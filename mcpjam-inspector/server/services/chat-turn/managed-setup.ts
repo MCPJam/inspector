@@ -425,7 +425,7 @@ export async function resolveManagedTurnSetup(args: {
   if (resolvedExecution.harness) {
     // User Testing boxes never receive the org's vendor key: refused first.
     if (externalAccountHarnessTurn && turnMode === "recorded") {
-      throw orgKeyHarnessSurfaceError(resolvedExecution.harness, "study");
+      throw orgKeyHarnessSurfaceError(resolvedExecution.harness);
     }
     const hostModelRefusal = externalAccountHostModelRefusalReason({
       harnessId: resolvedExecution.harness,

@@ -43,7 +43,7 @@ import {
   type LocalPlatform,
 } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
-import { isLoopbackListener, treeListeners } from "./process-checks.js";
+import { descendants, isLoopbackListener, treeListeners } from "./process-checks.js";
 import { installedAdapterVersion } from "./adapter-version.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
 
@@ -294,10 +294,6 @@ async function startChild(script: string, env: Record<string, string>) {
  * parent/child tree. Still deliberately NOT the code under test.
  */
 const WIN = process.platform === "win32";
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
 
 async function running(pid: number): Promise<boolean> {
   if (WIN) {
@@ -322,25 +318,6 @@ async function running(pid: number): Promise<boolean> {
 async function stillRunning(pids: readonly number[]): Promise<number[]> {
   const states = await Promise.all(pids.map(running));
   return pids.filter((_, i) => states[i]);
-}
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
-    }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
 }
 async function psLine(pid: number, withEnv = false) {
   try {

@@ -211,7 +211,7 @@ describe("OpenAiPortal", () => {
     renderPage(view({}, { values: {} }));
     expect(
       screen.getByText(
-        "The package's values are not imported into this rehearsal. Run checks to grade the package itself.",
+        "Package values are not shown here. Checks use the selected package's metadata when available.",
       ),
     ).toBeVisible();
     const panel = within(screen.getByRole("complementary", { name: "Findings" }));

@@ -22,8 +22,8 @@
  *     and `finalizeUsage` posts `/stream/org/local-usage` with the identical
  *     body `runLocalOrgChatTurnHeadless`'s `postLocalUsage` emitted.
  *   - external account → a hosted harness turn on the organization's own
- *     vendor key, for swarm and eval runs only; refused for every other
- *     caller. A runtime-chosen sentinel (`cursor/auto`) never asks the
+ *     vendor key, refused where its runtime declares it does not run (User
+ *     Testing). A runtime-chosen sentinel (`cursor/auto`) never asks the
  *     org-provider config a question.
  */
 
@@ -196,10 +196,10 @@ export async function resolveTurnRuntime(
   const modelId = String(args.modelDefinition.id);
 
   // A runtime that declares it does not run on this surface (Cursor, on the
-  // organization's vendor key, outside evals and swarms) is refused whatever
-  // the model, before anything is resolved and before the caller marks the
-  // turn possibly-spent. This resolver's `direct` callers are the v1 APIs,
-  // never the Playground.
+  // organization's vendor key, in User Testing) is refused whatever the model,
+  // before anything is resolved and before the caller marks the turn
+  // possibly-spent. This resolver's `direct` callers are the v1 APIs, never
+  // the Playground.
   const surfaceRefusal = args.harness
     ? harnessSurfaceRefusal(
         args.harness,

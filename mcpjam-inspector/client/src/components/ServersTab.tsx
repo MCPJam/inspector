@@ -170,6 +170,7 @@ import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
 
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
+const CONNECT_LOGS_PANEL_STORAGE_KEY = "mcpjam-connect-logs-panel-visible";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
 interface PersistedLoggerFocus {
@@ -830,7 +831,10 @@ export function ServersTab({
   });
 
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
-    useJsonRpcPanelVisibility();
+    useJsonRpcPanelVisibility({
+      storageKey: CONNECT_LOGS_PANEL_STORAGE_KEY,
+      defaultVisible: false,
+    });
   const [isAddingServer, setIsAddingServer] = useState(false);
   // Prefill for an agent-opened Add-server form (`ui_open_server_form`).
   // Undefined for a hand-opened form, which starts empty as before.
@@ -2112,7 +2116,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2191,7 +2199,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
