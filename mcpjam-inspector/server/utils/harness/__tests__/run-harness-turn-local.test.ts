@@ -554,17 +554,18 @@ describe("runHarnessTurn local continuity", () => {
     expect(stream).not.toContain("data-harness-reset");
   });
 
-  it("refuses an approval host on a turn nobody can answer", async () => {
+  it("runs an approval host on a turn nobody can answer, in the mode that asks", async () => {
+    // MCPJam answers each request with a denial (`turnApprovalPolicy`), so the
+    // turn runs rather than being refused for having nobody to ask.
     const onEngineError = vi.fn();
     await runHarnessTurn(baseOptions({
       requireToolApproval: true,
       approvalMode: "auto-deny",
       onEngineError,
-    }) as any, "none").catch((error: unknown) => onEngineError(error));
-    expect(onEngineError).toHaveBeenCalled();
-    expect(String(onEngineError.mock.calls[0]![0]?.message ?? onEngineError.mock.calls[0]![0]))
-      .toMatch(/cannot wait for tool approval in evals or swarms/);
-    expect(prepareLocalHarnessTurn).not.toHaveBeenCalled();
+    }) as any, "none");
+    expect(onEngineError).not.toHaveBeenCalled();
+    expect(prepareLocalHarnessTurn).toHaveBeenCalled();
+    expect(harnessState.agentOptions.permissionMode).toBe("allow-reads");
   });
 
   it("drains buffered results after an approval without duplicating tool calls", async () => {

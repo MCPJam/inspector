@@ -1,6 +1,10 @@
 import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
-import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
+import {
+  isolateAuthChallenge,
+  matchingRecordedChallenge,
+  attachRecordedAuthChallenge,
+} from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
@@ -818,7 +822,9 @@ export class MCPClientManager {
             name: params.name,
             arguments: params.arguments,
             cursor: params.cursor,
-            ...(params.maxAgeMs !== undefined ? { maxAgeMs: params.maxAgeMs } : {}),
+            ...(params.maxAgeMs !== undefined
+              ? { maxAgeMs: params.maxAgeMs }
+              : {}),
             _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
           },
         } as never,
@@ -981,21 +987,45 @@ export class MCPClientManager {
       options?.signal
     );
 
+    let retryRejected: ((error: unknown) => never) | undefined;
     const state: LiveClientState = liveState ?? {};
     const retryPromise = Promise.resolve().then(() =>
-      retryWithPolicy({
-        policy: this.defaultRetryPolicy,
-        signal,
-        operation: () => this.connectToServerOnce(serverId, signal),
-        shouldRetryError: (error) => isRetryableTransientError(error),
-        onRetry: async () => {
-          await this.destroyLiveState(serverId, {
+      runOperationWithAuthRecovery({
+        usesAuthProvider: false,
+        attach: () => undefined,
+        hasChallenge: () => false,
+        reset: () =>
+          this.destroyLiveState(serverId, {
             preserveRetryPromise: true,
             abortRetryOperations: false,
-          });
-        },
+          }),
+        refresh: (error) =>
+          this.refreshAccessTokenAfterUnauthorized(
+            serverId,
+            error,
+            signal,
+            (handler) => {
+              retryRejected = handler;
+            }
+          ),
+        run: () =>
+          retryWithPolicy({
+            policy: this.defaultRetryPolicy,
+            signal,
+            operation: () => this.connectToServerOnce(serverId, signal),
+            shouldRetryError: (error) => isRetryableTransientError(error),
+            onRetry: async () => {
+              await this.destroyLiveState(serverId, {
+                preserveRetryPromise: true,
+                abortRetryOperations: false,
+              });
+            },
+          }),
       })
-    );
+    ).catch((error: unknown) => {
+      if (retryRejected && isUnauthorized401(error)) retryRejected(error);
+      throw error;
+    });
     state.retryPromise = retryPromise;
     this.liveClientStates.set(serverId, state);
 
@@ -4404,7 +4434,8 @@ export class MCPClientManager {
     state?: LiveClientState
   ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     const elicitation = capabilities?.elicitation;
     return elicitation != null
       ? (elicitation as DeclaredElicitationCapability)
@@ -5323,8 +5354,12 @@ export class MCPClientManager {
             startedAt,
             config.authChallengeOperation
           ),
-        hasChallenge: () => !!matchingRecordedChallenge(
-          this.liveClientStates.get(serverId)?.authChallengeRecorder, startedAt, config.authChallengeOperation),
+        hasChallenge: () =>
+          !!matchingRecordedChallenge(
+            this.liveClientStates.get(serverId)?.authChallengeRecorder,
+            startedAt,
+            config.authChallengeOperation
+          ),
         reset: () =>
           this.destroyLiveState(serverId, { abortRetryOperations: false }),
         refresh: (error) =>
@@ -5338,7 +5373,8 @@ export class MCPClientManager {
   private async refreshAccessTokenAfterUnauthorized(
     serverId: string,
     error: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
+    onReplacement?: (handler: ((error: unknown) => never) | undefined) => void
   ): Promise<boolean> {
     if (!isUnauthorized401(error)) {
       return false;
@@ -5362,6 +5398,7 @@ export class MCPClientManager {
     if (!refreshPromise) {
       refreshPromise = (async () => {
         const result = await onUnauthorized({ serverId, error });
+        onReplacement?.(result?.onRetryRejected);
         const accessToken = result?.accessToken?.trim();
         if (!accessToken) {
           throw new Error(
@@ -5391,6 +5428,7 @@ export class MCPClientManager {
     };
     await this.destroyLiveState(serverId, {
       abortRetryOperations: false,
+      preserveRetryPromise: !!onReplacement,
     });
     return true;
   }

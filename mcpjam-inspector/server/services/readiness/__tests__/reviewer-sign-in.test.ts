@@ -28,8 +28,15 @@ const ATTEMPT = {
   passwordSecretName: PASSWORD_SECRET,
   tenant: "Acme",
 };
-const FEATURES = ["secret-origins", "navigation-stop-persistent"];
-const SHOT = { screenshotArtifactId: "shot_1", screenshotStatus: "captured" as const };
+const FEATURES = [
+  "network-public-only",
+  "secret-origins",
+  "navigation-stop-persistent",
+];
+const SHOT = {
+  screenshotArtifactId: "shot_1",
+  screenshotStatus: "captured" as const,
+};
 
 function fakes(
   play: (run: SignInAgentRun) => Promise<SignInAgentOutcome>,
@@ -77,20 +84,45 @@ afterEach(() => {
 describe("rehearseReviewerSignIn", () => {
   it("connects only through MCPJam's callback, recording the agent's stages", async () => {
     const { deps, writes, run } = fakes(async (input) => {
-      await input.record({ stage: "connect-link", status: "passed", detail: "Opened.", evidence: SHOT });
-      await input.record({ stage: "sign-in", status: "passed", detail: "Signed in.", evidence: SHOT });
-      return { kind: "callback", url: `${CALLBACK}?code=c1&state=s1&iss=${encodeURIComponent(AUTH)}` };
+      await input.record({
+        stage: "connect-link",
+        status: "passed",
+        detail: "Opened.",
+        evidence: SHOT,
+      });
+      await input.record({
+        stage: "sign-in",
+        status: "passed",
+        detail: "Signed in.",
+        evidence: SHOT,
+      });
+      return {
+        kind: "callback",
+        url: `${CALLBACK}?code=c1&state=s1&iss=${encodeURIComponent(AUTH)}`,
+      };
     });
-    expect(await sign(deps)).toEqual({ kind: "connected", reviewerAccountId: "acct_1" });
+    expect(await sign(deps)).toEqual({
+      kind: "connected",
+      reviewerAccountId: "acct_1",
+    });
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({
         attempt: ATTEMPT,
         values: [{ name: PASSWORD_SECRET, value: PASSWORD }],
-        link: expect.objectContaining({ authorizationServerOrigin: AUTH, callbackUrl: CALLBACK }),
+        link: expect.objectContaining({
+          authorizationServerOrigin: AUTH,
+          callbackUrl: CALLBACK,
+        }),
       }),
     );
     expect(deps.connect.complete).toHaveBeenCalledWith(
-      { state: "s1", code: "c1", iss: AUTH, error: undefined, errorDescription: undefined },
+      {
+        state: "s1",
+        code: "c1",
+        iss: AUTH,
+        error: undefined,
+        errorDescription: undefined,
+      },
       expect.any(AbortSignal),
     );
     expect(stages(writes)).toEqual(["connect-link", "sign-in", "connected"]);
@@ -105,7 +137,10 @@ describe("rehearseReviewerSignIn", () => {
       stage: "verification",
       reason: "The page asked for a code sent by email.",
       needsPerson: true,
-      evidence: { screenshotStatus: "suppressed", screenshotNote: "A credential was typed on this page." },
+      evidence: {
+        screenshotStatus: "suppressed",
+        screenshotNote: "A credential was typed on this page.",
+      },
     }));
     const outcome = await sign(deps);
     expect(outcome).toMatchObject({
@@ -113,7 +148,11 @@ describe("rehearseReviewerSignIn", () => {
       action: expect.stringContaining("complete the verification"),
     });
     expect(writes.at(-1)).toMatchObject({
-      stage: { stage: "verification", status: "blocked", evidence: { screenshotStatus: "suppressed" } },
+      stage: {
+        stage: "verification",
+        status: "blocked",
+        evidence: { screenshotStatus: "suppressed" },
+      },
       waitingFor: { reason: expect.stringContaining("code sent by email") },
     });
     expect(deps.connect.complete).not.toHaveBeenCalled();
@@ -128,8 +167,14 @@ describe("rehearseReviewerSignIn", () => {
       needsPerson: false,
     }));
     const outcome = await sign(deps);
-    expect(outcome).toEqual({ kind: "failed", detail: expect.stringContaining("password is incorrect.") });
-    expect(writes.at(-1)).toMatchObject({ outcome: "failed", stage: { stage: "sign-in", status: "failed" } });
+    expect(outcome).toEqual({
+      kind: "failed",
+      detail: expect.stringContaining("password is incorrect."),
+    });
+    expect(writes.at(-1)).toMatchObject({
+      outcome: "failed",
+      stage: { stage: "sign-in", status: "failed" },
+    });
   });
 
   it("stops for a person when the agent ends without the callback, saying why", async () => {
@@ -140,19 +185,27 @@ describe("rehearseReviewerSignIn", () => {
     }));
     expect(await sign(deps)).toMatchObject({ kind: "waiting-for-person" });
     expect(writes.at(-1)).toMatchObject({
-      stage: { stage: "consent", status: "blocked", detail: expect.stringContaining("daily budget") },
+      stage: {
+        stage: "consent",
+        status: "blocked",
+        detail: expect.stringContaining("daily budget"),
+      },
       waitingFor: { action: expect.stringContaining("approve access") },
     });
   });
 
-  it("refuses a daemon that cannot limit credentials or stop at the callback", async () => {
+  it("refuses a daemon that cannot keep to public addresses, limit credentials or stop at the callback", async () => {
     for (const [features, stage] of [
-      [["navigation-stop-persistent"], "sign-in"],
-      [["secret-origins"], "connected"],
+      [["secret-origins", "navigation-stop-persistent"], "connect-link"],
+      [["network-public-only", "navigation-stop-persistent"], "sign-in"],
+      [["network-public-only", "secret-origins"], "connected"],
     ] as const) {
-      const { deps, writes, run } = fakes(async () => ({ kind: "callback", url: CALLBACK }), {
-        features: [...features],
-      });
+      const { deps, writes, run } = fakes(
+        async () => ({ kind: "callback", url: CALLBACK }),
+        {
+          features: [...features],
+        },
+      );
       expect((await sign(deps)).kind).not.toBe("connected");
       expect(run).not.toHaveBeenCalled();
       expect(writes.at(-1)?.stage?.stage).toBe(stage);
@@ -161,11 +214,24 @@ describe("rehearseReviewerSignIn", () => {
   });
 
   it("records why it could not read the credentials, and reserves nothing", async () => {
-    const { deps, writes } = fakes(async () => ({ kind: "callback", url: CALLBACK }));
-    deps.secrets.mockResolvedValueOnce({ unavailable: "No saved password." } as never);
-    expect(await sign(deps)).toEqual({ kind: "failed", detail: "No saved password." });
+    const { deps, writes } = fakes(async () => ({
+      kind: "callback",
+      url: CALLBACK,
+    }));
+    deps.secrets.mockResolvedValueOnce({
+      unavailable: "No saved password.",
+    } as never);
+    expect(await sign(deps)).toEqual({
+      kind: "failed",
+      detail: "No saved password.",
+    });
     expect(writes).toEqual([
-      expect.objectContaining({ stage: expect.objectContaining({ stage: "credentials", status: "blocked" }) }),
+      expect.objectContaining({
+        stage: expect.objectContaining({
+          stage: "credentials",
+          status: "blocked",
+        }),
+      }),
     ]);
     expect(deps.desktop.reserve).not.toHaveBeenCalled();
   });
@@ -173,9 +239,14 @@ describe("rehearseReviewerSignIn", () => {
   it("records a callback with the server's refusal, or with no answer, as not connected", async () => {
     for (const url of [`${CALLBACK}?state=s1&error=access_denied`, CALLBACK]) {
       const { deps, writes } = fakes(async () => ({ kind: "callback", url }));
-      deps.connect.complete.mockResolvedValueOnce({ failed: "The server refused: access_denied." } as never);
+      deps.connect.complete.mockResolvedValueOnce({
+        failed: "The server refused: access_denied.",
+      } as never);
       expect(await sign(deps)).toMatchObject({ kind: "failed" });
-      expect(writes.at(-1)).toMatchObject({ stage: { stage: "connected", status: "failed" }, outcome: "failed" });
+      expect(writes.at(-1)).toMatchObject({
+        stage: { stage: "connected", status: "failed" },
+        outcome: "failed",
+      });
     }
   });
 });
@@ -186,7 +257,9 @@ describe("the desktop is released on every path", () => {
     first.deps.desktop.reserve.mockRejectedValueOnce(new Error("no box"));
     expect(await sign(first.deps)).toMatchObject({ kind: "failed" });
     const second = fakes(async () => ({ kind: "callback", url: CALLBACK }));
-    second.deps.connect.prepare.mockRejectedValueOnce(new Error("discovery failed"));
+    second.deps.connect.prepare.mockRejectedValueOnce(
+      new Error("discovery failed"),
+    );
     expect(await sign(second.deps)).toMatchObject({ kind: "failed" });
     expect(second.writes.at(-1)?.stage?.stage).toBe("connect-link");
     expect(second.deps.desktop.release).toHaveBeenCalledTimes(1);
@@ -204,7 +277,9 @@ describe("the desktop is released on every path", () => {
     const lost = fakes(async () => {
       throw new ReadinessLeaseLostError();
     });
-    await expect(sign(lost.deps)).rejects.toBeInstanceOf(ReadinessLeaseLostError);
+    await expect(sign(lost.deps)).rejects.toBeInstanceOf(
+      ReadinessLeaseLostError,
+    );
     expect(lost.deps.desktop.release).toHaveBeenCalledTimes(1);
   });
 
@@ -212,7 +287,9 @@ describe("the desktop is released on every path", () => {
     const { deps } = fakes(
       (input) =>
         new Promise((_resolve, reject) =>
-          input.signal.addEventListener("abort", () => reject(input.signal.reason)),
+          input.signal.addEventListener("abort", () =>
+            reject(input.signal.reason),
+          ),
         ),
     );
     expect(await sign(deps, 20)).toMatchObject({
@@ -224,7 +301,10 @@ describe("the desktop is released on every path", () => {
 
   it("and a failed release is logged without changing the outcome", async () => {
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
-    const { deps } = fakes(async () => ({ kind: "callback", url: `${CALLBACK}?code=c&state=s` }));
+    const { deps } = fakes(async () => ({
+      kind: "callback",
+      url: `${CALLBACK}?code=c&state=s`,
+    }));
     deps.desktop.release.mockRejectedValueOnce(new Error("close failed"));
     expect(await sign(deps)).toMatchObject({ kind: "connected" });
     expect(warn).toHaveBeenCalledWith(

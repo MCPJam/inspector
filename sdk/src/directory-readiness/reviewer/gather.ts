@@ -274,17 +274,20 @@ export async function gatherDirectoryReviewerPath(input: {
       ? await connectDirectoryReviewer(account.dial)
       : undefined;
   const identity: DirectoryReviewerIdentityEvidence =
-    typeof spec.identity !== "object"
+    spec.identity === undefined
       ? {
           outcome: "unverified",
-          reason: spec.identity ?? "the submission names no identity tool",
+          reason: "the submission names no identity tool",
+          notAsked: true,
         }
-      : !client || "error" in client
-        ? {
-            outcome: "unverified",
-            reason: `the reviewer account's session failed: ${client?.error}`,
-          }
-        : await checkDirectoryReviewerIdentity(client, spec.identity);
+      : typeof spec.identity === "string"
+        ? { outcome: "unverified", reason: spec.identity }
+        : !client || "error" in client
+          ? {
+              outcome: "unverified",
+              reason: `the reviewer account's session failed: ${client?.error}`,
+            }
+          : await checkDirectoryReviewerIdentity(client, spec.identity);
   const verified =
     identity.outcome === "verified" && client && !("error" in client)
       ? client

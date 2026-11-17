@@ -421,8 +421,10 @@ const MAX_CLIENT_LOGOS = 3;
 /** Compact host-logo strip for the Client column (HostCompatStrip-style). */
 function WaveClientLogoStrip({
   targets,
+  hostStyleByName,
 }: {
   targets: readonly SwarmOverviewTarget[];
+  hostStyleByName: ReadonlyMap<string, string | null | undefined>;
 }) {
   const names = waveClientNames(targets);
   if (names.length === 0) {
@@ -442,7 +444,11 @@ function WaveClientLogoStrip({
       aria-label={title}
     >
       {visible.map((name) => (
-        <JourneyHostLogoMark key={name} label={name} />
+        <JourneyHostLogoMark
+          key={name}
+          label={name}
+          hostStyle={hostStyleByName.get(name)}
+        />
       ))}
       {overflow > 0 ? (
         <span className="pl-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
@@ -551,6 +557,8 @@ export function formatWaveModelLabel(
 export interface SwarmOverviewPanelProps {
   /** `null` while signed out — both queries skip rather than firing unscoped. */
   projectId: string | null;
+  /** Project clients, for the logos: a wave target carries only its name. */
+  hosts?: readonly { name: string; hostStyle?: string | null }[];
   /**
    * Whether the project has any personas — drives which empty state shows.
    * `undefined` while the persona list is still loading: without that third
@@ -589,6 +597,7 @@ export function SwarmOverviewPanel(props: SwarmOverviewPanelProps) {
 
 function SwarmOverviewPanelBody({
   projectId,
+  hosts,
   hasPersonas,
   onNewSwarm,
   onOpenSwarm,
@@ -607,6 +616,11 @@ function SwarmOverviewPanelBody({
   const waves = useMemo(
     () => groupRunsIntoSwarmWaves(overview?.runs ?? []),
     [overview]
+  );
+  const hostStyleByName = useMemo(
+    () =>
+      new Map((hosts ?? []).map((host) => [host.name.trim(), host.hostStyle])),
+    [hosts]
   );
 
   // Confirmed-empty personas ⇒ the create-swarm hero. Checked before the
@@ -630,6 +644,7 @@ function SwarmOverviewPanelBody({
             waves={waves}
             onOpenSwarm={onOpenSwarm}
             environmentsEnabled={environmentsEnabled}
+            hostStyleByName={hostStyleByName}
           />
         )}
       </div>
@@ -719,10 +734,12 @@ function SwarmRunsList({
   waves,
   onOpenSwarm,
   environmentsEnabled,
+  hostStyleByName,
 }: {
   waves: SwarmWave[];
   onOpenSwarm: (swarmId: string) => void;
   environmentsEnabled: boolean;
+  hostStyleByName: ReadonlyMap<string, string | null | undefined>;
 }) {
   const [clientFilter, setClientFilter] = useState<string | null>(null);
   const [envFilter, setEnvFilter] = useState<string | null>(null);
@@ -863,6 +880,7 @@ function SwarmRunsList({
               wave={wave}
               onOpen={() => onOpenSwarm(swarmWaveRouteId(wave))}
               environmentsEnabled={environmentsEnabled}
+              hostStyleByName={hostStyleByName}
             />
           ))}
         </ul>
@@ -875,10 +893,12 @@ function SwarmWaveRow({
   wave,
   onOpen,
   environmentsEnabled,
+  hostStyleByName,
 }: {
   wave: SwarmWave;
   onOpen: () => void;
   environmentsEnabled: boolean;
+  hostStyleByName: ReadonlyMap<string, string | null | undefined>;
 }) {
   const title = swarmWaveTitle(wave);
   const sessions = waveSessionTotals(wave.runs);
@@ -968,7 +988,10 @@ function SwarmWaveRow({
           data-testid="swarm-overview-run-client"
           title={clientLabel}
         >
-          <WaveClientLogoStrip targets={targets} />
+          <WaveClientLogoStrip
+            targets={targets}
+            hostStyleByName={hostStyleByName}
+          />
         </span>
         <span
           className="w-24 shrink-0 truncate text-right font-mono text-xs text-muted-foreground"

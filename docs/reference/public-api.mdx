@@ -619,9 +619,21 @@ unique on the server, ignoring case.
 - **Nothing checks who a token belongs to.** A name is your own label, and
   replacing a token replaces it whoever the token belongs to. Keep each name
   for one test user.
-- **Uploaded accounts are hosted-only.** Hosted runs use them, and no local
-  app, browser or sandbox ever receives their token, the account's owner
-  included. Asking for it is refused with a message naming the rule.
+- **Uploaded accounts support hosted and local runs.** Local Inspector 3.22.0
+  or later can receive the access token. Sharing a server in the current Inspector enables **Allow local runs**. For servers shared before
+  Inspector 3.22.0, a project admin must enable it in the sharing settings. A personal server's uploaded account
+  is available locally only to its owner. Organization export policy can
+  block delivery. Browsers and sandbox runtimes do not receive these tokens.
+  Refresh tokens and client secrets stay in the backend. Disabling delivery
+  stops future token deliveries, while an existing copy remains subject to the
+  issuer's expiration and revocation rules.
+- **Use dedicated test accounts for sharing.** Every project member can use every shared
+  account on the server. Whoever holds a delivered token can use it outside
+  MCPJam. The audit log records token delivery and its recipient. Actions performed with a copied token may occur outside MCPJam’s audit trail.
+- **Set `tokens.expires_in` when the remaining lifetime is known.** It is a
+  number of seconds. Omission is supported, and the server still enforces expiry.
+- **Shared and uploaded accounts require HTTPS for remote MCP servers.**
+  Loopback development addresses are allowed.
 - **The token is bound to the server URL saved in the project.** The body
   takes only `tokens` and `clientInformation`. A URL field (`serverUrl`,
   `authorizationServerUrl`, `oauthResourceUrl`) or `tokens.id_token` is
@@ -684,8 +696,8 @@ one when the server has none, and keeps its old body and its old
 `{ imported, expiresAt }` answer. Every answer carries `Deprecation: true`, a
 `Sunset` date and a `Link` to `.../accounts`.
 
-An account this route creates is hosted-only. An existing default it writes
-into keeps whatever rule it had. Its `serverUrl` must be the URL saved in the
+An account this route creates follows the uploaded-account rules above.
+An existing default it writes into keeps its existing access rules. Its `serverUrl` must be the URL saved in the
 project, or the answer is `400`. `authorizationServerUrl`, `oauthResourceUrl`
 and `tokens.id_token` are accepted and ignored. Move to
 `PUT .../accounts/{account}`, which names the account it writes.

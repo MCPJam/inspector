@@ -34,7 +34,10 @@ import {
   ReviewerAttemptRefusedError,
   type ReadinessLease,
 } from "./backend-client.js";
-import { createSignInAgent, type SignInAgentDeps } from "./reviewer-sign-in-agent.js";
+import {
+  createSignInAgent,
+  type SignInAgentDeps,
+} from "./reviewer-sign-in-agent.js";
 import {
   rehearseReviewerSignIn,
   type ReviewerAttemptView,
@@ -157,9 +160,14 @@ async function storeScreenshot(
 }
 
 /** The one password try, on the attempt, before the value leaves this node. */
-function passwordTry(lease: ReadinessLease, attemptId: string): SignInAgentDeps["password"] {
+function passwordTry(
+  lease: ReadinessLease,
+  attemptId: string,
+): SignInAgentDeps["password"] {
   const write = (commandId: string, outcome: "intent" | "not_typed") =>
-    recordReviewerAttempt(lease, attemptId, { passwordSubmission: { commandId, outcome } });
+    recordReviewerAttempt(lease, attemptId, {
+      passwordSubmission: { commandId, outcome },
+    });
   return {
     mark: async (commandId) => {
       try {
@@ -179,10 +187,13 @@ function passwordTry(lease: ReadinessLease, attemptId: string): SignInAgentDeps[
       } catch (error) {
         if (error instanceof ReadinessLeaseLostError) throw error;
         // The try stays spent: the safe side of an unknown answer.
-        logger.warn("[readiness] a password try that typed nothing was not given back", {
-          runId: lease.runId,
-          error: redactForLog(error),
-        });
+        logger.warn(
+          "[readiness] a password try that typed nothing was not given back",
+          {
+            runId: lease.runId,
+            error: redactForLog(error),
+          },
+        );
       }
     },
   };
@@ -236,7 +247,8 @@ export function liveReviewerSignInDeps(input: {
       reserve: async (signal) => {
         const reserved = await leasePost(lease, SESSION, { profile: "blank" });
         const reservation = reserved.reservation as
-          { id?: unknown } | undefined;
+          | { id?: unknown }
+          | undefined;
         if (typeof reservation?.id !== "string") {
           throw new Error("No browser was reserved for this run.");
         }
@@ -264,6 +276,8 @@ export function liveReviewerSignInDeps(input: {
           bearer: "",
           projectId: input.attempt.projectId,
           contextMode: "ephemeral",
+          // Only public internet addresses: the submitter's pages steer it.
+          networkPolicy: "public",
           target: { kind: "sandbox", sandboxRowId, sandboxId, record: false },
           signal,
         });

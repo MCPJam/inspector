@@ -14,9 +14,8 @@ import { stripProjectFromPath } from "./project-route";
  * Suites prefix returns null rather than a bare list route, so a mode never
  * silently renders the other mode's URL.
  *
- * `/evaluate` is the flag-gated Evaluate (New) tab. It is a SIBLING of
- * `/evals`, not a sub-tree: it does not start with `/evals/`, so the guards
- * below already keep the two from parsing each other's URLs.
+ * `/evaluate` is the current Evaluate route. The retired `/evals` prefixes
+ * remain separate so saved links can be parsed and redirected.
  */
 export type EvalRoutePrefix = "/evals" | "/evals/runs" | "/evaluate";
 
@@ -61,7 +60,7 @@ export function parseEvalRouteFromUrl(
     return { type: "create" };
   }
 
-  // Evaluate (New) only. The v1 `/evals` tab has no first-run preview.
+  // The first-run preview belongs only to the current `/evaluate` route.
   if (prefix === "/evaluate" && tail[0] === "eval-server" && tail[1]) {
     return {
       type: "eval-server",
@@ -237,7 +236,7 @@ export function useEvalsRunsRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evals/runs");
 }
 
-/** Evaluate (New): same typed routes, parsed under the `/evaluate` prefix. */
+/** Current Evaluate routes, parsed under the `/evaluate` prefix. */
 export function useEvaluateRouteFromUrl(): EvalRoute {
   return useEvalRouteFromUrl("/evaluate");
 }

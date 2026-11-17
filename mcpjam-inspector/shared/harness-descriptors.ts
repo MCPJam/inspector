@@ -164,7 +164,6 @@ export const HARNESS_DESCRIPTORS = {
     modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
     unavailableOn: {
-      local: "OpenCode can't run on your computer yet. Run it in the cloud instead.",
       guests: "OpenCode isn't available to guests until it's tested with them.",
     },
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
