@@ -4,6 +4,7 @@ import {
   extractReportedProviderCost,
   normalizeModelUsage,
   parseModelCallCostEvidence,
+  parseModelRates,
   parseNormalizedModelUsage,
   priceModelCall,
   toModelCallCostEvidence,
@@ -550,5 +551,33 @@ describe("parseModelCallCostEvidence", () => {
       amountUsd: 0,
       source: "provider_reported",
     });
+  });
+});
+
+describe("parseModelRates", () => {
+  it("keeps a full rate card, tiers included", () => {
+    expect(parseModelRates(JSON.parse(JSON.stringify(sonnet.rates)))).toEqual(
+      sonnet.rates
+    );
+  });
+
+  it("refuses a card without input and output or in another currency", () => {
+    expect(parseModelRates({ currency: "USD", input: 3 })).toBeUndefined();
+    expect(
+      parseModelRates({ currency: "EUR", input: 3, output: 15 })
+    ).toBeUndefined();
+    expect(parseModelRates("3/15")).toBeUndefined();
+  });
+
+  it("drops an invalid optional rate rather than reading it as zero", () => {
+    expect(
+      parseModelRates({
+        currency: "USD",
+        input: 3,
+        output: 15,
+        cacheRead: -1,
+        cacheWrite: "3.75",
+      })
+    ).toEqual({ currency: "USD", input: 3, output: 15 });
   });
 });
