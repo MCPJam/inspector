@@ -14,7 +14,7 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isLoading: false }),
 }));
 vi.mock("@/components/ui/github-star-button", () => ({
-  GitHubStarButton: () => null,
+  GitHubStarButton: () => <button type="button">Star</button>,
 }));
 vi.mock("@/components/mcpjam-agent/AgentSidePanelTrigger", () => ({
   AgentSidePanelTrigger: () => null,
@@ -42,5 +42,11 @@ describe("AuthUpperArea", () => {
     render(<AuthUpperArea />);
     expect(screen.getByRole("button", { name: "Onboard" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
+  });
+
+  it("puts Sign in and Create account rightmost when signed out", () => {
+    render(<AuthUpperArea />);
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(names.slice(-3)).toEqual(["Star", "Sign in", "Create account"]);
   });
 });

@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 import { Star } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import { GitHubIcon } from "@/components/ui/github-icon";
 
 const REPO = "MCPJam/inspector";
@@ -63,23 +68,27 @@ export function GitHubStarButton() {
   }, [count]);
 
   return (
-    <Button asChild variant="chrome" size="sm" className="gap-1.5 px-2.5">
-      <a
-        href={`https://github.com/${REPO}`}
-        target="_blank"
-        rel="noreferrer"
-        aria-label={`Star ${REPO} on GitHub`}
-        title={`Star ${REPO} on GitHub`}
-      >
-        <GitHubIcon className="h-4 w-4" data-chrome-icon />
-        <Star className="h-3.5 w-3.5" data-chrome-icon />
-        <span className="text-xs font-medium">Star</span>
-        {count !== null && (
-          <span className="text-xs font-medium border-l border-border/60 pl-1.5 ml-0.5 text-muted-foreground">
-            {formatCount(count)}
-          </span>
-        )}
-      </a>
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button asChild variant="chrome" size="sm" className="gap-1.5 px-2.5">
+          <a
+            href={`https://github.com/${REPO}`}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Star ${REPO} on GitHub`}
+          >
+            <GitHubIcon className="h-4 w-4" data-chrome-icon />
+            <Star className="h-3.5 w-3.5" data-chrome-icon />
+            <span className="text-xs font-medium">Star</span>
+            {count !== null && (
+              <span className="text-xs font-medium border-l border-border/60 pl-1.5 ml-0.5 text-muted-foreground">
+                {formatCount(count)}
+              </span>
+            )}
+          </a>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Star us on GitHub</TooltipContent>
+    </Tooltip>
   );
 }
