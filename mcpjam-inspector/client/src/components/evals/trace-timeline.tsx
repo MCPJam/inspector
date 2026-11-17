@@ -63,12 +63,14 @@ import {
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
 import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
 import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import {
   TraceCostChips,
   TraceCostHoverBlock,
   TraceCostInline,
   TraceCostSummary,
+  useTraceCostSpans,
 } from "./trace-cost/trace-cost-display";
 
 const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
@@ -1917,6 +1919,8 @@ export interface TraceTimelineProps {
   fillContent?: boolean;
   /** "auto" puts the span detail beside the waterfall when there is room. */
   detailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's stored cost total and harness calls, for the summary. */
+  iterationCost?: IterationCostContext;
 }
 
 export function TraceTimeline({
@@ -1940,6 +1944,7 @@ export function TraceTimeline({
   turnRuntimeByPromptIndex,
   fillContent = false,
   detailPlacement = "below",
+  iterationCost,
 }: TraceTimelineProps) {
   const { containerRef, direction } = useTraceDetailDirection(detailPlacement);
   const beside = direction === "horizontal";
@@ -1950,9 +1955,22 @@ export function TraceTimeline({
     [projectedMessages, sourceSpans, transcriptMessages],
   );
   const recordedSpans = projected?.spans ?? sourceSpans;
+  // Cost reads these: a harness llm span carries its matched call's cost.
+  const traceCost = useTraceCostSpans(recordedSpans, iterationCost);
+  const costSpans = traceCost.spans;
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
   const costEnabled = useTraceCostEnabled();
+  // Spans with cost evidence, their own or a matched harness call's.
+  const costedSpanIds = useMemo(
+    () =>
+      new Set(
+        costEnabled
+          ? (costSpans ?? []).filter((span) => span.cost).map((span) => span.id)
+          : [],
+      ),
+    [costEnabled, costSpans],
+  );
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2150,7 +2168,7 @@ export function TraceTimeline({
       // selectable while the totals count it.
       const isOverheadLlm =
         node.span.category === "llm" &&
-        !(costEnabled && node.span.cost) &&
+        !costedSpanIds.has(node.span.id) &&
         typeof node.span.totalTokens !== "number" &&
         typeof node.span.inputTokens !== "number" &&
         typeof node.span.outputTokens !== "number" &&
@@ -2280,7 +2298,7 @@ export function TraceTimeline({
     mode,
     transcriptMessages,
     projectedMessages,
-    costEnabled,
+    costedSpanIds,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2385,9 +2403,9 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
-      cost: costEnabled ? selectRowCost(hoveredRow, recordedSpans) : undefined,
+      cost: costEnabled ? selectRowCost(hoveredRow, costSpans) : undefined,
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount, costEnabled]);
+  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount, costEnabled]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2435,17 +2453,34 @@ export function TraceTimeline({
     ],
   );
 
+  // Shown in every timing mode: an iteration with no recorded spans still has
+  // its stored total, and a harness's calls are listed as unmatched.
+  const costSummary = (
+    <>
+      {traceCost.loader}
+      <TraceCostSummary
+        spans={costSpans}
+        iteration={iterationCost}
+        unmatched={traceCost.unmatched}
+      />
+    </>
+  );
+
   if (mode === "none") {
     return (
-      <div className="text-xs text-muted-foreground">
-        No timing data recorded for this iteration.
-      </div>
+      <>
+        {costSummary}
+        <div className="text-xs text-muted-foreground">
+          No timing data recorded for this iteration.
+        </div>
+      </>
     );
   }
 
   if (mode === "estimated") {
     return (
       <div className="space-y-3">
+        {costSummary}
         <div className="flex items-center gap-2">
           <Badge className="border-warning/50 bg-warning/50 text-foreground">
             Estimated total only
@@ -2554,7 +2589,7 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
-      <TraceCostSummary spans={recordedSpans} />
+      {costSummary}
 
       <div
         ref={containerRef}
@@ -2972,7 +3007,7 @@ export function TraceTimeline({
               <TimelineDetailPane
                 projectedMessages={projectedMessages}
                 row={selectedRow}
-                recordedSpans={recordedSpans}
+                recordedSpans={costSpans}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}

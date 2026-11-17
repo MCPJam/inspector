@@ -24,14 +24,21 @@ export type CostRowTarget =
  * Sum the costs on llm spans, the only spans that carry one. Undefined when
  * none does: a trace recorded before costs were captured shows no cost rather
  * than "unavailable" on every call. Once one call has evidence, a call
- * without it counts as unpriced.
+ * without it counts as unpriced. `unplacedCalls` are calls no span stands
+ * for, such as a harness call no step matched; each counts once.
  */
 export function rollupLlmSpanCosts(
   spans: readonly EvalTraceSpan[],
+  unplacedCalls: ReadonlyArray<ModelCallCostEvidence | undefined> = [],
 ): ModelCostRollup | undefined {
   const llm = spans.filter((span) => span.category === "llm");
-  if (!llm.some((span) => span.cost)) return undefined;
-  return aggregateModelCallCosts(llm.map((span) => span.cost));
+  if (!llm.some((span) => span.cost) && unplacedCalls.length === 0) {
+    return undefined;
+  }
+  return aggregateModelCallCosts([
+    ...llm.map((span) => span.cost),
+    ...unplacedCalls,
+  ]);
 }
 
 export function selectRowCost(
@@ -41,9 +48,10 @@ export function selectRowCost(
   if (!row || row.kind === "interaction") return undefined;
   if (row.kind === "span") {
     const { span } = row;
-    return span.category === "llm" && span.cost
-      ? { kind: "call", cost: span.cost }
-      : undefined;
+    if (span.category !== "llm") return undefined;
+    // `spans` may carry a matched harness call's cost the row's span lacks.
+    const cost = span.cost ?? spans?.find(({ id }) => id === span.id)?.cost;
+    return cost ? { kind: "call", cost } : undefined;
   }
   // Same grouping as the timeline: a span without a prompt index is prompt 0.
   const rollup = rollupLlmSpanCosts(
