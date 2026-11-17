@@ -73,7 +73,7 @@ export function AgentSidePanelTrigger() {
           className="gap-1.5 px-2.5"
         >
           <MessageCircle className="h-4 w-4" aria-hidden data-chrome-icon />
-          <span>Ask MCPJam</span>
+          <span>Ask</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">

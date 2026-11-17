@@ -38,14 +38,14 @@ describe("OnboardAgentButton", () => {
     expect(logos).toEqual(["Claude", "Codex", "Cursor"]);
   });
 
-  it("keeps the label for 2xl and names the compact pill in a tooltip", async () => {
+  it("shows the short label at 2xl and the full name in a tooltip", async () => {
     const user = userEvent.setup();
     render(<OnboardAgentButton />);
     const trigger = screen.getByRole("button", {
       name: "Onboard your agent to MCPJam",
     });
     const label = Array.from(trigger.querySelectorAll("span")).find(
-      (span) => span.textContent === "Onboard your agent to MCPJam",
+      (span) => span.textContent === "Connect your agent",
     );
     expect(label).toHaveClass("hidden", "2xl:inline");
 

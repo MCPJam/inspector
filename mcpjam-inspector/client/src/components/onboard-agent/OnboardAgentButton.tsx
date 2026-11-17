@@ -43,6 +43,7 @@ const CLI_LINKS = [
 // Matches the trigger's `lg:inline-flex`; below it the trigger is hidden.
 const TRIGGER_VISIBLE_QUERY = "(min-width: 1024px)";
 const TRIGGER_LABEL = "Onboard your agent to MCPJam";
+const TRIGGER_SHORT_LABEL = "Connect your agent";
 const COPIED_RESET_MS = 1500;
 
 function CommandRow({ id, command }: { id: string; command: string }) {
@@ -120,7 +121,7 @@ export function OnboardAgentButton() {
                 open && "bg-chrome-button-hover",
               )}
             >
-              <span className="hidden 2xl:inline">{TRIGGER_LABEL}</span>
+              <span className="hidden 2xl:inline">{TRIGGER_SHORT_LABEL}</span>
               <span className="flex items-center gap-1" aria-hidden>
                 {AGENT_LOGOS.map(({ hostId, label }) => (
                   <img
@@ -135,9 +136,7 @@ export function OnboardAgentButton() {
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent side="bottom" className="2xl:hidden">
-          {TRIGGER_LABEL}
-        </TooltipContent>
+        <TooltipContent side="bottom">{TRIGGER_LABEL}</TooltipContent>
       </Tooltip>
       <PopoverContent
         align="end"
