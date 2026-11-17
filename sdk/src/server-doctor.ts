@@ -324,7 +324,7 @@ export async function collectConnectedServerDoctorState(
  * with its bytes is almost never wrong for one skill alone — a sample answers
  * "does this server's skill serving work" without pretending to be an audit.
  */
-const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
+export const DOCTOR_SKILL_VERIFY_SAMPLE = 5;
 
 /**
  * Why `skills/*` was not attempted, attributed to whoever actually withheld the

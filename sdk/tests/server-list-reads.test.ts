@@ -60,6 +60,45 @@ describe("readServerEventTypes", () => {
     expect(read.events.map((entry) => entry.name)).toEqual(["a"]);
   });
 
+  it("sends the signal with every page and stops paging once it aborts", async () => {
+    const controller = new AbortController();
+    const { manager, listServerEvents } = eventsManager({});
+    listServerEvents.mockImplementation(async (_serverId, params) => {
+      if (params?.cursor === undefined) {
+        return { events: [event("a", ["poll"])], nextCursor: "2" };
+      }
+      // The budget runs out while the second page is in flight.
+      controller.abort();
+      return { events: [event("b", ["poll"])], nextCursor: "3" };
+    });
+
+    const read = await readServerEventTypes(manager, "srv", {
+      signal: controller.signal,
+    });
+
+    expect(listServerEvents).toHaveBeenCalledTimes(2);
+    for (const call of listServerEvents.mock.calls) {
+      expect(call[2]?.signal).toBe(controller.signal);
+    }
+    expect(read.status).toBe("failed");
+    expect(read.events.map((entry) => entry.name)).toEqual(["a", "b"]);
+  });
+
+  it("sends nothing when the signal has already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { manager, listServerEvents } = eventsManager({
+      first: { events: [event("a", ["poll"])] },
+    });
+
+    const read = await readServerEventTypes(manager, "srv", {
+      signal: controller.signal,
+    });
+
+    expect(listServerEvents).not.toHaveBeenCalled();
+    expect(read).toMatchObject({ status: "failed", events: [] });
+  });
+
   it("marks the listing truncated when the page cap stops it", async () => {
     const { manager, listServerEvents } = eventsManager({
       first: { events: [event("a", ["poll"])], nextCursor: "2" },
