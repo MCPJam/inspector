@@ -12,16 +12,43 @@ export type MessagePreparation = {
   revision: string;
   intentDigest: string;
 };
+/** What a reader must present: every field is compared with the prepared one.
+ * No workspace: the new chat may open in another workspace of the project. */
+export type MessagePreparationIdentity = Pick<
+  MessagePreparation,
+  "actorId" | "projectId" | "subject" | "hostId" | "intentDigest"
+>;
 /** Short-lived transfer authority, issued only after original source admission.
  * No content, credentials, runtime closures, or execution receipts are retained.
+ * A preparation lives `PLUGIN_MESSAGE_PREPARATION_MS`, reads only for its own
+ * identity, and binds to one destination: a second destination is refused,
+ * the same one may bind again.
  */
-export class MessagePreparations {
+export interface MessagePreparationStore {
+  issue(value: MessagePreparation, signal: AbortSignal): Promise<string>;
+  read(
+    token: string,
+    identity: MessagePreparationIdentity,
+    signal: AbortSignal,
+  ): Promise<MessagePreparation>;
+  bind(
+    token: string,
+    identity: MessagePreparationIdentity,
+    destination: string,
+    signal: AbortSignal,
+  ): Promise<void>;
+}
+const unavailable = () =>
+  new PluginInvocationError("INSTANCE_MESSAGE_UNAVAILABLE");
+/** The single-process store, for local installs only: hosted replicas share
+ * the durable one in `message-preparation-store.ts`. */
+export class MessagePreparations implements MessagePreparationStore {
   private records = new Map<
     string,
     MessagePreparation & { expires: number; destination?: string }
   >();
   constructor(private now = Date.now) {}
-  issue(value: MessagePreparation) {
+  async issue(value: MessagePreparation) {
     for (const [token, record] of this.records)
       if (record.expires <= this.now()) this.records.delete(token);
     for (const [token, record] of this.records)
@@ -40,13 +67,7 @@ export class MessagePreparations {
     });
     return token;
   }
-  read(
-    token: string,
-    identity: Pick<
-      MessagePreparation,
-      "actorId" | "projectId" | "subject" | "hostId" | "intentDigest"
-    >,
-  ) {
+  private live(token: string, identity: MessagePreparationIdentity) {
     const record = this.records.get(token);
     if (
       !record ||
@@ -55,17 +76,25 @@ export class MessagePreparations {
         ([key, value]) => record[key as keyof MessagePreparation] !== value,
       )
     )
-      throw new PluginInvocationError("INSTANCE_MESSAGE_UNAVAILABLE");
-    return { ...record };
+      throw unavailable();
+    return record;
   }
-  bind(token: string, destination: string) {
-    const record = this.records.get(token);
-    if (
-      !record ||
-      record.expires <= this.now() ||
-      (record.destination && record.destination !== destination)
-    )
-      throw new PluginInvocationError("INSTANCE_MESSAGE_UNAVAILABLE");
+  async read(token: string, identity: MessagePreparationIdentity) {
+    const {
+      expires: _expires,
+      destination: _destination,
+      ...record
+    } = this.live(token, identity);
+    return record;
+  }
+  async bind(
+    token: string,
+    identity: MessagePreparationIdentity,
+    destination: string,
+  ) {
+    const record = this.live(token, identity);
+    if (record.destination && record.destination !== destination)
+      throw unavailable();
     record.destination = destination;
   }
 }

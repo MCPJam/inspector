@@ -352,6 +352,38 @@ describe("MultiModelChatCard", () => {
     });
   });
 
+  it("does not stop the next turn when only the session's stop function changes", async () => {
+    const card = (stopRequestId: number) => (
+      <MultiModelChatCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        selectedServerInstructions={{}}
+        broadcastRequest={null}
+        stopRequestId={stopRequestId}
+        placeholder="Message"
+        reasoningDisplayMode="inline"
+        executionConfig={{ systemPrompt: "", temperature: 0.7, requireToolApproval: false }}
+        onSummaryChange={vi.fn()}
+      />
+    );
+    const stopForPress = mockUseChatSession.stop;
+    const { rerender } = render(card(0));
+    rerender(card(1));
+    await waitFor(() => {
+      expect(stopForPress).toHaveBeenCalledTimes(1);
+    });
+
+    // The chat session hands back a new `stop` whenever its status or
+    // messages change, such as when the next turn starts after a Stop.
+    const stopForNextTurn = vi.fn();
+    mockUseChatSession.stop = stopForNextTurn;
+    rerender(card(1));
+
+    expect(stopForNextTurn).not.toHaveBeenCalled();
+    expect(stopForPress).toHaveBeenCalledTimes(1);
+  });
+
   it("card root has no forced min-height so it can shrink inside a short grid row", () => {
     render(
       <MultiModelChatCard

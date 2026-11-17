@@ -108,8 +108,10 @@ function parseRateEvidence(value: unknown): RateEvidence | undefined {
 /**
  * Read cost evidence from the wire or storage. Returns undefined for anything
  * that is not a coherent record (unknown completeness, an amount on an
- * unavailable result, no amount on a complete one), so a malformed value shows
- * as "no cost evidence" rather than a wrong number.
+ * unavailable result, no amount on a complete one, an amount with no known
+ * source), so a malformed value shows as "no cost evidence" rather than a
+ * wrong number. An amount must say where it came from: without a source the
+ * UI could not tell a report from an estimate.
  */
 export function parseModelCallCostEvidence(
   value: unknown
@@ -123,9 +125,16 @@ export function parseModelCallCostEvidence(
   ] as const);
   const calculationVersion = amount(raw.calculationVersion);
   const amountUsd = amount(raw.amountUsd);
+  const source = oneOf(raw.source, [
+    "provider_reported",
+    "list_price",
+    "customer_rate",
+    "runner_reported",
+  ] as const);
   if (!completeness || calculationVersion === undefined) return undefined;
   if ((completeness === "unavailable") !== (amountUsd === undefined))
     return undefined;
+  if (amountUsd !== undefined && !source) return undefined;
 
   const parts = pick<NonNullable<ModelCallCost["parts"]>>(
     asRecord(raw.parts) ?? {},
@@ -145,12 +154,6 @@ export function parseModelCallCostEvidence(
         "web_search_rate",
       ] as const) !== undefined
   );
-  const source = oneOf(raw.source, [
-    "provider_reported",
-    "list_price",
-    "customer_rate",
-    "runner_reported",
-  ] as const);
   const reason = oneOf(raw.reason, [
     "no_usage",
     "no_rate",

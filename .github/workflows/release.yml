@@ -3,10 +3,15 @@ name: Release
 # Ships the versions `main` already carries. Start release (prepare-release.yml)
 # pushes them as a version commit and dispatches this on it straight away;
 # release-trigger.yml dispatches it again if `main` moved first. Dispatching it
-# by hand (Soundcheck's "Publish") is the retry path. It never writes to `main`.
+# by hand (Soundcheck's "Retry release") is the retry path. It never writes to `main`.
 #
 # How a run goes. Steps 1 and 2 run at the same time; nothing in step 3 or 4
-# starts until `verified` says step 1 passed.
+# starts until `verified` says step 1 passed. `shipped` fails the run when
+# the versions did not reach npm, so green means shipped.
+#
+# To retry a failed release, dispatch this again (Soundcheck's "Retry release").
+# GitHub's "Re-run failed jobs" re-runs the failed jobs but not the publish
+# and deploy steps they held back.
 #
 #   1. Verify    `tests` + `build-and-test` run the full test suite and build on
 #                this exact commit. PRs run only the tests their diff can affect
@@ -207,7 +212,7 @@ jobs:
               const ownFailure = runs.find((run) => run.head_sha === headSha && run.conclusion === "failure");
               if (ownFailure) {
                 core.setFailed(
-                  `Deploy Staging failed on ${headSha}: ${ownFailure.html_url}. Fix or re-run it, then re-run this release's failed jobs.`
+                  `Deploy Staging failed on ${headSha}: ${ownFailure.html_url}. Fix or re-run it, then retry the release with Retry release in Soundcheck.`
                 );
                 return;
               }
@@ -316,6 +321,36 @@ jobs:
         if: steps.plan.outputs.inspector_version != '' && !fromJSON(inputs.skip_verify)
         run: node .github/scripts/check-workos-loopback.mjs production
 
+      # Every pack this build may SELECT: the desired one per harness, and the
+      # one permitted previous. The evidence run reads them the same way.
+      - name: Local harness packs this build selects
+        id: local_harness_packs
+        working-directory: mcpjam-inspector
+        run: node scripts/local-harness-release-packs.mjs >> "$GITHUB_OUTPUT"
+
+  # Beside the builds, not in preflight: it verifies every pinned pack's
+  # provenance one asset at a time (~2.5 minutes) and gates only publishing,
+  # so nothing that builds should wait for it.
+  harness-consistency:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
       # The local-execution release gate. It refuses a build whose derived
       # OFFER is inconsistent with what it can serve — a platform advertised
       # with no pack digest, or a digest table stamped at a version whose
@@ -333,19 +368,11 @@ jobs:
       # record relied on, from local-harness-pack-pipeline.yml) — signed by our
       # key is not enough on its own.
       - name: Local harness release consistency
-        if: fromJSON(steps.plan.outputs.build_inspector_artifacts)
         working-directory: mcpjam-inspector
         env:
-          INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
           GH_TOKEN: ${{ github.token }}
         run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION" --assets --verify-attestations
-
-      # Every pack this build may SELECT: the desired one per harness, and the
-      # one permitted previous. The evidence run reads them the same way.
-      - name: Local harness packs this build selects
-        id: local_harness_packs
-        working-directory: mcpjam-inspector
-        run: node scripts/local-harness-release-packs.mjs >> "$GITHUB_OUTPUT"
 
   # The release contract (`runtime-contract.json`) needs conformance evidence
   # for THIS commit's Inspector layer × every pack the build may select, on
@@ -737,6 +764,7 @@ jobs:
     needs:
       - preflight
       - verified
+      - harness-consistency
       - local-harness-contract
       - build-packages
       - deploy-backend-prod
@@ -763,7 +791,7 @@ jobs:
       needs.verified.result == 'success' &&
       (
         needs.preflight.outputs.publish_inspector != 'true' ||
-        needs.local-harness-contract.result == 'success'
+        (needs.local-harness-contract.result == 'success' && needs.harness-consistency.result == 'success')
       ) &&
       needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
@@ -856,8 +884,8 @@ jobs:
   # build took ten minutes (thirty once) after publish, holding the run open.
   # No job but `docker-publish` waits on it, so a Docker Hub outage or a
   # rejected token cannot hold back the webapp or the GitHub release; the run
-  # still ends red so the failure is seen. Retry with "Re-run failed jobs",
-  # or dispatch docker-release.yml.
+  # still ends red so the failure is seen. Retry by dispatching
+  # docker-release.yml.
   docker-release:
     needs: preflight
     if: needs.preflight.outputs.publish_inspector == 'true'
@@ -1128,6 +1156,7 @@ jobs:
       - build-mac
       - build-windows
       - local-harness-contract
+      - harness-consistency
     # The tag and the GitHub release wait for the desktop builds: releases are
     # immutable, so the release is created once with every asset attached.
     # npm and the webapp did not wait (see publish-packages). A desktop-only
@@ -1146,7 +1175,8 @@ jobs:
         (
           needs.build-mac.result == 'success' &&
           needs.build-windows.result == 'success' &&
-          needs.local-harness-contract.result == 'success'
+          needs.local-harness-contract.result == 'success' &&
+          needs.harness-consistency.result == 'success'
         )
       )
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
@@ -1224,6 +1254,36 @@ jobs:
   # host catalog with staging's live one, so it does not depend on anything
   # this release deploys and runs beside the rest instead of inside
   # `finalize`, where its install held up the GitHub release by a minute.
+  # The run's verdict on what it was for: the versions it set out to ship are
+  # on npm (or, for a desktop-only run, the GitHub release exists). Skipped
+  # jobs count as success in GitHub, so without this a run whose tests failed
+  # and were re-run shows green with nothing published. A run that stood down
+  # (preflight skipped) shipped nothing on purpose and stays green.
+  shipped:
+    needs: [preflight, publish-packages, finalize]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Require that this run shipped
+        env:
+          PUBLISH_ANY: ${{ needs.preflight.outputs.publish_any }}
+          DESKTOP_ONLY: ${{ needs.preflight.outputs.desktop_only }}
+          PUBLISHED: ${{ needs.publish-packages.result }}
+          FINALIZED: ${{ needs.finalize.result }}
+        run: |
+          retry="To retry, use Retry release in Soundcheck (or dispatch release.yml). GitHub's \"Re-run failed jobs\" does not run the publish steps again."
+          if [ "$PUBLISH_ANY" = "true" ] && [ "$PUBLISHED" != "success" ]; then
+            echo "::error::Nothing reached npm: publish-packages was ${PUBLISHED}. $retry"
+            exit 1
+          fi
+          if [ "$DESKTOP_ONLY" = "true" ] && [ "$FINALIZED" != "success" ]; then
+            echo "::error::The GitHub release was not created: finalize was ${FINALIZED}. $retry"
+            exit 1
+          fi
+          echo "Shipped."
+
   catalog-parity:
     needs: preflight
     if: needs.preflight.outputs.publish_sdk == 'true'

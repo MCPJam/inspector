@@ -22,7 +22,6 @@ import App, {
   CompatibilityRoute,
   ComputerRoute,
   EvalRunSharedRoute,
-  EvalsRoute,
   EvaluateRoute,
   EventsRoute,
   EventTriggersRoute,
@@ -297,24 +296,22 @@ const ROUTE_ELEMENTS: Record<
     loader: ({ params }) => redirect(`/organizations/${params.orgId}/billing`),
   },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
-  evals: { element: <EvalsRoute /> },
-  "evals/create": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/runs/:runId": { element: <EvalsRoute /> },
+  evals: { element: <LegacyEvalRedirect /> },
+  "evals/create": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/runs/:runId": { element: <LegacyEvalRedirect /> },
   "evals/suite/:suiteId/test/:testId": { element: <LegacyEvalCaseRedirect /> },
   "evals/suite/:suiteId/test/:testId/edit": { element: <LegacyEvalCaseRedirect /> },
-  "evals/suite/:suiteId/settings": { element: <EvalsRoute /> },
-  "evals/suite/:suiteId/settings/evaluators": { element: <EvalsRoute /> },
+  "evals/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
+  "evals/suite/:suiteId/settings/evaluators": { element: <LegacyEvalRedirect /> },
   "evals/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
-  // Runs mode. `mode` comes from the route table rather than sniffing the URL
-  // inside the component, so the two lenses stay one route element with one
-  // billing gate.
-  "evals/runs": { element: <EvalsRoute mode="runs" /> },
-  "evals/runs/create": { element: <EvalsRoute mode="runs" /> },
+  // Retired Runs links keep their artifact context through the redirect.
+  "evals/runs": { element: <LegacyEvalRedirect /> },
+  "evals/runs/create": { element: <LegacyEvalRedirect /> },
   "evals/runs/commit/:commitSha": { element: <LegacyEvalRedirect /> },
-  "evals/runs/suite/:suiteId": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId/runs/:runId": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalRedirect />,
   },
   "evals/runs/suite/:suiteId/test/:testId": {
     element: <LegacyEvalCaseRedirect />,
@@ -322,12 +319,12 @@ const ROUTE_ELEMENTS: Record<
   "evals/runs/suite/:suiteId/test/:testId/edit": {
     element: <LegacyEvalCaseRedirect />,
   },
-  "evals/runs/suite/:suiteId/settings": { element: <EvalsRoute mode="runs" /> },
+  "evals/runs/suite/:suiteId/settings": { element: <LegacyEvalRedirect /> },
   "evals/runs/suite/:suiteId/settings/evaluators": {
-    element: <EvalsRoute mode="runs" />,
+    element: <LegacyEvalRedirect />,
   },
   "evals/runs/suite/:suiteId/edit": { loader: redirectSuiteEditToSettings },
-  // Public Evaluate routes. Legacy access above is separately flagged.
+  // Public Evaluate routes. Legacy links above redirect here.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
   "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },

@@ -496,22 +496,59 @@ describe("parseModelCallCostEvidence", () => {
     ).toBeUndefined();
   });
 
-  it("drops unknown enum members and keeps an explicit zero", () => {
+  it("rejects an amount that does not say where it came from", () => {
+    const priced = {
+      calculationVersion: 1,
+      currency: "USD",
+      amountUsd: 0.0042,
+    };
+    for (const completeness of ["complete", "partial"]) {
+      expect(
+        parseModelCallCostEvidence({ ...priced, completeness })
+      ).toBeUndefined();
+      expect(
+        parseModelCallCostEvidence({
+          ...priced,
+          completeness,
+          source: "guessed",
+        })
+      ).toBeUndefined();
+    }
+  });
+
+  it("needs no source on an unavailable record", () => {
+    expect(
+      parseModelCallCostEvidence({
+        calculationVersion: 1,
+        currency: "USD",
+        completeness: "unavailable",
+        reason: "no_rate",
+      })
+    ).toEqual({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "unavailable",
+      reason: "no_rate",
+    });
+  });
+
+  it("drops unknown optional enum members and keeps an explicit zero", () => {
     expect(
       parseModelCallCostEvidence({
         calculationVersion: 1,
         currency: "USD",
         completeness: "complete",
         amountUsd: 0,
-        source: "guessed",
-        funding: "customer",
+        source: "provider_reported",
+        funding: "guessed",
+        usageSource: "guessed",
       })
     ).toEqual({
       calculationVersion: 1,
       currency: "USD",
       completeness: "complete",
       amountUsd: 0,
-      funding: "customer",
+      source: "provider_reported",
     });
   });
 });

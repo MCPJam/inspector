@@ -61,7 +61,7 @@ const {
   getToolsMock: vi.fn(),
   acquirePlaygroundHarnessBoxMock: vi.fn(),
   releaseBoxMock: vi.fn(),
-  backend: { chatEnvironments: true },
+  backend: { chatEnvironments: true, visibleSkillScope: true },
 }));
 
 // The box is the conversation's throwaway machine: a harness turn here binds
@@ -80,6 +80,8 @@ vi.mock("convex/browser", () => ({
     query(...args: unknown[]) {
       const name = typeof args[0] === "string" ? args[0] : getFunctionName(args[0] as Parameters<typeof getFunctionName>[0]);
       if (name === "projects:getProjectCapabilities") return Promise.resolve(backend.chatEnvironments ? { chatEnvironmentVersion: 1 } : {});
+      if (name === "projectEnvironments:getCapabilities")
+        return Promise.resolve(backend.visibleSkillScope ? { visibleSkillScope: true } : {});
       return queryMock(...args);
     }
     mutation(...args: unknown[]) {
@@ -175,6 +177,7 @@ import {
   harnessOfRuntimeConfig,
   hostRoutingSelectionForModel,
   resolveChatSessionEngine,
+  toolModeHarnessPolicy,
 } from "../chat-session-host-target.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -204,8 +207,9 @@ function firstTurn(overrides: Record<string, unknown> = {}) {
     idempotencyKey: `k-${Math.random()}`,
     message: "hi",
     modelId: MODEL,
-    // A harness builds its own tool set, so `read_only` is unenforceable there
-    // and refused. Every harness case here opts in deliberately.
+    // `read_only` holds on a proxied harness only through the proxy's policy
+    // seal, which this fixture's short secret cannot make, so it is refused
+    // here. Every harness case opts into `auto` unless it seals.
     toolMode: "auto",
     ...overrides,
   };
@@ -228,6 +232,7 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   vi.clearAllMocks();
   backend.chatEnvironments = true;
+  backend.visibleSkillScope = true;
   process.env.CONVEX_URL = "https://convex.test";
   process.env.CONVEX_HTTP_URL = "https://convex.test";
   // Everything `isComputersDataPlaneConfigured()` reads. Set here rather than
@@ -371,6 +376,78 @@ describe("host targeting dispatches the real harness", () => {
     // a silently emulated turn look identical to a harness one.
     expect(body.engine).toBe("harness:claude-code");
     expect(body.hostId).toBe(HOST);
+  });
+
+  it("builds an API turn's tools without the host's approval switch, and nobody is asked", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ modelId: MODEL, requireToolApproval: true }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ requireToolApproval: false }),
+    );
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({ approvalMode: "auto-deny" }),
+    );
+  });
+
+  it("runs a harness on an approval host with the switch off, and nobody is asked", async () => {
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL, requireToolApproval: true }),
+    );
+
+    const response = await turn(firstTurn({ environmentId: ENVIRONMENT }));
+
+    expect(response.status).toBe(200);
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requireToolApproval: false,
+        approvalMode: "auto-deny",
+      }),
+    );
+    expect((await response.json()).engine).toBe("harness:claude-code");
+  });
+
+  it("holds a read_only harness turn to read-only MCP tools where its calls run", async () => {
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "a-sealing-secret-of-32-characters");
+    resolveEnvironmentForRuntimeMock.mockResolvedValue(
+      environmentSpec({ harness: "claude-code", modelId: MODEL }),
+    );
+    getToolsMock.mockResolvedValue([
+      { name: "search", annotations: { readOnlyHint: true } },
+      { name: "delete_item", annotations: { destructiveHint: true } },
+    ]);
+
+    const response = await turn(
+      firstTurn({ environmentId: ENVIRONMENT, toolMode: "read_only" }),
+    );
+
+    expect(response.status).toBe(200);
+    // The emulated engine's exclusion and the harness's refusal name the
+    // same tool, from the same listing.
+    expect(prepareChatV2Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ excludeMcpToolNames: ["delete_item"] }),
+    );
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessToolPolicy: {
+          srv_1: {
+            mode: "readOnly",
+            known: ["search", "delete_item"],
+            denied: {
+              delete_item: {
+                reason: "readOnlyModeUnclassified",
+                classification: "destructive",
+              },
+            },
+            unknownTool: "deny",
+          },
+        },
+      }),
+    );
   });
 
   it("returns a reply and skipped servers even when the entire environment is refused", async () => {
@@ -850,18 +927,18 @@ describe("a runtime this API does not run", () => {
     refusedBeforeAnyWork();
   });
 
-  it("refuses the dedicated GitHub Copilot CLI client with servers", async () => {
-    // An API turn never forwards, and this client reaches servers no other way.
+  it("runs the dedicated GitHub Copilot CLI client with servers", async () => {
+    // An API turn never forwards; the client's own MCP client takes MCPJam's proxy.
     resolveHostModelDefinitionMock.mockResolvedValue({
-      id: MODEL,
-      provider: "anthropic",
+      id: "openai/gpt-5.5",
+      provider: "openai",
     });
     fetchHostRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {
         hostId: HOST,
         harness: "copilot-cli",
-        modelId: MODEL,
+        modelId: "openai/gpt-5.5",
         selectedServerIds: ["srv_1"],
       },
     });
@@ -869,16 +946,8 @@ describe("a runtime this API does not run", () => {
     const response = await turn(firstTurn({ hostId: HOST }));
     const body = await response.json();
 
-    expect(response.status).toBe(422);
-    expect(body.message).toBe(
-      "GitHub Copilot CLI calls MCP servers only through its own client, and " +
-        "this turn cannot forward them. Open this client in the signed-in hosted Playground.",
-    );
-    expect(body.details).toMatchObject({
-      harness: "copilot-cli",
-      kind: "surface-unsupported",
-    });
-    refusedBeforeAnyWork();
+    expect(response.status).toBe(200);
+    expect(body.engine).toBe("harness:copilot-cli");
   });
 
   it("runs no runtime that signs in with the customer's own account", () => {
@@ -1272,6 +1341,20 @@ describe("an environment's skills reach the engine that runs", () => {
     expect(
       resolveEnvironmentForRuntimeMock.mock.lastCall?.[1],
     ).not.toHaveProperty("skillScope");
+  });
+
+  it("runs a server-list turn on a backend that does not accept skillScope", async () => {
+    backend.visibleSkillScope = false;
+    resolveEnvironmentForRuntimeMock.mockImplementation(async (_client, args) => {
+      if ("skillScope" in args) throw new Error("Server Error");
+      return environmentSpec({});
+    });
+
+    const response = await turn(firstTurn({ serverIds: ["srv_1"] }));
+
+    expect(response.status).toBe(200);
+    expect(resolveEnvironmentForRuntimeMock).toHaveBeenCalledTimes(1);
+    expect(runUnifiedAssistantTurnMock).toHaveBeenCalledTimes(1);
   });
 
   it("records the skills the turn handed its engine, with the environment", async () => {
@@ -1682,7 +1765,7 @@ describe("resolveChatSessionEngine", () => {
     });
   });
 
-  it("refuses an approval host: a synchronous turn has nobody to ask", () => {
+  it("runs an approval host: an API turn leaves the switch off", () => {
     const result = resolveChatSessionEngine({
       ...base,
       hostTarget: hostTarget({
@@ -1690,7 +1773,37 @@ describe("resolveChatSessionEngine", () => {
         requireToolApproval: true,
       }),
     });
-    expect(result).toMatchObject({ ok: false, kind: "surface-approval" });
+    expect(result).toMatchObject({
+      ok: true,
+      engine: { kind: "harness", harness: "claude-code" },
+    });
+  });
+
+  it("runs read_only on a harness whose proxy can seal the exclusions", () => {
+    vi.stubEnv("COMPUTERS_TERMINAL_TOKEN_SECRET", "a-sealing-secret-of-32-characters");
+    try {
+      expect(
+        resolveChatSessionEngine({
+          ...base,
+          toolPolicy: { toolMode: "read_only" },
+          hostTarget: hostTarget({ harness: "claude-code" }),
+        }),
+      ).toMatchObject({ ok: true, engine: { kind: "harness", harness: "claude-code" } });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("refuses read_only where the proxy cannot seal the exclusions", () => {
+    // The fixture's secret is too short to seal with, so a runtime that dials
+    // MCPJam's proxy could not be held to `read_only`.
+    expect(
+      resolveChatSessionEngine({
+        ...base,
+        toolPolicy: { toolMode: "read_only" },
+        hostTarget: hostTarget({ harness: "claude-code" }),
+      }),
+    ).toMatchObject({ ok: false, kind: "surface-tool-policy" });
   });
 
   it("refuses per-turn tool narrowing a harness cannot honour", () => {
@@ -1732,7 +1845,7 @@ describe("resolveChatSessionEngine", () => {
     ).toMatchObject({ ok: false, kind: "surface-unpinnable-host" });
   });
 
-  it("outranks the approval rule, which is fixable on the host", () => {
+  it("refuses the unpinnable shape on an approval host too", () => {
     expect(
       resolveChatSessionEngine({
         ...base,
@@ -2190,5 +2303,40 @@ describe("environment-normalized API compatibility", () => {
     expect(
       persistChatSessionToConvexMock.mock.calls.at(-1)?.[0].resumeConfig,
     ).toMatchObject({ modelId: MODEL, serverIds: [] });
+  });
+});
+
+describe("toolModeHarnessPolicy", () => {
+  it("refuses read_only's exclusions on each server, and anything listed later", () => {
+    const policy = toolModeHarnessPolicy(
+      ["srv_1", "srv_gone"],
+      [
+        {
+          serverId: "srv_1",
+          tools: [
+            { name: "search", annotations: { readOnlyHint: true } },
+            { name: "delete_item", annotations: { destructiveHint: true } },
+            { name: "update_item" },
+          ],
+        },
+      ],
+      ["delete_item", "update_item"],
+    );
+    expect(policy.srv_1).toEqual({
+      mode: "readOnly",
+      known: ["search", "delete_item", "update_item"],
+      denied: {
+        delete_item: { reason: "readOnlyModeUnclassified", classification: "destructive" },
+        update_item: { reason: "readOnlyModeUnclassified", classification: "unknown" },
+      },
+      unknownTool: "deny",
+    });
+    // A server the turn could not list has every call refused.
+    expect(policy.srv_gone).toEqual({
+      mode: "readOnly",
+      known: [],
+      denied: {},
+      unknownTool: "deny",
+    });
   });
 });

@@ -95,7 +95,7 @@ describe("eval-trace-capture", () => {
     expect(spans.filter((s) => s.category === "error")).toHaveLength(1);
   });
 
-  it("backend cost lands on the llm span only, on success and tool failure", () => {
+  it("backend cost lands on the llm span only, on success and on failures", () => {
     const cost = {
       calculationVersion: 1,
       currency: "USD" as const,
@@ -111,11 +111,37 @@ describe("eval-trace-capture", () => {
     pushBackendStepToolFailureSpans(
       toolFailure, runAt, 0, 0, runAt, llm, runAt + 10, runAt + 15, meta,
     );
-    for (const spans of [success, toolFailure]) {
+    const llmFailure: EvalTraceSpan[] = [];
+    pushBackendStepLlmFailureSpans(
+      llmFailure, runAt, 0, 0, runAt, runAt, runAt + 10, meta,
+    );
+    for (const spans of [success, toolFailure, llmFailure]) {
       expect(spans.filter((span) => span.cost)).toEqual([
         expect.objectContaining({ category: "llm", cost, inputTokens: 10 }),
       ]);
     }
+  });
+
+  it("backend LLM failure with usage but no cost keeps an llm span without cost", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { inputTokens: 10, outputTokens: 0 };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    const categories = spans.map((span) => span.category);
+    expect(categories).toEqual(["step", "llm", "error"]);
+    const llm = spans.filter((span) => span.category === "llm");
+    expect(llm).toEqual([
+      expect.objectContaining({ status: "error", ...meta }),
+    ]);
+    expect(llm[0]).not.toHaveProperty("cost");
+  });
+
+  it("backend LLM failure with neither usage nor cost adds no llm span", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { modelId: "gpt-test" };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    expect(spans.map((span) => span.category)).toEqual(["step", "error"]);
   });
 
   it("AI SDK: one step, no tools — step + LLM only", () => {

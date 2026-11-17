@@ -97,6 +97,7 @@ import {
   CODEX_CLI_HOST_STYLE,
   GROKBOT_HOST_STYLE,
   MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
 } from "./variant-host-styles";
 
 export {
@@ -113,6 +114,7 @@ export {
   CODEX_CLI_HOST_STYLE,
   GROKBOT_HOST_STYLE,
   MUSE_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
 } from "./variant-host-styles";
 
 export {
@@ -758,6 +760,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CODEX_CLI_HOST_STYLE,
+  OPENCODE_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
   CLAUDE_CODE_DESKTOP_HOST_STYLE,
   CLAUDE_CODE_WEB_HOST_STYLE,

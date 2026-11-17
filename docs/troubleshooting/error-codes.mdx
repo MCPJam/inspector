@@ -1192,14 +1192,29 @@ Uploads to this server are budgeted per person: 60, refilling at 120 an hour. No
 **Next steps**
 - Wait for `Retry-After`, then upload again. Upload once per run, not on every retry.
 
-### Account for hosted runs only
+### Shared account unavailable locally
 
 `policy: "hostedOnlyAccount"`
 
-The server signs in with an account that only MCPJam-hosted runs can use: one uploaded through the API, or a project account. Its token is never sent to a local app, a browser or a sandbox, and no organization setting changes that.
+MCPJam withheld the shared or uploaded account’s access token from this client.
 
 **Next steps**
-- Run it as a hosted run, or connect a separate account for local use.
+- If the cause is `not_acknowledged`, ask a project admin to enable **Allow local runs** in the server’s sharing settings. Sharing enables it automatically for new shares; servers shared before Inspector 3.22.0 need this acknowledgement.
+- If the cause is `client_upgrade_required`, update your local MCPJam installation.
+- Use the local Inspector for local runs. Shared tokens are not delivered to browser clients or sandbox runtimes.
+- If the organization’s credential export policy blocks delivery, ask an organization admin about that policy.
+
+### Shared sign-in needs HTTPS
+
+Shared and uploaded accounts require HTTPS for remote MCP servers. Ask the server administrator to configure HTTPS. Loopback development addresses are allowed.
+
+### Uploaded token rejected
+
+The MCP server rejected the uploaded token. MCPJam checks the same selected account once for a replacement and retries when a replacement is available.
+
+**Next steps**
+- Upload a fresh token to the same account, then run again. Replacing the token preserves the account ID and saved account selections.
+
 
 ---
 
