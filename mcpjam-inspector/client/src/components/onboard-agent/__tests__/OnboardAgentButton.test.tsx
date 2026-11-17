@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -14,10 +14,17 @@ vi.mock("@/lib/clipboard", () => ({
 
 import { OnboardAgentButton } from "../OnboardAgentButton";
 
+const originalMatchMedia = window.matchMedia;
+
 describe("OnboardAgentButton", () => {
   beforeEach(() => {
     trackMock.mockReset();
     copyMock.mockReset();
+  });
+
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+    vi.useRealTimers();
   });
 
   it("shows the Claude, Codex and Cursor logos on the trigger", () => {
@@ -128,7 +135,6 @@ describe("OnboardAgentButton", () => {
       },
       removeEventListener: vi.fn(),
     };
-    const originalMatchMedia = window.matchMedia;
     window.matchMedia = vi
       .fn()
       .mockReturnValue(mql as unknown as MediaQueryList);
@@ -145,7 +151,6 @@ describe("OnboardAgentButton", () => {
     await waitFor(() =>
       expect(screen.queryByRole("tab", { name: "MCPJam CLI" })).toBeNull(),
     );
-    window.matchMedia = originalMatchMedia;
   });
 
   it("restarts the Copied timer on a repeat copy", async () => {
@@ -167,6 +172,5 @@ describe("OnboardAgentButton", () => {
     expect(copy).toHaveTextContent("Copied");
     act(() => vi.advanceTimersByTime(1000));
     expect(copy).toHaveTextContent("Copy");
-    vi.useRealTimers();
   });
 });

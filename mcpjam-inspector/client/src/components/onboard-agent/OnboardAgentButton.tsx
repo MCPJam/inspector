@@ -48,7 +48,6 @@ const CLI_LINKS = [
 
 // Matches the trigger's `lg:inline-flex`; below it the trigger is hidden.
 const TRIGGER_VISIBLE_QUERY = "(min-width: 1024px)";
-// Below 2xl the trigger shows only the logos so the server selector keeps room.
 const TRIGGER_LABEL = "Onboard your agent to MCPJam";
 const COPIED_RESET_MS = 1500;
 
@@ -121,6 +120,7 @@ export function OnboardAgentButton() {
               variant="secondary"
               size="sm"
               aria-label={TRIGGER_LABEL}
+              // Below 2xl only the logos show, so the server selector keeps room.
               className={cn(
                 "hidden gap-2 px-1.5 lg:inline-flex 2xl:pl-2.5",
                 open && "bg-chrome-control-hover",
