@@ -458,8 +458,7 @@
       "runtimeName": "OpenCode",
       "runtimeVersion": "1.18.34",
       "unavailableOn": {
-        "guests": "OpenCode isn't available to guests until it's tested with them.",
-        "local": "OpenCode can't run on your computer yet. Run it in the cloud instead."
+        "guests": "OpenCode isn't available to guests until it's tested with them."
       }
     },
     "qualifiedDiscovery": []
