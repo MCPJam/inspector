@@ -894,6 +894,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   forwardingRuntime: {
     runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
+    // Claude Code stamps its tool use id on every MCP call it sends.
+    correlationKey: "claudecode/toolUseId",
     ownedInput: true,
     nativeClient: CLAUDE_CODE_NATIVE_CLIENT,
     refresh: withClaudeForwardingResume,

@@ -572,3 +572,60 @@ describe("the route receipt on the persisted turn trace", () => {
     expect(receipt).not.toHaveProperty("profile");
   });
 });
+
+describe("a forwarded chat turn on its lane", () => {
+  /** The lane this chat's turns share, as the backend claims it. */
+  const onLane = async () => {
+    const { claimHarnessSessionState } = await import("../harness-session-state.js");
+    vi.mocked(claimHarnessSessionState).mockResolvedValueOnce({
+      ok: true,
+      leaseId: "lease-1",
+      stateVersion: 1,
+      state: null,
+      fingerprintChanged: false,
+      laneId: "lane-1",
+    } as never);
+    const { startHarnessModelBroker } = await import("../harness-model-broker.js");
+    return vi.mocked(startHarnessModelBroker);
+  };
+
+  it("asks its model lease for the lane's session grant and forwards on the lane's session envelopes", async () => {
+    const start = await onLane();
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: "https://inspector.test",
+    } as never);
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    const { sessionGrant } = start.mock.calls.at(-1)![0] as {
+      sessionGrant?: { laneId: string; leaseId: string };
+    };
+    expect(sessionGrant).toEqual({ laneId: "lane-1", leaseId: expect.any(String) });
+    const args = forwarding.prepare.mock.calls.at(-1)![0] as {
+      session?: { leaseId: string };
+      toolCatalog?: unknown;
+    };
+    // The envelopes are bound on the same lane lease the grant rides.
+    expect(args.session).toMatchObject({ leaseId: sessionGrant!.leaseId });
+    // Claude Code's agent can outlive the turn: its entries are versioned by
+    // each server's tools.
+    expect(args.toolCatalog).toEqual(expect.any(Function));
+  });
+
+  it("keeps per-turn forwarding contexts when the grant is injected on another origin", async () => {
+    const start = await onLane();
+    start.mockResolvedValueOnce({
+      ok: true,
+      proxyBaseUrl: "https://broker.example",
+      forwarding: {},
+      expiresAt: Date.now() + 60_000,
+      sessionGrantOrigin: "https://preview.example",
+    } as never);
+    await runHarnessTurn(admit("forwarded-native") as never, "none");
+    const args = forwarding.prepare.mock.calls.at(-1)![0];
+    expect(args).not.toHaveProperty("session");
+    expect(args).not.toHaveProperty("toolCatalog");
+  });
+});
