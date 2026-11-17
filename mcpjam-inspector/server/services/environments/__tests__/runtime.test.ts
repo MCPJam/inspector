@@ -308,6 +308,24 @@ describe("resolveEnvironmentForRuntime", () => {
     expect(calls).toHaveLength(1);
   });
 
+  it("does not retry a string-payload ConvexError that reads like a redaction", async () => {
+    const calls: unknown[] = [];
+    const client = {
+      query: async (_ref: unknown, args: unknown) => {
+        calls.push(args);
+        throw new ConvexError(REDACTED);
+      },
+    } as unknown as Parameters<typeof resolveEnvironmentForRuntime>[0];
+    await expect(
+      resolveEnvironmentForRuntime(client, {
+        projectId: "p_1",
+        environmentId: "env_1",
+        skillScope: "visible",
+      }),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(calls).toHaveLength(1);
+  });
+
   it("does not retry any other refusal", async () => {
     const calls: unknown[] = [];
     const client = {

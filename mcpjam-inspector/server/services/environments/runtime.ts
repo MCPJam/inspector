@@ -466,11 +466,13 @@ export async function resolveEnvironmentForRuntime(
 /**
  * A failure Convex sent as "Server Error" with no `ConvexError` payload:
  * production's redaction of any developer error, an argument refusal
- * included. A dev deployment puts its detail after the same text.
+ * included. A dev deployment puts its detail after the same text. Any `data`,
+ * a string payload included, means the backend chose to refuse.
  */
 function isRedactedServerError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return !convexErrorData(error) && /\bServer Error\b/.test(message);
+  const data = (error as { data?: unknown } | null)?.data;
+  return data === undefined && /\bServer Error\b/.test(message);
 }
 /** How long a refusal stops this process from sending the scope. */
 const SKILL_SCOPE_RETRY_MS = 10 * 60_000;
