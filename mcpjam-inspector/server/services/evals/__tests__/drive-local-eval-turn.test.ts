@@ -13,7 +13,10 @@ vi.mock("ai", async () => {
 
 import { APICallError, NoOutputGeneratedError } from "ai";
 import { driveLocalEvalTurn } from "../drive-local-eval-turn";
-import type { DriveLocalEvalTurnParams } from "../drive-local-eval-turn";
+import type {
+  DriveLocalEvalTurnParams,
+  LocalModelCallSettled,
+} from "../drive-local-eval-turn";
 
 const ids = { toolCallId: "call-1", toolName: "search" };
 const toolCall = { type: "tool-call", ...ids, input: { q: "status" } };
@@ -201,5 +204,66 @@ describe("driveLocalEvalTurn through the unified turn", () => {
       source: "provider_call",
       httpStatus: 401,
     });
+  });
+
+  it("puts each call's writeback price on its own llm span in a local org turn", async () => {
+    const steps = [
+      { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+      { inputTokens: 40, outputTokens: 6, totalTokens: 46 },
+    ];
+    streamTextMock.mockImplementationOnce((options: any) =>
+      streamResult({
+        async *[Symbol.asyncIterator]() {
+          for (const [stepNumber, stepUsage] of steps.entries()) {
+            await options.prepareStep({ stepNumber, messages: [] });
+            await options.onStepFinish({
+              usage: stepUsage,
+              response: { messages: [] },
+              finishReason: stepNumber === 0 ? "tool-calls" : "stop",
+              toolCalls: [],
+            });
+          }
+        },
+      }),
+    );
+    const priced = (amountUsd: number) => ({
+      calculationVersion: 1 as const,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd,
+      source: "customer_rate" as const,
+      funding: "customer" as const,
+    });
+    const onModelCallSettled = vi.fn(
+      async ({ calls = [] }: LocalModelCallSettled) =>
+        Object.fromEntries(
+          calls.map((call) => [
+            call.callId,
+            priced(call.stepIndex ? 0.5 : 0.01),
+          ]),
+        ),
+    );
+    const turnParams = params({
+      onModelCallSettled,
+      // The local org path: its calls are priced by the backend, not here.
+      beforeModelCall: async () => turnParams.llmModel!,
+    });
+
+    await driveLocalEvalTurn(turnParams);
+
+    expect(onModelCallSettled.mock.calls[0]![0].calls).toHaveLength(2);
+    const spans = turnParams.acc.capturedSpans;
+    expect(
+      spans
+        .filter((span) => span.category === "llm")
+        .map((span) => [span.stepIndex, span.cost?.amountUsd]),
+    ).toEqual([
+      [0, 0.01],
+      [1, 0.5],
+    ]);
+    expect(spans.filter((span) => span.category === "step")).not.toEqual([]);
+    expect(
+      spans.filter((span) => span.category !== "llm" && span.cost),
+    ).toEqual([]);
   });
 });

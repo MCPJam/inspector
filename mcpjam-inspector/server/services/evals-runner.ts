@@ -161,7 +161,11 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import type {
+  LegacyModelSelection,
+  ModelCallCostEvidence,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import {
   decideTurnRail,
   routingSelectionForModel,
@@ -2727,9 +2731,10 @@ export function resolveEvalCaseSettings(args: {
  * `/stream/org/local-usage` for one model turn of an eval iteration on a
  * local-runtime org connection: the backend never saw the call, so this is
  * its usage row, and, under a saved `org` selection, the execution record it
- * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
- * chat and swarm writebacks; an aborted call is not written back (the same
- * rule those follow: an aborted turn is not billed as completed usage).
+ * merges onto the iteration (`evalIterationId`). Resolves with the backend's
+ * price for each call, or undefined; it never rejects. An aborted call is not
+ * written back (the same rule the chat and swarm writebacks follow: an
+ * aborted turn is not billed as completed usage).
  */
 function postEvalOrgLocalUsage(args: {
   context: EvalOrgLocalUsageContext;
@@ -2740,9 +2745,9 @@ function postEvalOrgLocalUsage(args: {
   runId: string | null;
   convexAuthToken: string | undefined;
   selectedServers: string[];
-}): void {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
-  if (event.outcome === "aborted") return;
+  if (event.outcome === "aborted") return undefined;
   const execution = buildLocalExecutionRecord({
     selection: context.modelSelection,
     providerKey: context.providerKey,
@@ -2755,7 +2760,7 @@ function postEvalOrgLocalUsage(args: {
     at: event.at,
     ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
   });
-  void postLocalUsage({
+  return postLocalUsage({
     projectId: context.projectId,
     providerKey: context.providerKey,
     model: args.modelId,
@@ -2776,6 +2781,7 @@ function postEvalOrgLocalUsage(args: {
     logger.warn("[evals] Failed to post local usage", {
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   });
 }
 

@@ -711,6 +711,53 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
     expect(body).not.toHaveProperty("journeyRunId");
   });
 
+  it("puts each call's returned price on that call's llm span of the turn", async () => {
+    const cost = (amountUsd: number) => ({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd,
+      source: "customer_rate",
+      funding: "customer",
+    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        costs: { "turn-1:0": cost(0.01), "turn-1:1": cost(0.5) },
+      }),
+    );
+    const span = (id: string, category: "step" | "llm", stepIndex: number) => ({
+      id,
+      name: id,
+      category,
+      stepIndex,
+      startMs: 0,
+      endMs: 1,
+    });
+    const result = successResult();
+    result.turnTrace!.spans = [
+      span("step-0", "step", 0),
+      span("llm-0", "llm", 0),
+      span("llm-1", "llm", 1),
+    ];
+    result.modelCalls = [0, 1].map((stepIndex) => ({
+      callId: `turn-1:${stepIndex}`,
+      stepIndex,
+      usage: { totalTokens: 5 },
+      finishedAt: 1,
+    }));
+    const rt = await resolveTurnRuntime(localArgs());
+
+    await rt.finalizeUsage(result);
+
+    expect(
+      result.turnTrace!.spans.map((s) => [s.id, s.cost?.amountUsd]),
+    ).toEqual([
+      ["step-0", undefined],
+      ["llm-0", 0.01],
+      ["llm-1", 0.5],
+    ]);
+  });
+
   it("does NOT fire on an aborted result", async () => {
     const rt = await resolveTurnRuntime(localArgs());
 

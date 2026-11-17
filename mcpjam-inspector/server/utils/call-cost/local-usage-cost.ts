@@ -2,6 +2,7 @@ import {
   parseModelCallCostEvidence,
   type ModelCallCostEvidence,
 } from "@mcpjam/sdk";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 import type { PersistedTurnTrace } from "../chat-ingestion.js";
 import { waitAtMost } from "./wait-at-most.js";
@@ -58,29 +59,37 @@ export function readLocalUsageCosts(
  * Put the backend's price for each call of a local org turn on that call's
  * llm span. The Inspector never prices these calls itself: the
  * organization's rates live in the backend, which prices each provider
- * request on its own usage, so a context tier is crossed per call.
+ * request on its own usage, so a context tier is crossed per call. Step
+ * spans keep none: they repeat the call's tokens.
  */
-export async function withLocalUsageCost(
-  turnTrace: PersistedTurnTrace,
+export async function withCallCosts(
+  spans: EvalTraceSpan[],
   calls: TurnModelCall[],
   costs: Promise<Record<string, ModelCallCostEvidence> | undefined>,
-): Promise<PersistedTurnTrace> {
-  if (!calls.length) return turnTrace;
+): Promise<EvalTraceSpan[]> {
+  if (!calls.length) return spans;
   const priced = await waitAtMost(
     costs,
     WRITEBACK_COST_WAIT_MS,
     "usage writeback",
   );
-  if (!priced) return turnTrace;
+  if (!priced) return spans;
   const callIdByStep = new Map(
     calls.map((call) => [call.stepIndex, call.callId]),
   );
-  return {
-    ...turnTrace,
-    spans: turnTrace.spans.map((span) => {
-      if (span.category !== "llm" || span.stepIndex === undefined) return span;
-      const cost = priced[callIdByStep.get(span.stepIndex) ?? ""];
-      return cost ? { ...span, cost } : span;
-    }),
-  };
+  return spans.map((span) => {
+    if (span.category !== "llm" || span.stepIndex === undefined) return span;
+    const cost = priced[callIdByStep.get(span.stepIndex) ?? ""];
+    return cost ? { ...span, cost } : span;
+  });
+}
+
+/** {@link withCallCosts} on a chat turn's trace. */
+export async function withLocalUsageCost(
+  turnTrace: PersistedTurnTrace,
+  calls: TurnModelCall[],
+  costs: Promise<Record<string, ModelCallCostEvidence> | undefined>,
+): Promise<PersistedTurnTrace> {
+  const spans = await withCallCosts(turnTrace.spans, calls, costs);
+  return spans === turnTrace.spans ? turnTrace : { ...turnTrace, spans };
 }
