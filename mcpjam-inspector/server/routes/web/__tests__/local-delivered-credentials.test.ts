@@ -100,6 +100,18 @@ describe("createAuthorizedManager with a delivered token", () => {
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
   let batch: Record<string, unknown>;
 
+  it.each(["shared", "uploaded", undefined])("applies remote HTTPS enforcement to %s accounts", async (accountKind) => {
+    batch = authorizeResult({
+      serverConfig: { transportType: "http", url: "http://private.example/mcp", useOAuth: true, name: "Lab server" },
+      oauthBoundOrigins: ["http://private.example"],
+      ...(accountKind ? { oauthAccountKind: accountKind } : {}),
+    });
+    await inMode(false, async () => {
+      if (accountKind) await expect(buildManager()).rejects.toThrow("needs HTTPS");
+      else await expect(buildManager()).resolves.toMatchObject({ credentialSource: "mcpjam-backend" });
+    });
+  });
+
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://convex.example.com";
     batch = authorizeResult({

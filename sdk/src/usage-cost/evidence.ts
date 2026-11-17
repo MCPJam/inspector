@@ -56,7 +56,13 @@ const RATE_KEYS = [
   "cacheWrite1h",
 ] as const;
 
-function parseRates(value: unknown): ModelRates | undefined {
+/**
+ * Read a rate card from the wire or storage: a public price row, an
+ * organization rate or a local override. Returns undefined unless it is in US
+ * dollars with input and output rates; invalid optional rates are dropped, so
+ * the tokens they would price count as unpriced, never as free.
+ */
+export function parseModelRates(value: unknown): ModelRates | undefined {
   const raw = asRecord(value);
   if (!raw || raw.currency !== "USD") return undefined;
   const rates = pick<ModelRates>(
@@ -89,7 +95,7 @@ function parseRates(value: unknown): ModelRates | undefined {
 function parseRateEvidence(value: unknown): RateEvidence | undefined {
   const raw = asRecord(value);
   const source = oneOf(raw?.source, ["list_price", "customer_rate"] as const);
-  const rates = parseRates(raw?.rates);
+  const rates = parseModelRates(raw?.rates);
   const modelId = text(raw?.modelId);
   if (!raw || !source || !rates || !modelId) return undefined;
   const assumptions = Array.isArray(raw.assumptions)

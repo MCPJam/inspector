@@ -5513,8 +5513,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
       const emitted: Array<Record<string, unknown>> = [];
       streamTextMock.mockReset();
+      // The AI SDK settles a step's onStepFinish before the stream reports
+      // an error; a personal-key step awaits its price there.
+      let stepSettled: Promise<unknown> | undefined;
       streamTextMock.mockImplementationOnce((options: any) => {
-        void options.onStepFinish?.({
+        stepSettled = options.onStepFinish?.({
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           response: {
             messages: [
@@ -5547,6 +5550,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         });
         return {
           consumeStream: async () => {
+            await stepSettled;
             throw new Error("stream dropped");
           },
           response: Promise.resolve({ modelId: "gpt-4-turbo", messages: [] }),

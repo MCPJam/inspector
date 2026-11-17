@@ -31,6 +31,7 @@ export interface AuthorizedOAuthConnection extends OAuthConnection {
   boundOrigins?: string[];
   /** Absent: the person's own sign-in. */
   accountKind?: "shared" | "uploaded";
+  accountUploaded?: boolean;
   unavailableReason?: string;
   /**
    * Built by the Inspector from the authorize result's default credential, not

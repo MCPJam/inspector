@@ -7,6 +7,7 @@ import {
   parseModelCallCostEvidence,
   type ModelCallCostEvidence,
 } from "@mcpjam/sdk/browser";
+import { parseSpanCallId } from "./span-call-id";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory =
@@ -41,6 +42,8 @@ export type EvalTraceSpan = {
    * and a cost on both would count the call twice in every rollup.
    */
   cost?: ModelCallCostEvidence;
+  /** The local org usage writeback's `requestId` for this llm call: see `span-call-id.ts`. */
+  callId?: string;
   /** Inclusive index of the first related trace message in the stored blob. */
   messageStartIndex?: number;
   /** Inclusive index of the last related trace message in the stored blob. */
@@ -604,6 +607,8 @@ export const evalTraceSpanZ = z.object({
   // A malformed cost is dropped and the span kept: hydration drops spans that
   // fail, and a bad price record must not hide the call it describes.
   cost: z.unknown().transform(parseModelCallCostEvidence).optional(),
+  // Same rule: an invalid call id is dropped and the span kept.
+  callId: z.unknown().transform(parseSpanCallId).optional(),
   messageStartIndex: z.number().optional(),
   messageEndIndex: z.number().optional(),
   // GenAI harness metadata — see EvalTraceSpan + OTEL_ATTR.

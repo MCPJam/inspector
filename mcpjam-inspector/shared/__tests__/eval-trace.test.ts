@@ -15,7 +15,11 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 type FixtureRow = { label: string; value: Record<string, unknown> };
-type Fixtures = { __readme: string; accept: FixtureRow[]; reject: FixtureRow[] };
+type Fixtures = {
+  __readme: string;
+  accept: FixtureRow[];
+  reject: FixtureRow[];
+};
 const traceSpanFixtures: Fixtures = JSON.parse(
   readFileSync(
     join(__dirname, "fixtures/trace-span-parity-fixtures.json"),
@@ -185,6 +189,7 @@ const PRESERVED_FIELDS = [
   "evidenceRequestId",
   "evidenceStatus",
   "cost",
+  "callId",
 ] as const;
 
 describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
@@ -239,18 +244,53 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
   // Inspector-only: hydration drops a span that fails the mirror, so a bad
   // cost record is dropped on its own and the call it describes stays.
   it("drops a malformed cost and keeps the span", () => {
-    const span = { id: "x", name: "LLM", category: "llm", startMs: 0, endMs: 1 };
+    const span = {
+      id: "x",
+      name: "LLM",
+      category: "llm",
+      startMs: 0,
+      endMs: 1,
+    };
     for (const cost of [
       { calculationVersion: 1, currency: "USD", completeness: "complete" },
-      { calculationVersion: 1, currency: "EUR", completeness: "complete", amountUsd: 1 },
+      {
+        calculationVersion: 1,
+        currency: "EUR",
+        completeness: "complete",
+        amountUsd: 1,
+      },
       // An amount that does not say whether it is a report or an estimate.
-      { calculationVersion: 1, currency: "USD", completeness: "complete", amountUsd: 1 },
+      {
+        calculationVersion: 1,
+        currency: "USD",
+        completeness: "complete",
+        amountUsd: 1,
+      },
       "0.0042",
     ]) {
       const parsed = evalTraceSpanZ.safeParse({ ...span, cost });
       expect(parsed.success).toBe(true);
       expect(parsed.data?.cost).toBeUndefined();
     }
+  });
+
+  it("drops an invalid callId and keeps the span", () => {
+    const span = {
+      id: "x",
+      name: "LLM",
+      category: "llm",
+      startMs: 0,
+      endMs: 1,
+    };
+    for (const callId of ["", "t".repeat(201), 7, null]) {
+      const parsed = evalTraceSpanZ.safeParse({ ...span, callId });
+      expect(parsed.success).toBe(true);
+      expect(parsed.data?.callId).toBeUndefined();
+    }
+    const longest = "t".repeat(200);
+    expect(
+      evalTraceSpanZ.safeParse({ ...span, callId: longest }).data?.callId,
+    ).toBe(longest);
   });
 
   it("accepts connection and discovery categories and rejects unknowns", () => {
@@ -268,12 +308,12 @@ describe("trace-span parity fixtures (inspector evalTraceSpanZ side)", () => {
     expect(
       evalTraceSpanZ.safeParse({ ...base, category: "handshake" }).success,
     ).toBe(false);
-    expect(
-      evalTraceSpanZ.safeParse({ ...base, category: "" }).success,
-    ).toBe(false);
-    expect(
-      evalTraceSpanZ.safeParse({ ...base, category: null }).success,
-    ).toBe(false);
+    expect(evalTraceSpanZ.safeParse({ ...base, category: "" }).success).toBe(
+      false,
+    );
+    expect(evalTraceSpanZ.safeParse({ ...base, category: null }).success).toBe(
+      false,
+    );
   });
 });
 

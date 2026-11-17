@@ -1,5 +1,6 @@
 export {
   parseModelCallCostEvidence,
+  parseModelRates,
   toModelCallCostEvidence,
 } from "./evidence.js";
 export {
