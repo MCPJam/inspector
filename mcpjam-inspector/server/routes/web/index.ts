@@ -54,6 +54,7 @@ import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
 import conformanceShareCard from "./conformance-share-card.js";
+import { hostedServerFeatureRoutes } from "../shared/server-feature-observations.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -358,6 +359,7 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
+web.route("/server-features", hostedServerFeatureRoutes);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in

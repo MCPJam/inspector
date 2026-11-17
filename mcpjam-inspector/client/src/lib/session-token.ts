@@ -365,6 +365,9 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Approving a stdio server's command re-reads its row the same way, with
   // the caller's bearer. Without this entry Allow answers 401.
   "/api/mcp/servers/approve-command",
+  // Apps bridge observations for the server canvas: the route authorizes the
+  // server and checks the rollout with the caller's bearer.
+  "/api/mcp/server-features/observations",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",

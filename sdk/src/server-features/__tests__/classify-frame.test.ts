@@ -5,28 +5,8 @@ import {
   requestContextOf,
 } from "../classify-frame.js";
 import { SERVER_FEATURE_CATALOG } from "../catalog/index.js";
+import { APPS_BRIDGE_FEATURE_IDS } from "../classify-bridge.js";
 import { FRAME_FIXTURES, SILENT_FRAMES } from "./frame-fixtures.js";
-
-/**
- * Observable ids no JSON-RPC frame between MCPJam and a server can show:
- * they happen between a view and its host, so only the Apps bridge
- * classifier emits them.
- */
-const APPS_BRIDGE_ONLY_IDS = [
-  "apps.text-fallback",
-  "apps.app-tools-call",
-  "apps.app-resources-read",
-  "apps.view-requests",
-  "apps.view-notifications",
-  "apps.host-notifications",
-  "apps.display-modes",
-  "apps.download-file-teardown",
-  "apps.app-provided-tools",
-  "openai.file-resources",
-  "openai.model-context",
-  "openai.message",
-  "openai.files",
-];
 
 function sorted(ids: readonly string[]) {
   return [...ids].sort();
@@ -88,10 +68,10 @@ describe("classifyFrame", () => {
       FRAME_FIXTURES.flatMap((fixture) => fixture.expect)
     );
     const missing = [...OBSERVABLE_FEATURE_IDS].filter(
-      (id) => !emitted.has(id) && !APPS_BRIDGE_ONLY_IDS.includes(id)
+      (id) => !emitted.has(id) && !APPS_BRIDGE_FEATURE_IDS.has(id)
     );
     expect(missing).toEqual([]);
-    for (const id of APPS_BRIDGE_ONLY_IDS) {
+    for (const id of APPS_BRIDGE_FEATURE_IDS) {
       expect(OBSERVABLE_FEATURE_IDS.has(id), id).toBe(true);
       expect(emitted.has(id), id).toBe(false);
     }

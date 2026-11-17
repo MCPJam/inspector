@@ -1,4 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from "vitest";
+import posthog from "posthog-js";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const authFetchMock = vi.fn();
@@ -70,6 +79,10 @@ describe("mcp-api local-mode resolver-only path", () => {
   });
 
   it("testConnection sends a finished OAuth flow's summary once", async () => {
+    const canvasFlag = vi
+      .spyOn(posthog, "isFeatureEnabled")
+      .mockReturnValue(true);
+    onTestFinished(() => canvasFlag.mockRestore());
     const summary = {
       completedAt: 1,
       resourceIndicatorSent: true,

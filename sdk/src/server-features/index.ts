@@ -64,6 +64,12 @@ export {
   type FrameRequestContext,
 } from "./classify-frame.js";
 export {
+  APPS_BRIDGE_FEATURE_IDS,
+  classifyAppsBridgeMessage,
+  type BridgeDirection,
+  type BridgeMessage,
+} from "./classify-bridge.js";
+export {
   checkEvidenceFromDigest,
   isConformanceCheckRef,
   isConformanceSuiteKey,
