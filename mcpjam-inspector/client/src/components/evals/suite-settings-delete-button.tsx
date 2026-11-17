@@ -1,7 +1,5 @@
 import { Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { cn } from "@/lib/utils";
-import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "./constants";
 
 /**
  * Icon-only delete in the Suite settings header. It only asks: the caller's
@@ -19,8 +17,11 @@ export function SuiteSettingsDeleteButton({
   return (
     <Button
       type="button"
+      variant="destructive"
       size="icon"
-      className={cn("size-8", EVAL_DESTRUCTIVE_BUTTON_CLASS)}
+      // Solid in both themes. The variant's dark `/60` fill, like the evals
+      // pastel `/50` one, reads as a disabled button next to a solid Save.
+      className="size-8 dark:bg-destructive dark:hover:bg-destructive/90"
       aria-label="Delete suite"
       title="Delete suite"
       disabled={disabled}

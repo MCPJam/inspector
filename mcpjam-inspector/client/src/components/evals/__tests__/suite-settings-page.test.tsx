@@ -323,7 +323,8 @@ describe("suite settings delete button", () => {
     renderSettingsSheet({ evaluateSettingsDelete: true, onDelete });
     const button = deleteButton();
     expect(button).toBeEnabled();
-    expect(button).toHaveClass("bg-destructive/50");
+    expect(button).toHaveClass("bg-destructive");
+    expect(button).not.toHaveClass("bg-destructive/50");
     fireEvent.click(button!);
     expect(onDelete).toHaveBeenCalledWith(
       expect.objectContaining({ _id: "suite-1" }),
