@@ -38,7 +38,14 @@ describe("ModelRatesTable", () => {
         rates={[scheduled]}
         providers={[]}
         defaultAuthor="You"
-        inForce={new Map([[scheduled.rateId, today]])}
+        inForce={
+          new Map([
+            [
+              scheduled.rateId,
+              { revision: today, until: scheduled.effectiveAt },
+            ],
+          ])
+        }
       />,
     );
     expect(screen.getByText(/^In force until/)).toBeTruthy();

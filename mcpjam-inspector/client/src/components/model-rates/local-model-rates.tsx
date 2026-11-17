@@ -5,9 +5,12 @@ import { authFetch } from "@/lib/session-token";
 import {
   modelRateRevisionZ,
   parseModelRateRevision,
-  revisionInForce,
 } from "@/shared/model-rate-revision";
-import { nextRateChange, type ModelRateRow } from "./model-rate-format";
+import {
+  inForceUntilNext,
+  nextRateChange,
+  type ModelRateRow,
+} from "./model-rate-format";
 import {
   ModelRatesPanel,
   useWakeAt,
@@ -88,7 +91,7 @@ function LocalModelRatesPanel() {
       const now = Date.now();
       // A history that fails to load leaves only that rate without today's
       // price, as on the organization panel, not the whole list.
-      const current = await Promise.all(
+      const histories = await Promise.all(
         loaded
           .filter((rate) => rate.effectiveAt > now)
           .map(async (rate) => {
@@ -98,19 +101,28 @@ function LocalModelRatesPanel() {
             });
             try {
               const history = rowsOf((await request(`?${series}`)).revisions);
-              const row = revisionInForce(history, now) ?? null;
-              return { inForce: [[rate.rateId, row] as const], history };
+              return [[rate.rateId, history] as const];
             } catch {
-              return { inForce: [], history: [] };
+              return [];
             }
           }),
-      );
+      ).then((loadedHistories) => loadedHistories.flat());
       if (mine !== generation.current) return;
+      // The requests can cross a revision's start, so pick every in-force
+      // revision with one clock read taken after they all answered.
+      const at = Date.now();
       setRates(loaded);
-      setInForce(new Map(current.flatMap((series) => series.inForce)));
+      setInForce(
+        new Map(
+          histories.map(([rateId, history]) => [
+            rateId,
+            inForceUntilNext(history, at),
+          ]),
+        ),
+      );
       setRevisionsRead([
         ...loaded,
-        ...current.flatMap((series) => series.history),
+        ...histories.flatMap(([, history]) => history),
       ]);
       setLoadError(undefined);
     } catch (error) {

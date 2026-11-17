@@ -6,8 +6,11 @@ import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 import { convexErrMessage, isConvexQueryNotServed } from "@/lib/convex-error";
 import type { SavedModelRate } from "./model-rate-dialog";
-import { revisionInForce } from "@/shared/model-rate-revision";
-import { nextRateChange, type ModelRateRow } from "./model-rate-format";
+import {
+  inForceUntilNext,
+  nextRateChange,
+  type ModelRateRow,
+} from "./model-rate-format";
 import {
   ModelRatesPanel,
   ModelRatesTable,
@@ -117,7 +120,7 @@ function OrganizationModelRatesPanel({
   const inForce = new Map(
     Object.entries(histories).flatMap(([rateId, revisions]) =>
       Array.isArray(revisions)
-        ? [[rateId, revisionInForce(revisions, now) ?? null] as const]
+        ? [[rateId, inForceUntilNext(revisions, now)] as const]
         : [],
     ),
   );

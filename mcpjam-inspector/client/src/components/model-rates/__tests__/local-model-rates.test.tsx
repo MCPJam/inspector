@@ -253,6 +253,48 @@ describe("LocalModelRates", () => {
     }
   });
 
+  it("picks the in-force revision after its history answers, not before", async () => {
+    const MINUTE = 60_000;
+    const start = Date.UTC(2026, 10, 17, 12);
+    vi.useFakeTimers({ now: start });
+    try {
+      const old = { ...llama, effectiveAt: start - MINUTE };
+      const next = {
+        ...llama,
+        rateId: "r4",
+        rates: { currency: "USD", input: 0.5, output: 0.6 },
+        effectiveAt: start + MINUTE,
+        revision: 2,
+      };
+      const newest = {
+        ...scheduled,
+        rateId: "r5",
+        rates: { currency: "USD", input: 0.9, output: 1 },
+        effectiveAt: start + 5 * MINUTE,
+        revision: 3,
+      };
+      // The history answers after `next` has started.
+      server.authFetch.mockImplementation(async (url: string) => {
+        if (!url.includes("?")) {
+          return Response.json({ ok: true, rates: [newest] });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2 * MINUTE));
+        return Response.json({ ok: true, revisions: [newest, next, old] });
+      });
+      render(<LocalModelRates />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2 * MINUTE + 1);
+      });
+      const row = screen.getByText(/^In force until/).closest("tr")!;
+      expect(row).toHaveTextContent("$0.5");
+      expect(row).toHaveTextContent(
+        `In force until ${formatDay(newest.effectiveAt)}`,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps a raw network error out of the load failure", async () => {
     server.authFetch.mockRejectedValue(new TypeError("Failed to fetch"));
     render(<LocalModelRates />);

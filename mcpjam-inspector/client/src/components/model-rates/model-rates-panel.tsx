@@ -46,10 +46,14 @@ const HEADINGS =
   );
 
 /**
- * For each scheduled rate, by `rateId`, the revision in force until it
- * starts, or null when none is. A rate missing here shows no such row.
+ * For each scheduled rate, by `rateId`, the revision in force now (null when
+ * none is) and when the next revision of its series starts. A rate missing
+ * here shows no such row.
  */
-export type InForceRates = ReadonlyMap<string, ModelRateRow | null>;
+export type InForceRates = ReadonlyMap<
+  string,
+  { revision: ModelRateRow | null; until: number }
+>;
 
 /** Prices per million tokens; `actions` adds the controls a row offers. */
 export function ModelRatesTable({
@@ -116,9 +120,13 @@ export function ModelRatesTable({
           {rates.map((rate) => {
             const listPrice = listPrices.get(rate.modelId);
             // The row beside a scheduled price applies only until it starts.
-            const current =
+            const inForceNow =
               rate.effectiveAt > now ? inForce?.get(rate.rateId) : undefined;
-            const until = formatDay(rate.effectiveAt);
+            const current = inForceNow?.revision;
+            // An earlier scheduled revision can replace it before this one.
+            const until = formatDay(
+              Math.min(inForceNow?.until ?? Infinity, rate.effectiveAt),
+            );
             const provider = rate.providerKey
               ? (providers.find((p) => p.key === rate.providerKey)?.name ??
                 rate.providerKey)
@@ -145,7 +153,7 @@ export function ModelRatesTable({
                   </TableCell>
                 ) : null}
               </TableRow>,
-              current === undefined ? null : (
+              inForceNow === undefined ? null : (
                 <TableRow
                   key={`${rate.rateId}:in-force`}
                   className="align-top text-muted-foreground"
@@ -344,7 +352,7 @@ export function ModelRatesPanel({
         open={historyOf !== undefined}
         onOpenChange={(open) => !open && setHistoryOf(undefined)}
       >
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle>Price history for {historyOf?.modelId}</DialogTitle>
           </DialogHeader>

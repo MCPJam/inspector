@@ -140,6 +140,11 @@ describe("OrganizationModelRates", () => {
     expect(
       screen.getByText("Price history for anthropic/claude-sonnet-4.5"),
     ).toBeTruthy();
+    // A long history scrolls inside the dialog instead of past the viewport.
+    expect(screen.getByRole("dialog")).toHaveClass(
+      "max-h-[85vh]",
+      "overflow-y-auto",
+    );
   });
 
   it("lets an admin save a new revision and retire a rate", async () => {
@@ -250,6 +255,36 @@ describe("OrganizationModelRates", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("dates the in-force row by the next revision to start, not the newest", () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const next: ModelRateRow = {
+      ...sonnet,
+      rateId: "r6",
+      rates: { currency: "USD", input: 5, output: 15 },
+      effectiveAt: Date.now() + DAY,
+      revision: 2,
+    };
+    const newest: ModelRateRow = {
+      ...sonnet,
+      rateId: "r7",
+      rates: { currency: "USD", input: 9, output: 20 },
+      effectiveAt: Date.now() + 3 * DAY,
+      revision: 3,
+    };
+    convex.queries.set("organizationModelRates:list", [newest]);
+    convex.queries.set("organizationModelRates:history", [
+      newest,
+      next,
+      sonnet,
+    ]);
+    mount(false);
+    const row = screen.getByText(/^In force until/).closest("tr")!;
+    expect(row).toHaveTextContent(
+      `In force until ${formatDay(next.effectiveAt)}`,
+    );
+    expect(row).toHaveTextContent("$2.4");
   });
 
   it("says no price is in force before a first scheduled price", () => {
