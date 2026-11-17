@@ -383,6 +383,7 @@ import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled"
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
+import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -1207,6 +1208,7 @@ function useTemplateVerifyDeepLink({
   const codexEnabled = useCodexHostEnabledState();
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
+  const openCodeEnabled = useOpenCodeHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1278,6 +1280,7 @@ function useTemplateVerifyDeepLink({
       codex: codexEnabled,
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
+      openCode: openCodeEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1356,6 +1359,7 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     copilotCliEnabled,
+    openCodeEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,

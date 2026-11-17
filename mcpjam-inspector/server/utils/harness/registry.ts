@@ -14,6 +14,12 @@ import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
  * adapter is a COMPILE error.
  */
 import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js";
+import {
+  CLAUDE_CODE_NATIVE_CLIENT,
+  CODEX_NATIVE_CLIENT,
+  COPILOT_CLI_NATIVE_CLIENT,
+  CURSOR_CLI_NATIVE_CLIENT,
+} from "./forwarding/native-clients.js";
 import { withForwardingResume } from "./forwarding/bridge-refresh.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
@@ -892,6 +898,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
     runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
     ownedInput: true,
+    nativeClient: CLAUDE_CODE_NATIVE_CLIENT,
     refresh: withClaudeForwardingResume,
   },
   liveApprovalRuntime: true,
@@ -1071,6 +1078,7 @@ const codexAdapter: HarnessRuntimeAdapter = {
     configurationVersion: "native-mcp-v1",
     correlationKey: "callId",
     ownedInput: true,
+    nativeClient: CODEX_NATIVE_CLIENT,
     refresh: withForwardingResume,
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
@@ -1190,9 +1198,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
     ownedInput: false,
     passThroughOnly: true,
     boundApprovals: true,
-    // Measured on this runtime: `initialize` at 2025-11-25 on every server,
-    // and `server/discover` at 2026-07-28 only after a `-32022` naming it.
-    nativeVersionNegotiation: "legacy-first",
+    nativeClient: CURSOR_CLI_NATIVE_CLIENT,
     refresh: (runtime) => runtime,
   },
   // The ACP adapter writes each turn's skills to the CLI's private home
@@ -1275,6 +1281,7 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
     passThroughOnly: true,
+    nativeClient: COPILOT_CLI_NATIVE_CLIENT,
     refresh: (runtime) => refuseForwardedContinuation(runtime),
   },
   supportsSkills: true,
