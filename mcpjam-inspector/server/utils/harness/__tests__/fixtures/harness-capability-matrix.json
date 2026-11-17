@@ -2,6 +2,17 @@
   "claude-code": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": ".claude/projects",
+        "idKey": "claudeSessionId",
+        "named": {
+          "depth": 2,
+          "names": [
+            "{id}.jsonl",
+            "{id}"
+          ]
+        }
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Claude Code",
       "forwardingRuntime": {
@@ -95,6 +106,9 @@
     "adapter": {
       "acceptsSandboxPolicy": true,
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/codex-home/sessions"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "Codex",
       "forwardingRuntime": {
@@ -196,6 +210,10 @@
   "copilot-cli": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": {
+        "folder": "{sessionData}/copilot-home/session-state/{id}",
+        "idKey": "threadId"
+      },
       "defaultPermissionMode": "allow-all",
       "displayName": "GitHub Copilot CLI",
       "forwardingRuntime": {
@@ -275,6 +293,7 @@
   "cursor": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "Cursor CLI",
       "externalAccountCredentialEnv": [
@@ -382,6 +401,7 @@
   "opencode": {
     "adapter": {
       "approvalPermissionMode": "allow-reads",
+      "conversationState": null,
       "defaultPermissionMode": "allow-all",
       "displayName": "OpenCode",
       "id": "opencode",
