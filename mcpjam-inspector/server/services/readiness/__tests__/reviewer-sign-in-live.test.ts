@@ -10,7 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const ensureLiveBrowserSession = vi.fn();
 const prepareAuthorization = vi.fn();
 /** What the live seams handed the agent, and how the fake agent answers. */
-let agentDeps: import("../reviewer-sign-in-agent.js").SignInAgentDeps | undefined;
+let agentDeps:
+  | import("../reviewer-sign-in-agent.js").SignInAgentDeps
+  | undefined;
 let agentRun = vi.fn();
 
 vi.mock("../../browserd/live-session-deps.js", () => ({
@@ -22,7 +24,10 @@ vi.mock("../reviewer-sign-in-agent.js", () => ({
     given: import("../reviewer-sign-in-agent.js").SignInAgentDeps,
   ) => {
     agentDeps = given;
-    return { features: given.features, run: (input: unknown) => agentRun(input) };
+    return {
+      features: given.features,
+      run: (input: unknown) => agentRun(input),
+    };
   },
 }));
 // The polls wait for nothing here; what they ask for is what is tested.
@@ -158,7 +163,9 @@ describe("the desktop", () => {
   it("reserves a blank, unrecorded browser, boots the reservation's own box and hands it to the agent", async () => {
     const live = handle();
     ensureLiveBrowserSession.mockResolvedValue(live);
-    const { agent } = await deps().desktop.reserve(new AbortController().signal);
+    const { agent } = await deps().desktop.reserve(
+      new AbortController().signal,
+    );
 
     expect(posted[0]).toEqual({
       path: `${RUNS}/browser-session`,
@@ -169,14 +176,23 @@ describe("the desktop", () => {
       reservationId: "res_1",
       sandboxRowId: "row_1",
     });
-    // Not recorded: credentials are typed on this desktop.
+    // Not recorded: credentials are typed on this desktop. Public addresses
+    // only: the submitter's pages steer this browser.
     expect(ensureLiveBrowserSession).toHaveBeenCalledWith(
       expect.objectContaining({
         contextMode: "ephemeral",
-        target: { kind: "sandbox", sandboxRowId: "row_1", sandboxId: "sbx_1", record: false },
+        networkPolicy: "public",
+        target: {
+          kind: "sandbox",
+          sandboxRowId: "row_1",
+          sandboxId: "sbx_1",
+          record: false,
+        },
       }),
     );
-    expect(posted.find((call) => call.path.endsWith("/boot"))!.body).toMatchObject({
+    expect(
+      posted.find((call) => call.path.endsWith("/boot"))!.body,
+    ).toMatchObject({
       reservationId: "res_1",
       bootId: "boot_1",
     });
@@ -194,13 +210,24 @@ describe("the desktop", () => {
     ensureLiveBrowserSession.mockResolvedValue(handle());
     let spent: string | undefined;
     routes[`${RUNS}/reviewer-attempt`] = (body) => {
-      const submission = body.passwordSubmission as { commandId: string; outcome: string };
+      const submission = body.passwordSubmission as {
+        commandId: string;
+        outcome: string;
+      };
       if (submission.outcome === "not_typed") {
         if (spent === submission.commandId) spent = undefined;
         return [200, { ok: true, attempt: {} }];
       }
       if (spent && spent !== submission.commandId) {
-        return [409, { ok: false, error: "password_already_submitted", message: "MCPJam already typed the reviewer password once in this attempt." }];
+        return [
+          409,
+          {
+            ok: false,
+            error: "password_already_submitted",
+            message:
+              "MCPJam already typed the reviewer password once in this attempt.",
+          },
+        ];
       }
       spent = submission.commandId;
       return [200, { ok: true, attempt: {} }];
@@ -208,10 +235,15 @@ describe("the desktop", () => {
     await deps().desktop.reserve(new AbortController().signal);
     const password = agentDeps!.password;
     expect(await password.mark("c1")).toBeUndefined();
-    expect(await password.mark("c2")).toMatch(/^password_already_submitted: .*stop_sign_in/);
+    expect(await password.mark("c2")).toMatch(
+      /^password_already_submitted: .*stop_sign_in/,
+    );
     await password.giveBack("c1");
     expect(await password.mark("c2")).toBeUndefined();
-    expect(posted.filter((call) => call.path === `${RUNS}/reviewer-attempt`)[0]!.body).toEqual({
+    expect(
+      posted.filter((call) => call.path === `${RUNS}/reviewer-attempt`)[0]!
+        .body,
+    ).toEqual({
       ...LEASE,
       attemptId: "att_1",
       passwordSubmission: { commandId: "c1", outcome: "intent" },
@@ -230,7 +262,9 @@ describe("the desktop", () => {
           type: (init?.headers as Record<string, string>)["content-type"],
           bytes: (init?.body as Uint8Array).length,
         });
-        return new Response(JSON.stringify({ ok: true, screenshotId: "shot_1" }));
+        return new Response(
+          JSON.stringify({ ok: true, screenshotId: "shot_1" }),
+        );
       }
       const path = new URL(url).pathname;
       const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
@@ -537,16 +571,28 @@ describe("a sign-in that reaches MCPJam's callback", () => {
         },
       ],
       [`${RUNS}/reviewer-attempt`]: () => [200, { ok: true, attempt: {} }],
-      [`${RUNS}/browser-session`]: () => [200, { ok: true, reservation: { id: "res_1" } }],
-      [`${RUNS}/browser-session/desktop`]: () => [200, { ok: true, sandboxRowId: "row_1", sandboxId: "sbx_1" }],
+      [`${RUNS}/browser-session`]: () => [
+        200,
+        { ok: true, reservation: { id: "res_1" } },
+      ],
+      [`${RUNS}/browser-session/desktop`]: () => [
+        200,
+        { ok: true, sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      ],
       [`${RUNS}/browser-session/bind`]: () => [200, { ok: true }],
       [`${RUNS}/browser-session/boot`]: () => [200, { ok: true }],
       [`${RUNS}/browser-session/close`]: () => [200, { ok: true, released: 1 }],
       [CONNECTIONS]: () => [200, { ok: true, requestId: "req_1" }],
-      [`${CONNECTIONS}/claim`]: () => [200, { ok: true, serverUrl: "https://connector.example.com/mcp" }],
+      [`${CONNECTIONS}/claim`]: () => [
+        200,
+        { ok: true, serverUrl: "https://connector.example.com/mcp" },
+      ],
       [`${CONNECTIONS}/start`]: () => [200, { ok: true }],
       [`${CONNECTIONS}/complete`]: () => [200, { ok: true }],
-      [`${CONNECTIONS}/status`]: () => [200, { ok: true, stage: "completed", account: { id: "acct_1" } }],
+      [`${CONNECTIONS}/status`]: () => [
+        200,
+        { ok: true, stage: "completed", account: { id: "acct_1" } },
+      ],
     };
     prepareAuthorization.mockResolvedValue({
       authorizationUrl: `${AUTH}/oauth2/authorize?state=${STATE}`,
@@ -559,7 +605,11 @@ describe("a sign-in that reaches MCPJam's callback", () => {
       client: {
         status: vi.fn(async () => ({
           kind: "ok",
-          features: ["secret-origins", "navigation-stop-persistent"],
+          features: [
+            "network-public-only",
+            "secret-origins",
+            "navigation-stop-persistent",
+          ],
         })),
         sendCommand: vi.fn(),
       },
@@ -569,10 +619,20 @@ describe("a sign-in that reaches MCPJam's callback", () => {
   it("completes with the captured code and state, and records and logs neither", async () => {
     const warn = vi.spyOn(logger, "warn");
     const info = vi.spyOn(logger, "info");
-    agentRun = vi.fn(async (input: { link: { callbackUrl: string; authorizationServerOrigin: string } }) => {
-      expect(input.link).toMatchObject({ callbackUrl: CALLBACK, authorizationServerOrigin: AUTH });
-      return { kind: "callback", url: `${CALLBACK}?code=${CODE}&state=${STATE}` };
-    });
+    agentRun = vi.fn(
+      async (input: {
+        link: { callbackUrl: string; authorizationServerOrigin: string };
+      }) => {
+        expect(input.link).toMatchObject({
+          callbackUrl: CALLBACK,
+          authorizationServerOrigin: AUTH,
+        });
+        return {
+          kind: "callback",
+          url: `${CALLBACK}?code=${CODE}&state=${STATE}`,
+        };
+      },
+    );
 
     const outcome = await rehearseReviewerSignInLive({
       lease: LEASE,
@@ -582,14 +642,21 @@ describe("a sign-in that reaches MCPJam's callback", () => {
     });
 
     expect(outcome).toEqual({ kind: "connected", reviewerAccountId: "acct_1" });
-    expect(posted.find((call) => call.path === `${CONNECTIONS}/complete`)!.body).toEqual({
+    expect(
+      posted.find((call) => call.path === `${CONNECTIONS}/complete`)!.body,
+    ).toEqual({
       ...LEASE,
       requestId: "req_1",
       state: STATE,
       code: CODE,
     });
-    const writes = posted.filter((call) => call.path === `${RUNS}/reviewer-attempt`);
-    const kept = JSON.stringify({ writes, logs: [...warn.mock.calls, ...info.mock.calls] });
+    const writes = posted.filter(
+      (call) => call.path === `${RUNS}/reviewer-attempt`,
+    );
+    const kept = JSON.stringify({
+      writes,
+      logs: [...warn.mock.calls, ...info.mock.calls],
+    });
     expect(kept).not.toContain(CODE);
     expect(kept).not.toContain(STATE);
     warn.mockRestore();

@@ -125,6 +125,14 @@ export const BROWSERD_WEBMCP_FEATURES = [
 ] as const;
 
 /**
+ * Announced by a daemon booted with `MCPJAM_BROWSERD_NETWORK=public`: its
+ * browser reaches public internet addresses only (`daemon/public-network.ts`).
+ * Per boot, not per build, so it is not in the list above, and a caller that
+ * needs it refuses a daemon that does not announce it.
+ */
+export const BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.

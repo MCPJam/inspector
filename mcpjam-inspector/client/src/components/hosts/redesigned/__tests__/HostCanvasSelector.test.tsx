@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HostCanvasSelector } from "@/components/hosts/redesigned/HostCanvasSelector";
 import { track } from "@/lib/analytics";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -225,6 +226,25 @@ describe("HostCanvasSelector", () => {
       name: /Acme Internal Bot/,
     });
     expect(row.querySelector("img")).toHaveAttribute("src", "/mcp.svg");
+  });
+
+  it("draws a renamed client's logo from its saved style", async () => {
+    const user = userEvent.setup();
+    mockUseHostList.mockReturnValue({
+      hosts: [{ ...oneHost[0], name: "Codex QA", hostStyle: "codex" }],
+      isLoading: false,
+    });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId="host-a" />);
+
+    expect(
+      screen.getByTestId("host-canvas-current").querySelector("img"),
+    ).toHaveAttribute("src", getHostLogoSrc("codex"));
+    await user.click(screen.getByTestId("host-canvas-current"));
+    const row = await screen.findByRole("menuitemradio", { name: /Codex QA/ });
+    expect(row.querySelector("img")).toHaveAttribute(
+      "src",
+      getHostLogoSrc("codex"),
+    );
   });
 
   it("marks the active client with a single primary-colored dot", async () => {

@@ -731,6 +731,52 @@ describe("MultiModelPlaygroundCard", () => {
     });
   });
 
+  it("does not stop the next turn when only the session's stop function changes", async () => {
+    const card = (stopRequestId: number) => (
+      <MultiModelPlaygroundCard
+        compareId={String(model.id)}
+        compareLabel={model.name}
+        compareKind="model"
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={stopRequestId}
+        executionConfig={{
+          systemPrompt: "",
+          temperature: 0.7,
+          requireToolApproval: false,
+        }}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="mobile"
+        onSummaryChange={vi.fn()}
+      />
+    );
+    const stopForPress = mockUseChatSession.stop;
+    try {
+      const { rerender } = render(card(0));
+      rerender(card(1));
+      await waitFor(() => {
+        expect(stopForPress).toHaveBeenCalledTimes(1);
+      });
+
+      // The chat session hands back a new `stop` whenever its status or
+      // messages change, such as when the next turn starts after a Stop.
+      const stopForNextTurn = vi.fn();
+      mockUseChatSession.stop = stopForNextTurn;
+      rerender(card(1));
+
+      expect(stopForNextTurn).not.toHaveBeenCalled();
+      expect(stopForPress).toHaveBeenCalledTimes(1);
+    } finally {
+      mockUseChatSession.stop = stopForPress;
+    }
+  });
+
   describe("summary while streaming", () => {
     const idleSession = { ...mockUseChatSession };
 
