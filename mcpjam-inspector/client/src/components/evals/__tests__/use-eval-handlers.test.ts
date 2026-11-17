@@ -3754,3 +3754,13 @@ describe("formatEnsureServersReadyError", () => {
     );
   });
 });
+
+it("preserves each actionable connection refusal", () => {
+  expect(formatEnsureServersReadyError({ readyServerNames: [], missingServerNames: [], reauthServerNames: [], failedServerNames: ["one", "two"], failedServerErrors: { one: "Ask an admin to allow local runs.", two: "Upload a fresh token." } }, "run this suite", [])).toBe("Ask an admin to allow local runs.\nUpload a fresh token.");
+});
+
+it("keeps actionable credential messages when another server has a raw failure", () => {
+  const text = formatEnsureServersReadyError({ readyServerNames: [], missingServerNames: [], reauthServerNames: [], failedServerNames: ["one", "two"], failedServerErrors: { one: "Upload a fresh token." } }, "run this suite", []);
+  expect(text).toContain("Upload a fresh token.");
+  expect(text).toContain("all required servers");
+});

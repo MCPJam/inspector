@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { bindLocalTaskOwnerScope } from "./task-owner-binding.js";
 import { taskOwnerScope } from "../../shared/task-owner.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -196,6 +197,7 @@ type LocalAuthorizeBatchSuccess = {
   oauthBoundOrigins?: string[];
   /** Absent: the person's own sign-in. */
   oauthAccountKind?: "shared" | "uploaded";
+  oauthAccountUploaded?: boolean;
   /** The account `oauthAccessToken` came from, pinned for refresh. */
   oauthCredentialId?: string;
   /** Why there is no token, when the backend can say; see `local-oauth-refusal.ts`. */
@@ -898,6 +900,8 @@ export function toMCPServerConfig(
           ? undefined
           : oauthToken,
       boundOrigins: authResult.oauthBoundOrigins,
+      accountKind: authResult.oauthAccountKind,
+      accountUploaded: authResult.oauthAccountUploaded,
       stored: authResult.credentialBinding,
       target: {
         serverId: options?.refreshContext?.serverId,
@@ -2150,6 +2154,9 @@ async function executeLocalServerConnectAttempt(
     // envelope: tag it oauthRequired so the client escalates into the
     // interactive OAuth flow. Explicit "none" servers get a hint instead —
     // the user chose unauthenticated, so nothing auto-escalates.
+    if (error instanceof WebRouteError && (credentialFailureMessage(error) || error.details?.oauthRequired === true)) {
+      return respondWithLocalRouteError(c, error);
+    }
     if (isUnauthorized401(error)) {
       const serverUrl =
         resolved.config &&

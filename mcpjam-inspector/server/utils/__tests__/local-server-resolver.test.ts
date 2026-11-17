@@ -656,7 +656,10 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
 
     await expect(
       config.onUnauthorized({ serverId: "Lab", error: rejected })
-    ).resolves.toEqual({ accessToken: "upload-2" });
+    ).resolves.toEqual({
+      accessToken: "upload-2",
+      onRetryRejected: expect.any(Function),
+    });
     expect(authorizes).toHaveLength(2);
     expect(authorizes[1]).toMatchObject({
       serverIds: ["srv-uploaded"],

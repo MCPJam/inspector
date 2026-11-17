@@ -42,7 +42,7 @@ export function oauthRefusalFromAuthorize(
     const message = hostedOnly
       ? (result.oauthUnavailableMessage ??
         hostedOnlyFallback(named, result.oauthUnavailableCause))
-      : `Your organization keeps saved credentials for ${named} inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`;
+      : `Your organization does not allow saved credentials for ${named} in local runs. Ask an organization admin about your credential export policy.`;
     return new WebRouteError(403, ErrorCode.FORBIDDEN, message, {
       exportDenied: true,
       policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
