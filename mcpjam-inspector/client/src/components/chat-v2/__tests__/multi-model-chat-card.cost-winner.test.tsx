@@ -76,7 +76,14 @@ function stubSession(trace: LiveChatTraceEnvelope, isStreaming: boolean) {
       },
     ],
     setMessages: vi.fn(),
-    sendMessage: vi.fn(),
+    // A send starts streaming, unless a test holds it as a hosted send that
+    // is still resolving server ids.
+    holdSends: false,
+    sendMessage: vi.fn(() => {
+      if (session.holdSends) return;
+      Object.assign(session, { isStreaming: true, status: "streaming" });
+      refreshHarness.current();
+    }),
     status: isStreaming ? "streaming" : "ready",
     error: undefined,
     chatSessionId: "chat-session",
@@ -207,6 +214,11 @@ function Harness({
 
 const winnerLabels = () => screen.queryAllByText(/^Lowest/);
 
+function startStreaming(modelId: string) {
+  Object.assign(sessions[modelId], { isStreaming: true, status: "streaming" });
+  act(() => refreshHarness.current());
+}
+
 function finish(modelId: string) {
   Object.assign(sessions[modelId], { isStreaming: false, status: "ready" });
   act(() => refreshHarness.current());
@@ -219,7 +231,7 @@ function followUp(modelId: string, text: string, amounts: number[]) {
     expect.objectContaining({ text }),
   );
   sessions[modelId].liveTraceEnvelope = pricedTrace(amounts);
-  act(() => refreshHarness.current());
+  finish(modelId);
 }
 
 describe("MultiModelChatCard cost winner", () => {
@@ -230,6 +242,7 @@ describe("MultiModelChatCard cost winner", () => {
 
   it("names the cheaper card once both finish the same broadcast", () => {
     render(<Harness />);
+    finish(dear);
     expect(winnerLabels()).toHaveLength(0);
 
     finish(cheap);
@@ -243,6 +256,7 @@ describe("MultiModelChatCard cost winner", () => {
 
   it("names no winner when the cheaper card's stream is stopped", () => {
     const { rerender } = render(<Harness />);
+    finish(dear);
 
     act(() => rerender(<Harness stopRequestId={1} />));
 
@@ -257,17 +271,28 @@ describe("MultiModelChatCard cost winner", () => {
 
   it("names no winner while only one card has answered a follow-up", () => {
     const { rerender } = render(<Harness />);
+    finish(dear);
     finish(cheap);
     expect(winnerLabels()).toHaveLength(1);
 
     followUp(cheap, "And hotels?", [0.001, 0.0002]);
     expect(winnerLabels()).toHaveLength(0);
 
-    // The next broadcast reaches both cards, so they rank again.
+    // The next broadcast reaches both cards, so they rank again. A hosted
+    // send resolves server ids before it streams; until then each card
+    // still holds the previous turn's cost and must not rank it.
+    sessions[cheap].holdSends = true;
+    sessions[dear].holdSends = true;
     act(() => rerender(<Harness broadcastRequest={broadcast(2)} />));
+    expect(screen.getByTestId("statuses")).toHaveTextContent("running,running");
+    expect(winnerLabels()).toHaveLength(0);
+
+    startStreaming(cheap);
+    startStreaming(dear);
     sessions[cheap].liveTraceEnvelope = pricedTrace([0.001, 0.0002, 0.0005]);
     sessions[dear].liveTraceEnvelope = pricedTrace([0.004, 0.0004]);
-    act(() => refreshHarness.current());
+    finish(cheap);
+    finish(dear);
     expect(
       within(screen.getByTestId(`card-${dear}`)).getByText("Lowest cost"),
     ).toBeInTheDocument();
@@ -276,6 +301,7 @@ describe("MultiModelChatCard cost winner", () => {
 
   it("names no winner when each card answered a different follow-up", () => {
     render(<Harness />);
+    finish(dear);
     finish(cheap);
     expect(winnerLabels()).toHaveLength(1);
 

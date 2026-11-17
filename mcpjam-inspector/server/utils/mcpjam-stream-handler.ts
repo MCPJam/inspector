@@ -4926,6 +4926,32 @@ async function processOneStep(ctx: StepContext): Promise<{
         isMrtrSuspendSignalShape(error) ||
         isScopeStepUpSuspendSignal(error)
       ) {
+        // The provider call finished before the tool paused, so it keeps its
+        // llm span and cost: the finish chunk below carries no cost, and the
+        // span is the only place the call is counted.
+        pushBackendStepSuccessSpans(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.promptIndex,
+          stepIndex,
+          stepStartAbs,
+          { startAbs: llmStartAbs, endAbs: llmEndAbs },
+          {
+            startAbs: toolsStartAbs,
+            endAbs: Date.now(),
+            pushAggregateSpan: false,
+          },
+          {
+            modelId,
+            inputTokens: stepUsage?.inputTokens,
+            outputTokens: stepUsage?.outputTokens,
+            totalTokens: stepUsage?.totalTokens,
+            messageStartIndex: stepMessageStartIndex,
+            messageEndIndex: stepMessageEndIndex,
+            status: "ok",
+            ...harnessSpanMeta,
+          },
+        );
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
@@ -4933,6 +4959,19 @@ async function processOneStep(ctx: StepContext): Promise<{
         return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
       const failAbs = Date.now();
+      // A failure after this step's spans were recorded replaces them, so the
+      // provider call keeps one llm span and is counted once.
+      // In place: the traced tools hold this array.
+      for (let i = traceTurn.turnSpans.length - 1; i >= 0; i--) {
+        const span = traceTurn.turnSpans[i]!;
+        if (
+          (span.category === "step" || span.category === "llm") &&
+          span.promptIndex === traceTurn.promptIndex &&
+          span.stepIndex === stepIndex
+        ) {
+          traceTurn.turnSpans.splice(i, 1);
+        }
+      }
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,

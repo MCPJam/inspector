@@ -141,6 +141,11 @@ export function MultiModelChatCard({
   // The broadcast this card's latest prompt answers. A follow-up sent to this
   // card alone, or a reset thread, answers none, so it never ranks on cost.
   const [broadcastId, setBroadcastId] = useState<number>();
+  // A hosted send resolves server ids before it streams. Until the new
+  // broadcast's stream starts, the card's numbers are the previous turn's, so
+  // it reports itself running rather than rank them under the new broadcast.
+  const [awaitingBroadcastStream, setAwaitingBroadcastStream] =
+    useState(false);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
   const lastAddColumnVersionRef = useRef(0);
@@ -198,6 +203,7 @@ export function MultiModelChatCard({
       setWidgetStateQueue([]);
       setModelContextQueue([]);
       setBroadcastId(undefined);
+      setAwaitingBroadcastStream(false);
     },
   });
 
@@ -238,9 +244,15 @@ export function MultiModelChatCard({
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
   const latestTurnCost = useLatestTurnCost(liveTraceEnvelope);
+  useEffect(() => {
+    if (awaitingBroadcastStream && (isStreaming || error)) {
+      setAwaitingBroadcastStream(false);
+    }
+  }, [awaitingBroadcastStream, error, isStreaming]);
   const cardStatus = useCompareCardStatus({
     failed: Boolean(error),
     isStreaming,
+    isBusy: awaitingBroadcastStream,
     isThreadEmpty,
     consumeTurnAborted,
   });
@@ -389,6 +401,7 @@ export function MultiModelChatCard({
 
     lastBroadcastRequestIdRef.current = broadcastRequest.id;
     setBroadcastId(broadcastRequest.id);
+    setAwaitingBroadcastStream(true);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -420,6 +433,7 @@ export function MultiModelChatCard({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       setBroadcastId(undefined);
+      setAwaitingBroadcastStream(false);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

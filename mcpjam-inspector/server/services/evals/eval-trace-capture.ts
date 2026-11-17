@@ -712,7 +712,12 @@ export function pushBackendStepLlmFailureSpans(
   // Model-call counts, llm token totals and cost rollups read llm spans only,
   // so that call keeps one, as on the success path. Totals never read the
   // step span, so its tokens are not counted twice, and it never carries cost.
-  if (meta?.cost || typeof meta?.inputTokens === "number") {
+  if (
+    meta?.cost ||
+    typeof meta?.inputTokens === "number" ||
+    typeof meta?.outputTokens === "number" ||
+    typeof meta?.totalTokens === "number"
+  ) {
     const llmSpan: EvalTraceSpan = {
       id: `${stepParentId}-llm`,
       parentId: stepParentId,
