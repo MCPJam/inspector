@@ -47,17 +47,23 @@ import {
   CLAIM_RENEWAL_MS,
   PREPARATION_DEADLINE_MS,
 } from "./preparation-timing.js";
-import { buildBrokerDummyAuth, getHarnessAdapter } from "./registry.js";
+import {
+  buildBrokerDummyAuth,
+  getHarnessAdapter,
+  isHarnessId,
+  type HarnessId,
+} from "./registry.js";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 
-const PREPARABLE_HARNESSES = ["claude-code", "codex"] as const;
-export type PreparableHarness = (typeof PREPARABLE_HARNESSES)[number];
-
+/** A runtime whose box may be booted and bootstrapped before Send. */
 export function isPreparableHarness(
   harnessId: string | undefined,
-): harnessId is PreparableHarness {
-  return PREPARABLE_HARNESSES.some((id) => id === harnessId);
+): harnessId is HarnessId {
+  return (
+    isHarnessId(harnessId) &&
+    getHarnessAdapter(harnessId).preparesBeforeSend === true
+  );
 }
 
 /** Why the backend booted no box; anything else reads as `skipped`. */
@@ -102,7 +108,7 @@ const NO_PROXY_URL = "http://prepare.invalid";
  * hosted recipe to that), so the box ends up as the baked template has it.
  */
 export function hostedBootstrapRuntimes(
-  harnessId: PreparableHarness,
+  harnessId: HarnessId,
   modelId: string,
 ): HarnessAgentAdapter[] {
   const adapter = getHarnessAdapter(harnessId);
@@ -123,7 +129,7 @@ export function hostedBootstrapRuntimes(
 }
 
 export async function prepareConversationBox(args: {
-  harnessId: PreparableHarness;
+  harnessId: HarnessId;
   projectId: string;
   chatSessionId: string;
   /** The environment the Send's box would be booted with, if any. */

@@ -147,7 +147,7 @@ it.each(["accept", "cancel"] as const)("runs a model App's real MRTR %s round wi
     expect(pending.inputRequests[0].requestedSchema).toEqual(schema);
     const owner = modelApps.get(token, actor).owner.owner;
     expect(pluginInstances.getFormOwner(owner, actor).owner).toEqual(owner);
-    expect(pluginFormSources.get(pending.inputRequests[0].pluginFormSourceToken, actor, { kind: "mrtr", id: pending.continuationId, round: 1, inputRequestKey: "form" }).source.owner).toEqual(owner);
+    expect(pluginFormSources.get(pending.inputRequests[0].pluginFormSourceToken, { ...actor, subject: "user:actor" }, { kind: "mrtr", id: pending.continuationId, round: 1, inputRequestKey: "form" }).source.owner).toEqual(owner);
     expect(effects).toBe(0);
     f.responses = { form: { action, ...(action === "accept" ? { content: { enabled: false, count: 0 } } : {}) } };
     const completed = await (await call({ resume: { continuationId: pending.continuationId, round: 1, responsesBlobId: "private-answer" } })).json();

@@ -1,5 +1,15 @@
 # `@mcpjam/sdk` changelog
 
+## 10.9.0
+
+### Minor Changes
+
+- [#7681](https://github.com/MCPJam/inspector/pull/7681) [`19560e5`](https://github.com/MCPJam/inspector/commit/19560e5e0620b591303cc58f071e9e8e5c92bb02) Thanks [@prathmeshpatel](https://github.com/prathmeshpatel)! - Anonymous SDK telemetry now records how runs end. `EvalTest.run`, `runSuiteFile` and `runServerDoctor` each send one `sdk_run_completed` event when they finish, with which of them ran, the outcome (`passed`, `failed`, `errored` or `aborted`), the duration, the iteration count when there is one, and whether it ran in CI. `runSuiteFile` sends one event per call, not one per case. `runEventsConformance` now sends `conformance_run_triggered` like the other conformance runners, and that event now carries the suite family and whether it was a single test or a suite. All SDK events now include the SDK version. No event carries server URLs, tool names, prompts, results or error messages, and `DO_NOT_TRACK=1` or `MCPJAM_TELEMETRY_DISABLED=1` turns them all off.
+
+### Patch Changes
+
+- [#7706](https://github.com/MCPJam/inspector/pull/7706) [`2e9b7ca`](https://github.com/MCPJam/inspector/commit/2e9b7cad1ba77b4895498f60592115945514a932) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Readiness: each reviewer sign-in stage opens its own stored screenshot, or says why it has none (a credential was typed on the page, or no picture was taken). The "Approximated" label is gone; earlier attempts' recordings still play.
+
 ## 10.8.0
 
 ### Minor Changes

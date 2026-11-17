@@ -1,9 +1,11 @@
 import { create } from "zustand";
 import {
+  extractHostTheme,
   pickProjectHostContext,
   stableStringifyJson,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
+import { withoutThemeBoundColors } from "@/lib/host-context-colors";
 
 interface HostContextStoreState {
   activeProjectId: string | null;
@@ -245,8 +247,17 @@ export const useHostContextStore = create<HostContextStoreState>(
 
     patchHostContext: (patch) => {
       set((state) => {
+        const nextTheme = extractHostTheme(patch);
+        // Explicit styles are an intentional edit; a theme-only control must
+        // not carry the previous theme's concrete palette into the renderer.
+        const baseHostContext =
+          nextTheme &&
+          nextTheme !== extractHostTheme(state.draftHostContext) &&
+          !Object.hasOwn(patch, "styles")
+            ? withoutThemeBoundColors(state.draftHostContext)
+            : state.draftHostContext;
         const nextHostContext = {
-          ...state.draftHostContext,
+          ...baseHostContext,
           ...patch,
         };
         return {

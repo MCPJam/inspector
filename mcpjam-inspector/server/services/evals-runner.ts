@@ -28,6 +28,7 @@ import {
 } from "./browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -5280,6 +5281,10 @@ const runLocalIteration = async ({
         modelDefinition,
         systemPrompt: system,
         temperature,
+        requireToolApproval: appliedToolApproval(
+          "eval",
+          resolvedExecution.requireToolApproval,
+        ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
@@ -6694,6 +6699,10 @@ const runHostedIterationWithBrowser = async (
         ? {
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
+            requireToolApproval: appliedToolApproval(
+              "eval",
+              resolvedExecution.requireToolApproval,
+            ),
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
             ...(browserSecrets.length > 0
               ? {
@@ -7035,6 +7044,10 @@ const runHostedIterationWithBrowser = async (
       modelDefinition,
       systemPrompt,
       temperature,
+      requireToolApproval: appliedToolApproval(
+        "eval",
+        resolvedExecution.requireToolApproval,
+      ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness

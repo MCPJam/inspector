@@ -140,7 +140,7 @@ export const HARNESS_DESCRIPTORS = {
     controls: LOOP_CONTROLS.codex, reasoningEfforts: HARNESS_REASONING_EFFORTS.codex,
   },
   "copilot-cli": {
-    displayName: "GitHub Copilot CLI", runtimeName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "mcpjam",
+    displayName: "GitHub Copilot CLI", runtimeName: "GitHub Copilot CLI", runtimeVersion: "1.0.92", mcpClient: "harness",
     modelAccess: "broker", orgKeys: true,
     protocol: "openai-responses", credential: null,
     unavailableOn: {},

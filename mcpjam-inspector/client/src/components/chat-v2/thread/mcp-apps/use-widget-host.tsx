@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { ClientCspToastGroup } from "@/lib/client-csp-toast";
+import { withoutThemeBoundColors } from "@/lib/host-context-colors";
 import {
   HOSTED_MODE,
   SANDBOX_ORIGIN,
@@ -256,7 +257,20 @@ export function useWidgetHost(): WidgetHostImpl {
   // against the live profile; the renderer recomputes via `environment.profileKey`.
   const activeMcpProfileRef = useRef(activeMcpProfile);
   activeMcpProfileRef.current = activeMcpProfile;
-  const draftHostContext = useEffectiveHostContext();
+  const effectiveHostContext = useEffectiveHostContext();
+  const paneTheme = paneDisplay?.theme;
+  const draftHostContext = useMemo(() => {
+    if (!paneTheme) return effectiveHostContext;
+    const next: Record<string, unknown> = {
+      ...effectiveHostContext,
+      theme: paneTheme,
+    };
+    const configuredTheme = extractHostTheme(effectiveHostContext);
+    if (configuredTheme && configuredTheme !== paneTheme) {
+      return withoutThemeBoundColors(next);
+    }
+    return next;
+  }, [effectiveHostContext, paneTheme]);
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);

@@ -1501,6 +1501,66 @@ describe("mcpjam-stream-handler", () => {
       for (const span of llm) expect(span).not.toHaveProperty("cost");
       expect(llm.map((span) => span.inputTokens)).toEqual([3, 10]);
     });
+
+    // An empty step whose provider answered still counts as a model call: it
+    // keeps an llm span (with cost only when the backend priced it), so the
+    // model-call count and llm token totals match the success path.
+    it.each([
+      [
+        "usage and cost",
+        {
+          inputTokens: 12,
+          outputTokens: 0,
+          totalTokens: 12,
+          cost: reportedCost,
+        },
+        true,
+      ],
+      [
+        "usage without cost",
+        { inputTokens: 12, outputTokens: 0, totalTokens: 12 },
+        true,
+      ],
+      ["neither usage nor cost", undefined, false],
+    ])(
+      "records a step that returned no content, with %s",
+      async (_case, messageMetadata, answered) => {
+        global.fetch = vi
+          .fn()
+          .mockResolvedValue(
+            createSseResponse([
+              { type: "finish", finishReason: "length", messageMetadata },
+            ]),
+          );
+
+        await handleMCPJamFreeChatModel({ ...turnInput, tools: {} });
+        await lastExecution;
+
+        const spans = lastSnapshotSpans();
+        expect(spans.find((span) => span.category === "step")).toMatchObject({
+          status: "error",
+        });
+        const llm = spans.filter((span) => span.category === "llm");
+        expect(llm).toEqual(
+          answered
+            ? [
+                expect.objectContaining({
+                  stepIndex: 0,
+                  status: "error",
+                  inputTokens: 12,
+                }),
+              ]
+            : [],
+        );
+        const cost = messageMetadata?.cost;
+        expect(spans.filter((span) => span.cost)).toEqual(
+          cost ? [expect.objectContaining({ category: "llm", cost })] : [],
+        );
+        expect(writtenChunks.some((chunk) => chunk?.type === "error")).toBe(
+          true,
+        );
+      },
+    );
   });
 
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {

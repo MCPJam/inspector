@@ -58,6 +58,7 @@ const JOB_ORDER = [
   TESTS_ROW,
   "build-and-test / Build and Test",
   "preflight",
+  "harness-consistency",
   "verified",
   "build-mac / build-mac",
   "build-windows / make-windows",
@@ -67,7 +68,8 @@ const JOB_ORDER = [
   "deploy-webapp / deploy",
   "deploy-webapp / smoke / smoke",
   "deploy-slack-app / Deploy to Railway",
-  "finalize"
+  "finalize",
+  "shipped"
 ];
 
 export function ReleaseProgressSkeleton() {

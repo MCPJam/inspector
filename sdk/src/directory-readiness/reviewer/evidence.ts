@@ -85,6 +85,11 @@ export interface DirectoryReviewerIdentityEvidence {
   outcome: "verified" | "wrong-account" | "wrong-tenant" | "unverified";
   /** Why it is not verified. */
   reason?: string;
+  /**
+   * The submission named no identity tool, so no check was asked for. Any
+   * other `unverified` is a check that was asked for and could not be made.
+   */
+  notAsked?: true;
   call?: DirectoryReviewerCall;
   observed?: { identity?: string; organization?: string };
   expected?: { identity?: string; organization?: string };
