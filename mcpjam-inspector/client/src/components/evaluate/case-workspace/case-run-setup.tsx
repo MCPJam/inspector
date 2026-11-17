@@ -185,7 +185,7 @@ export function CaseRunSetup({
             onModelSelectionChange={() => {}}
             renderModels={(_hostId, harness) => (
               <EvalModelChoices
-                harness={harness}
+                harnessTargets={[harness]}
                 inModal
                 effortEditable={effortEditable}
                 value={selection}

@@ -26,7 +26,7 @@ async function openAddModel(harness: { harnessId: string } | null) {
       disabled={false}
       testId="choices"
       availableModels={MODELS}
-      harness={harness}
+      harnessTargets={[harness]}
     />,
   );
   await userEvent

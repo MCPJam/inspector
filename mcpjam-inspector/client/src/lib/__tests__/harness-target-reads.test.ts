@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "fs";
 import { join, relative, resolve, sep } from "path";
 import { fileURLToPath } from "url";
-import { harnessTargetOfClient } from "@/lib/harness-model-locks";
+import {
+  harnessTargetOfClient,
+  harnessTargetOfHost,
+} from "@/lib/harness-model-locks";
 
 /**
  * Ratchet: read a client's runtime with `effectiveHarnessId` or
@@ -79,6 +82,21 @@ describe("client runtime reads", () => {
       harnessId: "codex",
     });
     expect(harnessTargetOfClient({})).toBeNull();
+  });
+
+  it("prefers the backend's resolved runtime, and falls back without it", () => {
+    expect(harnessTargetOfHost({ runtime: "codex", harness: null })).toEqual({
+      harnessId: "codex",
+    });
+    // MCPJam Harness: the backend says null even if a stale field is set.
+    expect(harnessTargetOfHost({ runtime: null, agentLoop: "codex" })).toBeNull();
+    // An older backend: no `runtime`, read the config's own fields.
+    expect(
+      harnessTargetOfHost({ config: { agentLoop: "claude-code", harness: null } }),
+    ).toEqual({ harnessId: "claude-code" });
+    expect(harnessTargetOfHost({ agentLoop: "cursor" })).toEqual({
+      harnessId: "cursor",
+    });
   });
 
   it("adds no `.harness`-only reads", () => {

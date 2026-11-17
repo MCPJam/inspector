@@ -1,6 +1,7 @@
 import { useAvailableModels } from "@/hooks/use-available-models";
 import { RunIterationControl } from "./run-iteration-control";
 import { EvalModelChoices } from "./eval-target-matrix";
+import { useSuiteHarnessTargets } from "@/hooks/use-suite-harness-targets";
 import { explicitModelIds } from "@/components/environment-composer/environment-stack";
 import type { GeneratedDraft } from "@/lib/mcpjam-agent/eval-workspace";
 import { EVAL_DESCRIBE_ONLY_AGENT } from "@/shared/eval-agent-scope";
@@ -531,6 +532,11 @@ function AuthoringDraftSettings({
     onManageOrgProviders,
     onAddProvider,
   } = useAvailableModels({ projectId: scope.projectId });
+  // A draft's models run on every client the suite runs on.
+  const harnessTargets = useSuiteHarnessTargets(
+    scope.projectId,
+    scope.suiteId,
+  );
   return (
     <div className="space-y-4">
       <RunIterationControl
@@ -564,6 +570,7 @@ function AuthoringDraftSettings({
         // Drafts store model ids alone, so an effort picked here would be lost.
         effortEditable={false}
         availableModels={availableModels}
+        harnessTargets={harnessTargets}
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
         onAddProvider={onAddProvider}

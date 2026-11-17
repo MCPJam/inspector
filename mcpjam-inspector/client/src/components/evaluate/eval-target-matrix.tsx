@@ -16,7 +16,7 @@ import { useModelSelectionsSupported } from "@/hooks/use-project-environment-cap
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
 import {
-  harnessTargetOfClient,
+  harnessTargetOfHost,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
@@ -56,7 +56,13 @@ import { clientDisplayName } from "@/lib/client-display-name";
 
 type TargetMatrixHost = Pick<
   HostListItem,
-  "hostId" | "name" | "displayName" | "modelId" | "hostStyle" | "agentLoop"
+  | "hostId"
+  | "name"
+  | "displayName"
+  | "modelId"
+  | "hostStyle"
+  | "agentLoop"
+  | "runtime"
 > & {
   /**
    * The harness this client runs (`null` = emulated), with its runtime version
@@ -189,10 +195,14 @@ export function EvalTargetMatrix({
     const host = hosts.find((candidate) => candidate.hostId === hostId);
     const harness = host?.harness;
     if (harness && typeof harness === "object") return harness;
-    // The list carries both runtime fields; a paired client (Claude, ChatGPT)
-    // has `harness: null` and its runtime in `agentLoop`.
-    return host && (harness !== undefined || host.agentLoop !== undefined)
-      ? harnessTargetOfClient({
+    // A list row carries the client's runtime; a paired client (Claude,
+    // ChatGPT) has `harness: null` and its runtime in `agentLoop`.
+    return host &&
+      (host.runtime !== undefined ||
+        harness !== undefined ||
+        host.agentLoop !== undefined)
+      ? harnessTargetOfHost({
+          runtime: host.runtime,
           harness: harness ?? null,
           agentLoop: host.agentLoop ?? null,
         })
@@ -445,7 +455,7 @@ function EvalModelPicker({
         testId,
         defaultModelId,
         availableModels,
-        harness,
+        harnessTargets: [harness],
         requireOrgKeys,
         onManageOrgProviders,
         onAddProvider,
@@ -462,7 +472,7 @@ export function EvalModelChoices({
   testId,
   defaultModelId,
   availableModels: catalogModels,
-  harness,
+  harnessTargets,
   effortEditable = true,
   requireOrgKeys = false,
   onManageOrgProviders,
@@ -494,17 +504,25 @@ export function EvalModelChoices({
   defaultModelId?: string;
   availableModels: ModelDefinition[];
   /**
-   * The client's harness (`null`/absent = emulated or not known). Models it
-   * cannot run for an eval — unsupported, or not verified on its runtime
-   * version — render disabled with the reason, the same verdict the server's
-   * eval admission reaches.
+   * The client(s) the picked models run on (`null`/`undefined` = emulated or
+   * not known yet). A model every one of them cannot run for an eval
+   * (unsupported, or not verified on its runtime version) renders disabled
+   * with the reason, the same verdict the server's eval admission reaches.
+   * Required: a surface that has no client says so with `[]`.
    */
-  harness?: HarnessModelTarget | null;
+  harnessTargets: ReadonlyArray<HarnessModelTarget | null | undefined>;
 }) {
   const availableModels = useMemo(
-    () => evalModelRows(catalogModels, harness, requireOrgKeys),
-    [catalogModels, harness, requireOrgKeys],
+    () => evalModelRows(catalogModels, harnessTargets, requireOrgKeys),
+    [catalogModels, harnessTargets, requireOrgKeys],
   );
+  const harnessScope = useMemo(
+    () => ({ targets: harnessTargets, purpose: "eval" as const }),
+    [harnessTargets],
+  );
+  const effortHarness = harnessTargets.find(Boolean)?.harnessId as
+    | Harness
+    | undefined;
   const selectionsSupported = useModelSelectionsSupported();
   // A saved selection names its source and connection. Under the policy only
   // that exact row is the target, so a hosted target never borrows an org row
@@ -615,7 +633,7 @@ export function EvalModelChoices({
       const levels = reasoningEffortOptions(
         row,
         reasoningEffortRouteForRow(row),
-        harness?.harnessId as Harness | undefined,
+        effortHarness,
       );
       if (levels.length === 0 || !targetAt(row, levels[0])) return undefined;
       const sameModel = current?.modelId === String(row.id);
@@ -666,6 +684,7 @@ export function EvalModelChoices({
               requireOrgKeys={requireOrgKeys}
               onManageOrgProviders={onManageOrgProviders}
               onAddProvider={onAddProvider}
+              harnessScope={harnessScope}
               analyticsLocation="eval_suite"
               workload="evalTarget"
               onModelChange={(next) => changeChoice(key, inherited, next)}
@@ -763,6 +782,7 @@ export function EvalModelChoices({
         requireOrgKeys={requireOrgKeys}
         onManageOrgProviders={onManageOrgProviders}
         onAddProvider={onAddProvider}
+        harnessScope={harnessScope}
         analyticsLocation="eval_suite"
         workload="evalTarget"
         onModelChange={(model) =>

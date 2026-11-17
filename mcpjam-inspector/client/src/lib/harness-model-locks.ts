@@ -89,6 +89,23 @@ export function harnessTargetOfClient(
   return harnessId ? { harnessId } : null;
 }
 
+/**
+ * The harness target of a client as the backend lists or returns it: its
+ * resolved `runtime` field, or, from a backend older than that field, its
+ * config's (or list row's) own `agentLoop` / `harness`.
+ */
+export function harnessTargetOfHost(host: {
+  runtime?: string | null;
+  config?: { agentLoop?: string | null; harness?: string | null } | null;
+  agentLoop?: string | null;
+  harness?: string | null;
+}): HarnessModelTarget | null {
+  if (host.runtime !== undefined) {
+    return host.runtime ? { harnessId: host.runtime } : null;
+  }
+  return harnessTargetOfClient(host.config ?? host);
+}
+
 function runtimeVersionOf(target: HarnessModelTarget): string | undefined {
   return target.runtimeVersion ?? harnessPinnedVersion(target.harnessId);
 }

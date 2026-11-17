@@ -70,7 +70,7 @@ function pickerRows(
     hostedCatalog: [],
     savedModelIds,
   });
-  return evalModelRows(models, null, true);
+  return evalModelRows(models, [], true);
 }
 
 /** Pick `row` in the suite editor: the target list the suite saves. */
@@ -220,8 +220,8 @@ describe("evalModelRows", () => {
     const openAiRow = (rows: ModelDefinition[]) =>
       rows.some((model) => model.provider === "openai");
     expect(openAiRow(models)).toBe(true);
-    expect(openAiRow(evalModelRows(models, null, true))).toBe(false);
-    expect(openAiRow(evalModelRows(models, null, false))).toBe(true);
+    expect(openAiRow(evalModelRows(models, [], true))).toBe(false);
+    expect(openAiRow(evalModelRows(models, [], false))).toBe(true);
   });
 
   it("keeps a saved model the policy refuses, so its trigger can say so", () => {
@@ -247,7 +247,7 @@ describe("evalModelRows", () => {
         orgProvider: { providerKey: provider, id: `orgprov_${provider}` },
       };
       expect(
-        evalModelRows([row], null, true),
+        evalModelRows([row], [], true),
         `${provider} ${String(model.id)}`,
       ).toHaveLength(1);
       expect(pickedModelTarget(row, true).modelId).toMatch(/^[a-z-]+\//);
