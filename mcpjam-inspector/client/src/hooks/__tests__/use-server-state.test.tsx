@@ -1010,7 +1010,8 @@ describe("useServerState CLI config import", () => {
     await waitFor(() => {
       expect(injectHostedServerMapping).toHaveBeenCalledWith(
         "cli-http",
-        "srv_own"
+        "srv_own",
+        "proj_cloud",
       );
     });
     expect(logger.warn).not.toHaveBeenCalledWith(
@@ -1160,7 +1161,8 @@ describe("useServerState CLI config import", () => {
     );
     expect(injectHostedServerMapping).toHaveBeenCalledWith(
       "cli-http",
-      "srv_new"
+      "srv_new",
+      "proj_cloud",
     );
   });
 });
@@ -4812,6 +4814,13 @@ describe("syncServerToConvex name-collision recovery", () => {
         expect.objectContaining({ serverId: "srv_sibling" }),
       );
       expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      if (!saveOnly) {
+        expect(injectHostedServerMapping).toHaveBeenCalledWith(
+          "demo-server",
+          "srv_demo",
+          "project_default",
+        );
+      }
     },
   );
 

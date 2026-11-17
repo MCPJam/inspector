@@ -2707,7 +2707,7 @@ export function useServerState({
               : `Cannot start: failed to save server "${serverName}" to the project.`,
           );
         }
-        injectHostedServerMapping(serverName, synced.serverId);
+        injectHostedServerMapping(serverName, synced.serverId, synced.projectId);
         out.push({ serverName, serverId: synced.serverId });
       }
       return out;
@@ -4032,7 +4032,11 @@ export function useServerState({
             projectId: synced.projectId,
             serverId: synced.serverId,
           };
-          injectHostedServerMapping(formData.name, synced.serverId);
+          injectHostedServerMapping(
+            formData.name,
+            synced.serverId,
+            synced.projectId,
+          );
         } else {
           workspaceNameTaken = synced.reason === "workspace-name-taken";
         }
@@ -4236,7 +4240,11 @@ export function useServerState({
                     projectId: resynced.projectId,
                     serverId: resynced.serverId,
                   };
-                  injectHostedServerMapping(formData.name, resynced.serverId);
+                  injectHostedServerMapping(
+                    formData.name,
+                    resynced.serverId,
+                    resynced.projectId,
+                  );
                 }
                 serverEntryForSave = updatedEntry;
                 saveOAuthConfigToLocalStorage(formData);
