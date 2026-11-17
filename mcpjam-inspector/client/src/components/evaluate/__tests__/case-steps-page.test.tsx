@@ -390,6 +390,42 @@ describe("CaseStepsPage for a New case", () => {
       }),
     );
   });
+
+  it("creates one case from a double click, with Save case off while saving", async () => {
+    let finish = (_id: string) => {};
+    state.create = vi.fn(
+      () => new Promise<string>((resolve) => (finish = resolve)),
+    );
+    renderPage({ testCaseId: "draft:prompt" });
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected outcome" }),
+      "Lists them",
+    );
+    const save = screen.getByRole("button", { name: "Save case" });
+    await user.dblClick(save);
+    expect(state.create).toHaveBeenCalledOnce();
+    expect(save).toBeDisabled();
+    finish("case-new");
+    await waitFor(() => expect(save).toBeEnabled());
+  });
+
+  it.each([
+    ["CI-owned", {}],
+    ["locked by the suite view", { readOnly: true }],
+  ])("turns Save case off on a suite that is %s", async (_, over) => {
+    state.ciOwned = !("readOnly" in over);
+    renderPage({ testCaseId: "draft:prompt", ...over });
+    await screen.findByTestId("case-steps-editor");
+    expect(screen.getByRole("button", { name: "Save case" })).toBeDisabled();
+    expect(
+      screen.getByRole("textbox", { name: "Test case title" }),
+    ).toHaveAttribute("readonly");
+  });
 });
 
 describe("opensInStepsEditor", () => {

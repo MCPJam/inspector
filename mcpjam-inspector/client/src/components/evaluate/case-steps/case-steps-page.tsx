@@ -196,6 +196,14 @@ export function CaseStepsPage({
       >
         <NewCaseHeader
           title={draft.title}
+          saving={data.saving}
+          lockedReason={
+            data.readOnly
+              ? "This suite is managed by CI, so cases can't be added here."
+              : readOnly
+                ? "This suite is read-only, so cases can't be added here."
+                : null
+          }
           onTitleChange={setTitle}
           onSave={() => void create()}
         />

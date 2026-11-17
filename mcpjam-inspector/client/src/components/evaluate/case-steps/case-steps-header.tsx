@@ -13,13 +13,18 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "@/components/evals/constants";
 
-/** A New case's title row: its title and Save case. */
+/** A New case's title row: its title and Save case, off while saving. */
 export function NewCaseHeader({
   title,
+  saving,
+  lockedReason,
   onTitleChange,
   onSave,
 }: {
   title: string;
+  saving: boolean;
+  /** Why this suite takes no new cases here; null when it does. */
+  lockedReason: string | null;
   onTitleChange: (title: string) => void;
   onSave: () => void;
 }) {
@@ -31,13 +36,22 @@ export function NewCaseHeader({
           value={title}
           aria-label="Test case title"
           placeholder="Untitled test case"
+          readOnly={lockedReason !== null}
           onChange={(event) => onTitleChange(event.target.value)}
           className="min-w-0 flex-1 basis-[min(100%,12rem)] bg-transparent px-0 py-0 text-base font-semibold tracking-tight placeholder:text-muted-foreground focus:outline-none"
         />
-        <Button type="button" size="sm" className="h-8" onClick={onSave}>
-          <Save className="mr-2 h-3.5 w-3.5" aria-hidden />
-          Save case
-        </Button>
+        <DisabledReasonTooltip reason={lockedReason} variant="muted">
+          <Button
+            type="button"
+            size="sm"
+            className="h-8"
+            disabled={saving || lockedReason !== null}
+            onClick={onSave}
+          >
+            <Save className="mr-2 h-3.5 w-3.5" aria-hidden />
+            Save case
+          </Button>
+        </DisabledReasonTooltip>
       </div>
     </div>
   );
