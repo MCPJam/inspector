@@ -15,7 +15,9 @@ import {
 } from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
-import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
+import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain, clipboard } from "electron";
+import { release } from "node:os";
+import { buildHelpMenu } from "./desktop-help-menu.js";
 import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
@@ -972,6 +974,16 @@ function createAppMenu(): void {
           : []),
       ],
     },
+    buildHelpMenu({
+      snapshot: desktopDiagnostics.snapshot,
+      serverUrl: () => (serverPort > 0 ? getServerUrl() : null),
+      appVersion: () => app.getVersion(),
+      electronVersion: process.versions.electron,
+      os: `${process.platform}-${release()}`,
+      writeClipboard: (text) => clipboard.writeText(text),
+      confirm: (message) =>
+        void dialog.showMessageBox({ type: "info", message }),
+    }),
   ];
 
   const menu = Menu.buildFromTemplate(template);
