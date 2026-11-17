@@ -265,10 +265,12 @@ export function TraceCostSummary({
   iteration,
   unmatched = NO_UNMATCHED_CALLS,
 }: SummaryProps) {
+  const enabled = useTraceCostEnabled();
   // The iteration's stored total already counts every call it recorded,
   // unmatched ones included; without it, unmatched calls join the spans' sum
   // (a harness span carries its matched call's cost; see `joinModelCalls`).
   const cost = useMemo<RowCost | undefined>(() => {
+    if (!enabled) return undefined;
     const rollup =
       iteration?.rollup ??
       rollupLlmSpanCosts(
@@ -276,7 +278,7 @@ export function TraceCostSummary({
         unmatched.map((call) => call.cost),
       );
     return rollup && { kind: "rollup", rollup };
-  }, [spans, iteration?.rollup, unmatched]);
+  }, [enabled, spans, iteration?.rollup, unmatched]);
   const view = useCostView(cost);
   if (!view) return null;
   return (

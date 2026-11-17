@@ -714,6 +714,14 @@ export async function driveLocalEvalTurn(
   }
 
   await settle("ok");
+  // Settling can wait for the usage writeback; a cancel in that window still
+  // cancels the iteration rather than recording the turn.
+  if (localIsAborted()) {
+    logger.debug(
+      "[evals] local-BYOK iteration aborted while settling; skipping record"
+    );
+    return { kind: "cancelled" };
+  }
   const promptToolsCalled = params.extractToolCalls({
     steps: turn.direct?.steps,
     messages: promptResponseMessages,

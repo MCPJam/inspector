@@ -64,6 +64,7 @@ import {
 } from "./recorded-trace-toolbar";
 import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
 import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
+import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
 import {
   TraceCostChips,
   TraceCostHoverBlock,
@@ -1542,6 +1543,7 @@ function TimelineDetailPane({
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
 }) {
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
   if (!row) {
     return (
       <div
@@ -1667,7 +1669,7 @@ function TimelineDetailPane({
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
   const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
-  const rowCost = selectRowCost(row, recordedSpans);
+  const rowCost = costEnabled ? selectRowCost(row, recordedSpans) : undefined;
 
   return (
     <div
@@ -1958,6 +1960,17 @@ export function TraceTimeline({
   const costSpans = traceCost.spans;
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
+  // Spans with cost evidence, their own or a matched harness call's.
+  const costedSpanIds = useMemo(
+    () =>
+      new Set(
+        costEnabled
+          ? (costSpans ?? []).filter((span) => span.cost).map((span) => span.id)
+          : [],
+      ),
+    [costEnabled, costSpans],
+  );
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2150,9 +2163,12 @@ export function TraceTimeline({
         };
       }
 
-      // Skip overhead LLM spans (framework routing/dispatch, no actual generation)
+      // Skip overhead LLM spans (framework routing/dispatch, no actual
+      // generation). A call with cost evidence is billed, so it stays
+      // selectable while the totals count it.
       const isOverheadLlm =
         node.span.category === "llm" &&
+        !costedSpanIds.has(node.span.id) &&
         typeof node.span.totalTokens !== "number" &&
         typeof node.span.inputTokens !== "number" &&
         typeof node.span.outputTokens !== "number" &&
@@ -2282,6 +2298,7 @@ export function TraceTimeline({
     mode,
     transcriptMessages,
     projectedMessages,
+    costedSpanIds,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2386,9 +2403,9 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
-      cost: selectRowCost(hoveredRow, costSpans),
+      cost: costEnabled ? selectRowCost(hoveredRow, costSpans) : undefined,
     };
-  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
+  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount, costEnabled]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {

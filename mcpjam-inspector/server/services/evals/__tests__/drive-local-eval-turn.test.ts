@@ -298,4 +298,28 @@ describe("driveLocalEvalTurn through the unified turn", () => {
         .map((span) => [span.callId, span.cost]),
     ).toEqual([[call.callId, undefined]]);
   });
+
+  it("cancels instead of recording when the run is cancelled while the writeback settles", async () => {
+    streamTextMock.mockReturnValueOnce(streamResult());
+    const controller = new AbortController();
+    const onTurnSuccess = vi.fn();
+    const onModelCallSettled = vi.fn(async () => {
+      controller.abort();
+      return {};
+    });
+
+    const outcome = await driveLocalEvalTurn(
+      params({
+        abortSignal: controller.signal,
+        onModelCallSettled,
+        sinks: { onTurnSuccess } as never,
+      }),
+    );
+
+    expect(onModelCallSettled.mock.calls[0]![0]).toMatchObject({
+      outcome: "ok",
+    });
+    expect(outcome).toEqual({ kind: "cancelled" });
+    expect(onTurnSuccess).not.toHaveBeenCalled();
+  });
 });
