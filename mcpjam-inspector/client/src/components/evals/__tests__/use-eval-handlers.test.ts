@@ -252,7 +252,7 @@ describe("useEvalHandlers", () => {
       createdAt: 1,
       updatedAt: 1,
     };
-    mockMutations.deleteSuiteMutation.mockRejectedValue(new Error("boom"));
+    mockMutations.deleteSuiteMutation.mockRejectedValueOnce(new Error("boom"));
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { result } = renderHook(() =>
       useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),

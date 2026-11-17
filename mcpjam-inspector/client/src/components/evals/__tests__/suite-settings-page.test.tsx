@@ -28,7 +28,10 @@ vi.mock("@/components/chat-v2/chat-input/model/provider-logo", () => ({
  *   - and a read-only suite that offers a save it cannot perform.
  */
 
-const capability = vi.hoisted(() => ({ canUpgrade: false }));
+const capability = vi.hoisted(() => ({
+  canUpgrade: false,
+  permissions: {} as Record<string, boolean>,
+}));
 
 const mocks = vi.hoisted(() => ({
   applySuiteSettings: vi.fn(async () => ({ revisionNumber: 4 })),
@@ -64,7 +67,7 @@ vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
       capabilities: capability.canUpgrade
         ? {
             verdictPolicyV2: { canUpgrade: true, deploymentMode: "enforce" },
-            permissions: {},
+            permissions: capability.permissions,
             features: {},
             judge: {
               role: "advisory",
@@ -150,6 +153,7 @@ vi.mock("@mcpjam/design-system/popover", () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   capability.canUpgrade = false;
+  capability.permissions = {};
   flags.suiteSettingsTabs = false;
 });
 
@@ -395,10 +399,14 @@ describe("suite settings delete button", () => {
     await waitFor(() => expect(deleteButton()).toBeEnabled());
   });
 
-  async function leaveWithEdits(deletingSuiteId: string | null) {
+  async function leaveWithEdits(
+    overrides: { deletingSuiteId: string | null; evaluateSettingsDelete?: boolean },
+  ) {
+    // jsdom has no `window.confirm`; spying makes the guard's prompt visible.
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     const view = renderSettingsSheet({
       evaluateSettingsDelete: true,
-      deletingSuiteId,
+      ...overrides,
     });
     openSettingsRow(view.container, "name");
     fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
@@ -409,16 +417,64 @@ describe("suite settings delete button", () => {
       void view.router.navigate("/elsewhere");
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    return screen.queryByTestId("elsewhere") !== null;
+    const result = {
+      left: screen.queryByTestId("elsewhere") !== null,
+      prompted: confirm.mock.calls.length > 0,
+    };
+    confirm.mockRestore();
+    return result;
   }
 
   it("still guards unsaved edits when no delete is in flight", async () => {
-    expect(await leaveWithEdits(null)).toBe(false);
+    expect(await leaveWithEdits({ deletingSuiteId: null })).toEqual({
+      left: false,
+      prompted: true,
+    });
   });
 
   it("lets the post-delete navigation through unsaved edits", async () => {
-    // The dialog already told them the edits go with the suite.
-    expect(await leaveWithEdits("suite-1")).toBe(true);
+    expect(await leaveWithEdits({ deletingSuiteId: "suite-1" })).toEqual({
+      left: true,
+      prompted: false,
+    });
+  });
+
+  it("keeps the guard during a delete on mounts without the settings delete", async () => {
+    expect(
+      await leaveWithEdits({
+        deletingSuiteId: "suite-1",
+        evaluateSettingsDelete: false,
+      }),
+    ).toEqual({ left: false, prompted: true });
+  });
+
+  it("is disabled while another suite is being deleted", () => {
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-2",
+    });
+    expect(deleteButton()).toBeDisabled();
+  });
+
+  it("hides it when the backend withholds suite.delete", () => {
+    capability.canUpgrade = true;
+    capability.permissions = { "suite.delete": false };
+    renderSettingsSheet({ evaluateSettingsDelete: true });
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("won't start a save while this suite is being deleted", () => {
+    const { container } = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-1",
+    });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByRole("button", { name: "Save settings" })).toBeDisabled();
+    fireEvent.keyDown(window, { key: "s", metaKey: true });
+    expect(mocks.applySuiteSettings).not.toHaveBeenCalled();
   });
 
   it("shows on both tabs when the tabs flag is on", () => {

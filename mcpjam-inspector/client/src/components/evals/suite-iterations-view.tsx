@@ -625,9 +625,9 @@ export function SuiteIterationsView({
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
   /**
-   * Whether this caller's ROLE may delete the suite. Ownership is a separate
-   * question and is answered inside — `suite.delete` is a CI-locked action, so
-   * the affordance is withheld on a CI-owned suite whatever the role says.
+   * Whether this caller's ROLE may delete the suite. `suite.delete` is not a
+   * CI-locked action, so this is the whole answer for most surfaces; see the
+   * note above `canDeleteSuite` inside for why.
    */
   canDeleteSuite: boolean;
   /** Whether the run selection + batch delete surface is shown at all. */
@@ -1014,6 +1014,9 @@ export function SuiteIterationsView({
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
+  // A save that lands while this suite is being deleted writes to a suite that
+  // is about to be gone, so saving waits for the delete to settle.
+  const deletingThisSuite = deletingSuiteId === suite._id;
   const dirtySettingKeys = useMemo(() => new Set(dirtyKeys(draft)), [draft]);
   const rowIsDirty = useCallback(
     (key: EvalSuiteSettingKey) =>
@@ -1070,9 +1073,9 @@ export function SuiteIterationsView({
     onDiscard: () => dispatchDraft({ type: "discard" }),
   });
   useUnsavedChangesGuard(
-    // The delete dialog already said the edits go with the suite, so its
-    // navigation to the list must not ask again about a suite that is gone.
-    hasUnsavedSettings && deletingSuiteId !== suite._id,
+    // Evaluate's settings delete: the navigation to the list after it must
+    // not ask about edits to a suite that is gone. Other mounts keep the guard.
+    hasUnsavedSettings && !(evaluateSettingsDelete && deletingThisSuite),
     () => dispatchDraft({ type: "discard" }),
     undefined,
     isCommitting,
@@ -1100,7 +1103,8 @@ export function SuiteIterationsView({
   }, [liveSettingsKey]);
 
   const handleCommitSettings = useCallback(async () => {
-    if (!draftCanCommit || isCommitting || editingDisabled) return;
+    if (!draftCanCommit || isCommitting || editingDisabled || deletingThisSuite)
+      return;
     const runsEnvironments = Boolean(suite.environmentIds?.length);
     const imageBlock = environmentImageSaveBlock({
       runsEnvironments,
@@ -1165,6 +1169,7 @@ export function SuiteIterationsView({
     dirtySettingKeys,
     draftChanges,
     environmentCapabilities,
+    deletingThisSuite,
   ]);
 
   // Save the same validated draft from the button or keyboard shortcut.
@@ -2153,7 +2158,7 @@ export function SuiteIterationsView({
                     layout="inline"
                     changeCount={draftChanges.length}
                     conflictCount={draft.conflicts.length}
-                    canCommit={draftCanCommit}
+                    canCommit={draftCanCommit && !deletingThisSuite}
                     isCommitting={isCommitting}
                     onDiscard={() => dispatchDraft({ type: "discard" })}
                     onSave={() => void handleCommitSettings()}
@@ -2185,9 +2190,16 @@ export function SuiteIterationsView({
                     Save settings
                   </Button>
                 )}
-                {evaluateSettingsDelete && canDeleteSuite && !editingDisabled ? (
+                {evaluateSettingsDelete &&
+                canDeleteSuite &&
+                !editingDisabled &&
+                !(
+                  capabilitiesReady &&
+                  capabilities.permissions?.["suite.delete"] === false
+                ) ? (
                   <SuiteSettingsDeleteButton
-                    disabled={deletingSuiteId === suite._id || isCommitting}
+                    // Any delete in flight: `handleDelete` ignores a second one.
+                    disabled={deletingSuiteId !== null || isCommitting}
                     onDelete={() => onDelete(suite)}
                   />
                 ) : null}
