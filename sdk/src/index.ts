@@ -381,6 +381,16 @@ export {
   collectConnectedServerDoctorState,
   normalizeServerDoctorError,
 } from "./server-doctor.js";
+export {
+  EVENTS_LIST_MAX_PAGES,
+  readServerEventTypes,
+  readServerSkillCatalog,
+} from "./server-list-reads.js";
+export type {
+  ServerEventTypesRead,
+  ServerSkillsListSummary,
+  ServerSkillsRead,
+} from "./server-list-reads.js";
 export type {
   ServerDoctorError,
   ServerDoctorCheck,
