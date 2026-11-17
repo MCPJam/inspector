@@ -52,8 +52,11 @@ function postTest(body: Record<string, unknown>) {
   });
 }
 
+/** A Convex document-id-shaped organization id. */
+const ORG_ID = "js7abc0def1ghj2klm3nop4qrs5tuv6w";
+
 const REQUEST = {
-  organizationId: "org_1",
+  organizationId: ORG_ID,
   baseUrl: "https://litellm.acme.example",
   secret: "sk-test",
   apis: ["chatCompletions"],
@@ -86,7 +89,7 @@ describe("POST /api/web/org-gateway-test", () => {
     expect(getFunctionName(ref)).toBe(
       "organizationModelProviderTest:canTestProviderConnection",
     );
-    expect(args).toEqual({ organizationId: "org_1" });
+    expect(args).toEqual({ organizationId: ORG_ID });
     expect(gatewayFetch).toHaveBeenCalledWith(
       "https://litellm.acme.example/v1/models",
       expect.anything(),
@@ -120,13 +123,23 @@ describe("POST /api/web/org-gateway-test", () => {
     expect(reportMock).toHaveBeenCalledOnce();
   });
 
-  it("refuses an organization id Convex can't parse with 403 and no report", async () => {
+  it("answers a redacted backend failure with 502 and a report", async () => {
+    // What production Convex sends for any non-ConvexError, including an
+    // argument it rejected: no way to tell it from an outage.
     queryMock.mockRejectedValue(
       new Error(
-        '[CONVEX Q(organizationModelProviderTest:canTestProviderConnection)] Server Error\nArgumentValidationError: Value does not match validator.\nPath: .organizationId\nValue: "not-an-org"\nValidator: v.id("organizations")',
+        "[CONVEX Q(organizationModelProviderTest:canTestProviderConnection)] [Request ID: 7d1b] Server Error",
       ),
     );
 
+    const res = await postTest(REQUEST);
+
+    expect(res.status).toBe(502);
+    expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a malformed organization id with 403 before asking the backend", async () => {
     const res = await postTest({ ...REQUEST, organizationId: "not-an-org" });
 
     expect(res.status).toBe(403);
@@ -135,6 +148,7 @@ describe("POST /api/web/org-gateway-test", () => {
       message:
         "Only organization admins and owners can test a custom provider. Ask an admin to add it.",
     });
+    expect(queryMock).not.toHaveBeenCalled();
     expect(gatewayFetch).not.toHaveBeenCalled();
     expect(reportMock).not.toHaveBeenCalled();
   });
