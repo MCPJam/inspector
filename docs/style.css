@@ -552,8 +552,7 @@ tbody tr:hover td {
 
 /* Mirror design-system Tabs without replacing Mintlify's tab behavior. */
 .mcp-client-setup[data-component-part="tabs-list"] {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  display: flex;
   min-width: 0;
   width: 100%;
   gap: 0.125rem;
@@ -566,6 +565,7 @@ tbody tr:hover td {
 
 .mcp-client-setup[data-component-part="tabs-list"] > [role="tab"] {
   display: flex;
+  flex: 1 0 auto;
   align-items: center;
   justify-content: center;
   min-width: 0;
@@ -608,6 +608,7 @@ tbody tr:hover td {
 
 @media (max-width: 640px) {
   .mcp-client-setup[data-component-part="tabs-list"] {
+    display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
