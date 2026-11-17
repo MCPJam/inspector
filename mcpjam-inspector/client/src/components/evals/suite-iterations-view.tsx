@@ -1071,7 +1071,9 @@ export function SuiteIterationsView({
     onDiscard: () => dispatchDraft({ type: "discard" }),
   });
   useUnsavedChangesGuard(
-    hasUnsavedSettings,
+    // The delete dialog already said the edits go with the suite, so its
+    // navigation to the list must not ask again about a suite that is gone.
+    hasUnsavedSettings && deletingSuiteId !== suite._id,
     () => dispatchDraft({ type: "discard" }),
     undefined,
     isCommitting,

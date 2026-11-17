@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
   ciOwnedSuite,
   openSettingsRow,
@@ -392,6 +392,32 @@ describe("suite settings delete button", () => {
 
     finishSave({ revisionNumber: 4 });
     await waitFor(() => expect(deleteButton()).toBeEnabled());
+  });
+
+  async function leaveWithEdits(deletingSuiteId: string | null) {
+    const view = renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId,
+    });
+    openSettingsRow(view.container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    // Not awaited: a blocked navigation never settles.
+    act(() => {
+      void view.router.navigate("/elsewhere");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return screen.queryByTestId("elsewhere") !== null;
+  }
+
+  it("still guards unsaved edits when no delete is in flight", async () => {
+    expect(await leaveWithEdits(null)).toBe(false);
+  });
+
+  it("lets the post-delete navigation through unsaved edits", async () => {
+    // The dialog already told them the edits go with the suite.
+    expect(await leaveWithEdits("suite-1")).toBe(true);
   });
 
   it("shows on both tabs when the tabs flag is on", () => {
