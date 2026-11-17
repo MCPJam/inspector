@@ -86,6 +86,11 @@ export function sessionForwardingContext(
   | undefined {
   const handle = verifyHarnessSessionHandle(sealed.token, serverId);
   if (!handle) return undefined;
+  // A profile rides only with bridge delivery. `sessionPolicyDigest` ignores
+  // the envelope version, so a version 4 envelope carrying a profile would
+  // match a bridged turn's digest and be forwarded natively, past the
+  // bridge's visibility filter, result projection and initialize pins.
+  if (sealed.profile && sealed.delivery !== "bridge") return undefined;
   return {
     owner: {
       kind: "chat",

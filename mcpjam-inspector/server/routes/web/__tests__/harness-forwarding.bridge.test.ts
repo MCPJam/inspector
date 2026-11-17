@@ -223,6 +223,22 @@ describe("the profiled bridge on the native forwarding route", () => {
     expect(state.operations[0]).not.toHaveProperty("nativeToolCallId");
   });
 
+  it("refuses a session envelope that carries a profile without bridge delivery", async () => {
+    // The policy digest ignores the envelope version, so a version 4 envelope
+    // with a profile matches a bridged turn's digest; it must not forward
+    // natively past the bridge's filtering.
+    state.policyDigest = sessionPolicyDigest("srv-a", policy, profile);
+    const profiledNative = sealHarnessSessionEnvelope({
+      handle: sessionHandle(),
+      serverId: "srv-a",
+      policy,
+      profile,
+    });
+    expect((await post(profiledNative, call({}))).status).toBe(401);
+    expect(state.bridged).toHaveLength(0);
+    expect(state.upstream).toHaveLength(0);
+  });
+
   it("still forwards the runtime's own bytes for the lane's pass-through envelope", async () => {
     state.policyDigest = sessionPolicyDigest("srv-a", policy);
     const passThrough = sealHarnessSessionEnvelope({
