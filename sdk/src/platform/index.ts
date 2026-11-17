@@ -168,6 +168,7 @@ export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
+export * from "./eval-run-insights-operations.js";
 
 export {
   computeRunTargets,
@@ -286,6 +287,8 @@ export type {
   PlatformScoreContractDiff,
   PlatformScoreContractScorer,
   PlatformScoreContractSide,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,

@@ -9975,7 +9975,7 @@
         "operationId": "requestEvalRunInsights",
         "tags": ["Evals"],
         "summary": "Request insights for an eval run",
-        "description": "**No credits are consumed**: the model cost is on MCPJam. Runs a model over the finished run and draws on the same shared `insightsPerDay` request ledger as swarm and user-testing insights.\n\n`202`: scheduled, not done. Poll the run detail's `insights` envelope rather than re-requesting: the envelope's `status` distinguishes `pending` from `not_requested`, which a second POST would not.",
+        "description": "Starts the findings analysis, the same analysis the app's run page runs: a model explains the run's findings with cited evidence. **No credits are consumed**: the model cost is on MCPJam. It draws on the same shared `insightsPerDay` request ledger as swarm, study and user-testing insights.\n\n`202`: scheduled, not done. Poll the run detail's `insights` envelope rather than re-requesting: the envelope's `status` distinguishes `pending` from `not_requested`, which a second POST would not. Once `completed`, `insights.findings` lists the findings.\n\n`409` while an analysis is running, when one already finished and `force` is absent, and when the run's findings are not built yet: build them with `POST /projects/{projectId}/eval-runs/{runId}/findings/build` first.",
         "requestBody": {
           "required": false,
           "content": {
@@ -10009,8 +10009,109 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "cancelEvalRunInsights",
+        "tags": ["Evals"],
+        "summary": "Cancel a pending eval run analysis",
+        "description": "Stops an analysis that is still `pending`, the recovery path for a run stuck there: a running analysis cannot be re-requested, even with `force`. Afterwards the run detail's `insights` reads `failed` with `reasonCode: cancelled` and `retryable: false`. A run with no analysis in progress answers 409: there is nothing to cancel.",
+        "responses": {
+          "200": {
+            "description": "The analysis was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunInsightsCanceled"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-runs/{runId}/findings/build": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/evalVocabularyHeader"
+        },
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "post": {
+        "operationId": "buildEvalRunFindings",
+        "tags": ["Evals"],
+        "summary": "Build findings for an eval run",
+        "description": "Builds (or with `force`, rebuilds) a settled run's findings from its recorded evidence: the findings an analysis explains. Deterministic, with no model call, no credits and no quota.\n\n`202`: scheduled, not done. Poll the run detail's `insights.unifiedFindings.job` until its `status` is `completed`. On a run that has never been analyzed, a finished build starts the analysis automatically; otherwise request it with `POST /projects/{projectId}/eval-runs/{runId}/insights`.\n\n`409` while a build is running, when findings exist and `force` is absent, and while the run is still running or grading.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunFindingsBuildRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunFindingsBuildRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -27764,6 +27865,48 @@
         }
       },
       "EvalRunInsightsRequested": {
+        "type": "object",
+        "required": ["runId", "projectId", "status"],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending"]
+          }
+        }
+      },
+      "EvalRunInsightsCanceled": {
+        "type": "object",
+        "required": ["runId", "projectId", "canceled"],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "canceled": {
+            "type": "boolean",
+            "enum": [true]
+          }
+        }
+      },
+      "EvalRunFindingsBuildRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Rebuild over findings that already exist. Must be a real boolean."
+          }
+        }
+      },
+      "EvalRunFindingsBuildRequested": {
         "type": "object",
         "required": ["runId", "projectId", "status"],
         "properties": {

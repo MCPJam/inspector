@@ -5480,8 +5480,22 @@ export interface PlatformEvalCheckRepoConnected {
   outagePolicy: "fail_open" | "fail_closed";
 }
 
-/** Receipt for an eval-run insights (serverQuality) request. 202. */
+/** Receipt for an eval run analysis request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** Receipt for cancelling an eval run's analysis. */
+export interface PlatformEvalRunInsightsCanceled {
+  runId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/** Receipt for a findings build. 202: poll `insights.unifiedFindings.job`. */
+export interface PlatformEvalRunFindingsBuildRequested {
   runId: string;
   projectId: string;
   status: "pending";

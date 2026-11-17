@@ -74,6 +74,7 @@ vi.mock("../use-goal-completion", () => ({
 
 import { useRunInsights } from "../use-run-insights";
 import { useRunImportEligibility } from "../use-run-import-eligibility";
+import { useServerQuality } from "../use-server-quality";
 import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
 vi.mock("convex/react", () => ({
@@ -869,4 +870,49 @@ describe("RunDetailView", () => {
     });
   });
 
+  /**
+   * A findings analysis completes the run's analysis without writing the
+   * legacy per-tool result the triage card reads. Showing the card there
+   * left "Waiting for analysis…" on screen forever.
+   */
+  describe("server quality triage card", () => {
+    function renderWithQuality(
+      run: EvalSuiteRun,
+      result: Record<string, unknown> | null,
+    ) {
+      vi.mocked(useServerQuality).mockReturnValue({
+        result,
+        pending: false,
+        requested: false,
+        failedGeneration: false,
+        error: null,
+        requestServerQuality: vi.fn(),
+        unavailable: false,
+      } as unknown as ReturnType<typeof useServerQuality>);
+      return render(
+        <RunDetailView
+          selectedRunDetails={run}
+          caseGroupsForSelectedRun={[makeIteration()]}
+          source="ui"
+          runDetailSortBy="test"
+          onSortChange={() => {}}
+          selectedIterationId={null}
+          onSelectIteration={() => {}}
+          omitIterationList
+        />,
+      );
+    }
+
+    it("is hidden when a findings analysis completed the run", () => {
+      renderWithQuality(makeRun({ serverQualityStatus: "completed" }), null);
+      expect(screen.queryByText("Waiting for analysis…")).toBeNull();
+    });
+
+    it("still shows a run whose analysis has not been requested yet", () => {
+      renderWithQuality(makeRun(), null);
+      expect(screen.getAllByText("Waiting for analysis…").length).toBeGreaterThan(
+        0,
+      );
+    });
+  });
 });

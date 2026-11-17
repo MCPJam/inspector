@@ -100,11 +100,13 @@ import {
 } from "./show-servers.js";
 import {
   PROJECT_SELECTOR_DESCRIPTION,
+  evalRunScopedInput,
   resolveLiveServer,
   resolveProjectOrThrow,
   serverScopedInput,
   toSelectedProjectInfo,
   toServerInfo,
+  type EvalRunScopedInput,
   type ResolvedServerInfo,
   type ServerScopedInput,
 } from "./operation-support.js";
@@ -168,6 +170,11 @@ import {
   importDirectorySubmissionTestCasesOperation,
   setDirectorySubmissionEvalsOperation,
 } from "./directory-submission-eval-operations.js";
+import {
+  buildEvalRunFindingsOperation,
+  cancelEvalRunInsightsOperation,
+  requestEvalRunInsightsOperation,
+} from "./eval-run-insights-operations.js";
 import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -2495,6 +2502,7 @@ export * from "./directory-reviewer-attempt-operations.js";
 export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
+export * from "./eval-run-insights-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -2529,13 +2537,6 @@ const ENVIRONMENT_SELECTOR_DESCRIPTION = "Project environment name or ID.";
 const SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION =
   "Project environment name or ID. Must be one the suite has attached (set them with set_eval_suite_environments). Omit it when the suite has exactly one attached environment — that one is used; a suite with several requires naming one. Mutually exclusive with `servers`: an environment supplies its own closed server set.";
 
-// Unlike the listing operations, the run-polling reads do NOT default the
-// project: a run is an existing resource in one specific project, and
-// guessing "most recently updated" makes a run in any other project read as
-// NOT_FOUND. run_eval_suite and list_eval_suite_runs return the resolved
-// project precisely so callers can address the polls exactly.
-const RUN_PROJECT_DESCRIPTION =
-  "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
 
 // ── client / host, one selector ─────────────────────────────────────────────
 //
@@ -7035,18 +7036,7 @@ export const importEvalCasesOperation: PlatformOperation<
   },
 };
 
-const evalRunScopedInput = z.object({
-  project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
-  runId: z
-    .string()
-    .trim()
-    .min(1)
-    .describe(
-      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
-    ),
-});
-
-export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
+export type { EvalRunScopedInput } from "./operation-support.js";
 
 /**
  * The diagnostics page size this operation asks for.
@@ -7100,7 +7090,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
+    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence: `insights.status` says whether the run's analysis finished, and `insights.findings` lists its findings (MCP omits the identical `currentFindings` and sets `currentFindingsSameAsFindings`). To start, cancel or rebuild an analysis, use request_eval_run_insights, cancel_eval_run_insights and build_eval_run_findings. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -16225,7 +16215,7 @@ export const requestSwarmRunInsightsOperation: PlatformOperation<
   name: "request_swarm_run_insights",
   title: "Request MCPJam swarm run insights",
   description:
-    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
+    "Ask a model to analyze a whole swarm run. Returns immediately with status pending; the analysis continues asynchronously. Included with MCPJam; no customer credits consumed; subject to usage limits: it COUNTS against the organization's daily insight quota, which is SHARED with study, user-testing and eval run insights, so a request here takes one from there. Run scorecards (get_goal_run_scorecard) cost no quota.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -16344,7 +16334,7 @@ export const requestWaveInsightsOperation: PlatformOperation<
   name: "request_wave_insights",
   title: "Request MCPJam wave insights",
   description:
-    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with user-testing insights.",
+    "DEPRECATED — use request_swarm_run_insights, which is this operation under the name the product uses. Asks a model to analyze a whole wave; returns immediately with status pending. Included with MCPJam; no customer credits consumed; it COUNTS against the organization's daily insight quota, which is SHARED with study, user-testing and eval run insights.",
   readOnly: false,
   risk: "none",
   permalink: noPermalink("mutation-only"),
@@ -19465,6 +19455,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,

@@ -131,6 +131,7 @@ import type {
   RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
+import { registerEvalInsightsCommands } from "./eval-insights.js";
 import {
   buildSuiteFileFromPlatform,
   defaultSuiteFilePath,
@@ -6640,4 +6641,6 @@ export function registerEvalCommands(program: Command): void {
         await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
+
+  registerEvalInsightsCommands(evals);
 }

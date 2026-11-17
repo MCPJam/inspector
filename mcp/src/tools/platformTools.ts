@@ -187,6 +187,9 @@ import {
   getSwarmRunInsightsOperation,
   requestSwarmRunInsightsOperation,
   cancelSwarmRunInsightsOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
+  buildEvalRunFindingsOperation,
   publishStudyOperation,
   unpublishStudyOperation,
   listStudySessionsOperation,
@@ -474,6 +477,11 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
+  // The run page's Analyze button as three steps: build findings, request the
+  // analysis, cancel it. Results are read from get_eval_run's `insights`.
+  buildEvalRunFindingsOperation,
+  requestEvalRunInsightsOperation,
+  cancelEvalRunInsightsOperation,
   // The description-rewrite experiment, beside the judge request it most
   // resembles: propose and start are spends with a stated cap, so they carry
   // the same risk metadata the judge request does, and the read closes the
@@ -1486,7 +1494,40 @@ export function compactJourneyFindings(value: SwarmJourneyFindings) {
   };
 }
 
-function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+/**
+ * An eval run's finished findings analysis lists its findings twice: in
+ * `findings`, which every client reads, and in `currentFindings`. Sending both
+ * spends the model's context on a copy, so the copy is dropped and the drop is
+ * stated, so a reader does not take the missing field for missing findings.
+ */
+function dropRepeatedCurrentFindings(envelope: EnvelopeLike): EnvelopeLike {
+  const current = (envelope as { currentFindings?: unknown }).currentFindings;
+  if (
+    !Array.isArray(current) ||
+    current.length === 0 ||
+    current.length !== envelope.findings.length
+  ) {
+    return envelope;
+  }
+  const idOf = (row: unknown) =>
+    typeof row === "object" && row !== null
+      ? (row as { id?: unknown }).id
+      : undefined;
+  const repeated = current.every(
+    (row, i) =>
+      idOf(row) !== undefined && idOf(row) === idOf(envelope.findings[i]),
+  );
+  if (!repeated) return envelope;
+  const next: Record<string, unknown> = {
+    ...envelope,
+    currentFindingsSameAsFindings: true,
+  };
+  delete next.currentFindings;
+  return next as EnvelopeLike;
+}
+
+function compactEnvelope(source: EnvelopeLike): EnvelopeLike {
+  const envelope = dropRepeatedCurrentFindings(source);
   const journey = envelope.journeyFindings
     ? compactJourneyFindings(envelope.journeyFindings)
     : null;

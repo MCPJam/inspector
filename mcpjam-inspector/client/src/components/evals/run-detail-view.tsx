@@ -726,8 +726,16 @@ export function RunDetailView({
     // where the message is the only thing there is to say.
     runChain.serviceNote !== null;
 
+  // A findings analysis completes the run's analysis without writing the
+  // legacy per-tool result this card reads, so the card would wait forever.
+  // The actionable-findings panel above shows that analysis instead.
+  const findingsAnalysisOwnsRun =
+    selectedRunDetails.serverQualityStatus === "completed" &&
+    !serverQualityResult;
   const serverQualityTriage =
-    selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
+    selectedRunDetails.status === "completed" &&
+    !serverQualityUnavailable &&
+    !findingsAnalysisOwnsRun ? (
       <AiTriageCard
         run={selectedRunDetails}
         iterations={caseGroupsForSelectedRun}

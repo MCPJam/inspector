@@ -97,6 +97,30 @@ async function startFixture(): Promise<{
         );
         return;
       }
+      if (
+        (rest === "insights" || rest === "findings/build") &&
+        req.method === "POST"
+      ) {
+        res.statusCode = 202;
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            projectId: evalRun[1],
+            status: "pending",
+          })
+        );
+        return;
+      }
+      if (rest === "insights" && req.method === "DELETE") {
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            projectId: evalRun[1],
+            canceled: true,
+          })
+        );
+        return;
+      }
       if (rest === "compare") {
         res.end(
           JSON.stringify({
@@ -227,6 +251,21 @@ const INSPECTION_COMMANDS: ReadonlyArray<{
   { name: "status", args: ["status", "--run", "run-1"], pathIncludes: "/eval-runs/run-1" },
   { name: "cancel", args: ["cancel", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/cancel" },
   { name: "judge", args: ["judge", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/judge" },
+  {
+    name: "request-insights",
+    args: ["request-insights", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/insights",
+  },
+  {
+    name: "cancel-insights",
+    args: ["cancel-insights", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/insights",
+  },
+  {
+    name: "build-findings",
+    args: ["build-findings", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/findings/build",
+  },
   {
     name: "iterations",
     args: ["iterations", "--run", "run-1"],
