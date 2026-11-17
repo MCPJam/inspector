@@ -3809,7 +3809,7 @@ export function PlaygroundMain({
   }, [chatSessionId, convexProjectId, isCurrentHistoryTarget]);
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({ retries = 0, markRead = false, isCurrent = () => true } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
@@ -3820,6 +3820,7 @@ export function PlaygroundMain({
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
+            !isCurrent() ||
             !isCurrentHistoryTarget({ chatSessionId, projectId: convexProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           )
@@ -3898,11 +3899,16 @@ export function PlaygroundMain({
       return true;
     }
 
-    const target = { chatSessionId, projectId: convexProjectId };
+    // The sender checked its thread just before this call, so a check taken
+    // here covers the read: a thread picked meanwhile is not this send's.
+    const isCurrent = beginThreadSend();
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
+      detail = await withPresendSyncTimeout(
+        refreshCurrentHistorySession({ isCurrent }),
+      );
     } catch (error) {
+      if (!isCurrent()) return false;
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
         error,
@@ -3913,7 +3919,7 @@ export function PlaygroundMain({
     if (detail) return true;
     // Another thread opened while the read was in flight: this send belonged
     // to the one that closed, so drop it rather than detach the open thread.
-    if (!isCurrentHistoryTarget(target)) return false;
+    if (!isCurrent()) return false;
 
     detachHistorySession(
       "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
@@ -3921,10 +3927,9 @@ export function PlaygroundMain({
     return false;
   }, [
     activeHistorySessionId,
+    beginThreadSend,
     chatSessionId,
-    convexProjectId,
     detachHistorySession,
-    isCurrentHistoryTarget,
     pendingDirectVisibility,
     reactiveHistorySession,
     refreshCurrentHistorySession,

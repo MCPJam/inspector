@@ -11,6 +11,8 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { toast } from "sonner";
+import { WebApiError } from "@/lib/apis/web/base";
 import { track } from "@/lib/analytics";
 import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
@@ -2742,10 +2744,8 @@ describe("PlaygroundMain", () => {
       };
       return { ensureServersReady, release: () => release() };
     };
-    // Thread A open, with a live state current enough that the send skips
-    // the pre-send read: since #7281 the common path.
-    const renderWithThreadA = async (props: Record<string, unknown>) => {
-      mockConvexAuthState.isAuthenticated = true;
+    // Thread A open with no live state, so a send takes the pre-send read.
+    const openThreadA = async (props: Record<string, unknown> = {}) => {
       mockUseChatSession.messages = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
@@ -2763,6 +2763,13 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         screen.getByTestId("conversation-target-notice-acknowledge"),
       );
+      return view;
+    };
+    // Thread A open, with a live state current enough that the send skips
+    // the pre-send read: since #7281 the common path.
+    const renderWithThreadA = async (props: Record<string, unknown>) => {
+      mockConvexAuthState.isAuthenticated = true;
+      const view = await openThreadA(props);
       mockUseChatSession.resumedVersion = 4 as never;
       mockReactiveHistoryState.session = { ...sessionA } as never;
       mockReactiveHistoryState.widgetSnapshots = [] as never;
@@ -2837,24 +2844,7 @@ describe("PlaygroundMain", () => {
     });
 
     it("drops the send when the old thread's read returns after another thread is picked", async () => {
-      // The live state is not current, so the send takes the pre-send read.
-      mockUseChatSession.messages = [
-        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
-        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
-      ] as never;
-      mockReadHistory.mockResolvedValueOnce({
-        ok: true,
-        session: sessionA,
-        widgetSnapshots: [],
-      });
-      render(<PlaygroundMain {...defaultProps} />);
-      await waitFor(() => expect(bridge()).not.toBe(null));
-      await act(async () => {
-        await Promise.resolve(bridge()?.onSelectThread(sessionA));
-      });
-      fireEvent.click(
-        screen.getByTestId("conversation-target-notice-acknowledge"),
-      );
+      await openThreadA();
       let resolveA!: (value: unknown) => void;
       mockReadHistory.mockImplementation(
         (params: { chatSessionId?: string }) =>
@@ -2881,7 +2871,47 @@ describe("PlaygroundMain", () => {
       await settle();
 
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      // A's read wrote nothing over the picked thread.
+      expect(bridge()?.activeSessionId).toBe("history-2");
     });
+
+    it.each([
+      ["finds it gone", 403],
+      ["fails", 500],
+    ])(
+      "leaves the picked thread alone when the old thread's read %s after the pick",
+      async (_label, status) => {
+        const toastError = vi.spyOn(toast, "error");
+        await openThreadA();
+        let rejectA!: (error: unknown) => void;
+        mockReadHistory.mockImplementation(
+          (params: { chatSessionId?: string }) =>
+            params?.chatSessionId === "chat-session-2"
+              ? new Promise(() => {})
+              : new Promise((_resolve, reject) => {
+                  rejectA = reject;
+                }),
+        );
+        await typeAndSend("draft for A");
+
+        await act(async () => {
+          void bridge()?.onSelectThread(sessionB);
+        });
+        await act(async () => {
+          fireEvent.click(screen.getByText("Discard and continue"));
+        });
+        await act(async () => {
+          rejectA(new WebApiError(status, null, "read failed"));
+        });
+        await settle();
+
+        // No "This chat is no longer available" detach, no sync error.
+        expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+        expect(toastError).not.toHaveBeenCalled();
+        expect(bridge()?.activeSessionId).toBe("history-2");
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      },
+    );
 
     it.each([
       ["a resumed thread", true],
@@ -2951,29 +2981,8 @@ describe("PlaygroundMain", () => {
 
     it("stops at the wait it was in: the old thread's state read is not taken after a switch", async () => {
       // Live state not current, so a send that kept going would read A's state.
-      mockUseChatSession.messages = [
-        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
-        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
-      ] as never;
-      mockReadHistory.mockResolvedValueOnce({
-        ok: true,
-        session: sessionA,
-        widgetSnapshots: [],
-      });
       const readiness = holdServerReadiness();
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          ensureServersReady={readiness.ensureServersReady}
-        />,
-      );
-      await waitFor(() => expect(bridge()).not.toBe(null));
-      await act(async () => {
-        await Promise.resolve(bridge()?.onSelectThread(sessionA));
-      });
-      fireEvent.click(
-        screen.getByTestId("conversation-target-notice-acknowledge"),
-      );
+      await openThreadA({ ensureServersReady: readiness.ensureServersReady });
       mockReadHistory.mockImplementation(() => new Promise(() => {}));
       mockGetChatHistoryState.mockClear();
       await typeAndSend("draft for A");
