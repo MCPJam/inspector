@@ -9,6 +9,12 @@ export * from "./context.js";
 export * from "./snapshot.js";
 export { SERVER_FEATURE_CATALOG } from "./catalog/index.js";
 export {
+  CORE_REVISIONS,
+  compareCoreRevisions,
+  isCoreRevision,
+  type CoreRevision,
+} from "./catalog/revisions.js";
+export {
   SPEC_CHECKED_AT,
   SPEC_PINS,
   coreSpec,
