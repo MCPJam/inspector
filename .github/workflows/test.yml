@@ -98,14 +98,15 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.NODE_VERSION }}
-      # The head of MCPJam/mcpjam-backend#2700, whose step schema carries the
-      # evaluator tag and schema "declared". Bump it to a backend main commit
-      # once that PR merges.
+      # The head of MCPJam/mcpjam-backend#2700: its step schema carries the
+      # evaluator tag and schema "declared", and its predicate results accept
+      # status "not_applicable". Bump it to a backend main commit that
+      # includes b48e9b00 once that PR merges.
       - name: Checkout pinned backend contract
         uses: actions/checkout@v7
         with:
           repository: MCPJam/mcpjam-backend
-          ref: 4c8d8ab3cd39eaab49d3d734b033a9381c051c91
+          ref: b48e9b00d400ff680b1a4bc6d68304013cc725d4
           token: ${{ secrets.BACKEND_PREVIEW_DISPATCH_TOKEN }}
           path: .authoring-backend
           persist-credentials: false

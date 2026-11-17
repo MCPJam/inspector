@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { evaluatePredicates } from "../src/predicates/evaluate.js";
 import {
+  allGatingScorersPassed,
+  buildEvaluationConfigSnapshot,
+  deriveStageResults,
+  predicateScoreDefinition,
+  resolveScoreDefinition,
+  scoreResultFromPredicateResult,
+} from "../src/contract/index.js";
+import {
   predicateSchema,
   type IterationTranscript,
   type Predicate,
@@ -148,5 +156,45 @@ describe("toolResultMatchesSchema with the declared schema", () => {
       transcript([result("get_order", { structuredContent: {} })], null)
     );
     expect(verdict.status).toBe("error");
+  });
+});
+
+describe("a not-applicable declared-schema row downstream", () => {
+  const notApplicable = run(
+    transcript([result("search", { structuredContent: {} })], [search])
+  );
+
+  test("projects as a not-applicable score row that neither passes nor gates", () => {
+    const definition = resolveScoreDefinition(
+      predicateScoreDefinition(declared, { ordinal: 0 })
+    );
+    const score = scoreResultFromPredicateResult(definition, notApplicable);
+    expect(score.status).toBe("not_applicable");
+    expect(score).not.toHaveProperty("value");
+    const config = buildEvaluationConfigSnapshot([definition]);
+    expect(allGatingScorersPassed([score], config).passed).toBe(true);
+  });
+
+  test("is dropped from stage evidence instead of passing the stage", () => {
+    const { stageResults } = deriveStageResults({
+      authored: { mode: "model", toolExpectation: "open", assertionCount: 1 },
+      evidence: {
+        predicateResults: [notApplicable],
+        traceLacksSpanChannel: true,
+      },
+      iteration: { status: "completed" },
+    });
+    const stateOf = (rows: typeof stageResults) =>
+      rows.find((row) => row.stage === "response")?.state;
+    const passing = deriveStageResults({
+      authored: { mode: "model", toolExpectation: "open", assertionCount: 1 },
+      evidence: {
+        predicateResults: [{ ...notApplicable, status: undefined }],
+        traceLacksSpanChannel: true,
+      },
+      iteration: { status: "completed" },
+    }).stageResults;
+    expect(stateOf(passing)).toBe("passed");
+    expect(stateOf(stageResults)).not.toBe("passed");
   });
 });

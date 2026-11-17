@@ -219,7 +219,7 @@ function indexScores(
 }
 
 /** A stored predicate verdict; an error or not-applicable row is neither a pass nor a fail. */
-function resultFromPredicate(predicate: {
+export function resultFromPredicate(predicate: {
   passed: boolean;
   status?: "scored" | "error" | "not_applicable";
   reason: string;
