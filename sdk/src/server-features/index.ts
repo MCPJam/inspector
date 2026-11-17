@@ -22,3 +22,29 @@ export {
   featuresForCheck,
   type CheckFeatureTarget,
 } from "./check-map/index.js";
+export { toDeclaredSurface, type DeclaredSurfaceSource } from "./declared-surface.js";
+export {
+  FEATURE_PROTOCOL_VERSIONS,
+  featureApplicability,
+  featureMarkers,
+  isDeprecatedAt,
+  isKnownFeatureVersion,
+} from "./applicability.js";
+export { evaluateServerFeatures } from "./evaluate.js";
+export {
+  checkEvidenceFromDigest,
+  isConformanceCheckRef,
+  isConformanceSuiteKey,
+  type ConformanceDigestStatus,
+  type ConformanceDigestSuite,
+} from "./check-evidence.js";
+export {
+  listEvidenceContexts,
+  parseCaptureContext,
+  selectServerEvidence,
+  type CaptureAttempt,
+  type EvidenceContextOption,
+  type ProbeFailure,
+  type SelectedServerEvidence,
+  type StoredServerEvidence,
+} from "./evidence-input.js";
