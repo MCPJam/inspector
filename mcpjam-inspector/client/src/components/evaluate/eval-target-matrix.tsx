@@ -15,7 +15,10 @@ import { useAvailableModels } from "@/hooks/use-available-models";
 import { useModelSelectionsSupported } from "@/hooks/use-project-environment-capability";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 import { useHostHarnessTargets } from "@/hooks/use-host-harness-targets";
-import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import {
+  harnessTargetOfClient,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
 import type { ModelDefinition } from "@/shared/types";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
 import { ChevronDown, Plus, Trash2, X } from "lucide-react";
@@ -53,7 +56,7 @@ import { clientDisplayName } from "@/lib/client-display-name";
 
 type TargetMatrixHost = Pick<
   HostListItem,
-  "hostId" | "name" | "displayName" | "modelId" | "hostStyle"
+  "hostId" | "name" | "displayName" | "modelId" | "hostStyle" | "agentLoop"
 > & {
   /**
    * The harness this client runs (`null` = emulated), with its runtime version
@@ -184,10 +187,15 @@ export function EvalTargetMatrix({
     hostId: string,
   ): HarnessModelTarget | null | undefined => {
     const host = hosts.find((candidate) => candidate.hostId === hostId);
-    return host?.harness !== undefined
-      ? typeof host.harness === "string"
-        ? { harnessId: host.harness }
-        : host.harness
+    const harness = host?.harness;
+    if (harness && typeof harness === "object") return harness;
+    // The list carries both runtime fields; a paired client (Claude, ChatGPT)
+    // has `harness: null` and its runtime in `agentLoop`.
+    return host && (harness !== undefined || host.agentLoop !== undefined)
+      ? harnessTargetOfClient({
+          harness: harness ?? null,
+          agentLoop: host.agentLoop ?? null,
+        })
       : readHarnessByHost[hostId];
   };
   const rows = buildEvalTargetMatrixRows({

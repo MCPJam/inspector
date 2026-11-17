@@ -1,3 +1,4 @@
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import { useMemo } from "react";
 import { useConvexAuth, useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
@@ -42,7 +43,7 @@ function readinessOf(answer: unknown): OrgHarnessKeyReadiness | undefined {
 export function useOrgHarnessKeys(
   projectId: string,
   orgConfig: { readonly aiKeyPolicy?: unknown } | null | undefined,
-  hosts: readonly { harness?: string | null }[],
+  hosts: readonly { harness?: string | null; agentLoop?: string | null }[],
 ): OrgHarnessKeys {
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -55,11 +56,10 @@ export function useOrgHarnessKeys(
   const key = asks
     ? [
         ...new Set(
-          hosts.flatMap((host) =>
-            host.harness && orgKeyHarnessName(host.harness)
-              ? [host.harness]
-              : [],
-          ),
+          hosts.flatMap((host) => {
+            const harnessId = effectiveHarnessId(host);
+            return harnessId && orgKeyHarnessName(harnessId) ? [harnessId] : [];
+          }),
         ),
       ]
         .sort()

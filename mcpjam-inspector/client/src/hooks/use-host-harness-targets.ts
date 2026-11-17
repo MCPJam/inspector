@@ -14,7 +14,10 @@ import { useConvex, useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { HostDetail } from "@/hooks/useClients";
-import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import {
+  harnessTargetOfClient,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
 
 const getHostQuery = makeFunctionReference<
   "query",
@@ -47,8 +50,7 @@ export function useHostHarnessTargets(
     for (const hostId of key ? key.split(",") : []) {
       const result = results[hostId] as HostDetail | null | Error | undefined;
       if (!result || result instanceof Error) continue;
-      const harness = result.config?.harness;
-      byHost[hostId] = harness ? { harnessId: harness } : null;
+      byHost[hostId] = harnessTargetOfClient(result.config);
     }
     return byHost;
   }, [key, results]);
@@ -68,8 +70,7 @@ export function useHostHarnessLoader(): (
     async (hostId: string) => {
       try {
         const host = await convex.query(getHostQuery, { hostId });
-        const harness = host?.config?.harness;
-        return harness ? { harnessId: harness } : null;
+        return harnessTargetOfClient(host?.config);
       } catch {
         return null;
       }
