@@ -186,6 +186,25 @@ describe("TraceCostSummary for an eval iteration", () => {
     expect(screen.queryByTestId("trace-cost-unmatched-calls")).toBeNull();
   });
 
+  it("drops calls it loaded once the query fails for the same iteration", () => {
+    query.useQuery.mockReturnValue(calls);
+    const { rerender } = render(<Summary spans={spans} iteration={harness} />);
+    expect(screen.getByTestId("trace-cost-unmatched-calls")).toBeTruthy();
+
+    query.useQuery.mockImplementation(() => {
+      throw new Error(
+        "[CONVEX Q(evalIterationModelCalls:list)] [Request ID: 1] Server Error",
+      );
+    });
+    vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    rerender(<Summary spans={[...spans]} iteration={harness} />);
+
+    expect(screen.queryByTestId("trace-cost-unmatched-calls")).toBeNull();
+    expect(screen.getByTestId("trace-cost-summary")).toHaveTextContent(
+      "$0.0040",
+    );
+  });
+
   it("renders nothing and asks for nothing with the flag off", () => {
     flag.on = false;
     query.useQuery.mockReturnValue(calls);

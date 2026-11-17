@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useQuery } from "convex/react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -210,12 +216,15 @@ export function useTraceCostSpans(
     [spans, calls],
   );
   // Until every deployment serves the query, a failed fetch leaves the
-  // spans as they are and lists no unmatched calls.
+  // spans as they are and lists no unmatched calls. A fetch that fails after
+  // one succeeded drops those calls too, rather than showing stale ones.
+  const forgetCalls = useCallback(() => setLoaded(undefined), []);
   const loader = iterationId ? (
     <ErrorBoundary
       key={iterationId}
       name="trace-cost-model-calls"
       isExpectedError={isIterationModelCallsUnavailable}
+      onError={forgetCalls}
       fallback={null}
     >
       <ModelCallsLoader iterationId={iterationId} onLoad={setLoaded} />
