@@ -47,7 +47,7 @@ export function AuthUpperArea({
         {!user && !isLoading && (
           <>
             <Button
-              variant="secondary"
+              variant="chrome"
               size="sm"
               onClick={() => {
                 track("login_button_clicked", { location: "header" });

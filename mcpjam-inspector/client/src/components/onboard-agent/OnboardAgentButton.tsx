@@ -117,13 +117,13 @@ export function OnboardAgentButton() {
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
             <Button
-              variant="secondary"
+              variant="chrome"
               size="sm"
               aria-label={TRIGGER_LABEL}
               // Below 2xl only the logos show, so the server selector keeps room.
               className={cn(
                 "hidden gap-2 px-1.5 lg:inline-flex 2xl:pl-2.5",
-                open && "bg-chrome-control-hover",
+                open && "bg-chrome-button-hover",
               )}
             >
               <span className="hidden 2xl:inline">{TRIGGER_LABEL}</span>
@@ -134,6 +134,7 @@ export function OnboardAgentButton() {
                     src={getHostLogoSrc(hostId)}
                     alt={label}
                     className="size-4.5 rounded object-contain"
+                    data-chrome-icon
                   />
                 ))}
               </span>
