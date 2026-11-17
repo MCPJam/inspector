@@ -5,6 +5,7 @@ import { EVENTS_FEATURES } from "./events.js";
 import { SERVER_CARD_FEATURES } from "./server-cards.js";
 import { SKILLS_FEATURES } from "./skills.js";
 import { TASKS_FEATURES } from "./tasks.js";
+import { THIRD_PARTY_FEATURES } from "./third-party.js";
 
 export {
   KNOWN_EXPERIMENTAL_KEYS,
@@ -21,4 +22,5 @@ export const EXTENSION_FEATURES: readonly FeatureDefinition[] = [
   ...SKILLS_FEATURES,
   ...EVENTS_FEATURES,
   ...SERVER_CARD_FEATURES,
+  ...THIRD_PARTY_FEATURES,
 ];
