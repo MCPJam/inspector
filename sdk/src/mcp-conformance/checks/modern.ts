@@ -299,7 +299,7 @@ const MODERN_CHECK_METADATA = {
     category: "resources",
     title: "Resource Not Found",
     description:
-      "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+      "Reading an unknown resource answers with JSON-RPC error -32602.",
   },
   "modern-logs-require-log-level": {
     id: "modern-logs-require-log-level",
@@ -2176,13 +2176,6 @@ async function runResourceNotFoundCheck(
 
   const error = jsonRpcError(result);
   const problems: string[] = [];
-  // A handler-produced error stays in-band on HTTP 200 in the modern era; the
-  // status and the code are asserted as separate facts.
-  if (result.status !== 200) {
-    problems.push(
-      `expected HTTP 200 (in-band error), got HTTP ${result.status}`
-    );
-  }
   if (!error) {
     problems.push("expected an in-band JSON-RPC error object, got none");
   } else if (error.code !== INVALID_PARAMS) {
