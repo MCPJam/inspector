@@ -183,6 +183,7 @@ import {
 } from "./suite-settings-subsections";
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { SuiteSettingsDeleteButton } from "./suite-settings-delete-button";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import {
   useSuiteSettingsTabs,
@@ -524,6 +525,7 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
+  evaluateSettingsDelete = false,
   onGeneratingChange,
   onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
@@ -703,6 +705,12 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
+  /**
+   * Evaluate (New) only: a trash button in the Suite settings header that
+   * opens the shared delete dialog. OFF by default so `/evals` keeps its
+   * header as it is. Only `EvaluateTab` passes it.
+   */
+  evaluateSettingsDelete?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
@@ -1740,14 +1748,8 @@ export function SuiteIterationsView({
       isVerdictPolicyV2,
       showComputerEnvironment: computerEnvironmentRowVisible,
       showSchedule: scheduledEvalsEnabled,
-      showDelete: canDeleteSuite,
     }),
-    [
-      isVerdictPolicyV2,
-      computerEnvironmentRowVisible,
-      scheduledEvalsEnabled,
-      canDeleteSuite,
-    ],
+    [isVerdictPolicyV2, computerEnvironmentRowVisible, scheduledEvalsEnabled],
   );
   // Scope changes are API-only until an explicit operation ships in a follow-up.
   const openSetting = useCallback(
@@ -2145,6 +2147,12 @@ export function SuiteIterationsView({
                 >
                   Back to suite
                 </Button>
+                {evaluateSettingsDelete && canDeleteSuite && !editingDisabled ? (
+                  <SuiteSettingsDeleteButton
+                    disabled={deletingSuiteId === suite._id || isCommitting}
+                    onDelete={() => onDelete(suite)}
+                  />
+                ) : null}
                 {editingDisabled ? null : draftChanges.length > 0 ? (
                   <SuiteSettingsCommitBar
                     layout="inline"

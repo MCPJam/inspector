@@ -1736,7 +1736,7 @@ export function useEvalHandlers({
 
       // If we're viewing this suite, go back to the list
       if (selectedSuiteId === suiteToDelete._id) {
-        navigateEvalRoute({ type: "list" }, "evals");
+        navigateEvalRoute({ type: "list" }, evalsNavigationContext);
       }
 
       setSuiteToDelete(null);
@@ -1753,6 +1753,7 @@ export function useEvalHandlers({
     deletingSuiteId,
     mutations.deleteSuiteMutation,
     selectedSuiteId,
+    evalsNavigationContext,
   ]);
 
   // Duplicate suite handler

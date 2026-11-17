@@ -1618,6 +1618,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateSettingsDelete
           onGeneratingChange={setGeneratingCases}
           onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}

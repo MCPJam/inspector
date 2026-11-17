@@ -15,6 +15,7 @@ import {
   useEvalHandlers,
 } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
+import type { EvalSuite } from "../types";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
 import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
@@ -203,6 +204,60 @@ describe("useEvalHandlers", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     setApiContext(null);
+  });
+
+  describe("confirmDelete navigation", () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    async function deleteSelectedSuite(
+      evalsNavigationContext?: "evals" | "evaluate",
+    ) {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          selectedSuiteId: "suite-1",
+          evalsNavigationContext,
+        }),
+      );
+      act(() => result.current.handleDelete(suite));
+      let deleted = false;
+      await act(async () => {
+        deleted = await result.current.confirmDelete();
+      });
+      return deleted;
+    }
+
+    it("returns an Evaluate delete to the Evaluate suite list", async () => {
+      mockMutations.deleteSuiteMutation.mockResolvedValue(undefined);
+      expect(await deleteSelectedSuite("evaluate")).toBe(true);
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate");
+    });
+
+    it("keeps a legacy Evals delete on the Evals list", async () => {
+      mockMutations.deleteSuiteMutation.mockResolvedValue(undefined);
+      expect(await deleteSelectedSuite()).toBe(true);
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evals");
+    });
+
+    it("stays put and reports the error when the delete fails", async () => {
+      mockMutations.deleteSuiteMutation.mockRejectedValue(new Error("boom"));
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      expect(await deleteSelectedSuite("evaluate")).toBe(false);
+      expect(mockNavigateApp).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
   });
 
   describe("handleRerun", () => {

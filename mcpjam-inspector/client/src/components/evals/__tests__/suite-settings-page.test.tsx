@@ -313,3 +313,78 @@ describe("suite settings page with the tabs flag", () => {
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
   });
 });
+
+describe("suite settings delete button", () => {
+  const deleteButton = () =>
+    screen.queryByRole("button", { name: "Delete suite" });
+
+  it("offers a destructive trash button in Evaluate when the suite can be deleted", () => {
+    const onDelete = vi.fn();
+    renderSettingsSheet({ evaluateSettingsDelete: true, onDelete });
+    const button = deleteButton();
+    expect(button).toBeEnabled();
+    expect(button).toHaveClass("bg-destructive/50");
+    fireEvent.click(button!);
+    expect(onDelete).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: "suite-1" }),
+    );
+  });
+
+  it("leaves the legacy Evals settings header without it", () => {
+    renderSettingsSheet();
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("hides it from someone who cannot delete the suite", () => {
+    renderSettingsSheet({ evaluateSettingsDelete: true, canDeleteSuite: false });
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("hides it on a CI-owned suite, whose settings are read-only", () => {
+    // The real read-only gate: a read-only VIEWER never reaches the settings
+    // header at all, so only a CI-owned suite proves `!editingDisabled`.
+    renderSettingsSheet({ evaluateSettingsDelete: true, suite: ciOwnedSuite });
+    expect(screen.getByRole("button", { name: "Back to suite" })).toBeVisible();
+    expect(deleteButton()).toBeNull();
+  });
+
+  it("is disabled while this suite is being deleted", () => {
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      deletingSuiteId: "suite-1",
+    });
+    expect(deleteButton()).toBeDisabled();
+  });
+
+  it("stays enabled with unsaved changes and is disabled only while saving", async () => {
+    let finishSave: (value: { revisionNumber: number }) => void = () => {};
+    mocks.applySuiteSettings.mockImplementationOnce(
+      () => new Promise((resolve) => (finishSave = resolve)),
+    );
+    const { container } = renderSettingsSheet({ evaluateSettingsDelete: true });
+    openSettingsRow(container, "name");
+    fireEvent.change(screen.getByRole("textbox", { name: "Suite name" }), {
+      target: { value: "Renamed suite" },
+    });
+    expect(screen.getByTestId("suite-settings-commit-bar")).toBeInTheDocument();
+    expect(deleteButton()).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+    await waitFor(() => expect(deleteButton()).toBeDisabled());
+
+    finishSave({ revisionNumber: 4 });
+    await waitFor(() => expect(deleteButton()).toBeEnabled());
+  });
+
+  it("shows on both tabs when the tabs flag is on", () => {
+    flags.suiteSettingsTabs = true;
+    const settings = renderSettingsSheet({ evaluateSettingsDelete: true });
+    expect(deleteButton()).toBeEnabled();
+    settings.unmount();
+    renderSettingsSheet({
+      evaluateSettingsDelete: true,
+      route: { type: "suite-edit", suiteId: "suite-1", tab: "evaluators" },
+    });
+    expect(deleteButton()).toBeEnabled();
+  });
+});
