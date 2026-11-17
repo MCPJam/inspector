@@ -40,6 +40,17 @@ describe("placePopover", () => {
     expect(spot.top + spot.arrow).toBe(100 + 60);
   });
 
+  it("stays on top over the anchor's upper edge when there is no room above", () => {
+    const spot = placePopover(
+      { x: 40, y: 100, width: 900, height: 500 },
+      card,
+      bounds,
+      "top",
+    );
+    expect(spot.placement).toBe("top");
+    expect(spot.top).toBe(12);
+  });
+
   it("keeps the card inside the pane near an edge", () => {
     const spot = placePopover(
       { x: 900, y: 50, width: 80, height: 30 },

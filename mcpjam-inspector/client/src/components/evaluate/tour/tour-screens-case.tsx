@@ -1,4 +1,11 @@
-import { ArrowLeft, MessageSquare, Play, Trash2, Wrench } from "lucide-react";
+import {
+  ArrowLeft,
+  MessageSquare,
+  Play,
+  Target,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import {
   EXAMPLE_CASE,
@@ -13,10 +20,10 @@ import {
   TourBreadcrumb,
 } from "./tour-screen-chrome";
 
-function caseCrumbs(last: string) {
+function caseCrumbs(last: string, suiteAnchor?: string) {
   return [
     { label: "Evaluate" },
-    { label: EXAMPLE_SUITE.name, anchor: "diagnose-suite-crumb" },
+    { label: EXAMPLE_SUITE.name, anchor: suiteAnchor },
     { label: `Run #${EXAMPLE_ITERATION.runNumber}` },
     { label: EXAMPLE_CASE.title },
     { label: last },
@@ -51,13 +58,13 @@ function StepNumber({ n }: { n: number }) {
   );
 }
 
-/** Editing the example case: the prompt, its assertions, then Run. */
-export function TourExperimentScreen() {
+/** Editing the example case: the prompt, its checks, the expected outcome, then Run. */
+export function TourCaseScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TourBreadcrumb
-        crumbs={caseCrumbs("Edit test case").map(({ label }) => ({ label }))}
-        trailing={<CaseTrailing />}
+        crumbs={caseCrumbs("Edit test case")}
+        trailing={<ExampleDataPill />}
       />
       <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 py-5 sm:px-6">
         <div className="flex items-center justify-between gap-3">
@@ -69,7 +76,7 @@ export function TourExperimentScreen() {
               <Trash2 className="h-3.5 w-3.5" aria-hidden />
             </FakeButton>
             <FakeButton>Test Case Evaluators</FakeButton>
-            <FakeButton variant="primary" anchor="experiment-run">
+            <FakeButton variant="primary" anchor="case-run">
               <Play className="h-3.5 w-3.5" aria-hidden />
               Run
             </FakeButton>
@@ -79,7 +86,7 @@ export function TourExperimentScreen() {
           <div className="flex gap-3">
             <StepNumber n={1} />
             <div
-              data-tour-anchor="experiment-prompt"
+              data-tour-anchor="case-prompt"
               className="min-w-0 flex-1 space-y-3 rounded-xl border border-border bg-card p-4"
             >
               <p className="text-sm">
@@ -145,6 +152,25 @@ export function TourExperimentScreen() {
               </p>
             </div>
           </div>
+          <div className="flex gap-3">
+            <span className="w-7 shrink-0" aria-hidden />
+            <div
+              data-tour-anchor="case-outcome"
+              className="scroll-my-4 min-w-0 flex-1 space-y-2 rounded-xl border border-border bg-card p-4"
+            >
+              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Target className="h-4 w-4" aria-hidden />
+                Expected outcome
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Describe what success looks like. An AI judge checks whether
+                this goal was met.
+              </p>
+              <p className="rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground">
+                {EXAMPLE_CASE.expectedOutcome}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -163,7 +189,10 @@ export function TourDiagnoseScreen() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <TourBreadcrumb
-        crumbs={caseCrumbs(`Iteration #${EXAMPLE_ITERATION.iteration}`)}
+        crumbs={caseCrumbs(
+          `Iteration #${EXAMPLE_ITERATION.iteration}`,
+          "diagnose-suite-crumb",
+        )}
         trailing={<CaseTrailing />}
       />
       <div className="min-h-0 flex-1 overflow-hidden px-4 py-5 sm:px-6">

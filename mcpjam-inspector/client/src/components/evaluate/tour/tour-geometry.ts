@@ -150,7 +150,9 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * Puts a card next to `anchor`: the preferred side when it fits, else the
  * first side that does, else overlapping the anchor's lower edge (a tall
- * anchor in a short pane). The card is clamped inside `bounds`.
+ * anchor in a short pane). A card that prefers the top stays there and
+ * overlaps the anchor's upper edge instead, keeping what's below it in view.
+ * The card is clamped inside `bounds`.
  */
 export function placePopover(
   anchor: TourRect,
@@ -158,9 +160,11 @@ export function placePopover(
   bounds: TourSize,
   preferred: CoachmarkPlacement,
 ): PopoverPlacement {
-  const order: CoachmarkPlacement[] = [preferred, "bottom", "right", "top"];
+  const order: CoachmarkPlacement[] =
+    preferred === "top" ? ["top"] : [preferred, "bottom", "right", "top"];
   const placement =
-    order.find((side) => fits(side, anchor, card, bounds)) ?? "bottom";
+    order.find((side) => fits(side, anchor, card, bounds)) ??
+    (preferred === "top" ? "top" : "bottom");
   const center = rectCenter(anchor);
 
   if (placement === "right") {
@@ -183,7 +187,7 @@ export function placePopover(
   const below = anchor.y + anchor.height + GAP;
   const top =
     placement === "top"
-      ? anchor.y - GAP - card.height
+      ? Math.max(EDGE, anchor.y - GAP - card.height)
       : clamp(below, EDGE, bounds.height - card.height - EDGE);
   return {
     placement,

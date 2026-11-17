@@ -58,7 +58,6 @@ export function TourPopover({
       aria-labelledby={labelledBy}
       className={cn(
         "absolute z-10 w-[352px] max-w-[calc(100%-24px)] rounded-lg border border-border bg-popover p-4 text-popover-foreground shadow-lg",
-        "transition-[left,top] duration-200 ease-out motion-reduce:transition-none",
         !spot && "invisible",
         className,
       )}
@@ -80,7 +79,7 @@ export function TourPopover({
   );
 }
 
-/** "Setup → Experiment → Diagnose → Monitor" with the current stop marked. */
+/** "Setup → Define → Experiment → Monitor" with the current stop marked. */
 function StopTrail({ current }: { current: number }) {
   return (
     <ol className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">

@@ -75,7 +75,7 @@ describe("EvaluateTour", () => {
     );
   });
 
-  it("walks all four stops and hands off to the create-suite form", async () => {
+  it("walks every stop and hands off to the create-suite form", async () => {
     const onComplete = vi.fn();
     render(<Harness onComplete={onComplete} />);
 
@@ -86,7 +86,7 @@ describe("EvaluateTour", () => {
         expect(screen.getByText(stop.title)).toBeInTheDocument(),
       );
       expect(
-        screen.getByTestId(`evaluate-tour-screen-${stop.id}`),
+        screen.getByTestId(`evaluate-tour-screen-${stop.screen}`),
       ).toBeInTheDocument();
       expect(
         screen.getByText(`${index + 1} of ${TOUR_STOPS.length}`),
@@ -98,13 +98,42 @@ describe("EvaluateTour", () => {
     expect(screen.getByTestId("phase")).toHaveTextContent("handoff");
     expect(track).toHaveBeenCalledWith(
       "evaluate_tour_completed",
-      expect.anything(),
+      expect.objectContaining({ duration_ms: expect.any(Number) }),
     );
     expect(
       vi
         .mocked(track)
         .mock.calls.filter(([event]) => event === "evaluate_tour_step_viewed"),
     ).toHaveLength(TOUR_STOPS.length);
+  });
+
+  it("scrolls each stop's spotlight into view", async () => {
+    const scrolled: (string | null)[] = [];
+    const scrollIntoView = vi.fn(function (this: HTMLElement) {
+      scrolled.push(this.getAttribute("data-tour-anchor"));
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      render(<Harness />);
+      fireEvent.click(screen.getByTestId("evaluate-tour-start"));
+      await waitFor(() =>
+        expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
+      );
+      fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+      await waitFor(() =>
+        expect(screen.getByText(TOUR_STOPS[1].title)).toBeInTheDocument(),
+      );
+      expect(scrolled).toEqual([
+        ...[...TOUR_STOPS[0].anchors].reverse(),
+        ...[...TOUR_STOPS[1].anchors].reverse(),
+      ]);
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
   });
 
   it("closes on Skip tour and reports where", async () => {
@@ -121,6 +150,29 @@ describe("EvaluateTour", () => {
     expect(track).toHaveBeenCalledWith(
       "evaluate_tour_skipped",
       expect.objectContaining({ step: "setup" }),
+    );
+  });
+
+  it("reports the stop it was heading to when skipped mid-transition", async () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByTestId("evaluate-tour-start"));
+    await waitFor(() =>
+      expect(screen.getByText(TOUR_STOPS[0].title)).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByTestId("evaluate-tour-next"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId(`evaluate-tour-screen-${TOUR_STOPS[1].screen}`),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.queryByText(TOUR_STOPS[1].title)).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByTestId("evaluate-tour"), { key: "Escape" });
+
+    expect(screen.getByTestId("phase")).toHaveTextContent("closed");
+    expect(track).toHaveBeenCalledWith(
+      "evaluate_tour_skipped",
+      expect.objectContaining({ step: TOUR_STOPS[1].id }),
     );
   });
 
