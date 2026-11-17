@@ -949,7 +949,10 @@ export function PlaygroundMain({
   );
   const [comparisonServersRestored, setComparisonServersRestored] =
     useState(false);
-  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const {
+    isAuthenticated: isConvexAuthenticated,
+    isLoading: isConvexAuthLoading,
+  } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
   // Playground tab. Views and other read-only surfaces don't pass this and
@@ -1066,8 +1069,15 @@ export function PlaygroundMain({
       }),
     [manageOrgProviders, tester?.hostedContext.scenarioId],
   );
-  const { serversById, serversByName } = useProjectServers({
+  const {
+    serversById,
+    serversByName,
+    isLoading: serversLoading,
+    isBootstrapping: serversBootstrapping,
+  } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
+    // While sign-in loads, the skipped query would otherwise look settled.
+    authLoading: isConvexAuthLoading,
     projectId: convexProjectId,
   });
   // Optional: present app-wide, absent in isolated embeds. Drives the hosted
@@ -4060,22 +4070,16 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  // Read at mapping time, after the restore's reads, so the catalog is current.
-  const serverCatalogRef = useRef({ serversById, serversByName });
-  serverCatalogRef.current = { serversById, serversByName };
-  const toServerIds = useCallback((saved: readonly string[]) => {
-    const { serversById: byId, serversByName: byName } =
-      serverCatalogRef.current;
-    return saved.flatMap((value) => {
-      const id = byId.has(value) ? value : byName.get(value);
-      return id ? [id] : [];
-    });
-  }, []);
   const multiModelSessions = useMultiModelSessions({
     groupId: comparisonRecoveryGroupId,
     projectId: convexProjectId ?? "local",
     selectedServers,
-    toServerIds,
+    serverCatalog: {
+      serversById,
+      serversByName,
+      loaded: !serversLoading && !serversBootstrapping,
+      signedIn: isConvexAuthenticated,
+    },
     liveColumnKeys: compareLanes.map((lane) => lane.id),
     applyRestore: restoreMultiModelSession,
   });
@@ -4098,13 +4102,21 @@ export function PlaygroundMain({
       }
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
+      const isCurrentSelection = () =>
+        historySelectionRequestIdRef.current === selectionRequestId;
+      // Holds sends while a session may be reopening; a restore clears it.
+      setLoadingHistorySessionId(session._id);
       const opened = await multiModelSessions.openFromHistory(
         session,
         siblings,
-        () => historySelectionRequestIdRef.current === selectionRequestId,
+        isCurrentSelection,
       );
       if (opened === "restored") {
         setPendingDirectVisibility(session.directVisibility);
+      }
+      // A project switch or sign-in change leaves no newer selection to clear it.
+      if (opened === "stale" && isCurrentSelection()) {
+        setLoadingHistorySessionId(null);
       }
       if (opened) return;
       setActiveHistorySessionId(session._id);

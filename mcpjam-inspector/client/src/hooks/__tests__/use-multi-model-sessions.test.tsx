@@ -14,7 +14,10 @@ vi.mock("@/lib/multi-model-session-restore", () => ({
   fetchMultiModelRestore: fetchRestore,
 }));
 
-import { useMultiModelSessions } from "../use-multi-model-sessions";
+import {
+  useMultiModelSessions,
+  type ServerCatalog,
+} from "../use-multi-model-sessions";
 
 const session = {
   _id: "row-a",
@@ -34,19 +37,41 @@ const restored: MultiModelRestore = {
   columnSessions: [session],
 };
 
-function setup() {
+const loadedCatalog: ServerCatalog = {
+  serversById: new Map([["srv-linear", "linear"]]),
+  serversByName: new Map([["linear", "srv-linear"]]),
+  loaded: true,
+  signedIn: true,
+};
+
+function setup(
+  initial: Partial<{ projectId: string; serverCatalog: ServerCatalog }> = {},
+) {
   const applyRestore = vi.fn();
-  const hook = renderHook(() =>
-    useMultiModelSessions({
-      groupId: "live",
-      projectId: "p1",
-      selectedServers: ["linear"],
-      toServerIds: (saved) => [...saved],
-      liveColumnKeys: [],
-      applyRestore,
-    }),
+  const hook = renderHook(
+    ({ projectId, serverCatalog }) =>
+      useMultiModelSessions({
+        groupId: "live",
+        projectId,
+        selectedServers: ["linear"],
+        serverCatalog,
+        liveColumnKeys: [],
+        applyRestore,
+      }),
+    {
+      initialProps: {
+        projectId: initial.projectId ?? "p1",
+        serverCatalog: initial.serverCatalog ?? loadedCatalog,
+      },
+    },
   );
   return { applyRestore, hook };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
 }
 
 describe("useMultiModelSessions", () => {
@@ -106,5 +131,83 @@ describe("useMultiModelSessions", () => {
     expect(
       await hook.result.current.openFromHistory(single, [single], () => true),
     ).toBeNull();
+  });
+
+  it("waits for sign-in and the server catalog, then maps saved servers", async () => {
+    flag.enabled = true;
+    fetchRestore.mockResolvedValue(restored);
+    const loading: ServerCatalog = {
+      serversById: new Map(),
+      serversByName: new Map(),
+      loaded: false,
+      signedIn: true,
+    };
+    const { applyRestore, hook } = setup({ serverCatalog: loading });
+    let opened: Promise<string | null> | undefined;
+    act(() => {
+      opened = hook.result.current.openFromHistory(
+        session,
+        [session],
+        () => true,
+      );
+    });
+    await act(async () => {});
+    expect(fetchRestore).not.toHaveBeenCalled();
+
+    hook.rerender({ projectId: "p1", serverCatalog: loadedCatalog });
+    await act(async () => {
+      expect(await opened).toBe("restored");
+    });
+    expect(applyRestore).toHaveBeenCalledWith(restored.record);
+    const { toServerIds } = fetchRestore.mock.calls[0][0];
+    expect(toServerIds(["linear", "srv-linear", "gone"])).toEqual([
+      "srv-linear",
+      "srv-linear",
+    ]);
+  });
+
+  it("drops a restore that finishes after a project switch", async () => {
+    flag.enabled = true;
+    const read = deferred<MultiModelRestore>();
+    fetchRestore.mockReturnValue(read.promise);
+    const { applyRestore, hook } = setup();
+    let opened: Promise<string | null> | undefined;
+    act(() => {
+      opened = hook.result.current.openFromHistory(
+        session,
+        [session],
+        () => true,
+      );
+    });
+    hook.rerender({ projectId: "p2", serverCatalog: loadedCatalog });
+    await act(async () => {
+      read.resolve(restored);
+      expect(await opened).toBe("stale");
+    });
+    expect(applyRestore).not.toHaveBeenCalled();
+  });
+
+  it("drops a restore that finishes after sign-in changes", async () => {
+    flag.enabled = true;
+    const read = deferred<MultiModelRestore>();
+    fetchRestore.mockReturnValue(read.promise);
+    const { applyRestore, hook } = setup();
+    let opened: Promise<string | null> | undefined;
+    act(() => {
+      opened = hook.result.current.openFromHistory(
+        session,
+        [session],
+        () => true,
+      );
+    });
+    hook.rerender({
+      projectId: "p1",
+      serverCatalog: { ...loadedCatalog, signedIn: false },
+    });
+    await act(async () => {
+      read.resolve(restored);
+      expect(await opened).toBe("stale");
+    });
+    expect(applyRestore).not.toHaveBeenCalled();
   });
 });
