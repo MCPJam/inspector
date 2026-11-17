@@ -42,7 +42,9 @@ function pointerStyle(
 /**
  * A `FeatureSpotlight` card pinned beside `anchor`, for tours that position
  * cards themselves over a dimmed stage. Measures itself, then places; until
- * then it is laid out but invisible so the first paint is already in place.
+ * then it is laid out but transparent so the first paint is already in place.
+ * Transparent, not `invisible`: hidden content can't take focus, and the
+ * step content focuses Next as it mounts.
  */
 export function TourCoachmark({
   anchor,
@@ -74,7 +76,7 @@ export function TourCoachmark({
       role="dialog"
       className={cn(
         "absolute z-10 max-w-[calc(100%-24px)]",
-        !spot && "invisible",
+        !spot && "pointer-events-none opacity-0",
         className,
       )}
       style={spot ? { left: spot.left, top: spot.top } : { left: 0, top: 0 }}
