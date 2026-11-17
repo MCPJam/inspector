@@ -17,6 +17,7 @@ import {
   testConnection,
 } from "../mcp-api";
 import { serverCheckQueue } from "@/lib/server-check-queue";
+import { rememberOAuthFlowSummary } from "@/lib/oauth/flow-summary";
 import { useStdioCommandApprovalStore } from "@/lib/stdio-command-approval";
 import { STDIO_COMMAND_APPROVAL_REQUIRED_REASON } from "@/shared/stdio-command-approval";
 
@@ -66,6 +67,29 @@ describe("mcp-api local-mode resolver-only path", () => {
     expect(body.serverId).toBe("convex_id_abc123");
     expect(body.serverName).toBe("mcpjam local");
     expect(body.serverConfig).toBeUndefined();
+  });
+
+  it("testConnection sends a finished OAuth flow's summary once", async () => {
+    const summary = {
+      completedAt: 1,
+      resourceIndicatorSent: true,
+      scopesRequested: ["read"],
+      scopesGranted: ["read"],
+      issReturned: true,
+      issValidated: true,
+      refreshTokenIssued: true,
+    };
+    rememberOAuthFlowSummary("mcpjam local", summary);
+    const config = {
+      url: "http://localhost:8787/mcp",
+    } as unknown as MCPServerConfig;
+
+    await testConnection(config, "convex_id_abc123", {
+      projectId: "project_xyz",
+      serverName: "mcpjam local",
+    });
+
+    expect(readBody().oauthFlowSummary).toEqual(summary);
   });
 
   it("testConnection without projectId throws — legacy fallback is gone", async () => {

@@ -1843,8 +1843,9 @@ describe("mcp-oauth", () => {
       });
       expect(initiateResult.success).toBe(true);
 
+      const callbackState = issuedCallbackState();
       const callbackResult = await handleOAuthCallback("oauth-code", {
-        callbackState: issuedCallbackState(),
+        callbackState,
       });
 
       expect(callbackResult.success).toBe(true);
@@ -1852,6 +1853,19 @@ describe("mcp-oauth", () => {
       expect(callbackResult.serverConfig?.requestInit?.headers).toEqual({
         Authorization: "Bearer access-token",
       });
+      // The next connect carries a summary of the flow, never its secrets.
+      const { takeOAuthFlowSummary } = await import("../flow-summary");
+      const summary = takeOAuthFlowSummary("asana");
+      expect(summary).toMatchObject({ refreshTokenIssued: true });
+      for (const secret of [
+        "access-token",
+        "refresh-token",
+        "code-verifier",
+        "oauth-code",
+        callbackState,
+      ]) {
+        expect(JSON.stringify(summary)).not.toContain(secret);
+      }
       expect(getStoredTokens("asana")).toBeUndefined();
       expect(localStorage.getItem("mcp-tokens-asana")).toBeNull();
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();

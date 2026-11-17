@@ -1,6 +1,5 @@
 import { Hono } from "hono";
-import { runServerDoctor } from "@mcpjam/sdk";
-import { ConvexHttpClient } from "convex/browser";
+import { runServerDoctor, type OAuthFlowSummary } from "@mcpjam/sdk";
 import {
   HOSTED_MODE,
   WEB_CONNECT_TIMEOUT_MS,
@@ -25,10 +24,10 @@ import {
   createHostedRpcLogCollector,
 } from "./hosted-rpc-logs.js";
 import { buildConnectSuccessEnvelope } from "../../utils/local-server-resolver.js";
-import {
-  exportSingleServerForInspection,
-  type ServerToolSnapshot,
-} from "../../utils/export-helpers.js";
+import { recordConnectInspection } from "../../services/server-canvas/connect-hook.js";
+import { optionalOAuthFlowSummarySchema } from "../../services/server-canvas/oauth-flow-summary.js";
+import { widenHostedInitInfoForCanvas } from "../../utils/hosted-canvas-projection.js";
+import { resolveServerCanvasRollout } from "../../utils/server-canvas-rollout.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -41,11 +40,14 @@ import {
 } from "../../utils/hosted-doctor-redaction.js";
 import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
-import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
-import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
+
+/** Validate also takes the non-secret summary of a just-finished OAuth flow. */
+const validateServerSchema = projectServerSchema.extend({
+  oauthFlowSummary: optionalOAuthFlowSummarySchema,
+});
 
 // Hosted, a failure is reported like every other MCP route's (MJ-001; see
 // `withEphemeralConnection`), and a successful connect's log envelope reports
@@ -53,7 +55,7 @@ const servers = new Hono();
 servers.post("/validate", async (c) =>
   withEphemeralConnection(
     c,
-    projectServerSchema,
+    validateServerSchema,
     // Hosted, bounded by the Connect button's own deadline (counted from the
     // request's arrival, queue wait included); on expiry the ephemeral
     // connection's cleanup stops the stuck connect.
@@ -97,8 +99,15 @@ export function remainingServerCheckBudget(
 export async function validateServerCore(
   c: any,
   manager: any,
-  body: { projectId: string; serverId: string }
+  body: {
+    projectId: string;
+    serverId: string;
+    oauthFlowSummary?: OAuthFlowSummary;
+  }
 ) {
+  const bearer: string | undefined = c.req.header("authorization");
+  // Asked now so the answer is ready when the tools are listed.
+  const canvasRollout = resolveServerCanvasRollout(bearer);
   // The doctor's target check, so a stored URL the hosted inspector will not
   // dial is answered as the caller's to fix (400) rather than as a failed
   // connection. A no-op outside hosted mode.
@@ -107,50 +116,36 @@ export async function validateServerCore(
     await assertHostedServerTarget(String(configuredUrl));
   }
   await manager.getToolsForAiSdk([body.serverId]);
-  const snapshot = await exportSingleServerForInspection(
-    manager,
-    body.serverId,
-    body.serverId,
-    { logPrefix: "hosted-connect-inspection" }
-  );
-  void persistHostedConnectInspection(c, {
+  // Captured before returning: the ephemeral manager disconnects as soon as
+  // this function does. Only the Convex write runs after the response.
+  const { canvas } = await recordConnectInspection({
+    hosted: true,
     projectId: body.projectId,
-    snapshot,
-  }).catch((error) => {
-    logger.debug("Failed to persist hosted connect-time inspection", {
-      serverId: body.serverId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    serverId: body.serverId,
+    managerKey: body.serverId,
+    manager,
+    convexBearer: bearer,
+    ...(configuredUrl ? { serverUrl: String(configuredUrl) } : {}),
+    canvasRollout,
+    oauthFlow: body.oauthFlowSummary,
+    logPrefix: "hosted-connect-inspection",
   });
   // Same success envelope as the local /api/mcp/connect path so the inspector
   // client's `storeInitInfo` takes one code path on both surfaces. Hosted, its
-  // initialization info is projected (MJ-001).
+  // initialization info is projected (MJ-001), and widened for the canvas.
   const envelope = buildConnectSuccessEnvelope(manager, body.serverId);
-  return HOSTED_MODE
-    ? {
-        ...envelope,
-        initInfo: projectHostedValidateInitInfo(envelope.initInfo),
-      }
-    : envelope;
-}
-
-async function persistHostedConnectInspection(
-  c: any,
-  args: { projectId: string; snapshot: ServerToolSnapshot },
-): Promise<void> {
-  // Only `CONVEX_HTTP_URL` is boot-enforced; the convex-client URL is
-  // derived from it (suffix swap) by the runtime config helper so that
-  // production env (which sets only CONVEX_HTTP_URL) works.
-  const { convexUrl } = getInspectorClientRuntimeConfig();
-  if (!convexUrl) return;
-  const bearer = c.req.header("authorization");
-  if (!bearer) return;
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(bearer.replace(/^Bearer\s+/i, ""));
-  await client.mutation("serverInspections:recordFromConnect" as any, {
-    projectId: args.projectId,
-    snapshot: args.snapshot,
-  });
+  if (!HOSTED_MODE) return envelope;
+  const initInfo = projectHostedValidateInitInfo(envelope.initInfo);
+  return {
+    ...envelope,
+    initInfo: canvas
+      ? widenHostedInitInfoForCanvas(
+          initInfo,
+          envelope.initInfo,
+          manager.getCapturedEventsCapability?.(body.serverId)?.rawCapabilities,
+        )
+      : initInfo,
+  };
 }
 
 servers.post("/check-oauth", async (c) =>
