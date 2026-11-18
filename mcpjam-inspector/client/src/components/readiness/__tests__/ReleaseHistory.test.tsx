@@ -96,7 +96,7 @@ it("keeps publication evidence readable when revisions cannot load", async () =>
   api.listServerRevisions.mockRejectedValue(new Error("offline"));
   render(<ReleaseHistory projectId="prj" submission={submission} />);
   expect(await screen.findByText("Listing description 2")).toBeVisible();
-  expect(screen.getByText("Could not load server revisions.")).toBeVisible();
+  expect(screen.getByText("Could not load server revisions. Try again.")).toBeVisible();
 });
 
 it("records explicitly selected version and catalog once across a failed response and retry", async () => {
