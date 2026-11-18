@@ -150,3 +150,67 @@ test("stops waiting at the deadline and lets the release run the gate", async ()
   assert.equal(found.runId, null);
   assert.match(found.reason, /still queued/);
 });
+
+test("cancels an evidence run that has not started and lets the release run the gate at once", async () => {
+  const state = { markers: [], runs: {}, evidence: {}, active: [{ id: 23, status: "pending", head_sha: "abc" }] };
+  const cancelled = [];
+  let slept = 0;
+  const found = await findReleaseEvidence({
+    github: fakeGitHub(state),
+    owner: "MCPJam",
+    repo: "inspector",
+    name: NAME,
+    sha: "abc",
+    timeoutMs: 150 * 60 * 1000,
+    cancelRun: async (id) => {
+      cancelled.push(id);
+    },
+    sleep: async () => {
+      slept += 1;
+    },
+  });
+  assert.equal(found.runId, null);
+  assert.deepEqual(cancelled, [23]);
+  assert.equal(slept, 0);
+  assert.match(found.reason, /has not started.*cancelled it and runs the gate here/);
+});
+
+test("still runs the gate at once when an unstarted run can't be cancelled", async () => {
+  const state = { markers: [], runs: {}, evidence: {}, active: [{ id: 24, status: "pending", head_sha: "abc" }] };
+  const found = await findReleaseEvidence({
+    github: fakeGitHub(state),
+    owner: "MCPJam",
+    repo: "inspector",
+    name: NAME,
+    sha: "abc",
+    timeoutMs: 150 * 60 * 1000,
+    cancelRun: async () => {
+      throw new Error("Resource not accessible by integration");
+    },
+  });
+  assert.equal(found.runId, null);
+  assert.match(found.reason, /could not cancel it \(Resource not accessible by integration\) and runs the gate here/);
+});
+
+test("takes evidence an unstarted run's commit already has instead of cancelling anything", async () => {
+  const state = {
+    markers: [marker(25, "2026-11-12T00:00:00Z")],
+    runs: { 25: run(25) },
+    evidence: { 25: evidence() },
+    active: [{ id: 26, status: "pending", head_sha: "abc" }],
+  };
+  const cancelled = [];
+  const found = await findReleaseEvidence({
+    github: fakeGitHub(state),
+    owner: "MCPJam",
+    repo: "inspector",
+    name: NAME,
+    sha: "abc",
+    timeoutMs: 60_000,
+    cancelRun: async (id) => {
+      cancelled.push(id);
+    },
+  });
+  assert.equal(found.runId, 25);
+  assert.deepEqual(cancelled, []);
+});
