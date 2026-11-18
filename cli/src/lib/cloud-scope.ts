@@ -26,7 +26,12 @@ export type CloudScope =
   | {
       kind: "project";
       selector?: string;
-      source: "flag" | "input" | "env" | "link" | "automatic";
+      /**
+       * `browser`: no selector, and the operation does not fall back to a
+       * project either. `connect` leaves the choice to the person who opens
+       * the handoff link, so "automatic" would name a project it never uses.
+       */
+      source: "flag" | "input" | "env" | "link" | "automatic" | "browser";
       linkPath?: string;
       linkedName?: string;
     };
@@ -137,6 +142,8 @@ export function describeProjectScope(scope: ProjectCloudScope): string {
   switch (scope.source) {
     case "automatic":
       return "automatic (most recently updated)";
+    case "browser":
+      return "none (chosen in the browser)";
     case "flag":
       return `flag (${scope.selector})`;
     case "input":

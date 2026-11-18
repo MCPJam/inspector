@@ -639,11 +639,14 @@ async function startConnectionFixture(options: {
   baseUrl: string;
   createBodies: unknown[];
   cancelPaths: string[];
+  /** Every request as `METHOD /path`, so a test can prove a write never left. */
+  requests: string[];
   polls: number;
   close: () => Promise<void>;
 }> {
   const createBodies: unknown[] = [];
   const cancelPaths: string[] = [];
+  const requests: string[] = [];
   const remaining = [...(options.statuses ?? [])];
   let polls = 0;
 
@@ -651,6 +654,7 @@ async function startConnectionFixture(options: {
     let raw = "";
     for await (const chunk of req) raw += String(chunk);
     const url = new URL(req.url ?? "/", "http://fixture");
+    requests.push(`${req.method} ${url.pathname}`);
     res.setHeader("content-type", "application/json");
 
     // `connect --project <name>` resolves the name to an id before creating
@@ -713,6 +717,7 @@ async function startConnectionFixture(options: {
     baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
     createBodies,
     cancelPaths,
+    requests,
     get polls() {
       return polls;
     },
@@ -746,8 +751,13 @@ test("server connect rejects a URL that is not http(s) at the keyboard", async (
     );
 
     // Rejected before any request: a bad URL is a typo, and finding out from
-    // the API is a slower, vaguer version of the same answer.
-    assert.equal(run.result.exitCode, 1);
+    // the API is a slower, vaguer version of the same answer. A typo is a
+    // usage error, not an internal one carrying the validator's raw JSON.
+    assert.equal(run.result.exitCode, 2);
+    const payload = parseStderrJson(run.stderr);
+    assert.equal(payload.error.code, "USAGE_ERROR");
+    assert.match(payload.error.message, /url: Must be an http/);
+    assert.equal(run.stdout, "");
     assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();
@@ -1072,6 +1082,282 @@ test("server connect exits non-zero when it gave up rather than finished", async
     assert.match(run.stderr, /connect-cancel --request scr_1/);
   } finally {
     process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+const HANDOFF_URL = "https://app.mcpjam.test/connect/server/tok";
+
+function connectArgv(fixtureUrl: string, ...extra: string[]): string[] {
+  return [
+    ...projectsArgv(
+      fixtureUrl,
+      "servers",
+      "connect",
+      "--url",
+      "https://example.com/mcp",
+    ),
+    "--no-browser",
+    ...extra,
+    "--format",
+    "json",
+  ];
+}
+
+function occurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
+test("server connect that is ready at once prints no link and exits 0", async () => {
+  // The backend mints a link on every create. A server that needs nobody must
+  // not send the user off to a browser, nor leak the spent link into stdout.
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "ready",
+      handoffUrl: HANDOFF_URL,
+      server: {
+        id: "srv-1",
+        name: "S",
+        url: "https://example.com/mcp",
+        enabled: true,
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(connectArgv(fixture.baseUrl), { telemetry: telemetryDisabled }),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.status, "ready");
+    assert.equal(payload.handoffUrl, undefined);
+    assert.doesNotMatch(run.stderr, /connect\/server\/tok/);
+    assert.equal(fixture.polls, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect that goes discovering to ready never prints the link", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "discovering",
+      handoffUrl: HANDOFF_URL,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    statuses: [
+      {
+        connectionRequestId: "scr_1",
+        status: "ready",
+        server: {
+          id: "srv-1",
+          name: "S",
+          url: "https://example.com/mcp",
+          enabled: true,
+        },
+      },
+    ],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(connectArgv(fixture.baseUrl), { telemetry: telemetryDisabled }),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(JSON.parse(run.stdout).status, "ready");
+    assert.doesNotMatch(run.stderr, /connect\/server\/tok/);
+    assert.doesNotMatch(run.stdout, /connect\/server\/tok/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect prints the link once, when the request starts waiting on a person", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "discovering",
+      handoffUrl: HANDOFF_URL,
+      // Room for exactly two polls: the 2s backoff fits, the 3s one does not.
+      expiresAt: new Date(Date.now() + 3_000).toISOString(),
+    },
+    statuses: [
+      { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+      { connectionRequestId: "scr_1", status: "awaiting_authorization" },
+    ],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(connectArgv(fixture.baseUrl, "--project", "proj-alpha"), {
+        telemetry: telemetryDisabled,
+      }),
+    );
+
+    assert.equal(fixture.polls, 2);
+    assert.equal(occurrences(run.stderr, HANDOFF_URL), 1);
+    assert.match(run.stderr, /Open this link to finish connecting/);
+    assert.match(run.stderr, /Open the link above to finish it/);
+    // A project was named, so there is no project choice to skip.
+    assert.doesNotMatch(run.stderr, /Pass --project/);
+    assert.equal(JSON.parse(run.stdout).status, "awaiting_authorization");
+    assert.equal(run.result.exitCode, 1);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("server connect without a project says the browser picks it and how to skip that", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "discovering",
+      handoffUrl: HANDOFF_URL,
+      // Already expired, so the loop stops after its first poll.
+      expiresAt: new Date(Date.now() - 1_000).toISOString(),
+    },
+    statuses: [{ connectionRequestId: "scr_1", status: "awaiting_project" }],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(connectArgv(fixture.baseUrl), { telemetry: telemetryDisabled }),
+    );
+
+    // No project is sent and the SDK does not fall back to one, so the
+    // audience line must not claim the most recently updated project.
+    assert.doesNotMatch(run.stderr, /automatic \(most recently updated\)/);
+    assert.match(run.stderr, /project: none \(chosen in the browser\)/);
+    assert.match(run.stderr, /Pass --project <id-or-name> to skip that step/);
+    assert.match(run.stderr, /mcpjam cloud projects list/);
+    assert.equal(occurrences(run.stderr, HANDOFF_URL), 1);
+    assert.equal(
+      (fixture.createBodies[0] as { projectId?: string }).projectId,
+      undefined,
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("server connect refuses to call a disabled saved server ready, and does not enable it", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "discovering",
+      handoffUrl: HANDOFF_URL,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    statuses: [
+      {
+        connectionRequestId: "scr_1",
+        status: "ready",
+        server: {
+          id: "srv-off",
+          name: "S",
+          url: "https://example.com/mcp",
+          enabled: false,
+        },
+      },
+    ],
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(connectArgv(fixture.baseUrl, "--project", "proj-alpha"), {
+        telemetry: telemetryDisabled,
+      }),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(JSON.parse(run.stdout).server.enabled, false);
+    assert.match(run.stderr, /srv-off is disabled/);
+    assert.match(run.stderr, /enable it yourself/);
+    assert.deepEqual(
+      fixture.requests.filter((request) => request.includes("/servers")),
+      [],
+    );
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+for (const status of ["failed", "expired", "cancelled"] as const) {
+  test(`server connect exits 1 when the request ends ${status}`, async () => {
+    const fixture = await startConnectionFixture({
+      created: {
+        connectionRequestId: "scr_1",
+        status: "discovering",
+        handoffUrl: HANDOFF_URL,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+      statuses: [
+        {
+          connectionRequestId: "scr_1",
+          status,
+          error: {
+            code: "DISCOVERY_FAILED",
+            message: "No MCP server answered.",
+            retryable: true,
+          },
+        },
+      ],
+    });
+    try {
+      const run = await captureProcessOutput(() =>
+        main(connectArgv(fixture.baseUrl, "--project", "proj-alpha"), {
+          telemetry: telemetryDisabled,
+        }),
+      );
+
+      assert.equal(run.result.exitCode, 1);
+      assert.equal(JSON.parse(run.stdout).status, status);
+      assert.match(
+        run.stderr,
+        new RegExp(`scr_1 ${status}: DISCOVERY_FAILED: No MCP server answered`),
+      );
+      assert.doesNotMatch(run.stderr, /connect\/server\/tok/);
+    } finally {
+      process.exitCode = 0;
+      await fixture.close();
+    }
+  });
+}
+
+test("server connect --no-wait offers the link without claiming sign-in is needed", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "discovering",
+      handoffUrl: HANDOFF_URL,
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        connectArgv(fixture.baseUrl, "--no-wait", "--project", "proj-alpha"),
+        {
+          telemetry: telemetryDisabled,
+        },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.connectionRequestId, "scr_1");
+    assert.equal(payload.status, "discovering");
+    assert.match(run.stderr, /Not waiting on request scr_1/);
+    assert.match(
+      run.stderr,
+      /If the server needs sign-in or a project choice, open:/,
+    );
+    assert.equal(occurrences(run.stderr, HANDOFF_URL), 1);
+    assert.doesNotMatch(run.stderr, /Open this link to finish connecting/);
+    assert.equal(fixture.polls, 0);
+  } finally {
     await fixture.close();
   }
 });
