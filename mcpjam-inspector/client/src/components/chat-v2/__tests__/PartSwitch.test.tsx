@@ -4,10 +4,7 @@ import { MCP_UI_EXTENSION_ID } from "@mcpjam/sdk/browser";
 import { PartSwitch } from "../thread/part-switch";
 import { callTool, executeToolApi } from "@/lib/apis/mcp-tools-api";
 import { ActiveHostCapsResolverProvider } from "@/contexts/active-host-client-capabilities-context";
-import {
-  injectHostedServerMapping,
-  setApiContext,
-} from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 import type { UIMessage } from "@ai-sdk/react";
 
 const {
@@ -605,7 +602,10 @@ describe("PartSwitch", () => {
     it("addresses a managed turn's server by its local name", () => {
       // A local managed turn tags the call with the Convex id; this app's
       // own connections are keyed by name.
-      injectHostedServerMapping("qa-server", "convex-server-1");
+      setApiContext({
+        projectId: "project-1",
+        serverIdsByName: { "qa-server": "convex-server-1" },
+      });
       try {
         const part = {
           type: "dynamic-tool",

@@ -144,6 +144,11 @@ export function formatEnsureServersReadyError(
 
   if (result.failedServerNames.length > 0) {
     const names = result.failedServerNames;
+    const errors = names.flatMap((name) => result.failedServerErrors?.[name] ? [result.failedServerErrors[name]] : []);
+    if (errors.length > 0) {
+      const remaining = names.length - errors.length;
+      return errors.join("\n") + (remaining > 0 ? `\nWe couldn't connect to all required servers. Try again to ${actionLabel}.` : "");
+    }
     const opts = { remoteServers: projectServers };
     if (
       names.length > 0 &&
@@ -767,7 +772,7 @@ export function useEvalHandlers({
         skipJudge?: boolean;
         caseLaunchId?: string;
         /**
-         * Throw a launch failure instead of toasting it, so the Setup Run
+         * Throw a launch failure instead of toasting it, so the Set up run
          * sheet can show it inline and stay open. Unlike `stayOnPage`, the
          * launch still navigates and may still replay.
          */

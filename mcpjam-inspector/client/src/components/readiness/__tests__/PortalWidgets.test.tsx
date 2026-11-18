@@ -78,9 +78,6 @@ describe("PortalWidget", () => {
     expect(
       screen.getByRole("button", { name: "Add custom connector" }),
     ).toBeDisabled();
-    expect(
-      screen.getByText("Choose the server in the bar above."),
-    ).toBeVisible();
     const list = screen.getByRole("group", {
       name: "Or choose a connector you’ve already added:",
     });

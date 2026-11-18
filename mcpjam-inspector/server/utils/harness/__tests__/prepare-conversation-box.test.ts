@@ -51,7 +51,6 @@ import {
 import {
   COMMAND_BOUND_MS,
   hostedBootstrapRuntimes,
-  isPreparableHarness,
   prepareConversationBox,
 } from "../prepare-conversation-box";
 import { PREPARATION_DEADLINE_MS } from "../preparation-timing";
@@ -215,15 +214,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-});
-
-describe("which runtimes prepare before Send", () => {
-  it("is what each adapter declares: Claude Code and Codex today", async () => {
-    const { HARNESS_IDS } = await import("@mcpjam/sdk/host-config/internal");
-    expect(HARNESS_IDS.filter((id) => isPreparableHarness(id)).sort()).toEqual(["claude-code", "codex"]);
-    expect(isPreparableHarness(undefined)).toBe(false);
-    expect(isPreparableHarness("not-a-harness")).toBe(false);
-  });
 });
 
 describe("preparing a new chat's box", () => {
@@ -545,7 +535,8 @@ describe("the recipes a preparation applies", () => {
     ),
   ) as { recipes: Array<{ harnessId: string; identity: string }> };
 
-  it.each(["claude-code", "codex"] as const)(
+  // Every hosted runtime: cold, plus warm where it may run warm.
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "are the ones the template bakes for %s",
     async (harnessId) => {
       const identities = await Promise.all(

@@ -8,12 +8,10 @@ import {
 } from "@/hooks/useComputersEnabled";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import type { FocusTabDef } from "@/components/canvas-kit/FocusTabBar";
 import type { HostFocusTabId } from "../types";
 
-export interface HostFocusTabDef {
-  id: HostFocusTabId;
-  label: string;
-}
+export type HostFocusTabDef = FocusTabDef<HostFocusTabId>;
 
 export const HOST_FOCUS_TAB_DEFS: ReadonlyArray<HostFocusTabDef> = [
   { id: "behavior", label: "Agent" },

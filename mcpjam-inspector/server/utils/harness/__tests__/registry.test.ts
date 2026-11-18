@@ -1767,6 +1767,12 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
       "passThroughOnly",
     );
   expect(cursor).not.toHaveProperty("correlationKey");
+  // Every other contract names where its runtime stamps a call's id, which a
+  // session envelope carries to the forwarder.
+  expect(getHarnessAdapter("claude-code").forwardingRuntime?.correlationKey).toBe(
+    "claudecode/toolUseId",
+  );
+  expect(getHarnessAdapter("codex").forwardingRuntime?.correlationKey).toBe("callId");
   const runtime = { harnessId: "cursor" } as never;
   expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
@@ -1801,4 +1807,16 @@ it("gives the dedicated Copilot CLI client its own MCP client: proxied, or forwa
   );
   expect(doStart).not.toHaveBeenCalled();
   await expect(refreshed.doStart({} as never)).resolves.toBe("session");
+
+  // A chat lane's session configuration is the one the paused turn started
+  // with, so the continuation goes through.
+  const sessionStable = copilot.forwardingRuntime!.refresh(
+    { doStart } as never,
+    {},
+    "digest",
+    { sessionStable: true },
+  );
+  await expect(
+    sessionStable.doStart({ continueFrom: {} } as never),
+  ).resolves.toBe("session");
 });

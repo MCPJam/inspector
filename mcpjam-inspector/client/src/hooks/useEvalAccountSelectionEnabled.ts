@@ -3,7 +3,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 /**
  * PostHog rollout gate for choosing which accounts an eval suite runs with
  * (EFTW-5): the Accounts row in suite settings, the "Runs as you" line, the
- * Setup Run account checks, and the accounts a finished run records.
+ * Set up run account checks, and the accounts a finished run records.
  *
  * Everything it gates reads data only a backend with suite account choices
  * has, so the flag also keeps a browser from asking an older deployment for

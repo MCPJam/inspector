@@ -1010,7 +1010,8 @@ describe("useServerState CLI config import", () => {
     await waitFor(() => {
       expect(injectHostedServerMapping).toHaveBeenCalledWith(
         "cli-http",
-        "srv_own"
+        "srv_own",
+        "proj_cloud",
       );
     });
     expect(logger.warn).not.toHaveBeenCalledWith(
@@ -1160,7 +1161,8 @@ describe("useServerState CLI config import", () => {
     );
     expect(injectHostedServerMapping).toHaveBeenCalledWith(
       "cli-http",
-      "srv_new"
+      "srv_new",
+      "proj_cloud",
     );
   });
 });
@@ -4772,6 +4774,81 @@ describe("syncServerToConvex name-collision recovery", () => {
     url: "https://example.com/mcp",
   };
 
+  it.each([false, true])(
+    "saves a published plugin ID to the active project's row (save-only=%s)",
+    async (saveOnly) => {
+      const appState = createAppState();
+      appState.projects.default.sharedProjectId = "project_default";
+      const { result } = renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        activeProjectServersFlat: [
+          siblingRow,
+          { ...siblingRow, _id: "srv_demo", projectId: "project_default" },
+        ],
+      });
+
+      await act(async () => {
+        const outcome = await result.current.handleUpdate(
+          "demo-server",
+          {
+            name: "demo-server",
+            type: "http",
+            url: "https://example.com/mcp",
+            publishedPluginId: "plugin_parts",
+          },
+          saveOnly,
+        );
+        expect(outcome.ok).toBe(true);
+      });
+
+      expect(mockUpdateServer).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serverId: "srv_demo",
+          projectId: "project_default",
+          publishedPluginId: "plugin_parts",
+        }),
+      );
+      expect(mockUpdateServer).not.toHaveBeenCalledWith(
+        expect.objectContaining({ serverId: "srv_sibling" }),
+      );
+      expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+      if (!saveOnly) {
+        expect(injectHostedServerMapping).toHaveBeenCalledWith(
+          "demo-server",
+          "srv_demo",
+          "project_default",
+        );
+      }
+    },
+  );
+
+  it("refuses a published plugin ID edit when only a sibling project owns the name", async () => {
+    const appState = createAppState();
+    appState.projects.default.sharedProjectId = "project_default";
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      hasSignedInUser: true,
+      useLocalFallback: false,
+      activeProjectServersFlat: [siblingRow],
+    });
+
+    await act(async () => {
+      const outcome = await result.current.handleUpdate("demo-server", {
+        name: "Renamed",
+        type: "http",
+        url: "https://example.com/mcp",
+        publishedPluginId: "plugin_parts",
+      });
+      expect(outcome).toEqual({ ok: false, serverName: "demo-server" });
+    });
+
+    expect(mockUpdateServer).not.toHaveBeenCalled();
+    expect(mockCreateServerIfMissing).not.toHaveBeenCalled();
+    expect(mockDeleteServer).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])("does not confirm or publish a rename when configuration saving rejects (save-only=%s)", async (saveOnly) => {
     mockHostedMode.mockReturnValue(true);
     const appState = createAppState();
@@ -5077,7 +5154,7 @@ describe("syncServerToConvex name-collision recovery", () => {
         hasSignedInUser: true,
         useLocalFallback: false,
         effectiveProjects: appState.projects,
-        activeProjectServersFlat: [savedRow],
+        activeProjectServersFlat: [siblingRow, savedRow],
       });
       return { dispatch, ...rendered };
     }

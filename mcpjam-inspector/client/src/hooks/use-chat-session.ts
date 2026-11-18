@@ -151,6 +151,7 @@ import {
   noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
+import type { ModelSelectorHarnessScope } from "@/components/chat-v2/chat-input/model-selector";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -858,6 +859,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The client `availableModels` is locked for, for the model picker. */
+  modelHarnessScope: ModelSelectorHarnessScope;
   /** The authorized catalog before this session's harness filter. */
   catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
@@ -3310,6 +3313,19 @@ export function useChatSession(
         { requireOrgKeys },
       ),
     [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+  );
+  // The same target, for the picker: `availableModels` is already locked for
+  // it, and passing it on keeps the picker honest if a caller mixes in rows.
+  const modelHarnessScope = useMemo<ModelSelectorHarnessScope>(
+    () => ({
+      targets: [
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ],
+      purpose: "chat",
+    }),
+    [harnessId, harnessRuntimeVersion],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -6955,7 +6971,7 @@ export function useChatSession(
   // a client or an environment. A plugin chat's hidden environment is left out.
   const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
     HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
-    (harnessId === "claude-code" || harnessId === "codex") &&
+    isHarness(harnessId) &&
     messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
     (hostedExecutionTarget || hostedHostId)
       ? {
@@ -7004,6 +7020,7 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     // The authorized catalog before this session's harness filter, so another
     // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
     catalogModels: composedModels,
