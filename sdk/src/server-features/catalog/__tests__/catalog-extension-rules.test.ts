@@ -5,11 +5,18 @@ import {
   makeProbe,
   makeSurface,
 } from "../../__tests__/fixtures.js";
+import type { CoverageKey } from "../../types.js";
+import {
+  EXTENSION_FEATURES,
+  unrecognizedCapabilityKeys,
+} from "../extensions/index.js";
 import {
   MODERN,
   SKILLS_EXT,
+  TASKS_EXT,
   declared,
   feature,
+  plainTool,
   probed,
   type ProbeOverrides,
   type ProbeValues,
@@ -336,5 +343,206 @@ describe("Server Cards", () => {
     ).toMatchObject({
       kind: "unknown",
     });
+  });
+});
+
+describe("third-party and experimental", () => {
+  const searchTool = {
+    name: "search_mentions",
+    annotations: { readOnlyHint: true },
+    _meta: {
+      "openai/extensions": { "mentions/search": {} },
+      ui: { visibility: ["app"] },
+    },
+  };
+
+  it("reads OpenAI capabilities where each revision puts them", () => {
+    const both = {
+      "openai/settings": { readTool: "read", updateTool: "update" },
+    };
+    const modern = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: { extensions: both, experimental: both },
+    });
+    expect(declared("openai.settings", modern)).toMatchObject({
+      kind: "present",
+      detail: 'extensions["openai/settings"]',
+    });
+    expect(declared("openai.capability-location", modern)).toMatchObject({
+      kind: "present",
+    });
+    const experimentalOnly = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: { experimental: both },
+    });
+    expect(
+      declared("openai.capability-location", experimentalOnly)
+    ).toMatchObject({ kind: "unknown" });
+    const legacy = makeSurface({
+      protocolVersion: "2025-06-18",
+      capabilities: { experimental: both },
+    });
+    expect(declared("openai.capability-location", legacy)).toMatchObject({
+      kind: "present",
+    });
+    expect(
+      declared("openai.settings", makeSurface({ capabilities: {} }))
+    ).toEqual({ kind: "absent", basis: ["capabilities"] });
+  });
+
+  it("holds the mentions search tool to readOnlyHint and app visibility", () => {
+    const capabilities = {
+      extensions: { "openai/mentions": { searchTool: "search_mentions" } },
+    };
+    expect(
+      declared(
+        "openai.mentions",
+        makeSurface({ capabilities, tools: [searchTool] })
+      )
+    ).toMatchObject({ kind: "present" });
+    const writable = { ...searchTool, annotations: {} };
+    expect(
+      declared(
+        "openai.mentions",
+        makeSurface({ capabilities, tools: [writable] })
+      )
+    ).toMatchObject({ kind: "unknown" });
+    expect(
+      declared(
+        "openai.mentions-legacy-key",
+        makeSurface({ tools: [searchTool] })
+      )
+    ).toMatchObject({ kind: "present" });
+  });
+
+  it("detects entrypoints, legacy Apps SDK metadata and the profile tool", () => {
+    const tools = [
+      {
+        name: "open",
+        _meta: {
+          "openai/ui": { entrypoints: [{ type: "thread" }] },
+          "openai/outputTemplate": "ui://w",
+        },
+      },
+      { name: "me", _meta: { "openai/profile": true } },
+    ];
+    const resources = [
+      {
+        uri: "ui://w",
+        mimeType: "text/html+skybridge",
+        _meta: { "openai/widgetCSP": {} },
+      },
+    ];
+    const surface = makeSurface({ tools, resources });
+    expect(declared("openai.entrypoints", surface)).toMatchObject({
+      kind: "present",
+      count: 1,
+    });
+    expect(declared("openai.apps-sdk-meta", surface)).toMatchObject({
+      kind: "present",
+      detail: "openai/outputTemplate, openai/widgetCSP, text/html+skybridge",
+    });
+    expect(declared("openai.profile", surface)).toMatchObject({
+      kind: "present",
+    });
+    const twoProfiles = makeSurface({
+      tools: [tools[1], { name: "me2", _meta: { "openai/profile": true } }],
+    });
+    expect(declared("openai.profile", twoProfiles)).toMatchObject({
+      kind: "unknown",
+    });
+    expect(
+      declared("openai.apps-sdk-meta", makeSurface({ tools: [plainTool] }))
+    ).toMatchObject({ kind: "not-applicable" });
+  });
+
+  it("lists experimental proposals the server declares", () => {
+    const files = makeSurface({
+      capabilities: {
+        extensions: {
+          "io.modelcontextprotocol/files": { maxInlineBytes: 1024 },
+        },
+      },
+    });
+    expect(declared("experimental.extensions", files)).toMatchObject({
+      kind: "present",
+      detail: "io.modelcontextprotocol/files",
+    });
+    expect(
+      declared("experimental.extensions", makeSurface({ capabilities: {} }))
+    ).toEqual({ kind: "absent", basis: ["capabilities"] });
+  });
+
+  it("keeps unknown capabilities, extension ids and settings inspectable", () => {
+    const surface = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: {
+        tools: { listChanged: true, streaming: true },
+        widgets: {},
+        events: {},
+        extensions: { [TASKS_EXT]: {}, "com.acme/realtime": {} },
+        experimental: { tasks: {}, "acme/beta": {} },
+      },
+    });
+    expect(declared("third-party.unrecognized-capabilities", surface)).toEqual({
+      kind: "present",
+      via: "advertised",
+      count: 4,
+      detail:
+        'capabilities.tools.streaming, capabilities.widgets, extensions["com.acme/realtime"], experimental["acme/beta"]',
+    });
+    const known = makeSurface({
+      capabilities: {
+        tools: { listChanged: true },
+        extensions: { [SKILLS_EXT]: { directoryRead: true } },
+      },
+    });
+    expect(
+      declared("third-party.unrecognized-capabilities", known)
+    ).toMatchObject({ kind: "not-applicable" });
+    const partial = makeSurface({
+      capabilities: { tools: {} },
+      coverage: fullCoverage({ capabilities: "partial" }),
+    });
+    expect(
+      declared("third-party.unrecognized-capabilities", partial)
+    ).toBeNull();
+    expect(
+      unrecognizedCapabilityKeys({
+        extensions: { [SKILLS_EXT]: { directoryRead: true, beta: 1 } },
+      })
+    ).toEqual([`extensions["${SKILLS_EXT}"].beta`]);
+  });
+
+  it("keeps a legacy snapshot from producing gaps", () => {
+    const legacy = makeSurface({
+      envelopeVersion: 1,
+      protocolVersion: undefined,
+      capabilities: undefined,
+      coverage: fullCoverage(
+        Object.fromEntries(
+          (
+            [
+              "capabilities",
+              "tools",
+              "toolMeta",
+              "resources",
+              "skills",
+              "instructions",
+            ] as const
+          ).map((key): [CoverageKey, "not-captured"] => [key, "not-captured"])
+        )
+      ),
+    });
+    for (const entry of EXTENSION_FEATURES) {
+      const outcome = entry.assessment.declared?.(legacy);
+      if (outcome?.kind === "absent") {
+        expect(
+          outcome.basis.some((key) => legacy.coverage[key] !== "complete"),
+          entry.id
+        ).toBe(true);
+      }
+      expect(outcome?.kind, entry.id).not.toBe("not-applicable");
+    }
   });
 });

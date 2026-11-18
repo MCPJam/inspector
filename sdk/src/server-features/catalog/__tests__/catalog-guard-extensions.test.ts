@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
+import { MCP_APPS_CHECK_IDS } from "../../../apps-conformance/types.js";
+import { EVENTS_CHECK_IDS } from "../../../events-conformance/types.js";
 import { MCP_UI_EXTENSION_ID } from "../../../mcp-client-manager/capabilities.js";
+import { MCP_TASKS_CHECK_IDS } from "../../../tasks-conformance/types.js";
 import {
   fullCoverage,
   makeProbe,
   makeSurface,
 } from "../../__tests__/fixtures.js";
+import { APPS_CHECK_FEATURES } from "../../check-map/apps.js";
+import { EVENTS_CHECK_FEATURES } from "../../check-map/events.js";
+import { TASKS_CHECK_FEATURES } from "../../check-map/tasks.js";
+import type { CheckFeatureTarget } from "../../check-map/types.js";
+import type { FeatureFamilyId } from "../../types.js";
+import { SERVER_FEATURE_CATALOG } from "../index.js";
 import { EXTENSION_FEATURES } from "../extensions/index.js";
 import {
   MODERN,
@@ -31,13 +40,78 @@ const uiResource = {
   _meta: { ui: { csp: { connectDomains: ["https://api.example.com"] } } },
 };
 
+const LEAF_COUNTS: Partial<Record<FeatureFamilyId, number>> = {
+  "authorization-extensions": 9,
+  "mcp-apps": 20,
+  tasks: 18,
+  skills: 13,
+  events: 12,
+  "server-cards": 12,
+  "third-party-experimental": 17,
+};
+
+const OBSERVABLE_IDS = [
+  "apps.text-fallback",
+  "apps.app-tools-call",
+  "apps.app-resources-read",
+  "apps.view-requests",
+  "apps.view-notifications",
+  "apps.host-notifications",
+  "apps.display-modes",
+  "apps.download-file-teardown",
+  "apps.app-provided-tools",
+  "tasks.core.augmented-call",
+  "tasks.core.get",
+  "tasks.core.result",
+  "tasks.core.list",
+  "tasks.core.cancel",
+  "tasks.core.status-notification",
+  "tasks.core.input-required",
+  "tasks.ext.create-task-result",
+  "tasks.ext.polling",
+  "tasks.ext.update",
+  "tasks.ext.cancel",
+  "tasks.ext.notifications",
+  "tasks.ext.missing-capability-error",
+  "skills.get",
+  "events.list-changed",
+  "events.poll",
+  "events.stream",
+  "events.terminated",
+  "events.cursor-replay",
+  "events.error-codes",
+  "openai.file-resources",
+  "openai.model-context",
+  "openai.message",
+  "openai.files",
+  "openai.elicitation",
+];
+
 describe("extension catalog shape (families 18 to 24)", () => {
+  it("gives every family its inventory leaves", () => {
+    const parents = new Set(EXTENSION_FEATURES.map((entry) => entry.parent));
+    const counts: Partial<Record<FeatureFamilyId, number>> = {};
+    for (const entry of EXTENSION_FEATURES) {
+      if (parents.has(entry.id)) continue;
+      counts[entry.family] = (counts[entry.family] ?? 0) + 1;
+    }
+    expect(counts).toEqual(LEAF_COUNTS);
+  });
+
   it("names the setup for every feature assessed by configuration", () => {
     for (const entry of EXTENSION_FEATURES) {
       if (entry.assessment.primary === "configured") {
         expect(entry.assessment.setup, entry.id).toBeDefined();
       }
     }
+  });
+
+  it("pins the observable ids the traffic and Apps bridge classifier emits", () => {
+    expect(
+      EXTENSION_FEATURES.filter((entry) => entry.assessment.observable).map(
+        (entry) => entry.id
+      )
+    ).toEqual(OBSERVABLE_IDS);
   });
 
   it("marks every server-owned Apps row that can be absent as client dependent", () => {
@@ -54,6 +128,53 @@ describe("extension catalog shape (families 18 to 24)", () => {
         MCP_UI_EXTENSION_ID
       );
     }
+  });
+});
+
+describe("check maps for the Apps, Tasks and Events suites", () => {
+  const catalogIds = new Map(
+    SERVER_FEATURE_CATALOG.map((entry) => [entry.id, entry.family])
+  );
+  const suites: Array<
+    [
+      string,
+      readonly string[],
+      Readonly<Record<string, CheckFeatureTarget>>,
+      FeatureFamilyId,
+    ]
+  > = [
+    ["apps", MCP_APPS_CHECK_IDS, APPS_CHECK_FEATURES, "mcp-apps"],
+    ["tasks", MCP_TASKS_CHECK_IDS, TASKS_CHECK_FEATURES, "tasks"],
+    ["events", EVENTS_CHECK_IDS, EVENTS_CHECK_FEATURES, "events"],
+  ];
+
+  it.each(suites)(
+    "maps every %s check to existing features of its family",
+    (_suite, ids, map, family) => {
+      expect(Object.keys(map).sort()).toEqual([...ids].sort());
+      for (const [checkId, target] of Object.entries(map)) {
+        if (target === "excluded") continue;
+        expect(target.length, checkId).toBeGreaterThan(0);
+        for (const featureId of target) {
+          expect(catalogIds.get(featureId), `${checkId} -> ${featureId}`).toBe(
+            family
+          );
+        }
+      }
+    }
+  );
+
+  it("excludes checks that grade the client or a host, not the server", () => {
+    expect(TASKS_CHECK_FEATURES["tasks-declaration-hygiene"]).toBe("excluded");
+    expect(EVENTS_CHECK_FEATURES["chatgpt-readiness-webhook-listed"]).toBe(
+      "excluded"
+    );
+    expect(EVENTS_CHECK_FEATURES["chatgpt-readiness-protocol-version"]).toBe(
+      "excluded"
+    );
+    expect(EVENTS_CHECK_FEATURES["chatgpt-readiness-transport"]).toBe(
+      "excluded"
+    );
   });
 });
 
