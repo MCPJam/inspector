@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { createServer as createNetServer } from "node:net";
 import {
   cpSync,
   mkdirSync,
@@ -200,6 +201,19 @@ createServer((req, res) => {
 }).listen(Number(process.env.PORT), "127.0.0.1");
 `;
 
+// A port the OS has just handed out, so a stub launch cannot collide with
+// another test file or a CI neighbour the way a random pick can.
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createNetServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
 function runStub(root, args, { stopAfterReady = false } = {}) {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [join(root, "bin", "start.js"), ...args], {
@@ -242,12 +256,12 @@ function runStub(root, args, { stopAfterReady = false } = {}) {
 test("--json with a running server: stdout is exactly one ready line, the server's output goes to stderr", async () => {
   const root = stubProject(LISTENING_STUB);
   try {
-    const port = 41000 + Math.floor(Math.random() * 3000);
+    const port = await freePort();
     const result = await runStub(root, ["--json", "--port", String(port)], {
       stopAfterReady: true,
     });
     const lines = result.stdout.trim().split("\n");
-    assert.equal(lines.length, 1, result.stdout);
+    assert.equal(lines.length, 1, `stdout: ${result.stdout}\nstderr: ${result.stderr}`);
     const ready = JSON.parse(lines[0]);
     assert.equal(ready.event, "ready");
     assert.equal(ready.port, port);
@@ -261,7 +275,7 @@ test("--json with a running server: stdout is exactly one ready line, the server
 test("--json: a server that exits before it is ready is one error event, not an unhandled rejection", async () => {
   const root = stubProject('console.error("boom"); process.exit(1);');
   try {
-    const port = 44500 + Math.floor(Math.random() * 3000);
+    const port = await freePort();
     const result = await runStub(root, ["--json", "--port", String(port)]);
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
@@ -281,7 +295,7 @@ test("--json: a server that exits before it is ready is one error event, not an 
 test("--json: a server that exits cleanly before it is ready is still a failed start", async () => {
   const root = stubProject('console.error("done early"); process.exit(0);');
   try {
-    const port = 44500 + Math.floor(Math.random() * 3000);
+    const port = await freePort();
     const result = await runStub(root, ["--json", "--port", String(port)]);
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
@@ -305,7 +319,7 @@ test("a listener that does not accept this launch's token is not reported as rea
       .listen(Number(process.env.PORT), "127.0.0.1");
   `);
   try {
-    const port = 47500 + Math.floor(Math.random() * 3000);
+    const port = await freePort();
     const result = await runStub(root, ["--json", "--port", String(port)]);
     assert.equal(result.stdout, "");
     assert.equal(result.status, 1);
