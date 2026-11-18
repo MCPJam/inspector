@@ -35,6 +35,10 @@ import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
+import {
+  flushPendingHostedObservations,
+  recordLocalObservation,
+} from "./services/server-canvas/observation-recorders";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
@@ -438,6 +442,8 @@ const mcpClientManager = new MCPClientManager(
   {},
   {
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Observed server features, filed under each connection's own context.
+    featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
     rpcLogger: ({ direction, message, serverId }) => {
       rpcLogBus.publish({
         serverId,
@@ -1144,7 +1150,9 @@ async function shutdown() {
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.
-    await shutdownAnalytics();
+    // Hosted observed server features still inside their flush interval go
+    // out alongside, bounded the same way.
+    await Promise.all([shutdownAnalytics(), flushPendingHostedObservations()]);
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

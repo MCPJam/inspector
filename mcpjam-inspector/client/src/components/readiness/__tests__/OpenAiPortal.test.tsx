@@ -51,6 +51,7 @@ vi.mock("@/hooks/useProjectSecrets", () => ({
 }));
 
 const onClose = vi.fn();
+const onUpload = vi.fn();
 
 function renderPage(
   submission: SubmissionView,
@@ -63,6 +64,7 @@ function renderPage(
       view={submission}
       session={current}
       projectId="proj_1"
+      onUpload={onUpload}
       onClose={onClose}
     />,
   );
@@ -84,6 +86,7 @@ const RESULTS = [
 describe("OpenAiPortal", () => {
   beforeEach(() => {
     onClose.mockReset();
+    onUpload.mockReset();
     plugins.list = [PLUGIN];
     plugins.detail = PLUGIN_DETAIL;
     plugins.version = VERSION;
@@ -96,7 +99,7 @@ describe("OpenAiPortal", () => {
     );
     expect(screen.getByRole("heading", { name: "Plugins" })).toBeVisible();
     expect(
-      screen.getByText(/Its version stands for the ZIP you upload\./),
+      screen.getByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Choose" }));
     expect(current.setPlugin).toHaveBeenCalledWith({
@@ -110,7 +113,7 @@ describe("OpenAiPortal", () => {
     renderPage(view({ pluginId: undefined, pluginVersionId: undefined }));
     expect(
       screen.getByText(
-        "This project has no plugins. Add one on Connect, then choose it here.",
+        "No plugins in this project yet.",
       ),
     ).toBeVisible();
   });
@@ -156,7 +159,8 @@ describe("OpenAiPortal", () => {
       "aria-selected",
       "true",
     );
-    expect(screen.getByRole("button", { name: "Upload new version" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Upload new version" }));
+    expect(onUpload).toHaveBeenCalledOnce();
     expect(
       screen.getByRole("button", { name: "Review information, has findings" }),
     ).toBeEnabled();

@@ -1694,7 +1694,7 @@ describe("useEvalHandlers", () => {
       });
     });
 
-    describe("with throwOnFailure (the Setup Run sheet)", () => {
+    describe("with throwOnFailure (the Set up run sheet)", () => {
       it("throws the launch failure instead of toasting it", async () => {
         mockAuthFetch.mockResolvedValue(
           createFetchResponse({ message: "Model unavailable" }, 500),

@@ -487,6 +487,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "delete /projects/{projectId}/eval-runs/{runId}/insights":
+    "cancelEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/findings/build":
+    "buildEvalRunFindings",
   "post /projects/{projectId}/eval-runs/{runId}/backtest": "backtestEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/judge/backtest":
     "backtestEvalRunJudge",

@@ -45,6 +45,14 @@ export type {
   RpcLogEvent,
   HttpExchangeLogEvent,
   HttpExchangeLogger,
+  FeatureObserver,
+  FeatureObservationEvent,
+} from "./mcp-client-manager/index.js";
+// MCPJam's own traffic on a connection is not observed use.
+export {
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
 } from "./mcp-client-manager/index.js";
 
 // SEP-2243 header mirroring: CLI and conformance use the send path’s walk.
@@ -160,6 +168,7 @@ export {
   runEventsConformance,
   startEventsConformanceReceiver,
   EVENTS_CHECK_IDS,
+  EVENTS_WEBHOOK_CHECK_IDS,
 } from "./events-conformance/index.js";
 export type {
   EventsConformanceConfig,
@@ -255,6 +264,7 @@ export {
   serverSkillsActive,
 } from "./server-skills.js";
 export type {
+  ServerSkillFileReader,
   ServerSkillListing,
   ServerSkillRefusal,
   ServerSkillSummary,
@@ -352,6 +362,23 @@ export {
 export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
+export { parseBearerAuthenticateParameters } from "./oauth/state-machines/shared/challenges.js";
+export { discoverAuthorizationMetadata } from "./oauth/metadata-discovery.js";
+export type {
+  AuthorizationMetadataDiscoveryConfig,
+  AuthorizationMetadataDiscoveryOptions,
+} from "./oauth/metadata-discovery.js";
+export {
+  authorizationServerMetadataUrls,
+  MCP_AUTHORIZATION_SERVER_METADATA_FORMS,
+  mcpAuthorizationServerMetadataForms,
+  protectedResourceMetadataUrls,
+} from "./oauth/metadata-candidates.js";
+export type {
+  AuthorizationServerMetadataCandidate,
+  AuthorizationServerMetadataForm,
+  AuthorizationServerMetadataKind,
+} from "./oauth/metadata-candidates.js";
 export type {
   ProbeHttpAttempt,
   ProbeInitializeInfo,
@@ -361,10 +388,21 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export {
+  DOCTOR_SKILL_VERIFY_SAMPLE,
   runServerDoctor,
   collectConnectedServerDoctorState,
   normalizeServerDoctorError,
 } from "./server-doctor.js";
+export {
+  EVENTS_LIST_MAX_PAGES,
+  readServerEventTypes,
+  readServerSkillCatalog,
+} from "./server-list-reads.js";
+export type {
+  ServerEventTypesRead,
+  ServerSkillsListSummary,
+  ServerSkillsRead,
+} from "./server-list-reads.js";
 export type {
   ServerDoctorError,
   ServerDoctorCheck,
@@ -374,6 +412,7 @@ export type {
   ServerDoctorSkillsCheck,
   ServerDoctorSkillsFindings,
   ConnectedServerDoctorState,
+  CollectConnectedServerDoctorStateOptions,
   RunServerDoctorInput,
   ServerDoctorDependencies,
 } from "./server-doctor.js";
@@ -1485,8 +1524,13 @@ export type {
 export {
   MCPAppsConformanceTest,
   MCPAppsConformanceSuite,
+  gradeMCPApps,
+  planMCPAppsResourceReads,
 } from "./apps-conformance/index.js";
 export type {
+  MCPAppsGrading,
+  MCPAppsGradingInput,
+  MCPAppsResourceReadPlan,
   MCPAppsCheckCategory,
   MCPAppsCheckId,
   MCPAppsCheckResult,
@@ -2288,3 +2332,7 @@ export type {
   MCPTasksRunOptions,
   MCPTasksRunGroup,
 } from "./tasks-conformance/index.js";
+
+// Server feature model for the server canvas (KES-886). Browser-safe.
+export * from "./server-features/index.js";
+export * from "./server-card/index.js";
