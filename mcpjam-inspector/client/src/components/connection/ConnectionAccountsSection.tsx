@@ -28,6 +28,10 @@ import {
 } from "@/shared/oauth-connections";
 import { SignInSharingControl } from "./SignInSharingControl";
 import { LocalRunsControl } from "./LocalRunsControl";
+import {
+  EXPIRY_UNKNOWN,
+  formatAccountTime,
+} from "@/lib/evals/run-account-credentials";
 
 /**
  * The account a credential reaches, named the way the server named it, with
@@ -49,7 +53,19 @@ function identityOf(connection: OAuthConnection, index: number): string {
   );
 }
 
-/** The user's own words for this account, and whether chat uses it. */
+/**
+ * When a shared or uploaded account's token stops working. Nobody signs in
+ * to renew one, so its expiry is worth showing, and an opaque token uploaded
+ * without `expires_in` has none to show.
+ */
+function expiryOf(connection: OAuthConnection): string | undefined {
+  if (!connection.hostedOnly) return undefined;
+  const { expiresAt } = connection;
+  if (expiresAt === undefined) return EXPIRY_UNKNOWN;
+  return `${expiresAt <= Date.now() ? "Expired" : "Expires"} ${formatAccountTime(expiresAt)}`;
+}
+
+/** The user's own words for this account, whether chat uses it, and its expiry. */
 function captionOf(
   connection: OAuthConnection,
   identity: string,
@@ -60,6 +76,7 @@ function captionOf(
     [
       named === identity ? undefined : named,
       connection.isDefault ? "Default" : null,
+      expiryOf(connection),
     ]
       .filter(Boolean)
       .join(" · ") || undefined
