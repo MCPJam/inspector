@@ -56,7 +56,7 @@ function CatalogDiff({
         );
     return () => abort.abort();
   }, [projectId, serverId, from, to]);
-  if (from === to) return <p>Both use server revision {from}.</p>;
+  if (from === to) return <p>Both use catalog revision {from}.</p>;
   if (!diff)
     return (
       <p>
@@ -198,7 +198,7 @@ export function ReleaseHistory({
             <p className="whitespace-pre-wrap">{published.evidence.value}</p>
           )}
           {published?.snapshot?.revisionNumber && (
-            <p>MCP catalog · revision {published.snapshot.revisionNumber}</p>
+            <p>MCP catalog revision {published.snapshot.revisionNumber}</p>
           )}
           {published?.detail && (
             <p className="whitespace-pre-wrap">{published.detail}</p>
