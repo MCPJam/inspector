@@ -89,8 +89,9 @@ export function useMultiModelSessions(deps: {
   useEffect(() => {
     syncLiveColumns(liveColumns ? liveColumns.split("\n") : []);
   }, [liveColumns, syncLiveColumns]);
-  // Bumped by every selection, reset and branch, so an "Open multi-model
-  // session" still loading when one happens is dropped instead of applied.
+  // Bumped by every selection, reset, branch, project switch and sign-in
+  // change, so an "Open multi-model session" still loading when one happens is
+  // dropped instead of applied.
   const openRequest = useRef(0);
   const startedGroups = useRef(new Set<string>());
   const [openedColumn, setOpenedColumn] = useState<ChatHistorySession | null>(
@@ -131,6 +132,12 @@ export function useMultiModelSessions(deps: {
       `${latest.current.projectId}|${latest.current.serverCatalog.signedIn}`,
     [],
   );
+  // Each switch is its own invalidation: a project switched away and back
+  // reads the same scope again, but the load still belongs to the first visit.
+  const signedIn = serverCatalog.signedIn;
+  useEffect(() => {
+    openRequest.current += 1;
+  }, [projectId, signedIn]);
 
   const restore = useCallback(
     (restoredSession: MultiModelRestore) => {
@@ -159,12 +166,18 @@ export function useMultiModelSessions(deps: {
       isCurrent: () => boolean,
     ): Promise<"restored" | "stale" | null> => {
       openRequest.current += 1;
-      if (!enabled || !session.multiModel) {
+      if (!session.multiModel) {
         setOpenedColumn(null);
         return null;
       }
+      // Kept while the flag is still loading (a column reopened by its link on
+      // a cold load); the notice and branching read the flag when it lands.
       if (!siblings) {
         setOpenedColumn(session);
+        return null;
+      }
+      if (!enabled) {
+        setOpenedColumn(null);
         return null;
       }
       const startedIn = scope();

@@ -315,6 +315,7 @@ import {
   chipClientLimit,
   paneHostId,
   promoteLeadPane,
+  singleChatPanes,
   type ComparePaneTarget,
 } from "@/lib/compare-panes";
 import { useComparePaneSkillsSection } from "./compare-pane-skills";
@@ -4108,9 +4109,8 @@ export function PlaygroundMain({
     },
     showSingleChat: (column) => {
       setMultiModelEnabled(false);
-      // A model column has no client of its own: keep one, so no client grid
-      // covers the branch.
-      setSelectedHostIds(column.hostId ? [column.hostId] : selectedHostIds.slice(0, 1));
+      // One pane, so no client or environment grid covers the branch.
+      restorePanes(singleChatPanes(comparePanes, column.hostId));
     },
     unavailableHostIds: unavailableClients.map((client) => client.compareId),
     modelsReady: availableModels.length > 0,
@@ -4333,6 +4333,7 @@ export function PlaygroundMain({
       adoptRestoredConversationTarget,
       convexProjectId,
       loadHistorySession,
+      multiModelSessions.openFromHistory,
       restoreHistoryServerSelection,
     ],
   );

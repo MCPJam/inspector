@@ -138,6 +138,15 @@ describe("useMultiModelSessions", () => {
     expect(applyRestore).not.toHaveBeenCalled();
   });
 
+  it("branches a column opened before the flag loaded once the flag turns on", async () => {
+    const { hook } = setup();
+    await openAlone(hook);
+    expect(hook.result.current.sendInColumn).toBeNull();
+    flag.enabled = true;
+    hook.rerender({ projectId: "p1", serverCatalog: loadedCatalog });
+    expect(hook.result.current.sendInColumn).not.toBeNull();
+  });
+
   it("reopens the whole session and keeps its positions with the flag on", async () => {
     flag.enabled = true;
     fetchRestore.mockResolvedValue(restored);
@@ -324,6 +333,22 @@ describe("useMultiModelSessions", () => {
     expect(fetchRestore).toHaveBeenCalledWith(
       expect.objectContaining({ toServerIds: expect.any(Function) }),
     );
+    expect(applyRestore).not.toHaveBeenCalled();
+  });
+
+  it("drops an Open multi-model session when the project switches away and back mid-load", async () => {
+    flag.enabled = true;
+    const read = deferred<MultiModelRestore>();
+    fetchRestore.mockReturnValue(read.promise);
+    const { applyRestore, hook } = setup();
+    await openAlone(hook);
+    render(<>{hook.result.current.notice}</>);
+    fireEvent.click(screen.getByText("Open multi-model session"));
+    hook.rerender({ projectId: "p2", serverCatalog: loadedCatalog });
+    hook.rerender({ projectId: "p1", serverCatalog: loadedCatalog });
+    await act(async () => {
+      read.resolve(restored);
+    });
     expect(applyRestore).not.toHaveBeenCalled();
   });
 
