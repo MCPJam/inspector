@@ -180,6 +180,13 @@ export interface FeatureAssessmentRules {
   observable?: boolean;
   /** Set up in MCPJam before it can be assessed. */
   setup?: FeatureSetupKind;
+  /**
+   * Client extension a server may require before it shows this feature,
+   * e.g. "io.modelcontextprotocol/ui" for MCP Apps (servers can hide UI tools
+   * from clients without it). When the capture context did not advertise it,
+   * an `absent` outcome means "depends on the client", never "Could add".
+   */
+  requiresClientExtension?: string;
 }
 
 export interface FeatureDefinition {
@@ -316,7 +323,7 @@ export interface ProbeSummary<P extends ServerProbeId = ServerProbeId> {
   detail?: string;
   values: Partial<Record<ProbeValueKeys[P], ProbeValue>>;
   /** Read-only conformance checks graded by the probe, by check ref. */
-  checks?: Readonly<Record<ConformanceCheckRef, CheckStatus>>;
+  checks?: Readonly<Partial<Record<ConformanceCheckRef, CheckStatus>>>;
 }
 
 /**
