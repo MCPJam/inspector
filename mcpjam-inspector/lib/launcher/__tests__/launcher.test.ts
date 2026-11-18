@@ -1,270 +1,163 @@
-import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { launchInspector } from "../index.js";
 
-const spawnMock = vi.hoisted(() => vi.fn());
-vi.mock("child_process", () => ({ spawn: spawnMock }));
-
-import { launchInspector } from "../index";
-
-class FakeChild extends EventEmitter {
-  stdout: PassThrough | null;
-  stderr: PassThrough | null;
-  kill = vi.fn();
-  constructor(piped: boolean) {
-    super();
-    this.stdout = piped ? new PassThrough() : null;
-    this.stderr = piped ? new PassThrough() : null;
-  }
-}
-
-function fakeSpawn() {
-  let child: FakeChild | undefined;
-  spawnMock.mockImplementation(
-    (_cmd: string, _args: string[], opts: { stdio: unknown }) => {
-      child = new FakeChild(Array.isArray(opts.stdio));
-      return child;
-    },
-  );
-  return () => {
-    if (!child) throw new Error("spawn was not called");
-    return child;
+const engine = vi.hoisted(() => {
+  const inspector = {
+    url: "http://localhost:6274/#token=abc",
+    baseUrl: "http://localhost:6274",
+    port: 6274,
+    started: true,
+    process: { pid: 1 } as { pid: number } | undefined,
+    connect: vi.fn(async () => ({ status: "pending" })),
+    stop: vi.fn(async () => {}),
   };
-}
+  return { inspector, embedInspector: vi.fn(async () => inspector) };
+});
 
-function spawnOptions() {
-  return spawnMock.mock.calls[0][2] as {
-    stdio: unknown;
-    env: Record<string, string>;
-  };
-}
+vi.mock("@mcpjam/sdk/internal/inspector", () => ({
+  embedInspector: engine.embedInspector,
+}));
+
+type EmbedCall = {
+  start: { command: string; args: string[] };
+  port?: number;
+  strictPort?: boolean;
+  reuse?: boolean;
+  silent?: boolean;
+  tab?: string;
+  env: Record<string, string>;
+};
+const embedCall = () =>
+  (engine.embedInspector.mock.calls[0] as unknown as [EmbedCall])[0];
 
 describe("launchInspector", () => {
+  const isTTY = process.stdout.isTTY;
+  const ci = process.env.CI;
+
   beforeEach(() => {
-    spawnMock.mockReset();
-    vi.stubEnv("MCPJAM_SESSION_TOKEN", undefined);
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", undefined);
+    Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+    delete process.env.CI;
+    engine.inspector.started = true;
+    engine.inspector.process = { pid: 1 };
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.unstubAllEnvs();
+    vi.clearAllMocks();
+    Object.defineProperty(process.stdout, "isTTY", { value: isTTY, configurable: true });
+    if (ci === undefined) delete process.env.CI;
+    else process.env.CI = ci;
   });
 
-  it("shares the terminal by default", async () => {
-    fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+  it("starts bin/start.js through the engine and returns its link and process", async () => {
+    const instance = await launchInspector();
 
+    expect(embedCall().start.command).toBe("node");
+    expect(embedCall().start.args[0]).toMatch(/bin[\\/]start\.js$/);
+    expect(embedCall().start.args).not.toContain("--no-open");
+    expect(instance).toEqual({
+      url: engine.inspector.url,
+      port: 6274,
+      process: engine.inspector.process,
+      stop: engine.inspector.stop,
+    });
+  });
+
+  it("passes port, strictPort, silent and the inspector's settings through", async () => {
+    await launchInspector({
+      port: 7000,
+      strictPort: true,
+      silent: true,
+      verbose: true,
+      cspMode: "widget-declared",
+    });
+
+    expect(embedCall()).toMatchObject({
+      port: 7000,
+      strictPort: true,
+      silent: true,
+      env: { VERBOSE_LOGS: "true", MCP_CSP_MODE: "widget-declared" },
+    });
+  });
+
+  it("opens no browser with open: false, in CI, or without a terminal", async () => {
+    await launchInspector({ open: false });
+    process.env.CI = "true";
+    await launchInspector();
+    delete process.env.CI;
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
     await launchInspector();
 
-    expect(spawnOptions().stdio).toBe("inherit");
-  });
-
-  it("keeps output out of the terminal when silent", async () => {
-    fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-
-    await launchInspector({ silent: true });
-
-    expect(spawnOptions().stdio).toEqual(["ignore", "pipe", "pipe"]);
-  });
-
-  it("returns a link carrying the session token it gave the inspector", async () => {
-    fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-
-    const inspector = await launchInspector({ defaultTab: "chat" });
-
-    const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
-    expect(token).toMatch(/^[A-Za-z0-9_-]{24,}$/);
-    expect(inspector.url).toBe(
-      `http://localhost:6274/#token=${token}&tab=playground`,
-    );
-  });
-
-  it.each(["chat", "app-builder", "chat-v2"])(
-    "opens Playground for the older tab name %s",
-    async (defaultTab) => {
-      fakeSpawn();
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-
-      const inspector = await launchInspector({ defaultTab });
-
-      const { env } = spawnOptions();
-      expect(env.MCP_INITIAL_TAB).toBe("playground");
-      expect(inspector.url).toBe(
-        `http://localhost:6274/#token=${env.MCPJAM_SESSION_TOKEN}&tab=playground`,
-      );
-    },
-  );
-
-  it("passes a current tab through unchanged", async () => {
-    fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-
-    const inspector = await launchInspector({ defaultTab: "tools" });
-
-    const { env } = spawnOptions();
-    expect(env.MCP_INITIAL_TAB).toBe("tools");
-    expect(inspector.url).toMatch(/&tab=tools$/);
-  });
-
-  it("accepts a tab written with a leading # or /, as the Inspector does", async () => {
-    for (const defaultTab of ["#playground", "/playground"]) {
-      spawnMock.mockReset();
-      fakeSpawn();
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
-
-      const inspector = await launchInspector({ defaultTab });
-
-      expect(spawnOptions().env.MCP_INITIAL_TAB).toBe("playground");
-      expect(inspector.url).toMatch(/&tab=playground$/);
+    for (const [call] of engine.embedInspector.mock.calls as unknown as [EmbedCall][]) {
+      expect(call.start.args).toContain("--no-open");
     }
+  });
+
+  it("passes a current tab through unchanged and maps old names to Playground", async () => {
+    await launchInspector({ defaultTab: "tools" });
+    await launchInspector({ defaultTab: "chat" });
+    await launchInspector({ defaultTab: "#app-builder" });
+
+    const tabs = (engine.embedInspector.mock.calls as unknown as [EmbedCall][]).map(
+      ([call]) => call.tab,
+    );
+    expect(tabs).toEqual(["tools", "playground", "playground"]);
   });
 
   it("rejects a tab the Inspector does not have, before starting it", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    vi.stubGlobal("fetch", fetchMock);
+    await expect(launchInspector({ defaultTab: "nope" })).rejects.toThrow(
+      'defaultTab "nope" is not a tab',
+    );
+    expect(engine.embedInspector).not.toHaveBeenCalled();
+  });
 
-    const error: Error = await launchInspector({
-      defaultTab: "app-bulder",
-    }).then(
-      () => {
-        throw new Error("launch resolved");
+  it("hands an HTTP server to the open tab instead of the launch config", async () => {
+    await launchInspector({
+      server: {
+        name: "billing-mcp",
+        url: "http://127.0.0.1:7102/mcp",
+        headers: { Authorization: "Bearer x" },
+        useOAuth: true,
       },
-      (err: Error) => err,
-    );
+    });
 
-    expect(error.message).toMatch(
-      /^Could not launch the Inspector because defaultTab "app-bulder" is not a tab\. Set defaultTab to one of .*\.$/,
-    );
-    for (const tab of ["playground", "servers", "tools", "resources"]) {
-      expect(error.message).toContain(tab);
-    }
-    expect(spawnMock).not.toHaveBeenCalled();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(engine.inspector.connect).toHaveBeenCalledWith({
+      name: "billing-mcp",
+      url: "http://127.0.0.1:7102/mcp",
+      headers: { Authorization: "Bearer x" },
+      useOAuth: true,
+    });
+    expect(embedCall().env).not.toHaveProperty("MCP_CONFIG_DATA");
   });
 
-  it("reuses a session token from the environment", async () => {
-    const token = "a".repeat(32);
-    vi.stubEnv("MCPJAM_SESSION_TOKEN", token);
-    fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+  it("accepts a stdio server", async () => {
+    await launchInspector({
+      server: { name: "local", command: "node", args: ["server.js"], env: { A: "1" } },
+    });
 
-    const inspector = await launchInspector();
-
-    expect(spawnOptions().env.MCPJAM_SESSION_TOKEN).toBe(token);
-    expect(inspector.url).toBe(`http://localhost:6274/#token=${token}`);
+    expect(engine.inspector.connect).toHaveBeenCalledWith({
+      name: "local",
+      command: "node",
+      args: ["server.js"],
+      env: { A: "1" },
+    });
   });
 
-  it("waits for the inspector to confirm its own session token", async () => {
-    fakeSpawn();
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await launchInspector();
-
-    const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:6274/api/session-token",
-      expect.objectContaining({
-        headers: { "X-MCP-Session-Auth": `Bearer ${token}` },
-      }),
-    );
+  it("stops what it started when MCPJam refuses the server", async () => {
+    engine.inspector.connect.mockRejectedValueOnce(new Error("MCPJam did not add billing-mcp"));
+    await expect(
+      launchInspector({ server: { name: "billing-mcp", url: "http://127.0.0.1:1/mcp" } }),
+    ).rejects.toThrow("MCPJam did not add billing-mcp");
+    expect(engine.inspector.stop).toHaveBeenCalled();
   });
 
-  it("does not mistake an inspector already on the port for its own", async () => {
-    const child = fakeSpawn();
-    // Another inspector holds the port: it is healthy but rejects this token.
-    const fetchMock = vi.fn(async (url: string) =>
-      url.endsWith("/health") ? { ok: true } : { ok: false, status: 401 },
-    );
-    vi.stubGlobal("fetch", fetchMock);
+  it("with reuse, reports whether MCPJam was started and has no process when reused", async () => {
+    engine.inspector.started = false;
+    engine.inspector.process = undefined;
 
-    const launch = launchInspector({ silent: true });
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    // bin/start.js reports this on stderr, in color.
-    child().stdout?.write(
-      "\u001b[31m❌ Default port 6274 is already in use. Please free the port\u001b[0m\n",
-    );
-    await new Promise((r) => setImmediate(r));
-    child().emit("exit", 1, null);
-    child().emit("close", 1, null);
+    const instance = await launchInspector({ reuse: true });
 
-    await expect(launch).rejects.toThrow(
-      /exited before it was ready \(code 1\)\nInspector output:\n❌ Default port 6274 is already in use/,
-    );
-  });
-
-  it("checks plain health in hosted mode, where there is no session token", async () => {
-    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
-    fakeSpawn();
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const inspector = await launchInspector();
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:6274/health",
-      expect.objectContaining({ headers: undefined }),
-    );
-    expect(inspector.url).toBe("http://localhost:6274/");
-  });
-
-  it("rejects with the inspector's stderr when it exits before it is ready", async () => {
-    const child = fakeSpawn();
-    const fetchMock = vi.fn().mockRejectedValue(new Error("refused"));
-    vi.stubGlobal("fetch", fetchMock);
-
-    const launch = launchInspector({ silent: true });
-    child().stderr?.write("Port 6274 is already in use\n");
-    await new Promise((r) => setImmediate(r));
-    child().emit("exit", 1, null);
-    child().emit("close", 1, null);
-
-    await expect(launch).rejects.toThrow(
-      /exited before it was ready \(code 1\)\nInspector output:\nPort 6274 is already in use/,
-    );
-
-    const healthChecksAtRejection = fetchMock.mock.calls.length;
-    await new Promise((r) => setTimeout(r, 300));
-    expect(fetchMock.mock.calls.length).toBe(healthChecksAtRejection);
-  });
-
-  it("includes stderr that arrives after the inspector exits", async () => {
-    const child = fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
-
-    const launch = launchInspector({ silent: true });
-    await new Promise((r) => setImmediate(r));
-    child().emit("exit", 1, null);
-    child().stderr?.write("Error: Cannot find module dist/server\n");
-    await new Promise((r) => setImmediate(r));
-    child().emit("close", 1, null);
-
-    await expect(launch).rejects.toThrow(
-      /Inspector output:\nError: Cannot find module dist\/server/,
-    );
-  });
-
-  it("keeps the session token out of startup errors", async () => {
-    const child = fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
-
-    const launch = launchInspector({ silent: true });
-    const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
-    child().stdout?.write(`http://127.0.0.1:6274/#token=${token}\n`);
-    await new Promise((r) => setImmediate(r));
-    child().emit("exit", 1, null);
-    child().emit("close", 1, null);
-
-    const error: Error = await launch.then(
-      () => {
-        throw new Error("launch resolved");
-      },
-      (err: Error) => err,
-    );
-    expect(error.message).toContain("#token=<session token>");
-    expect(error.message).not.toContain(token);
+    expect(embedCall().reuse).toBe(true);
+    expect(instance.started).toBe(false);
+    expect(instance).not.toHaveProperty("process");
   });
 });
