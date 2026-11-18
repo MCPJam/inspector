@@ -39,6 +39,8 @@ interface ApiKeysRouteProps {
   organizationId?: string;
   /** Owner or admin of `organizationId`; enables the key creation setting. */
   isAdmin?: boolean;
+  /** The org the app is in; new personal keys are scoped to it. */
+  activeOrganizationId?: string | null;
 }
 
 /** A key's display name; the id stands in when WorkOS could not be asked. */
@@ -88,6 +90,7 @@ function KeyExpiry({ expiresAt }: { expiresAt?: string | null }) {
 export function ApiKeysRoute({
   organizationId,
   isAdmin = false,
+  activeOrganizationId,
 }: ApiKeysRouteProps = {}) {
   const [createOpen, setCreateOpen] = useState(false);
   const [revealValue, setRevealValue] = useState<string | null>(null);
@@ -310,6 +313,7 @@ export function ApiKeysRoute({
         isCreating={isCreating}
         organizations={sortedOrganizations}
         orgsLoading={orgsLoading}
+        activeOrganizationId={activeOrganizationId}
         onCreate={handleCreate}
       />
 

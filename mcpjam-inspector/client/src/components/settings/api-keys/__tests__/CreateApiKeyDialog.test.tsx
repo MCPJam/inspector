@@ -16,7 +16,10 @@ vi.mock("@/lib/apis/web/api-keys", () => ({
 
 const onCreate = vi.fn();
 
-function renderDialog(organizations = [{ _id: "org-a", name: "Acme" }]) {
+function renderDialog(
+  organizations = [{ _id: "org-a", name: "Acme" }],
+  activeOrganizationId?: string,
+) {
   return render(
     <CreateApiKeyDialog
       open
@@ -24,6 +27,7 @@ function renderDialog(organizations = [{ _id: "org-a", name: "Acme" }]) {
       isCreating={false}
       organizations={organizations}
       orgsLoading={false}
+      activeOrganizationId={activeOrganizationId}
       onCreate={onCreate}
     />,
   );
@@ -189,5 +193,40 @@ describe("CreateApiKeyDialog organization setting for who creates keys", () => {
       ).not.toBeInTheDocument(),
     );
     expect(screen.getByRole("button", { name: "Create key" })).toBeEnabled();
+  });
+});
+
+describe("CreateApiKeyDialog active organization", () => {
+  const twoOrgs = [
+    { _id: "org-a", name: "Acme" },
+    { _id: "org-b", name: "Beta" },
+  ];
+
+  it("scopes the key to the active organization without asking", async () => {
+    const user = userEvent.setup();
+    renderDialog(twoOrgs, "org-b");
+
+    expect(screen.getByTestId("api-key-active-org")).toHaveTextContent("Beta");
+    expect(
+      screen.queryByRole("combobox", { name: "Organization" }),
+    ).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("Name"), "ci");
+    await user.click(screen.getByRole("button", { name: "Create key" }));
+
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ organizationId: "org-b" }),
+      ),
+    );
+    expect(mockGetApiKeyMintEligibility).toHaveBeenCalledWith("org-b");
+  });
+
+  it("falls back to the picker when the active organization is not listed", () => {
+    renderDialog(twoOrgs, "org-gone");
+
+    expect(screen.queryByTestId("api-key-active-org")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Organization" }),
+    ).toBeInTheDocument();
   });
 });

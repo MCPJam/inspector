@@ -2818,7 +2818,8 @@ export function SettingsRoute() {
 export function ApiKeysSettingsRoute() {
   // Personal keys. The organization inventory mounts ApiKeysRoute with an
   // explicit organizationId from OrganizationsTab instead.
-  return <ApiKeysRoute />;
+  const { activeOrganizationId } = useAppRouteContext();
+  return <ApiKeysRoute activeOrganizationId={activeOrganizationId} />;
 }
 
 export function IntegrationsSettingsRoute() {
