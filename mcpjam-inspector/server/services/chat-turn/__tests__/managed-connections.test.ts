@@ -5,7 +5,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { HOSTED_HARNESS_INPUT_VERSION } from "../../../../shared/hosted-elicitation";
-const m = vi.hoisted(() => ({ order: [] as string[], authorize: vi.fn(), refused: {} as Record<string, unknown> }));
+const m = vi.hoisted(() => ({ order: [] as string[], authorize: vi.fn(), refused: {} as Record<string, unknown>, refreshProfiles: vi.fn(async () => {}) }));
 vi.mock("../../../routes/web/hosted-elicitation.js", async (original) => ({
   ...(await original<
     typeof import("../../../routes/web/hosted-elicitation.js")
@@ -39,7 +39,7 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-bearer",
 }));
 vi.mock("../../../utils/connection-profile-refresh.js", () => ({
-  refreshConnectionProfiles: async () => {},
+  refreshConnectionProfiles: m.refreshProfiles,
 }));
 vi.mock("../../xaa-mint.js", async (original) => ({
   ...(await original<typeof import("../../xaa-mint.js")>()),
@@ -69,6 +69,43 @@ const setup = {
   resolvedExecution: {},
   turnRail: "hosted",
 } as unknown as Setup;
+
+describe("session-start profile refresh", () => {
+  it.each([
+    { requireToolApproval: true, expected: true },
+    { requireToolApproval: false, expected: false },
+    { requireToolApproval: undefined, expected: false },
+  ])(
+    "passes the turn's tool approval ($requireToolApproval) to the refresh",
+    async ({ requireToolApproval, expected }) => {
+      m.refreshProfiles.mockClear();
+      const resources = new TurnResources((error) => {
+        throw error;
+      });
+      const app = new Hono();
+      app.post("/", async (c) => {
+        await prepareManagedConnections({
+          c,
+          rawBody: {},
+          bearerToken: "bearer",
+          rpcCollector: createHostedRpcLogCollector({}),
+          resources,
+          setup: { ...setup, requireToolApproval } as Setup,
+          onOAuthServerUrls: () => {},
+        });
+        return c.json({ ok: true });
+      });
+      expect((await app.request("/", { method: "POST" })).status).toBe(200);
+      expect(m.refreshProfiles).toHaveBeenCalledWith(
+        expect.anything(),
+        "bearer",
+        "project-1",
+        { toolApprovalRequired: expected },
+      );
+      await resources.dispose();
+    },
+  );
+});
 
 describe("managed connection ownership", () => {
   beforeEach(() => {
