@@ -10,12 +10,24 @@ import type {
   BillingInterval,
   BillingLimitName,
   GateDecision,
+  OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
   PlanCatalogEntry,
   PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
+
+export function canShowSubscriptionNotices(
+  billingStatus: Pick<OrganizationBillingStatus, "plan" | "source">,
+): boolean {
+  return (
+    billingStatus.plan !== "free" &&
+    billingStatus.source !== "trial" &&
+    billingStatus.source !== "simulation"
+  );
+}
+
 export function getDisplayPriceCentsForPlan(
   _plan: OrganizationPlan,
   interval: BillingInterval,
@@ -40,13 +52,9 @@ export function getAnnualDiscountPercent(
 }
 
 export const BILLING_FEATURE_BY_TAB = {
-  // Both Evaluate lenses (Suites and Runs) gate on `evals`: they are one tab
-  // now, and this map is keyed by tab id. `cicd` still exists as a backend
-  // feature — server-side ingest enforces it — it just no longer gates a
-  // client route.
+  // Retain the billing identity for saved legacy links.
   evals: "evals",
-  // Evaluate (New) is the same product behind a flag, so it gates on the same
-  // feature — a preview must not be a way around the paywall.
+  // Current Evaluate uses the same suite billing feature.
   evaluate: "evals",
   scenarios: "scenarios",
   // The agent Swarm surface shares the human Scenario's billing feature.
@@ -95,20 +103,14 @@ export function isGateAccessDenied(
  * organization premiumness applies.
  */
 export function isPremiumnessGateDeniedForShell(params: {
-  billingUiEnabled: boolean;
   projectPremiumness: PremiumnessState | undefined;
   organizationPremiumness: PremiumnessState | undefined;
   hasProject: boolean;
   gateKey: PremiumnessGateKey | null;
 }): boolean {
-  const {
-    billingUiEnabled,
-    projectPremiumness,
-    organizationPremiumness,
-    hasProject,
-    gateKey,
-  } = params;
-  if (!billingUiEnabled || !gateKey) {
+  const { projectPremiumness, organizationPremiumness, hasProject, gateKey } =
+    params;
+  if (!gateKey) {
     return false;
   }
   const premiumness =

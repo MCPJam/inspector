@@ -90,7 +90,8 @@ export interface SwarmRunDetailProps {
    */
   onRunAgain: (
     journeyRefIds: string[],
-  ) => Promise<{ swarmRunGroupId?: string } | void>;
+    runIds?: string[],
+  ) => Promise<{ swarmRunGroupId?: string; cancelled?: boolean } | void>;
 }
 
 export function SwarmRunDetail({
@@ -287,7 +288,8 @@ export function SwarmRunDetail({
     if (launchableJourneyIds.length === 0) return;
     setRunAgainBusy(true);
     try {
-      const started = await onRunAgain(launchableJourneyIds);
+      const started = await onRunAgain(launchableJourneyIds, wave?.runs.filter(run => !run.journeyArchived).map(run => run.runId));
+      if (started?.cancelled) return;
       const goals = launchableJourneyIds.length;
       // "Started 15 goals" reported an internal count and left the viewer on
       // the run they had just relaunched FROM, with no way to the new one. Say
@@ -313,7 +315,7 @@ export function SwarmRunDetail({
     } finally {
       setRunAgainBusy(false);
     }
-  }, [launchableJourneyIds, navigate, onRunAgain]);
+  }, [launchableJourneyIds, navigate, onRunAgain, wave]);
 
   const runningRunIds = useMemo(() => {
     if (!wave) return [];

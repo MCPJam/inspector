@@ -44,7 +44,9 @@ import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
 import { WebRouteError } from "../routes/web/errors.js";
 import { prepareEvalRun, shouldSkipExecution } from "../routes/shared/evals.js";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { createConvexClient } from "./evals/route-helpers.js";
+import { resolveConfiguredXaaIssuer } from "./xaa-configured-issuer.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
   CheckStepError,
@@ -72,6 +74,7 @@ import {
 } from "./github-checks/service-route.js";
 import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 import { createConformanceFetch } from "../routes/shared/conformance.js";
+import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -964,18 +967,6 @@ async function defaultDeleteEphemeralServer(args: {
 }
 
 /**
- * Run statuses the eval runner treats as final. `timed_out` is included because
- * the runner stamps it before rethrowing — re-finalizing as `failed` would
- * overwrite a real timeout verdict.
- */
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * Whether the run already has a terminal record — with `unknown` kept distinct
  * from `non_terminal`.
  *
@@ -1010,7 +1001,7 @@ async function runTerminality(
     })) as { status?: string } | null;
     if (!run) return "unknown";
     if (run.status === "grading") return "grading";
-    return TERMINAL_RUN_STATUSES.has(String(run.status))
+    return isEvalRunTerminalStatus(run.status)
       ? "terminal"
       : "non_terminal";
   } catch {
@@ -1019,7 +1010,7 @@ async function runTerminality(
 }
 
 /**
- * Read a run, waiting out a gating judge's hold.
+ * Read a run, waiting for its existing executor and gating judge.
  *
  * IT DECIDES NOTHING. It returns the last row it read, and every judgement
  * stays where it was: `runReachedAVerdict` is unchanged and still answers
@@ -1065,7 +1056,7 @@ export async function awaitJudgeVerdict(
     } | null;
 
   let run = await read();
-  while (run?.status === "grading") {
+  while (run?.status === "grading" || run?.status === "running" || run?.status === "pending") {
     if (options.isLeaseHeld?.() === false) return run;
     if (now() >= deadline) return run;
     await sleep(options.pollMs);
@@ -1073,7 +1064,7 @@ export async function awaitJudgeVerdict(
       run = await read();
     } catch (error) {
       // Not evidence about the run. Keep the last row and try again.
-      logger.warn("[github-checks] failed to re-read a run held for grading", {
+      logger.warn("[github-checks] failed to re-read an active eval run", {
         runId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -1185,6 +1176,7 @@ async function abandonPreparedRun(
   prepared: Awaited<ReturnType<typeof prepareEvalRun>>,
   ctx: { triggerId: string; reason: string; what: string },
 ): Promise<void> {
+  if (prepared.deduped === true) return;
   const notes = ctx.reason.slice(0, 500);
   await client
     .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
@@ -1298,12 +1290,8 @@ async function executeCheckRun(
   args: RunEvalSuiteArgs,
 ): Promise<Awaited<ReturnType<typeof awaitJudgeVerdict>>> {
   try {
-    // A redelivered claim replays the run its key already started. If that
-    // run FINISHED, re-executing would run the suite a second time and bill
-    // for it — and the verdict this check needs is already recorded on it.
-    // Only the execution is skipped; everything below still reads the run's
-    // terminality and reports it, which is exactly what a redelivery should
-    // do.
+    // A redelivered claim adopts the original worker's run. Wait for its
+    // verdict below while keeping this claim's heartbeat and temporary server.
     if (shouldSkipExecution(prepared)) {
       logger.info("[github-checks] trigger already ran — not re-executing", {
         triggerId: args.claimed.triggerId,
@@ -1430,7 +1418,14 @@ async function defaultRunEvalSuite(
   args: RunEvalSuiteArgs,
 ): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
-  // (same contract as the scheduled worker).
+  // (same contract as the scheduled worker), and the XAA issuer comes from the
+  // deployment's public origin as it does there.
+  //
+  // Unlike the scheduled worker, no host XAA policy. The one server is the
+  // throwaway row this check made for the PR build, registered with no
+  // authorization server: under a policy it could only be refused, and
+  // registering it would hand a customer's client credentials to the PR's
+  // code. It signs in with the repository's chosen OAuth source instead.
   const authorized = await createAuthorizedManager(
     {},
     args.bearer,
@@ -1441,7 +1436,7 @@ async function defaultRunEvalSuite(
       ? { [args.serverId]: args.oauthAccessToken }
       : undefined,
     undefined,
-    { serverNames: [args.serverName] },
+    { serverNames: [args.serverName], xaaIssuer: resolveConfiguredXaaIssuer() },
   );
 
   try {
@@ -2284,10 +2279,7 @@ export function startGithubChecksWorker(options?: {
     options?.claimedBy ??
     `inspector-gh-${process.env.RAILWAY_REPLICA_ID ?? process.pid}`;
   const claim = options?.claim ?? claimNext;
-  const execute =
-    options?.execute ??
-    ((claimed: ClaimedGithubCheck, by: string) =>
-      executeClaimedCheck(claimed, by));
+  const execute = options?.execute ?? executeClaimedCheck;
 
   if (!requiredEnv()) {
     logger.warn(
@@ -2331,7 +2323,7 @@ export function startGithubChecksWorker(options?: {
         if (claimed === "disabled") {
           waitMs = ERROR_BACKOFF_MS;
         } else if (claimed) {
-          await execute(claimed, claimedBy);
+          await serverDrain.track("claimed_job", execute(claimed, claimedBy));
           // Drain mode: another PR's check may be queued behind this one.
           waitMs = 1_000;
         }

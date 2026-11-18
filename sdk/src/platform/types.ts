@@ -1,5 +1,31 @@
 import type { PlatformReadinessStartBody } from "./readiness-start-types.js";
-export type { PlatformReadinessStartBody, PlatformReadinessLazyAuthProbe } from "./readiness-start-types.js";
+export type {
+  PlatformReadinessStartBody,
+  PlatformReadinessLazyAuthProbe,
+} from "./readiness-start-types.js";
+import type { PlatformEvalRunAccount } from "./eval-run-account-types.js";
+export type {
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
+} from "./eval-run-account-types.js";
+export type {
+  PlatformConformanceCheck,
+  PlatformConformanceReport,
+  PlatformConformanceReportCheck,
+  PlatformConformanceReportProfile,
+  PlatformConformanceRun,
+  PlatformConformanceRunReceipt,
+  PlatformConformanceRunReportSummary,
+  PlatformConformanceSettingsSource,
+  PlatformConformanceSuiteKind,
+} from "./conformance-types.js";
+export type {
+  PlatformServerRevision,
+  PlatformServerRevisionDiff,
+  PlatformServerRevisionSource,
+  PlatformServerRevisionSummary,
+  PlatformServerRevisionTool,
+} from "./server-revision-types.js";
 import type {
   SwarmJourneyFinding,
   SwarmJourneyFindings,
@@ -45,6 +71,16 @@ export type {
   PlatformFindingsJobStatus,
   PlatformReadinessObservationReason,
 } from "./analysis-outcome-types.js";
+import type { PlatformEvalFindingsView } from "./findings-view-types.js";
+export type {
+  PlatformEvalFindingsView,
+  PlatformEvalFindingsViewStatus,
+  PlatformFindingExplanation,
+  PlatformFindingObservationOutcome,
+  PlatformFindingOption,
+  PlatformFindingOptionKind,
+  PlatformFindingProblem,
+} from "./findings-view-types.js";
 export type { PlatformBrowserToolPolicy } from "./browser-policy.js";
 export type PlatformSessionBrowserInput = {
   policy?: PlatformBrowserToolPolicy;
@@ -1104,6 +1140,12 @@ export interface PlatformEvalRun {
    * the credential carried no attribution claims.
    */
   attribution?: PlatformEvalRunAttribution;
+  /**
+   * The account the run used on each server, recorded when it started.
+   * ABSENT when the run recorded none (runs from before accounts were
+   * recorded); `[]` means it recorded that it used none.
+   */
+  accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
@@ -5329,6 +5371,11 @@ export interface PlatformUnifiedFindings {
   };
   canBuild: boolean;
   canEnrich: boolean;
+  /**
+   * One problem per recorded observation, joined by the backend. Absent from
+   * older backends. Check `version` before rendering; render it alone.
+   */
+  findingsView?: PlatformEvalFindingsView;
 }
 
 export interface PlatformInsightsEnvelope {
@@ -5444,8 +5491,22 @@ export interface PlatformEvalCheckRepoConnected {
   outagePolicy: "fail_open" | "fail_closed";
 }
 
-/** Receipt for an eval-run insights (serverQuality) request. 202. */
+/** Receipt for an eval run analysis request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/** Receipt for cancelling an eval run's analysis. */
+export interface PlatformEvalRunInsightsCanceled {
+  runId: string;
+  projectId: string;
+  canceled: true;
+}
+
+/** Receipt for a findings build. 202: poll `insights.unifiedFindings.job`. */
+export interface PlatformEvalRunFindingsBuildRequested {
   runId: string;
   projectId: string;
   status: "pending";
@@ -5556,6 +5617,11 @@ export interface PlatformCapabilities {
       enforced: boolean;
       reason?: string;
     };
+    /**
+     * Whether you can start conformance runs. Absent on a deployment that
+     * does not report it, which means unknown, not off.
+     */
+    conformance?: { enabled: boolean };
   };
   plan: {
     name: string;
@@ -5994,6 +6060,12 @@ export interface PlatformReadinessRun {
   authMode: "headless" | "interactive" | "provided-token" | null;
   capabilities: string[];
   attemptCount: number;
+  /**
+   * The run stopped on the server and waits for the person who started it:
+   * `resumeReadinessRun` runs it again with their credentials. Only they can.
+   * Absent from deployments older than the field: read it as `false`.
+   */
+  resumable?: boolean;
   terminalReason: string | null;
   errorMessage: string | null;
   policySnapshotDate: string | null;
@@ -6003,6 +6075,14 @@ export interface PlatformReadinessRun {
   llmObservations: PlatformReadinessObservationState;
   hasReport: boolean;
   reportUrl: string | null;
+  /** The directory submission the run graded; `null` for a run started from a server. */
+  submissionId: string | null;
+  /** The submission's revision when the run was requested: the answers it graded. */
+  submissionRevision: number | null;
+  /** The stored plugin version a ChatGPT plugin submission's run grades; `null` otherwise. */
+  pluginVersionId: string | null;
+  /** The submission's test plan revision whose calls the run makes; `null` when it names none. */
+  testPlanRevision: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -6051,95 +6131,3 @@ export type PlatformMuseReadinessStartBody = Pick<
   PlatformReadinessStartBody,
   "idempotencyKey"
 >;
-
-/** Suites the hosted agent/API surface can start. OAuth is refused. */
-export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";
-
-/** The `202` receipt. Poll the run detail; do not re-POST. */
-export interface PlatformConformanceRunReceipt {
-  runId: string;
-  projectId: string;
-  serverId: string;
-  /**
-   * The run's status at the moment the start returned.
-   *
-   * `queued` for a fresh start. For a DEDUPED start it is whatever the
-   * existing run is already at — which may be `completed`.
-   */
-  status: string;
-  /** True when an idempotency key replayed an existing run. */
-  deduped: boolean;
-  requestedSuites: PlatformConformanceSuiteKind[];
-}
-
-export interface PlatformConformanceRunReportSummary {
-  suiteKind: string;
-  status: string;
-  outcome: string | null;
-  score: number | null;
-  pending: number;
-  profileId: string | null;
-  profileVersion: string | null;
-  hasReport: boolean;
-}
-
-export interface PlatformConformanceRun {
-  id: string;
-  projectId: string;
-  serverId: string | null;
-  source: string | null;
-  verification: string | null;
-  status: string;
-  outcome: string | null;
-  incompleteReason: string | null;
-  score: number | null;
-  applicable: number;
-  passed: number;
-  failed: number;
-  couldNotRun: number;
-  notApplicable: number;
-  pending: number;
-  advisoryCount: number;
-  requestedSuites: string[];
-  protocolVersion: string | null;
-  engineVersion: string | null;
-  createdAt: number;
-  completedAt: number | null;
-  durationMs: number | null;
-  reports: PlatformConformanceRunReportSummary[];
-  /** Relative v1 report URL when a stored report exists (or the run is terminal). */
-  reportUrl: string | null;
-}
-
-export interface PlatformConformanceReportCheck {
-  suiteKind: string;
-  id: string;
-  title: string;
-  groupId: string;
-  status: string;
-  pending: boolean;
-  skipReason?: string;
-  error?: string;
-}
-
-export interface PlatformConformanceReportProfile {
-  suiteKind: string;
-  profileId: string | null;
-  profileVersion: string | null;
-  pendingCheckIds: string[];
-}
-
-/** Bounded failing-check projection. The stored report can be megabytes. */
-export interface PlatformConformanceReport {
-  runId: string;
-  status: string;
-  outcome: string | null;
-  score: number | null;
-  pending: number;
-  checks: PlatformConformanceReportCheck[];
-  totalCases: number;
-  /** Failed + could-not-run count, the denominator behind `truncated`. */
-  totalFailingCases: number;
-  truncated: boolean;
-  profiles: PlatformConformanceReportProfile[];
-}

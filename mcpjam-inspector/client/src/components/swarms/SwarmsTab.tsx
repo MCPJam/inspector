@@ -94,7 +94,7 @@ import {
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
-import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
+import { RepairableSwarmRunDetail } from "./swarm-rerun-repair";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
 import {
@@ -179,6 +179,7 @@ type HostItem = {
   hostId: string;
   name: string;
   // Enriched by `hosts:listHosts` (additive) — powers the journey host chips.
+  hostStyle?: string | null;
   modelId?: string;
   serverCount?: number;
   hasComputer?: boolean;
@@ -1056,7 +1057,7 @@ export function SwarmsTab({
             onChange={onRunningPersonasChange}
           />
         </ErrorBoundary>
-        <SwarmRunDetail
+        <RepairableSwarmRunDetail
           organizationId={organizationId}
           // Remount per wave. Every piece of state in here is about the wave
           // being looked at — the persona filter, the stop confirmation, and
@@ -1100,6 +1101,7 @@ export function SwarmsTab({
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmOverviewPanel
               projectId={effectiveProjectId}
+              hosts={hosts}
               hasPersonas={
                 personas === undefined ? undefined : personas.length > 0
               }

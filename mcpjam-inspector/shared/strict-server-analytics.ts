@@ -4,19 +4,35 @@ import {
   type ServerAnalyticsEventName,
 } from "./analytics-events";
 import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
+import {
+  HARNESS_TURN_BOOTSTRAPS,
+  HARNESS_TURN_DURATIONS,
+  HARNESS_TURN_FALLBACK_REASONS,
+  HARNESS_TURN_KINDS,
+  HARNESS_TURN_STARTS,
+} from "./harness-turn-event";
+import { isLogConvexIdShape } from "./strict-log";
 
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],
   source_type: ["playground", "eval", "api", "direct", "scenario", "swarm"],
-  surface: ["api"],
+  surface: ["api", "eval", "playground", "scenario", "web", "local"],
   outcome: [
     "ok",
+    "partial",
     "failed",
     "rate_limited",
     "timeout",
     "completed",
     "cancelled",
+    "aborted",
   ],
+  // harness_turn_completed
+  kind: HARNESS_TURN_KINDS,
+  start: HARNESS_TURN_STARTS,
+  fallback_reason: HARNESS_TURN_FALLBACK_REASONS,
+  bootstrap: HARNESS_TURN_BOOTSTRAPS,
+  runtime: ["agent", "harness"],
   readiness_kind: ["claude", "chatgpt"],
   submission_mode: ["submit", "prepare", "existing"],
   overall_status: ["ready", "not-ready", "needs-attention", "pass", "fail"],
@@ -31,7 +47,7 @@ const enums: Record<string, readonly string[]> = {
   terminal_reason: ["runner_error", "timeout", "cancelled", "completed"],
   scope: ["project", "organization", "user"],
   status: ["running", "completed", "failed", "cancelled"],
-  harness_id: ["claude-code", "codex", "cursor"],
+  harness_id: ["claude-code", "codex", "copilot-cli", "cursor", "opencode"],
   trigger: ["boot", "readiness", "provision", "cli", "manual"],
   stage: ["download", "verify", "extract", "install", "probe", "activate"],
   role: ["desired", "previous", "candidate"],
@@ -43,7 +59,7 @@ const enums: Record<string, readonly string[]> = {
     "unsupported",
     "unknown",
   ],
-  engine: ["emulated", "harness:claude-code", "harness:codex"],
+  engine: ["emulated", "harness:claude-code", "harness:codex", "harness:opencode"],
   environment_skill_delivery: ["harness", "harness_unsupported", "emulated"],
 };
 const numbers = new Set([
@@ -56,7 +72,29 @@ const numbers = new Set([
   "environment_base_server_count",
   "environment_effective_server_count",
   "environment_skill_count",
+  // skills_delivered: one turn's skills by family, off the prompt's list, by
+  // exclusion reason, not delivered this turn, and failed
+  "delivered_library_count",
+  "delivered_plugin_count",
+  "delivered_mcp_server_count",
+  "delivered_local_count",
+  "omitted_from_catalog_count",
+  "excluded_unsupported_harness_count",
+  "excluded_server_skill_unsupported_count",
+  "excluded_plugin_disabled_count",
+  "excluded_name_collision_count",
+  "excluded_invalid_skill_name_count",
+  "excluded_over_cap_count",
+  "not_delivered_count",
+  "failed_count",
 ]);
+/** harness_turn_completed's timings: whole milliseconds, never a fraction. */
+const wholeMilliseconds = new Set<string>(HARNESS_TURN_DURATIONS);
+/**
+ * The organization a server-side check verified (a `LogConvexId` from the
+ * request context), kept only in a Convex ID's shape.
+ */
+const ids = new Set(["organization_id"]);
 const booleans = new Set([
   "include_llm_observations",
   "success",
@@ -70,7 +108,8 @@ const booleans = new Set([
 export type ServerAnalyticsFieldRule =
   | { values: readonly string[] }
   | { kind: "boolean" }
-  | { kind: "number"; max: number };
+  | { kind: "number"; max: number; integer?: true }
+  | { kind: "convexId" };
 
 /** The rule a property must meet to be forwarded, if it has one. */
 export function serverAnalyticsFieldRule(
@@ -80,6 +119,9 @@ export function serverAnalyticsFieldRule(
   if (Object.hasOwn(enums, key)) return { values: enums[key] };
   if (booleans.has(key)) return { kind: "boolean" };
   if (numbers.has(key)) return { kind: "number", max: 86400000 };
+  if (wholeMilliseconds.has(key))
+    return { kind: "number", max: 86400000, integer: true };
+  if (ids.has(key)) return { kind: "convexId" };
   return undefined;
 }
 
@@ -105,11 +147,14 @@ export function rebuildServerAnalytics(
         properties[key] = value;
     } else if (rule.kind === "boolean") {
       if (typeof value === "boolean") properties[key] = value;
+    } else if (rule.kind === "convexId") {
+      if (isLogConvexIdShape(value)) properties[key] = value;
     } else if (
       typeof value === "number" &&
       Number.isFinite(value) &&
       value >= 0 &&
-      value <= rule.max
+      value <= rule.max &&
+      (!rule.integer || Number.isInteger(value))
     )
       properties[key] = value;
   }
@@ -148,9 +193,6 @@ export function rolloutPersonProperties(input: Record<string, string>, trustedEm
       : {}),
     ...(input.deployment === "hosted" || input.deployment === "self_hosted"
       ? { deployment: input.deployment }
-      : {}),
-    ...(input.local_browser_security_version === "1"
-      ? { local_browser_security_version: "1" }
       : {}),
   };
 }

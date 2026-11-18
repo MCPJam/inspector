@@ -9,6 +9,7 @@ import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { runClientIdentity } from "../evals/helpers";
+import { InfoHint } from "../evals/global-gates-info";
 import {
   resolveRunOrigin,
   resolveRunOriginDetail,
@@ -22,21 +23,35 @@ import {
   type RunGitMetadataValue,
 } from "../evals/run-git-metadata";
 import { projectRunRollup } from "../evals/project-run-suite-groups";
-import { runEffectiveOutcome } from "../evals/project-runs-table";
+import {
+  runEffectiveOutcome,
+  type RunOutcomeFields,
+} from "../evals/project-runs-table";
 import type { ProjectRunRow } from "../evals/project-runs-table";
 import type { ProjectRunHistoryDetail } from "../evals/use-project-run-history";
 import {
   formatRunHistoryMetric,
   type SuiteRunHistoryRow,
 } from "./suite-detail-model";
+import { RunAccountCells } from "./run-account-facts";
+
+type HintedColumn = "Latency" | "Tokens" | "Calls";
+const isHintedColumn = (label: string): label is HintedColumn =>
+  label === "Latency" || label === "Tokens" || label === "Calls";
 
 export function EvaluateHistoryHeader({
   showSuite = false,
   showActions = false,
+  showAccounts = false,
+  hints,
 }: {
   showSuite?: boolean;
   /** Adds the untitled last column that holds each row's delete button. */
   showActions?: boolean;
+  /** Adds "Ran as" and "Accounts", for runs that recorded their accounts. */
+  showAccounts?: boolean;
+  /** Text behind an ⓘ beside these column headers; absent renders none. */
+  hints?: Partial<Record<HintedColumn, string>>;
 }) {
   return (
     <TableHeader>
@@ -49,6 +64,7 @@ export function EvaluateHistoryHeader({
           "Result",
           "Rate",
           "Platform",
+          ...(showAccounts ? ["Ran as", "Accounts"] : []),
           "Commit",
           "Date",
           "Latency",
@@ -56,7 +72,19 @@ export function EvaluateHistoryHeader({
           "Calls",
         ].map((label) => (
           <TableHead key={label} className="whitespace-nowrap">
-            {label}
+            {isHintedColumn(label) && hints?.[label] ? (
+              <span className="inline-flex items-center gap-1">
+                {label}
+                <InfoHint
+                  label={`About ${label}`}
+                  className="border border-border bg-muted/50"
+                >
+                  {hints[label]}
+                </InfoHint>
+              </span>
+            ) : (
+              label
+            )}
           </TableHead>
         ))}
         {showActions && (
@@ -76,7 +104,7 @@ export function EvaluateHistoryHeader({
  * so a run that recorded `cancelled`, `timed_out` or `inconclusive` in its
  * `result` is reported as decided rather than as having no result at all.
  */
-export function historyResult(rows: readonly ProjectRunRow[]): string {
+export function historyResult(rows: readonly RunOutcomeFields[]): string {
   if (rows.length === 0) return "No result";
   const outcomes = rows.map(runEffectiveOutcome);
   if (outcomes.some((it) => it === "running" || it === "pending"))
@@ -159,6 +187,7 @@ export function EvaluateHistoryRow({
   hostNamesById,
   showSuite = false,
   showActions = false,
+  showAccounts = false,
   onDelete,
   onOpen,
   testId,
@@ -173,6 +202,8 @@ export function EvaluateHistoryRow({
   /** Pairs with the header's `showActions`: the row keeps the column even
    *  when this caller may not delete it, so the columns stay aligned. */
   showActions?: boolean;
+  /** Pairs with the header's `showAccounts`. */
+  showAccounts?: boolean;
   /** Absent hides the button (no permission, or nothing to delete). */
   onDelete?: () => void;
   onOpen?: () => void;
@@ -313,6 +344,14 @@ export function EvaluateHistoryRow({
           })}
         </div>
       </TableCell>
+      {showAccounts ? (
+        <RunAccountCells
+          runs={rows.flatMap((row) => {
+            const run = details.get(row._id)?.run;
+            return run ? [run] : [];
+          })}
+        />
+      ) : null}
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
           {commits.map(({ row, git }) => (

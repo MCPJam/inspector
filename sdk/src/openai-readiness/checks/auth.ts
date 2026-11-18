@@ -204,7 +204,11 @@ export function runOpenAIAuthChecks(
   const anonymousInitialize =
     unauth !== undefined && unauth.status >= 200 && unauth.status < 300;
   const publishesPrm = prm !== undefined && prm.discoveredVia !== "not-found";
-  const observedChallenge = context.lazyAuthProbe?.protectedCall?.challenge !== undefined;
+  // A 401 counts even with no parsed challenge, as it does for rediscovery.
+  const protectedCall = context.lazyAuthProbe?.protectedCall;
+  const observedChallenge =
+    protectedCall?.challenge !== undefined ||
+    protectedCall?.outcome === "unauthorized";
   const authless = anonymousInitialize && !publishesPrm && !observedChallenge;
   // A protected call that asked for sign-in is lazy authentication too, even
   // when its metadata could not be found: the defect is then the metadata,

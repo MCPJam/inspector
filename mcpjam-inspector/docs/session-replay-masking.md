@@ -501,10 +501,6 @@ material.
   `sk_…` reveal.
 - `client/src/components/evals/copyable-code-block.tsx`: the `sensitive` prop.
 - `client/src/components/billing/PaymentsHistorySection.tsx`: invoice links.
-- `client/src/components/oauth/OAuthFlowProgressSimple.tsx`: the raw
-  `JSON.stringify(oauthTokens)` block. This is the one that matters: it is the
-  component `AuthTab` actually renders, and it prints the **untruncated** token
-  set.
 
 ## Two recorders, one boundary
 

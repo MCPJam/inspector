@@ -406,6 +406,19 @@ export function markPendingChatAuthRequiredClicked(
   traceChatAuthRecovery("click", pendingRecoveryContext(next));
   return true;
 }
+/**
+ * A Connect click whose sign-in never left the page has no callback coming.
+ * The call goes back to waiting for a click, so its card can retry, and the
+ * server's next unrelated callback, which looks only at `awaiting_oauth`
+ * calls, cannot claim and cancel it.
+ */
+export function releasePendingChatAuthRequiredClick(
+  continuationId: string,
+): void {
+  const pending = readPendingChatScopeStepUp({ continuationId });
+  if (pending?.phase !== "awaiting_oauth") return;
+  writePending({ ...pending, phase: "awaiting_click", flowDigest: undefined });
+}
 export function setPendingChatScopeStepUpFlowDigest(
   serverName: string,
   flowDigest: string,
@@ -611,6 +624,30 @@ export function claimCancelledChatScopeStepUp(
   continuationId?: string,
 ) {
   return claim(chatSessionId, "cancelled", continuationId);
+}
+/**
+ * A message sent while a sign-in card waits cancels that call in the same
+ * request. Claiming the marker as `cancelling` lets the cancel settle like a
+ * clicked one: a request that fails, or a reload before it finishes, reports
+ * the cancel as unconfirmed instead of losing it.
+ */
+export function claimWaitingChatScopeStepUpForCancel(
+  chatSessionId: string,
+  continuationId: string,
+): PendingChatScopeStepUp | undefined {
+  const pending = listPendingChatScopeStepUps({
+    chatSessionId,
+    continuationId,
+    phases: ["awaiting_click", "awaiting_oauth"],
+  })[0];
+  if (!pending || pending.cancelAttempted) return undefined;
+  return writePending({
+    ...pending,
+    phase: "cancelling",
+    cancelAttempted: true,
+  }).ok
+    ? pending
+    : undefined;
 }
 export function clearPendingChatScopeStepUp(continuationId: string): void {
   const pending = readPendingChatScopeStepUp({ continuationId });

@@ -132,6 +132,20 @@ describe("Tasks and OAuth advice picks", () => {
 });
 
 describe("runnableSelection", () => {
+  it("maps a saved Tasks check rename before filtering and deduplicates it", () => {
+    const saved = JSON.parse(
+      '{"tasks":["tasks-input-required-update-completes","tasks-update-ack-shape","unknown"]}',
+    );
+    expect(runnableSelection(saved, "auto")?.tasks).toEqual([
+      "tasks-update-ack-shape",
+    ]);
+    expect(
+      runnableSelection(
+        JSON.parse('{"tasks":["tasks-input-required-update-completes"]}'),
+        "auto",
+      )?.tasks,
+    ).toEqual(["tasks-update-ack-shape"]);
+  });
   it("drops ids this build does not know", () => {
     const selection = runnableSelection(
       {

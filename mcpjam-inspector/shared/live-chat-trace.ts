@@ -102,6 +102,8 @@ export type LiveChatTraceRequestPayloadEntry = {
 };
 
 export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
+  /** Messages combine turns whose original segment boundaries can differ. */
+  projectedMessages?: true;
   usage?: LiveChatTraceUsage;
   actualToolCalls?: LiveChatTraceToolCall[];
   events?: LiveChatTraceEvent[];

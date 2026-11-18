@@ -5,10 +5,11 @@
  *
  * Token delivery methods:
  * 1. Header: X-MCP-Session-Auth: Bearer <token> (preferred for fetch API)
- * 2. Query param: ?_token=<token> (required for SSE/EventSource)
+ * 2. Query param: ?_token=<token> (SSE/EventSource routes only)
  *
- * The query parameter fallback is necessary because the EventSource API
- * does not support custom headers.
+ * The query parameter fallback exists because the EventSource API does not
+ * support custom headers. Anywhere else a token in the URL is a token in
+ * history, logs and `Referer`, so other routes refuse it.
  *
  * SECURITY NOTE: When adding new routes, consider whether they should be protected.
  * Only add routes to UNPROTECTED_* if they:
@@ -118,6 +119,19 @@ const UNPROTECTED_PREFIXES = [
   // `/api/internal/chat-stage/derivation-requested`.
   "/api/internal/chat-stage/",
   "/api/internal/agent-turns/",
+  // MCP Events. The callers are the inbox Worker (`/enqueue`, authenticated
+  // by its own `x-events-inbox-token`, constant-time, fail-closed) and the
+  // backend (`/dispatch`, `internalServiceAuthMiddleware()`); neither has a
+  // browser session. Authorization is NOT waived — the router's own gates
+  // answer instead. Trailing slash for the same `startsWith` reason as above.
+  "/api/internal/events/",
+  // The LOCAL development webhook receiver (`routes/mcp/events.ts`): an MCP
+  // server POSTs events here and cannot present a session token. Every
+  // delivery is Standard-Webhooks signature-verified against the slot's
+  // secret before anything is journalled, and the route exists only in local
+  // mode (`/api/mcp/*` is not mounted hosted). Only the hooks sub-path is
+  // exempt — every other `/api/mcp/events/*` route keeps session auth.
+  "/api/mcp/events/hooks/",
   // Backend→Inspector hourly hosted-browser check. Same caller and same guard:
   // the router mounts `internalServiceAuthMiddleware()`, so this carve-out
   // only lets the backend's token reach it. Trailing slash for the
@@ -145,19 +159,23 @@ export function scrubTokenFromUrl(url: string): string {
   return scrubCredentialsInText(url);
 }
 
-// Routes that typically use query param auth (SSE endpoints)
+// Routes an EventSource opens, the only ones that may take `?_token=`. An
+// entry ending in "/" is a prefix: the bridges' SSE streams and the message
+// URLs they hand their clients.
 const SSE_ROUTES = [
   "/api/mcp/servers/rpc/stream",
+  "/api/mcp/events/stream",
   "/api/mcp/elicitation/stream",
+  "/api/mcp/subscriptions/stream",
+  "/api/mcp/subscribe",
   "/api/mcp/adapter-http/",
   "/api/mcp/manager-http/",
 ];
 
-/**
- * Check if a path is an SSE route (for better error messaging)
- */
 function isSSERoute(path: string): boolean {
-  return SSE_ROUTES.some((route) => path.startsWith(route));
+  return SSE_ROUTES.some((route) =>
+    route.endsWith("/") ? path.startsWith(route) : path === route,
+  );
 }
 
 /**
@@ -234,8 +252,7 @@ export async function sessionAuthMiddleware(
     token = authHeader.substring(7);
   }
 
-  // Fall back to query parameter (required for SSE/EventSource)
-  if (!token) {
+  if (!token && isSSERoute(path)) {
     token = c.req.query("_token") ?? undefined;
   }
 

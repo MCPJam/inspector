@@ -1,5 +1,6 @@
+import { pluginExtensionProfileForHost } from "@/lib/client-config-v2-plugin-extensions";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { loadServerOrder, saveServerOrder, serverCheckQueue } from "@/lib/server-check-queue";
+import { useServerCardOrder } from "@/hooks/use-server-card-order";
 import {
   useCallback,
   useContext,
@@ -86,7 +87,7 @@ import {
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
-import { reportCaught } from "@/lib/error-reporting";
+import { reportCaught, reportPossiblyOurFailure } from "@/lib/error-reporting";
 import {
   HoverCard,
   HoverCardContent,
@@ -169,6 +170,7 @@ import { onCredentialReentryRequest } from "@/lib/credential-refusal";
 
 
 const LOGGER_FOCUS_STORAGE_KEY = "mcp-server-logger-focus";
+const CONNECT_LOGS_PANEL_STORAGE_KEY = "mcpjam-connect-logs-panel-visible";
 const LOGGER_FOCUS_TTL_MS = 15 * 60 * 1000;
 
 interface PersistedLoggerFocus {
@@ -544,7 +546,10 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (formData: ServerFormData) => void;
+  onConnect: (
+    formData: ServerFormData,
+    options?: { onConfigSaved?: () => void }
+  ) => void | Promise<void>;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -759,12 +764,32 @@ export function ServersTab({
     return <ServersAutoConnectSwitch onToggled={handleAutoConnectToggled} />;
   };
 
+  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
+  const orderProject = projects[activeProjectId];
+  const orderReady =
+    !!orderProject && orderProject.id === activeProjectId &&
+    areServersHydrated && !isLoadingProjects && !isAuthHydrating;
+  const {
+    orderedServerNames,
+    setOrderedServerNames,
+    catalogOrder,
+    beginRename,
+    beginImport,
+  } = useServerCardOrder({
+    projectId: activeProjectId,
+    queueProjectId: sharedProjectIdForHostScope ?? activeProjectId,
+    catalogNames: Object.keys(orderProject?.servers ?? {}),
+    visibleNames: allNames,
+    ready: orderReady,
+  });
+
   useAutoConnectProjectServers({
     projectId: sharedProjectIdForHostScope ?? activeProjectId ?? null,
     hostScopeKey: previewedHostId,
     serverNames: projectServerNames,
-    catalogLoaded: viewProjectServersList !== undefined,
-    suspendAutoConnect,
+    catalogLoaded: orderReady && viewProjectServersList !== undefined,
+    suspendAutoConnect: suspendAutoConnect || !orderReady,
+    serverOrder: catalogOrder,
   });
 
   const appReady = useAppReady();
@@ -806,7 +831,10 @@ export function ServersTab({
   });
 
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
-    useJsonRpcPanelVisibility();
+    useJsonRpcPanelVisibility({
+      storageKey: CONNECT_LOGS_PANEL_STORAGE_KEY,
+      defaultVisible: false,
+    });
   const [isAddingServer, setIsAddingServer] = useState(false);
   // Prefill for an agent-opened Add-server form (`ui_open_server_form`).
   // Undefined for a hand-opened form, which starts empty as before.
@@ -846,38 +874,8 @@ export function ServersTab({
     sessionKey: 0,
     serverSnapshot: null,
   });
-
-  // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
-  const allNames = useMemo(() => Object.keys(projectServers), [projectServers]);
-
-  const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
-    const saved = loadServerOrder(activeProjectId);
-    if (saved && saved.length > 0) {
-      const existing = saved.filter((n: string) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    }
-    return allNames;
-  });
-
-  useEffect(() => {
-    serverCheckQueue.setOrder(
-      sharedProjectIdForHostScope ?? activeProjectId,
-      orderedServerNames,
-    );
-  }, [sharedProjectIdForHostScope, activeProjectId, orderedServerNames]);
-
-  // Reconcile when servers are added/removed or project changes
-  useEffect(() => {
-    setOrderedServerNames((prev) => {
-      const saved = loadServerOrder(activeProjectId);
-      const base = saved && saved.length > 0 ? saved : prev;
-      const existing = base.filter((n) => allNames.includes(n));
-      const added = allNames.filter((n) => !existing.includes(n));
-      return [...existing, ...added];
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allNames.join(","), activeProjectId]);
+  const detailProjectRef = useRef(activeProjectId);
+  detailProjectRef.current = activeProjectId;
 
   useEffect(() => {
     const persistedFocus = readPersistedLoggerFocus(activeProjectId);
@@ -905,8 +903,6 @@ export function ServersTab({
       if (oldIndex !== -1 && newIndex !== -1) {
         const newOrder = arrayMove(orderedServerNames, oldIndex, newIndex);
         setOrderedServerNames(newOrder);
-        saveServerOrder(activeProjectId, newOrder);
-        if (sharedProjectIdForHostScope) serverCheckQueue.setOrder(sharedProjectIdForHostScope, newOrder);
       }
     }
     setActiveId(null);
@@ -1267,19 +1263,24 @@ export function ServersTab({
 
   const handleSubmitDetailModal = useCallback(
     async (formData: ServerFormData, originalServerName: string) => {
-      const optimisticServerName = formData.name.trim() || originalServerName;
-
-      setDetailModalState((prev) => ({
-        ...prev,
-        serverName: optimisticServerName,
-        serverSnapshot: prev.serverSnapshot
-          ? { ...prev.serverSnapshot, name: optimisticServerName }
-          : prev.serverSnapshot,
-      }));
-
-      const result = await onUpdate(originalServerName, formData);
+      const originProjectId = activeProjectId;
+      const sessionKey = detailModalState.sessionKey;
+      const finishRename = beginRename(originalServerName, formData.name.trim());
+      let result: ServerUpdateResult;
+      try {
+        result = await onUpdate(originalServerName, formData);
+      } catch (error) {
+        finishRename(false);
+        throw error;
+      }
+      finishRename(result.ok);
 
       setDetailModalState((prev) => {
+        if (
+          detailProjectRef.current !== originProjectId ||
+          prev.sessionKey !== sessionKey
+        )
+          return prev;
         const liveServer = projectServers[result.serverName];
 
         return {
@@ -1295,7 +1296,13 @@ export function ServersTab({
 
       return result;
     },
-    [onUpdate, projectServers]
+    [
+      onUpdate,
+      projectServers,
+      beginRename,
+      activeProjectId,
+      detailModalState.sessionKey,
+    ]
   );
 
   useEffect(() => {
@@ -1330,9 +1337,22 @@ export function ServersTab({
       );
       return;
     }
-    servers.forEach((server) => {
+    const finishImport = beginImport(servers.map((server) => server.name));
+    servers.forEach(async (server) => {
       focusLoggerOnServer(server.name);
-      onConnect(server);
+      let saved = false;
+      try {
+        await onConnect(server, {
+          onConfigSaved: () => {
+            saved = true;
+            finishImport(server.name, true);
+          },
+        });
+      } catch (error) {
+        reportCaught(error, { source: "server_json_import" });
+      } finally {
+        if (!saved) finishImport(server.name, false);
+      }
     });
   };
 
@@ -1464,10 +1484,10 @@ export function ServersTab({
     try {
       await connectRegistryServer(server);
     } catch (err) {
-      // This used to swallow the failure entirely: the pending state was
-      // cleared and the user was left with a card that silently never
-      // connected.
-      reportCaught(err, {
+      // Gated and origin-filtered: a registry server that fails on its own
+      // side (an upstream 5xx, its GitHub quota) is surfaced in the toast,
+      // not paged.
+      reportPossiblyOurFailure(err, {
         source: "registry_quick_connect",
         extra: { registryServerId: server._id },
       });
@@ -2096,7 +2116,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2175,7 +2199,11 @@ export function ServersTab({
           </ResizablePanel>
         </>
       ) : (
-        <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
+        <CollapsedPanelStrip
+          onOpen={toggleJsonRpcPanel}
+          tooltipText="Show logs"
+          label="Logs"
+        />
       )}
     </ResizablePanelGroup>
   );
@@ -2292,6 +2320,7 @@ export function ServersTab({
             existingServerNames={Object.keys(projectServers)}
             projectClientConfig={selectedProject?.clientConfig}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
               projectId: hostedProjectId,
               hostId: previewedHostId,
@@ -2323,6 +2352,7 @@ export function ServersTab({
             plugin={pluginParts.detail}
             onClose={() => pluginParts.setDetail(null)}
             projectId={hostedProjectId}
+            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
             extensionSettingsScope={
               extensionSettingsEnabled && hostedProjectId && previewedHostId
                 ? {

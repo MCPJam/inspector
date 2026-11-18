@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { bindLocalTaskOwnerScope } from "./task-owner-binding.js";
 import { taskOwnerScope } from "../../shared/task-owner.js";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
@@ -44,7 +45,13 @@ import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
   isCredentialRefusalError,
+  type DeliveredTokenFacts,
 } from "./hosted-oauth-refresh.js";
+import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
+import {
+  uploadedAccountRecoveries,
+  type UploadedAccountRecovery,
+} from "./uploaded-account-recovery.js";
 import { logger } from "./logger.js";
 import { maybeCaptureOriginError } from "./error-origin-capture.js";
 import {
@@ -56,6 +63,10 @@ import {
 } from "./effective-auth.js";
 import type { XaaEnterprisePolicy } from "@mcpjam/sdk";
 import { exportSingleServerForInspection } from "./export-helpers.js";
+import {
+  captureHostedOnlyAccountProfiles,
+  isHostedOnlyAccount,
+} from "./account-profile-capture.js";
 import { ConvexHttpClient } from "convex/browser";
 import { getInspectorClientRuntimeConfig } from "../env.js";
 import { setRequestLogContext } from "./request-logger.js";
@@ -64,11 +75,19 @@ import {
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
 import {
-  bindCredentialHeaders,
   bindingForAuthorizedHeaders,
+  credentialOrigin,
   type CredentialHeaderBinding,
 } from "./credential-header-binding.js";
-import { hostedMcpBaseFetch } from "./hosted-mcp-base-fetch.js";
+import {
+  deliveredAccountFields,
+  deliveredCredentialFields,
+  accountBinding,
+  recordDeliveredAccountKind,
+  refuseMovedDeliveredToken,
+  registeringDeliveredToken,
+  registerStoredHeaders,
+} from "./delivered-oauth-credential.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -104,6 +123,7 @@ import {
   toStdioLaunchSpec,
 } from "./stdio-command-approvals.js";
 import {
+  deliveryContractHeaders,
   requireServiceCredential,
   WORKOS_API_KEY_FEATURE,
 } from "../services/service-credential.js";
@@ -177,6 +197,18 @@ type LocalAuthorizeBatchSuccess = {
   permissions: { chatOnly: boolean };
   serverConfig: LocalAuthorizeServerConfig;
   oauthAccessToken?: string | null;
+  /** Origins `oauthAccessToken` may be sent to; absent from older backends. */
+  oauthBoundOrigins?: string[];
+  /** Absent: the person's own sign-in. */
+  oauthAccountKind?: "shared" | "uploaded";
+  oauthAccountUploaded?: boolean;
+  /** The account `oauthAccessToken` came from, pinned for refresh. */
+  oauthCredentialId?: string;
+  /** Why there is no token, when the backend can say; see `local-oauth-refusal.ts`. */
+  oauthUnavailableReason?: string;
+  oauthUnavailablePolicy?: string;
+  oauthUnavailableCause?: string;
+  oauthUnavailableMessage?: string;
   oauthConnections?: AuthorizedOAuthConnection[];
   internalLogContext?: InternalLogContext;
   /**
@@ -288,6 +320,7 @@ export async function authorizeBatchLocal(
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    ...deliveryContractHeaders(HOSTED_MODE),
   };
   if (workosApiKeyActingAs) {
     // Only reachable for a validated `sk_…` key, which itself needs the
@@ -393,6 +426,21 @@ export async function authorizeBatchLocal(
       typeof raw.isAnonymous === "boolean" ? raw.isAnonymous : undefined,
     results: stripped,
   };
+}
+
+/** Uploaded-account recoveries that re-resolve through `authorize-batch-local`. */
+function localUploadedRecoveries(
+  manager: Pick<MCPClientManager, "disconnectServer">,
+  bearerToken: string,
+  projectId: string,
+) {
+  const recoveries = uploadedAccountRecoveries((id, connectionId) =>
+    authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
+      connectionIds: { [id]: connectionId },
+    }),
+  );
+  recoveries.bind(manager);
+  return recoveries;
 }
 
 /**
@@ -653,6 +701,8 @@ export function toMCPServerConfig(
       serverId: string;
       serverName: string;
       connectionId?: string;
+      /** An uploaded account's re-resolve when a refresh can't renew its token. */
+      uploaded?: UploadedAccountRecovery;
     };
     /**
      * XAA re-mint hook. When the server uses Cross-App Access, the connect
@@ -745,17 +795,20 @@ export function toMCPServerConfig(
       resolveEffectiveAuthMethod(serverConfig, options?.xaaPolicy) === "xaa")
       ? withXaaExtensionCapability(baseClientCapabilities)
       : baseClientCapabilities;
-  // Skills over MCP (SEP-2640). In LOCAL mode the inspector IS the MCPJam
-  // client, and it ships the fulfiller: the verified read path in
-  // `server-skills.ts` plus the chat wrapper in `server-skill-tools.ts`. So
-  // advertise = enforce is satisfied unconditionally here, and the declaration
-  // is not gated on the `skills-enabled` product flag — that flag controls UI
-  // rollout, and gating a PROTOCOL declaration on a client-evaluated flag would
-  // make the wire depend on a hidden switch (and would be unreadable from the
-  // server anyway). Hosted connections get the declaration from the host's
-  // stored `clientCapabilities` instead, which is why only the MCPJam persona
-  // advertises there.
-  const skillsMerged = withSkillsExtensionCapability(xaaMerged);
+  // Skills over MCP (SEP-2640). A host's capabilities are an exact set that
+  // already says whether this client declares the extension (its "Skills over
+  // MCP" switch), so nothing is added to them here: an emulated client that
+  // does not declare it must not advertise it, the same as on a hosted
+  // connection.
+  // With no host capabilities at all this connection is MCPJam's own client,
+  // which ships the fulfiller (the verified read path in `server-skills.ts`
+  // plus the agent's skill tools that load through it), so it declares the
+  // extension. Neither case reads the `skills-enabled` product flag: that flag
+  // controls UI rollout, and a protocol declaration must not depend on a
+  // hidden switch.
+  const skillsMerged = baseClientCapabilities
+    ? xaaMerged
+    : withSkillsExtensionCapability(xaaMerged);
   // Advertise = enforce, per era. The MODERN fulfiller (the MRTR bridge)
   // completes url rounds; the LEGACY one (the inbound `elicitation/create` SSE
   // bridge) is form-only. So `elicitation.url` — which the host toggle writes —
@@ -777,7 +830,7 @@ export function toMCPServerConfig(
     if (typeof timeout === "number") stdio.timeout = timeout;
     if (clientCapabilities) {
       stdio.capabilities = clientCapabilities;
-      stdio.clientCapabilities = clientCapabilities;
+      if (baseClientCapabilities) stdio.clientCapabilities = clientCapabilities;
     }
     // mcpProfile.initialize fields flow into the SDK's per-server config.
     // Undefined skips the field entirely so callers that don't opt in stay
@@ -839,18 +892,27 @@ export function toMCPServerConfig(
     requestInit: { headers },
   };
   // The transport rule (credential unification §3.7): revealed stored
-  // headers ride only on requests — and redirect hops — whose origin the
-  // backend bound them to. A hop anywhere else is dialed without them.
-  //
-  // Over `hostedMcpBaseFetch()` — bare `fetch` outside hosted mode, the pinned
-  // egress-guarded transport inside it — so setting a per-server fetch here
-  // can never trade away the MJ-001 guard for the transport rule.
-  if (authResult.credentialBinding) {
-    http.baseFetch = bindCredentialHeaders(
-      hostedMcpBaseFetch(),
-      authResult.credentialBinding
-    );
-  }
+  // headers and a delivered OAuth token ride only on requests (and redirect
+  // hops) to the origins they are bound to.
+  Object.assign(
+    http,
+    deliveredCredentialFields({
+      url,
+      // An XAA token is minted here for this server, not delivered.
+      token:
+        resolveEffectiveAuthMethod(serverConfig) === "xaa"
+          ? undefined
+          : oauthToken,
+      boundOrigins: authResult.oauthBoundOrigins,
+      accountKind: authResult.oauthAccountKind,
+      accountUploaded: authResult.oauthAccountUploaded,
+      stored: authResult.credentialBinding,
+      target: {
+        serverId: options?.refreshContext?.serverId,
+        serverName: options?.refreshContext?.serverName,
+      },
+    })
+  );
   // Plugin-declared transports are authoritative: `sse` skips the Streamable
   // HTTP attempt, `streamable-http` rules out the silent SSE downgrade. Rows
   // without a declaration keep the SDK's URL-heuristic + fallback behavior.
@@ -870,7 +932,7 @@ export function toMCPServerConfig(
   if (typeof timeout === "number") http.timeout = timeout;
   if (clientCapabilities) {
     http.capabilities = clientCapabilities;
-    http.clientCapabilities = clientCapabilities;
+    if (baseClientCapabilities) http.clientCapabilities = clientCapabilities;
   }
   // mcpProfile.initialize fields — same opt-in shape as the stdio branch.
   if (options?.clientInfo) http.clientInfo = options.clientInfo;
@@ -918,21 +980,25 @@ export function toMCPServerConfig(
     oauthToken &&
     (effectiveAuthForHooks === "oauth" ||
       effectiveAuthForHooks === "discover") &&
-    options?.refreshContext
+    options?.refreshContext &&
+    // A refresh that names no account can come back with another's token.
+    (HOSTED_MODE || options.refreshContext.connectionId)
   ) {
-    http.onUnauthorized = buildHostedOAuthUnauthorizedHandler({
+    http.onUnauthorized = registeringDeliveredToken(buildHostedOAuthUnauthorizedHandler({
       bearerToken: options.refreshContext.bearerToken,
       projectId: options.refreshContext.projectId,
       serverId: options.refreshContext.serverId,
       serverName: options.refreshContext.serverName,
       connectionId: options.refreshContext.connectionId,
+      targetOrigin: credentialOrigin(url),
+      uploaded: options.refreshContext.uploaded,
       // In local mode this process is the one that can reach a private
       // authorization server. Covers the in-flight 401 during a long session,
       // not just the connect. `!HOSTED_MODE` rather than `true`:
       // toMCPServerConfig is exported, so gate at the call site too instead of
       // relying solely on the assertion inside local-oauth-refresh.
       allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
-    });
+    }), http.baseFetch);
   } else if (
     oauthToken &&
     effectiveAuthForHooks === "xaa" &&
@@ -1041,10 +1107,12 @@ async function applyLocalRuntimeResolution<
           }
         : {}),
     };
+    registerStoredHeaders(secrets.headers, secrets.credentialHeaderNames);
   } else if (result.serverConfig.transportType === "http") {
     // Stored headers the authorize response carried inline: no reveal ran,
     // but they are held to an origin on the wire all the same.
     const binding = bindingForAuthorizedHeaders(result.serverConfig);
+    registerStoredHeaders(result.serverConfig.headers, binding?.headerNames);
     if (binding) result = { ...result, credentialBinding: binding };
   }
 
@@ -1410,6 +1478,28 @@ export async function resolveLocalServerForConnect(
   // refresh helper for in-flight 401s).
   let resolvedOauthAccessToken: string | undefined =
     result.oauthAccessToken ?? undefined;
+  // The account a recovered token came from, so its refreshes are pinned too,
+  // and where the connection sends it: a token bound elsewhere is refused.
+  let recoveredCredentialId: string | undefined;
+  const onDelivered = (delivered: DeliveredTokenFacts) =>
+    (recoveredCredentialId = delivered.credentialId);
+  const targetOrigin =
+    result.serverConfig.transportType === "http"
+      ? credentialOrigin(result.serverConfig.url)
+      : null;
+  // A token the backend refused to release (policy, local runs not allowed,
+  // a moved server) is answered here; a refresh would only be refused again.
+  if ((useOAuth || effectiveAuth === "discover") && !resolvedOauthAccessToken) {
+    const refusal = oauthRefusalFromAuthorize(result, {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      serverUrl:
+        result.serverConfig.transportType === "http"
+          ? result.serverConfig.url
+          : undefined,
+    });
+    if (refusal) throw refusal;
+  }
   if (useOAuth && !resolvedOauthAccessToken) {
     const displayName = options?.serverDisplayName ?? serverId;
     try {
@@ -1418,7 +1508,7 @@ export async function resolveLocalServerForConnect(
           bearerToken,
           projectId,
           serverId,
-          { serverName: displayName }
+          { serverName: displayName, onDelivered, targetOrigin }
         );
     } catch (error) {
       const refreshTokenInvalid =
@@ -1465,7 +1555,11 @@ export async function resolveLocalServerForConnect(
           bearerToken,
           projectId,
           serverId,
-          { serverName: options?.serverDisplayName ?? serverId }
+          {
+            serverName: options?.serverDisplayName ?? serverId,
+            onDelivered,
+            targetOrigin,
+          }
         );
     } catch (error) {
       // Refused, not unavailable: the policy or origin answer is what the
@@ -1589,6 +1683,13 @@ export async function resolveLocalServerForConnect(
     serverDisplayName: options?.serverDisplayName,
   });
 
+  const serverName = options?.serverDisplayName ?? serverId;
+  // Pinned to the account that answered, so a refresh never lands on
+  // whichever account is the default by then.
+  const connectionId =
+    result.oauthCredentialId ??
+    recoveredCredentialId ??
+    result.oauthConnections?.find((c) => c.isDefault)?.connectionId;
   const config = toMCPServerConfig(result, {
     timeoutMs: options?.timeoutMs ?? options?.defaults?.timeoutMs,
     clientCapabilities:
@@ -1618,9 +1719,19 @@ export async function resolveLocalServerForConnect(
       bearerToken,
       projectId,
       serverId,
-      serverName: options?.serverDisplayName ?? serverId,
-      connectionId: result.oauthConnections?.find((c) => c.isDefault)
-        ?.connectionId,
+      serverName,
+      connectionId,
+      uploaded: localUploadedRecoveries(
+        c.mcpClientManager,
+        bearerToken,
+        projectId,
+      ).for({
+        account: result,
+        token: resolvedOauthAccessToken,
+        connectionId,
+        serverId,
+        serverName,
+      }),
     },
     xaaUnauthorizedHandler,
     xaaPolicy,
@@ -1971,6 +2082,13 @@ async function executeLocalServerConnectAttempt(
   }
 
   signal.throwIfAborted();
+  const moved = await refuseMovedDeliveredToken(
+    mcpClientManager,
+    serverDisplayName,
+    resolved,
+    { serverId, serverName: serverDisplayName },
+  );
+  if (moved) return respondWithLocalRouteError(c, moved);
   registerLocalConnectionScope(mcpClientManager, serverDisplayName, {
     serverId,
     projectId,
@@ -2011,6 +2129,7 @@ async function executeLocalServerConnectAttempt(
       serverDisplayName,
       resolved.effectiveAuth,
     );
+    recordDeliveredAccountKind(mcpClientManager, serverDisplayName, resolved);
     await mcpClientManager.connectToServer(serverDisplayName, connectConfig, {
       signal,
     });
@@ -2039,6 +2158,9 @@ async function executeLocalServerConnectAttempt(
     // envelope: tag it oauthRequired so the client escalates into the
     // interactive OAuth flow. Explicit "none" servers get a hint instead —
     // the user chose unauthenticated, so nothing auto-escalates.
+    if (error instanceof WebRouteError && (credentialFailureMessage(error) || error.details?.oauthRequired === true)) {
+      return respondWithLocalRouteError(c, error);
+    }
     if (isUnauthorized401(error)) {
       const serverUrl =
         resolved.config &&
@@ -2120,6 +2242,7 @@ async function executeLocalServerConnectAttempt(
   const accounts = resolved.authorizeResult.oauthConnections ?? [];
   // See the note in routes/web/auth.ts: labels are unique per group.
   const accountLabels = connectionLabels(accounts);
+  const uploads = localUploadedRecoveries(mcpClientManager, bearer, projectId);
   const connected = [];
   for (const [index, account] of accounts.entries()) {
     signal.throwIfAborted();
@@ -2134,15 +2257,34 @@ async function executeLocalServerConnectAttempt(
     headers.set("Authorization", `Bearer ${account.accessToken}`);
     registerLocalMrtrCollector(mcpClientManager, key);
     try {
+      const delivered = deliveredAccountFields({
+        manager: mcpClientManager,
+        key,
+        baseKey: serverDisplayName,
+        url: (connectConfig as HttpServerConfig).url,
+        account,
+        stored: resolved.authorizeResult.credentialBinding,
+        target: { serverId, serverName: serverDisplayName },
+      });
+      // Under the account's own key, which a tunnel can name too.
+      recordDeliveredAccountKind(mcpClientManager, key, {
+        config: delivered,
+        authorizeResult: { oauthAccountKind: account.accountKind },
+      });
       const existing = mcpClientManager.getServerConfig(key) as
         | HttpServerConfig
         | undefined;
-      const sameToken =
+      const binding = accountBinding(mcpClientManager, key, [
+        account.boundOrigins,
+        resolved.authorizeResult.credentialBinding,
+      ]);
+      const unchanged =
         existing &&
+        binding.unchanged &&
         new Headers(existing.requestInit?.headers).get("Authorization") ===
           headers.get("Authorization");
       if (
-        !sameToken ||
+        !unchanged ||
         mcpClientManager.getConnectionStatus(key) !== "connected"
       ) {
         await mcpClientManager.disconnectServer(key).catch(() => undefined);
@@ -2151,16 +2293,29 @@ async function executeLocalServerConnectAttempt(
         await mcpClientManager.connectToServer(key, {
           ...(connectConfig as HttpServerConfig),
           requestInit: { ...connectConfig.requestInit, headers },
-          onUnauthorized: buildHostedOAuthUnauthorizedHandler({
+          ...delivered,
+          onUnauthorized: registeringDeliveredToken(buildHostedOAuthUnauthorizedHandler({
             bearerToken: bearer,
             projectId,
             serverId,
             serverName: serverDisplayName,
             connectionId: account.connectionId,
             allowPrivateAuthorizationServerFallback: true,
-          }),
+            targetOrigin: credentialOrigin(
+              (connectConfig as HttpServerConfig).url,
+            ),
+            uploaded: uploads.for({
+              account,
+              token: account.accessToken,
+              connectionId: account.connectionId,
+              serverId,
+              serverName: serverDisplayName,
+              accountName: accountLabels[index],
+            }),
+          }), delivered.baseFetch),
         }, { signal });
         signal.throwIfAborted();
+        binding.connected();
       }
       connected.push({
         serverId,
@@ -2220,6 +2375,27 @@ async function executeLocalServerConnectAttempt(
       error: error instanceof Error ? error.message : String(error),
     });
   });
+  // A shared or uploaded account's identity, for eval runs to show. This
+  // manager outlives the request, so the connect does not wait for it.
+  const { oauthCredentialId, oauthAccountKind, oauthAccountUploaded } =
+    resolved.authorizeResult;
+  void captureHostedOnlyAccountProfiles(
+    mcpClientManager,
+    connected.length
+      ? connected.filter((entry) =>
+          isHostedOnlyAccount(
+            accounts.find((a) => a.connectionId === entry.connectionId),
+          ),
+        )
+      : oauthCredentialId &&
+          isHostedOnlyAccount({
+            accountKind: oauthAccountKind,
+            accountUploaded: oauthAccountUploaded,
+          })
+        ? [{ key: serverDisplayName, serverId, connectionId: oauthCredentialId }]
+        : [],
+    { bearer, projectId },
+  );
 
   return c.json(
     buildConnectSuccessEnvelope(mcpClientManager, serverDisplayName)

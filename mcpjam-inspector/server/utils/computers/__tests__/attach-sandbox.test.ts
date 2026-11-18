@@ -17,10 +17,15 @@ import {
   runningSandboxConnection,
 } from "../attach-sandbox.js";
 
-const control = vi.hoisted(() => ({ status: vi.fn(), prepare: vi.fn() }));
+const control = vi.hoisted(() => ({
+  status: vi.fn(),
+  prepare: vi.fn(),
+  token: vi.fn(),
+}));
 vi.mock("../control-plane-client.js", () => ({
   getSandboxEgressStatus: control.status,
   prepareSandboxConnection: control.prepare,
+  getSandboxTrafficToken: control.token,
 }));
 const data = {
   sandboxID: "box-1",
@@ -62,6 +67,7 @@ beforeEach(() => {
   control.prepare
     .mockReset()
     .mockResolvedValue({ ok: true, value: { ok: true } });
+  control.token.mockReset();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -138,6 +144,28 @@ describe("controlled sandbox attachment", () => {
       "never-copy-network-secret",
     );
     expect(connection.signal).toBeUndefined();
+  });
+  it("leaves a public box without a traffic token and never asks for one", async () => {
+    const connection = await runningSandboxConnection("box-1", opts);
+    expect(connection).not.toHaveProperty("trafficAccessToken");
+    expect(control.token).not.toHaveBeenCalled();
+  });
+  it.each([attachRunningSandbox, attachBrokerPreparedSandbox])(
+    "retains envd on a private workspace without fetching an ingress credential",
+    async (attach) => {
+      responseBody = { ...data, network: { allowPublicTraffic: false } };
+      const box = await attach("box-1", opts);
+      expect(box).toMatchObject({ privateAppPorts: true });
+      expect(box.trafficAccessToken).toBeFalsy();
+      expect(control.token).not.toHaveBeenCalled();
+    },
+  );
+  it("refuses a private desktop before giving out connection details", async () => {
+    responseBody = { ...data, network: { allowPublicTraffic: false } };
+    await expect(runningSandboxConnection("box-1", opts)).rejects.toThrow(
+      "private desktop",
+    );
+    expect(control.token).not.toHaveBeenCalled();
   });
   it("refuses a quarantine before calling prepare or the vendor", async () => {
     control.status.mockResolvedValue({

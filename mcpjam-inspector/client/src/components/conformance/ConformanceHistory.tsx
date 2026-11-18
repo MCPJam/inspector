@@ -6,31 +6,55 @@
  * redacted artifact at `/conformance/shared/:token`.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { FlaskConical } from "lucide-react";
-import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
+import { LoadingState } from "@/components/evals/LoadingState";
+import { FlaskConical, Loader2 } from "lucide-react";
+import { useOpenRunFromHistory, useRunBack } from "./conformance-run-origin";
 import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
+import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { useSharedArtifact } from "@/hooks/useSharedArtifact";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import {
   OverallScoreCard,
+  savedNotApplicableSubtitle,
   SUITE_COPY,
   SuiteRow,
   VerdictBadge,
 } from "./conformance-ui";
 import { CatalogList } from "./ConformanceCheckRows";
 import { SuiteReportCases } from "./ConformanceSavedChecks";
+import {
+  ConformanceSourceVersion,
+  SuiteList,
+} from "./conformance-source-version";
 import { ConformanceAdvice, reportAdviceGroups } from "./ConformanceAdvice";
 import {
   useSavedRunReports,
   type LoadReport,
   type SavedReportCase,
 } from "./use-saved-run-reports";
+import type {
+  SharedConformanceArtifact,
+  SharedSuiteReport,
+} from "./conformance-shared-artifact";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
+import {
+  ConformanceHistoryTable,
+  HISTORY_SOURCE_LABEL,
+} from "./ConformanceHistoryTable";
+import { ConformanceHistoryEmpty } from "./ConformanceHistoryEmpty";
+import {
+  ConformanceHistoryFilters,
+  DEFAULT_HISTORY_SORT,
+  isBackendHistoryOrder,
+  searchAndSortHistory,
+  type HistorySort,
+} from "./ConformanceHistoryFilters";
 import { conformanceVersionRefusal } from "./conformance-version-refusal";
+import { conformanceRunTargetName } from "./conformance-run-target";
 import { suiteCatalog } from "./conformance-catalogs";
 import {
   SavedRunActions,
@@ -77,64 +101,44 @@ export type ConformanceRunListItem = {
   sharingEnabled: boolean;
 };
 
-/** Where a run came from, in the words the History table uses. */
-export const HISTORY_SOURCE_LABEL: Record<string, string> = {
-  ui: "UI",
-  sdk: "SDK",
-  cli: "CLI",
-  github_action: "GitHub",
-  github_app: "GitHub",
-  api: "API",
-};
+export {
+  HISTORY_SOURCE_LABEL,
+  historyDateFormat,
+} from "./ConformanceHistoryTable";
 
-export const historyDateFormat = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-export function RunResultBadge({ run }: { run: ConformanceRunListItem }) {
-  const base =
-    "inline-flex h-5.5 shrink-0 items-center rounded-sm px-2 text-[11px] font-semibold tracking-[0.06em]";
-  const neutral = "bg-muted text-muted-foreground";
-  if (run.status === "timed_out") {
-    return (
-      <span
-        className={`${base} bg-amber-400/25 text-amber-700 dark:text-amber-400`}
-      >
-        TIMED OUT
-      </span>
-    );
-  }
-  if (run.status === "cancelled") {
-    return <span className={`${base} ${neutral}`}>CANCELLED</span>;
-  }
-  if (run.status !== "completed") {
-    return <span className={`${base} ${neutral}`}>RUNNING</span>;
-  }
-  if (run.outcome === "passed") {
-    return (
-      <span
-        className={`${base} bg-emerald-500/15 text-emerald-700 dark:text-emerald-400`}
-      >
-        PASSED
-      </span>
-    );
-  }
-  if (run.outcome === "failed") {
-    return (
-      <span className={`${base} bg-red-500/10 text-red-600 dark:text-red-400`}>
-        FAILED
-      </span>
-    );
-  }
-  return <span className={`${base} ${neutral}`}>INCOMPLETE</span>;
+/**
+ * The app's loading state (the evals one), centered in all the height left
+ * below the toolbar, where the table will be.
+ */
+function HistoryLoader() {
+  return (
+    <div
+      className="flex min-h-64 flex-1 items-center justify-center"
+      role="status"
+      data-testid="conformance-history-loading"
+    >
+      <LoadingState />
+    </div>
+  );
 }
+
+const NO_RUNS_TITLE = "No conformance runs yet";
+const NO_RUNS_DESCRIPTION =
+  "Runs from the Inspector, the CLI, GitHub, and the API land here.";
+
+/** Runs per page while History shows the newest first. */
+const HISTORY_PAGE_SIZE = 20;
+/**
+ * Runs per page while History reads every run. The backend matches runs by
+ * server only and orders them newest first only, so search and every other
+ * sort work on the whole history, not on the pages loaded so far.
+ */
+const HISTORY_READ_ALL_PAGE_SIZE = 100;
 
 /**
  * Every conformance run in the project, newest first, as one table. A row
- * opens the run's detail page.
+ * opens the run's detail page. Above it, a full-width search box with the
+ * server filter at its right end; the Server, Score and Date headers sort.
  */
 export function ConformanceHistory({
   projectId,
@@ -146,12 +150,45 @@ export function ConformanceHistory({
 }) {
   const [cursor, setCursor] = useState<string | null>(null);
   const [rows, setRows] = useState<ConformanceRunListItem[]>([]);
-  const navigate = useAppNavigate();
+  /** A saved server's id, or null for every server. */
+  const [serverFilter, setServerFilter] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<HistorySort>(DEFAULT_HISTORY_SORT);
+  const openRun = useOpenRunFromHistory(projectId);
+
+  const query = search.trim().toLowerCase();
+  // Any order but the backend's needs every run. One server's runs all share
+  // a name, though, so the name sort needs no more of them than are loaded.
+  const readsEveryRun =
+    query.length > 0 ||
+    (!isBackendHistoryOrder(sort) &&
+      !(sort.key === "server" && serverFilter !== null));
+  /** History is paging forward on its own, on the large page. */
+  const [readAll, setReadAll] = useState(false);
+  /** Once there are runs, the toolbar stays up through every reload. */
+  const [hadRuns, setHadRuns] = useState(false);
+  /**
+   * The rows as last shown with every run they needed, kept while a sort
+   * reads the rest of the history so the table switches order only once.
+   */
+  const settled = useRef<{
+    serverFilter: string | null;
+    rows: ConformanceRunListItem[];
+  } | null>(null);
 
   const page = useQuery(
     "conformanceRuns:listRuns" as any,
     projectId
-      ? ({ projectId, paginationOpts: { numItems: 20, cursor } } as any)
+      ? ({
+          projectId,
+          // The backend filters by server on its index, so a filtered list
+          // pages through that server's runs alone.
+          ...(serverFilter ? { targetKey: `server:${serverFilter}` } : {}),
+          paginationOpts: {
+            numItems: readAll ? HISTORY_READ_ALL_PAGE_SIZE : HISTORY_PAGE_SIZE,
+            cursor,
+          },
+        } as any)
       : "skip",
   ) as
     | {
@@ -161,6 +198,18 @@ export function ConformanceHistory({
       }
     | undefined;
 
+  // A list that is already complete has nothing left to read.
+  if (readsEveryRun && !readAll && page && !page.isDone) setReadAll(true);
+  // Paging forward leaves only the last page watched: once cleared, go back to
+  // the first page, so new and finishing runs show again.
+  if (!readsEveryRun && readAll) {
+    setReadAll(false);
+    setCursor(null);
+  }
+  if (rows.length > 0 && !hadRuns) setHadRuns(true);
+  /** The page `rows` already holds; the query's newest can be a render ahead. */
+  const [mergedPage, setMergedPage] = useState<typeof page>(undefined);
+
   useEffect(() => {
     if (!page) return;
     setRows((previous) => {
@@ -168,92 +217,159 @@ export function ConformanceHistory({
       const seen = new Set(previous.map((row) => row._id));
       return [...previous, ...page.page.filter((row) => !seen.has(row._id))];
     });
+    setMergedPage(page);
   }, [cursor, page]);
 
+  // Search and the column sorts keep loading pages until the history is
+  // complete.
+  useEffect(() => {
+    if (readAll && page && !page.isDone) setCursor(page.continueCursor);
+  }, [readAll, page]);
+
   const serverLabel = (run: ConformanceRunListItem) =>
-    (run.serverId ? serverNames?.get(run.serverId) : undefined) ??
-    run.targetKey.replace(/^server:/, "");
+    conformanceRunTargetName(run, serverNames);
+
+  const changeServerFilter = (next: string | null) => {
+    if (next === serverFilter) return;
+    // Another server is another list: start it from its first page.
+    setServerFilter(next);
+    setCursor(null);
+    setRows([]);
+    setReadAll(false);
+  };
 
   // "Load more" changes the query's cursor, and the query reads undefined
   // again while that page loads: only the first page may replace the table.
-  if (page === undefined && rows.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        Loading run history…
-      </p>
-    );
+  // Only the first load returns early: a reload keeps the toolbar and its focus.
+  if (!hadRuns && serverFilter === null) {
+    if (page === undefined && rows.length === 0) {
+      return <HistoryLoader />;
+    }
+
+    if (rows.length === 0) {
+      return (
+        <ConformanceHistoryEmpty
+          title={NO_RUNS_TITLE}
+          description={NO_RUNS_DESCRIPTION}
+        />
+      );
+    }
   }
 
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={FlaskConical}
-        title="No conformance runs yet"
-        className="h-auto py-10"
-        description="Runs from the Inspector, the CLI, GitHub, and the API land here."
-      />
-    );
-  }
-
-  const header = "text-[11px] font-semibold tracking-[0.06em] text-foreground";
+  const sortedRows = searchAndSortHistory(rows, {
+    query,
+    sort,
+    texts: (run) => [
+      serverLabel(run),
+      run.protocolVersion ?? "Auto",
+      HISTORY_SOURCE_LABEL[run.source] ?? run.source,
+    ],
+    serverName: serverLabel,
+    score: (run) => run.score,
+    createdAt: (run) => run.createdAt,
+  });
+  // Also true on the render where a sort or search has just asked for every
+  // run, before the large page is set, and on the one where the last page has
+  // arrived but is not in `rows` yet: done then would sort without it.
+  const readingEveryRun =
+    readsEveryRun && !(page?.isDone && mergedPage === page);
+  // A sort over part of the history leads with the wrong runs, then reorders
+  // once the rest arrives. Keep the last complete order up, dimmed, until then.
+  // A search narrows as pages arrive, so it shows them as they come.
+  const holdOrder =
+    readingEveryRun &&
+    query.length === 0 &&
+    settled.current !== null &&
+    settled.current.serverFilter === serverFilter &&
+    settled.current.rows.length > 0;
+  const visibleRows =
+    holdOrder && settled.current ? settled.current.rows : sortedRows;
+  if (!readingEveryRun) settled.current = { serverFilter, rows: sortedRows };
+  // A sort with no complete order of its own to hold (just switched servers,
+  // say) would show part of the history in the wrong order: the loader waits
+  // for all of it instead.
+  const awaitingOrder = readingEveryRun && query.length === 0 && !holdOrder;
+  const filteredServerName = serverFilter
+    ? (serverNames?.get(serverFilter) ?? serverFilter)
+    : null;
 
   return (
-    <section className="space-y-3" aria-label="Run history">
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
-        <div className="flex items-center gap-4 bg-muted/60 px-4.5 py-2">
-          <span className={`w-30 shrink-0 ${header}`}>SERVER</span>
-          <span className={`w-35 shrink-0 ${header}`}>DATE</span>
-          <span className={`min-w-0 grow ${header}`}>SOURCE</span>
-          <span className={`shrink-0 ${header}`}>RESULT</span>
-          <span className={`w-12 shrink-0 text-right ${header}`}>SCORE</span>
-        </div>
-        <ul>
-          {rows.map((run) => (
-            <li
-              key={run._id}
-              className="border-t border-border/60 first:border-t-0"
-            >
-              <button
-                type="button"
-                className="flex w-full items-center gap-4 px-4.5 py-3.5 text-left transition-colors hover:bg-muted/30"
-                data-testid="conformance-history-row"
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  navigate(buildConformanceRunPath(run._id, projectId));
-                }}
-              >
-                <span className="w-30 shrink-0 truncate text-sm font-semibold">
-                  {serverLabel(run)}
-                </span>
-                <span className="w-35 shrink-0 text-[13px] text-muted-foreground">
-                  {historyDateFormat.format(run.createdAt)}
-                </span>
-                <span className="min-w-0 grow truncate text-[13px] text-muted-foreground">
-                  {HISTORY_SOURCE_LABEL[run.source] ?? run.source}
-                </span>
-                <RunResultBadge run={run} />
-                <span
-                  className={`w-14 shrink-0 text-right text-sm font-semibold tabular-nums ${
-                    run.score == null ? "text-muted-foreground" : ""
-                  }`}
-                >
-                  {run.score == null ? "—" : `${run.score}%`}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </div>
+    <section
+      className="flex flex-1 flex-col space-y-3"
+      aria-label="Run history"
+    >
+      <ConformanceHistoryFilters
+        search={search}
+        onSearchChange={setSearch}
+        serverFilter={serverFilter}
+        onServerFilterChange={changeServerFilter}
+        serverNames={serverNames}
+      />
 
-      {page === undefined ? (
-        <Button variant="outline" size="sm" disabled>
-          Loading…
+      {/* Always in the DOM, out of the flow: the sorted header's spinner is
+          what sighted users see, so the table never shifts for this. */}
+      <p className="sr-only" role="status">
+        {readingEveryRun && rows.length > 0 && !awaitingOrder
+          ? "Loading every run…"
+          : ""}
+      </p>
+
+      {page === undefined && rows.length === 0 ? (
+        <HistoryLoader />
+      ) : rows.length === 0 ? (
+        filteredServerName ? (
+          <ConformanceHistoryEmpty
+            title={`No runs for ${filteredServerName} yet`}
+            description="Run a check on it, or clear the filter to see every server's runs."
+            clear={{
+              label: "Clear server filter",
+              onClear: () => changeServerFilter(null),
+            }}
+          />
+        ) : (
+          <ConformanceHistoryEmpty
+            title={NO_RUNS_TITLE}
+            description={NO_RUNS_DESCRIPTION}
+          />
+        )
+      ) : visibleRows.length === 0 || awaitingOrder ? (
+        readingEveryRun ? (
+          <HistoryLoader />
+        ) : (
+          <ConformanceHistoryEmpty
+            title={`No runs match “${search.trim()}”`}
+            description="Try another search, or clear it to see every run."
+            clear={{ label: "Clear search", onClear: () => setSearch("") }}
+          />
+        )
+      ) : (
+        <ConformanceHistoryTable
+          rows={visibleRows}
+          sort={sort}
+          onSort={setSort}
+          loading={readingEveryRun}
+          dimmed={holdOrder}
+          serverLabel={serverLabel}
+          onOpenRun={openRun}
+        />
+      )}
+
+      {readsEveryRun || visibleRows.length === 0 ? null : page === undefined ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          disabled
+          aria-busy
+        >
+          <Loader2 aria-hidden className="size-4 animate-spin" />
+          Load more
         </Button>
       ) : !page.isDone ? (
         <Button
           variant="outline"
           size="sm"
+          className="self-start"
           onClick={() => setCursor(page.continueCursor)}
         >
           Load more
@@ -277,7 +393,7 @@ export function ConformanceRunDetailPage({
   serverSettings?: SavedRunServerSettings;
   serversLoading?: boolean;
 }) {
-  const navigate = useAppNavigate();
+  const back = useRunBack();
   const [settingsOpen, setSettingsOpen] = useState(false);
   // Each report carries a short-lived artifact link.
   const detail = useArtifactQuery<
@@ -324,8 +440,7 @@ export function ConformanceRunDetailPage({
   const savedServerName = detail.serverId
     ? serverNames?.get(detail.serverId)
     : undefined;
-  const serverName =
-    savedServerName ?? detail.targetKey.replace(/^server:/, "");
+  const serverName = conformanceRunTargetName(detail, serverNames);
   const finished = detail.status === "completed";
 
   if (settingsOpen && savedServerName && serverSettings) {
@@ -341,17 +456,21 @@ export function ConformanceRunDetailPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex shrink-0 flex-col gap-2 border-b border-border px-8 pt-5 pb-4">
-        <div className="flex items-center gap-2 text-sm">
-          <button
-            type="button"
-            className="font-medium tracking-tight text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/conformance?view=history")}
+      {/* The same chrome as a run on screen, so a saved run reads like it. */}
+      <DetailPageHeader
+        backLabel={back.label}
+        onBack={back.onBack}
+        backTestId="conformance-saved-run-back"
+        stackWhenNarrow
+        title={
+          <h1
+            className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={serverName}
           >
-            Conformance History
-          </button>
-          <span className="text-muted-foreground/70">/</span>
-          <span className="truncate font-semibold">{serverName}</span>
+            {serverName}
+          </h1>
+        }
+        actions={
           <SavedRunActions
             runId={detail._id}
             finished={finished}
@@ -360,12 +479,13 @@ export function ConformanceRunDetailPage({
             serversLoading={serversLoading}
             onOpenSettings={() => setSettingsOpen(true)}
           />
-        </div>
+        }
+      >
         <p className="text-sm text-muted-foreground">
           {detailDateFormat.format(detail.createdAt)} ·{" "}
           {HISTORY_SOURCE_LABEL[detail.source] ?? detail.source}
         </p>
-      </div>
+      </DetailPageHeader>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 pt-6 pb-8">
         <ConformanceVersionNotice refusal={conformanceVersionRefusal(versionCases, detail.protocolVersion)} serverName={serverName} />
@@ -391,16 +511,22 @@ export function ConformanceRunDetailPage({
             detail.status !== "timed_out" &&
             detail.status !== "cancelled"
           }
+          // A suite's own row already says why it is incomplete; the card
+          // repeats the run's reason only when no suite carries it (e.g. a
+          // suite that never reported).
+          note={
+            detail.incompleteReason &&
+            !detail.reports.some(
+              (report) => report.incompleteReason === detail.incompleteReason,
+            )
+              ? detail.incompleteReason
+              : null
+          }
         />
-        {detail.incompleteReason ? (
-          <p className="mt-3 text-sm text-amber-700 dark:text-amber-400">
-            {detail.incompleteReason}
-          </p>
-        ) : null}
 
         <ConformanceAdvice groups={advice} />
 
-        <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
+        <SuiteList version={detail.protocolVersion}>
           {detail.reports.map((report) => (
             <SavedSuiteRow
               key={report.suiteKind}
@@ -413,7 +539,7 @@ export function ConformanceRunDetailPage({
               }
             />
           ))}
-        </div>
+        </SuiteList>
       </div>
     </div>
   );
@@ -501,9 +627,8 @@ function SavedSuiteRow({
       subtitle={
         noResult
           ? "This suite did not report a result for this run."
-          : notApplicable && !absentApps
-            ? (report.incompleteReason ??
-              "Nothing here applied to this server, so it was not scored.")
+          : notApplicable
+            ? savedNotApplicableSubtitle(report, copy.title)
             : copy.description
       }
       badge={badge}
@@ -544,38 +669,6 @@ function SavedSuiteRow({
     </SuiteRow>
   );
 }
-
-/** One suite as a shared artifact stores it: the redacted SDK report. */
-type SharedSuiteReport = {
-  outcome?: string;
-  passed?: boolean;
-  incompleteReason?: string;
-  score?: {
-    score?: number;
-    outcome?: string;
-    applicable?: number;
-    passed?: number;
-    failed?: number;
-    couldNotRun?: number;
-  };
-  groups?: Array<{ cases?: SavedReportCase[] }>;
-  advisories?: unknown;
-};
-
-type SharedConformanceArtifact = {
-  score?: number | null;
-  outcome?: ConformanceRunListItem["outcome"];
-  applicable?: number;
-  passed?: number;
-  failed?: number;
-  couldNotRun?: number;
-  notApplicable?: number;
-  advisoryCount?: number;
-  protocolVersion?: string | null;
-  requestedSuites?: string[];
-  createdAt?: number;
-  reports?: Record<string, SharedSuiteReport>;
-};
 
 /** A shared suite in the shape the run page's rows read, from its own score. */
 function sharedSuiteRow(
@@ -650,7 +743,7 @@ export function ConformanceSharedPage({ token }: { token: string }) {
               }
             : undefined
         }
-        serverName="Shared run"
+        serverName={run.serverName?.trim() || "Shared run"}
         version={run.protocolVersion ?? "Auto"}
       />
       <ConformanceAdvice
@@ -662,19 +755,21 @@ export function ConformanceSharedPage({ token }: { token: string }) {
         )}
       />
       {suiteKinds.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-border bg-popover">
-          {suiteKinds.map((kind) => {
-            const row = sharedSuiteRow(kind, reports[kind]!);
-            return (
-              <SavedSuiteRow
-                key={kind}
-                report={row.report}
-                cases={row.cases}
-                runSettled
-              />
-            );
-          })}
-        </div>
+        <ConformanceSourceVersion version={run.protocolVersion}>
+          <div className="overflow-hidden rounded-lg border border-border bg-popover">
+            {suiteKinds.map((kind) => {
+              const row = sharedSuiteRow(kind, reports[kind]!);
+              return (
+                <SavedSuiteRow
+                  key={kind}
+                  report={row.report}
+                  cases={row.cases}
+                  runSettled
+                />
+              );
+            })}
+          </div>
+        </ConformanceSourceVersion>
       ) : null}
       <p className="text-xs text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun

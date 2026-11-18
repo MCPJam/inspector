@@ -4,9 +4,11 @@ import type { EnsureProjectClientResult } from "@/shared/ensure-project-client";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { useProjectClientInitialization } from "@/hooks/use-project-client-initialization";
 import {
-  loadSelectedHostIds,
-  saveSelectedHostIds,
-} from "@/lib/selected-host-storage";
+  loadComparePanes,
+  paneHostIds,
+  panesForHostIds,
+  saveComparePanes,
+} from "@/lib/compare-panes";
 import {
   loadPreviewedHostId,
   savePreviewedHostId,
@@ -19,7 +21,7 @@ type Selection = { previewed: string | null; selected: string[] };
 function readSelection(projectId: string): Selection {
   return {
     previewed: loadPreviewedHostId(projectId),
-    selected: loadSelectedHostIds(projectId),
+    selected: paneHostIds(loadComparePanes(projectId)),
   };
 }
 
@@ -80,7 +82,10 @@ function applySelection(
   // shouldn't announce itself.
   markQuietClientSwitch(projectId, next.lead);
   savePreviewedHostId(projectId, next.lead);
-  saveSelectedHostIds(projectId, next.lineup);
+  saveComparePanes(
+    projectId,
+    panesForHostIds(loadComparePanes(projectId), next.lineup),
+  );
   if (!isActive) return;
   live.setPreviewedHostId(next.lead);
   live.setSelectedHostIds(next.lineup);

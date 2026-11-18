@@ -1,8 +1,10 @@
+import { runTaskConformanceGroups } from "./run-task-conformance-groups";
+import { useShownSelectionRef } from "./use-shown-selection-ref";
 /** Run state, scores, and OAuth authorization for the four conformance suites. */
-
+import { useConformanceOAuthSession } from "./use-conformance-oauth-session";
+import { useConformanceDeadline } from "./use-conformance-deadline";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-// Browser-safe SDK entry — the top-level `@mcpjam/sdk` pulls Node-only
-// transitive deps that break the Vite browser bundle.
+// The browser entry excludes Node-only dependencies.
 import {
   type McpProtocolVersion,
   type MCPOAuthReadinessId,
@@ -16,10 +18,13 @@ import {
 } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
+  trackConformanceRunTriggered,
+  type ConformanceRunAnalyticsLocation,
+} from "./conformance-run-analytics";
+import {
   completeOAuthConformance,
   runAppsConformance,
   runProtocolConformance,
-  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "@/lib/apis/mcp-conformance-api";
@@ -32,12 +37,14 @@ import {
 import {
   conformanceTargetKey,
   useConformanceRunVersion,
+  versionErrorState,
 } from "./use-conformance-run-version";
 import {
   createAppsState,
   createOAuthState,
   createProtocolState,
   createTasksState,
+  expiredDeferredOAuth,
   isHttpServer,
   isSelected,
   NOT_SELECTED,
@@ -57,35 +64,13 @@ import {
   loadSavedClientSecret,
   oauthTargetUrl,
 } from "@/lib/oauth/saved-client-secret";
-
-/**
- * The authorization URL comes from the target's own metadata. A `javascript:`
- * or `data:` URL handed to `window.open` runs in this origin, so only web
- * URLs are opened; plain `http:` stays allowed for local authorization servers.
- */
-function isWebUrl(raw: string): boolean {
-  try {
-    const { protocol } = new URL(raw);
-    return protocol === "https:" || protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-/** The OAuth popup, or null when the browser blocked it. */
-function openAuthorizationPopup(authorizationUrl: string): Window | null {
-  return window.open(
-    authorizationUrl,
-    "oauth_conformance_auth",
-    "width=600,height=700,scrollbars=yes"
-  );
-}
-
+import { isWebUrl, useAuthorizationPopup } from "./conformance-oauth-popup";
 export {
   createAppsState,
   createOAuthState,
   createProtocolState,
   createTasksState,
+  expiredDeferredOAuth,
   isHttpServer,
   oauthStateFromResult,
   runnableSelection,
@@ -102,34 +87,23 @@ export type {
 } from "@/hooks/conformance-suite-state";
 
 export interface UseConformanceRunOptions {
+  runTimeoutSeconds?: number;
   server: ServerWithName;
-  /**
-   * When true, a run that reaches OAuth's authorization step PARKS at
-   * `needs-authorization` instead of opening the popup, and the caller decides
-   * when (or whether) to proceed via `authorizeOAuth`.
-   *
-   * The panel leaves this false: an operator who pressed "Run" in the product
-   * asked for the whole run, popup included. The score page turns it on,
-   * because an unrequested popup on a public landing page is a different
-   * thing entirely — there, OAuth is an opt-in "authorize to include OAuth in
-   * your score" step, and skipping it shows as *not scored*, never a
-   * deduction.
-   */
+  /** Where runs start from, for analytics. Defaults to the Conformance tab. */
+  analyticsLocation?: ConformanceRunAnalyticsLocation;
+  /** Park OAuth until the caller explicitly authorizes it. */
   deferOAuthAuthorization?: boolean;
   /** The revision the first run tests against, e.g. one picked before Run. */
   initialVersionPin?: ProtocolVersionPin;
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked before Run. Absent ⇒ every check of every suite. */
   selection?: ConformanceSelection;
-  /**
-   * Tools named as safe for the checks that must call one, as set in the
-   * check list. Absent ⇒ nothing on the server is executed, and those checks
-   * report could-not-run.
-   */
+  /** Tools explicitly approved for checks that execute calls. */
   probes?: ConformanceProbes;
 }
 
 export interface UseConformanceRunResult {
+  runTimeoutSeconds?: number;
   protocol: ProtocolSuiteState;
   apps: AppsSuiteState;
   tasks: TasksSuiteState;
@@ -159,18 +133,18 @@ export interface UseConformanceRunResult {
    * started: they ran, and read as unscored.
    */
   oauthUnscored: readonly string[];
-  /** True when OAuth produced a score object with nothing applicable in it. */
-  oauthNotScored: boolean;
   isRunning: boolean;
 }
 
 export function useConformanceRun({
   server,
+  analyticsLocation = "conformance_tab",
   deferOAuthAuthorization = false,
   initialVersionPin = "auto",
   initialResolvedProtocolVersion,
   selection,
   probes,
+  runTimeoutSeconds,
 }: UseConformanceRunOptions): UseConformanceRunResult {
   const httpServer = isHttpServer(server);
   const [protocol, setProtocol] = useState<ProtocolSuiteState>(() =>
@@ -195,8 +169,7 @@ export function useConformanceRun({
   const [resolvedProtocolVersion, setResolvedProtocolVersion] =
     useState<McpProtocolVersion>();
   // Read when a run starts; the caller passes it once, before Run.
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  const selectionRef = useShownSelectionRef(selection);
   // Read when the protocol suite starts, like the selection.
   const probesRef = useRef(probes);
   probesRef.current = probes;
@@ -219,42 +192,48 @@ export function useConformanceRun({
     oauthListenerCleanupRef.current = null;
   }, []);
 
+  const { remember: rememberSession, forget: forgetSession, cancel: cancelSession } = useConformanceOAuthSession();
+  const authorizationPopup = useAuthorizationPopup();
+  const deadline = useConformanceDeadline((message) => {
+    authorizationPopup.expire();
+    cancelSession();
+    latestRunTokenRef.current += 1;
+    pendingOAuthRef.current = null;
+    clearOAuthListeners();
+    const expire = <T extends { status: string }>(state: T): T =>
+      state.status === "running" || state.status === "needs-authorization"
+        ? { ...state, status: "error", error: message, verdict: "incomplete", waitingForAuth: false }
+        : state;
+    setProtocol(expire); setApps(expire); setTasks(expire); setOAuth((state) => expiredDeferredOAuth(state) ?? expire(state));
+  });
+  const { clear: clearDeadline, budget: runBudget, isExpired } = deadline;
+
   const beginRun = useCallback(() => {
+    clearDeadline();
+    cancelSession();
     latestRunTokenRef.current += 1;
     pendingOAuthRef.current = null;
     clearOAuthListeners();
     return latestRunTokenRef.current;
-  }, [clearOAuthListeners]);
+  }, [clearOAuthListeners, clearDeadline, cancelSession]);
 
   const isRunActive = useCallback(
     (runToken: number, serverName: string) =>
       latestRunTokenRef.current === runToken &&
-      activeServerNameRef.current === serverName,
-    [],
+      activeServerNameRef.current === serverName && !isExpired(),
+    [isExpired],
   );
 
-  /** The run whose OAuth suite the visitor skipped, if any. */
   const skippedOAuthRunTokenRef = useRef<number | null>(null);
 
-  // A skip ends only the OAuth suite, so it cannot bump the run token the
-  // other suites report under. A callback already past its listener checks
-  // this instead, or it would overwrite the skip with a late result.
+  // Skipping OAuth leaves other suites active but blocks late OAuth results.
   const isOAuthRunActive = useCallback(
     (runToken: number, serverName: string) =>
       isRunActive(runToken, serverName) &&
       skippedOAuthRunTokenRef.current !== runToken,
-    [isRunActive],
+    [isRunActive, runBudget],
   );
 
-  /**
-   * The current server, read without making the reset depend on its OBJECT
-   * identity. `ServerWithName` carries mutable fields (`connectionStatus`,
-   * `lastConnectionTime`), so hosted hydration and reconnect polling hand down
-   * a fresh object for the same server mid-run. If `resetStates` changed
-   * identity with it, the effect below would re-run and discard the results of
-   * suites still in flight — the visitor would watch a finished run snap back
-   * to idle for no visible reason. Only a change of NAME is a different server.
-   */
   const serverRef = useRef(server);
   serverRef.current = server;
 
@@ -262,6 +241,8 @@ export function useConformanceRun({
     (serverName?: string) => {
       const effectiveServerName = serverName ?? activeServerNameRef.current;
       const currentServer = serverRef.current;
+      clearDeadline();
+      cancelSession();
       latestRunTokenRef.current += 1;
       pendingOAuthRef.current = null;
       clearOAuthListeners();
@@ -273,7 +254,7 @@ export function useConformanceRun({
       setOAuth(createOAuthState(currentServer));
       activeServerNameRef.current = effectiveServerName;
     },
-    [clearOAuthListeners],
+    [clearOAuthListeners, clearDeadline, cancelSession],
   );
 
   const serverConfigKey = useMemo(
@@ -301,10 +282,10 @@ export function useConformanceRun({
       serverName: string,
       options: Parameters<typeof runProtocolConformance>[1],
     ) => {
-      if (!httpServer) return;
+      if (!httpServer || !isRunActive(runToken, serverName)) return;
       setProtocol({ status: "running" });
       try {
-        const { result } = await runProtocolConformance(serverName, options);
+        const { result } = await runProtocolConformance(serverName, { ...options, ...runBudget() });
         if (!isRunActive(runToken, serverName)) return;
         setProtocol({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
@@ -312,7 +293,7 @@ export function useConformanceRun({
         setProtocol({ status: "error", error: suiteErrorMessage(err) });
       }
     },
-    [httpServer, isRunActive],
+    [httpServer, isRunActive, runBudget],
   );
 
   const runApps = useCallback(
@@ -321,9 +302,10 @@ export function useConformanceRun({
       serverName: string,
       options: Parameters<typeof runAppsConformance>[1],
     ) => {
+      if (!isRunActive(runToken, serverName)) return;
       setApps({ status: "running" });
       try {
-        const { result } = await runAppsConformance(serverName, options);
+        const { result } = await runAppsConformance(serverName, { ...options, ...runBudget() });
         if (!isRunActive(runToken, serverName)) return;
         setApps({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
@@ -331,38 +313,39 @@ export function useConformanceRun({
         setApps({ status: "error", error: suiteErrorMessage(err) });
       }
     },
-    [isRunActive],
+    [isRunActive, runBudget],
   );
 
   const runTasks = useCallback(
     async (
       runToken: number,
       serverName: string,
-      options: Parameters<typeof runTasksConformance>[1],
+      options: Parameters<typeof runTaskConformanceGroups>[1],
     ) => {
+      if (!isRunActive(runToken, serverName)) return;
       setTasks({ status: "running" });
       try {
-        const { result } = await runTasksConformance(serverName, options);
-        if (!isRunActive(runToken, serverName)) return;
-        // The tasks suite reports a real third outcome: checks that apply but
-        // could not be exercised leave the run incomplete, never passing.
+        const result = await runTaskConformanceGroups(serverName, options, () => isRunActive(runToken, serverName), runBudget);
+        if (!result || !isRunActive(runToken, serverName)) return;
         setTasks({ status: "done", result, verdict: verdictOf(result) });
       } catch (err) {
         if (!isRunActive(runToken, serverName)) return;
         setTasks({ status: "error", error: suiteErrorMessage(err) });
       }
     },
-    [isRunActive],
+    [isRunActive, runBudget],
   );
 
   const pollOAuthComplete = useCallback(
     async (sessionId: string, runToken: number, serverName: string) => {
       const MAX_POLLS = 10;
       for (let i = 0; i < MAX_POLLS; i++) {
+        if (!isOAuthRunActive(runToken, serverName)) return;
         try {
-          const poll = await completeOAuthConformance(sessionId);
+          const poll = await completeOAuthConformance(sessionId, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
           if (!isOAuthRunActive(runToken, serverName)) return;
           if (poll.phase === "complete" && poll.result) {
+            forgetSession();
             setOAuth(oauthStateFromResult(poll.result));
             return;
           }
@@ -383,7 +366,7 @@ export function useConformanceRun({
           "The OAuth checks took too long to finish. Run the checks again.",
       });
     },
-    [isOAuthRunActive],
+    [isOAuthRunActive, runBudget, forgetSession],
   );
 
   const handleOAuthCallback = useCallback(
@@ -394,8 +377,9 @@ export function useConformanceRun({
       serverName: string,
       state?: string,
     ) => {
+      if (!isOAuthRunActive(runToken, serverName)) return;
       try {
-        await submitOAuthConformanceCode({ sessionId, code, state });
+        await submitOAuthConformanceCode({ sessionId, code, state }, ...(runBudget().signal ? [{ signal: runBudget().signal }] : []));
         if (!isOAuthRunActive(runToken, serverName)) return;
         setOAuth((prev) => ({
           ...prev,
@@ -411,17 +395,10 @@ export function useConformanceRun({
         });
       }
     },
-    [isOAuthRunActive, pollOAuthComplete],
+    [isOAuthRunActive, pollOAuthComplete, runBudget],
   );
 
-  /**
-   * Open the authorization popup and listen for the code coming back.
-   *
-   * Both local and hosted modes deliver the code through `/oauth/authorize`,
-   * so there is no polling here — `handleOAuthCallback` owns everything after
-   * the code arrives. Two channels are wired because a popup opened
-   * cross-origin may only be able to reach one of them.
-   */
+  /** Listen for the popup callback on both supported browser channels. */
   const beginOAuthAuthorization = useCallback(
     (
       sessionId: string,
@@ -437,7 +414,8 @@ export function useConformanceRun({
         });
         return;
       }
-      const popup = openAuthorizationPopup(authorizationUrl);
+      const cleanupFns: Array<() => void> = [];
+      const popup = authorizationPopup.open(authorizationUrl, cleanupFns);
       setOAuth({
         status: "running",
         sessionId,
@@ -446,7 +424,6 @@ export function useConformanceRun({
         popupBlocked: !popup,
       });
 
-      const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
         for (const fn of cleanupFns) fn();
         if (oauthListenerCleanupRef.current === cleanup) {
@@ -492,7 +469,7 @@ export function useConformanceRun({
         // BroadcastChannel not available
       }
     },
-    [handleOAuthCallback],
+    [authorizationPopup.open, handleOAuthCallback],
   );
 
   const runOAuth = useCallback(
@@ -502,16 +479,14 @@ export function useConformanceRun({
       protocolVersion: McpProtocolVersion,
       readinessIds?: MCPOAuthReadinessId[],
     ) => {
-      if (!isHttpServer(currentServer)) return;
+      if (!isHttpServer(currentServer) || !isRunActive(runToken, currentServer.name)) return;
 
       const serverName = currentServer.name;
       setOAuth({ status: "running" });
 
       try {
         const profile = deriveOAuthProfileFromServer(currentServer);
-        // Always send callbackOrigin — both local and hosted modes redirect
-        // back to the inspector's own `/oauth/callback/debug` page so the
-        // server can surface the code back to the SDK runner.
+        // Both modes return authorization codes to the inspector callback.
         const callbackOrigin = window.location.origin;
 
         const saved =
@@ -535,6 +510,7 @@ export function useConformanceRun({
           : undefined;
 
         const startResult = await startOAuthConformance({
+          ...runBudget(),
           serverNameOrId: serverName,
           oauthProfile: { ...baseProfile, protocolVersion },
           callbackOrigin,
@@ -554,6 +530,7 @@ export function useConformanceRun({
           startResult.authorizationUrl
         ) {
           const { sessionId, authorizationUrl } = startResult;
+          if (runBudget().runTimeoutSeconds !== undefined) rememberSession(sessionId);
           if (deferOAuthAuthorization) {
             pendingOAuthRef.current = {
               sessionId,
@@ -583,7 +560,7 @@ export function useConformanceRun({
         });
       }
     },
-    [beginOAuthAuthorization, deferOAuthAuthorization, isRunActive],
+    [beginOAuthAuthorization, deferOAuthAuthorization, isRunActive, runBudget, rememberSession],
   );
 
   const authorizeOAuth = useCallback(() => {
@@ -601,15 +578,16 @@ export function useConformanceRun({
 
   const openAuthorizationWindow = useCallback(() => {
     if (!oauth.waitingForAuth || !oauth.authorizationUrl) return;
-    const popup = openAuthorizationPopup(oauth.authorizationUrl);
+    const popup = authorizationPopup.open(oauth.authorizationUrl);
     setOAuth((prev) =>
       prev.waitingForAuth ? { ...prev, popupBlocked: !popup } : prev,
     );
-  }, [oauth.authorizationUrl, oauth.waitingForAuth]);
+  }, [authorizationPopup.open, oauth.authorizationUrl, oauth.waitingForAuth]);
 
   // The listeners for the code stay unwired after a skip, so a consent that
   // completes late in another tab cannot resurrect the suite.
   const skipOAuth = useCallback(() => {
+    cancelSession();
     skippedOAuthRunTokenRef.current = latestRunTokenRef.current;
     pendingOAuthRef.current = null;
     clearOAuthListeners();
@@ -618,16 +596,26 @@ export function useConformanceRun({
       unavailableReason: "OAuth was skipped, so it is not scored for this run.",
       skipped: true,
     });
-  }, [clearOAuthListeners]);
+  }, [clearOAuthListeners, cancelSession]);
 
   const runAll = useCallback(async () => {
     const runToken = beginRun();
+    deadline.start(runTimeoutSeconds);
     const currentServer = server;
     const httpServerNow = isHttpServer(currentServer);
 
     const selection = selectionRef.current;
     const probes = probesRef.current ?? {};
     const selected = runnableSelection(selection, versionPin);
+    // Count only a run that starts a suite: protocol and OAuth need HTTP.
+    if (
+      isSelected(selected?.apps) ||
+      isSelected(selected?.tasks) ||
+      (httpServerNow &&
+        (isSelected(selected?.protocol) || selected?.oauth !== false))
+    ) {
+      trackConformanceRunTriggered(analyticsLocation);
+    }
     setOAuthUnscored(scorableOAuthIds(selected?.oauthUnscored));
     setRunVersion((value) => value + 1);
     setResolvedProtocolVersion(undefined);
@@ -650,19 +638,20 @@ export function useConformanceRun({
         : createOAuthState(currentServer),
     );
     let resolved: McpProtocolVersion | undefined;
+    let loginRequired = false;
     try {
-      resolved = await resolveVersion(currentServer, versionPin);
-    } catch (error) {
+      resolved = await resolveVersion(currentServer, versionPin, runBudget());
+    } catch (e) {
       if (!isRunActive(runToken, currentServer.name)) return;
-      const state = {
-        status: "error" as const,
-        error: suiteErrorMessage(error),
-      };
-      if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
-      if (isSelected(selected?.apps)) setApps(state);
-      if (isSelected(selected?.tasks)) setTasks(state);
+      const state = versionErrorState(e, suiteErrorMessage(e));
       if (httpServerNow && selected?.oauth !== false) setOAuth(state);
-      return;
+      loginRequired = state.verdict === "incomplete";
+      if (!loginRequired) {
+        if (httpServerNow && isSelected(selected?.protocol)) setProtocol(state);
+        if (isSelected(selected?.apps)) setApps(state);
+        if (isSelected(selected?.tasks)) setTasks(state);
+        return;
+      }
     }
     if (!isRunActive(runToken, currentServer.name)) return;
     setResolvedProtocolVersion(resolved);
@@ -687,7 +676,7 @@ export function useConformanceRun({
       promises.push(
         runApps(runToken, currentServer.name, {
           checkIds: picked?.apps,
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -697,7 +686,7 @@ export function useConformanceRun({
       promises.push(
         runTasks(runToken, currentServer.name, {
           ...tasksRunOptions(probes, picked),
-          protocolVersion: resolved,
+          protocolVersion: pin === "auto" ? undefined : pin,
         }),
       );
     } else {
@@ -708,16 +697,19 @@ export function useConformanceRun({
         promises.push(
           runOAuth(runToken, currentServer, resolved, picked?.oauthAdvice),
         );
-      } else {
+      } else if (!loginRequired) {
         setOAuth(NOT_SELECTED);
       }
     }
 
     await Promise.allSettled(promises);
   }, [
+    analyticsLocation,
     beginRun,
+    deadline.start,
+    runTimeoutSeconds,
     isRunActive,
-    resolveVersion,
+    resolveVersion, runBudget,
     runApps,
     runOAuth,
     runProtocol,
@@ -726,9 +718,7 @@ export function useConformanceRun({
     versionPin,
   ]);
 
-  // Scores are derived, never stored: each finished suite contributes, and
-  // the headline pools their COUNTS (not an average of suite scores), so a
-  // 0-for-9 OAuth run stays visible inside 30 protocol passes.
+  // Pool counts across suites rather than averaging their percentages.
   const protocolScore = useMemo(
     () =>
       protocol.result ? scoreFromProtocolResult(protocol.result) : undefined,
@@ -765,8 +755,11 @@ export function useConformanceRun({
     const parts = [protocolScore, appsScore, tasksScore, oauthScore].filter(
       (part): part is ConformanceScore => part !== undefined,
     );
-    return parts.length > 0 ? pooledConformanceScore(parts) : undefined;
-  }, [protocolScore, appsScore, tasksScore, oauthScore]);
+    const incomplete = [protocol, apps, tasks, oauth].some((suite) => suite.verdict === "incomplete" && !suite.result);
+    if (!parts.length && !incomplete) return undefined;
+    const pooled = pooledConformanceScore(parts);
+    return incomplete && pooled.outcome !== "failed" ? { ...pooled, outcome: "incomplete" as const } : pooled;
+  }, [protocolScore, appsScore, tasksScore, oauthScore, protocol, apps, tasks, oauth]);
 
   const isRunning =
     protocol.status === "running" ||
@@ -774,7 +767,12 @@ export function useConformanceRun({
     tasks.status === "running" ||
     oauth.status === "running";
 
+  useEffect(() => {
+    if (!isRunning && oauth.status !== "needs-authorization") clearDeadline();
+  }, [isRunning, oauth.status, clearDeadline, runVersion]);
+
   return {
+    runTimeoutSeconds: deadline.runTimeoutSeconds,
     protocol,
     apps,
     tasks,
@@ -793,7 +791,6 @@ export function useConformanceRun({
     oauthScore,
     pooledScore,
     oauthUnscored,
-    oauthNotScored: oauthScore !== undefined && oauthScore.score === null,
     isRunning,
   };
 }

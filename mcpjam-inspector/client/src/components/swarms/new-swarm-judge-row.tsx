@@ -22,10 +22,12 @@ const JUDGE_MODEL_ID = "new-swarm-judge-model";
 
 export function NewSwarmJudgeRow({
   projectId,
+  inModal = false,
   value,
   onChange,
 }: {
   projectId?: string | null;
+  inModal?: boolean;
   value: GoalJudgeConfig | undefined;
   onChange: (next: GoalJudgeConfig | undefined) => void;
 }) {
@@ -54,6 +56,7 @@ export function NewSwarmJudgeRow({
       </div>
       <JudgeModelControl
         id={JUDGE_MODEL_ID}
+        inModal={inModal}
         value={value}
         onChange={onChange}
         availableModels={availableModels}

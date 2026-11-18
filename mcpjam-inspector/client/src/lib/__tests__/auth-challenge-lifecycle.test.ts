@@ -25,6 +25,13 @@ import {
   type DirectScopeStepUpReplayDescriptor,
 } from "../scope-step-up-replay";
 import { useAuthChallengeNoticeStore } from "../auth-challenge-chat";
+import {
+  preparePendingChatAuthRequired,
+  readPendingChatScopeStepUp,
+  savePendingChatScopeStepUp,
+  settlePendingChatScopeStepUpAfterCallback,
+} from "../scope-step-up-pending";
+import type { AuthRequiredEvent } from "@/shared/auth-challenge";
 import { registerScopeStepUpHostBridge } from "../scope-step-up";
 import { authorizationFlowDigest } from "../oauth/flow-digest";
 import { persistRequestedScopes } from "../oauth/requested-scopes";
@@ -620,6 +627,100 @@ describe("auth challenge lifecycle", () => {
         replay: card.replay,
       });
       expect(repeat).toMatchObject({ kind: "notice", reason: "permanent" });
+    });
+  });
+
+  describe("a chat Connect that never leaves the page", () => {
+    const pendingChat = () => ({
+      event: {
+        version: 1,
+        kind: "auth_required",
+        continuationId: "c1",
+        serverId: "orders",
+        serverName: "orders",
+        toolCallId: "tool-c1",
+        operation: { method: "tools/call", operation: "lookup" },
+        source: "http_401",
+        effectiveAuth: "discover",
+        action: "prompt",
+        readOnly: true,
+        expiresAt: Date.now() + 60_000,
+      } satisfies AuthRequiredEvent & { continuationId: string },
+      serverName: "orders",
+      chatSessionId: "chat-1",
+      projectId: "p1",
+      phase: "awaiting_click" as const,
+    });
+    const chatCard = async () => {
+      const input = pendingChat();
+      expect(savePendingChatScopeStepUp(input)).toEqual({ ok: true });
+      return presentCard({
+        replay: undefined,
+        continuationId: "c1",
+        onConnect: () => preparePendingChatAuthRequired(input),
+      });
+    };
+    const phase = () =>
+      readPendingChatScopeStepUp({ continuationId: "c1" })?.phase;
+
+    it.each([
+      [
+        "sign-in throws",
+        () => initiateOAuthMock.mockRejectedValueOnce(new Error("boom")),
+      ],
+      [
+        "sign-in fails before redirecting",
+        () =>
+          initiateOAuthMock.mockResolvedValueOnce({
+            success: false,
+            error: "metadata unreachable",
+          }),
+      ],
+    ])("hands the call back to its card when %s", async (_exit, arrange) => {
+      arrange();
+      const card = await chatCard();
+      const failed = await connectAuthChallenge(card, server, {
+        isTrusted: true,
+      });
+      expect(failed.kind).toBe("failed");
+      expect(phase()).toBe("awaiting_click");
+      // Another sign-in's callback on this server leaves the call alone.
+      expect(
+        settlePendingChatScopeStepUpAfterCallback(
+          "orders",
+          undefined,
+          "another-flow",
+        ),
+      ).toEqual({ kind: "ignored" });
+      expect(phase()).toBe("awaiting_click");
+      // And Connect still works from the same card.
+      expect(
+        await connectAuthChallenge(card, server, { isTrusted: true }),
+      ).toEqual({ kind: "started" });
+      expect(phase()).toBe("awaiting_oauth");
+    });
+
+    it("hands the call back to its card when its binding cannot be saved", async () => {
+      const card = await chatCard();
+      // The click writes the call once; the binding is the next write.
+      let chatWrites = 0;
+      const original = Storage.prototype.setItem;
+      const failBinding = vi
+        .spyOn(Storage.prototype, "setItem")
+        .mockImplementation(function (this: Storage, key, value) {
+          if (key === "mcp-scope-step-up-chat-v2" && ++chatWrites === 2)
+            throw new Error("quota");
+          return original.call(this, key, value);
+        });
+      try {
+        expect(
+          await connectAuthChallenge(card, server, { isTrusted: true }),
+        ).toEqual({ kind: "failed", message: CHAT_AUTH_RECOVERY_MESSAGE });
+      } finally {
+        failBinding.mockRestore();
+      }
+      expect(initiateOAuthMock).not.toHaveBeenCalled();
+      expect(phase()).toBe("awaiting_click");
     });
   });
 

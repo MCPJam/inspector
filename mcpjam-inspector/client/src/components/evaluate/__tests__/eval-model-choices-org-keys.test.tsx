@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EvalModelChoices } from "../eval-target-matrix";
+import { EvalModelChoices } from "../eval-model-choices";
 import type { ModelDefinition } from "@/shared/types";
+import { withSavedSelectionLocks } from "@/components/chat-v2/shared/available-models";
 
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
@@ -29,6 +30,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("warns about a saved hosted target on its trigger, by catalog name, and never lists it", async () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
@@ -65,6 +67,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     };
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -107,6 +110,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     } as ModelDefinition;
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -137,6 +141,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("keeps the raw id, without a warning, when the policy is off", () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "acme/retired" }],
@@ -183,6 +188,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     (_label, target) => {
       render(
         <EvalModelChoices
+          harnessTargets={[]}
           value={{ includeClientDefaults: false, explicitTargets: [target] }}
           onChange={vi.fn()}
           disabled={false}
@@ -201,6 +207,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
@@ -229,6 +236,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [] }}
         onChange={onChange}
         disabled={false}
@@ -251,6 +259,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("reads that saved target back as the org row, without a warning", () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [orgSonnet] }}
         onChange={vi.fn()}
         disabled={false}
@@ -271,6 +280,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [] }}
         onChange={onChange}
         disabled={false}
@@ -286,6 +296,72 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     expect(onChange).toHaveBeenLastCalledWith({
       includeClientDefaults: false,
       explicitTargets: [{ modelId: "claude-sonnet-4-5" }],
+    });
+  });
+
+  describe("a target saved as a bare id before the fix", () => {
+    const GPT51 = {
+      id: "gpt-5.1",
+      name: "GPT-5.1",
+      provider: "openai",
+      hosted: false,
+      orgProvider: { providerKey: "openai", id: "conn_1" },
+    } as ModelDefinition;
+    // The list as `composeAvailableModels` builds it: the org row plus the
+    // saved bare id kept as a disallowed row with the same id.
+    const models = withSavedSelectionLocks([GPT51], ["gpt-5.1"], () => [GPT51]);
+    const renderBadSave = () => {
+      const onChange = vi.fn();
+      render(
+        <EvalModelChoices
+          harnessTargets={[]}
+          value={{
+            includeClientDefaults: false,
+            explicitTargets: [{ modelId: "gpt-5.1" }],
+          }}
+          onChange={onChange}
+          disabled={false}
+          testId="choices"
+          availableModels={models}
+          requireOrgKeys
+        />,
+      );
+      return onChange;
+    };
+
+    it("is repaired by picking GPT-5.1 again on its chip", async () => {
+      const onChange = renderBadSave();
+      expect(
+        screen.getByTestId("model-trigger-org-keys-warning"),
+      ).toBeInTheDocument();
+      const user = userEvent.setup();
+      await user.click(
+        within(screen.getByTestId("choices")).getAllByRole("button")[0]!,
+      );
+      await user.click(screen.getByRole("option", { name: /GPT-5\.1/ }));
+      expect(onChange).toHaveBeenLastCalledWith({
+        includeClientDefaults: false,
+        explicitTargets: [
+          {
+            modelId: "openai/gpt-5.1",
+            selection: expect.objectContaining({
+              source: "org",
+              connectionRef: { kind: "orgProvider", id: "conn_1" },
+              nativeModelId: "gpt-5.1",
+            }),
+          },
+        ],
+      });
+    });
+
+    it("still offers GPT-5.1 under Add model", async () => {
+      renderBadSave();
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: /Add model/ }));
+      expect(
+        screen.getByRole("option", { name: /GPT-5\.1/ }),
+      ).toBeInTheDocument();
     });
   });
 });

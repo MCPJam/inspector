@@ -13,27 +13,18 @@ import type {
 } from "@mcpjam/sdk";
 // Browser-safe SDK entry: the top-level `@mcpjam/sdk` pulls Node-only
 // transitive deps that break the Vite browser bundle.
-import {
-  canRunConformance,
-  CHECK_ERAS,
-  MCP_APPS_CHECK_IDS,
-  MCP_CHECK_IDS,
-  MCP_OAUTH_READINESS_IDS,
-  MCP_READINESS_IDS,
-  MCP_TASKS_CHECK_IDS,
-  MCP_TASKS_READINESS_IDS,
-  PROTOCOL_VERSION_ERAS,
-  READINESS_ERAS,
-  type MCPAppsCheckId,
-  type MCPCheckId,
-  type MCPOAuthReadinessId,
-  type MCPReadinessId,
-  type MCPTasksCheckId,
-  type MCPTasksReadinessId,
-  type McpProtocolVersion,
-} from "@mcpjam/sdk/browser";
+import { canRunConformance } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { OAuthConformanceStartResult } from "@/lib/apis/mcp-conformance-api";
+
+// Shared with the hosted executor, so a saved server's settings select the
+// same checks from either place.
+export {
+  isSelected,
+  runnableSelection,
+  type ConformanceSelection,
+  type ProtocolVersionPin,
+} from "@/shared/conformance-settings";
 
 export type SuiteStatus =
   | "idle"
@@ -48,8 +39,6 @@ export type SuiteStatus =
   | "error"
   | "unavailable";
 
-/** "auto" ⇒ no pin: the run adopts whatever version the server negotiates. */
-export type ProtocolVersionPin = "auto" | McpProtocolVersion;
 
 export interface SuiteState {
   status: SuiteStatus;
@@ -94,8 +83,8 @@ export interface OAuthSuiteState extends SuiteState {
    */
   popupBlocked?: boolean;
   /**
-   * The user chose Skip OAuth. The suite reads "unavailable" like a server
-   * that needs no auth, but its checks were never run, not ruled out.
+   * OAuth was skipped or its deferred authorization expired. The suite is
+   * unavailable and unscored because authorization-dependent checks never ran.
    */
   skipped?: boolean;
 }
@@ -176,82 +165,11 @@ export function oauthStateFromResult(
   };
 }
 
-/**
- * The checks a run covers. A missing list runs the whole suite, so a check
- * added later still runs; an empty one, or `oauth: false`, leaves the suite
- * out. OAuth runs as one flow, so it RUNS all or nothing; `oauthUnscored`
- * names steps that still run but do not count toward the score.
- */
-export interface ConformanceSelection {
-  protocol?: MCPCheckId[];
-  /**
-   * The protocol suite's advice, which costs no points. Missing runs all of
-   * it; empty runs none. It runs only with the protocol suite, so only when
-   * at least one protocol check is picked.
-   */
-  protocolAdvice?: MCPReadinessId[];
-  apps?: MCPAppsCheckId[];
-  tasks?: MCPTasksCheckId[];
-  /** The Tasks suite's advice, read like `protocolAdvice`. */
-  tasksAdvice?: MCPTasksReadinessId[];
-  oauth?: boolean;
-  /** The OAuth suite's advice, read like `protocolAdvice`. */
-  oauthAdvice?: MCPOAuthReadinessId[];
-  /** OAuth steps that run with the flow but are left out of the score. */
-  oauthUnscored?: string[];
-}
-
 export const NOT_SELECTED = {
   status: "unavailable",
   unavailableReason: "Not selected for this run, so it is not scored.",
   notSelected: true,
 } as const;
-
-export const isSelected = (checkIds: readonly string[] | undefined) =>
-  checkIds === undefined || checkIds.length > 0;
-
-function knownIds<T extends string>(
-  picked: readonly string[] | undefined,
-  known: readonly T[],
-): T[] | undefined {
-  return picked === undefined
-    ? undefined
-    : known.filter((id) => picked.includes(id));
-}
-
-/**
- * The selection with each suite list cut to ids this build knows: saved
- * defaults are plain strings, so an id renamed or removed since would get the
- * whole suite refused. A pinned version also drops protocol checks outside
- * its era, which would only run as skips.
- */
-export function runnableSelection(
-  selection: ConformanceSelection | undefined,
-  versionPin: ProtocolVersionPin,
-): ConformanceSelection | undefined {
-  if (!selection) return undefined;
-  const pinnedEra =
-    versionPin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[versionPin];
-  const protocolIds = MCP_CHECK_IDS.filter(
-    (id) =>
-      pinnedEra === undefined ||
-      (CHECK_ERAS[id] as readonly string[]).includes(pinnedEra),
-  );
-  const adviceIds = MCP_READINESS_IDS.filter(
-    (id) =>
-      pinnedEra === undefined ||
-      (READINESS_ERAS[id] as readonly string[]).includes(pinnedEra),
-  );
-  return {
-    ...selection,
-    protocol: knownIds(selection.protocol, protocolIds),
-    protocolAdvice: knownIds(selection.protocolAdvice, adviceIds),
-    apps: knownIds(selection.apps, MCP_APPS_CHECK_IDS),
-    tasks: knownIds(selection.tasks, MCP_TASKS_CHECK_IDS),
-    tasksAdvice: knownIds(selection.tasksAdvice, MCP_TASKS_READINESS_IDS),
-    oauthAdvice: knownIds(selection.oauthAdvice, MCP_OAUTH_READINESS_IDS),
-  };
-}
 
 /**
  * A suite's request error, in words. A proxy that cut the request off (a 524,
@@ -266,4 +184,15 @@ export function suiteErrorMessage(err: unknown): string {
   return cutOff
     ? "These checks took too long to finish, so no results came back. Run them again, or pick fewer checks for this suite."
     : message;
+}
+
+
+/** An authorization the visitor never started is not a conformance verdict. */
+export function expiredDeferredOAuth(state: OAuthSuiteState): OAuthSuiteState | undefined {
+  if (state.status !== "needs-authorization") return undefined;
+  return {
+    status: "unavailable",
+    skipped: true,
+    unavailableReason: "OAuth was not authorized before the run ended, so it is not scored. Run again to authorize.",
+  };
 }

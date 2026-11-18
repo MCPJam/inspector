@@ -75,7 +75,7 @@ export interface ProbeLazyAuthenticationOptions {
 
 /** Classify one call and parse its refusal, once. */
 function readToolCall(
-  call: DirectoryToolCallEvidence,
+  call: DirectoryToolCallEvidence
 ): Pick<
   DirectoryLazyAuthToolCall,
   "outcome" | "status" | "challenge" | "invalidArguments" | "error"
@@ -133,7 +133,7 @@ function readToolCall(
  * and transport failure is recorded on the evidence.
  */
 export async function probeLazyAuthentication(
-  options: ProbeLazyAuthenticationOptions,
+  options: ProbeLazyAuthenticationOptions
 ): Promise<DirectoryLazyAuthProbeEvidence> {
   const protocolVersion = DIRECTORY_DIAL_PROTOCOL_VERSION;
   const evidence: DirectoryLazyAuthProbeEvidence = {
@@ -215,7 +215,12 @@ export async function probeLazyAuthentication(
   let id = 900;
   if (selection.publicTool) {
     const { tool, selectedBy, schemes } = selection.publicTool;
-    const call = await dialToolCall(anonymous, tool.name, initialize.sessionId, id++);
+    const call = await dialToolCall(
+      anonymous,
+      tool.name,
+      initialize.sessionId,
+      id++
+    );
     evidence.publicCall = {
       toolName: tool.name,
       selectedBy,
@@ -228,7 +233,12 @@ export async function probeLazyAuthentication(
 
   if (selection.protectedTool) {
     const { tool, selectedBy, schemes } = selection.protectedTool;
-    const call = await dialToolCall(anonymous, tool.name, initialize.sessionId, id++);
+    const call = await dialToolCall(
+      anonymous,
+      tool.name,
+      initialize.sessionId,
+      id
+    );
     evidence.protectedCall = {
       toolName: tool.name,
       selectedBy,

@@ -132,7 +132,9 @@ describe("Claude forwarding refresh", () => {
       "mcpServers",
       `let mcpjamRefreshNativeMcp; ${patched.slice(begin, end)} return mcpjamRefreshNativeMcp;`,
     );
-    const refresh = create({ setMcpServers }, { mcpServers: servers }, prior);
+    const mcpServerStatus = vi.fn(async (): Promise<Array<{ name: string; status: string }>> =>
+      [{ name: "server", status: "connected" }]);
+    const refresh = create({ setMcpServers, mcpServerStatus }, { mcpServers: servers }, prior);
     await refresh(servers);
     expect(setMcpServers).toHaveBeenCalledWith(prior);
     await expect(
@@ -147,6 +149,23 @@ describe("Claude forwarding refresh", () => {
       }),
     ).rejects.toThrow("Invalid forwarding configuration");
     expect(setMcpServers).toHaveBeenCalledOnce();
+    // A newer tool catalog is the one URL change a refresh takes, and the
+    // agent reconnects to the URL that names it.
+    const recataloged = `${servers.server.url}?mcpjam_tools=v2`;
+    await refresh({ server: { ...servers.server, url: recataloged } });
+    expect(setMcpServers).toHaveBeenLastCalledWith({
+      ...prior,
+      server: { ...servers.server, url: recataloged },
+    });
+    await expect(
+      refresh({
+        server: {
+          ...servers.server,
+          url: "https://forward.example/other?mcpjam_tools=v2",
+        },
+      }),
+    ).rejects.toThrow("Invalid forwarding configuration");
+    expect(setMcpServers).toHaveBeenCalledTimes(2);
     vi.stubEnv(
       "COMPUTERS_TERMINAL_TOKEN_SECRET",
       "test-forwarding-seal-key-with-32-characters",
@@ -175,6 +194,23 @@ describe("Claude forwarding refresh", () => {
       });
     } finally {
       vi.unstubAllEnvs();
+    }
+    for (const status of ["needs-auth", "failed", "disabled"]) {
+      mcpServerStatus.mockResolvedValueOnce([{ name: "server", status }]);
+      await expect(refresh(servers)).rejects.toThrow("MCP refresh failed");
+    }
+    vi.useFakeTimers();
+    try {
+      mcpServerStatus.mockResolvedValueOnce([]).mockResolvedValueOnce([{ name: "server", status: "pending" }]);
+      const delayed = refresh(servers);
+      await vi.advanceTimersByTimeAsync(250);
+      await delayed;
+      mcpServerStatus.mockResolvedValue([]);
+      const missing = expect(refresh(servers)).rejects.toThrow("MCP refresh timed out");
+      await vi.advanceTimersByTimeAsync(30_001);
+      await missing;
+    } finally {
+      vi.useRealTimers();
     }
     setMcpServers.mockResolvedValueOnce({
       errors: { server: "connection failed" },

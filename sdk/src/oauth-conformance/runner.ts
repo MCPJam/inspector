@@ -1,4 +1,5 @@
 import { refreshAuthorization } from "../oauth/browser-auth.js";
+import { captureConformanceRun } from "../telemetry.js";
 import {
   captureOpenAIProfile,
   findOpenAIProfileTool,
@@ -276,10 +277,7 @@ function buildStepResult(
  * a violation.
  */
 type AuthorizationRequirement =
-  | "required"
-  | "optional"
-  | "not-required"
-  | "inconclusive";
+  "required" | "optional" | "not-required" | "inconclusive";
 
 async function probeAuthorizationRequirement(
   config: NormalizedOAuthConformanceConfig,
@@ -300,7 +298,7 @@ async function probeAuthorizationRequirement(
       // discovery is graded rather than reported not-applicable.
       const prmUrl = await findPublishedResourceMetadata(
         config,
-        trackedRequest,
+        trackedRequest
       );
       if (prmUrl) {
         return {
@@ -490,6 +488,7 @@ function mergeConformanceDynamicRegistration(
 export class OAuthConformanceTest {
   private readonly config: NormalizedOAuthConformanceConfig;
   private readonly deps: OAuthConformanceRunnerDependencies;
+  private readonly suppressTelemetry: boolean;
 
   constructor(
     config: OAuthConformanceConfig,
@@ -497,9 +496,13 @@ export class OAuthConformanceTest {
   ) {
     this.config = normalizeOAuthConformanceConfig(config);
     this.deps = deps;
+    // The normalized config drops it, so read it from the caller's config.
+    this.suppressTelemetry = config.__suppressTelemetry === true;
   }
 
   async run(): Promise<ConformanceResult> {
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "single" });
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();
@@ -525,6 +528,7 @@ export class OAuthConformanceTest {
         warnings?: StepResult["warnings"];
       }>,
     ) => {
+      this.config.signal?.throwIfAborted();
       const beforeHistory = state.httpHistory?.length ?? 0;
       activeCollector = { attempts: [] };
 
@@ -543,6 +547,7 @@ export class OAuthConformanceTest {
           ),
         );
       } catch (error) {
+        this.config.signal?.throwIfAborted();
         const attempts = resolveAttempts(activeCollector, beforeHistory, state);
         steps.push(
           buildStepResult(
@@ -602,7 +607,7 @@ export class OAuthConformanceTest {
             headers: request.headers,
             body: serializeRequestBody(request.body, request.headers),
             redirect: options.redirect,
-            signal: controller.signal,
+            signal: this.config.signal ? AbortSignal.any([controller.signal, this.config.signal]) : controller.signal,
           });
 
           const body = await parseResponseBody(response);
@@ -623,6 +628,7 @@ export class OAuthConformanceTest {
             ok: response.ok,
           };
         } catch (error) {
+          this.config.signal?.throwIfAborted();
           const duration = Date.now() - historyEntry.timestamp;
           historyEntry.duration = duration;
           historyEntry.error = {
@@ -658,7 +664,7 @@ export class OAuthConformanceTest {
         // same 2xx and continues into proactive discovery, which is exactly
         // the path a client signing in to this server takes.
         this.config.onProgress(
-          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`,
+          `Anonymous access is allowed and OAuth is available — ${authRequirement.detail}. Grading discovery and the authorization flow.`
         );
       }
 
@@ -716,6 +722,7 @@ export class OAuthConformanceTest {
         state.currentStep !== "complete" &&
         guard < 40
       ) {
+        this.config.signal?.throwIfAborted();
         guard += 1;
 
         if (
@@ -812,6 +819,7 @@ export class OAuthConformanceTest {
 
             steps.push(buildStepResult("received_access_token", "passed", 0, [], []));
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             const durationMs = Date.now() - stepStartedAt;
             const logs = (state.infoLogs ?? []).slice(beforeLogs);
             const attempts = resolveAttempts(activeCollector, beforeHistory, state);
@@ -862,6 +870,7 @@ export class OAuthConformanceTest {
                     expectedState: state.state,
                     timeoutMs: this.config.stepTimeout,
                     openUrl: this.config.auth.openUrl,
+                    signal: this.config.signal,
                   })
                 : await (
                     this.deps.completeHeadlessAuthorization ??
@@ -892,6 +901,7 @@ export class OAuthConformanceTest {
               ),
             );
           } catch (error) {
+            this.config.signal?.throwIfAborted();
             updateState({
               currentStep: "received_authorization_code",
               error: error instanceof Error ? error.message : String(error),
@@ -923,11 +933,13 @@ export class OAuthConformanceTest {
 
         const startStep = state.currentStep;
         const beforeLogs = state.infoLogs?.length ?? 0;
+        this.config.signal?.throwIfAborted();
         const beforeHistory = state.httpHistory?.length ?? 0;
         activeCollector = { attempts: [] };
         const stepStartedAt = Date.now();
 
         await machine.proceedToNextStep();
+        this.config.signal?.throwIfAborted();
 
         const durationMs = Date.now() - stepStartedAt;
         const logs = (state.infoLogs ?? []).slice(beforeLogs);
@@ -995,9 +1007,12 @@ export class OAuthConformanceTest {
 
           // A server the pre-flight found publishing this server's metadata
           // is graded from proactive discovery, so its 2xx is expected here.
+          // So is one the pre-flight saw challenge: a 401 proves it requires
+          // sign-in, and a later 2xx cannot make that not applicable.
           if (
             probe.kind === "anonymous_allowed" &&
-            authRequirement.requirement !== "optional"
+            authRequirement.requirement !== "optional" &&
+            authRequirement.requirement !== "required"
           ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row
@@ -1370,7 +1385,8 @@ export class OAuthConformanceTest {
                         (freshManager, freshKey) =>
                           captureOpenAIProfile(freshManager, freshKey, {
                             timeoutMs: this.config.verification.timeout,
-                          })
+                          }),
+                        { signal: this.config.signal },
                       );
                       const same = refreshedProfile.profile?.id === profileId;
                       steps.push({
@@ -1470,7 +1486,7 @@ export class OAuthConformanceTest {
               }
             }
           },
-          { serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
+          { signal: this.config.signal, serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

@@ -401,6 +401,81 @@ describe("mcpjam-stream-handler", () => {
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
   });
 
+  it("sends the backend provider-safe tool names and restores them in its reply", async () => {
+    const toolDef = {
+      description: "Add",
+      inputSchema: { type: "object" } as any,
+    };
+    vi.mocked(serializeToolsForConvex).mockReturnValueOnce([
+      { name: "cart.add", inputSchema: { type: "object" } },
+      { name: "cart_add", inputSchema: { type: "object" } },
+    ]);
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "tool-input-start", toolCallId: "c2", toolName: "cart_add_2" },
+        {
+          type: "tool-input-available",
+          toolCallId: "c2",
+          toolName: "cart_add_2",
+          input: {},
+        },
+        {
+          type: "finish",
+          finishReason: "tool-calls",
+          totalUsage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ]),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [
+        { role: "user", content: "add it" },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "cart.add",
+              output: { type: "text", value: "added" },
+            },
+          ],
+        },
+      ] as any,
+      modelId: "anthropic/claude-sonnet-4.5",
+      systemPrompt: "",
+      tools: { "cart.add": toolDef, cart_add: toolDef },
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      String(vi.mocked(global.fetch).mock.calls[0]![1]!.body),
+    );
+    expect(
+      (fetchBody.tools as Array<{ name: string }>).map((t) => t.name),
+    ).toEqual(["cart_add_2", "cart_add"]);
+    expect(fetchBody.messages).toContain('"toolName":"cart_add_2"');
+    expect(fetchBody.messages).not.toContain("cart.add");
+    const forwardedNames = writtenChunks
+      .filter((chunk) => chunk?.type === "tool-input-available")
+      .map((chunk) => chunk.toolName);
+    expect(forwardedNames).toEqual(["cart.add"]);
+  });
+
   it("scrubs backend-only approval parts while preserving full history for completion callbacks", async () => {
     const onConversationComplete = vi.fn();
     const messages = [
@@ -1277,6 +1352,215 @@ describe("mcpjam-stream-handler", () => {
       },
     });
     expect(finishChunks[0]).not.toHaveProperty("totalUsage");
+  });
+
+  describe("per-call cost from the backend finish metadata", () => {
+    const reportedCost = {
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd: 0.0021,
+      source: "provider_reported",
+      reporter: "gateway",
+      funding: "mcpjam",
+    };
+    const estimatedCost = {
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "partial",
+      amountUsd: 0.0045,
+      source: "list_price",
+      missing: ["cache_write_rate"],
+      funding: "customer",
+    };
+    const toolStep = (cost: unknown) => [
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "read_docs",
+        input: { topic: "latency" },
+      },
+      {
+        type: "finish",
+        finishReason: "tool-calls",
+        messageMetadata: { inputTokens: 3, outputTokens: 4, totalTokens: 7, cost },
+      },
+    ];
+    const textStep = (cost: unknown) => [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "ok" },
+      { type: "text-end", id: "text-1" },
+      {
+        type: "finish",
+        finishReason: "stop",
+        messageMetadata: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cost },
+      },
+    ];
+
+    function mockTwoSteps(first: unknown, second: unknown) {
+      let call = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        const events = call === 0 ? toolStep(first) : textStep(second);
+        call += 1;
+        return createSseResponse(events);
+      });
+      vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+        (messages) =>
+          messages.some(
+            (message: any) =>
+              message?.role === "assistant" &&
+              Array.isArray(message.content) &&
+              message.content.some((part: any) => part.type === "tool-call"),
+          ) && !messages.some((message: any) => message?.role === "tool"),
+      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation(
+        async (messages: any[]) => {
+          const toolResultMessage = {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolCallId: "call-1",
+                toolName: "read_docs",
+                output: { type: "json", value: { ok: true } },
+                result: { ok: true },
+                serverId: "docs-server",
+              },
+            ],
+          };
+          messages.splice(2, 0, toolResultMessage);
+          return [toolResultMessage] as any;
+        },
+      );
+    }
+
+    const turnInput = {
+      messages: [{ role: "user", content: "Fetch the docs" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: { read_docs: { _serverId: "docs-server" } } as any,
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({ read_docs: {} }),
+      } as any,
+    };
+
+    function lastSnapshotSpans(): any[] {
+      const snapshots = writtenChunks
+        .filter((chunk) => chunk?.type === "data-trace-event")
+        .map((chunk) => chunk.data)
+        .filter((event: any) => event.type === "trace_snapshot");
+      return snapshots[snapshots.length - 1].snapshot.spans;
+    }
+
+    it.each([
+      ["hosted /stream", () => handleMCPJamFreeChatModel(turnInput)],
+      [
+        "org cloud /stream/org",
+        () =>
+          handleHostedOrgChatModel({
+            ...turnInput,
+            projectId: "project-1",
+            providerKey: "openai",
+            heartbeatIntervalMs: 0,
+          }),
+      ],
+    ])("puts each step's cost on that step's llm span only (%s)", async (_path, run) => {
+      mockTwoSteps(reportedCost, estimatedCost);
+
+      await run();
+      await lastExecution;
+
+      const spans = lastSnapshotSpans();
+      const llm = spans.filter((span) => span.category === "llm");
+      expect(llm.map((span) => [span.stepIndex, span.cost])).toEqual([
+        [0, reportedCost],
+        [1, estimatedCost],
+      ]);
+      expect(
+        spans.filter((span) => span.category !== "llm" && span.cost),
+      ).toEqual([]);
+
+      // The browser's finish chunk sums the whole turn, so the last call's
+      // cost must not ride along as if it were the turn's.
+      const finish = writtenChunks.find((chunk) => chunk?.type === "finish");
+      expect(finish.messageMetadata).toMatchObject({ inputTokens: 13 });
+      expect(finish.messageMetadata).not.toHaveProperty("cost");
+    });
+
+    it("ignores a malformed cost and keeps the step's tokens", async () => {
+      mockTwoSteps(
+        { ...reportedCost, amountUsd: undefined },
+        { ...estimatedCost, currency: "EUR" },
+      );
+
+      await handleMCPJamFreeChatModel(turnInput);
+      await lastExecution;
+
+      const llm = lastSnapshotSpans().filter((span) => span.category === "llm");
+      expect(llm).toHaveLength(2);
+      for (const span of llm) expect(span).not.toHaveProperty("cost");
+      expect(llm.map((span) => span.inputTokens)).toEqual([3, 10]);
+    });
+
+    // An empty step whose provider answered still counts as a model call: it
+    // keeps an llm span (with cost only when the backend priced it), so the
+    // model-call count and llm token totals match the success path.
+    it.each([
+      [
+        "usage and cost",
+        {
+          inputTokens: 12,
+          outputTokens: 0,
+          totalTokens: 12,
+          cost: reportedCost,
+        },
+        true,
+      ],
+      [
+        "usage without cost",
+        { inputTokens: 12, outputTokens: 0, totalTokens: 12 },
+        true,
+      ],
+      ["neither usage nor cost", undefined, false],
+    ])(
+      "records a step that returned no content, with %s",
+      async (_case, messageMetadata, answered) => {
+        global.fetch = vi
+          .fn()
+          .mockResolvedValue(
+            createSseResponse([
+              { type: "finish", finishReason: "length", messageMetadata },
+            ]),
+          );
+
+        await handleMCPJamFreeChatModel({ ...turnInput, tools: {} });
+        await lastExecution;
+
+        const spans = lastSnapshotSpans();
+        expect(spans.find((span) => span.category === "step")).toMatchObject({
+          status: "error",
+        });
+        const llm = spans.filter((span) => span.category === "llm");
+        expect(llm).toEqual(
+          answered
+            ? [
+                expect.objectContaining({
+                  stepIndex: 0,
+                  status: "error",
+                  inputTokens: 12,
+                }),
+              ]
+            : [],
+        );
+        const cost = messageMetadata?.cost;
+        expect(spans.filter((span) => span.cost)).toEqual(
+          cost ? [expect.objectContaining({ category: "llm", cost })] : [],
+        );
+        expect(writtenChunks.some((chunk) => chunk?.type === "error")).toBe(
+          true,
+        );
+      },
+    );
   });
 
   it("flushes buffered hosted rpc logs first and streams live hosted rpc logs as data parts", async () => {

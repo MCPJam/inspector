@@ -388,6 +388,13 @@ describe("explicit chat selections", () => {
     expect(resolve(raw, { allowLocal: false }).ok).toBe(false);
     expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });
   });
+  it("admits a Cursor account choice only for the Cursor harness", () => {
+    const model = { id: "cursor/gpt-5.4-nano", provider: "cursor" };
+    const raw = { source: "legacy", modelId: model.id };
+    expect(resolve(raw, { model, allowLocal: false, harnessId: "cursor" })).toMatchObject({ ok: true, selection: raw });
+    expect(resolve(raw, { model, allowLocal: false, harnessId: "codex" }).ok).toBe(false);
+    expect(resolve(raw, { allowLocal: false, harnessId: "cursor" }).ok).toBe(false);
+  });
   it("the explicit object overrides the host without rebinding its connection", () => {
     const raw = { ...inherited, connectionRef: { kind: "orgProvider", id: "other" } };
     expect(resolve(raw)).toEqual({ ok: true, selection: raw, requestSelection: raw });

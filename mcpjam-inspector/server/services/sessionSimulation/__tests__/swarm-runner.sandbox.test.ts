@@ -1,4 +1,7 @@
-vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(await vi.importActual("../../../utils/harness/local/run-resources.js")), isLocalHarnessVenue: () => false }));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+const acquireLocalSlotMock = vi.hoisted(() => vi.fn(async (_signal?: AbortSignal) => () => {}));
+const prepareLocalHarnessRunMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(await vi.importActual("../../../utils/harness/local/run-resources.js")), isLocalHarnessVenue: () => false, acquireLocalHarnessSlot: (signal?: AbortSignal) => acquireLocalSlotMock(signal), prepareLocalHarnessRun: (...args: unknown[]) => prepareLocalHarnessRunMock(...args) }));
 /**
  * swarm-runner.sandbox.test.ts — the per-attempt ephemeral sandbox (B-isolation).
  *
@@ -18,7 +21,6 @@ vi.mock("../../../utils/harness/local/run-resources.js", async () => ({ ...(awai
  *     otherwise reserve the launcher's shared personal computer while the bash
  *     path looked isolated.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const runAssistantTurnMock = vi.fn();
 const resolveSyntheticModelSourceMock = vi.fn();
@@ -30,11 +32,12 @@ const swarmPersonaNextTurnMock = vi.fn();
 const heartbeatJourneyRunMock = vi.fn();
 const provisionJourneySandboxMock = vi.fn();
 const releaseSandboxMock = vi.fn();
-const touchSandboxMock = vi.fn(async () => "touched" as const);
+const touchSandboxMock = vi.fn(async () => ({ outcome: "touched" as const }));
 const resolveHostToolsMock = vi.fn();
 const resolveBrowserSecretsMock = vi.fn();
 const resolveHarnessSandboxMock = vi.fn();
 const dataPlaneConfiguredMock = vi.fn(() => true);
+const finalizePendingAttemptsMock = vi.fn(async () => undefined);
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
   const actual = await vi.importActual<
@@ -106,6 +109,8 @@ vi.mock("../../swarm-agent.js", async () => {
       swarmPersonaNextTurnMock(...args),
     heartbeatJourneyRun: (...args: unknown[]) =>
       heartbeatJourneyRunMock(...args),
+    finalizePendingAttempts: (...args: unknown[]) =>
+      finalizePendingAttemptsMock(...(args as [])),
   };
 });
 
@@ -343,6 +348,8 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  acquireLocalSlotMock.mockReset().mockImplementation(async () => () => {});
+  prepareLocalHarnessRunMock.mockReset();
   // A deployment that CAN run hosted browsers — see the "declines to book a
   // desktop" case for the other side of it.
   hostedBrowserAdvertisableMock.mockReset().mockReturnValue(true);
@@ -686,6 +693,100 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(JSON.stringify(terminal)).toContain("stock desktop image");
   });
 
+  /** A pinned box plus the desktop the backend paired with it. */
+  function answerWithPair(): void {
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: {
+        sandboxId: "sbx_pinned",
+        sandboxRowId: "row_pinned",
+        runtimeKind: "terminal",
+        workdir: "/workspace",
+        browser: {
+          sandboxId: "sbx_desktop",
+          sandboxRowId: "row_desktop",
+          runtimeKind: "desktop-browser",
+        },
+      },
+    }));
+  }
+
+  it("runs a pinned browser target on its pinned box plus a paired desktop", async () => {
+    personaDrivesOneTurn();
+    answerWithPair();
+    // The take lives on the desktop, so that is the row it is collected from.
+    collectHostedRecordingMock.mockImplementation(async (row: string) =>
+      row === "row_desktop"
+        ? {
+            bytes: new Uint8Array([1]),
+            mime: "video/webm",
+            fps: 1,
+            durationMs: 1,
+            distinctFrames: 1,
+            truncated: false,
+          }
+        : null,
+    );
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["bash", "browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runtimeKind: "desktop-browser",
+      pairBrowser: true,
+    });
+    const ctx = resolverContexts()[0]!;
+    // Bash stays on the pinned image; Browser gets the desktop.
+    expect(ctx.sandboxBinding).toEqual({
+      sandboxId: "sbx_pinned",
+      sandboxRowId: "row_pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+    expect(ctx.browserSandboxBinding).toEqual({
+      sandboxId: "sbx_desktop",
+      sandboxRowId: "row_desktop",
+      runtimeKind: "desktop-browser",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+    expect(collectHostedRecordingMock).toHaveBeenCalledWith("row_desktop");
+    expect(stageVideoMock).toHaveBeenCalledTimes(1);
+    // Both boxes are handed back on the attempt's way out.
+    const released = releaseSandboxMock.mock.calls.map(
+      (call) => (call[0] as { sandboxRowId: string }).sandboxRowId
+    );
+    expect(released.sort()).toEqual(["row_desktop", "row_pinned"]);
+  });
+
+  it("runs a pinned harness target's harness on the pinned box, not the desktop", async () => {
+    personaDrivesOneTurn();
+    answerWithPair();
+
+    await startJourneyRun(
+      baseOpts({
+        harness: "claude-code",
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    expect(resolveHarnessSandboxMock).not.toHaveBeenCalled();
+    expect(turnOptions().harnessSandboxBinding).toEqual({
+      sandboxRowId: "row_pinned",
+      sandboxId: "sbx_pinned",
+      runtimeKind: "terminal",
+      workdir: "/workspace",
+    });
+    expect(resolverContexts()[0]!.browserSandboxBinding).toMatchObject({
+      sandboxRowId: "row_desktop",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
   it("names the DESKTOP budget when capacity is what it waited on", async () => {
     // A desktop refusal is a different sentence — and a different remedy —
     // from "this deployment is full": the message names WHICH budget ran out
@@ -878,6 +979,143 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
     // Nothing was booted, so nothing is released.
     expect(releaseSandboxMock).not.toHaveBeenCalled();
+  });
+
+  const trialRefusal = {
+    ok: false,
+    status: 409,
+    error:
+      "This organization has used its 20 free native harness turns. Upgrade your plan to keep using them, or switch to MCPJam Harness.",
+    code: "native_harness_trial_exhausted",
+  };
+
+  it("stops the whole run when the organization's native harness trial is used up", async () => {
+    // The backend's pre-check, before a computer boots: no other target
+    // escapes it, so the run stops as it does when the lease refuses.
+    provisionJourneySandboxMock.mockResolvedValue(trialRefusal);
+
+    await startJourneyRun(baseOpts({}, 2));
+
+    const terminals = terminalReports();
+    expect(terminals[0]).toMatchObject({
+      status: "failed",
+      errorCode: "native_harness_trial_exhausted",
+    });
+    // One refusal, then the stop: the second session never asked for a box.
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(finalizePendingAttemptsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ errorCode: "spend_cap_exceeded" }),
+    );
+  });
+
+  it("still runs another target's sponsored conversation when the refusal stops credit-funded ones mid-provision", async () => {
+    // Target 2's credit-funded box is still on its way when target 1's refusal
+    // stops credit-funded conversations. That stop cancels the box, and target
+    // 2's sponsored conversation still runs.
+    personaDrivesOneTurn();
+    let target2Asked!: () => void;
+    const asked = new Promise<void>((resolve) => (target2Asked = resolve));
+    const provisionBox = provisionJourneySandboxMock.getMockImplementation()!;
+    provisionJourneySandboxMock.mockImplementation(async (...args) => {
+      const request = args[0] as {
+        targetId: string;
+        sessionIdx: number;
+        signal: AbortSignal;
+      };
+      if (request.targetId === "environment:env-1") {
+        await asked;
+        return trialRefusal;
+      }
+      if (request.sessionIdx === 1) return provisionBox(...args);
+      target2Asked();
+      await new Promise((resolve) =>
+        request.signal.addEventListener("abort", resolve, { once: true }),
+      );
+      return { ok: false, status: 0, error: "aborted" };
+    });
+
+    await startJourneyRun({
+      ...twoTargetOpts({}, {}),
+      sessionsPerTarget: 2,
+      sessionFunding: [
+        { targetId: "environment:env-2", sessionIdx: 1, funding: "starter" },
+      ],
+    });
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ targetId: "environment:env-2", sessionIdx: 1 }),
+    );
+    expect(terminalReports()).toContainEqual(
+      expect.objectContaining({
+        targetId: "environment:env-2",
+        sessionIdx: 1,
+        status: "succeeded",
+      }),
+    );
+    expect(runAssistantTurnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("takes a local target on to its sponsored conversation when the refusal stops credit-funded ones while it waits for a slot", async () => {
+    // The local target's credit-funded conversation is queued for a local
+    // harness slot when the other target's refusal stops credit-funded ones.
+    personaDrivesOneTurn();
+    prepareLocalHarnessRunMock.mockResolvedValue({
+      target: {
+        kind: "local-native",
+        machineId: "machine-1",
+        workspaceGrantId: "grant-1",
+        harnessId: "claude-code",
+        runtimeId: "runtime-1",
+        permissionProfile: "workspace-edits",
+        policyVersion: "1",
+        localSessionId: "local-1",
+      },
+      cleanup: async () => {},
+    });
+    let slotQueued!: () => void;
+    const queued = new Promise<void>((resolve) => (slotQueued = resolve));
+    acquireLocalSlotMock.mockImplementationOnce(
+      (signal?: AbortSignal) =>
+        new Promise((_resolve, reject) => {
+          slotQueued();
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+    provisionJourneySandboxMock.mockImplementation(async () => {
+      await queued;
+      return trialRefusal;
+    });
+
+    await startJourneyRun({
+      ...twoTargetOpts(
+        {},
+        { harness: "claude-code", builtInToolIds: [], computerEnvironment: undefined },
+      ),
+      sessionsPerTarget: 2,
+      localHarnessActor: { credential: "authkit", userId: "user-1", subject: "sub-1" },
+      localHarnessIds: ["claude-code"],
+      sessionFunding: [
+        { targetId: "environment:env-2", sessionIdx: 1, funding: "starter" },
+      ],
+    });
+
+    // The local target went on to its sponsored conversation, which ends the
+    // way a sponsored step on a harness always does, not as a worker failure.
+    expect(acquireLocalSlotMock).toHaveBeenCalledTimes(2);
+    expect(terminalReports()).toContainEqual(
+      expect.objectContaining({
+        targetId: "environment:env-2",
+        sessionIdx: 1,
+        errorCode: "swarm_sponsorship_rejected",
+      }),
+    );
+    expect(terminalReports()).not.toContainEqual(
+      expect.objectContaining({ errorCode: "host_worker_failed" }),
+    );
   });
 
   it("retries a 503 and fails with `sandbox_at_capacity` once the retries are spent", async () => {
@@ -1209,41 +1447,25 @@ describe("swarm runner — harness preflight parity with interactive chat", () =
     );
   });
 
-  it("refuses requireToolApproval on a harness that cannot pause", async () => {
-    // Nobody can answer an approval in a swarm, so this is refused before a
-    // box is provisioned, whatever the runtime could pause on.
-    await startJourneyRun(
-      baseOpts({
-        harness: "codex",
-        requireToolApproval: true,
-        serverIds: ["server-1"],
-      })
-    );
-
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(String(terminalReports()[0]!.errorMessage)).toMatch(/approval/i);
-  });
-
-  // Claude Code CAN pause, but a swarm has nobody to answer: admitted, the
-  // turn parked at its first gated call and the next persona turn dropped it.
-  // Refused up front instead, with or without (plugin) servers.
+  // A swarm keeps the target's switch, and nobody answers: the harness pauses
+  // on each gated call and MCPJam denies it with the engine's own result, so
+  // the session carries on. Launched on every runtime that can pause, with or
+  // without (plugin) servers.
   it.each([
-    ["with MCP servers", { serverIds: ["server-1"] }],
-    ["plugin-only", { serverIds: [], pluginServerIds: ["plugin-server-1"] }],
-    ["with no MCP servers", { serverIds: [], pluginServerIds: [] }],
-  ])("refuses requireToolApproval on Claude Code (%s)", async (_label, servers) => {
-    await startJourneyRun(
-      baseOpts({
-        harness: "claude-code",
-        requireToolApproval: true,
-        ...servers,
-      })
-    );
+    ["Codex with MCP servers", { harness: "codex", modelId: "gpt-5-nano", serverIds: ["server-1"] }],
+    ["Claude Code with MCP servers", { harness: "claude-code", serverIds: ["server-1"] }],
+    ["Claude Code plugin-only", { harness: "claude-code", serverIds: [], pluginServerIds: ["plugin-server-1"] }],
+    ["Claude Code with no MCP servers", { harness: "claude-code", serverIds: [], pluginServerIds: [] }],
+  ] as const)("runs an approval-on target, denying what it asks (%s)", async (_label, target) => {
+    personaDrivesOneTurn();
+    await startJourneyRun(baseOpts({ requireToolApproval: true, ...target }));
 
-    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
-    expect(String(terminalReports()[0]!.errorMessage)).toMatch(
-      /cannot wait for tool approval in evals or swarms/i
-    );
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(turnOptions()).toMatchObject({
+      requireToolApproval: true,
+      approvalMode: "auto-deny",
+    });
+    expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
   it("admits a BARE hosted model id (provider comes from the resolved definition)", async () => {

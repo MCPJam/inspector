@@ -291,6 +291,38 @@ describe("auth", () => {
     expect(byId(findings, "openai.auth.challenge").status).toBe("not-applicable");
   });
 
+  it("reads a protected-call 401 with no parsed challenge as a sign-in request, not as authless", () => {
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        unauthenticated: { status: 200 },
+        prm: { discoveredVia: "not-found" },
+      }),
+      STAMP,
+      {
+        lazyAuthProbe: {
+          attempted: true,
+          protocolVersion: "2025-06-18",
+          eraNote: "test",
+          protectedCall: {
+            toolName: "read_order",
+            selectedBy: "named",
+            schemes: { schemes: [], source: "unresolved" },
+            outcome: "unauthorized",
+            status: 401,
+          },
+        },
+      }
+    );
+    expect(byId(findings, "openai.auth.prm-discoverable").status).toBe(
+      "violated"
+    );
+    const challenge = byId(findings, "openai.auth.challenge");
+    expect(challenge.status).toBe("not-applicable");
+    expect(challenge.notEvaluatedReason).toMatch(
+      /asks for sign-in on a protected tool call/
+    );
+  });
+
   it("grades the OAuth surface of a server that answers anonymously AND publishes PRM", () => {
     // Anonymous access with OAuth available: the lazy-authentication shape.
     // Reading every 2xx as authless graded this whole surface not-applicable.

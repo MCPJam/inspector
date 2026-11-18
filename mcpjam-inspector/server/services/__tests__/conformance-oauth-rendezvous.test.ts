@@ -34,6 +34,7 @@ import {
   runRendezvousOnThisReplica,
   stopLiveConformanceOAuthRuns,
   submitRendezvousCode,
+  cancelRendezvous,
 } from "../conformance-oauth-rendezvous.js";
 
 const SECRET = "client-secret-value";
@@ -159,6 +160,27 @@ afterEach(async () => {
   randomSpy.mockRestore();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+});
+
+it("observes cancellation on another replica after the code was delivered", async () => {
+  stubFetch({ "/conformance-oauth/poll": [submitted, { ok: true, rendezvous: { status: "running" } }, { ok: true, rendezvous: { status: "failed" } }] });
+  const run = controllableRun();
+  const session = fakeSession(run.promise);
+  const cancel = vi.fn((reason: Error) => run.reject(reason));
+  session.cancelRunner = cancel;
+  runRendezvousOnThisReplica(session);
+  await vi.advanceTimersByTimeAsync(3_001);
+  expect(session.controller.deliverCode).toHaveBeenCalledTimes(1);
+  expect(cancel).toHaveBeenCalledWith(new Error("Run cancelled"));
+  expect(liveConformanceOAuthRunCount()).toBe(0);
+});
+
+it("sends cancellation with the user's identity", async () => {
+  mutation.mockResolvedValueOnce({ ok: true });
+  await cancelRendezvous("Bearer user-jwt", "oauth-conf-1");
+  expect(setAuth).toHaveBeenCalledWith("user-jwt");
+  expect(getFunctionName(mutation.mock.calls[0][0])).toBe("conformanceOAuthRendezvous:cancel");
+  expect(mutation.mock.calls[0][1]).toEqual({ sessionId: "oauth-conf-1" });
 });
 
 describe("running replica: waiting for the code", () => {

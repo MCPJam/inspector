@@ -69,6 +69,15 @@ async function waitForRound(): Promise<void> {
 }
 
 describe("hosted MRTR direct-op client", () => {
+  it("keeps the extension form profile on the queued manual round", async () => {
+    const profile = { origin: "server" as const, userResources: false, previews: false };
+    mocks.webPost.mockResolvedValueOnce({ ok: true, outcome: "completed", result: {} });
+    const call = driveHostedDirectMrtr(pending({ pluginFormProfile: profile }), { serverNameOrId: "srv-1" });
+    await waitForRound();
+    expect(useHostedMrtrStore.getState().rounds[0]?.pluginFormProfile).toEqual(profile);
+    await answerActiveRound();
+    await expect(call).resolves.toEqual({});
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     useHostedMrtrStore.getState().__reset();

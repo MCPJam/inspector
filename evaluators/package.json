@@ -38,7 +38,7 @@
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
     "@noble/hashes": "^2.4.0",
-    "re2js": "2.8.6",
+    "re2js": "2.8.7",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -49,5 +49,10 @@
   "engines": {
     "node": ">=20.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "evaluators"
+  }
 }

@@ -1,3 +1,4 @@
+import { isMissingInputCheck } from "../../src/conformance-input.js";
 /**
  * The Tasks conformance runner driven END TO END against the raw extension
  * fixture over a real socket — no mocked `withEphemeralClient`, no mocked
@@ -128,7 +129,11 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       toolCount: 1,
       probedTool: TASK_TOOL_NAME,
     });
-    expect(result.discovery.createdTaskId).toBeTruthy();
+    expect(result.discovery.createdTaskId).toBeUndefined();
+    expect(
+      result.checks.find((check) => check.id === "tasks-inline-result")?.details
+        ?.taskId
+    ).toBeTruthy();
     expect(result.checks).toHaveLength(MCP_TASKS_CHECK_IDS.length);
     // One skip is expected and correct: this fixture's task completes without
     // ever asking for input, so the `tasks/update` acknowledgement is not
@@ -181,7 +186,7 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
 
     // The undeclared tools/call reached it too, and produced no task.
     expect(undeclaredRequests(fixture, "tools/call").length).toBeGreaterThan(0);
-    expect(fixture.tasks()).toHaveLength(1);
+    expect(fixture.tasks()).toHaveLength(3);
   });
 
   it("passes the rest of the suite against a conformant fixture", async () => {
@@ -295,16 +300,17 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("reports INCOMPLETE, not success, when no toolName is given on the extension wire", async () => {
-    // The false green this suite exists to make impossible: auto-selection
-    // reads `execution.taskSupport`, which the 2026 ToolSchema strips, so
-    // without a `toolName` six task-dependent checks never run. Two of eight
-    // passing must never be reported as conformance.
+  it("leaves checks out of the verdict when no toolName is given on the extension wire", async () => {
+    // Auto-selection reads `execution.taskSupport`, which the 2026 ToolSchema
+    // strips, so without a `toolName` the task-dependent checks never run.
+    // That is a missing setup input, not the server's gap: those checks show
+    // as needing input and do not hold the verdict back.
     const fixture = await serve();
     const result = await runAgainst(fixture, { toolName: undefined });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
+    expect(result.outcome).toBe("passed");
+    expect(result.passed).toBe(true);
+    expect(result.incompleteReason).toBeUndefined();
     expect(result.checks.some((entry) => entry.status === "failed")).toBe(false);
 
     // Only the checks that need no created task genuinely ran; nothing else
@@ -330,13 +336,15 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
       )
     ).toHaveLength(0);
 
-    // The reason has to tell the user what to do and why the runner could not
-    // do it for them.
-    expect(result.incompleteReason).toContain("could not run");
-    expect(result.incompleteReason).toContain("--tool-name");
-    expect(result.incompleteReason).toContain("execution.taskSupport");
-    expect(result.incompleteReason).toContain("2026-07-28");
-    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    // Each unrun check still tells the user what to do and why the runner
+    // could not do it for them.
+    const guidance = unrunChecks(result)
+      .map((entry) => entry.error?.message ?? "")
+      .join(" ");
+    expect(guidance).toContain("--tool-name");
+    expect(guidance).toContain("execution.taskSupport");
+    expect(guidance).toContain("2026-07-28");
+    expect(guidance).toContain(TASK_TOOL_NAME);
     // Every tasks check is scored since `mcp-tasks@2026-11-01.2`, so the
     // SUMMARY counts all 11 unrun checks and names nothing pending.
     expect(result.summary).toContain("11 could not run");
@@ -345,18 +353,20 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.discovery.createdTaskId).toBeUndefined();
   });
 
-  it("reports INCOMPLETE, naming the tool, when toolName is not listed by the server", async () => {
-    // A typo must not silently skip six checks either.
+  it("shows an unlisted toolName as a setup gap, naming the tool", async () => {
+    // A typo must not silently skip six checks either: each one says so, and
+    // since the typo is the caller's, it costs the server nothing.
     const fixture = await serve();
     const result = await runAgainst(fixture, { toolName: "task_toool" });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(unrunChecks(result)).toHaveLength(11);
-    expect(result.incompleteReason).toContain('"task_toool"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
+    const unrun = unrunChecks(result);
+    expect(unrun).toHaveLength(11);
+    expect(unrun.every(isMissingInputCheck)).toBe(true);
+    const reason = unrun[0]!.error?.message ?? "";
+    expect(reason).toContain('"task_toool"');
+    expect(reason).toContain("is not listed by this server");
     // …and it points at what the server DOES list.
-    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    expect(reason).toContain(TASK_TOOL_NAME);
     // No tools/call was attempted with a name the server never advertised.
     expect(
       fixture.received.filter((entry) => entry.method === "tools/call")

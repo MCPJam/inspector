@@ -14,6 +14,8 @@ import { Hono } from "hono";
 import { createNodeWebSocket } from "@hono/node-ws";
 import { attachComputerSandbox } from "../../../utils/computers/attach-computer.js";
 import { SignJWT, exportJWK, generateKeyPair } from "jose";
+import { reportRouteFailure } from "../../../utils/route-error-report.js";
+import { requestLogContextMiddleware } from "../../../middleware/request-log-context.js";
 import { createComputerTerminalWsHandler } from "../computer-terminal.js";
 import { resetComputerTerminalJwksCacheForTests } from "../../../utils/computers/terminal-token.js";
 
@@ -26,6 +28,11 @@ import { resetComputerTerminalJwksCacheForTests } from "../../../utils/computers
 
 vi.mock("../../../utils/computers/attach-computer.js", () => ({
   attachComputerSandbox: vi.fn(),
+}));
+
+vi.mock("../../../utils/route-error-report.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../utils/route-error-report.js")>()),
+  reportRouteFailure: vi.fn(),
 }));
 
 const ISSUER = "https://api.mcpjam.com/computer-terminal";
@@ -114,6 +121,7 @@ async function startServer(): Promise<{
   close: () => Promise<void>;
 }> {
   const app = new Hono();
+  app.use("*", requestLogContextMiddleware);
   const { upgradeWebSocket, injectWebSocket } = createNodeWebSocket({ app });
   app.get(
     "/api/web/computers/terminal",
@@ -164,6 +172,7 @@ describe("GET /api/web/computers/terminal", () => {
     const started = await startServer();
     port = started.port;
     close = started.close;
+    vi.mocked(reportRouteFailure).mockClear();
   });
 
   afterEach(async () => {
@@ -275,45 +284,170 @@ describe("GET /api/web/computers/terminal", () => {
     );
   });
 
-  it("touches activity on stdin, throttled to once per window", async () => {
-    stubConfiguredEnv();
-    installSandboxInfoStub("sbx_42");
-    const fakePty = { pid: 1, wait: () => new Promise(() => {}) };
-    const fakeSandbox = {
-      pty: {
-        create: vi.fn().mockResolvedValue(fakePty),
-        resize: vi.fn().mockResolvedValue(undefined),
-        sendInput: vi.fn().mockResolvedValue(undefined),
-        kill: vi.fn().mockResolvedValue(undefined),
-      },
-    };
-    vi.mocked(attachComputerSandbox).mockResolvedValue(fakeSandbox as never);
+  it.each([
+    "complete",
+    "reject",
+    "close",
+    "byte overflow",
+    "frame overflow",
+    "byte capacity recovers",
+    "frame capacity recovers",
+  ] as const)(
+    "keeps terminal stdin bounded and ordered: %s",
+    async (outcome) => {
+      stubConfiguredEnv();
+      installSandboxInfoStub("sbx_42");
+      let finish!: () => void;
+      let fail!: (error: Error) => void;
+      const firstWrite = new Promise<void>((resolve, reject) => {
+        finish = resolve;
+        fail = reject;
+      });
+      const fakePty = { pid: 1, wait: () => new Promise(() => {}) };
+      const fakeSandbox = {
+        pty: {
+          create: vi.fn().mockResolvedValue(fakePty),
+          resize: vi.fn().mockResolvedValue(undefined),
+          sendInput: vi
+            .fn()
+            .mockResolvedValue(undefined)
+            .mockImplementationOnce(() => firstWrite),
+          kill: vi.fn().mockResolvedValue(undefined),
+        },
+      };
+      vi.mocked(attachComputerSandbox).mockResolvedValue(fakeSandbox as never);
 
-    const token = await signToken();
-    const ws = new WebSocket(
-      `ws://127.0.0.1:${port}/api/web/computers/terminal?cols=80&rows=24`,
-      [token]
-    );
-    await waitForMessage(ws); // "ready"
+      const token = await signToken();
+      const ws = new WebSocket(
+        `ws://127.0.0.1:${port}/api/web/computers/terminal?cols=80&rows=24`,
+        [token]
+      );
+      await waitForMessage(ws); // "ready"
 
-    // Two keystrokes inside the same throttle window (60s) ⇒ one activity touch.
-    ws.send(Buffer.from([0x61]));
-    ws.send(Buffer.from([0x62]));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    const touchCalls = vi.mocked(fetch).mock.calls.filter(([url, init]) => {
-      if (!String(url).includes("/computers/terminal-sessions")) return false;
       try {
-        return JSON.parse(String(init?.body)).action === "touch";
-      } catch {
-        return false;
-      }
-    });
-    expect(touchCalls).toHaveLength(1);
-    // The stdin still reached the PTY both times.
-    expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2);
+        if (outcome.includes("overflow") || outcome.includes("capacity")) {
+          const byteLimit = 1024 * 1024;
+          const frameLimit = 4096;
+          const byteCase = outcome.startsWith("byte");
+          const overflow = outcome.endsWith("overflow");
+          const frames = byteCase
+            ? [Buffer.alloc(byteLimit - (overflow ? 0 : 1)), Buffer.from("b")]
+            : Array.from(
+                { length: frameLimit + (overflow ? 1 : 0) },
+                () => Buffer.from("a"),
+              );
+          const firstPong = waitForMessage(ws);
+          ws.send(frames[0]);
+          ws.send(JSON.stringify({ type: "ping" }));
+          expect(await firstPong).toEqual({ type: "pong" });
+          expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+          const message = waitForMessage(ws);
+          const closed = overflow ? waitForClose(ws) : undefined;
+          for (const frame of frames.slice(1)) ws.send(frame);
+          if (overflow) {
+            await vi.waitFor(() => expect(ws.readyState).toBe(WebSocket.CLOSED));
+            expect(await message).toEqual({
+              type: "error",
+              message: "Couldn't send input to the terminal. Reconnect to continue.",
+            });
+            expect((await closed)?.code).toBe(4503);
+            expect(fakeSandbox.pty.sendInput.mock.calls[0][2]).toEqual({
+              signal: expect.objectContaining({ aborted: true }),
+            });
+            expect(reportRouteFailure).toHaveBeenCalledTimes(1);
+            finish();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+          } else {
+            ws.send(JSON.stringify({ type: "ping" }));
+            expect(await message).toEqual({ type: "pong" });
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+            finish();
+            await vi.waitFor(() =>
+              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2),
+            );
+            expect(Buffer.concat(fakeSandbox.pty.sendInput.mock.calls.map(
+              (call) => Buffer.from(call[1]),
+            ))).toEqual(Buffer.concat(frames));
+            // Acknowledged input releases capacity for subsequent frames.
+            const pong = waitForMessage(ws);
+            ws.send(Buffer.from("z"));
+            ws.send(JSON.stringify({ type: "ping" }));
+            expect(await pong).toEqual({ type: "pong" });
+            await vi.waitFor(() =>
+              expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(
+                3,
+              ),
+            );
+            expect(reportRouteFailure).not.toHaveBeenCalled();
+          }
+          return;
+        }
+        // A pong proves all earlier frames reached the route while write one
+        // is unresolved. Later input, including Enter, must not overtake it.
+        const pong = waitForMessage(ws);
+        ws.send(Buffer.from("a"));
+        ws.send(Buffer.from("b"));
+        ws.send(Buffer.from("\r"));
+        ws.send(JSON.stringify({ type: "ping" }));
+        expect(await pong).toEqual({ type: "pong" });
+        expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
 
-    ws.close();
-    await waitForClose(ws);
-  });
+        const touchCalls = vi.mocked(fetch).mock.calls.filter(([url, init]) => {
+          if (!String(url).includes("/computers/terminal-sessions")) return false;
+          return JSON.parse(String(init?.body)).action === "touch";
+        });
+        expect(touchCalls).toHaveLength(1);
+
+        if (outcome === "complete") {
+          finish();
+          await vi.waitFor(() =>
+            expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(2),
+          );
+          expect(
+            fakeSandbox.pty.sendInput.mock.calls.map((call) =>
+              Buffer.from(call[1]).toString(),
+            ),
+          ).toEqual(["a", "b\r"]);
+        } else if (outcome === "reject") {
+          const error = waitForMessage(ws);
+          const closed = waitForClose(ws);
+          fail(new Error("provider input failed"));
+          expect(await error).toEqual({
+            type: "error",
+            message: "Couldn't send input to the terminal. Reconnect to continue.",
+          });
+          expect((await closed).code).toBe(4503);
+          expect(reportRouteFailure).toHaveBeenCalledExactlyOnceWith(
+            "[computer-terminal] input failed",
+            expect.any(Error),
+            {
+              source: "routes.web.computer-terminal.input",
+              hop: "mcpjam_internal",
+            },
+          );
+          expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+        } else {
+          const closed = waitForClose(ws);
+          ws.close();
+          await closed;
+          await vi.waitFor(() =>
+            expect(fakeSandbox.pty.kill).toHaveBeenCalledTimes(1),
+          );
+          finish();
+          // Let promise continuations run after the in-flight write settles.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          expect(reportRouteFailure).not.toHaveBeenCalled();
+          expect(fakeSandbox.pty.sendInput).toHaveBeenCalledTimes(1);
+        }
+      } finally {
+        finish();
+        if (ws.readyState !== WebSocket.CLOSED) {
+          const closed = waitForClose(ws);
+          ws.close();
+          await closed;
+        }
+      }
+    },
+  );
 });

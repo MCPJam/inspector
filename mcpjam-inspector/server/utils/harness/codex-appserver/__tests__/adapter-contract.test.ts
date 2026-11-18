@@ -25,6 +25,8 @@ import {
 } from "../bridge/index.js";
 import { LOCAL_UNATTENDED_SANDBOX_POLICY } from "../shared/sandbox-policy.js";
 import { startMessageSchema } from "../codex-appserver-bridge-protocol.js";
+import { toCodexTurnStartInput } from "../bridge/turn-start-input.js";
+import { extractHarnessPromptContent } from "@ai-sdk/harness/utils";
 
 describe("harness declaration", () => {
   const harness = createCodexAppServer();
@@ -83,6 +85,8 @@ describe("builtin tool catalog", () => {
     // Codex reports one patch covering every path.
     expect(tools.fileChange?.commonName).toBeUndefined();
     expect(tools.fileChange?.toolUseKind).toBe("edit");
+    expect(tools.imageView?.nativeName).toBe("view_image");
+    expect(tools.imageView?.toolUseKind).toBe("readonly");
   });
 
   it("exposes input schemas the display catalogue can convert", () => {
@@ -100,6 +104,16 @@ describe("builtin tool catalog", () => {
 });
 
 describe("permission mapping", () => {
+  it("overwrites the previous sandbox and refuses warm overrides on a local machine", () => {
+    const hosted = { warmWorkDir: "/home/user/work" };
+    expect(toCodexPermissions("allow-all", hosted).sandboxPolicy).toEqual({ type: "dangerFullAccess" });
+    expect(toCodexPermissions("allow-reads", hosted)).toMatchObject({
+      approvalPolicy: "untrusted", sandboxPolicy: { type: "workspaceWrite", networkAccess: false },
+    });
+    expect(() => toCodexPermissions("allow-reads", { ...hosted, supervisedLocally: true })).toThrow("hosted");
+    expect(() => toCodexPermissions("allow-reads", { warmWorkDir: "relative" })).toThrow("absolute");
+  });
+
   it("gates side effects under an approval mode and frees them otherwise", () => {
     // `untrusted` is what produces approval requests: Codex auto-approves the
     // commands it knows are read-only and asks about the rest.
@@ -217,6 +231,21 @@ describe("permission mapping", () => {
     ).toBe(true);
   });
 
+  it("parses a string prompt and a parts prompt", () => {
+    expect(startMessageSchema.safeParse({ type: "start", prompt: "hi" }).success).toBe(
+      true,
+    );
+    expect(
+      startMessageSchema.safeParse({
+        type: "start",
+        prompt: [
+          { type: "text", text: "see" },
+          { type: "image", data: "abc", mediaType: "image/png" },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it("accepts only a workspace-write sandbox policy on the wire", () => {
     const start = { type: "start", prompt: "hi" };
     expect(
@@ -234,6 +263,88 @@ describe("permission mapping", () => {
         startMessageSchema.safeParse({ ...start, sandboxPolicy }).success,
       ).toBe(false);
     }
+  });
+});
+
+describe("native image prompt", () => {
+  it("keeps a text-only prompt as joined text", () => {
+    expect(extractHarnessPromptContent({ prompt: "hello" })).toBe("hello");
+    expect(
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "text", text: "one" },
+            { type: "text", text: "two" },
+          ],
+        },
+      }),
+    ).toBe("one\n\ntwo");
+  });
+
+  it("passes raw base64 image parts through", () => {
+    expect(
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "text", text: "see" },
+            { type: "image", image: "abc", mediaType: "image/png" },
+          ],
+        },
+      }),
+    ).toEqual([
+      { type: "text", text: "see" },
+      { type: "image", data: "abc", mediaType: "image/png" },
+    ]);
+  });
+
+  it("unwraps a data URL and refuses a non-image part", () => {
+    expect(
+      extractHarnessPromptContent({
+        prompt: {
+          content: [{ type: "image", image: "data:image/png;base64,abc" }],
+        },
+      }),
+    ).toEqual([{ type: "image", data: "abc", mediaType: "image/png" }]);
+    expect(() =>
+      extractHarnessPromptContent({
+        prompt: {
+          content: [
+            { type: "file", data: "abc", mediaType: "application/pdf" },
+          ],
+        },
+      }),
+    ).toThrow(/files of media type 'application\/pdf'/);
+  });
+
+  it("accepts the upstream helper's image parts on the start-message schema", () => {
+    const prompt = extractHarnessPromptContent({
+      prompt: {
+        content: [
+          { type: "text", text: "see" },
+          { type: "image", image: "abc", mediaType: "image/png" },
+        ],
+      },
+    });
+    expect(startMessageSchema.safeParse({ type: "start", prompt }).success).toBe(
+      true,
+    );
+  });
+
+  it("wraps turn/start image URLs with one data prefix", () => {
+    expect(
+      toCodexTurnStartInput([
+        { type: "text", text: "see" },
+        { type: "image", data: "abc", mediaType: "image/png" },
+      ]),
+    ).toEqual([
+      { type: "text", text: "see" },
+      { type: "image", url: "data:image/png;base64,abc" },
+    ]);
+    const url = toCodexTurnStartInput([
+      { type: "image", data: "abc", mediaType: "image/jpeg" },
+    ])[0] as { url: string };
+    expect(url.url.startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(url.url.includes("data:image/jpeg;base64,data:")).toBe(false);
   });
 });
 

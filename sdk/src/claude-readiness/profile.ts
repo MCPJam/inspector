@@ -83,6 +83,9 @@ export const CLAUDE_APP_DESIGN_BUDGETS = {
   minTouchTargetPx: 44,
 } as const;
 
+/** The portal's counter under the one-liner reads "0 / 200 characters". */
+const ONE_LINER_MAX_LENGTH = 200;
+
 /**
  * Listing-field bounds from the submission form. Deterministic to check, which
  * is exactly why they belong to the directory-policy lane and not to a
@@ -90,10 +93,14 @@ export const CLAUDE_APP_DESIGN_BUDGETS = {
  */
 export const CLAUDE_SUBMISSION_LIMITS = {
   nameMaxLength: 100,
-  taglineMaxLength: 55,
+  oneLinerMaxLength: ONE_LINER_MAX_LENGTH,
+  /** @deprecated The form's short line is the one-liner; use `oneLinerMaxLength`. */
+  taglineMaxLength: ONE_LINER_MAX_LENGTH,
   descriptionMaxLength: 2_000,
   categoriesMin: 1,
   categoriesMax: 5,
+  /** Use case and example prompt rows the form offers. */
+  useCasesMax: 3,
   screenshotsMin: 3,
   screenshotsMax: 5,
   screenshotMinWidthPx: 1_000,

@@ -140,6 +140,24 @@ describe("originValidationMiddleware", () => {
 
       expect(res.status).toBe(200);
     });
+
+    it("drops the dev servers' ports from a production build", async () => {
+      vi.stubEnv("NODE_ENV", "production");
+      try {
+        for (const port of [5173, 8080]) {
+          const res = await app.request("/api/test", {
+            headers: { Origin: `http://localhost:${port}` },
+          });
+          expect(res.status).toBe(403);
+        }
+        const own = await app.request("/api/test", {
+          headers: { Origin: `http://localhost:${SERVER_PORT}` },
+        });
+        expect(own.status).toBe(200);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
   });
 
   describe("non-localhost origins (blocked by default)", () => {

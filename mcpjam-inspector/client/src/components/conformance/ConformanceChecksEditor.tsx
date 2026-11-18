@@ -1,3 +1,5 @@
+import { isTasksToolCheck } from "@mcpjam/sdk/browser";
+import { TasksSuiteDefaults, TasksCheckOverride } from "./TasksCheckOverride";
 import { useEffect, useMemo, useState } from "react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
@@ -6,12 +8,13 @@ import {
   type ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
 import {
+  LOG_LEVEL_ADVICE,
   probeInputStatus,
   PROBE_KEYS,
   probeKeyFor,
   probesApply,
-  tasksProbeRuns,
-  type ConformanceProbeKey,
+  protocolProbesFor,
+  taskProbePartIsSelected,
   type ConformanceProbes,
 } from "@/hooks/use-conformance-probes";
 import { ConformanceCheckPicker } from "./ConformanceCheckPicker";
@@ -38,14 +41,13 @@ export function ConformanceChecksEditor({
   onValidChange: (valid: boolean) => void;
   defaultsMode?: boolean;
 }) {
-  const [probeValid, setProbeValid] = useState<
-    Partial<Record<ConformanceProbeKey | "answers", boolean>>
-  >({});
+  const [probeValid, setProbeValid] = useState<Record<string, boolean>>({});
   const protocolProbes = Boolean(
     server && isHttpServer(server) && (defaultsMode || probesApply(versionPin)),
   );
-  const tasksProbe = tasksProbeRuns(selection.tasks);
-  const probeServer = server && (protocolProbes || tasksProbe) ? server : null;
+  // The Tasks suite default, and a Tasks row's field once opened, show even
+  // with the suite off, so the tools load either way.
+  const probeServer = server ?? null;
   const probeTools = useProbeTools(probeServer);
   const invalidProbeArguments = useMemo(
     () =>
@@ -65,13 +67,76 @@ export function ConformanceChecksEditor({
       ),
     [probes, probeTools.tools],
   );
-  const inputStatusFor = (checkId: string) => {
-    const key = probeKeyFor(checkId);
-    return key && (invalidProbeArguments.has(key) || probeValid[key] === false)
-      ? "missing"
-      : probeInputStatus(checkId, probes);
+  // The advice's own log tool counts only while the logging check is picked.
+  const usedProbes = protocolProbesFor(probes, selection.protocol);
+  const overrideFor = (checkId: string) =>
+    isTasksToolCheck(checkId)
+      ? usedProbes.tasksOverrides?.[checkId]
+      : checkId === LOG_LEVEL_ADVICE
+        ? usedProbes.logLevelOverride
+        : undefined;
+  const protocolPicked = (id: string) => {
+    const { protocol, protocolAdvice } = selection;
+    if (id !== LOG_LEVEL_ADVICE)
+      return !protocol || (protocol as string[]).includes(id);
+    // The advice runs only with at least one protocol check.
+    return (
+      (!protocol || protocol.length > 0) &&
+      (!protocolAdvice || (protocolAdvice as string[]).includes(id))
+    );
   };
-  const valid = !Object.values(probeValid).includes(false);
+  // The parts whose draft blocks Run. A protocol field reports as
+  // "row|part", and only a picked row's report counts: an off row's field,
+  // shown while it is open, is not used. Opened beside the picked log level
+  // advice, it is a second log tool field, so closing it must clear only its
+  // own report.
+  const blocking = Object.entries(probeValid).flatMap(([report, ok]) => {
+    if (ok) return [];
+    const at = report.indexOf("|");
+    if (at < 0)
+      return taskProbePartIsSelected(report, probes, selection.tasks)
+        ? [report]
+        : [];
+    return protocolPicked(report.slice(0, at)) ? [report.slice(at + 1)] : [];
+  });
+  const inputStatusFor = (checkId: string) => {
+    const override = overrideFor(checkId);
+    if (override) {
+      const tool = probeTools.tools.find(
+        (item) => item.name === override.toolName,
+      );
+      return blocking.includes(checkId) ||
+        (tool?.inputSchema !== undefined &&
+          acceptsToolArguments(tool.inputSchema, override.arguments ?? {}) ===
+            false)
+        ? "missing"
+        : probeInputStatus(checkId, usedProbes);
+    }
+    const key = probeKeyFor(checkId);
+    // A row's own field can hold an unparsed draft while it still inherits.
+    return key &&
+      (invalidProbeArguments.has(key) ||
+        blocking.includes(key) ||
+        blocking.includes(checkId))
+      ? "missing"
+      : probeInputStatus(checkId, usedProbes);
+  };
+  // With no output schema declared, the output check has nothing to grade, so
+  // it does not apply. A cut-off list cannot show that: a later tool may
+  // declare one.
+  const noOutputSchemas =
+    probeTools.status === "ready" &&
+    !probeTools.truncated &&
+    !probeTools.tools.some((tool) => tool.hasOutputSchema);
+  // A saved output tool still gets called, so its field stays shown until the
+  // user clears it.
+  const outputCheckNotApplicable = (suite: string, checkId: string) =>
+    suite === "protocol" &&
+    protocolProbes &&
+    noOutputSchemas &&
+    !probes.toolCallProbe &&
+    probeKeyFor(checkId) === "toolCallProbe";
+  const valid = blocking.length === 0;
   useEffect(() => {
     onValidChange(valid);
   }, [valid, onValidChange]);
@@ -82,52 +147,85 @@ export function ConformanceChecksEditor({
       onChange={onChange}
       showAdvice
       defaultOpen={defaultsMode}
+      renderSuiteExtra={(suite) =>
+        suite === "tasks" && probeServer ? (
+          <TasksSuiteDefaults
+            tools={probeTools}
+            probes={probes}
+            onChange={onProbesChange}
+            onValidChange={(valid) =>
+              setProbeValid((prev) => ({ ...prev, tasksProbe: valid }))
+            }
+          />
+        ) : null
+      }
       renderCheckExtra={
         probeServer
-          ? (suite, checkId, isPicked, checkTitle) =>
-              (suite === "protocol" && protocolProbes) ||
-              (suite === "tasks" && tasksProbe) ? (
+          ? (suite, checkId, isPicked, checkTitle, opened) => {
+              // An off row shows its field while open, as if picked.
+              const shown = (id: string) =>
+                isPicked(id) || (opened && id === checkId);
+              return suite === "tasks" ? (
+                <TasksCheckOverride
+                  checkId={checkId}
+                  checkTitle={checkTitle(checkId)}
+                  picked={shown(checkId)}
+                  tools={probeTools}
+                  probes={probes}
+                  onChange={onProbesChange}
+                  onValidChange={(part, valid) =>
+                    setProbeValid((prev) => ({ ...prev, [part]: valid }))
+                  }
+                />
+              ) : suite === "protocol" &&
+                protocolProbes &&
+                !outputCheckNotApplicable(suite, checkId) ? (
                 <ProbeCheckExtra
                   checkId={checkId}
                   checkTitle={checkTitle}
-                  isPicked={isPicked}
+                  isPicked={shown}
                   tools={probeTools}
                   probes={probes}
                   onProbesChange={onProbesChange}
                   onValidChange={(part, valid) =>
                     setProbeValid((prev) => ({
                       ...prev,
-                      [part]: valid,
+                      [`${checkId}|${part}`]: valid,
                     }))
                   }
                 />
-              ) : null
+              ) : null;
+            }
           : undefined
       }
       checkInputStatus={(suite, checkId) => {
         if (suite === "protocol" && protocolProbes) {
-          // The output check needs a tool only when one declares
-          // an output schema; otherwise it does not apply.
-          const noOutputSchemas =
-            probeTools.status === "ready" &&
-            !probeTools.truncated &&
-            !probeTools.tools.some((tool) => tool.hasOutputSchema);
-          return probeKeyFor(checkId) === "toolCallProbe" && noOutputSchemas
+          return outputCheckNotApplicable(suite, checkId)
             ? undefined
             : inputStatusFor(checkId);
         }
-        if (suite === "tasks" && tasksProbe) {
+        // With the suite off too, so an off row still says it needs a tool.
+        if (suite === "tasks") {
           // Metadata belongs to the existing connection, so a 2026 pin still
           // requires an explicit tool even when a legacy task tool is listed.
           const canPickTaskTool =
             versionPin !== "2026-07-28" &&
             !probes.tasksProbe &&
             probeTools.canAutoPickTaskTool;
-          if (canPickTaskTool) return undefined;
+          if (
+            canPickTaskTool &&
+            !(isTasksToolCheck(checkId) && probes.tasksOverrides?.[checkId])
+          )
+            return undefined;
           return inputStatusFor(checkId);
         }
         return undefined;
       }}
+      checkNotApplicable={(suite, checkId) =>
+        outputCheckNotApplicable(suite, checkId)
+          ? "No tool on this server declares an output schema, so this check does not apply."
+          : undefined
+      }
     />
   );
 }

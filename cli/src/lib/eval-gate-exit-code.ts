@@ -50,30 +50,12 @@ export function evalGateExitCode(report: GateReport): number {
 }
 
 /**
- * Statuses at which a run has stopped changing.
- *
- * Colocated with {@link NON_VERDICT_STATUSES} on purpose: they are one
- * vocabulary, and splitting them across files is how a newly-added terminal
- * status ends up in one set and not the other — making `--wait` poll a finished
- * run until the deadline and then report a wait timeout.
- *
- * `grading` IS NOT HERE, and must not be. A run held for its gating judge has
- * run every trial but has no verdict — `result` is still `pending` — so a gate
- * that treated it as terminal would decide on the summary written BEFORE the
- * judge's rows landed. Because it never reaches this set, it never reaches
- * `NON_VERDICT_STATUSES` or the exit-code mapping either: `--wait` keeps
- * polling, and a wait that runs out reports an incomplete gate (exit 3) rather
- * than a verdict.
- */
-export const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
-/**
  * Terminal run statuses that make a gate undecidable rather than failed.
+ *
+ * A subset of `isEvalRunTerminalStatus` from `@mcpjam/sdk/contract`, which
+ * decides when `--wait` stops polling. `grading` is in neither: a run held for
+ * its gating judge has no verdict yet, so `--wait` keeps polling it, and a wait
+ * that runs out reports an incomplete gate (exit 3) rather than a verdict.
  *
  * `"failed"` belongs here because it is an EXECUTION state, not a verdict:
  * the platform vocabulary separates `status` ("completed" | "failed" |

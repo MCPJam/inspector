@@ -14,12 +14,7 @@ const createConvexClient = vi.fn();
 
 vi.mock("../../routes/shared/evals.js", () => ({
   prepareEvalRun: (...args: unknown[]) => prepareEvalRun(...args),
-  // The real rule: only a replayed run that already finished skips execution.
-  shouldSkipExecution: (prepared: { deduped?: boolean; status?: string }) =>
-    prepared.deduped === true &&
-    ["completed", "failed", "cancelled", "timed_out", "grading"].includes(
-      prepared.status ?? "",
-    ),
+  shouldSkipExecution: (prepared: { deduped?: boolean }) => prepared.deduped === true,
 }));
 vi.mock("../../routes/web/auth.js", () => ({
   createAuthorizedManager: (...args: unknown[]) =>
@@ -27,6 +22,9 @@ vi.mock("../../routes/web/auth.js", () => ({
 }));
 vi.mock("../evals/route-helpers.js", () => ({
   createConvexClient: (...args: unknown[]) => createConvexClient(...args),
+}));
+vi.mock("../xaa-configured-issuer.js", () => ({
+  resolveConfiguredXaaIssuer: () => "https://issuer.test/api/web/xaa",
 }));
 
 import { defaultRunEvalSuiteForTests } from "../github-checks-worker";
@@ -88,6 +86,38 @@ describe("defaultRunEvalSuite provenance", () => {
     expect(request.suiteRerun).toBe(true);
     expect(request).not.toHaveProperty("refreshSnapshot");
     expect(result.result).toBe("passed");
+  });
+
+  it("connects with the deployment's XAA issuer and no host policy", async () => {
+    await defaultRunEvalSuiteForTests()({
+      claimed: { triggerId: "trig-xaa", repoFullName: "mcpjam/mcp-check-fixture", prNumber: 1, headSha: "a".repeat(40), organizationId: "org-1", projectId: "proj-1", createdByExternalId: "user_x", suiteId: "suite-1", repoPrivate: false, credentialPolicyVersion: 2, isFork: false, githubCredentialPolicy: "same_repository", allowedBuiltInToolIds: [] },
+      bearer: "bearer-token", serverId: "srv-1", serverName: "gh-check-trig-xaa",
+    });
+
+    // The issuer is the claim loop's to supply: there is no request to read
+    // it from. The policy is not: the PR server is a throwaway row with no
+    // client registration, which a host policy could only refuse.
+    const options = createAuthorizedManager.mock.calls[0][7];
+    expect(options).toEqual({
+      serverNames: ["gh-check-trig-xaa"],
+      xaaIssuer: "https://issuer.test/api/web/xaa",
+    });
+    expect(options).not.toHaveProperty("xaaPolicy");
+  });
+
+  it("does not fail an adopted run when snapshot verification is unavailable", async () => {
+    const execute = vi.fn();
+    const finalize = vi.fn();
+    const mutation = vi.fn();
+    prepareEvalRun.mockResolvedValueOnce({ runId: "existing-run", deduped: true, status: "running", recorder: { finalize }, execute });
+    createConvexClient.mockReturnValue({ query: vi.fn().mockRejectedValue(new Error("snapshot unavailable")), mutation });
+    await expect(defaultRunEvalSuiteForTests()({
+      claimed: { triggerId: "trig-src", repoFullName: "mcpjam/mcp-check-fixture", prNumber: 1, headSha: "a".repeat(40), organizationId: "org-1", projectId: "proj-1", createdByExternalId: "user_x", suiteId: "suite-1", repoPrivate: false, credentialPolicyVersion: 2, isFork: false, githubCredentialPolicy: "same_repository", allowedBuiltInToolIds: [] },
+      bearer: "bearer-token", serverId: "srv-1", serverName: "gh-check-trig-src",
+    })).rejects.toThrow();
+    expect(execute).not.toHaveBeenCalled();
+    expect(finalize).not.toHaveBeenCalled();
+    expect(mutation).not.toHaveBeenCalled();
   });
 
   it("does not strand the run when BINDING it throws", async () => {

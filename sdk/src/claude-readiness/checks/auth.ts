@@ -75,6 +75,8 @@ export interface ClaudeAuthEvidence {
      * server never published one.
      */
     rejectedPointer?: string;
+    /** No discovery request got an HTTP answer. */
+    unanswered?: boolean;
   };
   /**
    * Metadata for `authorization_servers[0]` ONLY. Claude does not fall back to
@@ -124,9 +126,18 @@ export interface ClaudeAuthEvidence {
  */
 export const CLAUDE_LAZY_AUTH_PROBE_INPUT = "lazyAuthProbe";
 
-/** Claude's documented trigger, quoted in every finding that applies it. */
-const CLAUDE_SIGN_IN_TRIGGER =
-  "Claude starts sign-in only on HTTP 401 with WWW-Authenticate; a 200 isError result is an ordinary tool failure to Claude";
+/**
+ * Claude's documented trigger, quoted in every finding that applies it. The
+ * clause about `isError` results is added only when the server answered with
+ * one; for a 401 without a Bearer header it would describe a different mistake.
+ */
+export function claudeSignInTrigger(answeredWithToolError: boolean): string {
+  const trigger =
+    "Claude starts sign-in only on HTTP 401 with WWW-Authenticate";
+  return answeredWithToolError
+    ? `${trigger}; a 200 isError result is an ordinary tool failure to Claude`
+    : trigger;
+}
 
 /**
  * The input that lets {@link RFC8707_RESOURCE_CANONICAL} run.
@@ -348,6 +359,18 @@ export interface ClaudeAuthCheckOutput {
   badges: ClaudeCapabilityBadge[];
 }
 
+/** Whether a tool call made without sign-in was refused with a challenge. */
+export function challengesProtectedCall(
+  evidence: Pick<ClaudeAuthEvidence, "lazyAuthProbe"> | undefined
+): boolean {
+  const call = evidence?.lazyAuthProbe?.protectedCall;
+  return (
+    call !== undefined &&
+    !call.invalidArguments &&
+    (call.outcome === "unauthorized" || call.challenge !== undefined)
+  );
+}
+
 export function runClaudeAuthChecks(
   evidence: ClaudeAuthEvidence,
   stamp: ClaudeCheckStamp,
@@ -366,12 +389,7 @@ export function runClaudeAuthChecks(
   // OAuth even though it serves `initialize` anonymously. With no
   // discoverable metadata that is a server Claude cannot sign in to, not an
   // authless one.
-  const lazyProtectedCall = evidence.lazyAuthProbe?.protectedCall;
-  const challengedProtectedCall =
-    lazyProtectedCall !== undefined &&
-    !lazyProtectedCall.invalidArguments &&
-    (lazyProtectedCall.outcome === "unauthorized" ||
-      lazyProtectedCall.challenge !== undefined);
+  const challengedProtectedCall = challengesProtectedCall(evidence);
   const authless = servedWithoutAuth && !challengedProtectedCall;
 
   // ── Auth mode: a badge, never a verdict ──────────────────────────────
@@ -483,6 +501,23 @@ export function runClaudeAuthChecks(
       "the server is authless, so it publishes no Protected Resource Metadata";
     findings.push(notApplicable(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notApplicable(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
+  } else if (prm.discoveredVia === "not-found" && prm.unanswered) {
+    // A request nobody answered is a gap in this run, not a server that
+    // publishes no metadata.
+    const reason = `no request for Protected Resource Metadata was answered (${prm.fetchError ?? "no response"})`;
+    // A pointer no conforming client follows is a defect on its own; only
+    // the document's checks lack evidence.
+    findings.push(
+      prm.rejectedPointer
+        ? violated(
+            PRM_DISCOVERABLE,
+            stamp,
+            "The 401 challenge points at a Protected Resource Metadata URL on another origin or with a non-http scheme, which a conforming client refuses to follow. Point it at this connector's own origin.",
+            { fetchError: prm.fetchError, rejectedPointer: prm.rejectedPointer }
+          )
+        : notEvaluated(PRM_DISCOVERABLE, stamp, reason)
+    );
+    findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
   } else {
     findings.push(
       prm.discoveredVia === "not-found"
@@ -902,7 +937,7 @@ function gradeProtectedCallChallenge(
     violated(
       CHALLENGE_PRESENT,
       stamp,
-      `An unauthenticated call to the protected tool "${call.toolName}" ${refusal}. ${CLAUDE_SIGN_IN_TRIGGER}. Refuse it with HTTP 401 and \`WWW-Authenticate: Bearer resource_metadata="…"\`.`,
+      `An unauthenticated call to the protected tool "${call.toolName}" ${refusal}. ${claudeSignInTrigger(call.outcome !== "unauthorized" && signal?.source === "tool_result_meta")}. Refuse it with HTTP 401 and \`WWW-Authenticate: Bearer resource_metadata="…"\`.`,
       details,
     ),
     notEvaluated(
@@ -943,10 +978,17 @@ function classifyAuthMode(
     };
   }
   if (servedWithoutAuth && challengedProtectedCall) {
+    // Claude starts sign-in only on HTTP 401 with a Bearer challenge. Any
+    // other refusal shows the server wants sign-in, not that Claude acts on it.
+    const call = evidence.lazyAuthProbe?.protectedCall;
+    const bearer401 =
+      call?.outcome === "unauthorized" &&
+      call.challenge?.facets.challengeHeader === "bearer";
     return {
-      detail:
-        "anonymous access allowed; a protected call asked for sign-in (lazy authentication)",
-      confident: true,
+      detail: bearer401
+        ? "anonymous access allowed; a protected call asked for sign-in (lazy authentication)"
+        : "anonymous access allowed; a protected call asked for sign-in, but not with the HTTP 401 Bearer challenge Claude acts on",
+      confident: bearer401,
     };
   }
   if (

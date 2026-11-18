@@ -3,22 +3,19 @@ import { mergeConnectionToolsets, type MCPClientManager } from "@mcpjam/sdk";
 import { getManagerConnections } from "../mcp-connections.js";
 /**
  * Project a host's selected MCP servers into HOST-EXECUTED AI SDK tools, for a
- * harness whose runtime cannot make an MCP tool model-callable itself
- * (`mcpDelivery: "mcpjam"` — Codex today).
+ * harness whose MCP delivery is MCPJam's (`mcpDelivery: "mcpjam"`: Codex, on a
+ * turn that does not qualify for native forwarding).
  *
- * ## Why this exists
+ * ## How the runtime reaches them
  *
- * Codex's only mode the SDK drives (`codex exec --experimental-json`) completes
- * the MCP handshake and answers `tools/list`, but never registers the tools as
- * model-callable functions (openai/codex#19425). Writing `~/.codex/config.toml`
- * `[mcp_servers]` MERGES cleanly with what the bridge sets and is still a
- * silent no-op — the COMP-39 spike proved that end to end. The harness authors
- * hit the same wall for their own host tools and built a CLI relay instead
- * (`@ai-sdk/harness-codex`'s `src/bridge/cli-relay.ts`), which is the mechanism
- * this module feeds: the bridge injects each tool's description into the
- * prompt, the model shells out via `bash node <shim> <toolName> <json>`, and the
- * invocation is relayed back over HTTP to the agent — which runs `execute()`
- * HERE, on MCPJam's server.
+ * `codex app-server` is a separate process in the box, so a host tool reaches
+ * it as an MCP tool. Codex spawns the `mcpjam` MCP server
+ * (`codex-appserver/bridge/host-tools-mcp.ts`) from the session's
+ * `config.toml` (`codex-home.ts`). That server proxies `tools/list` and
+ * `tools/call` over a loopback relay to the bridge, the bridge emits each call
+ * as a host tool call, and the agent runs `execute()` HERE, on MCPJam's
+ * server, after its own approval check. The relay is configured to approve
+ * every call, so Codex never asks a second time.
  *
  * ## Direct, not through the harness MCP proxy
  *
@@ -56,16 +53,18 @@ import { getManagerConnections } from "../mcp-connections.js";
  *    still applies (see {@link withModelOutputProjection}). The raw result is
  *    handed back through `onRawResult` so the UI keeps rendering what the server
  *    actually returned.
- *  - Every projected tool's description is injected into the PROMPT by the
- *    bridge, so a server with many tools inflates every turn of the
- *    conversation. There is no cap here — MCPJam has no tool-count budget to
- *    respect, and inventing one would silently hide the user's own servers.
+ *  - Every projected tool is published to Codex with its description
+ *    (`host-tool-catalog.ts`), so a server with many tools inflates every
+ *    turn of the conversation. There is no cap here — MCPJam has no
+ *    tool-count budget to respect, and inventing one would silently hide the
+ *    user's own servers.
  */
 import {
   decideToolPolicyFromSnapshot,
   type ToolPolicySnapshot,
 } from "@mcpjam/sdk/contract";
 import type { MCPJamHandlerOptions } from "../mcpjam-stream-handler.js";
+import { serverToolName } from "../../services/evals/account-routing.js";
 import { logger } from "../logger.js";
 import { harnessServerKeyToName } from "./mcp-config.js";
 import {
@@ -93,6 +92,19 @@ export function harnessMcpToolName(serverKey: string, toolName: string): string 
   return `mcp__${serverKey}__${toolName}`;
 }
 
+/** Display-only labels from the resolved runtime; routing keeps canonical server IDs. */
+function withServerSource(tool: unknown, sourceName: string | undefined): unknown {
+  const label = sourceName?.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!label || !tool || typeof tool !== "object" || Array.isArray(tool)) return tool;
+  const description = "description" in tool && typeof tool.description === "string"
+    ? tool.description
+    : "";
+  return {
+    ...tool,
+    description: `MCP server: ${JSON.stringify(label)}.${description ? `\n${description}` : ""}`,
+  };
+}
+
 export interface HostExecutedMcpProjection {
   /** Name-keyed AI SDK tools to merge into the agent's host-executed `tools`. */
   tools: Record<string, unknown>;
@@ -114,6 +126,8 @@ export interface HostExecutedMcpProjection {
 export async function projectSelectedMcpServersAsHostTools(args: {
   manager: MCPJamHandlerOptions["mcpClientManager"];
   selectedServerIds: string[];
+  /** Backend-resolved display names. Omitted labels preserve the original catalog. */
+  serverDisplayNames?: Readonly<Record<string, string>>;
   unavailableServerIds?: readonly string[];
   connectionsByServerId?: ConnectionsByServerId;
   /** Plugin origin per server id (INS-7): a plugin-contributed server with no
@@ -291,9 +305,20 @@ export async function projectSelectedMcpServersAsHostTools(args: {
         });
       }
       if (snapshot) {
-        projected = withToolPolicyGate({ tool: projected, toolName, snapshot });
+        projected = withToolPolicyGate({
+          tool: projected,
+          toolName,
+          // The snapshot is keyed by the server's tool names, and a
+          // multi-account variant holds one under another key.
+          policyName: serverToolName(tool, toolName),
+          snapshot,
+        });
       }
-      tools[harnessMcpToolName(key, toolName)] = projected;
+      tools[harnessMcpToolName(key, toolName)] = withServerSource(
+        projected,
+        args.serverDisplayNames && Object.hasOwn(args.serverDisplayNames, serverId)
+          ? args.serverDisplayNames[serverId] : undefined,
+      );
     }
   }
   return { tools, keyToServerId };
@@ -311,8 +336,8 @@ export async function projectSelectedMcpServersAsHostTools(args: {
  *
  * The AI SDK's own loop calls both. The harness host-tool loop calls NEITHER
  * but `execute()`: `maybeExecuteHostTool` submits that value straight to
- * `control.submitToolResult`, which the bridge JSON-serializes onto the CLI
- * relay's stdout. So without this wrapper a projected app tool would ship its
+ * `control.submitToolResult`, and the bridge relays it back as the call's
+ * result. So without this wrapper a projected app tool would ship its
  * client-only `_meta` and `structuredContent` into the model's context — pure
  * token cost and context leakage, since a harness cannot render a widget at all
  * (`widgetRendered` is refused at eval admission for exactly that reason) — and
@@ -477,7 +502,10 @@ function withScopeStepUpObserver(args: {
  */
 function withToolPolicyGate(args: {
   tool: unknown;
+  /** The name the call was made under, reported on the block. */
   toolName: string;
+  /** The server's name for the tool, which the snapshot decides. */
+  policyName: string;
   snapshot: ToolPolicySnapshot;
 }): unknown {
   const tool = args.tool as {
@@ -490,7 +518,7 @@ function withToolPolicyGate(args: {
     execute: async (input: unknown, options: unknown) => {
       const decision = decideToolPolicyFromSnapshot({
         snapshot: args.snapshot,
-        toolName: args.toolName,
+        toolName: args.policyName,
       });
       if (decision.allowed) return originalExecute(input, options);
       const marker: HarnessPolicyBlockMarker = {

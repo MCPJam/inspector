@@ -1,9 +1,11 @@
+import type { TurnAuthorization } from "../services/turn-authorization.js";
+import { finishPendingPersist } from "./completed-turn-finalization.js";
 import { WIDGET_TOOL_VERBS } from "../services/widget-tool-verbs.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
 import { resolveAgentLoop, assertAgentLoopResume } from './harness/agent-loop-dispatch.js';
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
 import { AdmissionWaitBudget } from "../services/sessionSimulation/admission-retry.js";
-import { withSwarmStepAdmissionRetry } from "./swarm-step-admission.js";
+import { withModelStepAdmissionRetry } from "./model-step-admission.js";
 import { streamSelectionFields } from "./selection-rail.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { unwrapToolOutputEnvelope } from "@/shared/tool-output-envelope";
@@ -34,7 +36,7 @@ import type {
 } from "ai";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk/browser";
-import { safeValidateTypes, zodSchema } from "@ai-sdk/provider-utils";
+import { zodSchema } from "@ai-sdk/provider-utils";
 import type {
   MCPClientManager,
   Harness,
@@ -46,10 +48,13 @@ import {
   type BackendStreamFailureContext,
 } from "./org-policy-stream-refusal.js";
 import {
+  createToolNameAliases,
   describeAsSlug,
   describeError,
   isNormalizedError,
   readModelOutputImage,
+  renameToolNamePart,
+  renameToolNamesInMessages,
   type NormalizedError,
 } from "@mcpjam/sdk";
 import {
@@ -75,6 +80,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { HarnessElicitationHandler } from "./harness/with-harness-elicitation.js";
@@ -107,6 +113,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   DEFAULT_TURN_MAX_STEPS,
@@ -133,7 +140,7 @@ import {
   shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   isRejectedToolCallMetadata,
   markRejectedToolCallMetadata,
@@ -204,14 +211,12 @@ function isModelVisibleImageOutput(value: unknown): boolean {
 /**
  * One decision per tool call, for the life of a turn.
  *
- * Keyed by `toolCallId` rather than by tool name because the SEP-2640
- * declaration is a FUNCTION WITH SIDE EFFECTS: it resolves the skill's
- * manifest and records the digest set the user is about to be asked about,
- * which `execute` then re-checks. This engine asks the same question about the
- * same call more than once — at the emit gate, then again on the unresolved
- * and auto-deny re-scans, which re-walk the whole history — and a second
- * evaluation would re-fetch the manifest and could overwrite the binding it
- * exists to check. The AI SDK evaluates once per call; so does this.
+ * Keyed by `toolCallId` rather than by tool name because a FUNCTION-form
+ * declaration answers per call, from that call's input and messages. This
+ * engine asks the same question about the same call more than once — at the
+ * emit gate, then again on the unresolved and auto-deny re-scans, which
+ * re-walk the whole history — and every one of those must get the answer the
+ * first ask got. The AI SDK evaluates once per call; so does this.
  *
  * Promises, not booleans, so two concurrent askers share one evaluation rather
  * than racing into two.
@@ -328,6 +333,7 @@ import {
   isMcpjamOwnedEmptyStep,
   type EmptyStepFacts,
 } from "./empty-step-failure.js";
+import { omitCallCost, readCallCostFromFinishChunk } from "./backend-call-cost.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -411,10 +417,12 @@ async function clientAcceptsBackendChunk(
   chunk: unknown,
   reported: Set<string>,
 ): Promise<boolean> {
-  const result = await safeValidateTypes({
-    value: chunk,
-    schema: uiMessageChunkSchema,
-  });
+  // Call the lazy schema's own validate. `safeValidateTypes` from the
+  // inspector's `@ai-sdk/provider-utils` cannot accept this schema: the
+  // harness pin brings a newer copy whose Schema brand does not overlap.
+  const validate = uiMessageChunkSchema().validate;
+  if (!validate) return true;
+  const result = await validate(chunk);
   if (result.success) return true;
 
   const record =
@@ -928,6 +936,12 @@ function applyToolRefresh(
 }
 
 export interface MCPJamHandlerOptions {
+  turnAuthorization?: TurnAuthorization;
+  /**
+   * The route's stage timing. A harness turn adds its stages and first text,
+   * and sends its closing event to the timing's `harnessTurnEvent` sink.
+   */
+  turnTiming?: import("./turn-timing.js").TurnTiming;
   harnessStartupRequestId?: string;
   /** Effective saved App declaration, qualified by the caller's installed handlers. */
   harnessHostCapabilities?: import("@/shared/harness-host-capabilities").HarnessHostCapabilityQualification;
@@ -1053,34 +1067,22 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (Project Environments — env-based swarm targets
-   * only). When set — even EMPTY — the harness turn delivers exactly these
-   * pinned artifacts and SKIPS the live `fetchRuntimeSkills` query; its
-   * `skillsHash` derives from the pinned artifact fingerprints. Undefined ⇒
-   * the legacy live-pool fetch. HARNESS-ONLY: the emulated engine receives
-   * pinned skills via prepareChatV2's `skillsSource` instead (which THROWS on
-   * harness+pinned — the two paths are deliberately disjoint).
+   * Pinned harness skills (eval runs and swarm targets). When set — even
+   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
+   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
+   * the emulated engine receives pinned skills via prepareChatV2's `skills`
+   * plan instead (which it refuses on a harness turn — the two paths are
+   * deliberately disjoint).
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
-   * Resolved Project-Environment skills for THIS turn (Phase 1.4). When set —
-   * even EMPTY — the harness turn delivers exactly these and SKIPS the live
-   * project-wide `fetchRuntimeSkills` query. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution) and
-   * ABOVE the legacy live fetch; see `harness/skill-delivery.ts` for the single
-   * place that precedence is written down. An empty override is semantic: the
-   * environment delivers no skills, which is not the same as "ask the project".
+   * The skills THIS turn's environment resolved to. When set — even EMPTY —
+   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
+   * (a pinned run's reproducibility outranks a live environment resolution);
+   * see `harness/skill-delivery.ts` for the single place that precedence is
+   * written down. With neither, the turn leaves the box's skills as they are.
    */
   runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The Playground's HIDDEN environment, harness side: deliver the project's
-   * live skill pool BESIDE `runtimeSkillsOverride` instead of skipping it.
-   * Selects the `live_plus` skill source explicitly — a turn that merely
-   * carries an environment's override and capability set never gets it. Only
-   * the web chat route sets it, and only for an environment target that asked
-   * for the project's skills.
-   */
-  includeProjectSkills?: boolean;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
@@ -1094,6 +1096,12 @@ export interface MCPJamHandlerOptions {
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
+  /**
+   * A client's or a study's turn: its servers are connected now, so their own
+   * MCP-server skills may be offered beside its skills. Unset for a named
+   * environment, whose server skills were captured with it.
+   */
+  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.
@@ -1171,6 +1179,7 @@ export interface MCPJamHandlerOptions {
   agentLoop?: Harness;
   harnessTurnContext?: string;
   harnessUnavailableAppTools?: boolean;
+  harnessAppTools?: import("@/shared/chat-v2").AppToolSnapshotEntry[];
   /** Which MCP-proxy plane the harness uses to route its MCP through MCPJam —
    *  set by the CALLER ROUTE (local `/api/mcp/*` vs hosted `/api/web/*`), not a
    *  global env. Absent ⇒ harness runs without proxied MCP. See
@@ -1227,6 +1236,11 @@ export interface MCPJamHandlerOptions {
    * `finalize-iteration` as the same policy blocks the in-process gate yields.
    */
   onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
+  /**
+   * What the box writer did with a harness turn's skills, once per turn: after
+   * its session is up, or when the turn stops before that.
+   */
+  onBoxSkillsWritten?: (result: BoxSkillsResult) => void;
   /**
    * The host's approval switch for this turn.
    *
@@ -1945,7 +1959,7 @@ function createClientFinishChunk(
     (finishChunk
       ? readUsageFromFinishChunk(finishChunk)
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-  const metadata = source?.messageMetadata;
+  const metadata = omitCallCost(source?.messageMetadata);
   const messageMetadata =
     metadata &&
     typeof metadata === "object" &&
@@ -2515,6 +2529,9 @@ async function processStream(
   // Who and where a pill minted here is bound to (MJ-008). Required: an
   // approval id minted without it could not be verified on resume.
   approvalBinding: ToolApprovalBinding,
+  // Undoes the request's provider-safe aliases, so a call to `cart_add` is
+  // handled as the server's `cart.add`.
+  toolNameFromWire: (name: string) => string,
   onLiveTextDelta?: (delta: string) => void,
   abortSignal?: AbortSignal,
   // PR 5b-pre: chunk-level callbacks. Optional; only fired when
@@ -2629,14 +2646,17 @@ async function processStream(
             );
       }
 
-      const chunk = value.value as UIMessageChunk & {
-        totalUsage?: {
-          inputTokens?: number;
-          outputTokens?: number;
-          totalTokens?: number;
-        };
-        [key: string]: unknown;
-      };
+      const chunk = renameToolNamePart(
+        value.value as UIMessageChunk & {
+          totalUsage?: {
+            inputTokens?: number;
+            outputTokens?: number;
+            totalTokens?: number;
+          };
+          [key: string]: unknown;
+        },
+        toolNameFromWire,
+      );
 
       if (firstChunkAt === undefined) {
         firstChunkAt = Date.now();
@@ -3980,7 +4000,7 @@ async function processOneStep(ctx: StepContext): Promise<{
 
   const beforeStepLength = messageHistory.length;
   const stepStartAbs = Date.now();
-  const llmStartAbs = stepStartAbs;
+  let llmStartAbs = stepStartAbs;
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
 
   // Keep current-turn reasoning while cleaning only the outgoing provider copy.
@@ -4081,41 +4101,74 @@ async function processOneStep(ctx: StepContext): Promise<{
   // paying, so a claim there is incoherent rather than merely misrouted.
   const dispatchPath =
     billingFeature !== undefined ? PLATFORM_STREAM_PATH : endpointPath;
+  // MCP allows tool names (`cart.add`) that the providers behind the backend
+  // reject, so the backend gets provider-safe aliases and `processStream`
+  // restores the originals.
+  const wireToolNames = createToolNameAliases(
+    activeToolDefs.map((def) => def.name),
+  );
   let res: Response;
   // Everything above this line is ours; everything at or below it is the
   // model's turn. Marked HERE, at the handover, not once a response comes
   // back: a provider that rejects the request outright still failed as the
   // model, while a throw in the preparation above genuinely is ours.
   onModelHandover?.();
-  res = await withSwarmStepAdmissionRetry(
-    () => fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
-      method: "POST",
-      headers: convexHeaders,
-      body: JSON.stringify({
-        mode: "stream",
-        // Persist only once at the end of the full agentic loop via
-        // onConversationComplete to avoid storing partial per-step traces.
-        skipChatIngestion: true,
-        messages: JSON.stringify(scrubbedMessages),
-        model: modelId,
-        systemPrompt: providerSystemPrompt,
-        ...(temperature !== undefined ? { temperature } : {}),
-        tools: activeToolDefs,
-        ...(scenarioId ? { scenarioId } : {}),
-        ...(scenarioId && Number.isFinite(accessVersion)
-          ? { accessVersion }
-          : {}),
-        ...(projectId ? { projectId } : {}),
-        ...(chatSessionId ? { chatSessionId } : {}),
-        ...(sourceType ? { sourceType } : {}),
-        turnId: traceTurn.turnId,
-        promptIndex: traceTurn.promptIndex,
-        stepIndex,
-        ...(toolChoice ? { toolChoice } : {}),
-        ...(extraBodyFields ?? {}),
-      }),
-      ...(abortSignal ? { signal: abortSignal } : {}),
-    }),
+  let admissionAttempts = 0;
+  res = await withModelStepAdmissionRetry(
+    () => {
+      // A resend after a busy refusal restarts the model's clock, so time
+      // spent waiting for spending admission stays out of its latency.
+      if (admissionAttempts++ > 0) llmStartAbs = Date.now();
+      return fetch(`${process.env.CONVEX_HTTP_URL}${dispatchPath}`, {
+        method: "POST",
+        headers: convexHeaders,
+        body: JSON.stringify({
+          mode: "stream",
+          // Persist only once at the end of the full agentic loop via
+          // onConversationComplete to avoid storing partial per-step traces.
+          skipChatIngestion: true,
+          messages: JSON.stringify(
+            renameToolNamesInMessages(scrubbedMessages, wireToolNames.toWire),
+          ),
+          model: modelId,
+          systemPrompt: providerSystemPrompt,
+          ...(temperature !== undefined ? { temperature } : {}),
+          tools: activeToolDefs.map((def) => ({
+            ...def,
+            name: wireToolNames.toWire(def.name),
+          })),
+          ...(scenarioId ? { scenarioId } : {}),
+          ...(scenarioId && Number.isFinite(accessVersion)
+            ? { accessVersion }
+            : {}),
+          ...(projectId ? { projectId } : {}),
+          ...(chatSessionId ? { chatSessionId } : {}),
+          ...(sourceType ? { sourceType } : {}),
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          ...(toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+          ...(extraBodyFields ?? {}),
+          // A hosted eval's own `toolChoice` rides in `extraBodyFields`.
+          ...(extraBodyFields?.toolChoice
+            ? {
+                toolChoice: renameToolNamePart(
+                  extraBodyFields.toolChoice,
+                  wireToolNames.toWire,
+                ),
+              }
+            : {}),
+        }),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+    },
     {
       sourceType,
       stepIndex,
@@ -4388,6 +4441,7 @@ async function processOneStep(ctx: StepContext): Promise<{
     approvalDecisions,
     messageHistory,
     approvalBinding,
+    wireToolNames.fromWire,
     onLiveTextDelta,
     abortSignal,
     onToolCall,
@@ -4445,6 +4499,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   const harnessSpanMeta = {
     provider,
     finishReason: readFinishReasonFromChunk(finishChunk),
+    cost: readCallCostFromFinishChunk(finishChunk),
     ttfcMs:
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
@@ -4568,7 +4623,7 @@ async function processOneStep(ctx: StepContext): Promise<{
             toolName: part.toolName,
             output: {
               type: "error-text",
-              value: "approval-denied (synthetic session)",
+              value: SYNTHETIC_SESSION_APPROVAL_DENIAL,
             },
           };
           const bucket = deniedByAssistantIdx.get(i) ?? [];
@@ -4871,6 +4926,32 @@ async function processOneStep(ctx: StepContext): Promise<{
         isMrtrSuspendSignalShape(error) ||
         isScopeStepUpSuspendSignal(error)
       ) {
+        // The provider call finished before the tool paused, so it keeps its
+        // llm span and cost: the finish chunk below carries no cost, and the
+        // span is the only place the call is counted.
+        pushBackendStepSuccessSpans(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.promptIndex,
+          stepIndex,
+          stepStartAbs,
+          { startAbs: llmStartAbs, endAbs: llmEndAbs },
+          {
+            startAbs: toolsStartAbs,
+            endAbs: Date.now(),
+            pushAggregateSpan: false,
+          },
+          {
+            modelId,
+            inputTokens: stepUsage?.inputTokens,
+            outputTokens: stepUsage?.outputTokens,
+            totalTokens: stepUsage?.totalTokens,
+            messageStartIndex: stepMessageStartIndex,
+            messageEndIndex: stepMessageEndIndex,
+            status: "ok",
+            ...harnessSpanMeta,
+          },
+        );
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
@@ -4878,6 +4959,19 @@ async function processOneStep(ctx: StepContext): Promise<{
         return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
       const failAbs = Date.now();
+      // A failure after this step's spans were recorded replaces them, so the
+      // provider call keeps one llm span and is counted once.
+      // In place: the traced tools hold this array.
+      for (let i = traceTurn.turnSpans.length - 1; i >= 0; i--) {
+        const span = traceTurn.turnSpans[i]!;
+        if (
+          (span.category === "step" || span.category === "llm") &&
+          span.promptIndex === traceTurn.promptIndex &&
+          span.stepIndex === stepIndex
+        ) {
+          traceTurn.turnSpans.splice(i, 1);
+        }
+      }
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,
@@ -4895,6 +4989,7 @@ async function processOneStep(ctx: StepContext): Promise<{
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
+          cost: harnessSpanMeta.cost,
         },
       );
       setStepSpanMessageRanges(
@@ -5567,6 +5662,7 @@ export async function runChatEngineLoop(
     let modelInvoked = false;
 
     try {
+      options.turnAuthorization?.start(traceTurn.turnId, safeWriter);
       onStreamWriterReady?.(safeWriter);
 
       if (aborted) {
@@ -5788,7 +5884,7 @@ export async function runChatEngineLoop(
             tools,
             progressivePlan,
             discoveryState,
-            authHeader,
+            authHeader: options.turnAuthorization ? await options.turnAuthorization.getAuthorization() : authHeader,
             scenarioId,
             accessVersion,
             projectId,
@@ -6089,10 +6185,11 @@ export async function runChatEngineLoop(
         };
         capturedTurnTrace = trace;
         try {
-          const persistOutcome = await onConversationComplete?.(
+          let persistOutcome = await onConversationComplete?.(
             [...messageHistory],
             trace,
           );
+          if (chatSessionId) persistOutcome = await finishPendingPersist(persistOutcome, receiptWriter, { chatSessionId, turnId: trace.turnId }, abortSignal);
           // Costs no latency: `onConversationComplete` already awaited the
           // ingest, which is what gates this stream's close in the first place.
           if (persistOutcome && chatSessionId) {

@@ -17,6 +17,7 @@
  * Chen left frustrated"); a persona never fails.
  */
 
+import { sessionReportUnavailableMessage } from "./findings-report-availability";
 import {
   SWARM_FINDING_COVERAGE_NOTE_LABELS,
   SWARM_FINDING_SIGNAL_LABELS,
@@ -646,10 +647,15 @@ export function composeWireFindingsSummary(
 }
 
 export function wireFindingsFootnotes(wire: SwarmJourneyFindings): string[] {
-  const notes = wire.coverageNotes.map(
-    (note) => SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
-  );
   const verification = wire.verification;
+  const notes = wire.coverageNotes
+    .filter((note) => note !== "mechanismsRejected" || !verification?.rejected)
+    .map(
+      (note) =>
+        (wire.findings.some((row) => row.coverageNotes.includes(note))
+          ? sessionReportUnavailableMessage([note])
+          : undefined) ?? SWARM_FINDING_COVERAGE_NOTE_LABELS[note],
+    );
   if (!verification) return notes;
   // Only proposals that were LOOKED AT and did not hold. An empty reply, an
   // unavailable model and a publication cap are none of them a rejected cause.

@@ -146,7 +146,7 @@ describe("OrganizationDefaultModelCard", () => {
     // No decision kind here, so the default model still answers typed decisions.
     expect(
       within(row).getByText(
-        "Insights and findings, generation, typed decisions and simulated users",
+        "Ask MCPJam, insights and findings, generation, typed decisions and simulated users",
       ),
     ).toBeInTheDocument();
     expect(within(row).getByText("Not set")).toBeInTheDocument();
@@ -415,10 +415,9 @@ describe("OrganizationDefaultModelCard", () => {
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: "Anthropic" }));
 
-    await user.type(
-      within(editor).getByLabelText("Default AI model id"),
-      "claude-haiku-4-5",
-    );
+    await user.click(within(editor).getByLabelText("Default AI model id"));
+    await user.type(screen.getByLabelText("Search Default AI model id"), "claude-haiku-4-5");
+    await user.click(screen.getByRole("option", { name: "Use claude-haiku-4-5" }));
     expect(
       within(editor).getByText("Saved as anthropic/claude-haiku-4.5"),
     ).toBeInTheDocument();
@@ -518,8 +517,9 @@ describe("OrganizationDefaultModelCard", () => {
     );
     const editor = screen.getByTestId("org-ai-model-default-editor");
     const model = within(editor).getByLabelText("Default AI model id");
-    await user.clear(model);
-    await user.type(model, "gpt-5.1");
+    await user.click(model);
+    await user.type(screen.getByLabelText("Search Default AI model id"), "gpt-5.1");
+    await user.click(screen.getByRole("option", { name: /^(Use )?gpt-5.1$/ }));
     await user.click(
       within(editor).getByRole("button", {
         name: "Test this default AI model",
@@ -777,7 +777,7 @@ describe("OrganizationDefaultModelCard", () => {
     expect(
       within(editor).getByRole("combobox", { name: "Default AI model provider" }),
     ).toHaveTextContent("OpenAI");
-    expect(within(editor).getByLabelText("Default AI model id")).toHaveValue(
+    expect(within(editor).getByLabelText("Default AI model id")).toHaveTextContent(
       "gpt-5-mini",
     );
   });
@@ -808,7 +808,7 @@ describe("OrganizationDefaultModelCard", () => {
 
       expect(
         within(screen.getByTestId("org-ai-model-default")).getByText(
-          "Insights and findings, generation and simulated users",
+          "Ask MCPJam, insights and findings, generation and simulated users",
         ),
       ).toBeInTheDocument();
       const row = screen.getByTestId("org-ai-model-decision");
@@ -851,7 +851,7 @@ describe("OrganizationDefaultModelCard", () => {
       );
       expect(
         screen.getByText(
-          "No organization provider can answer decisions. Add an OpenAI provider below to choose a decision model.",
+          "No organization provider can answer decisions. Add an OpenAI provider in Providers to choose a decision model.",
         ),
       ).toBeInTheDocument();
     });

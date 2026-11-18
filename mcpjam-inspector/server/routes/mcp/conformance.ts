@@ -1,3 +1,4 @@
+import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
@@ -21,6 +22,7 @@ import {
   UnsupportedTransportError,
   assertHttpSupported,
   completeOAuthConformance,
+  cancelOAuthConformance,
   runAppsConformance,
   runLocalDirectoryReadiness,
   runProtocolConformance,
@@ -30,10 +32,12 @@ import {
 } from "../shared/conformance";
 import {
   conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
   conformanceProbeFields,
 } from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
 import { checkConformanceConnection } from "../shared/conformance-connection.js";
+import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
 
 const conformance = new Hono();
 
@@ -63,6 +67,7 @@ function toHttpResolved(config: HttpServerConfig) {
     customHeaders: config.requestInit?.headers as
       | Record<string, string>
       | undefined,
+    credentialBinding: deliveredCredentialBinding(config),
   };
 }
 
@@ -80,12 +85,14 @@ function handleUnsupportedTransport(
 }
 
 const connectionCheckSchema = z.object({
+    ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
 });
 
 conformance.post("/connection-check", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const parsed = connectionCheckSchema.safeParse(await readRequestJson(c));
     if (!parsed.success)
       return c.json(
@@ -105,8 +112,13 @@ conformance.post("/connection-check", async (c) => {
           url: http.serverUrl,
           accessToken: http.accessToken,
           requestInit: { headers: http.customHeaders },
+          credentialSource: (resolved.config as HttpServerConfig)
+            .credentialSource,
+          credentialHeaderNames: (resolved.config as HttpServerConfig)
+            .credentialHeaderNames,
         },
         parsed.data.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
       ),
     );
   } catch (error) {
@@ -123,6 +135,7 @@ conformance.post("/connection-check", async (c) => {
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 const protocolSchema = z.object({
+  ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
@@ -136,6 +149,7 @@ const protocolSchema = z.object({
 
 conformance.post("/protocol", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = protocolSchema.safeParse(body);
     if (!parsed.success) {
@@ -155,11 +169,16 @@ conformance.post("/protocol", async (c) => {
 
     assertHttpSupported("protocol", resolved.config);
     const { result } = await runProtocolConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
       checkIds: parsed.data.checkIds,
       readinessIds: parsed.data.readinessIds,
       logProbe: parsed.data.logProbe,
+      logLevelFilteringProbe: parsed.data.logLevelFilteringProbe,
       inputRequiredProbe: parsed.data.inputRequiredProbe,
       toolCallProbe: parsed.data.toolCallProbe,
     });
@@ -186,6 +205,7 @@ conformance.post("/protocol", async (c) => {
 // ── POST /apps ──────────────────────────────────────────────────────────
 
 const appsSchema = z.object({
+    ...conformanceDeadlineFields,
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
@@ -194,6 +214,7 @@ const appsSchema = z.object({
 
 conformance.post("/apps", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = appsSchema.safeParse(body);
     if (!parsed.success) {
@@ -218,6 +239,10 @@ conformance.post("/apps", async (c) => {
     }
 
     const { result } = await runAppsConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       ...serverConfig,
       protocolVersion: parsed.data.protocolVersion,
       ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
@@ -243,6 +268,7 @@ conformance.post("/apps", async (c) => {
 // ── POST /tasks ─────────────────────────────────────────────────────────
 
 const tasksSchema = z.object({
+    ...conformanceDeadlineFields,
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Tool used to provoke a task; required on the extension wire, where tools
@@ -250,6 +276,7 @@ const tasksSchema = z.object({
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
   inputResponses: conformanceInputResponsesSchema,
+  checkOverrides: conformanceTaskOverridesSchema,
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
@@ -259,6 +286,7 @@ const tasksSchema = z.object({
 
 conformance.post("/tasks", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = tasksSchema.safeParse(body);
     if (!parsed.success) {
@@ -284,6 +312,8 @@ conformance.post("/tasks", async (c) => {
     }
 
     const { result } = await runTasksConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
       ...serverConfig,
       ...runOptions,
     });
@@ -308,6 +338,7 @@ conformance.post("/tasks", async (c) => {
 // ── POST /oauth/start ───────────────────────────────────────────────────
 
 const oauthStartSchema = z.object({
+  ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
   callbackOrigin: z.string().optional(),
@@ -317,6 +348,7 @@ const oauthStartSchema = z.object({
 
 conformance.post("/oauth/start", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = oauthStartSchema.safeParse(body);
     if (!parsed.success) {
@@ -352,8 +384,12 @@ conformance.post("/oauth/start", async (c) => {
     }
 
     const result = await startOAuthConformance({
+      requestStartedAt,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       defaultServerUrl: http.serverUrl,
       defaultCustomHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
       readinessIds,
@@ -427,6 +463,13 @@ conformance.post("/oauth/authorize", async (c) => {
       500,
     );
   }
+});
+
+conformance.post("/oauth/cancel", async (c) => {
+  const parsed = z.object({ sessionId: z.string().min(1) }).safeParse(await readRequestJson(c));
+  if (!parsed.success) return c.json({ success: false, error: "Invalid session" }, 400);
+  cancelOAuthConformance(parsed.data);
+  return c.json({ success: true });
 });
 
 // ── POST /oauth/complete ────────────────────────────────────────────────
@@ -580,6 +623,7 @@ conformance.post("/readiness/:publisher", async (c) => {
       submissionMode: parsed.data.submissionMode,
       accessToken: http.accessToken,
       customHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
     });
     return c.json({ success: true, result });
   } catch (error) {

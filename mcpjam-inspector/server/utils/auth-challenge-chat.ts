@@ -150,6 +150,16 @@ export interface AuthChallengeChatObserver {
     toolInput: unknown,
     toolCallId: string,
   ) => string | undefined;
+  /**
+   * Whether that credential is the server's only login, grouped by the host.
+   * It still binds the saved call; the card does not name it, so the sign-in
+   * takes the ordinary path that reconnects the server afterwards.
+   */
+  connectionIsImplicit?: (
+    toolName: string,
+    toolInput: unknown,
+    toolCallId: string,
+  ) => boolean;
   /** A sign-in for this operation just completed (a repeat is permanent). */
   hasRecentSignIn?: (input: {
     serverId: string;
@@ -433,6 +443,12 @@ export async function handleChatAuthChallenge(input: {
   const connectionId = toolCallId
     ? observer.connectionIdFor?.(toolName, input.toolInput, toolCallId)
     : undefined;
+  // What the card tells the browser; the saved call keeps `connectionId`.
+  const cardConnectionId =
+    connectionId &&
+    !observer.connectionIsImplicit?.(toolName, input.toolInput, toolCallId!)
+      ? connectionId
+      : undefined;
 
   if (decision.action === "passthrough") {
     notice(
@@ -455,7 +471,7 @@ export async function handleChatAuthChallenge(input: {
         buildAuthRequiredEvent({
           serverId,
           serverName,
-          connectionId,
+          connectionId: cardConnectionId,
           toolCallId,
           toolName,
           signal,
@@ -507,7 +523,7 @@ export async function handleChatAuthChallenge(input: {
       buildAuthRequiredEvent({
         serverId,
         serverName,
-        connectionId,
+        connectionId: cardConnectionId,
         toolCallId,
         toolName,
         signal,
@@ -542,7 +558,7 @@ export async function handleChatAuthChallenge(input: {
       buildAuthRequiredEvent({
         serverId,
         serverName,
-        connectionId,
+        connectionId: cardConnectionId,
         toolCallId,
         toolName,
         signal,
@@ -557,7 +573,7 @@ export async function handleChatAuthChallenge(input: {
   const event = buildAuthRequiredEvent({
     serverId,
     serverName,
-    connectionId,
+    connectionId: cardConnectionId,
     toolCallId,
     toolName,
     signal,

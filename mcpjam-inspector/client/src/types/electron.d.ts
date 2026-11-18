@@ -94,13 +94,6 @@ export interface ElectronAPI {
     keystoreAvailable: () => Promise<boolean>;
   };
 
-  // MCP operations (for future use)
-  mcp: {
-    connect: (config: any) => Promise<any>;
-    disconnect: (id: string) => Promise<void>;
-    listServers: () => Promise<any[]>;
-  };
-
   // OAuth operations
   oauth: {
     onCallback: (callback: (url: string) => void) => void;

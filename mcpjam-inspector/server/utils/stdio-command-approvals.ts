@@ -278,15 +278,18 @@ export function stdioCommandApprovalRequired(args: {
 
 /**
  * A pending command approval among a tolerant manager's refused servers. It is
- * a question for the person at the chat, not a server that failed, so a turn
- * must not quietly run without it.
+ * Direct selections block for review. Explicitly optional additions stay refused
+ * and the turn reports their missing command approval separately.
  */
 export function pendingStdioCommandApproval(
   refused: Record<string, unknown> | undefined,
+  optionalServerIds: ReadonlySet<string> = new Set(),
 ): WebRouteError | undefined {
-  return Object.values(refused ?? {}).find(
-    (error): error is WebRouteError =>
+  const error = Object.entries(refused ?? {}).find(
+    ([serverId, error]) =>
+      !optionalServerIds.has(serverId) &&
       error instanceof WebRouteError &&
       error.code === ErrorCode.STDIO_COMMAND_APPROVAL_REQUIRED,
-  );
+  )?.[1];
+  return error instanceof WebRouteError ? error : undefined;
 }

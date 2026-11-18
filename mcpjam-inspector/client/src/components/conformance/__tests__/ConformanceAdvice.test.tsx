@@ -52,10 +52,13 @@ describe("ConformanceAdvice", () => {
     ).not.toBeInTheDocument();
 
     // The spec words link to their definitions, outside the toggle.
-    for (const word of ["SHOULD", "MAY"]) {
+    for (const [word, section] of [
+      ["SHOULD", 3],
+      ["MAY", 5],
+    ] as const) {
       expect(screen.getByRole("link", { name: word })).toHaveAttribute(
         "href",
-        "https://datatracker.ietf.org/doc/html/bcp14",
+        `https://www.rfc-editor.org/info/rfc2119/#section-${section}`,
       );
     }
 
@@ -65,8 +68,8 @@ describe("ConformanceAdvice", () => {
       screen.getAllByRole("listitem").map((row) => row.textContent),
     ).toEqual([
       "Suggested (SHOULD) Protocol ttlttl message",
-      "Deprecation notice Protocol deprecateddeprecated message",
-      "Deprecation notice Apps legacylegacy message",
+      "Suggested Protocol deprecateddeprecated message",
+      "Suggested Apps legacylegacy message",
       "Suggested (SHOULD) Tasks statusstatus message",
       "Suggested (SHOULD) OAuth ississ message",
       "Optional (MAY) Protocol parseparse message",
@@ -101,7 +104,7 @@ describe("reportAdviceGroups", () => {
         screen.getByRole("button", { name: /^Additional enhancements/ }),
       );
       expect(screen.getByRole("listitem")).toHaveTextContent(
-        "Deprecation notice Protocol Deprecated Feature Use",
+        "Suggested Protocol Deprecated Feature Use",
       );
       expect(screen.getByRole("listitem")).not.toHaveTextContent("Suggested (");
       expect(

@@ -1,3 +1,4 @@
+import { withAbortSignalFetch } from "../abort-signal.js";
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../oauth/client-identity.js";
 import { getSupportedRegistrationStrategies } from "../oauth/state-machines/factory.js";
 import {
@@ -114,9 +115,10 @@ export function normalizeOAuthConformanceConfig(
     auth,
     client,
     scopes: config.scopes?.trim() || undefined,
-    customHeaders: config.customHeaders,
+    customHeaders: withoutAuthorizationHeader(config.customHeaders),
     redirectUrl: config.redirectUrl,
-    fetchFn: config.fetchFn ?? fetch,
+    signal: config.signal,
+    fetchFn: withAbortSignalFetch(config.fetchFn ?? fetch, config.signal),
     allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {
@@ -132,6 +134,24 @@ export function normalizeOAuthConformanceConfig(
       : {}),
     onProgress: config.onProgress ?? (() => {}),
   };
+}
+
+/**
+ * The suite signs in for itself and sends only the token it obtains. A
+ * caller's `Authorization` header (the local Inspector passes a connection's
+ * saved sign-in here) would ride on the requests that must carry no token, so
+ * a server that requires sign-in would answer the unauthenticated probe with
+ * 200 and be reported not applicable.
+ */
+function withoutAuthorizationHeader(
+  headers: Record<string, string> | undefined
+): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  return Object.fromEntries(
+    Object.entries(headers).filter(
+      ([name]) => name.toLowerCase() !== "authorization"
+    )
+  );
 }
 
 /** Unlike check ids elsewhere, an empty list stays empty: no advice at all. */

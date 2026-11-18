@@ -1,3 +1,4 @@
+import { validateTaskOverrides } from "./plan.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
 import {
   MCP_TASKS_CHECK_IDS,
@@ -59,12 +60,16 @@ export function normalizeMCPTasksConformanceConfig(
   config: MCPTasksConformanceConfig
 ): NormalizedMCPTasksConformanceConfig {
   const {
+    signal,
     checkIds,
     readinessIds,
+    checkOverrides,
     toolName,
     toolArguments,
     pollTimeoutMs,
     inputResponses,
+    // The runner's usage-ping flag, kept out of the server config.
+    __suppressTelemetry: _suppressTelemetry,
     ...rest
   } = config;
   const serverConfig = rest as MCPServerConfig;
@@ -75,6 +80,7 @@ export function normalizeMCPTasksConformanceConfig(
   }
 
   return {
+    signal,
     serverConfig,
     target,
     timeout: serverConfig.timeout ?? 30_000,
@@ -82,6 +88,9 @@ export function normalizeMCPTasksConformanceConfig(
     checkIds: normalizeCheckIds(checkIds),
     ...(readinessIds !== undefined
       ? { readinessIds: normalizeReadinessIds(readinessIds) }
+      : {}),
+    ...(checkOverrides
+      ? { checkOverrides: validateTaskOverrides(checkOverrides) }
       : {}),
     ...(toolName ? { toolName } : {}),
     ...(toolArguments ? { toolArguments } : {}),

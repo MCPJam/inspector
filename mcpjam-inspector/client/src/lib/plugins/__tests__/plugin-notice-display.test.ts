@@ -308,3 +308,27 @@ describe("a notice's Sign in", () => {
     unregisterNewer();
   });
 });
+
+it("offers command review distinctly from sign-in and does not execute on display", () => {
+  resetShownPluginNotices();
+  showPluginNotice("review-chat", { kind: "skipped", plugins: [{
+    ...bitsNeedsAuth.plugins[0], reason: "needs_approval", partial: true,
+    reviewCommand: { projectId: "project", serverId: "server", serverName: "Files" },
+  }] });
+  expect(toastInfo.mock.lastCall?.[0]).toContain("review its command");
+  expect(toastInfo.mock.lastCall?.[1].action.label).toBe("Review command");
+});
+
+it("preserves a separate command review action for each blocked plugin", () => {
+  resetShownPluginNotices();
+  toastInfo.mockClear();
+  const plugins = ["first", "second"].map((name) => ({
+    ...bitsNeedsAuth.plugins[0], pluginId: name, name, displayName: name,
+    reason: "needs_approval" as const, partial: true,
+    reviewCommand: { projectId: "project", serverId: name, serverName: name },
+  }));
+  expect(showPluginNotice("two-reviews", { kind: "skipped", plugins })).toBe(true);
+  expect(toastInfo).toHaveBeenCalledTimes(2);
+  for (const call of toastInfo.mock.calls) expect(call[1]?.action.label).toBe("Review command");
+  expect(showPluginNotice("two-reviews", { kind: "skipped", plugins })).toBe(false);
+});

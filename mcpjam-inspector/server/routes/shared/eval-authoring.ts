@@ -192,6 +192,8 @@ export async function handleEvalAuthoring(c: Context, local: boolean) {
         undefined,
         undefined,
         {
+          // A tool snapshot has no disposable iteration Computer bound to it.
+          pluginComputerRuntime: false,
           serverNames: selection.serverNames,
           // A Cross-App Access server mints its token with MCPJam as the IdP,
           // and the ID-JAG's `iss` is this issuer (as on the other eval routes).

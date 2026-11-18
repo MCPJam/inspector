@@ -484,3 +484,99 @@ test("log probe: bad flags are usage errors", () => {
     );
   }
 });
+
+test("log filter and input required: no flags means the SDK sees neither key", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("logLevelFilteringProbe" in config, false);
+  assert.equal("inputRequiredProbe" in config, false);
+});
+
+test("log filter: the three flags thread into logLevelFilteringProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--log-probe-tool",
+      "emit-log",
+      "--log-filter-tool",
+      "emit-warning",
+      "--log-filter-args",
+      '{"count":1}',
+      "--log-filter-level",
+      "error",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.logProbe, { toolName: "emit-log" });
+  assert.deepEqual(captured?.logLevelFilteringProbe, {
+    toolName: "emit-warning",
+    arguments: { count: 1 },
+    level: "error",
+  });
+});
+
+test("log filter: a tool alone works without --log-probe-tool", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    logFilterTool: "emit-warning",
+  });
+  assert.deepEqual(config.logLevelFilteringProbe, { toolName: "emit-warning" });
+  assert.equal("logProbe" in config, false);
+});
+
+test("input required: the two flags thread into inputRequiredProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--input-required-tool",
+      "ask-name",
+      "--input-required-args",
+      '{"greeting":"hi"}',
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.inputRequiredProbe, {
+    toolName: "ask-name",
+    arguments: { greeting: "hi" },
+  });
+});
+
+test("log filter and input required: bad flags are usage errors", () => {
+  for (const [options, pattern] of [
+    [{ logFilterLevel: "error" }, /need --log-filter-tool/],
+    [{ logFilterArgs: "{}" }, /need --log-filter-tool/],
+    [{ logFilterTool: "   " }, /--log-filter-tool needs a tool name/],
+    [{ logFilterTool: "emit-warning", logFilterLevel: "loud" }, /Unknown log level/],
+    [{ logFilterTool: "emit-warning", logFilterArgs: "[]" }, /JSON object/],
+    [
+      { logProbeTool: "emit-log", logProbeLevel: "error", logFilterTool: "emit-warning" },
+      /--log-probe-level is not used when --log-filter-tool is set/,
+    ],
+    [{ inputRequiredArgs: "{}" }, /--input-required-args needs --input-required-tool/],
+    [{ inputRequiredTool: "  " }, /--input-required-tool needs a tool name/],
+    [{ inputRequiredTool: "ask-name", inputRequiredArgs: "[]" }, /JSON object/],
+  ] as const) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", ...options }),
+      (error: unknown) =>
+        error instanceof CliError && pattern.test(error.message),
+    );
+  }
+});

@@ -28,6 +28,10 @@ import {
 
 const TARGET = "https://connector.example.com/mcp";
 
+/** A model finding that says something; a decision check left off says only why. */
+const saidByModel = (f: { provenance: string; status: string }) =>
+  f.provenance === "llm" && f.status !== "not-evaluated";
+
 function jsonRpc(id: unknown, result: unknown): Response {
   return new Response(JSON.stringify({ jsonrpc: "2.0", id, result }), {
     status: 200,
@@ -113,7 +117,7 @@ describe("a run with no observation requester", () => {
     expect(observations.status).toBe("not-requested");
     expect(observations.reason).toBe("not_requested");
     expect(result.llmObservations?.status).toBe("not-requested");
-    expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
+    expect(result.findings.some(saidByModel)).toBe(false);
   });
 });
 
@@ -182,7 +186,7 @@ describe("what the broker's answers become", () => {
     });
     expect(result.llmObservations?.status).toBe("provider-failed");
     expect(result.llmObservations?.reason).toBe("provider_error");
-    expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
+    expect(result.findings.some(saidByModel)).toBe(false);
   });
 
   it("keeps an ai_unavailable reason instead of rewriting it to provider_error", async () => {
@@ -215,7 +219,7 @@ describe("what the broker's answers become", () => {
     });
     expect(result.llmObservations?.status).toBe("invalid-output");
     expect(result.llmObservations?.reason).toBe("schema_invalid");
-    expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
+    expect(result.findings.some(saidByModel)).toBe(false);
   });
 
   it("refuses the other publisher's envelope", async () => {
@@ -315,6 +319,20 @@ describe("cancellation", () => {
 });
 
 describe("the OpenAI submission mode", () => {
+  it("passes saved answers through to the OpenAI grader", async () => {
+    const { result } = await runDirectoryReadiness({
+      publisher: "openai",
+      target: TARGET,
+      submissionMode: "mcp-only",
+      fetchFn: wireFetch(HEALTHY),
+      submissionAnswers: [
+        { key: "mcp.verificationToken", value: "sample-token", origin: "set" },
+      ],
+    });
+    expect(
+      result.findings.find((item) => item.id === "openai.submission.domain-token")?.status,
+    ).toBe("satisfied");
+  });
   it("is required, and is never inferred", async () => {
     // Inference reads a forgotten package as "MCP-only", which reports the
     // package lane `not-applicable` — a missing input becoming a clean bill of

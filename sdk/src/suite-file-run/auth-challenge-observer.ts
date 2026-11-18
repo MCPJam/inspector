@@ -55,9 +55,7 @@ export function createLocalAuthChallengeObserver(args: {
   /** The target server that owns a tool, by tool name. */
   serverOf: (toolName: string) => string | undefined;
 }): LocalAuthChallengeObserver {
-  let first:
-    | Omit<SuiteFileAuthRequired, "challengedCalls">
-    | undefined;
+  let first: Omit<SuiteFileAuthRequired, "challengedCalls"> | undefined;
   let challengedCalls = 0;
   const record = (
     toolName: string,

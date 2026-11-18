@@ -46,7 +46,7 @@ import {
   shouldForceInitialToolSearch,
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
-} from "@/shared/progressive-tool-discovery";
+} from "@mcpjam/sdk";
 import {
   mergeMcpToolOriginMetadata,
   mergeMcpToolConnectionMetadata,
@@ -55,13 +55,17 @@ import {
 } from "@/shared/mcp-tool-origin-metadata";
 import { pageToolBindingOf } from "./built-in-tools/page-tools";
 import type { PersistedTurnTrace } from "./chat-ingestion";
+import { buildDirectChatTurnTrace } from "./direct-chat-turn-full-stream";
 import { logger } from "./logger";
 import { withoutEmptyTextBlocks } from "./empty-text-blocks";
+import { withProviderSafeToolNames } from "@mcpjam/sdk";
 import {
   applyPrepareAdvertisedTools,
   gateToolsToAdvertisedSubset,
   type PrepareAdvertisedTools,
 } from "./advertised-tools";
+import type { StepCallPricer } from "./call-cost/direct-call-pricer.js";
+import type { TurnModelCall } from "./call-cost/local-usage-cost.js";
 
 /**
  * Stream parts that mean the model has produced something — the subset AI
@@ -108,6 +112,8 @@ export interface DirectChatTurnTraceTurn {
     ReturnType<typeof createAiSdkEvalTraceContext>
   >["recordedSpans"];
   turnUsage: LiveChatTraceUsage | undefined;
+  /** Each provider request the turn made, in step order. */
+  turnCalls: TurnModelCall[];
 }
 
 export interface DirectChatTurnRequestPayloadInfo {
@@ -191,6 +197,8 @@ export interface DirectChatTurnPersistEvent {
   usage?: LiveChatTraceUsage;
   finishReason?: string;
   turnTrace: PersistedTurnTrace;
+  /** Each provider request, for a writeback that records one row per call. */
+  calls: TurnModelCall[];
 }
 
 export interface DirectChatTurnTraceEvents {
@@ -288,6 +296,17 @@ export interface DirectChatTurnEngineErrorEvent {
   rawText: string;
   promptIndex: number;
   stepIndex?: number;
+}
+
+/**
+ * Every direct turn (BYOK chat and evals, org-configured providers) reaches
+ * the provider through here, so the request fixes live here: MCP tool names a
+ * provider rejects (`cart.add`) are aliased on the wire and restored in its
+ * reply. A gateway id string has no model object to wrap.
+ */
+function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+  const model = withoutEmptyTextBlocks(llmModel);
+  return typeof model === "string" ? model : withProviderSafeToolNames(model);
 }
 
 export interface RunDirectChatTurnOptions {
@@ -424,6 +443,12 @@ export interface RunDirectChatTurnOptions {
    * observability; chat currently omits.
    */
   experimentalTelemetry?: Parameters<typeof streamText>[0]["experimental_telemetry"];
+  /**
+   * Prices each step's one provider call for its llm span. Set for personal
+   * keys, which only this machine can price; org calls are priced by the
+   * backend, which holds the org's rates.
+   */
+  priceStepCall?: StepCallPricer;
 }
 
 export interface RunDirectChatTurnHandle {
@@ -594,6 +619,7 @@ export function runDirectChatTurn(
     shouldPauseAfterStep,
     suspendedToolCallIds,
     transformStepMessages,
+    priceStepCall,
   } = options;
   const resolvedMaxSteps =
     typeof maxSteps === "number" && Number.isFinite(maxSteps) && maxSteps > 0
@@ -618,6 +644,7 @@ export function runDirectChatTurn(
     turnStartedAt,
     turnSpans: [],
     turnUsage: undefined,
+    turnCalls: [],
   };
   const traceContext = createAiSdkEvalTraceContext(traceAnchor);
   const providerSystemPrompt = normalizeSystemPromptForProvider(systemPrompt);
@@ -730,7 +757,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: withoutEmptyTextBlocks(llmModel),
+    model: providerReadyModel(llmModel),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as
@@ -926,7 +953,25 @@ export function runDirectChatTurn(
           ? step.response.timestamp.toISOString()
           : undefined;
 
-      emitAiSdkOnStepFinish(traceContext, Date.now(), {
+      // Read before pricing so a slow rate lookup never stretches the span.
+      // No pricer, no await: unpriced routes settle the step as before.
+      const stepFinishedAt = Date.now();
+      traceTurn.turnCalls.push({
+        callId: `${traceTurn.turnId}:${currentStepIndex}`,
+        stepIndex: currentStepIndex,
+        ...(stepUsage ? { usage: stepUsage } : {}),
+        ...(step?.finishReason
+          ? { finishReason: String(step.finishReason) }
+          : {}),
+        finishedAt: stepFinishedAt,
+      });
+      const cost = priceStepCall
+        ? await priceStepCall({
+            usage: step.usage,
+            providerMetadata: step.providerMetadata,
+          })
+        : undefined;
+      emitAiSdkOnStepFinish(traceContext, stepFinishedAt, {
         modelId,
         inputTokens: stepUsage?.inputTokens,
         outputTokens: stepUsage?.outputTokens,
@@ -938,6 +983,7 @@ export function runDirectChatTurn(
         responseId: step?.response?.id,
         responseTimestamp,
         ttfcMs,
+        cost,
       });
 
       setToolSpanMessageRangesFromResults(
@@ -1108,6 +1154,7 @@ export function runDirectChatTurn(
             ),
           usage: traceTurn.turnUsage,
           finishReason: event.finishReason,
+          calls: [...traceTurn.turnCalls],
           turnTrace: {
             turnId: traceTurn.turnId,
             promptIndex: traceTurn.promptIndex,
@@ -1182,29 +1229,15 @@ export async function consumeDirectChatTurnHeadless(
     const messages = Array.isArray(responseMessages)
       ? (responseMessages as ModelMessage[])
       : [];
-    // Build the real turnTrace from the engine's own accumulator — mirrors the
-    // streaming `onPersist` construction (runDirectChatTurn ~902) so headless
-    // and streaming produce the identical PersistedTurnTrace.
-    const turnTrace: PersistedTurnTrace = {
-      turnId: handle.traceTurn.turnId,
-      promptIndex: handle.traceTurn.promptIndex,
-      startedAt: handle.traceTurn.turnStartedAt,
-      endedAt: Date.now(),
-      spans: [...handle.traceContext.recordedSpans],
-      requestPayloads: capRequestPayloadsForPersist(
-        handle.traceContext.recordedRequestPayloads,
-      ),
-      usage: handle.traceTurn.turnUsage,
-      finishReason: finishReason ?? undefined,
-      modelId: handle.modelId,
-    };
     return {
       messages,
       steps,
       totalUsage,
       finishReason,
       spans: handle.traceContext.recordedSpans,
-      turnTrace,
+      // The same construction as the streaming `onPersist` path, so headless
+      // and streaming produce the identical PersistedTurnTrace.
+      turnTrace: buildDirectChatTurnTrace(handle, finishReason),
       aborted: handle.isAborted(),
     };
   } catch (error) {

@@ -12,7 +12,7 @@ import {
 } from "@/shared/types";
 import {
   classifyModelIdProvider,
-  isRuntimeChosenModelSentinel,
+  isRuntimeAccountModel,
   runtimeChosenModelSentinelName,
 } from "@/shared/model-provider";
 import { decideTurnRail } from "./selection-rail.js";
@@ -90,6 +90,8 @@ export { orgRequiresOwnKeys };
 
 export type ResolvedOrgModelConfig = {
   providers: ResolvedProviderConfig[];
+  /** Saved background model, checked by each consumer before routing. */
+  defaultModel?: unknown;
   /**
    * Absent on a backend that predates the policy, which reads as "off". When
    * `requireOrgKeys` is set, hosted (MCPJam-provided) and local selections are
@@ -328,6 +330,7 @@ export async function resolveOrgModelConfig(
       error?: string;
       providers?: unknown;
       aiKeyPolicy?: unknown;
+      defaultModel?: unknown;
     };
     if (!data?.ok) {
       throw new Error(
@@ -379,6 +382,9 @@ export async function resolveOrgModelConfig(
 
     const result: ResolvedOrgModelConfig = {
       providers,
+      ...(data.defaultModel !== undefined
+        ? { defaultModel: data.defaultModel }
+        : {}),
       ...(aiKeyPolicy ? { aiKeyPolicy } : {}),
     };
     const withholdsKeys =
@@ -422,7 +428,7 @@ export function deriveOrgProviderKey(
   const sentinelName = runtimeChosenModelSentinelName(
     String(modelDefinition.id),
   );
-  if (sentinelName) {
+  if (isRuntimeAccountModel(String(modelDefinition.id))) {
     return {
       ok: false,
       error:
@@ -512,6 +518,8 @@ export function buildLlmRuntimeConfigFromOrgConfig(
       const name = provider.providerKey.replace(/^custom:/, "");
       if (!name) continue;
 
+      // Checked where it is dialed: `createLlmModel` sends every hop to this
+      // base URL, redirects included, through the hosted egress guard.
       runtime.customProviders.push({
         name,
         protocol: provider.protocol || "openai-compatible",
@@ -710,7 +718,7 @@ export async function resolveSyntheticModelSource(args: {
   // resolver returns an attribution ("nobody billed MCPJam, and there is no
   // configured provider either") instead of throwing on a key it must not ask
   // for. `orgRuntime` is deliberately absent: there is no runtime to reuse.
-  if (isRuntimeChosenModelSentinel(modelIdStr)) {
+  if (isRuntimeAccountModel(modelIdStr)) {
     return { source: "external-account" };
   }
   const keyResult = deriveOrgProviderKey(args.modelDefinition);
@@ -891,7 +899,7 @@ export async function resolveHostModelDefinition(args: {
   // live turn: `resolveOrgModelConfig` carries a 15 s timeout, and this call
   // sits between the request and the first token of an external-account harness
   // turn that needs nothing from the org's model config.
-  const skipOrgConfig = shapeIsExact || isRuntimeChosenModelSentinel(modelId);
+  const skipOrgConfig = shapeIsExact || isRuntimeAccountModel(modelId);
   if (!skipOrgConfig && projectId) {
     try {
       const config = await resolveOrgModelConfig({ projectId }, auth);

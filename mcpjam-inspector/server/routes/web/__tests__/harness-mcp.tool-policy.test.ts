@@ -6,7 +6,7 @@
  * (real signed token, real bridge, mock authorized manager), plus a real sealed
  * envelope carrying the launch-time decision snapshot.
  */
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 
@@ -132,6 +132,56 @@ beforeEach(() => {
 });
 
 describe("harness MCP proxy tool policy", () => {
+  describe("turn-bound credentials", () => {
+    const credential = (leaseId: string) => sealHarnessProxyToken({
+      token: innerToken("srv-a"), serverId: "srv-a", policy: snapshot(),
+      expiresAtMs: Date.now() + 60_000, turn: { laneId: "lane", leaseId },
+    });
+    let active: string | undefined;
+    beforeEach(() => {
+      active = "first";
+      vi.stubEnv("CONVEX_HTTP_URL", "https://authority.test");
+      vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "test-server-only");
+      vi.stubGlobal("fetch", vi.fn(async (url: URL, init: RequestInit) => {
+        expect(url.pathname).toBe("/internal/harness/proxy-turn");
+        expect(init.redirect).toBe("error");
+        const body = JSON.parse(String(init.body));
+        expect(body).toMatchObject({ projectId: "p1", laneId: "lane" });
+        return new Response(null, { status: body.leaseId === active ? 204 : 403 });
+      }));
+    });
+    afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+    it("refuses an old credential before dispatch, while idle and during a later turn", async () => {
+      const previous = credential("first");
+      expect((await call(previous, "read_file")).status).toBe(200);
+      active = undefined;
+      expect((await call(previous, "read_file")).status).toBe(401);
+      active = "second";
+      expect((await call(previous, "read_file")).status).toBe(401);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+      expect((await call(credential("second"), "read_file")).status).toBe(200);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(2);
+    });
+
+    it("drops a tool result that completes after the message lost ownership", async () => {
+      mockManager.executeTool.mockImplementationOnce(async () => {
+        active = "second";
+        return { content: [{ type: "text", text: "first-turn-only" }] };
+      });
+      const response = await call(credential("first"), "read_file");
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain("first-turn-only");
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("refuses dispatch when the authority is unavailable", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("disconnected")));
+      expect((await call(credential("first"), "read_file")).status).toBe(503);
+      expect(mockManager.executeTool).not.toHaveBeenCalled();
+    });
+  });
+
   it("blocks a denied tools/call before it reaches the manager", async () => {
     const res = await call(sealedToken("srv-a"), "delete_repo");
     expect(res.status).toBe(200);

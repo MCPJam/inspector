@@ -39,6 +39,7 @@ function fixture(enabled = true) {
   const calls: string[] = [];
   const harness = new McpAppBrowserHarness({
     enableViewTools: enabled,
+    getWorkspacePresentation: () => ({ hostStyle: "chatgpt" }),
     readResource: async () => ({ contents: [] }),
     callTool: async (_server, _name, args) => {
       calls.push(String(args.move));
@@ -72,9 +73,15 @@ describe("harness view tools", () => {
       "arguments",
     );
     expect(calls).toEqual([]);
-    const result = await harness.viewTools.call("A", "move", { move: "e4" });
-    expect(result.structuredContent).toEqual({ move: "e4" });
-    expect(calls).toEqual(["e4"]);
+    const privateMove = "private-view-tool-payload";
+    const result = await harness.viewTools.call("A", "move", { move: privateMove });
+    expect(result.structuredContent).toEqual({ move: privateMove });
+    expect(calls).toEqual([privateMove]);
+    const observed = await render("A");
+    expect(observed.pluginWorkspace?.events.filter((event) => event.kind === "call-completed")).toHaveLength(2);
+    expect(JSON.stringify(observed.pluginWorkspace)).not.toMatch(/view-fixture|move|record/);
+    expect(JSON.stringify(observed.pluginWorkspace)).not.toContain(privateMove);
+    expect(calls).toEqual([privateMove]);
     expect(harness.viewTools.drainRecords()).toMatchObject([
       {
         viewId: "A",

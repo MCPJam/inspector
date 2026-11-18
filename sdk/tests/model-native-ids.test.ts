@@ -7,6 +7,9 @@
  */
 import {
   ANTHROPIC_NATIVE_MODEL_IDS,
+  OPENAI_NATIVE_MODEL_IDS,
+  GOOGLE_NATIVE_MODEL_IDS,
+  nativeModelIdFor,
   anthropicNativeModelId,
 } from "../src/model-native-ids.js";
 import * as modelFactory from "../src/model-factory.js";
@@ -82,5 +85,34 @@ describe("ANTHROPIC_NATIVE_MODEL_IDS", () => {
       ANTHROPIC_NATIVE_MODEL_IDS
     );
     expect(modelFactory.anthropicNativeModelId).toBe(anthropicNativeModelId);
+  });
+});
+
+
+describe("nativeModelIdFor", () => {
+  it.each([
+    ["openai", "openai/gpt-5-mini", "gpt-5-mini"],
+    ["openai", "openai/gpt-6-astra", "gpt-6-astra"],
+    ["anthropic", "anthropic/claude-sonnet-4.5", "claude-sonnet-4-5"],
+    ["google", "google/gemini-2.5-pro", "gemini-2.5-pro"],
+  ])("looks up %s model %s", (provider, canonical, native) => {
+    expect(nativeModelIdFor(provider, canonical)).toBe(native);
+  });
+
+  it("leaves unknown and mismatched names unresolved", () => {
+    expect(nativeModelIdFor("openai", "openai/unlisted")).toBeUndefined();
+    expect(nativeModelIdFor("google", "openai/gpt-5-mini")).toBeUndefined();
+    expect(nativeModelIdFor("unknown", "openai/gpt-5-mini")).toBeUndefined();
+  });
+
+  it.each([
+    ["openai", OPENAI_NATIVE_MODEL_IDS],
+    ["google", GOOGLE_NATIVE_MODEL_IDS],
+    ["anthropic", ANTHROPIC_NATIVE_MODEL_IDS],
+  ] as const)("resolves every reviewed %s row", (provider, rows) => {
+    for (const row of rows) {
+      expect(row.evidence.trim()).not.toBe("");
+      expect(nativeModelIdFor(provider, row.canonicalId)).toBe(row.nativeId);
+    }
   });
 });

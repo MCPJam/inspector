@@ -104,7 +104,12 @@ describe.each(["local", "hosted"] as const)(
         status: "ready",
         protocolVersion: "2025-06-18",
       });
-      expect(check).toHaveBeenCalledWith(expect.anything(), "auto");
+      expect(check).toHaveBeenCalledWith(expect.anything(), "auto", {
+        runTimeoutSeconds: undefined,
+        remainingRunTimeoutMs: undefined,
+        requestStartedAt: expect.any(Number),
+        signal: expect.any(AbortSignal),
+      });
     });
 
     it("uses the authorized target and saved login, ignoring body credentials", async () => {

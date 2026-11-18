@@ -78,6 +78,9 @@ const submitCodeRef = makeFunctionReference<
   { sessionId: string; code: string; state?: string },
   { ok: boolean; reason?: string }
 >("conformanceOAuthRendezvous:submitCode");
+const cancelRef = makeFunctionReference<
+  "mutation", { sessionId: string }, { ok: boolean }
+>("conformanceOAuthRendezvous:cancel");
 const getRef = makeFunctionReference<
   "query",
   { sessionId: string },
@@ -218,6 +221,11 @@ export async function submitRendezvousCode(
   return result.ok ? "accepted" : "gone";
 }
 
+/** Cancellation is delivered to the owning replica through the same row. */
+export async function cancelRendezvous(bearer: string, sessionId: string): Promise<void> {
+  await withDeadline((signal) => userClient(bearer, signal).mutation(cancelRef, { sessionId }));
+}
+
 export type RendezvousOutcome =
   | { phase: "complete"; result: ConformanceResult }
   | { phase: "pending" }
@@ -308,6 +316,7 @@ async function pollForCode(
   signal: AbortSignal,
 ): Promise<void> {
   let failures = 0;
+  let codeDelivered = false;
   while (!signal.aborted) {
     await sleep(
       CONFORMANCE_OAUTH_POLL_INTERVAL_MS +
@@ -330,6 +339,7 @@ async function pollForCode(
         logger.warn("[conformance-oauth] stopped waiting for the code", {
           error: error instanceof Error ? error.message : String(error),
         });
+        session.cancelRunner?.(new Error(OAUTH_RUN_STOPPED_MESSAGE));
         session.controller.fail(new Error(OAUTH_RUN_STOPPED_MESSAGE));
         return;
       }
@@ -340,7 +350,8 @@ async function pollForCode(
     // the in-memory idle sweep from dropping a run that is still waiting.
     touchSession(session.id);
 
-    if (row?.status === "code_submitted" && row.code) {
+    if (row?.status === "code_submitted" && row.code && !codeDelivered) {
+      codeDelivered = true;
       session.controller.deliverCode({
         code: row.code,
         ...(row.state !== undefined ? { state: row.state } : {}),
@@ -354,10 +365,13 @@ async function pollForCode(
           error: error instanceof Error ? error.message : String(error),
         }),
       );
-      return;
+      if (!session.cancelRunner) return;
+      continue;
     }
+    if (codeDelivered && (row?.status === "running" || row?.status === "code_submitted")) continue;
     if (row?.status !== "awaiting_code") {
       // Gone, expired or already settled: no code is coming for this run.
+      session.cancelRunner?.(new Error("Run cancelled"));
       session.controller.fail(new Error(OAUTH_SESSION_EXPIRED_MESSAGE));
       return;
     }

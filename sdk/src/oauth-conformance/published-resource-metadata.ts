@@ -72,5 +72,11 @@ function describesServer(serverUrl: string, resource: string): boolean {
     serverUrl,
     prmResource: resource,
   });
-  return decision.status === "valid" && decision.strictClientCompatible;
+  // A blank `resource` is skipped by the evaluator, which then judges the
+  // server URL itself. Only a decision about the document's own value counts.
+  return (
+    decision.source === "prm" &&
+    decision.status === "valid" &&
+    decision.strictClientCompatible
+  );
 }

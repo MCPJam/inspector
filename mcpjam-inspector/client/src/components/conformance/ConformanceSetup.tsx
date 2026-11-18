@@ -5,7 +5,6 @@
  */
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronLeft } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import type { McpProtocolVersion } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -20,6 +19,7 @@ import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { toast } from "@/lib/toast";
 import { startConnectToast } from "@/lib/connect-toast";
 import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
+import { useConformanceConnectToast } from "@/hooks/use-conformance-connect-toast";
 import { ConformanceProtocolConnection } from "./ConformanceProtocolConnection";
 import type {
   ConformanceConnectOutcome,
@@ -126,6 +126,10 @@ export function ConformanceSetup({
       ? protocolConnection.result.protocolVersion
       : undefined;
   const effectiveVersion = resolvedVersion ?? versionPin;
+  const holdConnectToast = useConformanceConnectToast(
+    serverName,
+    protocolConnection,
+  );
   // Picked from the project's list before this session loaded it: it has no
   // runtime entry until it connects.
   const pickedName =
@@ -214,7 +218,8 @@ export function ConformanceSetup({
     }
     setConnecting((names) => names.filter((other) => other !== name));
     if (outcome === "ready") {
-      progress.connected();
+      // Continue still waits on the protocol check, and so does the toast.
+      holdConnectToast(name, progress);
       return;
     }
     progress.failed(
@@ -296,22 +301,11 @@ export function ConformanceSetup({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-2xl px-8 py-6">
-        <Button
-          variant="link"
-          size="sm"
-          onClick={onCancel}
-          className="h-auto gap-1 px-0 text-sm has-[>svg]:px-0"
-        >
-          <ChevronLeft className="size-3.5" />
-          Conformance
-        </Button>
-
         <ProgressStepper
           steps={STEPS}
           activeIndex={step}
           onStepSelect={setStep}
           ariaLabel="Conformance setup"
-          className="mt-6"
         />
 
         {step === 0 ? (
@@ -404,6 +398,7 @@ export function ConformanceSetup({
         ) : (
           <>
             {protocolNotice}
+            {/* The run timeout lives in the server's Settings, not here. */}
             <h2 className="mt-3 text-2xl font-semibold tracking-[-0.02em]">
               Set what you'd like to test
             </h2>

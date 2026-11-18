@@ -11,6 +11,11 @@
  * built-ins, so it is safe from the browser entry.
  */
 
+import {
+  isMissingInputCheck,
+  missingInputForCheck,
+} from "./conformance-input.js";
+
 /**
  * Why a skipped check produced no verdict. The two are NOT interchangeable:
  *
@@ -22,7 +27,9 @@
  *   - `"could-not-run"` — the requirement DOES apply, but the run could not
  *     exercise it: a missing probe tool, an unreachable prerequisite, an
  *     opt-in the caller did not supply. The obligation is untested, so the
- *     run cannot claim conformance.
+ *     run cannot claim conformance. The one exception is a check that only
+ *     lacks a tool from setup (`isMissingInputCheck`): it is reported as
+ *     needing input but does not hold the verdict back.
  */
 export type ConformanceSkipReason = "not-applicable" | "could-not-run";
 
@@ -59,10 +66,11 @@ export function isInapplicableCheck(check: OutcomeCheckLike): boolean {
 /**
  * The run's verdict, plus the reason when it is `incomplete`.
  *
- * `passed` requires that every SELECTED check actually produced a verdict —
- * either it ran, or it was inapplicable to this server. A check that could not
- * run is neither a violation nor a pass, and collapsing it into "not failed"
- * is what let a two-of-eight run report success.
+ * `passed` requires that every SELECTED check either produced a verdict (it
+ * ran, or it was inapplicable to this server) or only needs a tool from setup,
+ * and that at least one check produced a verdict. A check that could not run
+ * is neither a violation nor a pass, and collapsing it into "not failed" is
+ * what let a two-of-eight run report success.
  */
 export function decideConformanceOutcome(checks: OutcomeCheckLike[]): {
   outcome: ConformanceRunOutcome;
@@ -71,15 +79,33 @@ export function decideConformanceOutcome(checks: OutcomeCheckLike[]): {
   if (checks.some((check) => check.status === "failed")) {
     return { outcome: "failed" };
   }
-  const unrun = checks.filter(isUnrunCheck);
+  // A check that only lacks a tool from setup is the caller's gap, not the
+  // server's: it shows as "Not run", costs no points, and does not hold the
+  // verdict back. The score and the UI still report it as needing input.
+  // A login is different: without it the server was never reached, so it
+  // costs no points but still keeps the run from passing.
+  const unrun = checks.filter(
+    (check) =>
+      isUnrunCheck(check) &&
+      (!isMissingInputCheck(check) || missingInputForCheck(check) === "login"),
+  );
   if (unrun.length === 0) {
-    return checks.length === 0
-      ? {
-          outcome: "incomplete",
-          incompleteReason:
-            "no checks were selected, so this run establishes nothing",
-        }
-      : { outcome: "passed" };
+    if (checks.length === 0) {
+      return {
+        outcome: "incomplete",
+        incompleteReason:
+          "no checks were selected, so this run establishes nothing",
+      };
+    }
+    // Setup gaps alone don't block a verdict, but they can't make one either.
+    if (checks.every(isMissingInputCheck)) {
+      return {
+        outcome: "incomplete",
+        incompleteReason:
+          "every selected check needs input from setup, so this run establishes nothing",
+      };
+    }
+    return { outcome: "passed" };
   }
   const reasons = Array.from(
     new Set(unrun.map((check) => check.error?.message ?? "reason unavailable")),

@@ -597,3 +597,103 @@ describe("the mcp-tasks profile", () => {
     });
   });
 });
+
+describe("per-check task subjects", () => {
+  it("uses different tools and arguments without mixing task observations", async () => {
+    const fixture = await serve(quickPhases(), {
+      tools: {
+        success: taskTool(quickPhases()),
+        failure: taskTool(failedTaskPhases()),
+      },
+    });
+    const result = await run(
+      fixture,
+      ["tasks-inline-result", "tasks-status-payload-shape"],
+      {
+        toolName: "success",
+        toolArguments: { duration: 1 },
+        checkOverrides: {
+          "tasks-status-payload-shape": {
+            toolName: "failure",
+            toolArguments: { reason: "test" },
+          },
+        },
+      }
+    );
+    expect(result.checks.every((check) => check.status === "passed")).toBe(
+      true
+    );
+    const completed = check(result, "tasks-inline-result");
+    const failed = check(result, "tasks-status-payload-shape");
+    expect(completed.details?.toolName).toBe("success");
+    expect(failed.details?.toolName).toBe("failure");
+    expect(failed.details?.observedStatuses).toContain("failed");
+    expect(completed.details?.taskId).not.toBe(failed.details?.taskId);
+    expect(
+      fixture.received
+        .filter((r) => r.method === "tools/call")
+        .map((r) => r.params?.arguments)
+    ).toEqual([{ duration: 1 }, { reason: "test" }]);
+    expect(result.discovery.probedTool).toBeUndefined();
+  });
+  it("reuses a task for compatible reads and cancels a separate task before polling it", async () => {
+    const fixture = await serve(quickPhases());
+    const result = await run(fixture, [
+      "tasks-inline-result",
+      "tasks-ttl-shape",
+      "tasks-cancel-ack-shape",
+    ]);
+    const read = check(result, "tasks-inline-result").details?.taskId;
+    const cancel = check(result, "tasks-cancel-ack-shape").details?.taskId;
+    expect(check(result, "tasks-ttl-shape").details?.taskId).toBe(read);
+    expect(cancel).not.toBe(read);
+    expect(fixture.tasks()).toHaveLength(2);
+    expect(
+      fixture.received
+        .filter((r) => r.params?.taskId === cancel)
+        .map((r) => r.method)
+    ).toEqual(["tasks/cancel"]);
+  });
+  it("makes no tool calls for task-free checks, even with a suite default", async () => {
+    const fixture = await serve(quickPhases());
+    await run(fixture, [
+      "tasks-wire-resolvable",
+      "tasks-declaration-hygiene",
+      "tasks-invalid-task-id-rejected",
+    ]);
+    expect(
+      fixture.received.filter((r) => r.method === "tools/call")
+    ).toHaveLength(0);
+  });
+  it("sends update answers only to its own task and keeps the observed task independent", async () => {
+    const fixture = await serve(quickPhases(), {
+      tools: {
+        success: taskTool(quickPhases()),
+        input: taskTool(defaultTaskPhases()),
+      },
+    });
+    const result = await run(
+      fixture,
+      ["tasks-inline-result", "tasks-update-ack-shape"],
+      {
+        toolName: "success",
+        inputResponses: {
+          [DEFAULT_INPUT_REQUEST_KEY]: {
+            result: { action: "accept", content: { name: "Ada" } },
+          },
+        },
+        checkOverrides: { "tasks-update-ack-shape": { toolName: "input" } },
+      }
+    );
+    expect(result.checks.every((check) => check.status === "passed")).toBe(
+      true
+    );
+    const id = check(result, "tasks-update-ack-shape").details?.taskId;
+    expect(
+      fixture.received
+        .filter((r) => r.method === "tasks/update")
+        .map((r) => r.params?.taskId)
+    ).toEqual([id]);
+    expect(check(result, "tasks-inline-result").details?.taskId).not.toBe(id);
+  });
+});

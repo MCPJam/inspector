@@ -61,6 +61,7 @@ import { PREDICATES_VERSION } from "../contract/types.js";
 import { deriveIterationStageMetadata } from "../eval-result-mapping.js";
 import { readSdkVersion } from "../sdk-version.js";
 import { redactTelemetryString } from "../telemetry-redaction.js";
+import { startSdkRunTelemetry } from "../telemetry.js";
 import {
   SuiteFileRunError,
   refusal,
@@ -165,12 +166,31 @@ export function createSuiteFileRunner(runtime: SuiteFileRunnerRuntime = {}): {
  * cases ran, for a report that fails its own contract (`REPORT_INVALID`).
  * Returns evidence for everything else after execution began, including an
  * interrupted run (with an explicit `termination`). Never uploads anything.
+ * Sends one anonymous `sdk_run_completed` per call, except for the CLI, which
+ * counts `mcpjam test` itself.
  */
-export function runSuiteFile(
+export async function runSuiteFile(
   sourceText: string,
   options: RunSuiteFileOptions
 ): Promise<SuiteFileRunResult> {
-  return executeSuiteFile(sourceText, options, {});
+  const telemetry =
+    options.surface === "cli" ? undefined : startSdkRunTelemetry("suite_file");
+  try {
+    const result = await executeSuiteFile(sourceText, options, {});
+    void telemetry?.finish(
+      result.termination === "aborted"
+        ? "aborted"
+        : result.passed
+          ? "passed"
+          : "failed"
+    );
+    return result;
+  } catch (error) {
+    const cancelled =
+      error instanceof SuiteFileRunError && error.code === "CANCELLED";
+    void telemetry?.finish(cancelled ? "aborted" : "errored");
+    throw error;
+  }
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -305,7 +325,6 @@ async function executeSuiteFile(
   let executed: Awaited<ReturnType<typeof executeCases>> | undefined;
   let failure: unknown;
   let snapshot: ToolPolicySnapshot | undefined;
-  let toolServers: ReadonlyMap<string, string> = new Map();
   try {
     // ── 4. credentials, then connect and discover ────────────────────────────
     progress({ type: "setup", stage: "credentials" });
@@ -461,7 +480,7 @@ async function executeSuiteFile(
     }
     const frozenTools = Object.freeze({ ...merged }) as ToolSet;
     const toolNames = Object.keys(frozenTools);
-    toolServers = new Map(ownerOf);
+    const toolServers: ReadonlyMap<string, string> = new Map(ownerOf);
 
     if (plan.toolPolicy) {
       try {
@@ -895,7 +914,10 @@ async function executeCase(args: {
   const baseFactory = args.runtime.createLanguageModel ?? createModelFromString;
   const connection = args.credentials.mcpjam;
   const root = new HostRunner({
-    ...(plan.host ? { host: plan.host.json } : {}),
+    // A template that leaves Progressive tools unset means Auto by it.
+    ...(plan.host
+      ? { host: plan.host.json, progressiveToolDiscoveryWhenUnset: "auto" }
+      : {}),
     model: model.effectiveModel,
     tools: args.tools,
     apiKey:

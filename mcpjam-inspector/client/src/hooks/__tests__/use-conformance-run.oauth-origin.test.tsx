@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   startOAuthConformance: vi.fn(),
   submitOAuthConformanceCode: vi.fn(),
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: vi.fn(),
   runAppsConformance: vi.fn(),
   runTasksConformance: vi.fn(),
@@ -102,6 +103,9 @@ describe("useConformanceRun OAuth callback listener", () => {
     await waitFor(() =>
       expect(api.submitOAuthConformanceCode).toHaveBeenCalledWith(
         expect.objectContaining({ code: "injected-code" }),
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
+        }),
       ),
     );
   });

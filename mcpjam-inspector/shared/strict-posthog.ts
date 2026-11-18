@@ -1,11 +1,39 @@
 import { version } from "../package.json";
 import { POSTHOG_PROJECT_KEY } from "./posthog-project";
+import {
+  EXTENSION_OPERATION_ERROR_CODES,
+  EXTENSION_OPERATION_PROPERTIES,
+} from "./extension-operation-event";
 
 export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
 type Rule = readonly string[] | "count" | "boolean";
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
+  extension_launch_completed: {
+    location: ["host_workspace"],
+    launch_kind: ["thread", "global", "file", "quick-action", "settings"],
+    host_profile: ["chatgpt", "codex"],
+    outcome: ["success", "failure"],
+    failure_stage: ["none", "execution", "rendering", "timeout", "unknown"],
+    deployment: ["hosted", "self_hosted"],
+    source: ["client"],
+  },
+  extension_operation_completed: {
+    ...EXTENSION_OPERATION_PROPERTIES,
+    error_code: EXTENSION_OPERATION_ERROR_CODES,
+  },
+  // Sent at startup, often before the content grant arrives, so most launches
+  // reach the relay as strict. Without this entry every one of them is dropped.
+  app_launched: {
+    location: ["app"],
+    is_authenticated: "boolean",
+    platform: ["web", "npm", "docker", "mac", "win", "electron"],
+    deployment: ["hosted", "self_hosted"],
+    // Measures how long the content grant takes, to tune the launch timeout.
+    launch_trigger: ["immediate", "grant", "timeout", "hidden"],
+    policy_wait_ms: "count",
+  },
   send_message: {
     location: ["chat_tab", "ui_playground"],
     multi_model_enabled: "boolean",
@@ -23,9 +51,24 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     num_models: "count",
     replay: "boolean",
   },
+  conformance_run_triggered: {
+    location: [
+      "conformance_tab",
+      "score_runner",
+      "compat_page",
+      "compat_detail_modal",
+    ],
+    run_source: ["ui"],
+  },
   $pageview: {},
   $pageleave: {},
 };
+
+/** Feature-health outcomes: every listed property must be present and valid. */
+const OUTCOME_EVENTS: ReadonlySet<string> = new Set([
+  "extension_launch_completed",
+  "extension_operation_completed",
+]);
 
 export function telemetryRouteTemplate(value: unknown): string {
   if (typeof value !== "string") return "/:path";
@@ -51,6 +94,13 @@ export function rebuildStrictPostHogEvent(
     typeof event.properties === "object" && event.properties !== null
       ? (event.properties as Record<string, unknown>)
       : {};
+  // An incomplete outcome would count as a successful attempt in the monitor.
+  if (OUTCOME_EVENTS.has(event.event) &&
+      Object.entries(CATALOG[event.event]).some(([key, rule]) => {
+        const candidate = source[key];
+        return typeof rule !== "string" &&
+          (typeof candidate !== "string" || !rule.includes(candidate));
+      })) return null;
   const properties: Record<string, unknown> = {
     token: POSTHOG_PROJECT_KEY,
     app_version: version,

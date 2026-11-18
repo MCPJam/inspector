@@ -30,6 +30,8 @@ colors:
   chrome-control-border: "oklch(0.856 0.0218 85.9495)"
   chrome-hover: "oklch(0.8957 0.0187 86.151)"
   chrome-control-hover: "oklch(0.83 0.0235 80.6762)"
+  chrome-button: "oklch(0.9818 0.0054 95.0986)"
+  chrome-button-hover: "oklch(0.9468 0.0102 92.3)"
   divider: "oklch(0.8829 0.0171 88.0071)"
   input: "oklch(0.7621 0.0156 98.3528)"
   ring: "oklch(0.6171 0.1375 39.0427)"
@@ -96,6 +98,8 @@ colors:
   chrome-control-border-dark: "oklch(0.3618 0.0101 106.8928)"
   chrome-hover-dark: "oklch(0.213 0.0078 95.4245)"
   chrome-control-hover-dark: "oklch(0.3951 0.0106 106.8928)"
+  chrome-button-dark: "oklch(0.2679 0.0036 106.6427)"
+  chrome-button-hover-dark: "oklch(0.3085 0.0035 106.6039)"
   divider-dark: "oklch(0.3618 0.0101 106.8928)"
   input-dark: "oklch(0.4336 0.0113 100.2195)"
   ring-dark: "oklch(0.6724 0.1308 38.7559)"
@@ -315,6 +319,15 @@ unreadable.
 hub, sandbox proxy iframe, view iframe). They are role-based names for that one
 drawing. Do not reuse them as a general accent palette.
 
+**Directory portal copies are scoped.** The Readiness page copies a directory's
+submission portal one to one, so inside `.portal-claude` and `.portal-openai`
+(`mcpjam-inspector/client/src/components/readiness/portal-theme.css`) the role
+tokens take that portal's colours, in light and dark. Components there still use
+role tokens; only the values change. The scope overrides the surface, text,
+border and ring roles and leaves the status roles alone, so MCPJam's additions on
+those screens (the rehearsal bar, results marked "MCPJam") keep MCPJam's status
+colours. Do not apply the scope anywhere else.
+
 **Two syntax palettes, and they are not interchangeable.** The `json-*` tokens
 belong to the JSON viewer alone. The `code-*` tokens serve multi-language code —
 docs code blocks (via Mintlify's Shiki `css-variables` theme), terminal and log
@@ -359,6 +372,12 @@ divider between them, and the content panel sits inset within that frame, its
 rounded top edge doing the separating. See
 `mcpjam-inspector/client/src/components/app-chrome-panel.tsx` and `mcp-sidebar.tsx`.
 
+Top-bar buttons (Onboard, Ask MCPJam, Sign in, Star) use the `chrome` Button
+variant: a paper `chrome-button` fill with the `chrome-control-border` hairline,
+so the server selector is the only beige `chrome-control` fill in the bar. Their
+icons opt into a short hover tip with `data-chrome-icon`, skipped under
+`prefers-reduced-motion`.
+
 In the docs, tables use bottom-hairline rows with no header tint and generous
 padding; callouts are editorial left-rail marks, never soft-filled boxes.
 
@@ -402,6 +421,10 @@ Conventions: `cn()` merges class names, `class-variance-authority` defines varia
 its `className` prop or by adding a cva variant to the primitive itself — not by
 restyling it at the call site.
 
+Tab sets open on their first visible tab. Do not seed the active tab from the
+current selection or from which tab holds it; a caller may open a specific tab
+only for an explicit deep link (a "Settings" action that opens the Settings tab).
+
 Docs equivalents follow the product: buttons match the app's Add Server button,
 tables are bottom-hairline only, callouts are left-rail editorial marks.
 
@@ -422,10 +445,12 @@ tables are bottom-hairline only, callouts are left-rail editorial marks.
 
 - Don't write a literal hex or `oklch()` value into a component, a stylesheet, or
   this file's prose. Role values belong in `design-system/src/tokens.css`, so
-  there is one place to change. The one exception is a package-local accent
+  there is one place to change. The exceptions are a package-local accent
   palette deliberately outside the role system — chat-ui's
-  `--trace-waterfall-*` — and adding another is a decision to make on purpose:
-  it won't track the theme, and nothing will check it.
+  `--trace-waterfall-*` — and the directory portal copies (`.portal-claude`,
+  `.portal-openai`), which hold a portal's own colours. Adding another is a
+  decision to make on purpose: it won't track the theme, and nothing will
+  check it.
 - Don't hand-edit generated regions: this file's front matter, the fenced blocks in
   `docs/style.css` and `chat-ui/src/styles.css`, or the derived color fields in
   `docs/docs.json`. CI fails on drift; run the sync script.

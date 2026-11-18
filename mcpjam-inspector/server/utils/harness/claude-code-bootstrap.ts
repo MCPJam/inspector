@@ -8,6 +8,7 @@ import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { patchClaudeCodeBackgroundDrain } from "./claude-code-background-drain.js";
 import { patchClaudeCodeSubagentSteps } from "./claude-code-subagent-steps.js";
 import { patchClaudeCodeElicitation } from "./claude-code-elicitation.js";
+import { patchClaudeCodeBootstrapLock } from "./claude-code-lockfile.js";
 
 export function createClaudeCodeHarness(
   settings?: Parameters<typeof createClaudeCode>[0],
@@ -23,9 +24,8 @@ export function createClaudeCodeHarness(
  * Groups B and C survive on the `@ai-sdk/harness-claude-code@1.0.x` stable
  * line; Group D (background drain) lives in `claude-code-background-drain.ts`
  * and Group E (a subagent's steps) in `claude-code-subagent-steps.ts`.
- * A third — injecting `parent_tool_use_id: null` into the outbound user message
- * — was RETIRED at the stable bump: the adapter's own `toUserMessage` now sets
- * it, and re-applying ours would have written the key twice.
+ * Do not inject `parent_tool_use_id: null` into the outbound user message:
+ * `toUserMessage` already sets it, and a second write would duplicate the key.
  *
  * Every needle below is quoted from the vendored `dist/bridge/index.mjs` and
  * must match VERBATIM. A miss throws rather than silently shipping an
@@ -75,22 +75,31 @@ const CLAUDE_CODE_BRIDGE_STREAM_EVENT_PATCH = `    if (type === "stream_event") 
       }
       handleStreamEvent({`;
 
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `      for (const block of msg.message.content) {
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
-const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `      for (const block of msg.message.content) {
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_NEEDLE = `    if (type === "assistant" && Array.isArray(messageContent)) {
+      const usage = toUsageRecord(msg.message?.usage);`;
+const CLAUDE_CODE_BRIDGE_ASSISTANT_TEXT_PATCH = `    if (type === "assistant" && Array.isArray(messageContent)) {
+      const usage = toUsageRecord(msg.message?.usage);
+      for (const block of messageContent) {
         if (block.type === "text" && typeof block.text === "string") {
           emitAssistantTextFallback(block.text);
-          continue;
         }
-        if (block.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {`;
+      }`
 
 /** `createEmitStreamEvent` has no `result` branch of its own, so this adds one.
  *  It is anchored AFTER the `parent_tool_use_id` sub-agent guard so a subagent's
  *  terminal result never leaks into the parent transcript. */
 const CLAUDE_CODE_BRIDGE_RESULT_TEXT_NEEDLE = `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }`;
 const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != null) {
+      emit({
+        type: "raw",
+        rawValue: msg
+      });
       return;
     }
     if (type === "result" && msg.subtype === "success") {
@@ -108,10 +117,11 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *  provider-qualified Gateway id verbatim (`anthropic/claude-fable-5`) — so the
  *  model on the wire is the model that was asked for, never the CLI default.
  *
- *  On the NATIVE profile (a turn on the organization's own Anthropic key)
- *  there is no Gateway, so the overrides are switched off by the turn's
- *  `MCPJAM_HARNESS_UPSTREAM_PROFILE=anthropic-native` env and the CLI's native
- *  ids go on the wire as they are (pinned to the leased model by the turn).
+ *  On an organization profile (`anthropic-native` on its own Anthropic key,
+ *  `org-gateway` on its gateway) there is no Gateway, so any
+ *  `MCPJAM_HARNESS_UPSTREAM_PROFILE` other than `gateway` switches the
+ *  overrides off and the CLI's ids go on the wire as they are (pinned to the
+ *  leased model by the turn).
  *  The turn's `env` reaches the bridge on its `start` message (`start.env`),
  *  NOT as the bridge process's own environment, so that is where it is read.
  *
@@ -119,11 +129,12 @@ const CLAUDE_CODE_BRIDGE_RESULT_TEXT_PATCH = `    if (msg.parent_tool_use_id != 
  *  GONE from the patch: stable exposes a first-class `env` option on
  *  `createClaudeCode`, so it is passed as configuration instead (see
  *  `createHarness` below). */
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
-const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `var HOST_TOOL_PREFIX = "mcp__harness-tools__";
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_NEEDLE = `const HOST_TOOL_PREFIX = "mcp__harness-tools__";`;
+const CLAUDE_CODE_BRIDGE_MODEL_OVERRIDES_PATCH = `const HOST_TOOL_PREFIX = "mcp__harness-tools__";
 function gatewayModelOverrideSettingsFor(model, env) {
   if (typeof model !== "string") return undefined;
-  if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
+  const profile = env?.MCPJAM_HARNESS_UPSTREAM_PROFILE;
+  if (profile && profile !== "gateway") return undefined;
   let overrides;
   if (model === "haiku") {
     const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
@@ -239,7 +250,8 @@ const MODERN_CLAUDE_CODE_BRIDGE_USER_MESSAGE_PATCH = `  const toUserMessage = (t
 const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_NEEDLE = `  const q = claudeSdk.query({`;
 const MODERN_CLAUDE_CODE_BRIDGE_MODEL_HELPER_PATCH = `  function gatewayModelOverrideSettingsFor(model, env) {
     if (typeof model !== "string") return undefined;
-    if (env?.MCPJAM_HARNESS_UPSTREAM_PROFILE === "anthropic-native") return undefined;
+    const profile = env?.MCPJAM_HARNESS_UPSTREAM_PROFILE;
+    if (profile && profile !== "gateway") return undefined;
     let overrides;
     if (model === "haiku") {
       const native = env?.ANTHROPIC_DEFAULT_HAIKU_MODEL ?? "claude-haiku-4-5";
@@ -332,12 +344,17 @@ function enforceStrictMcpConfig(content: string): string {
   return content.replace(needle, replacement);
 }
 
+/** 1.0.162's bundled bridge uses tabs; every needle below is 2-space. */
+function detabBridgeSource(content: string): string {
+  return content.replaceAll("\t", "  ");
+}
+
 function patchClaudeCodeBridgeContent(content: string): string {
-  let patched = content;
+  let patched = detabBridgeSource(content);
 
   // Route the CANARY line to its own anchor set. Despite the name, the
   // `MODERN_*` group below is the canary one: the stable-line anchors are the
-  // `CLAUDE_CODE_BRIDGE_*` group above, and those are what 1.0.100 matches.
+  // `CLAUDE_CODE_BRIDGE_*` group above, and those are what 1.0.162 matches.
   //
   // The discriminator is the stream-event call shape — canary passes its
   // arguments positionally, stable passes a single object. `mcpToolUseIds` and
@@ -538,7 +555,9 @@ export function patchClaudeCodeHarnessBootstrap(
                     patchClaudeCodeElicitation(patchClaudeCodeBridgeContent(file.content)),
                   ),
                 }
-              : file,
+              : file.path.endsWith("/pnpm-lock.yaml")
+                ? { ...file, content: patchClaudeCodeBootstrapLock(file.content) }
+                : file,
           ),
           {
             path: `${bootstrap.bootstrapDir}/.npmrc`,

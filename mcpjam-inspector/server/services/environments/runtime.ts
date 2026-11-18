@@ -29,7 +29,9 @@ import { HOSTED_MODE } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import type { EnvironmentOverrides } from "../../../shared/execution-target.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
+import { logger } from "../../utils/logger.js";
 import { canColocatePluginStdio } from "../plugins/computer-stdio.js";
+import { ORG_KEY_MISSING_MESSAGE } from "../../../shared/org-key-surfaces.js";
 import { markOnboardingPhase } from "../plugin-host/onboarding-trace.js";
 
 /** Where a connectable server in the resolved set came from. */
@@ -59,10 +61,10 @@ export interface ResolvedEnvironmentSkill {
    * writer.
    *
    * OPAQUE on purpose. Re-declaring its fields here would make this the FOURTH
-   * hand mirror of a shape whose three existing mirrors all drifted — and the
-   * only thing this side does with it is echo it back onto the turn trace.
-   * Typing it as a record is what keeps that honest: nothing here can read a
-   * field, so nothing here can start depending on one.
+   * hand mirror of a shape whose three existing mirrors all drifted — and this
+   * side only echoes it back onto the turn trace, apart from the skills
+   * preview, which shows its revision number when it carries one. Typing it as
+   * a record keeps that honest: a reader has to check every field it uses.
    *
    * Optional for deploy skew: an older backend omits it, and a turn then
    * records no provenance rather than a partial one.
@@ -141,6 +143,19 @@ export interface ResolvedEnvironmentRuntime {
     }>;
   };
   skills?: ResolvedEnvironmentSkill[];
+  /**
+   * Skills a scope (such as "all shared Library skills") covered that the
+   * backend left out of `skills`: over the scope's cap, or under a name
+   * another entry already takes. The list has a cap of its own, so it can be
+   * shorter than what was left out. Absent when no scope applies.
+   */
+  skillScopeExclusions?: Array<{
+    skillId: string;
+    name: string;
+    description: string;
+    /** `over-cap` or `name-collision`; a turn plan skips any other value. */
+    reason: string;
+  }>;
   /** Captured MCP-server skills selected by the environment. */
   serverSkills?: Array<{
     serverSkillId: string;
@@ -206,6 +221,25 @@ export function translateEnvironmentRuntimeError(
   const structuredMessage =
     typeof data?.message === "string" ? data.message : undefined;
 
+  if (code === "HOST_UNRESOLVED") {
+    return new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      structuredMessage ??
+        "Client not found. Select another client and try again.",
+      {
+        reason: "HOST_UNRESOLVED",
+        ...(data?.details?.hostId ? { hostId: data.details.hostId } : {}),
+      },
+    );
+  }
+  if (code === "cursor_key_missing") {
+    // Turn preparation refuses a harness whose org key isn't ready before the
+    // turn's own key check runs: the member reads the same refusal either way.
+    return new WebRouteError(409, ErrorCode.CONFLICT, ORG_KEY_MISSING_MESSAGE, {
+      reason: "EXTERNAL_ACCOUNT_CREDENTIAL_UNAVAILABLE",
+    });
+  }
   if (code && code.startsWith("ENV_")) {
     if (RUNTIME_NOT_FOUND_CODES.has(code)) {
       return new WebRouteError(
@@ -294,12 +328,14 @@ export function resolveRuntimeVenue(): RuntimeVenue | undefined {
  * connectable names, server provenance) are deliberately NOT checked — those are
  * the deploy-skew surface.
  */
-function assertRuntimeInvariants(raw: unknown): ResolvedEnvironmentRuntime {
+export function assertRuntimeInvariants(
+  raw: unknown,
+): ResolvedEnvironmentRuntime {
   const fail = (detail: string): never => {
     throw new WebRouteError(
       502,
       ErrorCode.INTERNAL_ERROR,
-      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`
+      `This environment resolved to an unusable runtime specification (${detail}). The turn was stopped rather than run with an unknown configuration.`,
     );
   };
   if (!isRecord(raw)) return fail("empty response");
@@ -369,13 +405,19 @@ export async function resolveEnvironmentForRuntime(
     environmentId: string;
     overrides?: EnvironmentOverrides;
     serverSelectionSource?: "client-default";
+    /**
+     * A Playground client's turn: the backend adds the client's selection,
+     * all visible by default, to the spec's skills, and echoes the scope. It
+     * applies only to an ad-hoc row whose client selects all visible skills,
+     * so a named environment resolves exactly as it would without it.
+     */
+    skillScope?: "visible";
   }
 ): Promise<ResolvedEnvironmentRuntime> {
   const serverOverrideIds = args.overrides?.serverIds;
   const runtimeVenue = resolveRuntimeVenue();
-  let raw: unknown;
-  try {
-    raw = await convexClient.query(
+  const query = (skillScope: "visible" | undefined) =>
+    convexClient.query(
       RUNTIME_FUNCTION_REF as any,
       {
         projectId: args.projectId,
@@ -385,8 +427,26 @@ export async function resolveEnvironmentForRuntime(
           : {}),
         ...(serverOverrideIds !== undefined ? { serverOverrideIds } : {}),
         ...(runtimeVenue !== undefined ? { runtimeVenue } : {}),
+        ...(skillScope ? { skillScope } : {}),
       } as any
     );
+  const skillScope =
+    args.skillScope && Date.now() >= skillScopeRefusedUntil
+      ? args.skillScope
+      : undefined;
+  let raw: unknown;
+  try {
+    raw = await query(skillScope).catch((error: unknown) => {
+      // DEPLOY SKEW: a backend that predates the scope refuses the argument
+      // instead of ignoring it. The turn then resolves the environment as
+      // that backend always did, with the client's own selection only.
+      if (!skillScope || !SKILL_SCOPE_REFUSED.test(String(error))) throw error;
+      skillScopeRefusedUntil = Date.now() + SKILL_SCOPE_RETRY_MS;
+      logger.warn(
+        "[environments] Backend does not accept skillScope yet; client turns get the client's own skill selection until it deploys.",
+      );
+      return query(undefined);
+    });
   } catch (error) {
     throw translateEnvironmentRuntimeError(error);
   }
@@ -394,6 +454,11 @@ export async function resolveEnvironmentForRuntime(
   markOnboardingPhase("admission");
   return spec;
 }
+
+const SKILL_SCOPE_REFUSED = /extra field [`'"]?skillScope(?:[`'"]|\b)/i;
+/** How long a refusal stops this process from sending the scope. */
+const SKILL_SCOPE_RETRY_MS = 10 * 60_000;
+let skillScopeRefusedUntil = 0;
 
 // ── Projections used by the executing caller ────────────────────────────────
 //
@@ -456,97 +521,6 @@ export function runtimeSkills(
       ? { extraFrontmatter: skill.extraFrontmatter as never }
       : {}),
   }));
-}
-
-/**
- * What this turn should RECORD about the configuration it ran with.
- *
- * Deliberately NOT part of `runtimeSkills` and not in the effective-capability
- * set: skill DELIVERY stays byte-identical, and provenance is a separate
- * outbound field on the turn trace. A recording change that also changed what
- * reaches the model would be impossible to review.
- *
- * Call this AFTER any narrowing (plugin overrides filter `spec.skills`), so the
- * record reflects what actually ran rather than what the environment would
- * resolve on its own.
- *
- * DELIVERY DECIDES WHAT IS RECORDED. `skillsAtTurn` asserts "this turn ran with
- * exactly these", so it must describe what the model RECEIVED, not what the
- * environment resolved — the two differ per channel, and recording the resolved
- * set would make the trace claim a skill the model never saw:
- *
- *   - `emulated` — every channel is delivered. `getEffectiveSkillToolsAndPrompt`
- *     mints a tool per entry of `allEffectiveSkills`, captures included and
- *     addressed by their namespaced `ref`. Record everything.
- *   - `harness` — only `runtimeSkills(spec)` reaches the adapter, and that is
- *     `spec.skills` alone. Captured MCP-server skills are NOT delivered: their
- *     runtime address is `<serverSlug>/<name>`, and `isValidSkillName` rejects
- *     a name containing `/`, so an adapter would skip every one as
- *     `invalid-skill-name`. Record authored + plugin only.
- *   - `unsupported` — the resolved harness has no skill channel at all (Codex
- *     today). Nothing is delivered, so record an empty list.
- *
- * Wiring captures into the harness channel is a DELIVERY change blocked on that
- * addressing question — see the P2 skill-delivery work. Until it lands, the
- * honest record is the narrower one.
- *
- * `undefined` when there is no environment — a plain Playground chat has
- * nothing to record. An empty `skillsAtTurn` when nothing was delivered,
- * because "ran with none" is a real answer and a different one from "unknown".
- * Entries whose `provenance` the backend did not supply are skipped: on an
- * older deployment that yields an empty array, which is honest about what this
- * side can prove.
- */
-export function turnSkillProvenance(
-  spec:
-    | Pick<
-        ResolvedEnvironmentRuntime,
-        "environmentRef" | "skills" | "serverSkills"
-      >
-    | null
-    | undefined,
-  options: { delivery: EnvironmentSkillDelivery }
-): TurnSkillProvenance | undefined {
-  const ref = spec?.environmentRef;
-  if (
-    !ref ||
-    typeof ref.environmentId !== "string" ||
-    typeof ref.name !== "string" ||
-    // An EMPTY name is rejected, not tolerated. `readScenarioEnvironment`
-    // normalizes a missing `environmentRef.name` to `""`, and recording that
-    // would put a blank `mcpjam.environment.name` into an exported trace —
-    // which reads as a real environment called nothing, rather than as absent
-    // provenance. Costs nothing in practice: a payload old enough to omit the
-    // name is old enough that its skills carry no `provenance` rows either, so
-    // `skillsAtTurn` would have been empty anyway.
-    ref.name.length === 0 ||
-    typeof ref.revision !== "number"
-  ) {
-    return undefined;
-  }
-  const isProvenanceRow = (
-    provenance: unknown
-  ): provenance is Record<string, unknown> =>
-    !!provenance && typeof provenance === "object" && !Array.isArray(provenance);
-  return {
-    environmentAtTurn: {
-      environmentId: ref.environmentId,
-      name: ref.name,
-      revision: ref.revision,
-    },
-    // Exactly the channels this delivery mode hands to the model — see the
-    // header. Captures are appended after authored entries, the order the
-    // backend's own run snapshots pin them in.
-    skillsAtTurn:
-      options.delivery === "unsupported"
-        ? []
-        : [
-            ...(spec?.skills ?? []).map((skill) => skill.provenance),
-            ...(options.delivery === "emulated"
-              ? (spec?.serverSkills ?? []).map((skill) => skill.provenance)
-              : []),
-          ].filter(isProvenanceRow),
-  };
 }
 
 // ── Browser preview projection ──────────────────────────────────────────────
@@ -617,6 +591,12 @@ function readBoolean(
   return typeof value === "boolean" ? value : null;
 }
 
+/** The agent loop and harness a resolved client config names (`turnRuntime`). */
+export function runtimeSelectors(config: Record<string, unknown>) {
+  const agentLoop = readString(config, "agentLoop");
+  return { agentLoop, harness: readString(config, "harness") };
+}
+
 /**
  * Narrow, read-only projection for the browser.
  *
@@ -630,10 +610,13 @@ function readBoolean(
  * sizes, and the signed `url`s most of all), the host's `computer` block,
  * `mcpProfile` (carries the enterprise auth policy), `harness` broker/proxy
  * settings, and anything under `runtimeConfig` not listed below.
+ *
+ * The caller passes `skillDelivery`, decided for the engine the turn's skill
+ * plan runs on (`turnRuntime`), so this preview and the turn agree on it.
  */
 export function toEnvironmentPreview(
   spec: ResolvedEnvironmentRuntime,
-  options: { harnessSupportsSkills: (harnessId: string) => boolean }
+  { skillDelivery }: { skillDelivery: EnvironmentSkillDelivery },
 ): EnvironmentPreview {
   const runtimeConfig = spec.host.runtimeConfig;
   const harness = readString(runtimeConfig, "harness");
@@ -644,11 +627,6 @@ export function toEnvironmentPreview(
     : [];
   const skills = spec.skills ?? [];
   const capturedServerSkills = spec.serverSkills ?? [];
-  const skillDelivery: EnvironmentSkillDelivery = !harness
-    ? "emulated"
-    : options.harnessSupportsSkills(harness)
-    ? "harness"
-    : "unsupported";
 
   const connectable = Array.isArray(spec.servers.connectable)
     ? spec.servers.connectable

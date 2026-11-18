@@ -1,6 +1,13 @@
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OAuthAuthorizationModal } from "../OAuthAuthorizationModal";
+
+const hint = vi.hoisted(() => ({
+  showOAuthCallbackHint: vi.fn(),
+  dismissOAuthCallbackHint: vi.fn(),
+}));
+vi.mock("@/lib/oauth/callback-hint", () => hint);
 
 describe("OAuthAuthorizationModal", () => {
   const openExternal = vi.fn();
@@ -110,5 +117,63 @@ describe("OAuthAuthorizationModal", () => {
     });
 
     consoleErrorSpy.mockRestore();
+  });
+});
+
+describe("OAuthAuthorizationModal callback hint", () => {
+  let popup: { closed: boolean };
+
+  function Harness() {
+    const [open, setOpen] = useState(true);
+    return (
+      <OAuthAuthorizationModal
+        open={open}
+        onOpenChange={setOpen}
+        authorizationUrl="https://auth.example.com/authorize"
+      />
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    window.isElectron = false;
+    popup = { closed: false };
+    vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the hint when the popup closes with no code back", () => {
+    render(<Harness />);
+
+    popup.closed = true;
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(hint.showOAuthCallbackHint).toHaveBeenCalledWith("try again");
+  });
+
+  it("stays quiet when the code came back before the popup closed", () => {
+    render(<Harness />);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: { type: "OAUTH_CALLBACK", code: "code" },
+        }),
+      );
+    });
+    popup.closed = true;
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(hint.showOAuthCallbackHint).not.toHaveBeenCalled();
   });
 });

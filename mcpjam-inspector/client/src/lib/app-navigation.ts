@@ -53,6 +53,7 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "sharing",
   "audit-log",
   "data-management",
+  "security",
   "api-keys",
   "plans",
   "integrations",
@@ -79,6 +80,7 @@ export function parseOrganizationSection(
     segment === "sharing" ||
     segment === "audit-log" ||
     segment === "data-management" ||
+    segment === "security" ||
     segment === "integrations"
   )
     return segment;
@@ -115,6 +117,7 @@ export const routePaths = {
   resources: "/resources",
   prompts: "/prompts",
   tasks: "/tasks",
+  events: "/events",
   auth: "/auth",
   skills: "/skills",
   learning: "/learning",
@@ -124,6 +127,7 @@ export const routePaths = {
   /** Revocable read-only share of a conformance run. The token IS the credential. */
   conformanceShared: "/conformance/shared",
   compatibility: "/compatibility",
+  readiness: "/readiness",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
@@ -135,6 +139,7 @@ export const routePaths = {
   environments: "/environments",
   sessions: "/sessions",
   playground: "/playground",
+  triggers: "/triggers",
   support: "/settings/support",
   settings: "/settings",
   profile: "/profile",
@@ -148,11 +153,11 @@ export const routePaths = {
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
-  /** Legacy Runs mode, available behind evaluate-enabled. */
+  /** Saved Runs bookmarks redirect to Evaluate. */
   evalsRuns: "/evals/runs",
   /** Redeem-based read-only share of an eval run. */
   evalsShared: "/evals/shared",
-  /** Public Evaluate; legacy Evaluate lives at /evals. */
+  /** Public Evaluate; /evals is retained for saved bookmarks. */
   evaluate: "/evaluate",
   organizations: "/organizations",
 } as const;
@@ -485,6 +490,7 @@ export function buildOrganizationPath(
     section === "sharing" ||
     section === "audit-log" ||
     section === "data-management" ||
+    section === "security" ||
     section === "integrations"
   )
     return `/organizations/${orgId}/${section}`;
@@ -567,7 +573,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     case "create":
       return `${prefix}/create`;
     case "eval-server":
-      // The first-run preview is Evaluate (New) only. /evals has no home
+      // The first-run preview is only available at /evaluate. /evals has no home
       // for it, so degrade to that prefix's list the same way commit-detail
       // degrades on /evaluate.
       if (prefix !== routePaths.evaluate) return prefix;
@@ -584,6 +590,9 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
     }
     case "run-detail": {
       const params = new URLSearchParams();
+      const result = route.resultPage;
+      if (result?.target) params.set("target", result.target);
+      if (result?.tab) params.set("tab", result.tab);
       if (route.iteration) params.set("iteration", route.iteration);
       if (route.testCaseId) params.set("case", route.testCaseId);
       if (route.insightsFocus) params.set("insights", "1");
@@ -591,7 +600,15 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,
-      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${query ? `?${query}` : ""}`;
+      )}/runs/${encodeURIComponent(route.runId)}${route.comparison ? "/compare" : ""}${
+        result
+          ? `/cases/${encodeURIComponent(result.caseKey)}${
+              result.iterationId
+                ? `/iterations/${encodeURIComponent(result.iterationId)}`
+                : ""
+            }`
+          : ""
+      }${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
       const params = new URLSearchParams();
@@ -616,7 +633,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       }`;
     }
     case "suite-edit":
-      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/edit${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
+      return `${prefix}/suite/${encodeURIComponent(route.suiteId)}/settings${route.tab === "evaluators" ? "/evaluators" : ""}${route.fromCaseChecks ? `?fromCaseChecks=${encodeURIComponent(route.fromCaseChecks)}` : ""}`;
     case "commit-detail": {
       // Commits are a Runs-mode lens: Suites mode has no cross-suite SHA view,
       // so a commit route built there degrades to that mode's list.
@@ -642,6 +659,8 @@ export interface AppNavigateOptions {
    * failed to open". Everything else wants the inheritance.
    */
   unscoped?: boolean;
+  /** State for the new history entry; read it with `useCurrentLocationState`. */
+  state?: unknown;
 }
 
 /**
@@ -695,7 +714,10 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
   const target = options?.unscoped ? to : scopeNavigationTarget(to);
   const router = getAppRouter();
   if (router) {
-    void router.navigate(target, { replace: options?.replace });
+    void router.navigate(target, {
+      replace: options?.replace,
+      state: options?.state,
+    });
     return;
   }
   if (
@@ -704,10 +726,11 @@ export function navigateApp(to: string, options?: AppNavigateOptions): void {
     )
   )
     return;
+  const state = options?.state ?? {};
   if (options?.replace) {
-    window.history.replaceState({}, "", target);
+    window.history.replaceState(state, "", target);
   } else {
-    window.history.pushState({}, "", target);
+    window.history.pushState(state, "", target);
   }
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
@@ -732,9 +755,9 @@ export function useAppNavigate() {
         : scopeNavigationTarget(to, pathname);
       if (navigator) {
         if (options?.replace) {
-          navigator.replace(target);
+          navigator.replace(target, options.state);
         } else {
-          navigator.push(target);
+          navigator.push(target, options?.state);
         }
         return;
       }
@@ -829,6 +852,13 @@ export function useCurrentLocationParts(): AppLocationParts {
     search: location.search || "",
     hash: location.hash || "",
   };
+}
+
+/** The current history entry's state, router-first. */
+export function useCurrentLocationState(): unknown {
+  const locationContext = useContext(UNSAFE_LocationContext);
+  if (locationContext) return locationContext.location.state;
+  return typeof window === "undefined" ? undefined : window.history.state;
 }
 
 function getWindowFallbackLocationParts(): AppLocationParts {

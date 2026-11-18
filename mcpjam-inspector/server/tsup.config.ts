@@ -58,6 +58,8 @@ export default defineConfig({
     // harness.
     "@ai-sdk/harness",
     "@ai-sdk/harness-claude-code",
+    "@ai-sdk/harness-cursor",
+    "@ai-sdk/harness-opencode",
     "@ai-sdk/anthropic",
     "@ai-sdk/openai",
     "@ai-sdk/deepseek",
@@ -77,6 +79,9 @@ export default defineConfig({
     // `import("node-pty")` resolves from node_modules — and cleanly fails to,
     // degrading the terminal off, when it isn't there. See utils/computers/local-pty.ts.
     "node-pty",
+    // Native addon; loaded with a dynamic `import("sharp")` from the harness
+    // prompt-image pipeline. Bundling it would miss the platform binaries.
+    "sharp",
     // evals-cli dependencies
     "posthog-node",
     "@openrouter/ai-sdk-provider",
@@ -125,6 +130,7 @@ export default defineConfig({
     "@mcpjam/sdk/plugin-bundle",
     "@mcpjam/sdk/oauth/node",
     "@mcpjam/sdk/widget-runtime",
+    "@mcpjam/sdk/events",
     "@mcpjam/sdk/internal/plugin-host",
     "@mcpjam/sdk/internal/telemetry",
     "@mcpjam/sdk/internal/network-proxy",
@@ -196,6 +202,8 @@ export default defineConfig({
         rootDir,
         "../sdk/dist/widget-runtime/index.js",
       ),
+      // MCP Events: keeper, executor, local runtime, rpc-log redaction.
+      "@mcpjam/sdk/events": join(rootDir, "../sdk/dist/events/index.js"),
     };
   },
 });

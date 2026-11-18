@@ -26,6 +26,13 @@ import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useSwarmSponsorshipAllowance } from "@/hooks/use-swarm-sponsorship-allowance";
 import {
+  NATIVE_HARNESS_TURNS_TOOLTIP,
+  nativeHarnessTurnsLeftPercent,
+  nativeHarnessTurnsLeftText,
+  useNativeHarnessTrial,
+} from "@/hooks/use-native-harness-trial";
+import { useNativeHarnessEnabled } from "@/hooks/useNativeHarnessEnabled";
+import {
   formatEvalIterationResetTime,
   getEvalIterationQuotaLabel,
 } from "@/lib/eval-iteration-quota";
@@ -65,6 +72,10 @@ export function CreditBalanceCard({
     });
   const sponsoredAllowance = useSwarmSponsorshipAllowance(
     Boolean(organizationId),
+  );
+  const nativeHarnessEnabled = useNativeHarnessEnabled();
+  const nativeTrial = useNativeHarnessTrial(
+    nativeHarnessEnabled ? organizationId : null,
   );
   const topUpEligible = balance?.topUpEligible !== false;
   const [isTopupOpen, setIsTopupOpen] = useState(false);
@@ -143,6 +154,13 @@ export function CreditBalanceCard({
     evalIterationQuota?.windowKind,
   );
 
+  if ((balance?.unlimitedCreditsUntil ?? 0) > Date.now()) return (
+    <Card><CardContent className="py-4">
+      <p>Credits: Unlimited</p>
+      <p className="text-sm text-muted-foreground">Included in your contract through {new Date(balance!.unlimitedCreditsUntil!).toLocaleDateString()}.</p>
+      <Button variant="link" onClick={() => navigate('/models/usage')}>See usage</Button>
+    </CardContent></Card>
+  );
   return (
     <Card className="border-0 bg-transparent py-0 shadow-none">
       <CardContent className="flex flex-col gap-5 p-0">
@@ -375,6 +393,19 @@ export function CreditBalanceCard({
             ariaValueText={`${sponsoredAllowance.remaining.toLocaleString()} of ${sponsoredAllowance.granted.toLocaleString()} sponsored swarm conversations remaining`}
             isLoading={false}
             testId="usage-swarm-sponsored"
+          />
+        ) : null}
+
+        {nativeTrial ? (
+          <UsageRow
+            label="Native harness turns"
+            tooltip={NATIVE_HARNESS_TURNS_TOOLTIP}
+            rightText={nativeHarnessTurnsLeftText(nativeTrial)}
+            fillPercent={nativeHarnessTurnsLeftPercent(nativeTrial)}
+            ariaLabel="Native harness turns remaining"
+            ariaValueText={`${nativeTrial.remaining.toLocaleString()} of ${nativeTrial.granted.toLocaleString()} native harness turns remaining`}
+            isLoading={false}
+            testId="usage-native-harness-turns"
           />
         ) : null}
 

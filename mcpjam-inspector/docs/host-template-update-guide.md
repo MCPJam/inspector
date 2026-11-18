@@ -3,7 +3,7 @@
 **Audience:** any MCPJam engineer — no prior host-compat experience assumed.
 **Use this when:** capability drift is found (a client renders something our catalog says it can't, or vice versa), a client ships a behavior change, or a new host needs a template. This guide covers the full pipeline so a parity fix never queues behind the one person who knows it.
 
-Related public docs: [`docs/inspector/host-templates.mdx`](../../docs/inspector/host-templates.mdx) (contributor-facing "add a host" walkthrough), [`docs/inspector/compatibility.mdx`](../../docs/inspector/compatibility.mdx) (verdict semantics). This guide is the internal end-to-end version: where the data lives, how it flows, and how to prove an edit landed.
+Related docs: [`docs/inspector/host-templates.mdx`](../../docs/inspector/host-templates.mdx) (public field guide to the built-in presets), [`internal-docs/unreleased/compatibility.mdx`](../../internal-docs/unreleased/compatibility.mdx) (verdict semantics, unpublished until the compatibility feature ships). This guide is the internal end-to-end version: where the data lives, how it flows, and how to prove an edit landed.
 
 ---
 

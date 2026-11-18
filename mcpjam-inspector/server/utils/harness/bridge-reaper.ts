@@ -26,20 +26,23 @@
  *
  * Only harness bridges are considered: processes running a `…/bridge.mjs`
  * whose `--bridge-state-dir` sits in the same sessions root as the spawning
- * bridge's (`<home>/.agent-runs/<session>/bridge` for both the Claude Code and
- * the Codex app-server bridge, which also share `runBridge` and its meta
- * file). They are found through `/proc` with `node` — the one runtime every
- * box that runs a bridge is guaranteed to have.
+ * bridge's (`$HOME/.ai-sdk-harness/.agent-runs/<session>/bridge`, the
+ * framework's run state, for both the Claude Code and the Codex app-server
+ * bridge, which also share `runBridge` and its meta file), or in
+ * `$HOME/.agent-runs`, where inspectors before that state directory started
+ * them: a box keeps those across a deploy. They are found through `/proc` with
+ * `node` — the one runtime every box that runs a bridge is guaranteed to have.
  *
  * SIGTERM first (the bridge installs no handler, so it exits at once), then
  * SIGKILL for anything still alive after the grace period.
  *
  * The command prints the stopped pids, space-separated, and nothing when there
- * was nothing to stop. It always exits 0: reaping is housekeeping, never a
- * reason to fail a turn.
+ * was nothing to stop. Spawn housekeeping exits 0; exact teardown reports
+ * failure if process inspection or forced termination cannot be confirmed.
  */
 
 import { posix } from "node:path";
+import { HARNESS_STATE_DIRECTORY_NAME } from "./harness-bake.js";
 
 /** How long a SIGTERM'd bridge gets to exit before SIGKILL. */
 export const BRIDGE_REAP_GRACE_MS = 3_000;
@@ -48,11 +51,12 @@ export const BRIDGE_REAP_GRACE_MS = 3_000;
 const REAPER_SCRIPT = String.raw`
 const fs = require("fs");
 const own = process.argv[1];
-const sessionsRoot = process.argv[2];
 const graceMs = Number(process.argv[3]);
+const exactOnly = process.argv[4] === "exact";
+const sessionsRoots = [process.argv[2], ...process.argv.slice(exactOnly ? 5 : 4)];
 const IDLE = new Set(["starting", "init", "waiting", "done"]);
 let pids = [];
-try { pids = fs.readdirSync("/proc").filter((p) => /^[0-9]+$/.test(p) && Number(p) !== process.pid); } catch {}
+try { pids = fs.readdirSync("/proc").filter((p) => /^[0-9]+$/.test(p) && Number(p) !== process.pid); } catch { if (exactOnly) process.exit(1); }
 const reap = [];
 for (const pid of pids) {
   let argv;
@@ -60,12 +64,27 @@ for (const pid of pids) {
   if (!argv.some((arg) => arg.endsWith("bridge.mjs"))) continue;
   const at = argv.indexOf("--bridge-state-dir");
   const dir = at >= 0 ? argv[at + 1] : "";
-  if (!dir || !dir.startsWith(sessionsRoot)) continue;
+  if (!dir || !sessionsRoots.some((root) => dir.startsWith(root))) continue;
   if (dir === own) { reap.push(Number(pid)); continue; }
+  if (exactOnly) continue;
   let meta;
   try { meta = JSON.parse(fs.readFileSync(dir + "/bridge-meta.json", "utf8")); } catch { continue; }
   const superseded = typeof meta.pid === "number" && meta.pid !== Number(pid);
   if (superseded || IDLE.has(meta.state)) reap.push(Number(pid));
+}
+if (exactOnly) {
+  let added = true;
+  while (added) {
+    added = false;
+    for (const pid of pids) {
+      if (reap.includes(Number(pid))) continue;
+      try {
+        const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");
+        const parent = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+        if (reap.includes(parent)) { reap.push(Number(pid)); added = true; }
+      } catch {}
+    }
+  }
 }
 const alive = (pid) => {
   try {
@@ -81,7 +100,12 @@ const settle = () => {
   const left = reap.filter(alive);
   if (left.length > 0 && Date.now() < deadline) return void setTimeout(settle, 50);
   signal(left, "SIGKILL");
-  console.log(reap.join(" "));
+  if (exactOnly && left.length > 0) {
+    setTimeout(() => {
+      if (left.some(alive)) process.exitCode = 1;
+      process.stdout.write(reap.join(" ") + "\n");
+    }, 100);
+  } else process.stdout.write(reap.join(" ") + "\n");
 };
 if (reap.length > 0) {
   signal(reap, "SIGTERM");
@@ -92,14 +116,18 @@ if (reap.length > 0) {
 const shellSingleQuote = (value: string): string =>
   `'${value.replace(/'/g, `'\\''`)}'`;
 
+const STATE_RUNS = `${HARNESS_STATE_DIRECTORY_NAME}/.agent-runs/`;
+
 /**
  * The shell command that reaps a computer's bridges before the bridge whose
- * state dir is `ownStateDir` starts. Its sessions root — two levels up — bounds
+ * state dir is `ownStateDir` starts. Its sessions root — two levels up — and,
+ * for a root in the state directory, the root inspectors used before it bound
  * which bridges are considered at all.
  */
 export function reapHarnessBridgesCommand(
   ownStateDir: string,
   graceMs: number = BRIDGE_REAP_GRACE_MS,
+  exactOnly = false,
 ): string {
   if (!posix.isAbsolute(ownStateDir)) {
     throw new Error(`not an absolute bridge state dir: ${ownStateDir}`);
@@ -109,11 +137,16 @@ export function reapHarnessBridgesCommand(
   }
   const root = posix.dirname(posix.dirname(ownStateDir));
   const sessionsRoot = root.endsWith("/") ? root : `${root}/`;
+  const legacyRoot = sessionsRoot.endsWith(`/${STATE_RUNS}`)
+    ? `${sessionsRoot.slice(0, -STATE_RUNS.length)}.agent-runs/`
+    : undefined;
   return [
     `node -e '${REAPER_SCRIPT}'`,
     shellSingleQuote(ownStateDir),
     shellSingleQuote(sessionsRoot),
     String(graceMs),
+    ...(exactOnly ? ["exact"] : []),
+    ...(legacyRoot ? [shellSingleQuote(legacyRoot)] : []),
   ].join(" ");
 }
 

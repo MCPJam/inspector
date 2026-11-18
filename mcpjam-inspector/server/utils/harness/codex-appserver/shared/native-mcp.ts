@@ -2,6 +2,14 @@ import { z } from "zod/v4";
 import type { HarnessMcpJson } from "../../mcp-config.js";
 import { RELAY_MCP_SERVER_NAME } from "./tool-names.js";
 
+/** Empty host-only configurations have no native credentials to refresh. */
+export function needsNativeMcpReload(
+  previous: HarnessMcpJson["mcpServers"] | undefined,
+  next: HarnessMcpJson["mcpServers"],
+): boolean {
+  return Object.keys(previous ?? {}).length > 0 || Object.keys(next).length > 0;
+}
+
 export const nativeMcpServersSchema = z.record(
   z.string(),
   z

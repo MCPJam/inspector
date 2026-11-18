@@ -1187,6 +1187,13 @@ describe("a run held for its gating judge", () => {
       expect(time.sleeps).toEqual([1_000, 1_000]);
     });
 
+    it("waits for an adopted run through execution and grading", async () => {
+      const c = client([{ status: "pending" }, { status: "running" }, { status: "grading" }, { status: "completed", result: "passed" }]);
+      const time = clock();
+      await expect(awaitJudgeVerdict(c, "run-1", { waitMs: 60_000, pollMs: 1000, now: time.now, sleep: time.sleep })).resolves.toMatchObject({ status: "completed", result: "passed" });
+      expect(time.sleeps).toHaveLength(3);
+    });
+
     it("returns the held row when the wait runs out — it decides nothing", async () => {
       const c = client([{ status: "grading" }]);
       const time = clock();

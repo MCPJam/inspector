@@ -134,7 +134,7 @@ function normalizeProtocolVersion(
 
 function normalizeToolProbe(
   probe: MCPConformanceConfig["inputRequiredProbe"],
-  optionName: "inputRequiredProbe" | "logProbe",
+  optionName: "inputRequiredProbe" | "logProbe" | "logLevelFilteringProbe"
 ): NormalizedMCPConformanceConfig["inputRequiredProbe"] {
   if (!probe) {
     return undefined;
@@ -151,15 +151,16 @@ function normalizeToolProbe(
 }
 
 function normalizeLogProbe(
-  probe: MCPConformanceConfig["logProbe"]
+  probe: MCPConformanceConfig["logProbe"],
+  optionName: "logProbe" | "logLevelFilteringProbe" = "logProbe"
 ): NormalizedMCPConformanceConfig["logProbe"] {
-  const normalized = normalizeToolProbe(probe, "logProbe");
+  const normalized = normalizeToolProbe(probe, optionName);
   if (!normalized || probe?.level === undefined) {
     return normalized;
   }
   if (!(MCP_LOG_LEVELS as readonly string[]).includes(probe.level)) {
     throw new Error(
-      `MCP conformance logProbe.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`
+      `MCP conformance ${optionName}.level must be one of ${MCP_LOG_LEVELS.join(", ")}, got ${JSON.stringify(probe.level)}`
     );
   }
   return { ...normalized, level: probe.level };
@@ -313,6 +314,14 @@ export function normalizeMCPConformanceConfig(
       "inputRequiredProbe",
     ),
     logProbe: normalizeLogProbe(config.logProbe),
+    ...(config.logLevelFilteringProbe
+      ? {
+          logLevelFilteringProbe: normalizeLogProbe(
+            config.logLevelFilteringProbe,
+            "logLevelFilteringProbe"
+          ),
+        }
+      : {}),
     fixtures: normalizeFixtures(config.fixtures),
   };
 }
