@@ -2523,6 +2523,41 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("sends an 'Ask agent to run' prompt that arrives while a composer submit is being prepared after that submit", async () => {
+      mockUseChatSession.messages = [];
+      useAgentToolPromptBridge.setState({ pending: null });
+      render(<PlaygroundMain {...defaultProps} />);
+      await act(async () => {
+        (
+          composerProps() as unknown as {
+            onChangeFileAttachments: (files: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([
+          {
+            id: "f1",
+            file: new File(["x"], "note.txt", { type: "text/plain" }),
+          },
+        ]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "draft with a file" },
+      });
+
+      // The rail's gates finish before the composer's file conversion does.
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+        useAgentToolPromptBridge
+          .getState()
+          .requestRun("Run read_file on /etc/hosts");
+      });
+
+      await waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+      expect(
+        sendMessage.mock.calls.map(([options]) => options.text),
+      ).toEqual(["draft with a file", "Run read_file on /etc/hosts"]);
+      useAgentToolPromptBridge.setState({ pending: null });
+    });
+
     it("sends a starter prompt once when it is clicked twice while the server connects", async () => {
       mockUseChatSession.messages = [];
       mockSharedAppState.servers["test-server"] = {
@@ -4145,14 +4180,14 @@ describe("PlaygroundMain", () => {
       fireEvent.click(screen.getByTestId("chat-submit-button"));
 
       await waitFor(() => {
-        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
       });
-      // The prepend lands in the thread BEFORE the user turn, so the request
-      // carries it as history instead of trailing the model's answer.
-      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
-      const next = typeof updater === "function" ? updater([]) : updater;
-      expect(JSON.stringify(next)).toContain("release-notes");
-      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      // The send carries the prepend and lands it right before the user turn,
+      // so the request has it as history instead of trailing the model's answer.
+      const [options] = mockUseChatSession.sendMessage.mock.calls.at(-1)!;
+      expect(JSON.stringify(options.prependMessages)).toContain(
+        "release-notes",
+      );
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {

@@ -73,4 +73,26 @@ describe("useSingleFlight", () => {
     });
     expect(next).toHaveBeenCalledTimes(1);
   });
+
+  it("settles once the running task ends, and at once when nothing runs", async () => {
+    const { result } = renderHook(() => useSingleFlight());
+    await expect(result.current.settled()).resolves.toBeUndefined();
+
+    const gate = deferred();
+    let task!: Promise<void | undefined>;
+    act(() => {
+      task = result.current.run(() => gate.promise);
+    });
+    let settled = false;
+    void result.current.settled().then(() => (settled = true));
+    await act(async () => {});
+    expect(settled).toBe(false);
+
+    // A failed task settles it too.
+    await act(async () => {
+      gate.reject(new Error("preparation failed"));
+      await expect(task).rejects.toThrow("preparation failed");
+    });
+    expect(settled).toBe(true);
+  });
 });

@@ -48,7 +48,6 @@ function deps(servers: Array<{ serverId: string }> = []) {
     ensureSelectedServerReadyForChat: vi.fn(async () => true),
     ensureThreadReadyForSend: vi.fn(async () => true),
     ensureLocalHarnessReadyForSend: vi.fn(async () => true),
-    setMessages: vi.fn(),
     trackSendMessage: vi.fn(),
     sendMessage: vi.fn(async () => true),
     outgoingSenderMetadata: undefined as Record<string, unknown> | undefined,
@@ -77,7 +76,7 @@ describe("the Playground's onboarding send", () => {
       true,
       expect.any(AbortSignal),
     );
-    expect(surface.setMessages).toHaveBeenCalledTimes(1);
+    // The skill's context rides with the send instead of being added first.
     expect(surface.sendMessage).toHaveBeenCalledWith({
       text: "Run the attached onboarding skill.",
       metadata: {
@@ -86,7 +85,19 @@ describe("the Playground's onboarding send", () => {
           attemptId: expect.any(String),
         },
       },
+      prependMessages: [expect.objectContaining({ role: expect.any(String) })],
+      isCurrent: expect.any(Function),
     });
+  });
+
+  it("lets a send that waited for a running turn re-check that its server is still in the chat", async () => {
+    const surface = deps([{ serverId: "server" }]);
+    await createPluginOnboardingSend(surface)(spec, "server", "t", "owner");
+    const [[message]] = surface.sendMessage.mock.calls;
+    const { isCurrent } = message as { isCurrent: () => boolean };
+    expect(isCurrent()).toBe(true);
+    surface.onboardingLiveRef.current.servers = [];
+    expect(isCurrent()).toBe(false);
   });
 
   it("names each try, and shows that name in Logs once it was sent", async () => {

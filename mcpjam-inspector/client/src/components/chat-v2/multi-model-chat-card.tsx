@@ -403,16 +403,10 @@ export function MultiModelChatCard({
     setBroadcastId(broadcastRequest.id);
     setAwaitingBroadcastStream(true);
 
-    if (broadcastRequest.prependMessages.length > 0) {
-      setMessages((previous) => [
-        ...previous,
-        ...(broadcastRequest.prependMessages as UIMessage[]),
-      ]);
-    }
-
     sendMessage({
       text: broadcastRequest.text,
       files: broadcastRequest.files,
+      prependMessages: broadcastRequest.prependMessages as UIMessage[],
       metadata: outgoingSenderMetadata,
       widgetModelContext: fitWidgetModelContext([
         ...(broadcastRequest.widgetModelContext ?? []),
