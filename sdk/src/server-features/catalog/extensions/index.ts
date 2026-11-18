@@ -1,4 +1,5 @@
 import type { FeatureDefinition } from "../../types.js";
+import { APPS_FEATURES } from "./apps.js";
 import { AUTHORIZATION_EXTENSION_FEATURES } from "./authorization.js";
 
 export {
@@ -11,4 +12,5 @@ export {
 /** Families 18–24 (extensions, third-party, experimental), in display order. */
 export const EXTENSION_FEATURES: readonly FeatureDefinition[] = [
   ...AUTHORIZATION_EXTENSION_FEATURES,
+  ...APPS_FEATURES,
 ];
