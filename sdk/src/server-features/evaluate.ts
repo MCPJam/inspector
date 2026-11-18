@@ -206,16 +206,6 @@ function collectEvidence(
       contextHash,
     }),
   );
-  // Only a captured connect proves its context worked; a context alone does not.
-  push(
-    evidenceFromRule({
-      feature,
-      outcome: runRule(rules.connectedWith, input.declared ? input.context : undefined),
-      source: "oauth-flow",
-      capturedAt: input.declared?.capturedAt,
-      contextHash,
-    }),
-  );
 
   // Read-only checks graded by background probes.
   for (const summary of Object.values(input.probes ?? {})) {
@@ -431,6 +421,9 @@ function assess(
     });
   }
   const unknown = evidence.find((e) => e.outcome === "unknown");
+  // Setup comes before connecting: connecting without it shows nothing.
+  if (feature.assessment.primary === "configured")
+    return needsSetup(feature, input, evidence.length, unknown, result);
   if (!input.connected && evidence.length === 0) {
     return result("not-checked", {
       reason: "Connect this server to check it.",
@@ -438,7 +431,6 @@ function assess(
     });
   }
   const primary = feature.assessment.primary;
-  if (primary === "configured") return needsSetup(feature, input, unknown, result);
   return result("not-checked", {
     reason: unknown?.detail ?? REASON_FOR_PRIMARY[primary],
     nextAction: NEXT_ACTION_FOR_PRIMARY[primary],
@@ -447,12 +439,14 @@ function assess(
 
 /**
  * A feature MCPJam can only check after setup. Setup alone proves nothing
- * about the server, so it moves the feature on to "connect to check it",
- * never to Supported. Setup this MCPJam surface cannot offer gets no step.
+ * about the server, so it never makes a feature Supported; the evidence comes
+ * from the sign-in that uses it. Setup this MCPJam surface cannot offer, or
+ * whose result it cannot record, gets no step.
  */
 function needsSetup(
   feature: FeatureDefinition,
   input: ServerFeatureEvidenceInput,
+  evidenceCount: number,
   unknown: FeatureEvidence | undefined,
   result: (
     state: FeatureUserState,
@@ -460,21 +454,28 @@ function needsSetup(
   ) => FeatureAssessment,
 ): FeatureAssessment {
   const setup = feature.assessment.setup;
-  if (setup && input.configured?.includes(setup)) {
+  if (!setup || !input.setupOffered?.includes(setup)) {
     return result("not-checked", {
-      reason:
-        unknown?.detail ?? "Set up in MCPJam. Reconnect to check it with that setup.",
-      nextAction: "reconnect",
+      reason: unknown?.detail ?? "MCPJam cannot check this yet.",
     });
   }
-  if (setup && input.setupOffered?.includes(setup)) {
+  if (!input.configured?.includes(setup)) {
     return result("not-checked", {
       reason: unknown?.detail ?? REASON_FOR_PRIMARY.configured,
       nextAction: "set-up",
     });
   }
+  if (!input.connected && evidenceCount === 0) {
+    return result("not-checked", {
+      reason: "Set up in MCPJam. Connect this server to check it.",
+      nextAction: "connect",
+    });
+  }
+  // Reconnecting with saved tokens records nothing; only a new sign-in does.
   return result("not-checked", {
-    reason: unknown?.detail ?? "MCPJam cannot check this yet.",
+    reason:
+      unknown?.detail ??
+      "Set up in MCPJam. MCPJam records the result the next time you sign in to this server.",
   });
 }
 

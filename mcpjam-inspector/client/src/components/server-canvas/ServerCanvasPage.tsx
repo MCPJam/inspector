@@ -106,11 +106,10 @@ export function ServerCanvasPage({
   useOAuthResumeMarker(server.name);
 
   const [contextHash, setContextHash] = useState<string | undefined>();
-  const { registrationMode, oauthFlowProfile, useXaa, authMethod } = server;
+  const { registrationMode, oauthFlowProfile } = server;
   const configured = useMemo(
-    () =>
-      configuredSetup({ registrationMode, oauthFlowProfile, useXaa, authMethod }),
-    [registrationMode, oauthFlowProfile, useXaa, authMethod],
+    () => configuredSetup({ registrationMode, oauthFlowProfile }),
+    [registrationMode, oauthFlowProfile],
   );
   const evidence = useServerFeatureEvidence(projectId, hostedServerId, {
     connected: connection.isConnected,

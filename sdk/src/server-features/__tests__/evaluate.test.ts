@@ -252,18 +252,35 @@ describe("evaluateServerFeatures", () => {
     const setup = feature("test.setup", {
       assessment: { primary: "configured", setup: "client-credentials" },
     });
-    const configured = evaluateServerFeatures(
-      [setup],
-      connected({
-        configured: ["client-credentials"],
-        setupOffered: ["client-credentials"],
-      }),
-    );
+    const offered = {
+      configured: ["client-credentials"] as const,
+      setupOffered: ["client-credentials"] as const,
+    };
+    const configured = evaluateServerFeatures([setup], connected(offered));
     expect(configured.assessments["test.setup"]).toMatchObject({
       state: "not-checked",
-      nextAction: "reconnect",
+      reason:
+        "Set up in MCPJam. MCPJam records the result the next time you sign in to this server.",
       evidence: [],
     });
+    // Reconnecting with saved tokens records nothing, so no Reconnect step.
+    expect(configured.assessments["test.setup"].nextAction).toBeUndefined();
+    const notConnected = evaluateServerFeatures([setup], {
+      connected: false,
+      ...offered,
+    });
+    expect(notConnected.assessments["test.setup"].nextAction).toBe("connect");
+  });
+
+  it("asks for setup before connecting a server that never connected", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"].nextAction).toBe("set-up");
   });
 
   it("offers no Set up step for setup this MCPJam surface cannot do", () => {

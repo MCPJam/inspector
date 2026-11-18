@@ -2,34 +2,23 @@ import type { FeatureSetupKind } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
 
 /**
- * Setup the canvas can send the reader to: both live in the server's
- * Configuration tab, and both lead to evidence once the server reconnects
- * (the OAuth flow summary, or a captured XAA connect). The app cannot set up
- * the client credentials grant, event webhooks or OpenAI onboarding, so
- * those features say MCPJam cannot check them yet instead of offering a step.
+ * Setup the canvas can send the reader to: a pre-registered OAuth client, in
+ * the server's Configuration tab, whose next sign-in records the OAuth flow
+ * summary the feature reads. XAA can be set up there too, but nothing records
+ * which auth a connect used, so its result would never show here. The client
+ * credentials grant, event webhooks and OpenAI onboarding are not set up in
+ * Configuration. Every other setup kind reads "MCPJam cannot check this yet".
  */
 export const CANVAS_SETUP_OFFERED: readonly FeatureSetupKind[] = [
   "pre-registered-client",
-  "enterprise-managed-authorization",
 ];
 
-type SetupFields = Pick<
-  ServerWithName,
-  "registrationMode" | "oauthFlowProfile" | "useXaa" | "authMethod"
->;
+type SetupFields = Pick<ServerWithName, "registrationMode" | "oauthFlowProfile">;
 
 /** Setup this server has saved, read from its stored auth settings. */
 export function configuredSetup(server: SetupFields): FeatureSetupKind[] {
-  const configured: FeatureSetupKind[] = [];
-  if (
-    server.registrationMode === "preregistered" ||
+  return server.registrationMode === "preregistered" ||
     server.oauthFlowProfile?.registrationStrategy === "preregistered"
-  ) {
-    configured.push("pre-registered-client");
-  }
-  // `useXaa` mirrors the backend's xaaConfigured rule for "auto" servers.
-  if (server.authMethod === "xaa" || server.useXaa === true) {
-    configured.push("enterprise-managed-authorization");
-  }
-  return configured;
+    ? ["pre-registered-client"]
+    : [];
 }

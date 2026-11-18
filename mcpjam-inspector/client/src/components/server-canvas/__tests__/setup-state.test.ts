@@ -18,19 +18,7 @@ describe("configuredSetup", () => {
     expect(configuredSetup({ registrationMode: "dcr" })).toEqual([]);
   });
 
-  it("reads XAA from the auth method or the xaaConfigured mirror", () => {
-    expect(configuredSetup({ authMethod: "xaa" })).toEqual([
-      "enterprise-managed-authorization",
-    ]);
-    expect(configuredSetup({ authMethod: "auto", useXaa: true })).toEqual([
-      "enterprise-managed-authorization",
-    ]);
-  });
-
-  it("offers only setup the Configuration tab has", () => {
-    expect([...CANVAS_SETUP_OFFERED].sort()).toEqual([
-      "enterprise-managed-authorization",
-      "pre-registered-client",
-    ]);
+  it("offers only the setup whose result the page can record", () => {
+    expect(CANVAS_SETUP_OFFERED).toEqual(["pre-registered-client"]);
   });
 });

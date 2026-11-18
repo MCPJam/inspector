@@ -271,48 +271,27 @@ describe("authorization extensions", () => {
     }
   });
 
-  it("credits XAA only from a captured XAA connect, never from setup alone", () => {
+  it("never credits XAA from setup or from an advertised extension", () => {
+    // An enterprise host advertises the XAA extension even on a connect whose
+    // own auth method skips XAA, so neither the extension nor setup is proof.
     const surface = makeSurface();
-    const context = {
-      transport: "streamable-http" as const,
-      protocolVersion: surface.protocolVersion,
-    };
-    const xaaRows = ["auth-ext.xaa.access", "auth-ext.xaa.jwt-bearer"];
-    const setupOnly = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+    const result = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
       connected: true,
-      context,
+      context: {
+        transport: "streamable-http",
+        protocolVersion: surface.protocolVersion,
+        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
+      },
       declared: { surface, capturedAt: 1 },
       configured: ["enterprise-managed-authorization"],
-      setupOffered: ["enterprise-managed-authorization"],
     });
-    for (const id of xaaRows) {
-      expect(setupOnly.assessments[id]).toMatchObject({
+    for (const id of ["auth-ext.xaa.access", "auth-ext.xaa.jwt-bearer"]) {
+      expect(result.assessments[id]).toMatchObject({
         state: "not-checked",
-        nextAction: "reconnect",
+        reason: "MCPJam cannot check this yet.",
       });
+      expect(result.assessments[id].nextAction).toBeUndefined();
     }
-    const viaXaa = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
-      connected: true,
-      context: {
-        ...context,
-        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
-      },
-      declared: { surface, capturedAt: 2 },
-    });
-    for (const id of xaaRows) {
-      expect(viaXaa.assessments[id]).toMatchObject({
-        state: "supported",
-        sources: ["oauth-flow"],
-      });
-    }
-    const noCapture = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
-      connected: true,
-      context: {
-        ...context,
-        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
-      },
-    });
-    expect(noCapture.assessments["auth-ext.xaa.access"].state).not.toBe("supported");
   });
 
   it("is not applicable without OAuth or on stdio, and silent without a probe", () => {

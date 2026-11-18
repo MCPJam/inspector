@@ -11,8 +11,8 @@
  *
  * plus `oauth-flow`, a non-secret summary written when the connect OAuth flow
  * completes. A feature whose primary source is `configured` needs setup in
- * MCPJam first (an XAA connection, say); the setup is a precondition, never
- * evidence that the server supports the feature.
+ * MCPJam first (a pre-registered OAuth client, say); the setup is a
+ * precondition, never evidence that the server supports the feature.
  *
  * Browser-safe and pure: no I/O and no Node imports anywhere in this folder.
  */
@@ -177,13 +177,6 @@ export interface FeatureAssessmentRules {
   declared?: (surface: DeclaredSurface) => FeatureRuleOutcome;
   probed?: (probes: ProbeSurface) => FeatureRuleOutcome;
   oauthFlow?: (summary: OAuthFlowSummary) => FeatureRuleOutcome;
-  /**
-   * Reads the context of a connect that succeeded and was captured, e.g. the
-   * client extensions it advertised. An XAA connect advertises the
-   * enterprise-managed authorization extension only when it authenticated
-   * that way, so a capture in that context shows XAA worked end to end.
-   */
-  connectedWith?: (context: CaptureContext) => FeatureRuleOutcome;
   /** True when the observation classifier can emit this feature's id. */
   observable?: boolean;
   /** Set up in MCPJam before it can be assessed. */
