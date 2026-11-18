@@ -276,8 +276,8 @@ describe("the error describer", () => {
       expect(described.nextSteps[0]).toMatch(/^On Free, upgrade/);
       return;
     }
-    expect(described.nextSteps[0]).toBe(fixture.expectedRecovery);
-    expect(described.nextSteps.join(" ")).not.toMatch(/On Free, upgrade/);
+    // The step is the only advice: no BYOK or waiting beside it.
+    expect(described.nextSteps).toEqual([fixture.expectedRecovery]);
   });
 });
 

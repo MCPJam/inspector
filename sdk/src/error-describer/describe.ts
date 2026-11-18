@@ -24,7 +24,6 @@ import {
 } from "../mcp-client-manager/mcp-error-codes.js";
 import {
   ERROR_CATALOG,
-  PLAN_CREDIT_GUIDANCE,
   type ErrorCatalogEntry,
   type ErrorOrigin,
 } from "./catalog.js";
@@ -1048,8 +1047,9 @@ const CREDIT_SLUGS = new Set([
 ]);
 
 /**
- * A credit refusal that carries `recovery` leads with the step it names, link
- * included, in place of the plan-generic guidance.
+ * A credit refusal that carries `recovery` gives the step it names, link
+ * included, as its only next step: the catalog's other suggestions (BYOK,
+ * waiting) gave agents a second choice, and they took it.
  */
 function applyCreditRecovery(
   entry: ErrorCatalogEntry,
@@ -1061,10 +1061,7 @@ function applyCreditRecovery(
   if (!recovery) return entry;
   return {
     ...entry,
-    nextSteps: [
-      formatCreditRecovery(recovery),
-      ...entry.nextSteps.filter((step) => step !== PLAN_CREDIT_GUIDANCE),
-    ],
+    nextSteps: [formatCreditRecovery(recovery)],
   };
 }
 
