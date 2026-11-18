@@ -101,6 +101,7 @@ describe("launchInspector", () => {
     child().stderr?.write("Port 6274 is already in use\n");
     await new Promise((r) => setImmediate(r));
     child().emit("exit", 1, null);
+    child().emit("close", 1, null);
 
     await expect(launch).rejects.toThrow(
       /exited before it was ready \(code 1\)\nInspector stderr:\nPort 6274 is already in use/,
@@ -109,5 +110,21 @@ describe("launchInspector", () => {
     const healthChecksAtRejection = fetchMock.mock.calls.length;
     await new Promise((r) => setTimeout(r, 300));
     expect(fetchMock.mock.calls.length).toBe(healthChecksAtRejection);
+  });
+
+  it("includes stderr that arrives after the inspector exits", async () => {
+    const child = fakeSpawn();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
+
+    const launch = launchInspector({ silent: true });
+    await new Promise((r) => setImmediate(r));
+    child().emit("exit", 1, null);
+    child().stderr?.write("Error: Cannot find module dist/server\n");
+    await new Promise((r) => setImmediate(r));
+    child().emit("close", 1, null);
+
+    await expect(launch).rejects.toThrow(
+      /Inspector stderr:\nError: Cannot find module dist\/server/,
+    );
   });
 });

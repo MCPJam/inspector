@@ -110,6 +110,17 @@ async function waitForServer(
 }
 
 const STDERR_TAIL_CHARS = 4000;
+const STDERR_DRAIN_MS = 1000;
+
+function waitForStdioClose(child: ChildProcess, timeoutMs: number) {
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 
 function createSessionToken(env: Record<string, string>): string | undefined {
   if (env.VITE_MCPJAM_HOSTED_MODE === "true") return undefined;
@@ -226,9 +237,11 @@ export async function launchInspector(
         resolved = true;
         readiness.abort();
         const reason = signal ? `signal ${signal}` : `code ${code}`;
-        reject(
-          new Error(
-            withStderr(`Inspector exited before it was ready (${reason})`),
+        waitForStdioClose(child, STDERR_DRAIN_MS).then(() =>
+          reject(
+            new Error(
+              withStderr(`Inspector exited before it was ready (${reason})`),
+            ),
           ),
         );
       }
