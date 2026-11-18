@@ -2,6 +2,11 @@
   "name": "@mcpjam/cli",
   "version": "6.4.0",
   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "cli"
+  },
   "type": "module",
   "main": "dist/index.js",
   "files": [
