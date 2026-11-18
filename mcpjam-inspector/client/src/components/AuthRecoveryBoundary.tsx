@@ -45,8 +45,12 @@ export function AuthRecoveryBoundary({
           message={paused ? "Reconnecting your session…" : undefined}
         />
         {/* Once escalated, the recovery card carries the same actions. */}
-        {!escalated && <SessionRefreshBanner dismissible={false} />}
-        <GuestSessionRefusedBanner />
+        {!escalated && (
+          <>
+            <SessionRefreshBanner dismissible={false} />
+            <GuestSessionRefusedBanner />
+          </>
+        )}
       </>
     );
   }

@@ -61,7 +61,13 @@ export function StartupDiagnostics({ status }: { status: StartupStatus }) {
     <Collapsible open={open} onOpenChange={setOpen}>
       <CardFooter className="flex-col items-stretch gap-3 border-t pt-4 [.border-t]:pt-4">
         <div className="flex items-center justify-between gap-2">
-          <Button variant="ghost" size="sm" onClick={() => void copy()}>
+          {/* Wait for the local server check so the copy includes it. */}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={localServer.result === "pending"}
+            onClick={() => void copy()}
+          >
             {copied === "copied" ? (
               <Check className="text-success" />
             ) : (

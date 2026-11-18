@@ -1,13 +1,22 @@
 import { act, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const auth = vi.hoisted(() => ({ isAuthenticated: false, publicPage: false }));
+
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({ isLoading: false, isAuthenticated: false }),
+  useConvexAuth: () => ({
+    isLoading: false,
+    isAuthenticated: auth.isAuthenticated,
+  }),
+}));
+vi.mock("../vanity-landing-hosts", () => ({
+  shouldSkipGuestSession: () => auth.publicPage,
 }));
 vi.mock("@/hooks/use-inspector-auth", () => ({
   useInspectorAuth: () => ({ user: null }),
 }));
-vi.mock("../error-reporting", () => ({ reportCaught: vi.fn() }));
+const reportCaught = vi.hoisted(() => vi.fn());
+vi.mock("../error-reporting", () => ({ reportCaught }));
 vi.mock("../guest-session", () => ({
   getGuestSessionRefusal: () => null,
   subscribeGuestSessionChanges: () => () => {},
@@ -21,7 +30,11 @@ import {
   useStartupStatus,
   useStartupStore,
 } from "../startup-status";
-import { STARTUP_RECOVERY_DEADLINE_MS } from "@/shared/app-load-stall";
+import {
+  APP_LOAD_STALL_MS,
+  STARTUP_RECOVERY_DEADLINE_MS,
+} from "@/shared/app-load-stall";
+import { resetAppLoadStallForTests } from "../app-load-stall";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 
 const escalated = () => useStartupStore.getState().escalated;
@@ -31,6 +44,10 @@ describe("StartupStatusTracker", () => {
     vi.useFakeTimers();
     vi.spyOn(performance, "now").mockReturnValue(0);
     resetStartupStatusForTests();
+    resetAppLoadStallForTests();
+    reportCaught.mockReset();
+    auth.isAuthenticated = false;
+    auth.publicPage = false;
     useSessionRefreshStore.setState({ status: "idle", kind: null });
   });
 
@@ -90,5 +107,35 @@ describe("StartupStatusTracker", () => {
     expect(result.current.stage).toBe("app_load/guest_session_failed");
     act(() => useSessionRefreshStore.getState().notifyFailure("manual"));
     expect(result.current.retrying).toBe(false);
+  });
+
+  it("frees Retry and names the user-record step once auth recovers but setup stalls", () => {
+    const { result, rerender } = renderHook(() => useStartupStatus());
+    const tracker = render(<StartupStatusTracker />);
+    act(() => useSessionRefreshStore.getState().notifyFailure("transient"));
+    act(() => retryStartup());
+    act(() => useSessionRefreshStore.getState().clear());
+    auth.isAuthenticated = true;
+    tracker.rerender(<StartupStatusTracker />);
+    act(() => reportUserReadiness(false, true));
+    rerender();
+    expect(result.current.escalated).toBe(true);
+    expect(result.current.retrying).toBe(false);
+    expect(result.current.failureKind).toBeNull();
+    expect(result.current.stage).toBe("app_load/user_setup_pending");
+  });
+
+  it("neither escalates nor reports a stall on a page that works signed out, like /redeem", () => {
+    auth.publicPage = true;
+    render(<StartupStatusTracker />);
+    act(() => vi.advanceTimersByTime(APP_LOAD_STALL_MS));
+    expect(escalated()).toBe(false);
+    expect(reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("still reports a stall when nothing is exempt", () => {
+    render(<StartupStatusTracker />);
+    act(() => vi.advanceTimersByTime(APP_LOAD_STALL_MS));
+    expect(reportCaught).toHaveBeenCalledTimes(1);
   });
 });
