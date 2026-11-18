@@ -441,6 +441,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
     onEditUserMessage,
     editDisabled,
     sendFollowUpMessage,
+    onModelContextUpdate,
     onFullscreenChange,
     interactive,
     onToolApprovalResponse,
@@ -455,6 +456,10 @@ vi.mock("@/components/chat-v2/thread", () => ({
     // Widget-driven follow-ups bypass the composer, so tests need the handler
     // itself — a rendered button could never stand in for that path.
     sendFollowUpMessage?: (text: string) => void;
+    onModelContextUpdate?: (
+      toolCallId: string,
+      context: { structuredContent?: Record<string, unknown> },
+    ) => void;
     // A widget going fullscreen is what swaps the docked composer for the
     // pinned overlay; only the widget can report it, so tests drive it here.
     onFullscreenChange?: (fullscreen: boolean) => void;
@@ -467,6 +472,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
         onEditUserMessage,
         editDisabled,
         sendFollowUpMessage,
+        onModelContextUpdate,
         onFullscreenChange,
         interactive,
         onToolApprovalResponse,
@@ -6030,6 +6036,125 @@ describe("PlaygroundMain tester rules", () => {
       expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     } finally {
       mockUseChatSession.messages = originalMessages;
+    }
+  });
+
+  it("keeps the study's prompt and image policy off the visitor's saved host", () => {
+    const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+    mockConvexAuthState.isAuthenticated = true;
+    localStorage.setItem(
+      "mcp-previewed-host-id",
+      JSON.stringify({ "project-1": hostId }),
+    );
+    const studyImages = { placement: "collapsed" as const };
+    mockHostQueryState.result = {
+      hostId,
+      name: "Saved host",
+      config: {
+        id: "cfg_saved",
+        systemPrompt: "from the saved host",
+        temperature: 0.1,
+        requireToolApproval: true,
+        mcpToolResultImageRendering: { placement: "inline" },
+      },
+    };
+    const originalMessages = mockUseChatSession.messages;
+    mockUseChatSession.messages = [
+      { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+    ];
+    try {
+      const view = render(
+        <PlaygroundMain
+          {...study}
+          activeProjectId="project-1"
+          tester={{
+            ...study.tester,
+            executionConfig: {
+              ...study.tester.executionConfig,
+              mcpToolResultImageRendering: studyImages,
+            },
+          }}
+        />,
+      );
+      expect(mockUseChatSession.setSystemPrompt).not.toHaveBeenCalledWith(
+        "from the saved host",
+      );
+      expect(mockUseChatSession.setTemperature).not.toHaveBeenCalledWith(0.1);
+      expect(
+        mockUseChatSession.setRequireToolApproval,
+      ).not.toHaveBeenCalledWith(true);
+      expect(capturedChatSessionOptions.mcpToolResultImageRendering).toEqual(
+        studyImages,
+      );
+
+      view.unmount();
+      mockUseChatSession.setSystemPrompt.mockClear();
+      render(
+        <PlaygroundMain
+          serverName="test-server"
+          pendingExecution={null}
+          onExecutionInjected={vi.fn()}
+          activeProjectId="project-1"
+        />,
+      );
+      expect(mockUseChatSession.setSystemPrompt).toHaveBeenCalledWith(
+        "from the saved host",
+      );
+    } finally {
+      mockUseChatSession.messages = originalMessages;
+      mockConvexAuthState.isAuthenticated = false;
+      mockHostQueryState.result = null;
+    }
+  });
+
+  it("keeps widget context when a follow-up is refused", async () => {
+    mockSharedAppState.servers.asana = { connectionStatus: "connected" };
+    const originalMessages = mockUseChatSession.messages;
+    mockUseChatSession.messages = [
+      { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+    ];
+    mockUseChatSession.sendMessage.mockResolvedValue(false);
+    try {
+      render(
+        <PlaygroundMain
+          {...study}
+          tester={{ ...study.tester, composerBlocked: false }}
+        />,
+      );
+      const thread = () =>
+        mockThread.mock.calls.at(-1)?.[0] as {
+          onModelContextUpdate?: (
+            toolCallId: string,
+            context: { structuredContent?: Record<string, unknown> },
+          ) => void;
+          sendFollowUpMessage?: (text: string) => Promise<void>;
+        };
+      act(() => {
+        thread().onModelContextUpdate?.("call_1", {
+          structuredContent: { rows: 3 },
+        });
+      });
+      mockUseChatSession.sendMessage.mockClear();
+      await act(async () => {
+        await thread().sendFollowUpMessage?.("widget follow-up");
+      });
+      await act(async () => {
+        await thread().sendFollowUpMessage?.("again");
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
+      for (const call of mockUseChatSession.sendMessage.mock.calls) {
+        expect(call[0]).toEqual(
+          expect.objectContaining({
+            widgetModelContext: [
+              expect.objectContaining({ toolCallId: "call_1" }),
+            ],
+          }),
+        );
+      }
+    } finally {
+      delete mockSharedAppState.servers.asana;
+      mockUseChatSession.messages = originalMessages;
+      mockUseChatSession.sendMessage.mockReset();
     }
   });
 

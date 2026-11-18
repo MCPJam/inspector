@@ -1186,10 +1186,17 @@ export function PlaygroundMain({
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
-        previewedHost?.config?.mcpToolResultImageRendering,
-        previewedHost?.config?.modelVisibleMcpToolResults,
+        // The top-level chat option wins over executionConfig. A study has to
+        // supply its own policy here, or the visitor's previewed host replaces it.
+        tester
+          ? tester.executionConfig.mcpToolResultImageRendering
+          : previewedHost?.config?.mcpToolResultImageRendering,
+        tester
+          ? tester.executionConfig.modelVisibleMcpToolResults
+          : previewedHost?.config?.modelVisibleMcpToolResults,
       ),
     [
+      tester,
       previewedHost?.config?.mcpToolResultImageRendering,
       previewedHost?.config?.modelVisibleMcpToolResults,
     ],
@@ -1745,9 +1752,14 @@ export function PlaygroundMain({
     const isFirstSeedThisMount = last === null;
     lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
-    setSystemPrompt(cfg.systemPrompt);
-    setTemperature(cfg.temperature);
-    setRequireToolApproval(cfg.requireToolApproval);
+    // A study's prompt, temperature, and approval come from its execution
+    // config. This seed is the visitor's saved Playground host, and writing
+    // it here replaces the study on the next send.
+    if (!tester) {
+      setSystemPrompt(cfg.systemPrompt);
+      setTemperature(cfg.temperature);
+      setRequireToolApproval(cfg.requireToolApproval);
+    }
 
     if (onSelectMultipleServers) {
       const seen = new Set<string>();
@@ -1835,6 +1847,7 @@ export function PlaygroundMain({
     previewedHostId,
     previewedHostConfigId,
     previewedHost,
+    tester,
     isEnvironmentMode,
     serversById,
     onSelectMultipleServers,
@@ -4984,7 +4997,7 @@ export function PlaygroundMain({
         if (conversationSendBlockedRef.current) {
           return;
         }
-        const sent = sendMessage({
+        const sent = await sendMessage({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
@@ -4992,10 +5005,9 @@ export function PlaygroundMain({
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => !conversationSendBlockedRef.current,
         });
-        setModelContextQueue([]);
-        // Settles once the message is dispatched, so Retry's lock covers the
-        // hosted preflight too.
-        await sent;
+        // A refusal during that preparation must keep the widget context for
+        // the next admitted turn. The composer clears its queue the same way.
+        if (sent) setModelContextQueue([]);
       })();
     },
     [
