@@ -188,6 +188,8 @@ export function PortalFrame({
   serverUrl,
   serverName,
   people = NO_PEOPLE,
+  initialStep,
+  onStepChange,
   onClose,
 }: {
   flow: DirectoryFlow;
@@ -199,9 +201,11 @@ export function PortalFrame({
   serverName?: string;
   /** Who wrote each answer, by name; ids alone read as "a project member". */
   people?: People;
+  initialStep?: string;
+  onStepChange?: (step: string) => void;
   onClose: () => void;
 }) {
-  const [active, setActive] = useState(0);
+  const [active, setActive] = useState(() => Math.max(0, flow.steps.findIndex(step => step.id === initialStep)));
   const [left, setLeft] = useState<ReadonlySet<number>>(new Set());
   const directory = DIRECTORY_NAMES[flow.directory];
   const last = flow.steps.length - 1;
@@ -228,6 +232,7 @@ export function PortalFrame({
     if (index === active) return;
     setLeft((current) => new Set(current).add(active));
     setActive(index);
+    onStepChange?.(flow.steps[index].id);
   };
   const rail = flow.steps.map((entry) => {
     const counts = placed(entry.id)?.counts;
