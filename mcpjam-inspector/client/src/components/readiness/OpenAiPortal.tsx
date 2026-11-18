@@ -99,7 +99,7 @@ function PluginChoice({
     <div className="mx-auto max-w-2xl space-y-4 px-8 py-10">
       <h1 className="text-xl font-semibold">Plugins</h1>
       <McpjamNote>
-        Upload a plugin ZIP or choose a saved plugin below.
+        Choose a plugin ZIP, a source folder, or a saved plugin below.
       </McpjamNote>
       {gone ? (
         <p role="alert" className="text-sm text-destructive">

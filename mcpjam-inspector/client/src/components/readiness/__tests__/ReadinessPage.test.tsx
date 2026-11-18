@@ -360,7 +360,7 @@ describe("ReadinessRoute", () => {
     await waitFor(() => expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
       { projectId: "proj_1", submissionId: "sub_2" }, expect.any(String), "version_7", undefined,
     ));
-    expect(screen.getByRole("region", { name: "Readiness checks" })).toHaveTextContent(/ChatGPT plugin ZIP\s*QA plugin · 1\.2\.0/);
+    expect(screen.getByRole("region", { name: "Readiness checks" })).toHaveTextContent(/ChatGPT plugin package\s*QA plugin · 1\.2\.0/);
     expect(api.startDirectorySubmissionRun).toHaveBeenCalledTimes(1);
   });
 
@@ -898,7 +898,7 @@ describe("ReadinessRoute", () => {
       expect.stringMatching(/^ui-srv_1-/),
     );
     expect(
-      await screen.findByText(/Upload a plugin ZIP or choose a saved plugin below\./),
+      await screen.findByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
   });
 
@@ -912,18 +912,18 @@ describe("ReadinessRoute", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Go step by step" }));
 
     expect(
-      await screen.findByText(/Upload a plugin ZIP or choose a saved plugin below\./),
+      await screen.findByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
     expect(
       screen.getByText(
-        "ChatGPT plugin ZIP",
+        "ChatGPT plugin package",
       ),
     ).toBeVisible();
     expect(
-      screen.getByText("Choose a plugin ZIP to run checks."),
+      screen.getByText("Choose a plugin package to run checks."),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Run checks" })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Upload ZIP" }));
+    await userEvent.click(screen.getByRole("button", { name: "Upload ZIP or folder" }));
     await userEvent.click(screen.getByRole("button", { name: "Finish test import" }));
     expect(api.updateDirectorySubmission).toHaveBeenCalledWith(
       expect.objectContaining({ submissionId: "sub_2" }),
