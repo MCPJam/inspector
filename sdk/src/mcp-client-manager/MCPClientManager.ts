@@ -104,6 +104,14 @@ import type {
   AiSdkTool,
 } from "./types.js";
 import type { TraceContextProvider } from "./trace-context.js";
+import {
+  createFeatureFrameTap,
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
+  type FeatureFrameTap,
+  type FeatureObserver,
+} from "./feature-observer.js";
 import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
@@ -492,6 +500,7 @@ export class MCPClientManager {
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
+  private readonly featureObserver?: FeatureObserver;
   private readonly defaultHttpLogger?: HttpExchangeLogger;
   /** See `baseFetch` on `MCPClientManagerOptions`. */
   private readonly defaultBaseFetch?: typeof fetch;
@@ -538,6 +547,7 @@ export class MCPClientManager {
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.featureObserver = options.featureObserver;
     this.defaultHttpLogger = options.httpLogger;
     this.defaultBaseFetch = options.baseFetch;
     this.defaultProgressHandler = options.progressHandler;
@@ -2868,6 +2878,8 @@ export class MCPClientManager {
     };
     signal?.addEventListener("abort", abort, { once: true });
     const clientCapabilities = this.buildCapabilities(serverId, config);
+    // The handshake is MCPJam's own traffic, not observed use.
+    const resumeObservation = pauseFeatureObservation(this, serverId);
     try {
       signal?.throwIfAborted();
       // Resolve clientInfo from (in order): per-server `clientInfo` >
@@ -3185,7 +3197,9 @@ export class MCPClientManager {
       // itself is also tolerant (no-op + warning) — this guard avoids
       // the warning noise on every connect.
       if (client.getServerCapabilities?.()?.logging) {
-        this.setLoggingLevel(serverId, "debug").catch(() => {});
+        suppressFeatureObservation(this, serverId, () =>
+          this.setLoggingLevel(serverId, "debug")
+        ).catch(() => {});
       }
 
       return client;
@@ -3203,9 +3217,21 @@ export class MCPClientManager {
       });
       throw error;
     } finally {
+      resumeObservation();
       signal?.removeEventListener("abort", abort);
       await closing;
     }
+  }
+
+  /** This connection's feature tap; none without a `featureObserver`. */
+  private featureTapFor(serverId: string): FeatureFrameTap | undefined {
+    const observer = this.featureObserver;
+    return (
+      observer &&
+      createFeatureFrameTap(serverId, observer, {
+        isPaused: () => isFeatureObservationPaused(this, serverId),
+      })
+    );
   }
 
   private async connectViaStdio(
@@ -3236,7 +3262,12 @@ export class MCPClientManager {
           config,
           wrapTransportForTaskResults(
             logger
-              ? wrapTransportForLogging(serverId, logger, underlying)
+              ? wrapTransportForLogging(
+                  serverId,
+                  logger,
+                  underlying,
+                  this.featureTapFor(serverId)
+                )
               : underlying
           )
         )
@@ -3401,7 +3432,12 @@ export class MCPClientManager {
               config,
               wrapTransportForTaskResults(
                 logger
-                  ? wrapTransportForLogging(serverId, logger, guarded)
+                  ? wrapTransportForLogging(
+                      serverId,
+                      logger,
+                      guarded,
+                      this.featureTapFor(serverId)
+                    )
                   : guarded
               )
             )
@@ -3535,7 +3571,12 @@ export class MCPClientManager {
             config,
             wrapTransportForTaskResults(
               logger
-                ? wrapTransportForLogging(serverId, logger, sseTransport)
+                ? wrapTransportForLogging(
+                    serverId,
+                    logger,
+                    sseTransport,
+                    this.featureTapFor(serverId)
+                  )
                 : sseTransport
             )
           )
