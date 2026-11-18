@@ -344,7 +344,7 @@ export function readEnvironmentResolutions(
         );
       else if (typeof code !== "string" || !code.startsWith("ENV_"))
         console.warn(
-          "[Setup Run] Could not preflight an environment; the launch will check it.",
+          "[Set up run] Could not preflight an environment; the launch will check it.",
           resolved,
         );
       continue;
@@ -691,7 +691,7 @@ export function RunPreflightNotices({
       const message = await preflight.connect(ref);
       setFailure(message ? { ref, message } : null);
     } catch (error) {
-      console.warn("[Setup Run] Connect failed.", error);
+      console.warn("[Set up run] Connect failed.", error);
       setFailure({ ref, message: `${serverName(ref)} didn't connect.` });
     } finally {
       setConnecting(null);

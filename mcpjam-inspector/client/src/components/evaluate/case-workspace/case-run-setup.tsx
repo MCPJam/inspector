@@ -26,7 +26,7 @@ export type CaseSuiteChipOption = {
 /** One quick-run pick: a model value and, at a chosen effort, its selection. */
 export type CaseRunPick = { modelValue: string; selection?: ModelSelection };
 
-/** The run controls a case workspace hands the Setup Run sheet. */
+/** The run controls a case workspace hands the Set up run sheet. */
 export type CaseRunControls = {
   /** Quick-run keys (`quickRunKey`): a model value, plus its effort if any. */
   models: string[];
@@ -142,7 +142,7 @@ export function CaseRunSetup({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full gap-0 sm:max-w-xl">
         <SheetHeader className="border-b border-border px-6 py-4 pr-12">
-          <SheetTitle>Setup Run</SheetTitle>
+          <SheetTitle>Set up run</SheetTitle>
           <SheetDescription>{caseTitle}</SheetDescription>
         </SheetHeader>
         <div className="flex-1 space-y-5 overflow-y-auto p-6">

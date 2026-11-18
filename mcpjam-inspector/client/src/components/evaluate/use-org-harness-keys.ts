@@ -81,7 +81,7 @@ export function useOrgHarnessKeys(
     for (const [harnessId, answer] of Object.entries(answers)) {
       if (answer instanceof Error) {
         console.warn(
-          "[Setup Run] Could not read the organization's harness key; the launch will check it.",
+          "[Set up run] Could not read the organization's harness key; the launch will check it.",
           answer,
         );
         continue;
