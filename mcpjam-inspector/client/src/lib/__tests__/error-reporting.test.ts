@@ -239,6 +239,25 @@ describe("reportCaught", () => {
       expect.any(Error),
       expect.objectContaining({ level: "warning", extra: { step: 3 } }),
     );
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ $exception_level: "warning", step: 3 }),
+    );
+  });
+
+  it("sends the fingerprint to both sinks", () => {
+    reportCaught(new Error("x"), {
+      source: "unit",
+      fingerprint: ["unit", "same_shape"],
+    });
+    expect(captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ fingerprint: ["unit", "same_shape"] }),
+    );
+    expect(posthogCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ $exception_fingerprint: "unit:same_shape" }),
+    );
   });
 
   it("reports to Sentry but NOT PostHog on a non-capture surface", async () => {
