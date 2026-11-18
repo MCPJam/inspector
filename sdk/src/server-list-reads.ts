@@ -31,11 +31,17 @@ export interface ServerEventTypesRead {
 /**
  * Walk `events/list` pages until the server stops offering a new cursor or
  * `maxPages` is reached. A failed page ends the walk; what was read is kept.
+ * `signal` goes with every page and ends the walk once aborted, so no later
+ * page is sent (and none reconnects a closed connection) after the caller
+ * gave up; the read then reports `failed` with the abort reason.
  */
 export async function readServerEventTypes(
   manager: Pick<MCPClientManager, "listServerEvents">,
   serverId: string,
-  { maxPages = EVENTS_LIST_MAX_PAGES }: { maxPages?: number } = {}
+  {
+    maxPages = EVENTS_LIST_MAX_PAGES,
+    signal,
+  }: { maxPages?: number; signal?: AbortSignal } = {}
 ): Promise<ServerEventTypesRead> {
   const events: EventDescriptorWire[] = [];
   let truncated = false;
@@ -43,9 +49,11 @@ export async function readServerEventTypes(
   try {
     let cursor: string | undefined;
     for (let page = 0; page < maxPages; page += 1) {
+      signal?.throwIfAborted();
       const result = await manager.listServerEvents(
         serverId,
-        cursor !== undefined ? { cursor } : undefined
+        cursor !== undefined ? { cursor } : undefined,
+        signal ? { signal } : undefined
       );
       events.push(...result.events);
       if (result.nextCursor === undefined || result.nextCursor === cursor) break;

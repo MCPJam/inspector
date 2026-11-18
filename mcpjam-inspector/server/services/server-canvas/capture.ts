@@ -24,6 +24,7 @@ import {
   protocolEra,
   stableHash,
   type CaptureContext,
+  type ConnectedServerDoctorState,
   type MCPClientManager,
   type ServerFeatureSnapshotServerV3,
   type ServerFeatureSnapshotV3,
@@ -36,6 +37,12 @@ export interface ServerFeatureCapture {
   snapshot: ServerFeatureSnapshotV3;
   context: CaptureContext;
   contextHash: string;
+  /**
+   * The doctor state the snapshot was built from, kept in memory for the
+   * background probes (Apps grading reads its lists, the skills probe its
+   * skill listing). Absent when the capture failed. Never stored.
+   */
+  doctor?: ConnectedServerDoctorState;
 }
 
 export interface CaptureContextOptions {
@@ -139,11 +146,13 @@ export async function captureServerFeatures(
     (HOSTED_MODE ? HOSTED_CAPTURE_BUDGET_MS : LOCAL_CAPTURE_BUDGET_MS);
   let initInfo: unknown;
   let server: ServerFeatureSnapshotServerV3;
+  let doctor: ConnectedServerDoctorState | undefined;
   try {
     const state = await collectConnectedServerDoctorState(manager, managerKey, {
       verifySkills: false,
       signal: listingSignal(budgetMs, options.signal),
     });
+    doctor = state;
     initInfo = state.initInfo;
     server = buildSnapshotServerV3({
       serverId: snapshotServerId,
@@ -168,5 +177,18 @@ export async function captureServerFeatures(
     },
     context,
     contextHash: computeCaptureContextHash(context),
+    ...(doctor ? { doctor } : {}),
   };
+}
+
+/**
+ * Whether the capture failed outright: collecting threw, or the server's
+ * tools could not be listed (the backend keeps such a snapshot out of the
+ * stored inspection).
+ */
+export function captureFailed(capture: ServerFeatureCapture): boolean {
+  return (
+    !capture.doctor ||
+    capture.snapshot.servers.some((server) => server.captureError !== undefined)
+  );
 }

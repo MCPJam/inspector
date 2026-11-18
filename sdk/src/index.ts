@@ -256,6 +256,7 @@ export {
   serverSkillsActive,
 } from "./server-skills.js";
 export type {
+  ServerSkillFileReader,
   ServerSkillListing,
   ServerSkillRefusal,
   ServerSkillSummary,
@@ -379,6 +380,7 @@ export type {
   ProbeTransportResult,
 } from "./server-probe.js";
 export {
+  DOCTOR_SKILL_VERIFY_SAMPLE,
   runServerDoctor,
   collectConnectedServerDoctorState,
   normalizeServerDoctorError,
