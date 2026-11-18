@@ -5,19 +5,22 @@
  * QA run starts from a signed-in screen instead of from setup.
  *
  * Usage:
+ *   npm run qa:start -w @mcpjam/inspector -- --bundle <bundle.json> [--headed]
  *   npm run qa:start -w @mcpjam/inspector -- --environment <environment.json> --grant <grant.json>
  *       [--profile <file>] [--open <app path>] [--expect-server <name>] [--name <slug>] [--headed]
  *
- * `environment.json` and the grant come from the backend's agent environments
- * (`agent-env up` and `agent-env sign-in --grant`). Ready means a real
- * browser, signed in as the grant's user, shows the intended screen: for a
- * seeded workspace, with its saved server listed. A backend that was
- * provisioned correctly doesn't count until then.
+ * The bundle is what the agent-environments MCP server's `get_environment`
+ * returns: the profile, flag answers and a sign-in grant in one file. The
+ * other form takes the backend CLI's files (`agent-env up` and
+ * `agent-env sign-in --grant`). Ready means a real browser, signed in as the
+ * grant's user, shows the intended screen: for a seeded workspace, with its
+ * saved server listed. A backend that was provisioned correctly doesn't count
+ * until then.
  *
  * Prints one JSON object: the instance URLs, the screen it opened, a storage
  * state for your next browser context, a screenshot, the log and how to stop.
- * Run it again with a new grant to sign in another context; it reuses the
- * running instance. Nothing secret is printed.
+ * Run it again with a new grant (or a fresh bundle) to sign in another
+ * context; it reuses the running instance. Nothing secret is printed.
  */
 
 import { spawn } from "node:child_process";
@@ -38,7 +41,9 @@ import {
   isReady,
   parseInstanceLine,
   parseQaArgs,
+  profileWithFlags,
   readGrant,
+  requireProfile,
   resolveQaInputs,
   sessionDir,
   sessionFiles,
@@ -234,12 +239,26 @@ async function signInAndOpen(session, inputs, grant, files) {
 
 async function main() {
   const inputs = resolveQaInputs(parseQaArgs(process.argv.slice(2)));
-  const grant = readGrant(inputs.grantPath);
+  const grant = inputs.grant ?? readGrant(inputs.grantPath);
   const dir = sessionDir(inputs.name);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const files = sessionFiles(dir);
 
   const reused = await runningSession(files);
+  if (inputs.bundle && !reused) {
+    writeFileSync(
+      files.flags,
+      JSON.stringify(inputs.bundle.flags, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+    writeFileSync(
+      files.profile,
+      profileWithFlags(inputs.bundle.profile, files.flags),
+      { mode: 0o600 },
+    );
+    inputs.profile = files.profile;
+  }
+  requireProfile(inputs, Boolean(reused));
   const session = reused ?? (await startInspector(inputs, files));
   const opened = await signInAndOpen(session, inputs, grant, files);
   process.stdout.write(
