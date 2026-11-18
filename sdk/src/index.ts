@@ -692,7 +692,7 @@ export type {
 } from "./contract/index.js";
 export {
   creditRecoveryOfIterations,
-  findCreditRecovery,
+  creditRecoveryOfRefusal,
   formatCreditRecovery,
   parseCreditRecovery,
 } from "./contract/index.js";

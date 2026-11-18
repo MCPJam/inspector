@@ -322,11 +322,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       .map((fixture) => [fixture.__name, fixture] as const),
   )("words a credit stop from the %s refusal", async (_name, fixture) => {
     const success = streamTextMock.getMockImplementation()!;
-    streamTextMock.mockImplementationOnce(success).mockImplementationOnce(() => {
-      throw Object.assign(new Error(fixture.body.error), {
-        responseBody: JSON.stringify(fixture.body),
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error(fixture.body.error), {
+          responseBody: JSON.stringify(fixture.body),
+        });
       });
-    });
     const config = buildQuickRunConfig();
     config.config.tests[0].runs = 3;
     let nextId = 0;
@@ -349,6 +351,30 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(skipped?.error.startsWith(fixture.expectedRecovery)).toBe(true);
     expect(refused?.[1].metadata?.creditRecovery).toEqual(
       fixture.body.recovery,
+    );
+  });
+
+  it("records no recovery from a provider's own error body", async () => {
+    // A third party's body shaped like MCPJam's refusal, link and all.
+    const [fixture] = creditRefusalCorpus.cases;
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error(fixture!.body.error), {
+          name: "AI_APICallError",
+          statusCode: 402,
+          responseBody: JSON.stringify(fixture!.body),
+        });
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+    const result = await runEvalSuiteWithAiSdk(config as any);
+    expect(result?.quickRunIterationOutcomes?.[1]).not.toHaveProperty(
+      "creditRecovery",
+    );
+    expect(JSON.stringify(convexClient.action.mock.calls)).not.toContain(
+      "creditRecovery",
     );
   });
 

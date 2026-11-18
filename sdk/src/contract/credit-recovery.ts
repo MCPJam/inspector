@@ -13,6 +13,7 @@
  * Browser-safe, no node-only deps.
  */
 import { z } from "zod";
+import { MCPJAM_CLOUD_BASE_URL } from "../deployment/address.js";
 
 export const CREDIT_RECOVERY_ACTIONS = [
   "upgrade_plan",
@@ -47,7 +48,10 @@ export type CreditRecovery = {
   reason: string;
   action: CreditRecoveryAction;
   actor: CreditRecoveryActor;
-  /** Only ever an https URL on an MCPJam app origin; see {@link parseCreditRecovery}. */
+  /**
+   * Only ever a normalized https URL on an MCPJam app origin; see
+   * {@link parseCreditRecovery}.
+   */
   url?: string;
   /** The plan tier to upgrade to, e.g. `pro`. */
   plan?: string;
@@ -56,24 +60,43 @@ export type CreditRecovery = {
 };
 
 /**
- * An https URL on mcpjam.com or one of its subdomains. The URL is rendered as
- * a link an agent hands to a person, so a refusal body that named any other
- * host (a proxy rewriting it, a forged envelope) must not get it shown.
+ * The app origins a recovery link may point at: MCPJam Cloud and staging. The
+ * link is handed to a person as MCPJam's own instruction, so any other host,
+ * subdomain included, is not shown.
  */
-function isMcpjamAppUrl(value: string): boolean {
+const MCPJAM_APP_HOSTS: ReadonlySet<string> = new Set([
+  new URL(MCPJAM_CLOUD_BASE_URL).hostname,
+  "staging.mcpjam.com",
+]);
+
+/** Whitespace or a control character anywhere in the raw string. */
+const UNSAFE_URL_CHARACTERS = /[\s\u0000-\u001f\u007f]/;
+
+/**
+ * The URL in its normalized form when it is an https link on an MCPJam app
+ * origin, otherwise `undefined`. The normalized `href` is what gets emitted,
+ * and a raw string that does not already equal it is refused rather than
+ * repaired: the difference is where a forged link hides.
+ */
+function mcpjamAppUrl(value: string): string | undefined {
+  if (UNSAFE_URL_CHARACTERS.test(value)) return undefined;
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    return false;
+    return undefined;
   }
-  const host = parsed.hostname.toLowerCase();
-  return (
-    parsed.protocol === "https:" &&
-    parsed.username === "" &&
-    parsed.password === "" &&
-    (host === "mcpjam.com" || host.endsWith(".mcpjam.com"))
-  );
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.port !== "" ||
+    !MCPJAM_APP_HOSTS.has(parsed.hostname) ||
+    parsed.href !== value.trim()
+  ) {
+    return undefined;
+  }
+  return parsed.href;
 }
 
 /**
@@ -88,56 +111,55 @@ export function parseCreditRecovery(
   const parsed = creditRecoverySchema.safeParse(value);
   if (!parsed.success) return undefined;
   const { version, reason, action, actor, url, plan, resetAt } = parsed.data;
+  const appUrl = url === undefined ? undefined : mcpjamAppUrl(url);
   return {
     version,
     reason,
     action,
     actor,
-    ...(url !== undefined && isMcpjamAppUrl(url) ? { url } : {}),
+    ...(appUrl !== undefined ? { url: appUrl } : {}),
     ...(plan !== undefined ? { plan } : {}),
     ...(resetAt !== undefined ? { resetAt } : {}),
   };
 }
 
 /**
- * The first `recovery` found in a refusal: the envelope itself, its
- * `details`, a nested error, or a JSON envelope an error string wraps (error
- * strings often prefix the body with a URL and a status).
+ * A refusal envelope: the object itself, or a string that is wholly one JSON
+ * object (a raw response body). Text that merely contains JSON is not one.
  */
-export function findCreditRecovery(value: unknown): CreditRecovery | undefined {
-  const seen = new WeakSet<object>();
-  const visit = (item: unknown, depth: number): CreditRecovery | undefined => {
-    if (depth > 6) return undefined;
-    if (typeof item === "string") {
-      const start = item.indexOf("{");
-      if (start < 0) return undefined;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(item.slice(start));
-      } catch {
-        return undefined;
-      }
-      return visit(parsed, depth + 1);
+function envelopeOf(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text.startsWith("{")) return undefined;
+    try {
+      return envelopeOf(JSON.parse(text));
+    } catch {
+      return undefined;
     }
-    if (!item || typeof item !== "object" || seen.has(item)) return undefined;
-    seen.add(item);
-    if (item instanceof Error) {
-      return (
-        visit((item as Error & { details?: unknown }).details, depth + 1) ??
-        visit(item.cause, depth + 1) ??
-        visit(item.message, depth + 1)
-      );
-    }
-    const record = item as Record<string, unknown>;
-    const own = parseCreditRecovery(record.recovery);
-    if (own) return own;
-    for (const nested of Object.values(record)) {
-      const found = visit(nested, depth + 1);
-      if (found) return found;
-    }
-    return undefined;
-  };
-  return visit(value, 0);
+  }
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * The `recovery` on MCPJam's refusal envelope, read from its top level only:
+ * the envelope itself, or the envelope one `details` or `message` down when
+ * that field is wholly one (an error carrying the response body, or
+ * `{ message, details }` holding the raw body). Never searched for in nested
+ * values or in free-form error text, where a third party's body could plant
+ * one. Callers pass only a refusal already known to be MCPJam's own.
+ */
+export function creditRecoveryOfRefusal(
+  refusal: unknown
+): CreditRecovery | undefined {
+  const envelope = envelopeOf(refusal);
+  if (!envelope) return undefined;
+  return (
+    parseCreditRecovery(envelope.recovery) ??
+    parseCreditRecovery(envelopeOf(envelope.details)?.recovery) ??
+    parseCreditRecovery(envelopeOf(envelope.message)?.recovery)
+  );
 }
 
 /**

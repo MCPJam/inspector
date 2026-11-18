@@ -19,7 +19,7 @@ import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
 import {
-  findCreditRecovery,
+  creditRecoveryOfRefusal,
   type CreditRecovery,
 } from "@mcpjam/sdk/contract";
 import { creditStopNote } from "./evals/credit-stop.js";
@@ -5912,7 +5912,12 @@ const runLocalIteration = async ({
       message: acc.iterationError,
       details: acc.iterationErrorDetails,
     };
-    const creditRecovery = findCreditRecovery(creditRefusal);
+    const creditsExhausted = isCreditExhaustion(creditRefusal);
+    // Only MCPJam's own credit refusal names a step. Another error's body
+    // is not ours to repeat as an instruction.
+    const creditRecovery = creditsExhausted
+      ? creditRecoveryOfRefusal(creditRefusal)
+      : undefined;
     if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     const finishParams = buildIterationFinishParams({
       iterationId,
@@ -6046,7 +6051,7 @@ const runLocalIteration = async ({
     });
 
     return {
-      creditsExhausted: isCreditExhaustion(creditRefusal),
+      creditsExhausted,
       ...(creditRecovery ? { creditRecovery } : {}),
       evaluation,
       iterationId: iterationId ?? undefined,
@@ -6235,7 +6240,9 @@ const runLocalIteration = async ({
     const creditsExhausted =
       acc.stepErrorEvidence?.source !== "provider_call" &&
       isCreditExhaustion(creditRefusal);
-    const creditRecovery = findCreditRecovery(creditRefusal);
+    const creditRecovery = creditsExhausted
+      ? creditRecoveryOfRefusal(creditRefusal)
+      : undefined;
     if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
@@ -7187,7 +7194,9 @@ const runHostedIterationWithBrowser = async (
         false,
       );
     }
-    const setupCreditRecovery = findCreditRecovery(error);
+    const setupCreditRecovery = isCreditExhaustion(error)
+      ? creditRecoveryOfRefusal(error)
+      : undefined;
     if (setupCreditRecovery) {
       iterationMetadataBase.creditRecovery = setupCreditRecovery;
     }
@@ -7766,9 +7775,10 @@ const runHostedIterationWithBrowser = async (
   };
   const creditsExhausted =
     modelSource !== "external-account" && isCreditExhaustion(creditRefusal);
-  // On the row, where the v1 projection reads it back as `infraError.recovery`
-  // (a spend cap names its step too, without stopping the run).
-  const creditRecovery = findCreditRecovery(creditRefusal);
+  // On the row, where the v1 projection reads it back as `infraError.recovery`.
+  const creditRecovery = creditsExhausted
+    ? creditRecoveryOfRefusal(creditRefusal)
+    : undefined;
   if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure

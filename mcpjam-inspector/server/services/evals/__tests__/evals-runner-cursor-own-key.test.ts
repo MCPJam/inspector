@@ -156,6 +156,20 @@ const STRICT_ORG_CONFIG = {
 const fallback = { provider: "none", model: "none" } as const;
 /** An error that reads like an exhausted credit balance. */
 const CREDIT_WORDS = "Insufficient credits on this account.";
+/** An MCPJam credit refusal's body, with its `recovery` and link. */
+const RECOVERY_REFUSAL = JSON.stringify({
+  ok: false,
+  code: "user_rate_limit",
+  error: "Daily MCPJam model limit reached.",
+  recovery: {
+    version: 1,
+    reason: "allowance_exhausted",
+    action: "upgrade_plan",
+    actor: "caller",
+    plan: "pro",
+    url: "https://app.mcpjam.com/organizations/org_1/plans",
+  },
+});
 const ORG_ANTHROPIC: ModelSelection = {
   modelId: "anthropic/claude-sonnet-4.5",
   source: "org",
@@ -316,6 +330,35 @@ describe("a Cursor eval case", () => {
     expect(assistantTurn).toHaveBeenCalledTimes(2);
     expect(JSON.stringify(client.action.mock.calls)).not.toContain(
       "Out of MCPJam credits",
+    );
+  });
+});
+
+describe("a refusal body on the customer's own account", () => {
+  // The same error on both rails; only the MCPJam one may record its step.
+  const refuse = () =>
+    assistantTurn.mockRejectedValue(new Error(RECOVERY_REFUSAL));
+
+  it("records no recovery for an external-account turn", async () => {
+    refuse();
+    const { run, client } = runCase({}, { runs: 2 });
+    await run;
+
+    const written = JSON.stringify(client.action.mock.calls);
+    expect(written).not.toContain("creditRecovery");
+    expect(written).not.toContain("Upgrade to Pro");
+  });
+
+  it("records it for the same refusal on MCPJam's own rail", async () => {
+    refuse();
+    const { run, client } = runCase(
+      { suiteHostConfig: { harness: "claude-code" } },
+      { runs: 2, selection: ORG_ANTHROPIC },
+    );
+    await run;
+
+    expect(JSON.stringify(client.action.mock.calls)).toContain(
+      "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_1/plans.",
     );
   });
 });
