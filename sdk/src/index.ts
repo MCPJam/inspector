@@ -352,6 +352,22 @@ export {
 export { isNonRetryableMarkedError } from "./mcp-client-manager/error-utils.js";
 export { EvalReportingError, SdkError } from "./errors.js";
 export { probeMcpServer } from "./server-probe.js";
+export { discoverAuthorizationMetadata } from "./oauth/metadata-discovery.js";
+export type {
+  AuthorizationMetadataDiscoveryConfig,
+  AuthorizationMetadataDiscoveryOptions,
+} from "./oauth/metadata-discovery.js";
+export {
+  authorizationServerMetadataUrls,
+  MCP_AUTHORIZATION_SERVER_METADATA_FORMS,
+  mcpAuthorizationServerMetadataForms,
+  protectedResourceMetadataUrls,
+} from "./oauth/metadata-candidates.js";
+export type {
+  AuthorizationServerMetadataCandidate,
+  AuthorizationServerMetadataForm,
+  AuthorizationServerMetadataKind,
+} from "./oauth/metadata-candidates.js";
 export type {
   ProbeHttpAttempt,
   ProbeInitializeInfo,

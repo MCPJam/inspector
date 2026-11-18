@@ -1,3 +1,4 @@
+import { protectedResourceMetadataUrls } from "../oauth/metadata-candidates.js";
 import { evaluateResourceIndicator } from "../oauth/resource-policy.js";
 import {
   type NormalizedOAuthConformanceConfig,
@@ -24,12 +25,7 @@ export async function findPublishedResourceMetadata(
 ): Promise<string | undefined> {
   let candidates: string[];
   try {
-    const base = new URL(config.serverUrl);
-    const path = base.pathname.replace(/\/$/, "");
-    candidates = [
-      `${base.origin}/.well-known/oauth-protected-resource${path}`,
-      `${base.origin}/.well-known/oauth-protected-resource`,
-    ];
+    candidates = protectedResourceMetadataUrls(config.serverUrl);
   } catch {
     return undefined;
   }
