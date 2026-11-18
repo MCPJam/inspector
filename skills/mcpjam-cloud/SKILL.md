@@ -100,7 +100,7 @@ A run's decision summary can carry a `nextAction` that says to check the server 
 
 A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, a spend budget, or a required platform fee means the organization is out of allowance.
 
-Read the refusal's `recovery` first: `creditRecovery` in `eval status` or `eval run --wait` JSON (the `Recovery:` line in human output), `infraError.recovery` on the refused iteration, or `details.recovery` on a launch refusal. Give the user its `url` first, with the step its `action` names. When `actor` is `owner_or_admin`, say the user has to forward that link to an organization owner or admin. The run's `notes` and the decision summary's `nextAction` lead with the same sentence.
+Read the refusal's `recovery` first: `creditRecovery` in `eval status` or `eval run --wait` JSON (the `Recovery:` line in human output), `infraError.recovery` on the refused iteration, or `details.recovery` on a launch refusal. The run's `notes` and the decision summary's `nextAction` say the same thing. Give the user the step its `action` names and its `url`, copied exactly, and nothing else. When `actor` is `owner_or_admin`, say the user has to send that link to an organization owner or admin. `resetAt` is for your records: don't suggest waiting for it, and don't offer BYOK instead, because BYOK does not remove platform fees.
 
 Without a `recovery` (an older deployment), in this order:
 

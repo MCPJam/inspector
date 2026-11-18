@@ -8,10 +8,10 @@
         "ok": false,
         "code": "user_rate_limit",
         "limitKind": "total",
-        "error": "Daily MCPJam model limit reached. Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans. BYOK avoids MCPJam model charges; the free allowance resets in 17 hours.",
+        "error": "Daily MCPJam model limit reached. Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans",
         "isRetryable": true,
         "retryAfter": 61200000,
-        "details": "Try again in 17 hours.",
+        "details": "Retry once that is done.",
         "canTopUp": false,
         "walletLocked": false,
         "budgetReached": false,
@@ -26,7 +26,7 @@
         },
         "organizationId": "org_free"
       },
-      "expectedRecovery": "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans. BYOK avoids MCPJam model charges. The allowance resets at 2026-11-19 00:00 UTC.",
+      "expectedRecovery": "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans",
       "expectedUrl": "https://app.mcpjam.com/organizations/org_free/plans"
     },
     {
@@ -36,10 +36,10 @@
         "ok": false,
         "code": "user_rate_limit",
         "limitKind": "total",
-        "error": "Daily MCPJam model limit reached. Ask an organization owner or admin to upgrade to Pro: https://app.mcpjam.com/organizations/org_free/plans. BYOK avoids MCPJam model charges; the free allowance resets in 17 hours.",
+        "error": "Daily MCPJam model limit reached. Only an organization owner or admin can upgrade to Pro. Send them this link: https://app.mcpjam.com/organizations/org_free/plans",
         "isRetryable": true,
         "retryAfter": 61200000,
-        "details": "Try again in 17 hours.",
+        "details": "Retry once that is done.",
         "canTopUp": false,
         "walletLocked": false,
         "budgetReached": false,
@@ -54,7 +54,7 @@
         },
         "organizationId": "org_free"
       },
-      "expectedRecovery": "Ask an organization owner or admin to upgrade to Pro: https://app.mcpjam.com/organizations/org_free/plans. BYOK avoids MCPJam model charges. The allowance resets at 2026-11-19 00:00 UTC.",
+      "expectedRecovery": "Only an organization owner or admin can upgrade to Pro. Send them this link: https://app.mcpjam.com/organizations/org_free/plans",
       "expectedUrl": "https://app.mcpjam.com/organizations/org_free/plans"
     },
     {
@@ -65,10 +65,10 @@
         "billingModel": "monthly_per_seat",
         "code": "user_rate_limit",
         "limitKind": "total",
-        "error": "Monthly MCPJam model limit reached. Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open. BYOK avoids MCPJam model charges.",
+        "error": "Monthly MCPJam model limit reached. Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open",
         "isRetryable": true,
         "retryAfter": 0,
-        "details": "Your team's monthly credits will reset when the billing period renews.",
+        "details": "Retry once that is done.",
         "canTopUp": true,
         "walletLocked": false,
         "budgetReached": false,
@@ -81,7 +81,7 @@
         },
         "organizationId": "org_paid"
       },
-      "expectedRecovery": "Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open. BYOK avoids MCPJam model charges.",
+      "expectedRecovery": "Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open",
       "expectedUrl": "https://app.mcpjam.com/organizations/org_paid/billing?topup=open"
     },
     {
@@ -91,7 +91,7 @@
         "ok": false,
         "code": "spend_budget_reached",
         "limitKind": "total",
-        "error": "This organization's spend budget is reached. An owner or admin can raise it in Organization → Budget: https://app.mcpjam.com/organizations/org_paid/budget.",
+        "error": "This organization's spend budget is reached. Only an organization owner or admin can raise the spend budget. Send them this link: https://app.mcpjam.com/organizations/org_paid/budget",
         "isRetryable": false,
         "retryAfter": 0,
         "details": "Runs using your own API keys are unaffected.",
@@ -108,7 +108,7 @@
         },
         "organizationId": "org_paid"
       },
-      "expectedRecovery": "Ask an organization owner or admin to raise the organization's spend budget: https://app.mcpjam.com/organizations/org_paid/budget. BYOK avoids MCPJam model charges.",
+      "expectedRecovery": "Only an organization owner or admin can raise the spend budget. Send them this link: https://app.mcpjam.com/organizations/org_paid/budget",
       "expectedUrl": "https://app.mcpjam.com/organizations/org_paid/budget"
     },
     {

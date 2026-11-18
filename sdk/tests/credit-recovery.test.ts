@@ -52,7 +52,7 @@ describe("formatCreditRecovery", () => {
     }
   );
 
-  it("puts the wait last, and only with a real reset time", () => {
+  it("gives a step alone, and a reset time only for a wait", () => {
     const base = {
       version: 1,
       reason: "allowance_exhausted",
@@ -60,11 +60,10 @@ describe("formatCreditRecovery", () => {
       actor: "caller",
       plan: "pro",
     } as const;
-    expect(formatCreditRecovery(base)).toBe(
-      "Upgrade to Pro to keep going. BYOK avoids MCPJam model charges."
-    );
-    expect(formatCreditRecovery(base, { resetAt: 1795046400000 })).toBe(
-      "Upgrade to Pro to keep going. BYOK avoids MCPJam model charges. The allowance resets at 2026-11-19 00:00 UTC."
+    expect(formatCreditRecovery(base)).toBe("Upgrade to Pro to keep going.");
+    // Agents offered "upgrade, BYOK, or wait" chose to wait.
+    expect(formatCreditRecovery({ ...base, resetAt: 1795046400000 })).toBe(
+      "Upgrade to Pro to keep going."
     );
     expect(
       formatCreditRecovery({ ...base, action: "wait", resetAt: 1795046400000 })
@@ -74,7 +73,7 @@ describe("formatCreditRecovery", () => {
     );
   });
 
-  it("leaves BYOK out where it does not avoid the charge", () => {
+  it("has a member send the link on, with no period after it", () => {
     expect(
       formatCreditRecovery({
         version: 1,
@@ -84,7 +83,7 @@ describe("formatCreditRecovery", () => {
         url: "https://app.mcpjam.com/organizations/org_1/billing?topup=open",
       })
     ).toBe(
-      "Ask an organization owner or admin to buy credits: https://app.mcpjam.com/organizations/org_1/billing?topup=open."
+      "Only an organization owner or admin can buy credits. Send them this link: https://app.mcpjam.com/organizations/org_1/billing?topup=open"
     );
   });
 
@@ -151,9 +150,7 @@ describe("parseCreditRecovery", () => {
     const parsed = parseCreditRecovery({ ...valid, url });
     expect(parsed).toBeDefined();
     expect(parsed?.url).toBeUndefined();
-    expect(formatCreditRecovery(parsed!)).toBe(
-      "Buy credits to keep going. BYOK avoids MCPJam model charges."
-    );
+    expect(formatCreditRecovery(parsed!)).toBe("Buy credits to keep going.");
   });
 
   it("keeps an app URL as its normalized href, on Cloud and staging", () => {
