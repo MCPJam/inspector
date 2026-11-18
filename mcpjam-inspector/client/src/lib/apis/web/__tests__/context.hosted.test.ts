@@ -13,6 +13,7 @@ import {
   normalizeHostedServerNames,
   resolveHostedServerId,
   tryGetHostedServerDisplayName,
+  tryResolveProjectServer,
 } from "../context";
 
 describe("injectHostedServerMapping", () => {
@@ -40,7 +41,7 @@ describe("injectHostedServerMapping", () => {
     );
 
     // Inject the mapping
-    injectHostedServerMapping("new-server", "id-new");
+    injectHostedServerMapping("new-server", "id-new", "project-1");
 
     // Now it resolves
     expect(resolveHostedServerId("new-server")).toBe("id-new");
@@ -50,14 +51,14 @@ describe("injectHostedServerMapping", () => {
   // revision bump made the Playground ask for the tool list a second time.
   it("does not announce a mapping it already had", () => {
     const before = getApiContextRevision();
-    injectHostedServerMapping("existing-server", "id-existing");
+    injectHostedServerMapping("existing-server", "id-existing", "project-1");
     expect(getApiContextRevision()).toBe(before);
-    injectHostedServerMapping("existing-server", "id-moved");
+    injectHostedServerMapping("existing-server", "id-moved", "project-1");
     expect(getApiContextRevision()).toBe(before + 1);
   });
 
   it("preserves existing server mappings", () => {
-    injectHostedServerMapping("new-server", "id-new");
+    injectHostedServerMapping("new-server", "id-new", "project-1");
 
     // Existing server still resolves
     expect(resolveHostedServerId("existing-server")).toBe("id-existing");
@@ -65,8 +66,25 @@ describe("injectHostedServerMapping", () => {
     expect(resolveHostedServerId("new-server")).toBe("id-new");
   });
 
+  it("keeps the current project's mapping when another project's save finishes", () => {
+    setApiContext({
+      projectId: "project-2",
+      isAuthenticated: true,
+      serverIdsByName: { "existing-server": "id-project-2" },
+    });
+    const before = getApiContextRevision();
+
+    injectHostedServerMapping("existing-server", "id-existing", "project-1");
+
+    expect(tryResolveProjectServer("existing-server")).toEqual({
+      projectId: "project-2",
+      serverId: "id-project-2",
+    });
+    expect(getApiContextRevision()).toBe(before);
+  });
+
   it("is overwritten by setApiContext with same data", () => {
-    injectHostedServerMapping("new-server", "id-new");
+    injectHostedServerMapping("new-server", "id-new", "project-1");
     expect(resolveHostedServerId("new-server")).toBe("id-new");
 
     // Simulate the subscription catching up and calling setApiContext
@@ -85,7 +103,7 @@ describe("injectHostedServerMapping", () => {
   });
 
   it("injected mapping is lost if setApiContext fires before subscription catches up", () => {
-    injectHostedServerMapping("new-server", "id-new");
+    injectHostedServerMapping("new-server", "id-new", "project-1");
 
     // If setApiContext fires with stale data (without the new server),
     // the injected mapping is lost — this is the edge case the await prevents
