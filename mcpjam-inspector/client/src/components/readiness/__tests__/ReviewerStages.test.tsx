@@ -212,6 +212,7 @@ describe("the reviewer path's stages", () => {
     renderPath({ ...WAITING, reviewerAccountId: "reviewer_1", humanSignInCompletedAt: 100 });
     expect(await screen.findByText("Reviewer sign-in completed. Resume this attempt to run the checks.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Finish reviewer sign-in" })).toBeNull();
+    expect((await rowNamed("Reviewer connection")).getByText("A project member connected the reviewer account in their browser.")).toBeVisible();
   });
 
   it("a verification stop: the step waits for a person, and the handover says what, who and what works", async () => {

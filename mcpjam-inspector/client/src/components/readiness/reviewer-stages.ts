@@ -228,6 +228,9 @@ export function reviewerPathRows(
   const rows = SIGN_IN.flatMap(({ stage: name, label, shown }, index) => {
     const stage = latest(name);
     if (stage) return [rowOf(stage, label)];
+    if (name === "connected" && attempt?.humanSignInCompletedAt && attempt.reviewerAccountId) {
+      return [{ key: name, label, status: "established" as const, detail: "A project member connected the reviewer account in their browser." }];
+    }
     const passed = SIGN_IN.slice(index + 1).some((later) =>
       latest(later.stage),
     );
