@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureLiveBrowserSession = vi.fn();
 const prepareAuthorization = vi.fn();
+const runConnectionJob = vi.fn();
+vi.mock("../../server-connection-worker.js", () => ({
+  runConnectionJob: (id: string) => runConnectionJob(id),
+}));
 /** What the live seams handed the agent, and how the fake agent answers. */
 let agentDeps:
   | import("../reviewer-sign-in-agent.js").SignInAgentDeps
@@ -425,6 +429,19 @@ describe("the connection", () => {
       state: "st_1",
       code: "code_1",
     });
+  });
+
+  it("drives discovery and validation for its own request on a local Inspector", async () => {
+    vi.stubEnv("MCPJAM_LOCAL_DOORBELL_MS", "2000");
+    try {
+      const live = deps().connect;
+      const signal = new AbortController().signal;
+      await live.prepare(signal);
+      await live.complete({ state: "st_1", code: "code_1" }, signal);
+      expect(runConnectionJob.mock.calls).toEqual([["req_1"], ["req_1"]]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("answers a refused completion and a failed request with the backend's words", async () => {
