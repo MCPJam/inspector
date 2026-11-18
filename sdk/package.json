@@ -27,6 +27,11 @@
       "import": "./dist/internal/network-proxy.js",
       "default": "./dist/internal/network-proxy.js"
     },
+    "./internal/inspector": {
+      "types": "./dist/internal/inspector.d.ts",
+      "import": "./dist/internal/inspector.js",
+      "default": "./dist/internal/inspector.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",

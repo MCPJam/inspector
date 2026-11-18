@@ -168,6 +168,54 @@ export function isToolCalledWithAssert(step: TestStep): boolean {
   );
 }
 
+export type ToolCalledWithStep = Extract<TestStep, { kind: "assert" }> & {
+  assertion: Extract<Predicate, { type: "toolCalledWith" }>;
+};
+
+/** Any `toolCalledWith` assert, advisory included: what "No tools" removes. */
+function isAnyToolCalledWith(step: TestStep): step is ToolCalledWithStep {
+  return (
+    step.kind === "assert" &&
+    "type" in step.assertion &&
+    step.assertion.type === "toolCalledWith"
+  );
+}
+
+/** An assert "No tools" set aside, with the ids before it, nearest first. */
+export type StashedToolCheck = {
+  step: ToolCalledWithStep;
+  preceding: string[];
+};
+
+export function stashToolChecks(steps: TestStep[]): StashedToolCheck[] {
+  const ids = steps.map((step) => step.id);
+  return steps.flatMap((step, index) =>
+    isAnyToolCalledWith(step)
+      ? [{ step, preceding: ids.slice(0, index).reverse() }]
+      : [],
+  );
+}
+
+/**
+ * Each stashed assert back, unchanged, after the nearest earlier step still
+ * there (else after the first prompt). One already in the case stays put.
+ */
+export function restoreToolChecks(
+  steps: TestStep[],
+  stash: StashedToolCheck[],
+): TestStep[] {
+  const next = [...steps];
+  for (const { step, preceding } of stash) {
+    if (next.some((item) => item.id === step.id)) continue;
+    const anchor = preceding.find((id) => next.some((item) => item.id === id));
+    const index = anchor
+      ? next.findIndex((item) => item.id === anchor)
+      : next.findIndex((item) => item.kind === "prompt");
+    next.splice(index + 1, 0, step);
+  }
+  return next;
+}
+
 export function isWidgetAssertStep(step: TestStep): step is WidgetAssertStep {
   return isAssertStep(step) && isWidgetAssertion(step.assertion);
 }
@@ -437,17 +485,7 @@ export function writeSimpleCase(
   if (view.noTool) {
     // Negative applies to every model turn (and the backend rejects a negative
     // case that kept any `toolCalledWith`), so this drops them list-wide.
-    return [
-      ...lead,
-      ...rest.filter(
-        (step) =>
-          !(
-            step.kind === "assert" &&
-            "type" in step.assertion &&
-            step.assertion.type === "toolCalledWith"
-          ),
-      ),
-    ];
+    return [...lead, ...rest.filter((step) => !isAnyToolCalledWith(step))];
   }
 
   const prevTools = rest.filter(isToolCalledWithAssert);

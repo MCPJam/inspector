@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
+import {
+  isAwaitingFirstRunAfterTour,
+  takeFirstRunAfterTour,
+} from "@/components/evaluate/tour/tour-attribution";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
@@ -1139,6 +1143,10 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
           fan_out_axis: fanOutAxis,
           num_environments: numEnvironments,
+          // A batch where every launch was rejected isn't the first run.
+          after_tour:
+            failures.length < runPlans.length &&
+            takeFirstRunAfterTour(suite._id),
         });
 
         track("eval_suite_run_start_requests_completed", {
@@ -1545,6 +1553,7 @@ export function useEvalHandlers({
           return null;
         }
 
+        const afterTour = isAwaitingFirstRunAfterTour(suite._id);
         const runResults = await Promise.all(
           preparedRuns.map(async (preparedRun) => {
             track("eval_test_case_run_started", {
@@ -1552,6 +1561,7 @@ export function useEvalHandlers({
               suite_id: suite._id,
               test_case_id: testCase._id,
               model: preparedRun.modelValue,
+              after_tour: afterTour,
             });
 
             try {
@@ -1607,6 +1617,7 @@ export function useEvalHandlers({
             data: any;
           } => result.ok,
         );
+        if (successfulRuns.length > 0) takeFirstRunAfterTour(suite._id);
         const failedRuns = runResults.filter(
           (
             result,
