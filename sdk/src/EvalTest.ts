@@ -1087,7 +1087,10 @@ export class EvalTest {
                   // `test()`, `expectedToolCalls` and each gating predicate each
                   // contribute one gating score of exactly that value. Advisory
                   // predicates contribute an advisory row and never fail the trial.
-                  passed: !controller.signal.aborted && graded.passed,
+                  // A cancel that lands after `test()` returned doesn't override
+                  // the rows: a gating check it cut short already wrote a failing
+                  // row, and `status` says the trial was cancelled.
+                  passed: graded.passed,
                   // The iteration RAN. `graded.passed === false` is the server
                   // under test failing its task, which is not an execution
                   // failure — only the timeout stopped execution short. Bound to
