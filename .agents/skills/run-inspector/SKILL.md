@@ -54,6 +54,24 @@ deterministic `https://stateless.mcpjam.com/mcp` (`echo` returns
 `mcpjam-backend`'s `scripts/agentEnv.ts` documents every command; the usual
 run:
 
+**If you have the `prepare_qa` tool** (MCPJam's agent environments MCP
+server), use it instead of the backend checkout and steps 2 and 3:
+
+- Call `prepare_qa` with the pull request number and the full commit you
+  checked out, **before** installing or running the PR's code. It refuses
+  pull requests from forks and commits that aren't on the PR's branch; an
+  engineer reviews outside contributors' code first. Pass `backend_ref` when
+  the PR needs a backend branch, pushed first.
+- Call `get_environment` until it says ready (about two minutes). Save its
+  JSON to a file **outside the repository** (it holds a single-use sign-in),
+  then run `npm run qa:start -w @mcpjam/inspector -- --bundle <file>` and
+  continue at step 5.
+- For another browser context, call `get_environment` (or `sign_in`) again
+  and rerun `qa:start --bundle` with the new file; it reuses the running
+  instance. Finish with `qa:stop`, then `delete_environment`.
+
+Otherwise, the backend CLI path:
+
 1. Install dependencies in both checkouts first: `npm ci` in
    `mcpjam-backend`, and the install in this repo's `AGENTS.md` here. A fresh
    cloud checkout has neither, and a session with two repositories may skip
@@ -128,6 +146,8 @@ Notes:
   page they link to), and eval judge results, wait on a backend request that
   doesn't reach it. Report flows that wait on those as unverified, not
   failed.
+- The profile carries no WorkOS key, so MCPJam API-key (`sk_…`) flows can't
+  be checked on an agent environment. Report them as unverified.
 - Hosted browsers start on WebMCP → Open browser; enter a public URL first,
   because the default address points at nothing inside the cloud desktop.
 

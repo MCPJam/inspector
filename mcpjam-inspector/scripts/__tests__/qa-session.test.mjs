@@ -8,7 +8,9 @@ import {
   isReady,
   parseInstanceLine,
   parseQaArgs,
+  profileWithFlags,
   readGrant,
+  requireProfile,
   resolveQaInputs,
   sessionDir,
   sessionFiles,
@@ -52,6 +54,8 @@ test("resolveQaInputs takes the profile, workspace and server from environment.j
     assert.deepEqual(inputs, {
       name: "fix-refresh",
       profile: "/envs/fix-refresh/inspector.env",
+      bundle: null,
+      grant: null,
       grantPath: join(dir, "grant.json"),
       open: "/p/p1/servers",
       expectServer: "stateless",
@@ -91,10 +95,9 @@ test("resolveQaInputs lets flags override the environment, and works without one
 
 test("resolveQaInputs names what's missing", () => {
   assert.throws(
-    () => resolveQaInputs({ grant: "g.json" }),
-    /--environment <environment.json> or --profile/,
+    () => resolveQaInputs({ profile: "p.env" }),
+    /Pass --bundle <file>, or --grant <file>/,
   );
-  assert.throws(() => resolveQaInputs({ profile: "p.env" }), /Pass --grant/);
   assert.throws(
     () => resolveQaInputs({ profile: "p.env", grant: "g", name: "Bad Name" }),
     /--name must be a lowercase slug/,
@@ -103,6 +106,83 @@ test("resolveQaInputs names what's missing", () => {
     () =>
       resolveQaInputs({ environment: "/nope/environment.json", grant: "g" }),
     /Can't read the environment summary/,
+  );
+});
+
+test("requireProfile only needs a profile to start a new instance", () => {
+  const inputs = resolveQaInputs({ grant: "g.json", name: "fix-refresh" });
+  assert.equal(inputs.profile, null);
+  assert.throws(
+    () => requireProfile(inputs, false),
+    /No QA session "fix-refresh" is running. Pass --bundle/,
+  );
+  assert.doesNotThrow(() => requireProfile(inputs, true));
+});
+
+const BUNDLE = {
+  kind: "mcpjam-agent-environment",
+  version: 1,
+  environment: {
+    name: "qa-pr-7846",
+    deployment: "happy-otter-123",
+    backend: { ref: "main", commit: "a".repeat(40) },
+    workspace: { serverName: "stateless", path: "/p/p1/servers" },
+  },
+  profile:
+    "VITE_CONVEX_URL=https://happy-otter-123.convex.cloud\nINSPECTOR_SERVICE_TOKEN=s\n",
+  flags: { skills: true },
+  grant: {
+    email: "agent@example.net",
+    clientId: "client_1",
+    refreshToken: "r",
+  },
+};
+
+test("resolveQaInputs takes everything from a bundle", () => {
+  const dir = scratch({
+    "bundle.json": JSON.stringify(BUNDLE),
+    "other.json": JSON.stringify({ ...BUNDLE, kind: "something-else" }),
+    "bad-grant.json": JSON.stringify({ ...BUNDLE, grant: { email: "a" } }),
+  });
+  try {
+    const inputs = resolveQaInputs({ bundle: "bundle.json" }, dir);
+    assert.deepEqual(inputs, {
+      name: "qa-pr-7846",
+      profile: null,
+      bundle: { profile: BUNDLE.profile, flags: { skills: true } },
+      grant: BUNDLE.grant,
+      grantPath: null,
+      open: "/p/p1/servers",
+      expectServer: "stateless",
+      headed: false,
+    });
+    const withGrant = resolveQaInputs(
+      { bundle: "bundle.json", grant: "g.json" },
+      dir,
+    );
+    assert.equal(withGrant.grant, null);
+    assert.equal(withGrant.grantPath, join(dir, "g.json"));
+    assert.throws(
+      () => resolveQaInputs({ bundle: "other.json" }, dir),
+      /isn't an agent environment bundle/,
+    );
+    assert.throws(
+      () => resolveQaInputs({ bundle: "bad-grant.json" }, dir),
+      /has no clientId/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("profileWithFlags points the profile at the local flags file", () => {
+  const text = profileWithFlags(
+    "A=1\nMCPJAM_FEATURE_FLAGS_FILE=/elsewhere.json\n\nB=2\n",
+    "/tmp/qa/flags.json",
+  );
+  assert.equal(
+    text,
+    "A=1\nB=2\nMCPJAM_FEATURE_FLAGS_FILE=/tmp/qa/flags.json\n",
   );
 });
 
@@ -176,6 +256,8 @@ test("session files live under a per-name directory", () => {
     log: join(dir, "inspector.log"),
     storageState: join(dir, "storage-state.json"),
     screenshot: join(dir, "ready.png"),
+    profile: join(dir, "inspector.env"),
+    flags: join(dir, "flags.json"),
   });
 });
 
