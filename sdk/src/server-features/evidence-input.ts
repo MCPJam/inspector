@@ -275,6 +275,7 @@ export function selectServerEvidence(
     contextHash?: string;
     checks?: readonly CheckResultEvidence[];
     configured?: readonly FeatureSetupKind[];
+    setupOffered?: readonly FeatureSetupKind[];
   },
 ): SelectedServerEvidence {
   const contexts = listEvidenceContexts(stored);
@@ -337,6 +338,7 @@ export function selectServerEvidence(
     observations,
     checks: options.checks,
     configured: options.configured,
+    setupOffered: options.setupOffered,
   };
   return { input, contextHash, capturedAt, latestAttempt, probeFailures, contexts };
 }

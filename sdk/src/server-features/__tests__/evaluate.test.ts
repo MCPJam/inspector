@@ -239,19 +239,46 @@ describe("evaluateServerFeatures", () => {
     const setup = feature("test.setup", {
       assessment: { primary: "configured", setup: "client-credentials" },
     });
-    const result = evaluateServerFeatures([observed, checked, setup], connected());
+    const result = evaluateServerFeatures(
+      [observed, checked, setup],
+      connected({ setupOffered: ["client-credentials"] }),
+    );
     expect(result.assessments["test.observed"].nextAction).toBe("use-in-playground");
     expect(result.assessments["test.checked"].nextAction).toBe("run-checks");
     expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
 
+  it("never counts setup in MCPJam as the server supporting a feature", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
     const configured = evaluateServerFeatures(
       [setup],
-      connected({ configured: ["client-credentials"] }),
+      connected({
+        configured: ["client-credentials"],
+        setupOffered: ["client-credentials"],
+      }),
     );
     expect(configured.assessments["test.setup"]).toMatchObject({
-      state: "supported",
-      sources: ["configured"],
+      state: "not-checked",
+      nextAction: "reconnect",
+      evidence: [],
     });
+  });
+
+  it("offers no Set up step for setup this MCPJam surface cannot do", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures(
+      [setup],
+      connected({ setupOffered: ["enterprise-managed-authorization"] }),
+    );
+    expect(result.assessments["test.setup"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(result.assessments["test.setup"].nextAction).toBeUndefined();
   });
 
   it("asks to connect a server that was never connected", () => {

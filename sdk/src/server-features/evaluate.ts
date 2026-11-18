@@ -57,7 +57,6 @@ const SOURCE_STRENGTH: readonly EvidenceSource[] = [
   "oauth-flow",
   "declared",
   "detected",
-  "configured",
 ];
 
 function emptyCounts(): Record<FeatureUserState, number> {
@@ -207,6 +206,16 @@ function collectEvidence(
       contextHash,
     }),
   );
+  // Only a captured connect proves its context worked; a context alone does not.
+  push(
+    evidenceFromRule({
+      feature,
+      outcome: runRule(rules.connectedWith, input.declared ? input.context : undefined),
+      source: "oauth-flow",
+      capturedAt: input.declared?.capturedAt,
+      contextHash,
+    }),
+  );
 
   // Read-only checks graded by background probes.
   for (const summary of Object.values(input.probes ?? {})) {
@@ -269,18 +278,6 @@ function collectEvidence(
           ? "Passed with warnings."
           : undefined,
       ref: { runId: check.runId, check: check.ref },
-    });
-  }
-
-  if (rules.setup && input.configured?.includes(rules.setup)) {
-    evidence.push({
-      featureId: feature.id,
-      source: "configured",
-      outcome: "present",
-      provenance: "manual",
-      intrusiveness: "passive",
-      coverage: "complete",
-      contextHash,
     });
   }
   return evidence;
@@ -441,9 +438,43 @@ function assess(
     });
   }
   const primary = feature.assessment.primary;
+  if (primary === "configured") return needsSetup(feature, input, unknown, result);
   return result("not-checked", {
     reason: unknown?.detail ?? REASON_FOR_PRIMARY[primary],
     nextAction: NEXT_ACTION_FOR_PRIMARY[primary],
+  });
+}
+
+/**
+ * A feature MCPJam can only check after setup. Setup alone proves nothing
+ * about the server, so it moves the feature on to "connect to check it",
+ * never to Supported. Setup this MCPJam surface cannot offer gets no step.
+ */
+function needsSetup(
+  feature: FeatureDefinition,
+  input: ServerFeatureEvidenceInput,
+  unknown: FeatureEvidence | undefined,
+  result: (
+    state: FeatureUserState,
+    extra?: Partial<FeatureAssessment>,
+  ) => FeatureAssessment,
+): FeatureAssessment {
+  const setup = feature.assessment.setup;
+  if (setup && input.configured?.includes(setup)) {
+    return result("not-checked", {
+      reason:
+        unknown?.detail ?? "Set up in MCPJam. Reconnect to check it with that setup.",
+      nextAction: "reconnect",
+    });
+  }
+  if (setup && input.setupOffered?.includes(setup)) {
+    return result("not-checked", {
+      reason: unknown?.detail ?? REASON_FOR_PRIMARY.configured,
+      nextAction: "set-up",
+    });
+  }
+  return result("not-checked", {
+    reason: unknown?.detail ?? "MCPJam cannot check this yet.",
   });
 }
 
