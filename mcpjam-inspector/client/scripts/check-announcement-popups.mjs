@@ -13,7 +13,7 @@ const roots = new Map([
 ]);
 
 export function checkAnnouncementPopups(file, code) {
-  if (file === wrapper) return [];
+  if (file.replaceAll("\\", "/") === wrapper) return [];
   const source = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const imports = new Map();
   for (const statement of source.statements) {

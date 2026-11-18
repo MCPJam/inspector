@@ -4,6 +4,16 @@ import { checkAnnouncementPopups } from "../../client/scripts/check-announcement
 
 const check = (code) => checkAnnouncementPopups("components/example.tsx", code);
 
+test("exempts the shared wrapper with POSIX and Windows paths", () => {
+  const code = 'import { toast } from "sonner"; toast.custom(() => null);';
+  for (const file of [
+    "components/announcement-popups.tsx",
+    "components\\announcement-popups.tsx",
+  ]) {
+    assert.deepEqual(checkAnnouncementPopups(file, code), []);
+  }
+});
+
 test("flags direct custom toasts and feature spotlight roots even if aliased", () => {
   const violations = check(`
     import { toast as notify } from "sonner";
