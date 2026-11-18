@@ -1485,8 +1485,8 @@ export function ScenarioChatPage({
             scenarioSurface: session.surface ?? "share_link",
             projectId: session.payload.projectId,
             // `hostedContext.selectedServerIds` wins over the status-filtered
-            // names inside ChatTabV2, so a server proven unreachable has to be
-            // dropped HERE or the turn still ships it. Sending it anyway costs
+            // names inside the Playground chat, so a server proven unreachable
+            // has to be dropped HERE or the turn still ships it. Sending it costs
             // the whole turn: one server that fails `listTools` rejects the
             // Promise.all behind the tool set. The tester already has the
             // banner saying why it's missing.
