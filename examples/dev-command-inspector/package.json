@@ -1,0 +1,17 @@
+{
+  "name": "mcpjam-example-dev-command-inspector",
+  "private": true,
+  "type": "module",
+  "description": "An MCP server whose `npm run dev` opens MCPJam with the server connected",
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.1.13"
+  },
+  "devDependencies": {
+    "@mcpjam/inspector": "^3.24.0",
+    "vite": "^7.3.0"
+  }
+}
