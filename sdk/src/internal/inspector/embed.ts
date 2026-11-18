@@ -213,7 +213,7 @@ function handle(args: {
     started,
     ...(child ? { process: child } : {}),
     async connect(server) {
-      const attachId = inspectorAttachId(process.pid, port, server.name);
+      const attachId = inspectorAttachId(process.pid, port, server);
       const state = await requestInspectorAttach(apiBase, token, {
         attachId,
         server,
