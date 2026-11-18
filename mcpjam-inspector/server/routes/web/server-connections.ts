@@ -24,6 +24,7 @@
 
 import { Hono } from "hono";
 import { z } from "zod";
+import { runConnectionJob } from "../../services/server-connection-worker.js";
 import {
   cancelFromHandoff,
   claimHandoff,
@@ -298,6 +299,11 @@ serverConnections.get("/state", async (c) => {
   const token = requireContinuation(c);
   try {
     const state = await fetchHandoffState(token);
+    // In local doorbell mode the preview cannot wake the validation worker.
+    // The continuation supplies the request id even after a page reload.
+    if (process.env.MCPJAM_LOCAL_DOORBELL_MS && state.live && state.status === "validating") {
+      await runConnectionJob(state.requestId);
+    }
     return c.json(state, 200, { "cache-control": "no-store" });
   } catch (error) {
     throw translate(error);
