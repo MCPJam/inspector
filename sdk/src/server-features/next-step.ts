@@ -64,7 +64,7 @@ function stepFor(
   const rules = feature.assessment;
   switch (source) {
     case "declared":
-      return (rules.declared || rules.connectedWith) && !input.declared
+      return rules.declared && !input.declared
         ? {
             reason: "Nothing was captured for this yet. Reconnect to capture it.",
             nextAction: "reconnect",
