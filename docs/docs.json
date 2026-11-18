@@ -124,6 +124,12 @@
             "group": "Troubleshoot",
             "icon": "life-buoy",
             "pages": ["troubleshooting/common-errors", "troubleshooting/error-codes"]
+          },
+          {
+            "group": "Changelog",
+            "hidden": true,
+            "searchable": true,
+            "pages": ["changelog/overview"]
           }
         ]
       },
