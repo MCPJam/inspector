@@ -6,6 +6,7 @@ import {
   type BillingInterval,
 } from "@/hooks/useOrganizationBilling";
 import {
+  canUpgradeOrganizationPlan,
   formatPlanName,
   getAnnualDiscountPercent,
 } from "@/lib/billing-entitlements";
@@ -297,7 +298,9 @@ export function useUpgradeCheckout({
 
   const currentPlan = billingStatus?.plan ?? "free";
   const effectivePlan = billingStatus?.effectivePlan ?? currentPlan;
-  const canManageBilling = billingStatus?.canManageBilling ?? false;
+  // Every action here is an upgrade checkout, which admins may start too, so
+  // this reads the upgrade permission rather than owner-only billing control.
+  const canManageBilling = canUpgradeOrganizationPlan(billingStatus);
 
   const selectInterval = useCallback(
     (nextInterval: BillingInterval) => {

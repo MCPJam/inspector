@@ -61,6 +61,7 @@ import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import {
   canShowSubscriptionNotices,
+  canUpgradeOrganizationPlan,
   getAnnualDiscountPercent,
 } from "@/lib/billing-entitlements";
 import { consumeUrlFlag } from "@/lib/url-flag";
@@ -114,6 +115,7 @@ function getPlanColumnCta(params: {
   entry: NonNullable<PlanCatalog["plans"][OrganizationPlan]>;
   billingConfigured: boolean;
   canManageBilling: boolean;
+  canUpgradePlan: boolean;
   isBillingActionPending: boolean;
   scheduledCancellationDate: string | null;
   onDowngradePlan: (
@@ -143,6 +145,7 @@ function getPlanColumnCta(params: {
     entry,
     billingConfigured,
     canManageBilling,
+    canUpgradePlan,
     isBillingActionPending,
     scheduledCancellationDate,
     onDowngradePlan,
@@ -250,10 +253,16 @@ function getPlanColumnCta(params: {
     ) {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
+    // Mirrors the server: an admin may move to a higher tier, but not
+    // switch an annual plan to monthly or change interval within a tier.
+    const canStart =
+      isHigherTier &&
+      !(currentBillingInterval === "annual" && billingInterval === "monthly")
+        ? canUpgradePlan
+        : canManageBilling;
     return {
       label: currentPlan === plan ? "Change plan" : "Upgrade",
-      disabled:
-        !billingConfigured || !canManageBilling || isBillingActionPending,
+      disabled: !billingConfigured || !canStart || isBillingActionPending,
       variant: "default",
       onClick: () => void onStartPlanChange(plan, billingInterval),
     };
@@ -681,6 +690,7 @@ function FreePlanTeamUpsell({
   currentPlan,
   billingConfigured,
   canManageBilling,
+  canUpgradePlan,
   isBillingActionPending,
   pendingPlanChangeTarget,
   deferredTrialBillingCopy,
@@ -691,6 +701,7 @@ function FreePlanTeamUpsell({
   currentPlan: OrganizationPlan;
   billingConfigured: boolean;
   canManageBilling: boolean;
+  canUpgradePlan: boolean;
   isBillingActionPending: boolean;
   pendingPlanChangeTarget: "pro" | "team" | null;
   deferredTrialBillingCopy: string | null;
@@ -723,6 +734,7 @@ function FreePlanTeamUpsell({
     entry,
     billingConfigured,
     canManageBilling,
+    canUpgradePlan,
     isBillingActionPending,
     scheduledCancellationDate: null,
     onDowngradePlan,
@@ -948,10 +960,12 @@ export function OrganizationBillingSection({
       return;
     }
 
-    if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
+    // Deep links only reach Free and trial orgs, so every one is an upgrade.
+    const canStartCheckout = canUpgradeOrganizationPlan(billingStatus);
+    if (!billingStatus.billingConfigured || !canStartCheckout) {
       toast.error(
-        !billingStatus.canManageBilling
-          ? "Only organization owners can start checkout."
+        !canStartCheckout
+          ? "Only organization owners and admins can start checkout."
           : "Checkout isn't available in this environment.",
       );
       onCheckoutIntentConsumed?.();
@@ -1009,6 +1023,7 @@ export function OrganizationBillingSection({
   const currentPlan = billingStatus?.plan ?? "free";
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
+  const canUpgradePlan = canUpgradeOrganizationPlan(billingStatus);
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
@@ -1213,6 +1228,7 @@ export function OrganizationBillingSection({
             currentPlan={currentPlan}
             billingConfigured={billingConfigured}
             canManageBilling={canManageBilling}
+            canUpgradePlan={canUpgradePlan}
             isBillingActionPending={isBillingActionPending}
             pendingPlanChangeTarget={pendingPlanChangeTarget}
             deferredTrialBillingCopy={deferredTrialBillingCopy}
@@ -1279,8 +1295,9 @@ export function OrganizationBillingSection({
               ) : null}
               {!canManageBilling ? (
                 <p className="text-sm text-muted-foreground">
-                  Only organization owners can manage billing changes. Admins
-                  can review plan details here.
+                  {canUpgradePlan
+                    ? "Admins can upgrade to a higher plan. Downgrades, cancellation, and payment details stay with organization owners."
+                    : "Only organization owners can manage billing changes. Admins can review plan details here."}
                 </p>
               ) : null}
             </>
@@ -1380,6 +1397,7 @@ export function OrganizationBillingSection({
                                 entry,
                                 billingConfigured,
                                 canManageBilling,
+                                canUpgradePlan,
                                 isBillingActionPending,
                                 scheduledCancellationDate,
                                 onDowngradePlan: (

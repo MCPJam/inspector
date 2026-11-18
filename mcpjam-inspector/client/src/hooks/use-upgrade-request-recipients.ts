@@ -9,8 +9,8 @@ import type { UpgradeRequestRecipient } from "@/components/billing/RequestUpgrad
 
 /**
  * The org owners a blocked member should be pointed at. Owners only: admins
- * can't start checkout either (`canManageBilling` is owner-only in Convex), so
- * addressing them would route the ask to someone who also can't act on it.
+ * can upgrade now (`canUpgradePlan`), but a backend that predates that field
+ * still refuses them, and owners hold every billing action the ask may need.
  *
  * Pending invites are excluded — `activeMembers` already filters to members
  * with a resolved `userId`.

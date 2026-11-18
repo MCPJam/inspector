@@ -719,6 +719,83 @@ describe("OrganizationsTab billing", () => {
     ).toBeEnabled();
   });
 
+  it("lets an admin upgrade from Free", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          catalogPlanId: "free",
+          priceModel: "free",
+          canManageBilling: false,
+          canUpgradePlan: true,
+          isOwner: false,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    for (const column of ["Pro", "Team"]) {
+      expect(
+        within(getPlanColumn(column)).getByRole("button", { name: "Upgrade" }),
+      ).toBeEnabled();
+    }
+  });
+
+  it("lets an admin move up a tier but not down or across cadences", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "monthly",
+          hasCustomer: true,
+          canManageBilling: false,
+          canUpgradePlan: true,
+          isOwner: false,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    ).toBeEnabled();
+    expect(
+      within(getPlanColumn("Free")).getByRole("button", { name: "Downgrade" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getAllByRole("radio", { name: /^Annual/ })[0]);
+
+    expect(
+      within(getPlanColumn("Pro")).getByRole("button", { name: "Change plan" }),
+    ).toBeDisabled();
+  });
+
+  it("keeps an admin off checkout against a backend without canUpgradePlan", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          catalogPlanId: "free",
+          priceModel: "free",
+          canManageBilling: false,
+          isOwner: false,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    ).toBeDisabled();
+  });
+
   it("does not call a cadence the bundle does not sell the current plan", () => {
     const base = createV2PlanCatalog();
     const catalog = {

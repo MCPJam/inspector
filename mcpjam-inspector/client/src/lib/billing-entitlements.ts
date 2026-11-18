@@ -575,3 +575,15 @@ function rawErrorMessage(error: unknown): string | null {
     ? error.message
     : null;
 }
+
+/** Admins may start an upgrade; downgrades and the portal stay owner-only. */
+export function canUpgradeOrganizationPlan(
+  billingStatus:
+    | Pick<OrganizationBillingStatus, "canManageBilling" | "canUpgradePlan">
+    | null
+    | undefined,
+): boolean {
+  return (
+    billingStatus?.canUpgradePlan ?? billingStatus?.canManageBilling ?? false
+  );
+}
