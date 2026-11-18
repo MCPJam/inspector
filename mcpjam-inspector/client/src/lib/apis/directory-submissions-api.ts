@@ -103,7 +103,7 @@ export async function listSubmissionEvents(
   signal?: AbortSignal,
 ): Promise<SubmissionEvent[]> {
   const page = await client().listDirectorySubmissionEvents(
-    { ...scope, kind },
+    { ...scope, kind, limit: 100 },
     { signal },
   );
   return page.items;
