@@ -136,7 +136,6 @@ export async function prepareManagedConnections(args: {
     | "turnRail"
     | "modelVisibleMcpToolResults"
     | "executionScope"
-    | "requireToolApproval"
   >;
   onOAuthServerUrls: (urls: Record<string, string>) => void;
 }) {
@@ -668,7 +667,7 @@ export async function prepareManagedConnections(args: {
   );
   if (pendingApproval) throw pendingApproval;
   if (Array.isArray(hostedBody.messages) && hostedBody.messages.length <= 1)
-    void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId, { toolApprovalRequired: args.setup.requireToolApproval === true });
+    void refreshConnectionProfiles(manager, bearerToken, hostedBody.projectId);
 
   onOAuthServerUrls(urls);
   pluginNegotiatedVersion = (serverId) =>
