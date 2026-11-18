@@ -30,10 +30,24 @@ const ATTACH_TIMEOUT_MS = 5_000;
 /**
  * Stable for one process, port and server, so a Vite restart in the same
  * process sends the same id and the tab reuses its earlier decision.
+ *
+ * The server's identity is its name and what it points at (URL, or command
+ * and arguments), not the name alone: a changed URL is a different server,
+ * and two launches in one process that share a name but not a URL must not
+ * overwrite each other's request. Headers and environment are not part of
+ * it; editing them is the same server.
  */
-export function inspectorAttachId(pid: number, port: number, serverName: string): string {
+export function inspectorAttachId(
+  pid: number,
+  port: number,
+  server: InspectorAttachServer,
+): string {
+  const target =
+    server.url !== undefined
+      ? `url:${server.url}`
+      : `command:${JSON.stringify([server.command, ...(server.args ?? [])])}`;
   return createHash("sha256")
-    .update(`${pid}\0${port}\0${serverName}`)
+    .update(`${pid}\0${port}\0${server.name}\0${target}`)
     .digest("hex")
     .slice(0, 24);
 }

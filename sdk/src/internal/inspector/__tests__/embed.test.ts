@@ -181,10 +181,29 @@ describe("holdInspector", () => {
 });
 
 describe("inspectorAttachId", () => {
+  const http = { name: "a", url: "http://127.0.0.1:7102/mcp" };
+
   it("is stable for one process, port and server", () => {
-    expect(inspectorAttachId(1, 6274, "a")).toBe(inspectorAttachId(1, 6274, "a"));
-    expect(inspectorAttachId(1, 6274, "a")).not.toBe(inspectorAttachId(2, 6274, "a"));
-    expect(inspectorAttachId(1, 6274, "a")).not.toBe(inspectorAttachId(1, 6275, "a"));
+    expect(inspectorAttachId(1, 6274, http)).toBe(inspectorAttachId(1, 6274, { ...http }));
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(inspectorAttachId(2, 6274, http));
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(inspectorAttachId(1, 6275, http));
+  });
+
+  it("tells two servers with the same name but different targets apart", () => {
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(
+      inspectorAttachId(1, 6274, { name: "a", url: "http://127.0.0.1:9999/mcp" }),
+    );
+    const stdio = { name: "a", command: "node", args: ["server.js"] };
+    expect(inspectorAttachId(1, 6274, stdio)).not.toBe(
+      inspectorAttachId(1, 6274, { ...stdio, args: ["other.js"] }),
+    );
+    expect(inspectorAttachId(1, 6274, stdio)).not.toBe(inspectorAttachId(1, 6274, http));
+  });
+
+  it("ignores headers and environment, which do not make a different server", () => {
+    expect(inspectorAttachId(1, 6274, { ...http, headers: { Authorization: "Bearer x" } })).toBe(
+      inspectorAttachId(1, 6274, http),
+    );
   });
 });
 
@@ -202,7 +221,10 @@ describe("embedInspector", () => {
 
     const state = await inspector.connect({ name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" });
     expect(state).toMatchObject({ status: "pending", serverName: "billing-mcp" });
-    const attachId = inspectorAttachId(process.pid, port, "billing-mcp");
+    const attachId = inspectorAttachId(process.pid, port, {
+      name: "billing-mcp",
+      url: "http://127.0.0.1:7102/mcp",
+    });
     expect(requests()[0]).toContain(`POST /api/mcp/launcher/attach`);
     expect(JSON.parse(requests()[0].split(" ").slice(2).join(" "))).toEqual({
       attachId,
