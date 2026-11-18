@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -81,6 +81,17 @@ export function CanvasShell<N extends Node, E extends Edge>({
   }, [edgeRevealDelayMs]);
 
   const [viewportReady, setViewportReady] = useState(false);
+  // The canvas can unmount before its reveal runs (a route change, a test
+  // ending), so the pending reveal is cancelled on unmount.
+  const revealTimer = useRef<number | undefined>(undefined);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      window.clearTimeout(revealTimer.current);
+    };
+  }, []);
 
   return (
     <div
@@ -131,18 +142,16 @@ export function CanvasShell<N extends Node, E extends Edge>({
               padding: FIT_VIEW_PADDING,
               duration: 0,
             });
-            if (!alignTopAfterFit) {
-              window.setTimeout(() => setViewportReady(true), 60);
-              return;
-            }
-            const reveal = window.setTimeout(
+            revealTimer.current = window.setTimeout(
               () => setViewportReady(true),
-              TOP_ALIGN_REVEAL_FALLBACK_MS,
+              alignTopAfterFit ? TOP_ALIGN_REVEAL_FALLBACK_MS : 60,
             );
+            if (!alignTopAfterFit) return;
             void fitted.then(() => {
+              if (!mounted.current) return;
               const { x, zoom } = instance.getViewport();
               void instance.setViewport({ x, y: TOP_ALIGN_INSET, zoom });
-              window.clearTimeout(reveal);
+              window.clearTimeout(revealTimer.current);
               setViewportReady(true);
             });
           }}
