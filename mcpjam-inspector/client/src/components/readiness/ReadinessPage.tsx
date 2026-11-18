@@ -4,6 +4,7 @@
  * screen and the server's saved rehearsals, then Claude's form or ChatGPT's
  * plugin page.
  */
+import { ReleaseHistory } from "./ReleaseHistory";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
@@ -254,7 +255,9 @@ function PortalStart({
       setBusy(false);
     }
   };
+  const [releaseId, setReleaseId] = useState<string | null>(null);
   const ours = saved.filter((entry) => entry.directory === directory);
+  const release = ours.find((entry) => entry.id === releaseId);
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-4xl space-y-8 px-10 py-14 text-center">
@@ -293,6 +296,15 @@ function PortalStart({
                   <Button
                     type="button"
                     size="sm"
+                    variant="ghost"
+                    aria-expanded={releaseId === entry.id}
+                    onClick={() => setReleaseId(releaseId === entry.id ? null : entry.id)}
+                  >
+                    Release history
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
                     variant="secondary"
                     onClick={() => onOpen(entry.id)}
                   >
@@ -301,6 +313,7 @@ function PortalStart({
                 </li>
               ))}
             </ul>
+            {release && <ReleaseHistory key={release.id} projectId={projectId} submission={release} />}
           </section>
         ) : null}
       </div>
