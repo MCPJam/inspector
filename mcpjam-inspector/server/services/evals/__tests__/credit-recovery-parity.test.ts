@@ -51,7 +51,7 @@ const corpus = JSON.parse(
 ) as { cases: CreditRefusalFixture[] };
 
 const OLD_STOP_NOTE =
-  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.";
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Upgrade the plan to keep going: https://app.mcpjam.com/billing";
 
 /** How the hosted runner holds a refusal: the sentence and the raw body. */
 const refusalOf = (fixture: CreditRefusalFixture) => ({

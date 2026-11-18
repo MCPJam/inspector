@@ -358,7 +358,7 @@ describe("a refusal body on the customer's own account", () => {
     await run;
 
     expect(JSON.stringify(client.action.mock.calls)).toContain(
-      "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_1/plans.",
+      "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_1/plans",
     );
   });
 });
