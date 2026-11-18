@@ -69,6 +69,10 @@ import {
   type FailureCategory,
   type UserValueStage,
 } from "./chain.js";
+import {
+  formatCreditRecovery,
+  parseCreditRecovery,
+} from "./credit-recovery.js";
 import { isEvalRunTerminalStatus } from "./eval-lifecycle.js";
 import { opaqueIdSchema } from "./identity.js";
 import {
@@ -631,7 +635,7 @@ export type EvalRunDecisionIterationInput = {
   stageAnalyzerVersion?: unknown;
   stageResultsUnverified?: unknown;
   /** Present when MCPJam's own infrastructure failed the trial. */
-  infraError?: { class?: unknown } | null;
+  infraError?: { class?: unknown; recovery?: unknown } | null;
 };
 
 export type EvalRunDecisionAssemblyInput = {
@@ -849,6 +853,13 @@ function infraNextAction(
     return undefined;
   }
   const infraClass = infraError?.class;
+  // A credit refusal that named its step: that step, link included, is the
+  // action; the class's generic sentence is for refusals that named none.
+  const recovery =
+    infraClass === "account_limit"
+      ? parseCreditRecovery(infraError?.recovery)
+      : undefined;
+  if (recovery) return formatCreditRecovery(recovery);
   return typeof infraClass === "string" &&
     Object.hasOwn(NEXT_ACTION_BY_INFRA_CLASS, infraClass)
     ? NEXT_ACTION_BY_INFRA_CLASS[infraClass]

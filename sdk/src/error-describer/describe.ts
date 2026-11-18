@@ -24,9 +24,14 @@ import {
 } from "../mcp-client-manager/mcp-error-codes.js";
 import {
   ERROR_CATALOG,
+  PLAN_CREDIT_GUIDANCE,
   type ErrorCatalogEntry,
   type ErrorOrigin,
 } from "./catalog.js";
+import {
+  findCreditRecovery,
+  formatCreditRecovery,
+} from "../contract/credit-recovery.js";
 import { extractNodeErrno } from "./node-errno.js";
 import { isTlsTrustFailure } from "../oauth-proxy-error.js";
 import { orgPolicyRefusal } from "./org-policy.js";
@@ -1034,6 +1039,35 @@ function retargetQuotaForSurface(
   return slug;
 }
 
+const CREDIT_SLUGS = new Set([
+  "provider/mcpjam_limit",
+  "provider/mcpjam_limit_daily",
+  "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit_insufficient",
+  "provider/mcpjam_platform_budget",
+]);
+
+/**
+ * A credit refusal that carries `recovery` leads with the step it names, link
+ * included, in place of the plan-generic guidance.
+ */
+function applyCreditRecovery(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  error: unknown,
+): ErrorCatalogEntry {
+  if (!CREDIT_SLUGS.has(slug)) return entry;
+  const recovery = findCreditRecovery(error);
+  if (!recovery) return entry;
+  return {
+    ...entry,
+    nextSteps: [
+      formatCreditRecovery(recovery),
+      ...entry.nextSteps.filter((step) => step !== PLAN_CREDIT_GUIDANCE),
+    ],
+  };
+}
+
 export function describeError(
   error: unknown,
   context?: DescribeContext,
@@ -1046,22 +1080,23 @@ export function describeError(
     const slug = retargetQuotaForSurface(resolved.slug, context);
     const rawCode =
       resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
-    const entry = applyOriginContext(
-      annotateWithChallenge(
-        maybePromoteRawMessage(
-          lookupCatalog(slug),
-          slug,
-          rawMessage,
-          rawCode,
-          slug === "server/http_error"
-            ? combinedTransportStatuses(error)?.fallback
-            : undefined,
-        ),
+    const annotated = annotateWithChallenge(
+      maybePromoteRawMessage(
+        lookupCatalog(slug),
         slug,
-        context?.challenge
-          ? context
-          : { ...context, challenge: challengeSummaryFromError(error) }
+        rawMessage,
+        rawCode,
+        slug === "server/http_error"
+          ? combinedTransportStatuses(error)?.fallback
+          : undefined,
       ),
+      slug,
+      context?.challenge
+        ? context
+        : { ...context, challenge: challengeSummaryFromError(error) }
+    );
+    const entry = applyOriginContext(
+      applyCreditRecovery(annotated, slug, error),
       slug,
       context,
     );

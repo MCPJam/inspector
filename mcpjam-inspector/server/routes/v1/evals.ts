@@ -2107,7 +2107,7 @@ function toIterationDto(
     // OUR infrastructure failed this trial (a provider outage, a sandbox, an
     // account limit). It measured nothing about the server, and every score
     // excludes it. OMITTED on every trial without one.
-    ...toInfraErrorProjection(iteration.infraError),
+    ...toInfraErrorProjection(iteration.infraError, iteration.metadata),
     ...toScoreProjection(iteration.metadata, vocabulary),
     ...toStageProjection(iteration.metadata),
     // Observable patterns in this trial's tool calls — a report beside the

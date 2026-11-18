@@ -198,7 +198,11 @@ import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
-import type { EvalRunDecisionSummary } from "@mcpjam/sdk";
+import {
+  creditRecoveryOfIterations,
+  readEvalRunCreditRecovery,
+  type EvalRunDecisionSummary,
+} from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -207,6 +211,7 @@ import {
 } from "../lib/eval-compare.js";
 import {
   parseReporterFormat,
+  writeCreditRecovery,
   writeEvalDecisionSummary,
   writeReporterArtifact,
   writeReporterResult,
@@ -4080,6 +4085,15 @@ export function registerEvalCommands(program: Command): void {
                       runs[0]!
                     )
                   : undefined;
+              const soloRecovery =
+                result.targets.length === 1 && runs.length === 1
+                  ? await readEvalRunCreditRecovery(
+                      client,
+                      signal,
+                      result.project.id,
+                      runs[0]!
+                    )
+                  : undefined;
               // Deliberately does NOT throw on `waitErrors` here. Throwing from
               // inside the platform command skips the receipt below, and the
               // receipt is the only place the launched run ids are printed: a
@@ -4094,6 +4108,7 @@ export function registerEvalCommands(program: Command): void {
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
+                ...(soloRecovery ? { creditRecovery: soloRecovery } : {}),
               };
             }
 
@@ -4151,12 +4166,17 @@ export function registerEvalCommands(program: Command): void {
                     },
                   })
                 : undefined;
+            // From the walk above, like the summary: no extra read.
+            const creditRecovery = solo
+              ? creditRecoveryOfIterations(solo.iterations)
+              : undefined;
             return {
               runs,
               waitErrors,
               reportInputs,
               iterationErrorCodes,
               ...(decisionSummary ? { decisionSummary } : {}),
+              ...(creditRecovery ? { creditRecovery } : {}),
             };
           },
           {
@@ -4254,6 +4274,9 @@ export function registerEvalCommands(program: Command): void {
               ...(globalOptions.format === "json" && completion.decisionSummary
                 ? { decisionSummary: completion.decisionSummary }
                 : {}),
+              ...(globalOptions.format === "json" && completion.creditRecovery
+                ? { creditRecovery: completion.creditRecovery }
+                : {}),
             },
             globalOptions.format
           );
@@ -4270,6 +4293,7 @@ export function registerEvalCommands(program: Command): void {
             completion.decisionSummary,
             process.stdout
           );
+          writeCreditRecovery(globalOptions.format, completion.creditRecovery);
         }
 
         // Everything above has already been written — report file, reporter
@@ -4422,8 +4446,11 @@ export function registerEvalCommands(program: Command): void {
         const resultForOutput =
           globalOptions.format === "human"
             ? (() => {
-                const { decisionSummary: _decisionSummary, ...humanResult } =
-                  result;
+                const {
+                  decisionSummary: _decisionSummary,
+                  creditRecovery: _creditRecovery,
+                  ...humanResult
+                } = result;
                 return humanResult;
               })()
             : result;
@@ -4439,6 +4466,7 @@ export function registerEvalCommands(program: Command): void {
           process.stdout,
           { stages: options.stages === true }
         );
+        writeCreditRecovery(globalOptions.format, result.creditRecovery);
         writeRunLink(globalOptions.format, webOrigin, {
           projectId: result.project.id,
           suiteId: result.run.suiteId,

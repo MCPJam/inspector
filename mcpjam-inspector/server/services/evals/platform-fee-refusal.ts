@@ -1,3 +1,4 @@
+import { parseCreditRecovery } from "@mcpjam/sdk/contract";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 
 /**
@@ -24,21 +25,27 @@ const PLATFORM_FEE_REFUSALS = new Map<string, string>([
 
 /**
  * Translate a fee refusal (a `ConvexError` whose `data.code` is one of the
- * codes above) into a 403 naming it in `details.reason`. Null for anything
- * else, so a real fault stays a fault.
+ * codes above) into a 403 naming it in `details.reason`, with the refusal's
+ * `recovery` beside it when it named one. Null for anything else, so a real
+ * fault stays a fault.
  */
 export function platformFeeRefusalError(error: unknown): WebRouteError | null {
   const data = (error as { data?: unknown } | null)?.data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-  const { code, message } = data as { code?: unknown; message?: unknown };
+  const { code, message, recovery } = data as {
+    code?: unknown;
+    message?: unknown;
+    recovery?: unknown;
+  };
   if (typeof code !== "string") return null;
   const fallback = PLATFORM_FEE_REFUSALS.get(code);
   if (!fallback) return null;
+  const parsedRecovery = parseCreditRecovery(recovery);
   return new WebRouteError(
     403,
     ErrorCode.FORBIDDEN,
     typeof message === "string" && message.trim() ? message : fallback,
-    { reason: code },
+    { reason: code, ...(parsedRecovery ? { recovery: parsedRecovery } : {}) },
   );
 }
 
