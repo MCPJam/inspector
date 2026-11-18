@@ -16,7 +16,7 @@ import {
 } from "../startup-diagnostics";
 
 const answer = (status: number) =>
-  vi.fn<typeof fetch>(async () => new Response("{}", { status }));
+  vi.fn<typeof fetch>(async () => Response.json({ status: "ok" }, { status }));
 
 describe("probeLocalServer", () => {
   afterEach(() => {
@@ -26,6 +26,16 @@ describe("probeLocalServer", () => {
   it("reports a local server that answers", async () => {
     const result = await probeLocalServer(answer(200));
     expect(result).toMatchObject({ result: "ok" });
+  });
+
+  it("does not count the dev server's app page as the local server answering", async () => {
+    const appShell = vi.fn<typeof fetch>(
+      async () =>
+        new Response("<!doctype html>", {
+          headers: { "content-type": "text/html" },
+        }),
+    );
+    expect(await probeLocalServer(appShell)).toEqual({ result: "network" });
   });
 
   it("keeps only the status when the server answers with an error", async () => {

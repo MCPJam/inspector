@@ -6378,7 +6378,8 @@ export default function App() {
     (shouldHoldHostedDefaultRouteForAuth ||
       shouldHoldHostedHomeRouteForAppReady)
   ) {
-    return <LoadingScreen />;
+    // Home also waits here for projects, which wait for the user record.
+    return <StartupScreen />;
   }
 
   if (
