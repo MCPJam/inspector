@@ -148,10 +148,9 @@ describe("a hosted server under DO_NOT_TRACK", () => {
     });
   });
 
-  it("serves the flag file's answers, not PostHog's", () => {
+  it("serves only allowlisted flag-file answers", () => {
     expect(optedOutUse.flags).toEqual({
       flags: {
-        "evaluate-enabled": true,
         "guest-credit-wall-copy": "treatment",
         "registry-enabled": false,
       },

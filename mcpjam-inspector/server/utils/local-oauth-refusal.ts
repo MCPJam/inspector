@@ -1,5 +1,6 @@
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import { credentialOrigin } from "./credential-header-binding.js";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "../../shared/credential-export-setting.js";
 
 /** What `/web/authorize-batch-local` says about a token it withheld. */
 export type AuthorizeOAuthOutcome = {
@@ -42,7 +43,7 @@ export function oauthRefusalFromAuthorize(
     const message = hostedOnly
       ? (result.oauthUnavailableMessage ??
         hostedOnlyFallback(named, result.oauthUnavailableCause))
-      : `Your organization keeps saved credentials for ${named} inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`;
+      : `Your organization does not allow saved credentials for ${named} in local runs. ${CREDENTIAL_EXPORT_SETTING_HINT}`;
     return new WebRouteError(403, ErrorCode.FORBIDDEN, message, {
       exportDenied: true,
       policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",

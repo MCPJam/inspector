@@ -1,5 +1,11 @@
 export { MCPAppsConformanceTest } from "./runner.js";
 export { MCPAppsConformanceSuite } from "./suite.js";
+export { gradeMCPApps, planMCPAppsResourceReads } from "./grading.js";
+export type {
+  MCPAppsGrading,
+  MCPAppsGradingInput,
+  MCPAppsResourceReadPlan,
+} from "./grading.js";
 
 export type {
   MCPAppsCheckCategory,

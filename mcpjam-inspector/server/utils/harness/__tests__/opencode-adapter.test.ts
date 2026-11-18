@@ -92,23 +92,14 @@ describe("the OpenCode adapter", () => {
     }
   });
 
-  it("admits an approval-gated host someone can answer", () => {
+  it("admits an approval-gated host", () => {
     expect(
       harnessToolApprovalRefusalReason({
         adapter: getHarnessAdapter("opencode"),
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-        unattended: false,
       }),
     ).toBeUndefined();
-    expect(
-      harnessToolApprovalRefusalReason({
-        adapter: getHarnessAdapter("opencode"),
-        requireToolApproval: true,
-        hasSelectedMcpServers: true,
-        unattended: true,
-      }),
-    ).toMatch(/evals or swarms/i);
   });
 
   it("pins title and compaction to the leased Anthropic model", () => {

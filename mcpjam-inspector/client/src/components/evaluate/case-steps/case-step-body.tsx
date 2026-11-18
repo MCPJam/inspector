@@ -231,19 +231,21 @@ export function ActionCard({
             availableTools={invokableTools(availableTools)}
             readOnly={readOnly}
             onChange={(cfg) => {
-              // The fields normalize on mount: write only a real edit.
+              // On load the fields fill in a server's id and drop a 0
+              // timeout; keep the stored values so only a real edit writes.
               if (readOnly) return;
+              const sameServer = cfg.serverName === step.serverName;
+              const sameTimeout =
+                (cfg.renderTimeoutMs ?? 0) === (step.renderTimeoutMs ?? 0);
               const next = {
                 ...step,
-                serverId:
-                  cfg.serverId ??
-                  (cfg.serverName === step.serverName
-                    ? step.serverId
-                    : undefined),
+                serverId: sameServer ? step.serverId : cfg.serverId,
                 serverName: cfg.serverName,
                 toolName: cfg.toolName,
                 arguments: cfg.arguments,
-                renderTimeoutMs: cfg.renderTimeoutMs,
+                renderTimeoutMs: sameTimeout
+                  ? step.renderTimeoutMs
+                  : cfg.renderTimeoutMs,
               };
               if (JSON.stringify(next) !== JSON.stringify(step)) onChange(next);
             }}
@@ -279,7 +281,7 @@ export function AssertionEditor({
 }) {
   const assertion = step.assertion;
   const widget = isWidgetAssertion(assertion);
-  const toolNames = availableTools.map((tool) => tool.name);
+  const toolNames = [...new Set(availableTools.map((tool) => tool.name))];
   return (
     <fieldset disabled={readOnly} className="min-w-0 space-y-3">
       <div className="flex flex-wrap items-end gap-3">
@@ -322,7 +324,7 @@ export function AssertionEditor({
       {widget ? (
         <>
           <p className="text-xs text-muted-foreground">
-            Checked against the live view at this point. Always blocking.
+            Checked against the live view at this point. Always required.
           </p>
           <WidgetAssertionFields
             paper

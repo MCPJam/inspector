@@ -59,7 +59,11 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   ),
 }));
 
-vi.mock("../registry.js", () => ({
+vi.mock("../registry.js", async () => ({
+  // The snapshot restore reads the runtime's conversation-state declaration.
+  harnessConversationState: (
+    await vi.importActual<typeof import("../registry.js")>("../registry.js")
+  ).harnessConversationState,
   // Broker-only credential delivery (COMP-23): the turn builds dummy auth
   // pointed at the broker proxy; there is no per-adapter resolveAuth anymore.
   buildBrokerDummyAuth: vi.fn(() => ({

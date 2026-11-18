@@ -396,6 +396,7 @@ events.post("/list", async (c) =>
       };
       return response;
     }),
+    { observeFeatures: true },
   ),
 );
 
@@ -423,6 +424,7 @@ events.post("/poll", async (c) =>
       };
       return response;
     }),
+    { observeFeatures: true },
   ),
 );
 

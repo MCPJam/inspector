@@ -52,6 +52,7 @@ import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
 import { progressStore } from "./services/progress-store.js";
 import { cacheEventLogger } from "./utils/cache-events.js";
+import { recordLocalObservation } from "./services/server-canvas/observation-recorders.js";
 import { startProcessVitalsSampler } from "./utils/process-vitals.js";
 import { inspectorCommandBus } from "./services/inspector-command-bus.js";
 import { CORS_OPTIONS, HOSTED_MODE, ALLOWED_HOSTS, LOCAL_HARNESS_ENABLED } from "./config.js";
@@ -222,6 +223,8 @@ export async function createHonoApp() {
     {},
     {
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+      // Observed server features, filed under each connection's own context.
+      featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
       rpcLogger: ({ direction, message, serverId }) => {
         rpcLogBus.publish({
           serverId,

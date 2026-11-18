@@ -3,6 +3,11 @@
   "version": "0.3.0",
   "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "vitest"
+  },
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

@@ -328,6 +328,7 @@ export function createPluginRequestRuntime(
       hostConfig: config,
       serverBindings,
       serverNamesById,
+      publishedPluginIdsByServerId,
     } = await read(() =>
       timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
@@ -664,6 +665,8 @@ export function createPluginRequestRuntime(
         projectServerSchema,
         {
           lazyConnect: true,
+          // An App's calls in a member's chat are that member's use.
+          observeFeatures: true,
           extensionRequestHandlers: legacyForms
             ? {
                 [binding.serverId]: [
@@ -879,6 +882,7 @@ export function createPluginRequestRuntime(
       hostRevision,
       bindingId: lease.bindingId,
       serverIdentity,
+      publishedPluginId: publishedPluginIdsByServerId?.[binding.serverId],
       localFileTargetContract: fileTargets.contract,
       executionScope: config.executionScope,
       /** Form uploads for this server can be placed on the project's Computer. */
@@ -920,7 +924,7 @@ export function createPluginRequestRuntime(
   ) => {
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
-    const { hostConfig, serverBindings } = await read(() =>
+    const { hostConfig, serverBindings, publishedPluginIdsByServerId } = await read(() =>
       timedPluginStep("backend-admission-read", async () =>
         readPluginExecutionContext({
           projectId: admission.projectId,
@@ -947,6 +951,7 @@ export function createPluginRequestRuntime(
       throw denied();
     signal.throwIfAborted();
     if (disposed) throw new PluginInvocationError("INSTANCE_REQUEST_CLOSED");
+    return publishedPluginIdsByServerId?.[binding.serverId];
   };
   let resolving = false;
   const owned = async <T>(effect: () => Promise<T>): Promise<T> => {
@@ -1086,7 +1091,7 @@ export function createPluginRequestRuntime(
     verifyCurrent: (signal: AbortSignal) =>
       owned(async () => {
         if (!lastAdmitted) throw denied();
-        await verify(lastAdmitted, signal);
+        return verify(lastAdmitted, signal);
       }),
     /** Related tools share one freshly admitted catalog, never a retained grant. */
     resolveTools: async (

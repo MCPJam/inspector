@@ -2180,7 +2180,9 @@ describe("web auth manager batching", () => {
         serverName: "Asana",
       },
     });
-    expect(error.message).toContain("credential export policy");
+    expect(error.message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
+    );
     // Authorizing again would mint a token the same policy withholds.
     expect(error.details?.oauthRequired).toBeUndefined();
   });

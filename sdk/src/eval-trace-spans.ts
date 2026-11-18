@@ -8,6 +8,13 @@ import type {
 } from "ai";
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
 import { isToolPolicyBlockResult } from "./contract/tool-policy.js";
+import {
+  extractReportedProviderCost,
+  normalizeModelUsage,
+  priceModelCall,
+  toModelCallCostEvidence,
+  type ModelCallCostEvidence,
+} from "./usage-cost/index.js";
 
 type MutableSpan = EvalTraceSpanInput;
 type SpanStatus = "ok" | "error";
@@ -28,7 +35,34 @@ type StepMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  /** The step's one provider call; set on the llm span alone, never the step. */
+  cost?: ModelCallCostEvidence;
 };
+
+/**
+ * What a step's call cost, as far as the runner can tell: dollars the
+ * provider reported to the runner, or unavailable. The server cannot verify
+ * an amount the runner sends, so it is recorded as `runner_reported`, never
+ * as provider-reported. The runner holds no rates; the backend prices runner
+ * usage itself.
+ */
+export function runnerCallCost(
+  usage: unknown,
+  providerMetadata: unknown
+): ModelCallCostEvidence {
+  const normalized = normalizeModelUsage(usage);
+  const reported = extractReportedProviderCost(providerMetadata);
+  const cost = priceModelCall({
+    usage: normalized,
+    reported: reported && { ...reported, source: "runner_reported" },
+  });
+  return toModelCallCostEvidence(cost, {
+    usage: normalized,
+    usageSource: "runner",
+    funding: "customer",
+    recordedAt: Date.now(),
+  });
+}
 
 type ToolMeta = {
   serverId?: string;
@@ -249,6 +283,7 @@ export function createEvalSpanIntegration(options: {
         provider,
         responseId: event.response?.id,
         responseTimestamp,
+        cost: runnerCallCost(event.usage, event.providerMetadata),
       });
     },
 
@@ -497,9 +532,11 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
       }
 
       const step = ensureActiveStep(stepNumber, startMsHint);
-      applyStepMeta(step.stepSpan, meta);
-      applyStepMeta(step.llmSpan, meta);
-      applyStepMetaToChildren(step.stepSpan.id, meta);
+      const { cost, ...shared } = meta ?? {};
+      applyStepMeta(step.stepSpan, shared);
+      applyStepMeta(step.llmSpan, shared);
+      if (cost) step.llmSpan.cost = cost;
+      applyStepMetaToChildren(step.stepSpan.id, shared);
       finalizeActiveStep(rel());
     },
 

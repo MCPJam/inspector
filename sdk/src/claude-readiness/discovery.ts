@@ -25,9 +25,15 @@ import type { ClaudeEndpointEvidence } from "./checks/endpoint.js";
 import {
   discoverProtectedResourceMetadata as discoverPrm,
   fetchDiscoveryJson,
+  findDiscoveryDocument,
   traceRedirects,
   type DirectoryDiscoveryOptions,
 } from "../directory-readiness/discovery.js";
+import {
+  authorizationServerMetadataUrls,
+  MCP_AUTHORIZATION_SERVER_METADATA_FORMS,
+  type AuthorizationServerMetadataCandidate,
+} from "../oauth/metadata-candidates.js";
 
 export interface ClaudeDiscoveryOptions extends DirectoryDiscoveryOptions {}
 
@@ -133,9 +139,12 @@ async function fetchFirstAuthorizationServer(
 ): Promise<ClaudeAuthEvidence["firstAuthorizationServer"]> {
   if (!issuer) return undefined;
 
-  let base: URL;
+  let candidates: AuthorizationServerMetadataCandidate[];
   try {
-    base = new URL(issuer);
+    candidates = authorizationServerMetadataUrls(
+      issuer,
+      MCP_AUTHORIZATION_SERVER_METADATA_FORMS.current,
+    );
   } catch {
     return {
       issuer,
@@ -144,27 +153,15 @@ async function fetchFirstAuthorizationServer(
     };
   }
 
-  const path = base.pathname.replace(/\/$/, "");
-  const candidates = [
-    `${base.origin}/.well-known/oauth-authorization-server${path}`,
-    `${base.origin}/.well-known/openid-configuration${path}`,
-    `${base.origin}${path}/.well-known/openid-configuration`,
-  ];
-
-  let lastError: string | undefined;
-  for (const url of candidates) {
-    const result = await fetchDiscoveryJson(url, options);
-    if (result.status >= 200 && result.status < 300 && result.document) {
-      return {
+  const lookup = await findDiscoveryDocument(candidates, options);
+  return lookup.found
+    ? {
         issuer,
-        metadataUrl: url,
+        metadataUrl: lookup.candidate.url,
         reachable: true,
-        document: result.document,
-      };
-    }
-    lastError = result.error ?? `${url} answered ${result.status}`;
-  }
-  return { issuer, reachable: false, fetchError: lastError };
+        document: lookup.document,
+      }
+    : { issuer, reachable: false, fetchError: lookup.lastError };
 }
 
 /**

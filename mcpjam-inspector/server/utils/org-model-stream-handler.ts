@@ -2,6 +2,14 @@ import type { TurnAuthorization } from "../services/turn-authorization.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
 import { buildLocalExecutionRecord, type LocalExecutionAttempt } from "./local-execution-record.js";
 import { inspectorAiRequestHeaders } from "./ai-request-headers.js";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
+import {
+  MAX_WRITEBACK_CALLS,
+  localUsageCallsBody,
+  readLocalUsageCosts,
+  withLocalUsageCost,
+  type TurnModelCall,
+} from "./call-cost/local-usage-cost.js";
 /**
  * Org BYOK Stream Handler
  *
@@ -765,7 +773,7 @@ function buildLocalOrgOnPersist(params: {
     params;
   return async (event) => {
     // Best-effort usage accounting must not delay transcript persistence.
-    postLocalUsage({
+    const usageCost = postLocalUsage({
       projectId: options.projectId,
       providerKey: options.provider.providerKey,
       model: options.modelId,
@@ -780,6 +788,7 @@ function buildLocalOrgOnPersist(params: {
         outcome: isStreamErrored() ? { kind: "error", code: "provider_error" } : { kind: "ok" }, at: Date.now(),
       }),
       usage: event.usage,
+      calls: event.calls,
       finishReason: event.finishReason,
       chatSessionId: options.chatSessionId,
       sourceType: options.sourceType,
@@ -794,6 +803,7 @@ function buildLocalOrgOnPersist(params: {
       logger.warn("[org/local] Failed to post local usage", {
         error: err instanceof Error ? err.message : String(err),
       });
+      return undefined;
     });
 
     // Usage is recorded even when a partial transcript cannot be persisted.
@@ -801,7 +811,10 @@ function buildLocalOrgOnPersist(params: {
 
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
-    const outcome = await onConversationComplete(fullHistory, event.turnTrace);
+    const outcome = await onConversationComplete(
+      fullHistory,
+      await withLocalUsageCost(event.turnTrace, event.calls, usageCost),
+    );
     if (outcome) {
       onOutcome?.(outcome, event.turnTrace.turnId);
     }
@@ -821,6 +834,13 @@ export async function postLocalUsage(params: {
   providerKey: string;
   model: string;
   usage?: LiveChatTraceUsage;
+  /**
+   * Each provider request of the turn. The backend stores and prices each on
+   * its own usage (a context tier is per request) and returns each cost by
+   * call id. `usage` stays the turn's sum, which a backend without per-call
+   * writeback records instead.
+   */
+  calls?: TurnModelCall[];
   finishReason?: string;
   chatSessionId?: string;
   sourceType?: string;
@@ -861,9 +881,9 @@ export async function postLocalUsage(params: {
    * of that selection and rebuilds the stored record from its plan.
    */
   execution?: LocalExecutionRecord;
-}): Promise<void> {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) return;
+  if (!convexHttpUrl) return undefined;
 
   const url = `${convexHttpUrl.replace(/\/$/, "")}/stream/org/local-usage`;
   const controller = new AbortController();
@@ -881,6 +901,10 @@ export async function postLocalUsage(params: {
         providerKey: params.providerKey,
         model: params.model,
         ...(params.usage ? { usage: params.usage } : {}),
+        // A turn over the cap is written back as its sum alone, as before.
+        ...(params.calls?.length && params.calls.length <= MAX_WRITEBACK_CALLS
+          ? { calls: localUsageCallsBody(params.calls) }
+          : {}),
         ...(params.finishReason ? { finishReason: params.finishReason } : {}),
         ...(params.chatSessionId
           ? { chatSessionId: params.chatSessionId }
@@ -918,7 +942,10 @@ export async function postLocalUsage(params: {
         status: response.status,
         preview: preview.slice(0, 200),
       });
+      return undefined;
     }
+    // The backend prices each call it stored, with the org's rates.
+    return readLocalUsageCosts(await response.json());
   } finally {
     clearTimeout(timeout);
   }

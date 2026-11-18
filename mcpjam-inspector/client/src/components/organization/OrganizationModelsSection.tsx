@@ -58,6 +58,7 @@ import {
   type UpsertOrgProviderArgs,
 } from "@/hooks/use-org-model-config";
 import { OrganizationAiCards } from "./OrganizationAiCards";
+import { OrganizationModelRates } from "../model-rates/organization-model-rates";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { AddProviderDialog } from "./gateway/AddProviderDialog";
 import {
@@ -494,6 +495,11 @@ function OrganizationProviderSettings({
           )}
         </CardContent>
         <OrganizationAiCards
+          organizationId={organizationId}
+          isAdmin={isAdmin}
+          providers={providers}
+        />
+        <OrganizationModelRates
           organizationId={organizationId}
           isAdmin={isAdmin}
           providers={providers}

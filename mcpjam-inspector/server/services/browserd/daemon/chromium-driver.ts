@@ -925,7 +925,10 @@ export class ChromiumDriver implements BrowserDriver {
       if (!watch) {
         const cdp = await entry.page.cdp();
         if (!cdp) return { ok: false, error: "navigation stop unavailable" };
-        watch = { target, stop: await armNavigationStop(cdp, target) };
+        watch = {
+          target,
+          stop: await armNavigationStop(cdp, target, this.context.proxyAuth),
+        };
         this.navigationStops.set(tabId, watch);
       }
       const before = watch.stop.stopped();
@@ -953,7 +956,7 @@ export class ChromiumDriver implements BrowserDriver {
     if (!cdp || !isStopTarget(target)) {
       return this.executeInBarrier(command, context);
     }
-    const stop = await armNavigationStop(cdp, target);
+    const stop = await armNavigationStop(cdp, target, this.context.proxyAuth);
     try {
       const result = await this.executeInBarrier(command, context);
       const stoppedAt = stop.stopped();
