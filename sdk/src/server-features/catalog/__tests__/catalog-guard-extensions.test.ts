@@ -14,6 +14,8 @@ import { TASKS_CHECK_FEATURES } from "../../check-map/tasks.js";
 import type { CheckFeatureTarget } from "../../check-map/types.js";
 import type { FeatureFamilyId } from "../../types.js";
 import { SERVER_FEATURE_CATALOG } from "../index.js";
+import { ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID } from "../extensions/authorization.js";
+import { evaluateServerFeatures } from "../../evaluate.js";
 import { EXTENSION_FEATURES } from "../extensions/index.js";
 import {
   MODERN,
@@ -267,6 +269,50 @@ describe("authorization extensions", () => {
       });
       expect(feature(id).assessment.probed).toBeUndefined();
     }
+  });
+
+  it("credits XAA only from a captured XAA connect, never from setup alone", () => {
+    const surface = makeSurface();
+    const context = {
+      transport: "streamable-http" as const,
+      protocolVersion: surface.protocolVersion,
+    };
+    const xaaRows = ["auth-ext.xaa.access", "auth-ext.xaa.jwt-bearer"];
+    const setupOnly = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context,
+      declared: { surface, capturedAt: 1 },
+      configured: ["enterprise-managed-authorization"],
+      setupOffered: ["enterprise-managed-authorization"],
+    });
+    for (const id of xaaRows) {
+      expect(setupOnly.assessments[id]).toMatchObject({
+        state: "not-checked",
+        nextAction: "reconnect",
+      });
+    }
+    const viaXaa = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: {
+        ...context,
+        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
+      },
+      declared: { surface, capturedAt: 2 },
+    });
+    for (const id of xaaRows) {
+      expect(viaXaa.assessments[id]).toMatchObject({
+        state: "supported",
+        sources: ["oauth-flow"],
+      });
+    }
+    const noCapture = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: {
+        ...context,
+        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
+      },
+    });
+    expect(noCapture.assessments["auth-ext.xaa.access"].state).not.toBe("supported");
   });
 
   it("is not applicable without OAuth or on stdio, and silent without a probe", () => {

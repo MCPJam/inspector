@@ -1,17 +1,19 @@
 /**
  * Family 18: Authorization extensions (OAuth Client Credentials and
  * Enterprise-Managed Authorization). Neither extension defines a server
- * capability, so the authorization server's metadata is the cheapest hint
- * and real support needs setup in MCPJam. Like core authorization, every
- * leaf is not applicable on stdio.
+ * capability, so the authorization server's metadata is the cheapest hint.
+ * The MCPJam app cannot run the client credentials grant, so those rows say
+ * so and point at the CLI, which can. Like core authorization, every leaf is
+ * not applicable on stdio.
  */
 
 import type {
+  CaptureContext,
   FeatureDefinition,
   FeatureRuleOutcome,
   ProbeSurface,
 } from "../../types.js";
-import { authStdio } from "../core/rules.js";
+import { authStdio, present } from "../core/rules.js";
 import { extensionSpec } from "../spec-refs.js";
 import {
   familyFeature,
@@ -28,6 +30,19 @@ export const ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID =
   "io.modelcontextprotocol/enterprise-managed-authorization";
 export const ID_JAG_GRANT_PROFILE =
   "urn:ietf:params:oauth:grant-profile:id-jag";
+
+/**
+ * A captured connect that advertised the enterprise-managed authorization
+ * extension authenticated with XAA: the authorization server took the ID-JAG
+ * through the JWT bearer grant and the server accepted the token.
+ */
+function connectedWithXaa(context: CaptureContext): FeatureRuleOutcome {
+  return context.clientExtensions?.includes(
+    ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID
+  )
+    ? present("oauth-flow", { detail: "An XAA connect succeeded and was captured." })
+    : null;
+}
 
 const feature = familyFeature("authorization-extensions", "stable");
 
@@ -118,7 +133,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     name: "OAuth Client Credentials",
     summary: "Lets a machine client get tokens for the server without a user.",
     howTo:
-      "Enable the client_credentials grant on your authorization server for MCP clients. Set up a client credentials connection in MCPJam to test it.",
+      "Enable the client_credentials grant on your authorization server for MCP clients. The MCPJam app cannot run this grant yet; test it with mcpjam oauth login --auth-mode client_credentials.",
     owner: "authorization-server",
     spec: specAt("client-credentials"),
     assessment: {
@@ -134,7 +149,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The authorization server issues tokens to a client acting on its own behalf.",
     howTo:
-      "List client_credentials in grant_types_supported and issue tokens for the MCP resource. Set up a client credentials connection in MCPJam to confirm it.",
+      "List client_credentials in grant_types_supported and issue tokens for the MCP resource. The MCPJam app cannot run this grant yet; test it with mcpjam oauth login --auth-mode client_credentials.",
     owner: "authorization-server",
     spec: specAt("client-credentials", "server-metadata-requirements"),
     assessment: {
@@ -176,7 +191,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The client requests a token with its own credentials and calls the server with it.",
     howTo:
-      "Set up a client credentials connection in MCPJam with a client id and secret or key, then connect.",
+      "Give the client a client id and secret or key. The MCPJam app cannot run this grant yet; test it with mcpjam oauth login --auth-mode client_credentials.",
     owner: "client",
     spec: specAt("client-credentials", "flow-steps"),
     assessment: {
@@ -191,7 +206,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "Lets an enterprise identity provider grant access to the server through single sign-on.",
     howTo:
-      "Accept ID-JAG assertions at your authorization server. Set up an enterprise-managed authorization connection in MCPJam to test it.",
+      "Accept ID-JAG assertions at your authorization server. Set up XAA for this server in MCPJam, then reconnect to test it.",
     owner: "authorization-server",
     spec: specAt("enterprise-managed-authorization"),
     assessment: {
@@ -207,13 +222,14 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "A user signed in to the enterprise identity provider reaches the server without a separate consent screen.",
     howTo:
-      "Set up an enterprise-managed authorization connection in MCPJam with your identity provider, then connect.",
+      "Set up XAA for this server in MCPJam, then reconnect. MCPJam signs in through its own test identity provider.",
     owner: "authorization-server",
     spec: specAt("enterprise-managed-authorization"),
     assessment: {
       primary: "configured",
       declared: authStdio,
       setup: "enterprise-managed-authorization",
+      connectedWith: connectedWithXaa,
     },
   }),
   feature({
@@ -245,7 +261,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The identity provider exchanges the user's ID token for an ID-JAG (RFC 8693).",
     howTo:
-      "Configure token exchange for ID-JAG on your identity provider, then set up the connection in MCPJam.",
+      "Configure token exchange for ID-JAG on your identity provider.",
     owner: "identity-provider",
     spec: specAt("enterprise-managed-authorization", "4-token-exchange"),
     assessment: {
@@ -268,6 +284,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
       primary: "configured",
       declared: authStdio,
       setup: "enterprise-managed-authorization",
+      connectedWith: connectedWithXaa,
     },
   }),
   feature({
@@ -277,7 +294,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "An identity provider that uses SAML issues a refresh token, then an ID-JAG, for the user.",
     howTo:
-      "Configure the SAML exchange on your identity provider, then set up the connection in MCPJam.",
+      "Configure the SAML exchange on your identity provider.",
     owner: "identity-provider",
     spec: specAt("enterprise-managed-authorization", "4-token-exchange"),
     assessment: {
