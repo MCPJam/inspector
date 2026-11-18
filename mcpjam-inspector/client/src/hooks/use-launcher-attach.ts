@@ -144,7 +144,7 @@ export function useLauncherAttach(options: UseLauncherAttachOptions): void {
         case "conflict": {
           const what = task.server.url ? "URL" : "command";
           const message = `${name} is already saved in ${project.name} with a different ${what}. Rename one of them, then restart your dev command.`;
-          toast.error(`Could not add ${name}`, { description: message });
+          toast.error(message);
           await reportLauncherAttach(task.attachId, {
             tabId,
             outcome: "failed",
