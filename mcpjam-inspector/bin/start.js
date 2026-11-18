@@ -1294,8 +1294,9 @@ async function main() {
       } else if (!cancelled) {
         report: {
         const base = await resolveBrowserBaseUrl(apiBaseUrl);
-        // A shutdown that arrived during the lookup is not a launch to report.
-        if (cancelled) break report;
+        // A shutdown, or the server exiting, during the lookup is not a launch
+        // to report; the wait for the exit below reports the failure.
+        if (cancelled || serverProcessClosed) break report;
         const url = createAccessLink(base, launchToken, initialTab);
         output.ready({ url, port: Number(PORT) });
         const docker = process.env.DOCKER_CONTAINER === "true";
