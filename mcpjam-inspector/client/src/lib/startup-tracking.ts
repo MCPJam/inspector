@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { STRICT_COUNT_MAX } from "@/shared/strict-posthog";
 import { track } from "./analytics";
 import type { StartupStatus } from "./startup-status";
 
@@ -14,7 +15,10 @@ let blockedSent = false;
  * stuck on and whether a reported failure or the deadline put it there.
  * Their ratio, by version and platform, is the share of stuck launches.
  */
-export function useStartupTracking(status: StartupStatus): void {
+export function useStartupTracking(
+  status: StartupStatus,
+  userReady: boolean,
+): void {
   useEffect(() => {
     if (startedSent) return;
     // PostHogProvider calls posthog.init in its own effect, and React runs a
@@ -30,16 +34,23 @@ export function useStartupTracking(status: StartupStatus): void {
 
   const { escalated, stage, failureKind } = status;
   useEffect(() => {
+    // Once the app has been usable, a later failure is a broken session, not a
+    // stuck launch: it must not count toward the blocked share.
+    if (userReady) blockedSent = true;
     if (!escalated || blockedSent) return;
     blockedSent = true;
     track("app_startup_blocked", {
       location: "app",
       stage,
       trigger: failureKind ? "failure" : "deadline",
-      elapsed_ms:
+      // The strict relay drops counts above its cap; a tab left open that
+      // long still belongs in the top bucket, so clamp rather than lose it.
+      elapsed_ms: Math.min(
         typeof performance === "undefined" ? 0 : Math.round(performance.now()),
+        STRICT_COUNT_MAX,
+      ),
     });
-  }, [escalated, stage, failureKind]);
+  }, [userReady, escalated, stage, failureKind]);
 }
 
 /** Test seam: each test is its own page load. */

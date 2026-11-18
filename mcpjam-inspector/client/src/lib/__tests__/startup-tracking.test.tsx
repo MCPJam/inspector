@@ -11,6 +11,7 @@ import {
   useStartupTracking,
 } from "../startup-tracking";
 import type { StartupStatus } from "../startup-status";
+import { STRICT_COUNT_MAX } from "@/shared/strict-posthog";
 
 const waiting: StartupStatus = {
   escalated: false,
@@ -40,7 +41,7 @@ describe("useStartupTracking", () => {
   });
 
   it("waits a task before counting the launch, so PostHog has initialized", () => {
-    renderHook(() => useStartupTracking(waiting));
+    renderHook(() => useStartupTracking(waiting, false));
     // PostHogProvider initializes in its own effect, after this child's.
     expect(sent("app_startup_started")).toHaveLength(0);
     act(() => vi.runAllTimers());
@@ -48,7 +49,7 @@ describe("useStartupTracking", () => {
   });
 
   it("counts a launch once, even when StrictMode mounts it twice", () => {
-    renderHook(() => useStartupTracking(waiting), { wrapper: strict });
+    renderHook(() => useStartupTracking(waiting, false), { wrapper: strict });
     act(() => vi.runAllTimers());
     expect(sent("app_startup_started")).toEqual([
       ["app_startup_started", { location: "app" }],
@@ -57,7 +58,7 @@ describe("useStartupTracking", () => {
 
   it("reports a block from a failure once, with its stage", () => {
     const { rerender } = renderHook(
-      (status: StartupStatus) => useStartupTracking(status),
+      (status: StartupStatus) => useStartupTracking(status, false),
       { initialProps: waiting },
     );
     const failed: StartupStatus = {
@@ -83,11 +84,14 @@ describe("useStartupTracking", () => {
 
   it("names the deadline when nothing failed", () => {
     renderHook(() =>
-      useStartupTracking({
-        ...waiting,
-        escalated: true,
-        stage: "app_load/user_setup_pending",
-      }),
+      useStartupTracking(
+        {
+          ...waiting,
+          escalated: true,
+          stage: "app_load/user_setup_pending",
+        },
+        false,
+      ),
     );
     expect(sent("app_startup_blocked")[0]![1]).toMatchObject({
       trigger: "deadline",
@@ -96,7 +100,35 @@ describe("useStartupTracking", () => {
   });
 
   it("sends no block for a launch that never escalates", () => {
-    renderHook(() => useStartupTracking(waiting));
+    renderHook(() => useStartupTracking(waiting, false));
     expect(sent("app_startup_blocked")).toHaveLength(0);
+  });
+
+  it("does not count a failure after the app was usable as a blocked launch", () => {
+    const { rerender } = renderHook(
+      ({ status, ready }: { status: StartupStatus; ready: boolean }) =>
+        useStartupTracking(status, ready),
+      { initialProps: { status: waiting, ready: true } },
+    );
+    rerender({
+      status: {
+        ...waiting,
+        escalated: true,
+        stage: "app_load/session_refresh_failed",
+        failureKind: "transient",
+      },
+      ready: false,
+    });
+    expect(sent("app_startup_blocked")).toHaveLength(0);
+  });
+
+  it("keeps elapsed_ms within what the strict relay accepts", () => {
+    vi.spyOn(performance, "now").mockReturnValue(STRICT_COUNT_MAX * 2);
+    renderHook(() =>
+      useStartupTracking({ ...waiting, escalated: true }, false),
+    );
+    expect(sent("app_startup_blocked")[0]![1]).toMatchObject({
+      elapsed_ms: STRICT_COUNT_MAX,
+    });
   });
 });
