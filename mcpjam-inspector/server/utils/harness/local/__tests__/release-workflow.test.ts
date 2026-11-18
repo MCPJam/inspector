@@ -398,6 +398,8 @@ describe("pack release boundaries", () => {
       expect(String(jobs[name].if), name).toContain("needs.local-harness-evidence-lookup.outputs.run_id == ''");
       expect(String(jobs[name].if), name).toContain("!cancelled()");
       expect(jobs[name].with.certified_only, name).toBe(true);
+      // Off GitHub's five-job macOS cap, with a variable to go back.
+      expect(jobs[name].with.macos_runner, name).toBe("${{ vars.RELEASE_MACOS_RUNNER || 'blacksmith-6vcpu-macos-latest' }}");
     }
     // Either way the same gate checks the records, and evidence made here is
     // marked for the next release to find.
