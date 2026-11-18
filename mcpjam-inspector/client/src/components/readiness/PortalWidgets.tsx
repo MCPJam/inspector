@@ -7,6 +7,7 @@
  * The portal's buttons that add what MCPJam does not rehearse (a connector,
  * request headers) stay visible, disabled, with MCPJam's reason beside them.
  */
+import { PreviewServerIcon } from "./PreviewServerIcon";
 import { useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { Info, Plus } from "lucide-react";
@@ -119,7 +120,6 @@ export function PortalWidget({
               {text.add}
             </Button>
             <p className={NOTE}>{text.addHelper}</p>
-            <McpjamNote>Choose the server in the bar above.</McpjamNote>
           </div>
           {fields.map((field) =>
             renderField(
@@ -159,12 +159,10 @@ export function PortalWidget({
         <div className="space-y-2">
           <p className={NOTE}>{text.title}</p>
           <div className="flex max-w-md items-center gap-3 rounded-xl bg-card px-4 py-3">
-            <span
-              aria-hidden="true"
-              className="flex size-8 shrink-0 items-center justify-center rounded-md border border-border text-sm text-muted-foreground"
-            >
-              ?
-            </span>
+            <PreviewServerIcon
+              className="size-8 rounded-md"
+              customUrl={textOf(values["listing.iconUrl"])}
+            />
             <span className="min-w-0">
               <span className="block truncate text-sm">
                 {textOf(values[`${step.id}.name`]) || text.name}

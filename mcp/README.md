@@ -137,6 +137,9 @@ beta; they are listed [after the table](#held-tools).
 | `backtest_eval_run` | Preview draft assertions against stored evidence; reports missing capture and never changes saved results. | — |
 | `backtest_eval_run_judge` | Preview a draft judge rubric against recorded evidence. Spends model budget without changing saved verdicts; supports continuation. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `build_eval_run_findings` | Build a settled eval run's findings from its recorded evidence: no model call, no quota. On a run never analyzed, a finished build starts the analysis. | — |
+| `request_eval_run_insights` | Start the findings analysis the app's run page runs. Included with MCPJam (no credits); counts against the daily insight quota. Read the result from `get_eval_run`'s `insights.findings`. | — |
+| `cancel_eval_run_insights` | Stop a running eval run analysis, the recovery path for a run stuck pending. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |

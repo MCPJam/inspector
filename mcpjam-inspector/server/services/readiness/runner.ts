@@ -527,6 +527,7 @@ export async function runDirectoryReadiness(
       result: gradeOpenAIReadiness({
         ...evidence,
         ...reviewer,
+        submissionAnswers: options.submissionAnswers,
         llmObservations: observations,
         decisionScan,
       }),

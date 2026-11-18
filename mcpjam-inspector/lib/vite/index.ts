@@ -43,10 +43,15 @@ export interface MCPInspectorPluginOptions {
   autoLaunch?: boolean;
 
   /**
-   * Enable verbose logging output.
-   * When false (default), the inspector runs silently.
+   * Add HTTP request logs to the inspector's output.
    */
   verbose?: boolean;
+
+  /**
+   * Keep the inspector's output out of your terminal, including the
+   * "MCP Inspector running at" line. Launch failures are still reported.
+   */
+  silent?: boolean;
 
   /**
    * Content Security Policy mode for the Playground sandbox.
@@ -95,9 +100,12 @@ export function mcpInspector(options: MCPInspectorPluginOptions = {}): Plugin {
             server: options.server,
             defaultTab: options.defaultTab ?? "playground",
             verbose: options.verbose,
+            silent: options.silent,
             cspMode: options.cspMode,
           });
-          console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
+          if (!options.silent) {
+            console.log(`\n  MCP Inspector running at ${inspector.url}\n`);
+          }
         } catch (error) {
           console.error("Failed to launch MCP Inspector:", error);
         }

@@ -267,6 +267,47 @@ describe("session-stable forwarding", () => {
     await second.stop();
   });
 
+  it("gives a runtime that outlives its turn the same config each turn, versioned by its server's tools", async () => {
+    let catalog = "aaaaaaaaaaaaaaaa";
+    const keyed = (turnId: string) =>
+      prepareNativeForwarding({
+        owners: [account],
+        origin: "https://forward.example",
+        expiresAt: Date.now() + 60_000,
+        turnId,
+        strategy: { plane: "web-authorized", mode: "relay" },
+        authHeader: "private-user-bearer",
+        writer: { write: vi.fn() },
+        correlationKey: "mcpjam/toolCallId",
+        session: {
+          owner: { ownerType: "direct-chat", chatSessionId: "chat" } as never,
+          leaseId: `lease-${turnId}`,
+          turnId: `lane-turn-${turnId}`,
+        },
+        toolCatalog: async () => catalog,
+      });
+    const first = await keyed("grant-turn-1");
+    const second = await keyed("grant-turn-2");
+    expect(JSON.stringify(second.mcpJson)).toBe(JSON.stringify(first.mcpJson));
+    const entry = first.mcpJson.mcpServers.server;
+    const url = new URL(entry.url);
+    expect(url.searchParams.get("native")).toBe("1");
+    expect(url.searchParams.get("mcpjam_tools")).toBe(catalog);
+    // A fixed bound past the approval wait, the same on every turn.
+    expect(entry.timeout).toBe(30 * 60_000);
+    expect(entry.headers!.Connection).toBe("close");
+    expect(
+      unsealHarnessProxyToken(entry.headers!["X-MCPJam-Forwarding-Context"], "server"),
+    ).toMatchObject({ session: true, correlationKey: "mcpjam/toolCallId" });
+    // A changed catalog changes only its version.
+    catalog = "bbbbbbbbbbbbbbbb";
+    const third = await keyed("grant-turn-3");
+    expect(new URL(third.mcpJson.mcpServers.server.url).searchParams.get("mcpjam_tools"))
+      .toBe("bbbbbbbbbbbbbbbb");
+    expect(third.mcpJson.mcpServers.server.headers).toEqual(entry.headers);
+    for (const prepared of [first, second, third]) await prepared.stop();
+  });
+
   it("binds each turn on the lane and on the owner's grant with the server's own digest", async () => {
     const prepared = await prepare("grant-turn-1", 60_000);
     const digest = sessionPolicyDigest("server", {

@@ -1,7 +1,8 @@
 /**
  * Built-in styles for clients that borrow an existing client's surface (the
- * ChatGPT and Claude Code app clients, Codex CLI) and for two tools-only
- * clients (Muse, Grokbot). `built-ins.ts` lists them in BUILT_IN_HOST_STYLES.
+ * ChatGPT and Claude Code app clients, Codex CLI) and for clients shown in
+ * MCPJam's neutral chrome (OpenCode, Muse, Grokbot). `built-ins.ts` lists them
+ * in BUILT_IN_HOST_STYLES.
  */
 
 import claudeLogo from "/claude_logo.png";
@@ -11,6 +12,8 @@ import openaiLogo from "/openai_logo.png";
 import codexLogo from "/codex-logo.svg";
 import museLogo from "/muse_logo.png";
 import grokbotLogo from "/grokbot_logo.png";
+import openCodeLogoLight from "/opencode-logo-light.svg";
+import openCodeLogoDark from "/opencode-logo-dark.svg";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   CHATGPT_CHAT_BACKGROUND,
@@ -185,6 +188,32 @@ export const CODEX_CLI_HOST_STYLE: HostStyleDefinition = {
     family: "chatgpt",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: CodexShineIndicator,
+  },
+};
+
+/**
+ * OpenCode in a terminal. It has no chat surface of its own to borrow, so the
+ * chrome is MCPJam's neutral stand-in with OpenCode's identity, as for Muse,
+ * and the capability claim is the no-claims preset.
+ */
+export const OPENCODE_HOST_STYLE: HostStyleDefinition = {
+  id: "opencode",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: MCPJAM_PLATFORM,
+    fontCss: MCPJAM_FONT_CSS,
+    ...HOST_STYLE_CAPABILITIES.opencode,
+    resolveStyleVariables: getMcpJamStyleVariables,
+  },
+  chatUi: {
+    label: "OpenCode",
+    shortLabel: "OpenCode-style host",
+    pickerDescription: "The OpenCode coding agent in a terminal",
+    logoSrc: openCodeLogoLight,
+    logoSrcByTheme: { light: openCodeLogoLight, dark: openCodeLogoDark },
+    family: "chatgpt",
+    resolveChatBackground: (theme) => MCPJAM_CHAT_BACKGROUND[theme],
+    loadingIndicator: MCPJamMarkIndicator,
   },
 };
 
