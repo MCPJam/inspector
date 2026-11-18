@@ -71,11 +71,11 @@ describe("an export refusal names the rule that refused", () => {
       oauthUnavailablePolicy: "hostedOnlyAccount",
       oauthUnavailableCause: "not_acknowledged",
       oauthUnavailableMessage:
-        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+        "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.",
     });
     const error = await refusal();
     expect(error.message).toBe(
-      "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+      "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.",
     );
     expect(error.details).toMatchObject({
       exportDenied: true,
