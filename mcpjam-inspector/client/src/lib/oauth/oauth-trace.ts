@@ -216,13 +216,10 @@ function deriveTraceError(
   return failureStep?.error ?? fallback;
 }
 
-function buildPersistableTrace(
-  trace: OAuthTrace,
-  options: { dropHttpHistory?: boolean } = {},
-): OAuthTrace {
+function buildPersistableTrace(trace: OAuthTrace): OAuthTrace {
   return clone({
     ...trace,
-    httpHistory: options.dropHttpHistory ? [] : trimHttpHistory(trace.httpHistory),
+    httpHistory: trimHttpHistory(trace.httpHistory),
   });
 }
 
@@ -260,25 +257,6 @@ export function buildOAuthTraceFromSnapshot(input: {
   };
 }
 
-export function loadOAuthTrace(serverName: string): OAuthTrace | undefined {
-  try {
-    const raw = localStorage.getItem(storageKey(serverName));
-    if (!raw) {
-      return undefined;
-    }
-    const parsed = JSON.parse(raw) as OAuthTrace;
-    if (parsed?.version !== 1 || !Array.isArray(parsed.steps)) {
-      return undefined;
-    }
-    parsed.httpHistory = Array.isArray(parsed.httpHistory)
-      ? parsed.httpHistory
-      : [];
-    return parsed;
-  } catch {
-    return undefined;
-  }
-}
-
 export function clearPersistedOAuthTraces(): void {
   try {
     const keysToRemove: string[] = [];
@@ -294,26 +272,6 @@ export function clearPersistedOAuthTraces(): void {
     });
   } catch {
     // Ignore storage access failures; startup should continue without trace migration.
-  }
-}
-
-export function saveOAuthTrace(serverName: string, trace: OAuthTrace): void {
-  try {
-    localStorage.setItem(
-      storageKey(serverName),
-      JSON.stringify(buildPersistableTrace(trace)),
-    );
-  } catch (error) {
-    console.warn("Failed to persist OAuth trace with HTTP history.", error);
-
-    try {
-      localStorage.setItem(
-        storageKey(serverName),
-        JSON.stringify(buildPersistableTrace(trace, { dropHttpHistory: true })),
-      );
-    } catch (retryError) {
-      console.warn("Failed to persist OAuth trace.", retryError);
-    }
   }
 }
 
