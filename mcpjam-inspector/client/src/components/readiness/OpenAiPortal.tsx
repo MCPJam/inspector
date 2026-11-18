@@ -10,8 +10,9 @@
  * the ZIP the portal takes. Choosing one saves it on the submission at once,
  * guarded like an answer, and a run grades that version.
  */
+import { PreviewServerIcon } from "./PreviewServerIcon";
 import { useState, type ReactNode } from "react";
-import { ChevronRight, ExternalLink, Upload } from "lucide-react";
+import { Blocks, ChevronRight, ExternalLink, Upload } from "lucide-react";
 import type { DirectoryFlow } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -92,14 +93,13 @@ function PluginChoice({
   } else if (!plugins) {
     state = "Loading this project's plugins…";
   } else if (plugins.length === 0) {
-    state = "This project has no plugins. Add one on Connect, then choose it here.";
+    state = "No plugins in this project yet.";
   }
   return (
     <div className="mx-auto max-w-2xl space-y-4 px-8 py-10">
       <h1 className="text-xl font-semibold">Plugins</h1>
       <McpjamNote>
-        Choose the stored plugin to rehearse. Its version stands for the ZIP
-        you upload.
+        Upload a plugin ZIP or choose a saved plugin below.
       </McpjamNote>
       {gone ? (
         <p role="alert" className="text-sm text-destructive">
@@ -154,6 +154,9 @@ export function OpenAiPortal({
   session,
   projectId,
   serverUrl,
+  initialTab,
+  onTabChange,
+  onUpload,
   onClose,
 }: {
   flow: DirectoryFlow;
@@ -162,9 +165,12 @@ export function OpenAiPortal({
   projectId: string;
   /** The saved server's URL, which a run grades. */
   serverUrl?: string;
+  initialTab?: string;
+  onTabChange?: (tab: string) => void;
+  onUpload?: () => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState(LISTING);
+  const [tab, setTab] = useState(initialTab ?? LISTING);
   const [open, setOpen] = useState<string | null>(null);
   const [recorded, setRecorded] = useState<SubmissionEvent | null>(null);
   // Only a plugin still in the project is read: an uninstalled one's
@@ -239,10 +245,15 @@ export function OpenAiPortal({
       </div>
       <div className="flex flex-wrap items-start justify-between gap-6 px-8 pt-6">
         <div className="flex items-center gap-4">
-          <PluginIcon
-            icons={plugin?.icons}
+          <PreviewServerIcon
             className="size-12 rounded-xl"
-            fallback={<span className="block size-12 rounded-xl bg-accent" />}
+            fallback={plugin?.icons && (
+              <PluginIcon
+                icons={plugin.icons}
+                className="size-12 rounded-xl"
+                fallback={<Blocks aria-hidden="true" className="size-12 text-muted-foreground" />}
+              />
+            )}
           />
           <div>
             <h1 className="text-xl font-semibold">{name}</h1>
@@ -265,7 +276,7 @@ export function OpenAiPortal({
           </Status>
         </div>
       </div>
-      <Tabs value={tab} onValueChange={setTab} className="mt-5 gap-0">
+      <Tabs value={tab} onValueChange={value => { setTab(value); onTabChange?.(value); }} className="mt-5 gap-0">
         <TabsList className="h-auto w-full justify-start gap-5 rounded-none border-b border-border bg-transparent p-0 px-8">
           {[LISTING, MCP].map((id) => (
             <TabsTrigger key={id} value={id} className={TAB}>
@@ -294,11 +305,10 @@ export function OpenAiPortal({
                 ))}
               </SelectContent>
             </Select>
-            <Button type="button" variant="outline" size="sm" disabled>
+            <Button type="button" variant="outline" size="sm" disabled={!onUpload} onClick={onUpload}>
               <Upload aria-hidden="true" />
               {blocks.find((block) => block.text?.upload)?.text?.upload}
             </Button>
-            <McpjamNote>Import a new version of this plugin on Connect.</McpjamNote>
             <div className="ml-auto flex gap-2">
               {review ? (
                 <Button type="button" variant="outline" size="sm" onClick={() => setOpen(REVIEWER)}>

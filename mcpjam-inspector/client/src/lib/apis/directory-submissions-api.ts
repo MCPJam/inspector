@@ -32,11 +32,12 @@ export const getDirectoryFlow = (flowId: string): Promise<DirectoryFlow> =>
 
 export async function listServerSubmissions(
   projectId: string,
-  serverId: string,
+  serverId: string | undefined,
   signal?: AbortSignal,
+  flowId?: string,
 ): Promise<SubmissionSummary[]> {
   const page = await client().listDirectorySubmissions(
-    { projectId, serverId },
+    { projectId, serverId, flowId, limit: 100 },
     { signal },
   );
   return page.items;
