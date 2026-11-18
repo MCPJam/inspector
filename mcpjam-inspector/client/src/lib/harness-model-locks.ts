@@ -23,7 +23,10 @@ import { isRuntimeAccountModel } from "@/shared/model-provider";
  */
 import type { ModelSelection } from "@mcpjam/sdk/browser";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
-import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import {
+  effectiveHarnessId,
+  HARNESS_DESCRIPTORS,
+} from "@/shared/harness-descriptors";
 import {
   harnessRunsOnConnection,
   harnessTakesOrgKeys,
@@ -65,6 +68,43 @@ export type HarnessModelTarget = {
   harnessId: string;
   runtimeVersion?: string | null;
 };
+
+/**
+ * The harness target a saved client runs, or `null` for an emulated client.
+ *
+ * Read it through here, never off `config.harness`: a client paired with a
+ * vendor runtime (Claude → Claude Code, ChatGPT → Codex) stores it in
+ * `agentLoop` and leaves `harness` empty, so reading `harness` alone treats it
+ * as emulated and its pickers lock nothing. The Playground reads
+ * `effectiveHarnessId` and every other picker must agree with it
+ * (`__tests__/harness-target-reads.test.ts` guards this).
+ */
+export function harnessTargetOfClient(
+  config:
+    | { agentLoop?: string | null; harness?: string | null }
+    | null
+    | undefined,
+): HarnessModelTarget | null {
+  const harnessId = effectiveHarnessId(config);
+  return harnessId ? { harnessId } : null;
+}
+
+/**
+ * The harness target of a client as the backend lists or returns it: its
+ * resolved `runtime` field, or, from a backend older than that field, its
+ * config's (or list row's) own `agentLoop` / `harness`.
+ */
+export function harnessTargetOfHost(host: {
+  runtime?: string | null;
+  config?: { agentLoop?: string | null; harness?: string | null } | null;
+  agentLoop?: string | null;
+  harness?: string | null;
+}): HarnessModelTarget | null {
+  if (host.runtime !== undefined) {
+    return host.runtime ? { harnessId: host.runtime } : null;
+  }
+  return harnessTargetOfClient(host.config ?? host);
+}
 
 function runtimeVersionOf(target: HarnessModelTarget): string | undefined {
   return target.runtimeVersion ?? harnessPinnedVersion(target.harnessId);

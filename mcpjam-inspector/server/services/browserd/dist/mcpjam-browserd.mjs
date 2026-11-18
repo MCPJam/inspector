@@ -5982,11 +5982,12 @@ function isStopTarget(value) {
 }
 var isAt = (url, target) => url === target || url.startsWith(`${target}?`) || url.startsWith(`${target}#`);
 var watches = /* @__PURE__ */ new WeakMap();
+var ANSWERED_LIMIT = 512;
 async function answer(cdp, slot, payload) {
   const paused = payload;
   const watch = slot.current;
   const url = paused.request?.url ?? "";
-  const stop = watch !== void 0 && watch.stopped === void 0 && paused.frameId === watch.mainFrame && isAt(url, watch.target);
+  const stop = watch !== void 0 && watch.stopped === void 0 && paused.resourceType === "Document" && paused.frameId === watch.mainFrame && isAt(url, watch.target);
   if (stop) watch.stopped = url;
   try {
     await cdp.send(
@@ -5996,12 +5997,36 @@ async function answer(cdp, slot, payload) {
   } catch {
   }
 }
-async function armNavigationStop(cdp, target) {
+async function answerAuth(cdp, slot, payload) {
+  const challenge = payload;
+  const requestId = challenge.requestId ?? "";
+  const credentials = slot.proxyAuth;
+  const provide = credentials !== void 0 && challenge.authChallenge?.source === "Proxy" && !slot.answered.has(requestId);
+  if (provide) {
+    if (slot.answered.size >= ANSWERED_LIMIT) slot.answered.clear();
+    slot.answered.add(requestId);
+  }
+  try {
+    await cdp.send("Fetch.continueWithAuth", {
+      requestId,
+      authChallengeResponse: provide ? {
+        response: "ProvideCredentials",
+        username: credentials.username,
+        password: credentials.password
+      } : { response: "CancelAuth" }
+    });
+  } catch {
+  }
+}
+async function armNavigationStop(cdp, target, proxyAuth) {
   let slot = watches.get(cdp);
   if (!slot) {
-    const created = {};
+    const created = { answered: /* @__PURE__ */ new Set() };
     cdp.on("Fetch.requestPaused", (payload) => {
       void answer(cdp, created, payload);
+    });
+    cdp.on("Fetch.authRequired", (payload) => {
+      void answerAuth(cdp, created, payload);
     });
     watches.set(cdp, created);
     slot = created;
@@ -6010,15 +6035,22 @@ async function armNavigationStop(cdp, target) {
   const watch = { target, mainFrame: tree.frameTree?.frame?.id };
   const owner = slot;
   owner.current = watch;
-  await cdp.send("Fetch.enable", {
-    patterns: [
-      {
-        urlPattern: `${target}*`,
-        resourceType: "Document",
-        requestStage: "Request"
-      }
-    ]
-  });
+  owner.proxyAuth = proxyAuth;
+  await cdp.send(
+    "Fetch.enable",
+    proxyAuth ? {
+      handleAuthRequests: true,
+      patterns: [{ urlPattern: "*", requestStage: "Request" }]
+    } : {
+      patterns: [
+        {
+          urlPattern: `${target}*`,
+          resourceType: "Document",
+          requestStage: "Request"
+        }
+      ]
+    }
+  );
   return {
     stopped: () => watch.stopped,
     disarm: async () => {
@@ -8272,7 +8304,10 @@ var ChromiumDriver = class {
       if (!watch) {
         const cdp2 = await entry.page.cdp();
         if (!cdp2) return { ok: false, error: "navigation stop unavailable" };
-        watch = { target, stop: await armNavigationStop(cdp2, target) };
+        watch = {
+          target,
+          stop: await armNavigationStop(cdp2, target, this.context.proxyAuth)
+        };
         this.navigationStops.set(tabId, watch);
       }
       const before = watch.stop.stopped();
@@ -8295,7 +8330,7 @@ var ChromiumDriver = class {
     if (!cdp || !isStopTarget(target)) {
       return this.executeInBarrier(command, context);
     }
-    const stop = await armNavigationStop(cdp, target);
+    const stop = await armNavigationStop(cdp, target, this.context.proxyAuth);
     try {
       const result = await this.executeInBarrier(command, context);
       const stoppedAt = stop.stopped();
@@ -10538,6 +10573,7 @@ function secureDriverContext(context, policy) {
     return wrapped;
   }
   return {
+    ...context.proxyAuth ? { proxyAuth: context.proxyAuth } : {},
     async newPage() {
       await policy.assertActive();
       const page = await context.newPage();
@@ -11369,6 +11405,12 @@ async function launchBrowserdContext(options) {
       const adapted = adaptContext(context, {
         localSecurity: Boolean(policy),
         localBudget: policy?.discoveryBudget,
+        ...proxy ? {
+          proxyAuth: {
+            username: proxy.proxy.username,
+            password: proxy.proxy.password
+          }
+        } : {},
         onClose: async () => {
           try {
             await onClose?.();
@@ -11494,6 +11536,7 @@ function adaptContext(context, options = {}) {
     return driverPage;
   }
   return {
+    ...options.proxyAuth ? { proxyAuth: options.proxyAuth } : {},
     onPageCreated(listener) {
       listeners.add(listener);
       return () => {

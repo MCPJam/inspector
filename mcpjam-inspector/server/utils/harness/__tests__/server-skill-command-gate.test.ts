@@ -89,7 +89,7 @@ describe("the gate's answer", () => {
       state({ switchOn: true, inUse: true, answerer: "guest" }),
       "deny",
     ],
-    // Nobody to ask with the switch on (the turn refuses this up front).
+    // Nobody to ask with the switch on: MCPJam denies, as its engine does.
     [CLAUDE_WRITE, state({ switchOn: true, answerer: "nobody" }), "deny"],
   ] as const)("%o under %o → %s", (request, gate, expected) => {
     expect(commandGateDecision(request, gate).kind).toBe(expected);
@@ -108,6 +108,18 @@ describe("the gate's answer", () => {
         state({ inUse: true, answerer: "guest" }),
       ),
     ).toEqual({ kind: "deny", reason: COMMAND_REFUSED_IN_USE.guest });
+  });
+
+  it("denies a request nobody can answer with MCPJam engine's result", () => {
+    expect(
+      commandGateDecision(
+        CLAUDE_WRITE,
+        state({ switchOn: true, answerer: "nobody" }),
+      ),
+    ).toEqual({
+      kind: "deny",
+      reason: "approval-denied (synthetic session)",
+    });
   });
 
   it("holds commands in the mode that asks before them and not before edits", () => {

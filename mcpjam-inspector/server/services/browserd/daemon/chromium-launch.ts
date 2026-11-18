@@ -874,6 +874,14 @@ export async function launchBrowserdContext(
       const adapted = adaptContext(context as unknown as AnyContext, {
         localSecurity: Boolean(policy),
         localBudget: policy?.discoveryBudget,
+        ...(proxy
+          ? {
+              proxyAuth: {
+                username: proxy.proxy.username,
+                password: proxy.proxy.password,
+              },
+            }
+          : {}),
         onClose: async () => {
           try {
             await onClose?.();
@@ -1025,6 +1033,7 @@ export function adaptContext(
     onClose?: () => Promise<unknown>;
     localSecurity?: boolean;
     localBudget?: LocalDiscoveryBudget;
+    proxyAuth?: DriverContext["proxyAuth"];
   } = {},
 ): DriverContext {
   const startup = [...context.pages()];
@@ -1057,6 +1066,7 @@ export function adaptContext(
     return driverPage;
   }
   return {
+    ...(options.proxyAuth ? { proxyAuth: options.proxyAuth } : {}),
     onPageCreated(listener) {
       listeners.add(listener);
       return () => {

@@ -26,7 +26,7 @@ import {
   addAfterRun,
   chooseTools,
   nextCasePredicateIndex,
-  setCaseKind,
+  removeExactOrder,
   setCasePredicates,
   setEnvelopeMode,
   type CaseStepsDraft,
@@ -78,7 +78,7 @@ export function CaseAfterRun({
   onEdit: (edit: DraftEdit) => void;
   onOpenSuiteSettings: () => void;
 }) {
-  const toolNames = availableTools.map((tool) => tool.name);
+  const toolNames = [...new Set(availableTools.map((tool) => tool.name))];
   const route = section.route;
   const menu = (
     label: string,
@@ -154,11 +154,7 @@ export function CaseAfterRun({
                       route.kind === "noTools"
                         ? chooseTools
                         : (current) =>
-                            setCaseKind(
-                              current,
-                              "capability",
-                              suiteDefaultMatchOptions,
-                            ),
+                            removeExactOrder(current, suiteDefaultMatchOptions),
                     ),
                 },
               ])}
@@ -214,7 +210,9 @@ export function CaseAfterRun({
             );
           })}
           {section.caseRows.map((row) => {
-            const index = row.predicateIndex ?? 0;
+            const index = row.predicateIndex;
+            // Without an index there is no predicate to edit or remove.
+            if (index === undefined) return null;
             const predicate = row.predicate;
             const s = rowSummary(row);
             const key = `case:${index}`;

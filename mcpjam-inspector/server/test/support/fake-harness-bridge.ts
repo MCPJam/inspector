@@ -43,7 +43,7 @@ const GREETING_BRIDGES = new Set(["claude-code", "opencode"]);
  * poll resolves at once, and `getPortEndpoint` points its bridge WebSocket at
  * the test server.
  */
-function fakeBridgeBox(bridgeType: string, port: number) {
+function fakeBridgeBox(bridgeType: string, port: number, frozenRestricted = false) {
   const writes: BoxWrite[] = [];
   const commands: string[] = [];
   const spawns: BridgeSpawn[] = [];
@@ -83,7 +83,8 @@ function fakeBridgeBox(bridgeType: string, port: number) {
       id: "sandbox-1",
       defaultWorkingDirectory: `${BOX_HOME}/work`,
       ports: [port],
-      restricted: () => restricted,
+      // A local session's restricted view is frozen (`supervised-provider.ts`).
+      restricted: () => (frozenRestricted ? Object.freeze(restricted) : restricted),
       getPortEndpoint: async () => ({ url: `ws://127.0.0.1:${port}` }),
     },
   };
@@ -97,6 +98,7 @@ function fakeBridgeBox(bridgeType: string, port: number) {
 export async function promptWithSkills(
   harness: DrivenHarness,
   skills: PromptSkills,
+  options: { frozenRestricted?: boolean } = {},
 ): Promise<{
   writes: BoxWrite[];
   commands: string[];
@@ -112,7 +114,7 @@ export async function promptWithSkills(
     }
   });
 
-  const box = fakeBridgeBox(harness.harnessId, port);
+  const box = fakeBridgeBox(harness.harnessId, port, options.frozenRestricted);
   let session: Awaited<ReturnType<DrivenHarness["doStart"]>> | undefined;
   let error: unknown;
   try {

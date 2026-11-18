@@ -239,4 +239,10 @@ export interface DriverContext {
   /** True while the underlying browser is alive; false after a crash/close. */
   isConnected(): boolean;
   close(): Promise<void>;
+  /**
+   * The egress proxy's credentials, when every request goes through it. A
+   * CDP session that intercepts requests must answer the proxy's challenge
+   * with these (`navigation-stop.ts`).
+   */
+  readonly proxyAuth?: { username: string; password: string };
 }

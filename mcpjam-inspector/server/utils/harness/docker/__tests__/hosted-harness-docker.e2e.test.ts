@@ -113,6 +113,17 @@ vi.mock("../../harness-session-state.js", async (importOriginal) => ({
   commitHarnessSessionState: vi.fn(async () => true),
   heartbeatHarnessSessionState: vi.fn(async () => "ok"),
   releaseHarnessSessionState: vi.fn(async () => {}),
+  // A chat turn binds its lane's session handles first. The broker stand-in
+  // installs no session grant beside the lease, so the turn then keeps
+  // per-turn tokens, as it does on an origin egress does not inject for.
+  bindHarnessSessionTurn: vi.fn(
+    async ({ servers }: { servers: Array<{ serverId: string }> }) => ({
+      ok: true,
+      handles: Object.fromEntries(
+        servers.map(({ serverId }) => [serverId, `session-${serverId}`]),
+      ),
+    }),
+  ),
 }));
 
 vi.mock("../../runtime-skills.js", async (importOriginal) => ({

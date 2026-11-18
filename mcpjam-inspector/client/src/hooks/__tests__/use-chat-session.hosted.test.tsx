@@ -989,6 +989,43 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"])(
+    "asks to prepare a new %s chat's computer",
+    (harnessId) => {
+      const { result, unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            hostId: "host-1",
+            selectedServerIds: ["server-id-1"],
+          },
+          harnessModelTarget: { harnessId },
+        }),
+      );
+      expect(result.current.harnessBoxPreparation).toMatchObject({
+        chatSessionId: expect.any(String),
+        body: { projectId: "project-1", hostId: "host-1" },
+      });
+      unmount();
+    },
+  );
+
+  it("asks nothing for a chat on MCPJam's own agent", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+    expect(result.current.harnessBoxPreparation).toBeNull();
+    unmount();
+  });
+
   it("does not report a selection resolved before the saved one is read", () => {
     mockState.persistedModelInitialized = false;
     mockState.selectedModelId = null as unknown as string;

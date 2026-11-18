@@ -25,6 +25,10 @@ const buttonVariants = cva(
         // vanish into the fill.
         secondary:
           "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-control-hover",
+        // Header buttons on the linen ground: a paper fill with the chrome
+        // hairline, so the server selector keeps the only beige fill.
+        chrome:
+          "bg-chrome-button text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-button-hover",
         // No fill at rest, chrome fill on hover. One token for both themes,
         // so this no longer needs a dark-mode override.
         //

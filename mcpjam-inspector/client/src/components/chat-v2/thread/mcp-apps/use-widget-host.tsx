@@ -42,6 +42,7 @@ import { useSavedClient, useEffectiveHostContext } from "@/contexts/saved-client
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { usePaneDisplay } from "@/contexts/pane-display-context";
 import { useTrafficLogStore } from "@/stores/traffic-log-store";
+import { useAppsBridgeObservations } from "@/lib/server-canvas/use-apps-bridge-observations";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
 import { compareCspPolicies } from "../csp-workbench/csp-header";
@@ -375,7 +376,10 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
   const setSandboxApplied = useWidgetDebugStore((s) => s.setSandboxApplied);
   const appendLifecycle = useWidgetDebugStore((s) => s.appendLifecycle);
-  const addTrafficLog = useTrafficLogStore((s) => s.addLog);
+  // Logged bridge traffic also feeds the server canvas's observed features.
+  const addTrafficLog = useAppsBridgeObservations(
+    useTrafficLogStore((s) => s.addLog),
+  );
   const cspTelemetryLimiterRef = useRef(new CspViolationTelemetryLimiter());
   const cspToastGroupRef = useRef(
     new ClientCspToastGroup(

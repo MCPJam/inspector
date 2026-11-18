@@ -87,7 +87,8 @@ async function openRehearsal() {
       <ReadinessRoute />
     </MemoryRouter>,
   );
-  await userEvent.click(screen.getByRole("button", { name: /MCP connector/ }));
+  await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+  await userEvent.click(screen.getByRole("button", { name: "Go step by step" }));
   await screen.findByRole("heading", { level: 1, name: "Connection" });
   return within(
     screen.getByRole("navigation", { name: "Claude submission steps" }),

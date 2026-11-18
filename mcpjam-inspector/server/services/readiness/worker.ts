@@ -383,7 +383,9 @@ export function attemptEnding(
   }
   const checked =
     identity?.outcome === "verified"
-      ? "the identity check confirmed the reviewer"
+      ? identity.expected?.identity
+        ? "the identity check confirmed the reviewer"
+        : "the organization check passed; account identity was not checked"
       : "the submission names no identity tool, so the identity was not checked";
   return {
     outcome: "passed",

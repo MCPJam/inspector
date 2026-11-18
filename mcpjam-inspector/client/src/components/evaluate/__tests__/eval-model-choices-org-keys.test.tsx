@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EvalModelChoices } from "../eval-target-matrix";
+import { EvalModelChoices } from "../eval-model-choices";
 import type { ModelDefinition } from "@/shared/types";
 import { withSavedSelectionLocks } from "@/components/chat-v2/shared/available-models";
 
@@ -30,6 +30,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("warns about a saved hosted target on its trigger, by catalog name, and never lists it", async () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
@@ -66,6 +67,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     };
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -108,6 +110,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     } as ModelDefinition;
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [
@@ -138,6 +141,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("keeps the raw id, without a warning, when the policy is off", () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "acme/retired" }],
@@ -184,6 +188,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     (_label, target) => {
       render(
         <EvalModelChoices
+          harnessTargets={[]}
           value={{ includeClientDefaults: false, explicitTargets: [target] }}
           onChange={vi.fn()}
           disabled={false}
@@ -202,6 +207,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{
           includeClientDefaults: false,
           explicitTargets: [{ modelId: "anthropic/claude-haiku-4.5" }],
@@ -230,6 +236,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [] }}
         onChange={onChange}
         disabled={false}
@@ -252,6 +259,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
   it("reads that saved target back as the org row, without a warning", () => {
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [orgSonnet] }}
         onChange={vi.fn()}
         disabled={false}
@@ -272,6 +280,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
     const onChange = vi.fn();
     render(
       <EvalModelChoices
+        harnessTargets={[]}
         value={{ includeClientDefaults: false, explicitTargets: [] }}
         onChange={onChange}
         disabled={false}
@@ -305,6 +314,7 @@ describe("EvalModelChoices — organization requires its own keys", () => {
       const onChange = vi.fn();
       render(
         <EvalModelChoices
+          harnessTargets={[]}
           value={{
             includeClientDefaults: false,
             explicitTargets: [{ modelId: "gpt-5.1" }],

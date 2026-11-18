@@ -52,7 +52,7 @@ describe("EvalsHeader", () => {
       screen.getByRole("button", { name: "More evaluate actions" }),
     );
     // Setting up a run is the Runs landing's job, not a second offer here.
-    expect(screen.queryByRole("menuitem", { name: "Setup run" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Set up run" })).toBeNull();
     await user.click(screen.getByRole("menuitem", { name: "Add test case" }));
     expect(add).toHaveBeenCalledOnce();
     expect(setup).not.toHaveBeenCalled();

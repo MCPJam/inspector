@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { act, renderWithProviders, screen, userEvent } from "@/test";
 import type { PinnedToolCallFields } from "@/components/evals/pinned-tool-call-fields";
 import type { Predicate } from "@/shared/eval-matching";
+import { OBSERVATION_PREDICATE_KINDS } from "@/shared/predicate-kinds";
 import type { TestStep } from "@/shared/steps";
+import { deleteActionPlan } from "../case-spine/case-spine-model";
 import {
   ActionCard,
   AssertionEditor,
@@ -173,7 +175,72 @@ describe("ActionCard", () => {
         renderTimeoutMs: 1000,
       }),
     );
-    expect(onChange).toHaveBeenCalledWith({ ...call, arguments: { id: 1 } });
+    expect(onChange.mock.calls[0]![0]).toStrictEqual({
+      ...call,
+      arguments: { id: 1 },
+    });
+  });
+
+  it.each<
+    [
+      string,
+      Partial<typeof call>,
+      Partial<Parameters<typeof fields.onChange>[0]>,
+    ]
+  >([
+    [
+      "a server id the fields look up",
+      { serverId: undefined },
+      { serverId: "found" },
+    ],
+    [
+      "a 0 timeout the fields drop",
+      { renderTimeoutMs: 0 },
+      { renderTimeoutMs: undefined },
+    ],
+  ])("keeps the stored step for %s", (_name, stored, reported) => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <ActionCard
+        {...common}
+        step={{ ...call, ...stored }}
+        onChange={onChange}
+        onToggle={vi.fn()}
+      />,
+    );
+    act(() =>
+      fields.onChange({
+        serverName: "accounts",
+        toolName: "get_me",
+        arguments: {},
+        renderTimeoutMs: 1000,
+        ...reported,
+      }),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("writes the suite's server into a step that names none", () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <ActionCard
+        {...common}
+        step={{ ...call, serverId: undefined, serverName: "" }}
+        onChange={onChange}
+        onToggle={vi.fn()}
+      />,
+    );
+    act(() =>
+      fields.onChange({
+        serverName: "accounts",
+        toolName: "get_me",
+        arguments: {},
+        renderTimeoutMs: 1000,
+      }),
+    );
+    expect(onChange.mock.calls[0]![0]).toMatchObject({
+      serverName: "accounts",
+    });
   });
 
   const interact = {
@@ -263,8 +330,8 @@ describe("AssertionEditor", () => {
     const onChange = mount({ type: "toolCalledAtLeastOnce", toolName: "x" });
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Non-blocking" }));
-    expect(onChange).toHaveBeenCalledWith(
+      .click(screen.getByRole("button", { name: "Advisory" }));
+    expect(onChange.mock.calls[0]![0]).toStrictEqual(
       assertStep({
         type: "toolCalledAtLeastOnce",
         toolName: "x",
@@ -273,9 +340,80 @@ describe("AssertionEditor", () => {
     );
   });
 
+  it("moves to the step picked in Graded after", async () => {
+    const onMove = vi.fn();
+    const tool = {
+      id: "t1",
+      kind: "toolCall" as const,
+      serverName: "accounts",
+      toolName: "get_me",
+      arguments: {},
+    };
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep({ type: "noToolErrors" })}
+        actionId="p1"
+        actions={[
+          ...actions,
+          { ...actions[0]!, step: tool, index: 1, ordinal: 2, lastIndex: 1 },
+        ]}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy
+        onChange={vi.fn()}
+        onMove={onMove}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Graded after" }));
+    await user.click(screen.getByRole("option", { name: /^Step 2 · / }));
+    expect(onMove).toHaveBeenCalledWith("t1");
+  });
+
+  it("lists a tool name two servers share once", async () => {
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep({ type: "toolCalledAtLeastOnce", toolName: "" })}
+        actionId="p1"
+        actions={actions}
+        availableTools={[
+          { name: "get_me", serverId: "a" },
+          { name: "get_me", serverId: "b" },
+          { name: "list_items", serverId: "a" },
+        ]}
+        readOnly={false}
+        checkPolicy
+        onChange={vi.fn()}
+        onMove={vi.fn()}
+      />,
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("combobox", { name: /^Tool/ }));
+    expect(screen.getAllByRole("option", { name: "get_me" })).toHaveLength(1);
+  });
+
+  it("reads Before the first step for a leading assertion", () => {
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep({ type: "noToolErrors" })}
+        actionId={null}
+        actions={actions}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy
+        onChange={vi.fn()}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Graded after" }),
+    ).toHaveTextContent("Before the first step");
+  });
+
   it("has no role control for a widget check, or without check policy", () => {
     mount({ kind: "widgetRendered", toolName: "show_board" });
-    expect(screen.getByText(/Always blocking/)).toBeInTheDocument();
+    expect(screen.getByText(/Always required/)).toBeInTheDocument();
     expect(
       screen.queryByRole("group", { name: "If this assertion misses" }),
     ).toBeNull();
@@ -436,38 +574,129 @@ describe("RemoveStepDialog", () => {
   });
 });
 
+describe("RemoveStepDialog from a real case", () => {
+  const p = (id: string): TestStep => ({ id, kind: "prompt", prompt: id });
+  const t = (id: string): TestStep => ({
+    id,
+    kind: "toolCall",
+    serverName: "accounts",
+    toolName: "get_me",
+    arguments: {},
+  });
+  const a = (id: string): TestStep => ({
+    id,
+    kind: "assert",
+    assertion: { type: "noToolErrors" },
+  });
+
+  const i = (id: string): TestStep => ({
+    id,
+    kind: "interact",
+    toolName: "board",
+    action: { kind: "key", key: "Enter" },
+  });
+  const moves = "1 later assertion in its turn will move to step 1's turn.";
+
+  // Prompts and tool calls open a turn; an interact runs inside one.
+  it.each<[string, TestStep[], string, string | null]>([
+    ["a follow-up prompt", [p("p1"), p("p2"), i("i"), a("b")], "p2", moves],
+    ["a tool call", [p("p1"), t("t"), i("i"), a("b")], "t", moves],
+    ["an interact step", [p("p1"), i("i"), i("i2"), a("b")], "i", null],
+    [
+      "a prompt before a tool call's turn",
+      [p("p1"), p("p2"), t("t"), a("b")],
+      "p2",
+      null,
+    ],
+    [
+      "the first prompt while another remains",
+      [p("p1"), a("a"), p("p2")],
+      "p1",
+      "Its 1 assertion would be graded before the first step.",
+    ],
+  ])("removing %s", (_name, steps, id, text) => {
+    renderWithProviders(
+      <RemoveStepDialog
+        pending={deleteActionPlan(steps, id)}
+        onClose={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    if (text === null) expect(screen.queryByRole("alertdialog")).toBeNull();
+    else expect(screen.getByText(text)).toBeInTheDocument();
+  });
+});
+
 describe("RoleControl", () => {
   const assertion = {
     type: "toolCalledAtLeastOnce",
     toolName: "create_view",
   } as Predicate;
 
-  it.each([
-    [assertion, "Blocking"],
-    [{ ...assertion, role: "advisory" } as Predicate, "Non-blocking"],
-  ])("selects the stored role (%#)", (predicate, selected) => {
+  const mount = (predicate: Predicate, readOnly = false) => {
+    const onChange = vi.fn();
     renderWithProviders(
-      <RoleControl predicate={predicate} readOnly={false} onChange={vi.fn()} />,
+      <RoleControl
+        predicate={predicate}
+        readOnly={readOnly}
+        onChange={onChange}
+      />,
     );
-    for (const name of ["Blocking", "Non-blocking"])
+    return onChange;
+  };
+  const with_ = (role: string) => ({ ...assertion, role }) as Predicate;
+
+  it.each<[string, Predicate, string]>([
+    ["no role", assertion, "Required"],
+    ["advisory", with_("advisory"), "Advisory"],
+    ["gating", with_("gating"), "Required"],
+    ["required", with_("required"), "Required"],
+    ["a misspelled role", with_("advsory"), "Required"],
+  ])("selects the stored role: %s", (_name, predicate, selected) => {
+    mount(predicate);
+    for (const name of ["Required", "Advisory"])
       expect(screen.getByRole("button", { name })).toHaveAttribute(
         "aria-pressed",
         String(name === selected),
       );
   });
 
-  it("switches a blocking assertion to non-blocking", async () => {
-    const onChange = vi.fn();
-    renderWithProviders(
-      <RoleControl
-        predicate={assertion}
-        readOnly={false}
-        onChange={onChange}
-      />,
-    );
+  it("switches a required assertion to advisory", async () => {
+    const onChange = mount(assertion);
     await userEvent
       .setup()
-      .click(screen.getByRole("button", { name: "Non-blocking" }));
-    expect(onChange).toHaveBeenCalledWith({ ...assertion, role: "advisory" });
+      .click(screen.getByRole("button", { name: "Advisory" }));
+    expect(onChange.mock.calls[0]![0]).toStrictEqual(with_("advisory"));
+  });
+
+  it("switches back to required with no role key left", async () => {
+    const onChange = mount(with_("advisory"));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Required" }));
+    expect(onChange.mock.calls[0]![0]).toStrictEqual(assertion);
+  });
+
+  it("only offers Advisory for an observation kind", async () => {
+    const observation = {
+      type: OBSERVATION_PREDICATE_KINDS[0],
+      role: "advisory",
+    } as Predicate;
+    const onChange = mount(observation);
+    expect(screen.getByRole("button", { name: "Required" })).toBeDisabled();
+    expect(
+      screen.getByRole("group", { name: "If this assertion misses" })
+        .parentElement,
+    ).toHaveAttribute("title", "This assertion can only warn.");
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Advisory" }));
+    expect(onChange).toHaveBeenCalled();
+  });
+
+  it("disables both in a read-only view", () => {
+    mount(assertion, true);
+    for (const name of ["Required", "Advisory"])
+      expect(screen.getByRole("button", { name })).toBeDisabled();
   });
 });

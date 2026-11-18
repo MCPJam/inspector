@@ -319,6 +319,20 @@ describe("cancellation", () => {
 });
 
 describe("the OpenAI submission mode", () => {
+  it("passes saved answers through to the OpenAI grader", async () => {
+    const { result } = await runDirectoryReadiness({
+      publisher: "openai",
+      target: TARGET,
+      submissionMode: "mcp-only",
+      fetchFn: wireFetch(HEALTHY),
+      submissionAnswers: [
+        { key: "mcp.verificationToken", value: "sample-token", origin: "set" },
+      ],
+    });
+    expect(
+      result.findings.find((item) => item.id === "openai.submission.domain-token")?.status,
+    ).toBe("satisfied");
+  });
   it("is required, and is never inferred", async () => {
     // Inference reads a forgotten package as "MCP-only", which reports the
     // package lane `not-applicable` — a missing input becoming a clean bill of
