@@ -15,7 +15,7 @@
   "dependencies": {
     "@mcpjam/design-system": "*",
     "@workos-inc/authkit-nextjs": "^4.3.2",
-    "@workos-inc/node": "^11.0.0",
+    "@workos-inc/node": "^12.3.0",
     "next": "^16.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0"
