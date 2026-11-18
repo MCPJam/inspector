@@ -167,7 +167,7 @@ function credentialRefusalNormalized(
         ? "Blocked by organization policy"
         : refusal.kind === "hosted_only"
           ? refusal.cause === "not_acknowledged"
-            ? "Local runs are off"
+            ? "Local runs are off for this server"
             : refusal.cause === "client_upgrade_required"
               ? "Update MCPJam to use this account"
               : "Account can't run locally"

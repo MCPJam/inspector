@@ -204,7 +204,7 @@ describe("a shared or uploaded account's refusal", () => {
     ) as { error: string; normalized: NormalizedError };
     expect(result.error).toBe(SENTENCE);
     expect(result.error).not.toMatch(/organization admin/);
-    expect(result.normalized.title).toBe("Local runs are off");
+    expect(result.normalized.title).toBe("Local runs are off for this server");
   });
 
   it("names the admin's step when the result carries no sentence", () => {
