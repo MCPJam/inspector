@@ -73,4 +73,36 @@ describe("CanvasShell", () => {
     });
     expect(shell).toHaveAttribute("data-viewport-ready", "true");
   });
+
+  // A reveal left pending after unmount fired once the test environment was
+  // gone and failed CI with "window is not defined".
+  it.each([
+    { alignTopAfterFit: false, delay: 60 },
+    { alignTopAfterFit: true, delay: 400 },
+  ])(
+    "cancels the pending reveal when it unmounts first (alignTopAfterFit: $alignTopAfterFit)",
+    async ({ alignTopAfterFit, delay }) => {
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(window, "setTimeout");
+      const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
+      const { unmount } = renderShell({ alignTopAfterFit });
+      // ReactFlow calls onInit a frame after mount; stop well before the
+      // reveal itself is due.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20);
+      });
+
+      const revealCall = setTimeoutSpy.mock.calls.findIndex(
+        ([, ms]) => ms === delay,
+      );
+      expect(revealCall).toBeGreaterThanOrEqual(0);
+      const revealId = setTimeoutSpy.mock.results[revealCall].value;
+
+      unmount();
+
+      expect(clearTimeoutSpy).toHaveBeenCalledWith(revealId);
+      setTimeoutSpy.mockRestore();
+      clearTimeoutSpy.mockRestore();
+    },
+  );
 });
