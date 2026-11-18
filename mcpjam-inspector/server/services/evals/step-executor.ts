@@ -127,8 +127,24 @@ export interface StepExecutionState {
    * later checks are absent; surfaced as "Skipped" in the step UI.
    */
   skippedSteps: SkippedStep[];
+  /**
+   * The `prompt`/`toolCall` step whose engine call failed and halted the run.
+   * Kept on the step, not only as the iteration error, so the persisted step
+   * rows show which step failed and why instead of an `ok` row followed by
+   * skipped ones.
+   */
+  failedStep?: FailedEngineStep;
   /** Accumulated usage across `prompt` steps. */
   usage: UsageSummary;
+}
+
+/** A `prompt`/`toolCall` step whose engine reported a fatal error. */
+export interface FailedEngineStep {
+  stepId: string;
+  stepIndex: number;
+  error: string;
+  source?: "model" | "setup";
+  code?: string;
 }
 
 /** A step that fail-fast skipped (an earlier step failed). */
@@ -486,6 +502,22 @@ async function runAssertStep(
   });
 }
 
+function recordFailedStep(
+  state: StepExecutionState,
+  step: TestStep,
+  stepIndex: number,
+  error: string,
+  outcome: StepEngineOutcome,
+): void {
+  state.failedStep = {
+    stepId: step.id,
+    stepIndex,
+    error,
+    ...(outcome.errorSource ? { source: outcome.errorSource } : {}),
+    ...(outcome.errorCode ? { code: outcome.errorCode } : {}),
+  };
+}
+
 /** Record `steps[fromIndex…]` as fail-fast-skipped (an earlier step failed). */
 function recordSkippedSteps(
   state: StepExecutionState,
@@ -659,6 +691,13 @@ export async function executeSteps(args: {
         return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
+        recordFailedStep(
+          state,
+          step,
+          stepIndex,
+          outcome.iterationError,
+          outcome,
+        );
         recordSkippedSteps(
           state,
           steps,
@@ -705,6 +744,13 @@ export async function executeSteps(args: {
         return { state, cancelled: true, setupFailure: false };
       if (outcome.iterationError) {
         emitStatus(stepIndex, "fail");
+        recordFailedStep(
+          state,
+          step,
+          stepIndex,
+          outcome.iterationError,
+          outcome,
+        );
         recordSkippedSteps(
           state,
           steps,

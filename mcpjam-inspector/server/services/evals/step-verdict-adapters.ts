@@ -83,12 +83,13 @@ export function resolveTurnCheckResultsFromStepExecution(
  *   - any step in `skippedSteps`            → "skipped" (fail-fast halted before it ran)
  *   - `assert`                              → from `assertionResults[stepId].passed`
  *   - `interact`                            → "fail" if in `interactionFailures`, else "ok"
- *   - `prompt` / `toolCall`                 → "ok" (executed; cycle errors are iteration-level)
+ *   - `prompt` / `toolCall`                 → "fail" with the engine error as reason when it
+ *                                             is `failedStep` (its call halted the run), else "ok"
  */
 export function buildStepResultRecords(
   state: Pick<
     StepExecutionState,
-    "assertionResults" | "interactionFailures" | "skippedSteps"
+    "assertionResults" | "interactionFailures" | "skippedSteps" | "failedStep"
   >,
   steps: TestStep[],
 ): EvalStepResultRecord[] {
@@ -119,6 +120,9 @@ export function buildStepResultRecords(
       return f
         ? { ...base, status: "fail", reason: f.reason }
         : { ...base, status: "ok" };
+    }
+    if (state.failedStep?.stepId === step.id) {
+      return { ...base, status: "fail", reason: state.failedStep.error };
     }
     return { ...base, status: "ok" };
   });
