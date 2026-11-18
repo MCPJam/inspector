@@ -16,6 +16,7 @@ vi.mock("../src/eval-reporting-receipt.js", async (original) => ({
 import { EvalTest } from "../src/EvalTest";
 import { PromptResult } from "../src/PromptResult";
 import type { HostRunner } from "../src/HostRunner";
+import type { Evaluator } from "../src/evaluators/types";
 import {
   promptsToEvalResult,
   runToEvalResults,
@@ -54,7 +55,13 @@ function recoveredToolErrorResult(prompt: string): PromptResult {
         startMs: 0,
         endMs: 1,
       },
-      { category: "tool", status: "ok", name: "search_tasks", startMs: 2, endMs: 3 },
+      {
+        category: "tool",
+        status: "ok",
+        name: "search_tasks",
+        startMs: 2,
+        endMs: 3,
+      },
     ],
   } as Parameters<typeof PromptResult.from>[0]);
 }
@@ -71,7 +78,13 @@ function cleanResult(prompt: string): PromptResult {
     usage: { inputTokens: 50, outputTokens: 50, totalTokens: 100 },
     latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
     spans: [
-      { category: "tool", status: "ok", name: "search_tasks", startMs: 0, endMs: 1 },
+      {
+        category: "tool",
+        status: "ok",
+        name: "search_tasks",
+        startMs: 0,
+        endMs: 1,
+      },
     ],
   } as Parameters<typeof PromptResult.from>[0]);
 }
@@ -326,10 +339,121 @@ describe("every SDK upload path sends the verdict its rows give", () => {
     const [row] = capture.mock.calls[0][0].results.map(uploadedRow);
     expect(row.passed).toBe(false);
     expect(
-      row.scores.find(
-        (score) => score.scorerId === "platform:iterationError"
-      )
+      row.scores.find((score) => score.scorerId === "platform:iterationError")
     ).toMatchObject({ status: "scored", value: 0 });
     expectVerdictFromRows(row);
+  });
+
+  it("recomputes built-in rows instead of trusting ones carried over", () => {
+    const earlier = promptsToEvalResult([cleanResult("q")], {
+      caseTitle: "helper",
+      passed: true,
+    });
+    const failing = uploadedRow(
+      promptsToEvalResult([cleanResult("q")], {
+        caseTitle: "helper",
+        passed: false,
+        metadata: earlier.metadata,
+      })
+    );
+    expect(failing.passed).toBe(false);
+    expectVerdictFromRows(failing);
+    expect(failing.scores.map((score) => score.scorerId)).toEqual([
+      "legacy:test",
+      "platform:toolExecution",
+      "platform:iterationError",
+    ]);
+
+    const toolError = uploadedRow(
+      promptsToEvalResult([recoveredToolErrorResult("q")], {
+        caseTitle: "helper",
+        passed: true,
+        metadata: earlier.metadata,
+      })
+    );
+    expect(toolError.passed).toBe(false);
+    expectVerdictFromRows(toolError);
+  });
+
+  it("refuses a carried-over built-in definition with another policy", () => {
+    const advisory = promptsToEvalResult([cleanResult("q")], {
+      caseTitle: "helper",
+      passed: true,
+      failOnToolError: false,
+    });
+    expect(() =>
+      promptsToEvalResult([recoveredToolErrorResult("q")], {
+        caseTitle: "helper",
+        passed: true,
+        metadata: advisory.metadata,
+      })
+    ).toThrow(/"platform:toolExecution" with a different policy/);
+  });
+});
+
+describe("a cancel that lands after test() returned", () => {
+  function cancellingEvaluator(
+    controller: AbortController,
+    role: "gating" | "advisory"
+  ): Evaluator {
+    return {
+      definition: {
+        scorerId: `cancel:${role}`,
+        idSource: "explicit",
+        scorerVersion: "1",
+        implementationHash: "impl",
+        deterministic: true,
+        role,
+        passThreshold: 1,
+      },
+      evaluate: () => {
+        controller.abort();
+        return new Promise<never>(() => {});
+      },
+    };
+  }
+
+  async function runCancelled(role: "gating" | "advisory") {
+    const controller = new AbortController();
+    const evalCase = new EvalTest({
+      id: `c_cancel_${role}`,
+      name: "cancelled while scoring",
+      test: async (agent) => {
+        await agent.run("List my open tasks");
+        return true;
+      },
+      evaluators: {
+        mode: "extend",
+        list: [cancellingEvaluator(controller, role)],
+      },
+    });
+    const run = await evalCase.run(scriptedAgent(new Set()), {
+      iterations: 1,
+      concurrency: 1,
+      signal: controller.signal,
+      mcpjam: { enabled: false },
+    });
+    return {
+      iteration: run.iterationDetails[0],
+      definitions: run.evaluationConfig?.definitions ?? [],
+    };
+  }
+
+  it("keeps the rows' verdict when only an advisory check was cut short", async () => {
+    const { iteration, definitions } = await runCancelled("advisory");
+    expect(iteration.status).toBe("cancelled");
+    expect(iteration.passed).toBe(true);
+    expect(iteration.passed).toBe(
+      scoresPassed(iteration.scores ?? [], definitions)
+    );
+  });
+
+  it("fails through the gating row a cut-short check writes", async () => {
+    const { iteration } = await runCancelled("gating");
+    expect(iteration.status).toBe("cancelled");
+    expect(iteration.passed).toBe(false);
+    expect(
+      iteration.scores?.find((score) => score.scorerId === "cancel:gating")
+    ).toMatchObject({ status: "error" });
   });
 });

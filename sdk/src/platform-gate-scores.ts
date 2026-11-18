@@ -23,7 +23,10 @@ import {
   fromLegacyTestOutcome,
   legacyTestScoreDefinition,
 } from "./contract/adapters.js";
-import { buildEvaluationConfigSnapshot } from "./contract/derive.js";
+import {
+  buildEvaluationConfigSnapshot,
+  definitionHash,
+} from "./contract/derive.js";
 import { scoresPassed } from "./scorers/run.js";
 
 /** Both ids, whatever their role: reserved against custom evaluators. */
@@ -69,8 +72,11 @@ export function platformGateScores(
  *
  * The caller's boolean becomes the `test()` row, the platform checks add
  * theirs, and `passed` is `scoresPassed` over all of them. Rows the caller
- * already attached in `metadata.scores` / `metadata.evaluationConfig` are kept
- * and count toward the verdict too.
+ * attached in `metadata.scores` / `metadata.evaluationConfig` are kept and
+ * count toward the verdict too, except rows for these built-in checks: those
+ * are always recomputed from this call's inputs, so metadata carried over from
+ * an earlier conversion can't vouch for this one. An attached built-in
+ * definition with a different policy is refused.
  */
 export function gradeCallerVerdict(input: {
   passed: boolean;
@@ -87,32 +93,42 @@ export function gradeCallerVerdict(input: {
       "metadata.scores and metadata.evaluationConfig must be passed together: a score row is read through its definition."
     );
   }
-  const callerDefinitions: ResolvedScoreDefinition[] =
+  const builtIn = buildEvaluationConfigSnapshot([
+    legacyTestScoreDefinition(),
+    ...platformGateDefinitions(input.failOnToolError),
+  ]).definitions;
+  const builtInById = new Map(
+    builtIn.map((definition) => [definition.scorerId, definition])
+  );
+  const attachedDefinitions: ResolvedScoreDefinition[] =
     typeof callerConfig === "object" &&
     callerConfig !== null &&
     "definitions" in callerConfig &&
     Array.isArray(callerConfig.definitions)
       ? callerConfig.definitions
       : [];
-  const callerRows: ScoreResult[] = Array.isArray(callerScores)
-    ? callerScores
-    : [];
-  const taken = new Set(callerDefinitions.map((entry) => entry.scorerId));
-  const ownDefinitions = [
-    legacyTestScoreDefinition(),
-    ...platformGateDefinitions(input.failOnToolError),
-  ].filter((definition) => !taken.has(definition.scorerId));
+  for (const attached of attachedDefinitions) {
+    const own = builtInById.get(attached.scorerId);
+    if (own && definitionHash(own) !== definitionHash(attached)) {
+      throw new Error(
+        `metadata.evaluationConfig declares "${attached.scorerId}" with a different policy than this call. Remove it from the metadata, or pass the same failOnToolError it was built with.`
+      );
+    }
+  }
+  const callerDefinitions = attachedDefinitions.filter(
+    (definition) => !builtInById.has(definition.scorerId)
+  );
+  const callerRows: ScoreResult[] = (
+    Array.isArray(callerScores) ? callerScores : []
+  ).filter((row) => !builtInById.has(row.scorerId));
   const config = buildEvaluationConfigSnapshot([
     ...callerDefinitions,
-    ...ownDefinitions,
+    ...builtIn,
   ]);
-  const byId = new Map(
-    config.definitions.map((definition) => [definition.scorerId, definition])
-  );
   const definitionFor = (scorerId: string): ResolvedScoreDefinition =>
-    byId.get(scorerId)!;
-  const ownIds = new Set(ownDefinitions.map((entry) => entry.scorerId));
-  const ownRows = [
+    builtInById.get(scorerId)!;
+  const scores = [
+    ...callerRows,
     fromLegacyTestOutcome(
       definitionFor(legacyTestScoreDefinition().scorerId),
       input.passed
@@ -121,8 +137,7 @@ export function gradeCallerVerdict(input: {
       trace: input.trace,
       iterationError: input.iterationError,
     }),
-  ].filter((row) => ownIds.has(row.scorerId));
-  const scores = [...callerRows, ...ownRows];
+  ];
   return {
     passed: scoresPassed(scores, config.definitions),
     metadata: { ...metadata, scores, evaluationConfig: config },
