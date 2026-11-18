@@ -48,6 +48,7 @@ import studies from "./studies.js";
 import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalBacktest from "./eval-backtest.js";
+import evalRunInsights from "./eval-run-insights.js";
 import evalIngest from "./eval-ingest.js";
 import modelLeases from "./model-leases.js";
 import conformanceIngest from "./conformance-ingest.js";
@@ -281,6 +282,7 @@ v1.route("/", shares);
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalBacktest);
+v1.route("/", evalRunInsights);
 v1.route("/", evalIngest);
 // Model leases for SDK evals running outside the platform. Guest-DENIED by
 // default (no GUEST_ALLOWED_V1_RULES entry) — every lease this mints can

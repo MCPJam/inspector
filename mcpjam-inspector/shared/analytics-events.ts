@@ -599,6 +599,14 @@ export const ANALYTICS_EVENTS = {
   ui_tool_native_registration_failed: { source: "client" },
   ui_tool_native_call_completed: { source: "client" },
 
+  // --- Header: "Onboard your agent to MCPJam" popover ---
+  // Props: location ("header"). `onboard_agent_command_copied` adds command
+  // (install | login) and copied (false when the clipboard refused);
+  // `onboard_agent_link_clicked` adds link (reference).
+  onboard_agent_opened: { source: "client" },
+  onboard_agent_command_copied: { source: "client" },
+  onboard_agent_link_clicked: { source: "client" },
+
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
   // state (none | automatic_invite_pending | provisioning | invite_sent |

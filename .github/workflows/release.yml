@@ -104,7 +104,8 @@ permissions:
   packages: write
   # Read only: the local harness gate verifies pinned packs' provenance.
   # `local-harness-contract` grants itself the OIDC and attestation writes it
-  # needs; no other job gets them.
+  # needs, and `publish-packages` the OIDC token npm trusted publishing needs;
+  # no other job gets them.
   attestations: read
 
 jobs:
@@ -386,7 +387,7 @@ jobs:
     needs: preflight
     if: ${{ fromJSON(needs.preflight.outputs.build_inspector_artifacts) }}
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 40
+    timeout-minutes: 160
     permissions:
       contents: read
       actions: read
@@ -422,11 +423,15 @@ jobs:
               core.setOutput("run_id", "");
               return;
             }
-            // Under the job's timeout, so a stuck evidence run still leaves
-            // time to run the gate here.
+            // An evidence run that is still going is almost always waiting
+            // for the same few macOS runners a second copy would need, so
+            // the release waits for it rather than doubling the queue. Every
+            // leg has its own timeout, so the run always ends; cancelling it
+            // ends the wait at once. The cap is under the job's timeout, so a
+            // run that somehow never ends still leaves the gate to run here.
             const found = await findReleaseEvidence({
               github, ...context.repo, name, sha: context.sha,
-              timeoutMs: 30 * 60 * 1000, log: (line) => core.info(line),
+              timeoutMs: 150 * 60 * 1000, log: (line) => core.info(line),
             });
             core.info(found.reason);
             core.setOutput("run_id", found.runId === null ? "" : String(found.runId));
@@ -800,6 +805,16 @@ jobs:
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    # npm trusted publishing: `npm publish` trades this job's OIDC token for a
+    # one-time publish token for each package that names release.yml as its
+    # trusted publisher, and attaches provenance. A package without one falls
+    # back to NPM_TOKEN, which npm stops honouring for publishes in January
+    # 2027. A new trusted publisher expires unless it publishes within two
+    # days, so each package gets one just before a release that ships it.
+    # Once every package has published this way, drop NPM_TOKEN.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7

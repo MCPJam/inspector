@@ -1,5 +1,17 @@
 # `@mcpjam/sdk` changelog
 
+## 10.11.0
+
+### Minor Changes
+
+- [#7793](https://github.com/MCPJam/inspector/pull/7793) [`44d9cd0`](https://github.com/MCPJam/inspector/commit/44d9cd0c3a2e9b811fc382d8c8ad289e729c250a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Agents and scripts can run an eval run's analysis the way the run page does. `request_eval_run_insights`, `cancel_eval_run_insights` and `build_eval_run_findings` (MCP), `mcpjam cloud eval request-insights`, `cancel-insights` and `build-findings` (CLI), and `DELETE …/eval-runs/:runId/insights` and `POST …/eval-runs/:runId/findings/build` (REST) are new. `POST …/eval-runs/:runId/insights` and the SDK's `requestEvalRunInsights` now start the findings analysis the app runs instead of the older per-tool analysis; read the result from the run's `insights.currentFindings`, or on MCP, from `insights.findings` when `currentFindingsSameAsFindings` is `true`. Because the findings analysis explains a run's findings, such a request now answers 409 on a run whose findings are not built yet or are being rebuilt, where it used to start the older analysis; build them first with `build_eval_run_findings` or `mcpjam cloud eval build-findings`. The run page no longer shows "Waiting for analysis…" on a run whose findings analysis finished.
+
+- [#7850](https://github.com/MCPJam/inspector/pull/7850) [`0ce9aa9`](https://github.com/MCPJam/inspector/commit/0ce9aa91f500b753b3cb2d10ce243782ae15e247) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Eval runs read through the API now include `accounts`: the account each server used, whether it was personal or the project's, when its token was stored and by whom, when it expires, and whose it was. An account's email is included only when you may see it: a project account's for every project member, a personal account's only for the person who started the run, which for an API key is the key's owner. In human output, `mcpjam eval status`, `eval run --wait` and `eval rerun --wait` print one line per server naming those accounts.
+
+### Patch Changes
+
+- [#7831](https://github.com/MCPJam/inspector/pull/7831) [`6dcdaf2`](https://github.com/MCPJam/inspector/commit/6dcdaf2a41b06bef3f169266a80d15f950c9f648) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Accept the required JSON-RPC resource-not-found error without requiring HTTP 200. Clarify that modern logging is deprecated without implying support for the removed logging/setLevel method.
+
 ## 10.10.0
 
 ### Minor Changes

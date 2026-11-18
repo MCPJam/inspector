@@ -457,6 +457,7 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // The /conformance page starting, polling, cancelling, resuming and reading
   // a directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/revisions(\/\d+\/diff)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
   // The /readiness page's reviewer sign-in: a submission's attempts, one
   // attempt, resuming or cancelling it, and the handoff link a person
