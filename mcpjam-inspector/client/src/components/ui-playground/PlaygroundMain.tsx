@@ -218,7 +218,6 @@ import {
   getScenarioChatBackground,
   getScenarioHostFamily,
   getScenarioHostLogo,
-  getScenarioShellStyle,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
@@ -476,7 +475,7 @@ function PlaygroundCompareThemeScope({
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground",
                 effectiveThreadTheme === "dark" && "dark",
               )}
               data-testid="playground-compare-shell"
@@ -1402,6 +1401,7 @@ export function PlaygroundMain({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     catalogModels,
     isAuthLoading,
     systemPrompt,
@@ -2116,11 +2116,6 @@ export function PlaygroundMain({
   const hostBackgroundColor =
     getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
-  const hostShellStyle = getScenarioShellStyle(
-    hostStyle,
-    effectiveThreadTheme,
-    chatUiOverride,
-  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -6254,6 +6249,7 @@ export function PlaygroundMain({
     placeholder,
     currentModel: selectedModel,
     availableModels,
+    harnessScope: modelHarnessScope,
     onModelChange: handleSingleModelChange,
     onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
@@ -7133,8 +7129,11 @@ export function PlaygroundMain({
               hostStyle={hostStyle}
               hostCapabilitiesOverride={hostCapabilitiesOverride}
               chatUiOverride={chatUiOverride}
-              effectiveThreadTheme={effectiveThreadTheme}
-              hostShellStyle={hostShellStyle}
+              // The compare shell is workspace chrome: the canvas and shared
+              // composer follow the app theme, not the selected client's saved
+              // theme or palette. Per-pane overrides live inside each card.
+              effectiveThreadTheme={globalThemeMode}
+              hostShellStyle={{ colorScheme: globalThemeMode }}
             >
               {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
                 <MultiModelEmptyTraceDiagnosticsPanel

@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "10.9.0",
+  "version": "10.11.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -191,6 +191,11 @@
   ],
   "author": "MCPJam",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "sdk"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/node": "2.1.2",

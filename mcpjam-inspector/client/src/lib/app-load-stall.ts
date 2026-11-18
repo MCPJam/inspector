@@ -29,9 +29,13 @@ let settled = false;
  * Report once if `ready` has not become true within `APP_LOAD_STALL_MS` of the
  * page starting. Self-hosted only (npm, Docker, desktop): there the user's own
  * network decides whether the embedded server can reach MCPJam, and nothing on
- * our side sees it fail.
+ * our side sees it fail. `identityKnown` is whether an actor (signed-in user or
+ * guest) has resolved, which splits a missing actor from a slow user setup.
  */
-export function useAppLoadStallReport(ready: boolean): void {
+export function useAppLoadStallReport(
+  ready: boolean,
+  identityKnown: boolean,
+): void {
   const { isAuthenticated } = useConvexAuth();
 
   useEffect(() => {
@@ -51,6 +55,7 @@ export function useAppLoadStallReport(ready: boolean): void {
               sessionRefreshFailed:
                 useSessionRefreshStore.getState().status !== "idle",
               authenticated: isAuthenticated,
+              identityKnown,
             }),
           },
         });
@@ -58,7 +63,7 @@ export function useAppLoadStallReport(ready: boolean): void {
       Math.max(0, APP_LOAD_STALL_MS - elapsed),
     );
     return () => window.clearTimeout(timer);
-  }, [ready, isAuthenticated]);
+  }, [ready, isAuthenticated, identityKnown]);
 }
 
 /** Test seam: each test is its own page load. */

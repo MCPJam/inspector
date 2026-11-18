@@ -136,6 +136,14 @@ describe("OpenCode skill parity (real adapter)", () => {
     expect(foldersToClear(descriptor)).toEqual([]);
   });
 
+  it("starts the same way on a session whose restricted view is frozen, as a local one is", async () => {
+    const { spawns, error } = await promptWithSkills(openCode(), [], { frozenRestricted: true });
+
+    expect(error).toBeUndefined();
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]!.env).toMatchObject({ OPENCODE_DISABLE_EXTERNAL_SKILLS: "1" });
+  });
+
   it("accepts every name MCPJam accepts and throws on one MCPJam leaves off", async () => {
     const names = [
       "a",

@@ -10,6 +10,8 @@ import {
 interface CollapsedPanelStripProps {
   onOpen: () => void;
   tooltipText?: string;
+  /** Short name shown above the icon so the strip says what it opens. */
+  label?: string;
   /** Which side the panel opens from. "right" means the strip is on the right and opens a right panel. */
   side?: "left" | "right";
   /** Out of reach while something is drawn over the strip. */
@@ -19,6 +21,7 @@ interface CollapsedPanelStripProps {
 export function CollapsedPanelStrip({
   onOpen,
   tooltipText = "Show panel",
+  label,
   side = "right",
   inert,
 }: CollapsedPanelStripProps) {
@@ -39,8 +42,15 @@ export function CollapsedPanelStrip({
               size="sm"
               onClick={onOpen}
               aria-label={tooltipText}
-              className="h-full px-1 rounded-none cursor-pointer"
+              className={
+                label
+                  ? "h-full w-12 flex-col gap-1.5 px-0 rounded-none cursor-pointer text-muted-foreground hover:text-foreground"
+                  : "h-full px-1 rounded-none cursor-pointer"
+              }
             >
+              {label ? (
+                <span className="text-xs font-medium">{label}</span>
+              ) : null}
               <Icon className="h-4 w-4" />
             </Button>
           </TooltipTrigger>

@@ -10,7 +10,7 @@
  * (`scripts/bundle-local-harness-layer.mjs`).
  */
 import { createCursorHarness } from "./cursor-harness.js";
-import { replaceInRegion } from "./cursor-host-tool-approval.js";
+import { replaceInRegion } from "./bridge-source-patch.js";
 
 const SPAWN = "child = spawn(`${implementationDir}/${implementation.executablePath}`,";
 const LOCAL_SPAWN =

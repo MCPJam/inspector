@@ -14,6 +14,12 @@ import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
  * adapter is a COMPILE error.
  */
 import type { ForwardingRuntimeContract } from "./forwarding/runtime-contract.js";
+import {
+  CLAUDE_CODE_NATIVE_CLIENT,
+  CODEX_NATIVE_CLIENT,
+  COPILOT_CLI_NATIVE_CLIENT,
+  CURSOR_CLI_NATIVE_CLIENT,
+} from "./forwarding/native-clients.js";
 import { withForwardingResume } from "./forwarding/bridge-refresh.js";
 import { withClaudeForwardingResume } from "./forwarding/claude-resume.js";
 import { createClaudeCodeHarness } from "./claude-code-bootstrap.js";
@@ -74,6 +80,10 @@ import {
   HARNESS_SKILLS,
   type HarnessSkillsDescriptor,
 } from "./skills-descriptor.js";
+import {
+  HARNESS_CONVERSATION_STATE,
+  type HarnessConversationState,
+} from "./conversation-state.js";
 
 /** A harness id this inspector has a runtime adapter for. Derived from the SDK's
  *  portable `Harness` union (the persistence-contract source of truth), so the
@@ -387,9 +397,17 @@ type HarnessRuntimeAdapterBase = {
   mcpDelivery: HarnessMcpDelivery;
   /** Qualified vendor continuation hook for the shared forwarding route. */
   forwardingRuntime?: ForwardingRuntimeContract;
-  /** The runtime refuses to resume when its MCP config changes, so each lane
-   *  gets session handles in place of per-turn tokens. */
-  sessionStableMcpConfig?: boolean;
+  /** The runtime refuses to resume a session whose MCP configuration changed,
+   *  header values included, so its lane's configuration carries nothing that
+   *  varies between turns: no tool-catalog version, no added headers. */
+  fingerprintsMcpConfig?: true;
+  /**
+   * How an agent kept running in a hosted box between messages takes each
+   * message's MCP configuration: `refresh` applies it to the live agent
+   * through the qualified forwarding contract, `restart` resumes the runtime's
+   * session with it. Absent: every message starts the agent cold.
+   */
+  hostedWarmAgent?: "refresh" | "restart";
   /** Does the adapter deliver runtime (Cloud) skills into the sandbox? Claude
    *  Code: yes. Codex: yes (INS-8) — its `writeSkills` materializes the same
    *  `skills` param under its own root before the CLI starts. */
@@ -399,6 +417,9 @@ type HarnessRuntimeAdapterBase = {
    *  this and nothing else about the runtime, `supportsSkills` off included:
    *  a runtime that takes no skills still reads folders other runtimes write. */
   skills: HarnessSkillsDescriptor;
+  /** The files its conversation resumes from, which a replaced box gets back
+   *  (`conversation-state.ts`), or null when it does not survive one. */
+  conversationState: HarnessConversationState | null;
   /** Can the adapter install a whole PLUGIN BUNDLE natively (the plugin folder
    *  as the runtime's own plugin/marketplace unit), rather than MCPJam projecting
    *  the bundle's components into per-kind channels (skills, native MCP config)?
@@ -817,6 +838,7 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
+  hostedWarmAgent: "refresh",
   promptImageInput: true,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
   // Nothing verified yet: an effort on this harness is refused, not dropped.
@@ -879,12 +901,16 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   forwardingRuntime: {
     runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
+    // Claude Code stamps its tool use id on every MCP call it sends.
+    correlationKey: "claudecode/toolUseId",
     ownedInput: true,
+    nativeClient: CLAUDE_CODE_NATIVE_CLIENT,
     refresh: withClaudeForwardingResume,
   },
   liveApprovalRuntime: true,
   supportsSkills: true,
   skills: HARNESS_SKILLS["claude-code"],
+  conversationState: HARNESS_CONVERSATION_STATE["claude-code"],
   // No native plugin-unit install: this adapter delivers a plugin's COMPONENTS
   // (skills param + MCP configuration), which is not the same contract.
   supportsPluginBundles: false,
@@ -1006,6 +1032,7 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
+  hostedWarmAgent: "refresh",
   promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
   // exec transport forks (with a visible "runtime-changed" reset) instead of
@@ -1057,13 +1084,16 @@ const codexAdapter: HarnessRuntimeAdapter = {
     configurationVersion: "native-mcp-v1",
     correlationKey: "callId",
     ownedInput: true,
-    refresh: withForwardingResume,
+    nativeClient: CODEX_NATIVE_CLIENT,
+    refresh: (runtime, servers, policyDigest) =>
+      withForwardingResume(runtime, servers, policyDigest),
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
   // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
   // root the retired exec transport used.
   supportsSkills: true,
   skills: HARNESS_SKILLS.codex,
+  conversationState: HARNESS_CONVERSATION_STATE.codex,
   // Codex has no plugin-install interface — MCPJam still projects a plugin's
   // components (skills param, host-executed MCP tools), which is not the same
   // contract as a native bundle install.
@@ -1113,6 +1143,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
 
 const cursorAdapter: HarnessRuntimeAdapter = {
   id: "cursor",
+  // No `hostedWarmAgent`: a CLI kept running between messages would hold the
+  // turn's Cursor login after the turn removed it from the box.
   promptImageInput: true,
   // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
   // chat panel) keeps that name, and the two are different products with
@@ -1164,27 +1196,24 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // mechanism — which is exactly the distinction this field carries.
   mcpNativeDelivery: "session-config",
   // The ACP adapter fingerprints its MCP servers, headers included, on every
-  // resume, so a per-turn token there would end the session each turn.
-  sessionStableMcpConfig: true,
-  // Pass-through only: Cursor's client talks to the server and MCPJam renders
-  // nothing. Approval bindings correlate calls (no tool-call id reaches the
-  // server), Cursor declines elicitation itself, and the session-stable config
-  // never changes between turns, so there is nothing to refresh.
+  // resume, so any value that varies between turns would end the session.
+  fingerprintsMcpConfig: true,
+  // Approval bindings correlate calls (no tool-call id reaches the server),
+  // Cursor declines elicitation itself, and the session-stable config never
+  // changes between turns, so there is nothing to refresh.
   forwardingRuntime: {
     runtimeVersion: "2026.11.05-86047df",
     configurationVersion: "acp-forward-v1",
     ownedInput: false,
-    passThroughOnly: true,
     boundApprovals: true,
-    // Measured on this runtime: `initialize` at 2025-11-25 on every server,
-    // and `server/discover` at 2026-07-28 only after a `-32022` naming it.
-    nativeVersionNegotiation: "legacy-first",
+    nativeClient: CURSOR_CLI_NATIVE_CLIENT,
     refresh: (runtime) => runtime,
   },
   // The ACP adapter writes each turn's skills to the CLI's private home
   // (`cursor-skill-parity.test.ts`).
   supportsSkills: true,
   skills: HARNESS_SKILLS.cursor,
+  conversationState: HARNESS_CONVERSATION_STATE.cursor,
   supportsPluginBundles: false,
   // Cursor does not emit file-change stream parts.
   fileChangeToolName: undefined,
@@ -1234,6 +1263,7 @@ const cursorAdapter: HarnessRuntimeAdapter = {
 
 const copilotCliAdapter: HarnessRuntimeAdapter = {
   id: "copilot-cli",
+  hostedWarmAgent: "restart",
   promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS["copilot-cli"].displayName,
   modelAccess: "broker",
@@ -1259,11 +1289,15 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     configurationVersion: "copilot-native-mcp-v1",
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
-    passThroughOnly: true,
-    refresh: (runtime) => refuseForwardedContinuation(runtime),
+    nativeClient: COPILOT_CLI_NATIVE_CLIENT,
+    // The lane's session configuration is the one the paused turn started
+    // with, so only a turn on per-turn credentials has anything to refuse.
+    refresh: (runtime, _servers, _policyDigest, context) =>
+      context?.sessionStable ? runtime : refuseForwardedContinuation(runtime),
   },
   supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
+  conversationState: HARNESS_CONVERSATION_STATE["copilot-cli"],
   supportsPluginBundles: false,
   listBuiltinTools: () => [],
   parseToolName: parseHarnessToolName,
@@ -1283,6 +1317,9 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
 
 const opencodeAdapter: HarnessRuntimeAdapter = {
   id: "opencode",
+  // No `hostedWarmAgent`: its bridge keeps the OpenCode server it started
+  // until `openCodeConfig` changes, so an agent kept between messages would
+  // answer with the previous message's tools and MCP servers.
   promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS.opencode.displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
@@ -1297,6 +1334,7 @@ const opencodeAdapter: HarnessRuntimeAdapter = {
   mcpDelivery: HARNESS_MCP_DELIVERY.opencode,
   supportsSkills: true,
   skills: HARNESS_SKILLS.opencode,
+  conversationState: HARNESS_CONVERSATION_STATE.opencode,
   supportsPluginBundles: false,
   fileChangeToolName: undefined,
   listBuiltinTools: memoizedBuiltinTools(() => createOpenCode()),
@@ -1360,6 +1398,13 @@ export function registeredHarnessIds(): HarnessId[] {
  */
 export function harnessSupportsSkills(id: string): boolean {
   return isHarnessId(id) ? HARNESS_ADAPTERS[id].supportsSkills : false;
+}
+
+/** A runtime's conversation-state declaration, or null for an unknown id. */
+export function harnessConversationState(
+  id: string,
+): HarnessConversationState | null {
+  return isHarnessId(id) ? HARNESS_ADAPTERS[id].conversationState : null;
 }
 
 /**

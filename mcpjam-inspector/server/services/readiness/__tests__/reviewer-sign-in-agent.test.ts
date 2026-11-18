@@ -33,14 +33,18 @@ type Call = { toolCallId: string; messages: never[]; context: object };
 const call: Call = { toolCallId: "t", messages: [], context: {} };
 
 /** Browser tools that answer from a list of pages, calling the real gates. */
-function fakeBrowser(pages: Record<string, unknown>[]) {
+function fakeBrowser(
+  pages: Record<string, unknown>[],
+  callback = `${CALLBACK}?code=c1&state=s1`,
+) {
   let opts: Opts | undefined;
   let commands = 0;
   const page = () => pages[Math.min(commands, pages.length - 1)]!;
   const deliver = async (value: string) => {
-    const names = [ATTEMPT.usernameSecretName, ATTEMPT.passwordSecretName].filter(
-      (name) => value.includes(`{{secret:${name}}}`),
-    );
+    const names = [
+      ATTEMPT.usernameSecretName,
+      ATTEMPT.passwordSecretName,
+    ].filter((name) => value.includes(`{{secret:${name}}}`));
     if (names.length === 0) return undefined;
     const commandId = `cmd-${commands}`;
     const refusal = await opts!.secrets!.beforeDeliver?.(names, { commandId });
@@ -51,7 +55,7 @@ function fakeBrowser(pages: Record<string, unknown>[]) {
   const step = async (result: Record<string, unknown>) => {
     commands += 1;
     if (result.url === CALLBACK) {
-      opts!.navigationStop!.onStopped(`${CALLBACK}?code=c1&state=s1`);
+      opts!.navigationStop!.onStopped(callback);
       return { stopped: true };
     }
     return result;
@@ -80,13 +84,20 @@ function fakeBrowser(pages: Record<string, unknown>[]) {
 
 function agentWith(
   browser: ReturnType<typeof fakeBrowser>,
-  script: (tools: Record<string, { execute: (input: object, call: Call) => Promise<unknown> }>) => Promise<void>,
+  script: (
+    tools: Record<
+      string,
+      { execute: (input: object, call: Call) => Promise<unknown> }
+    >,
+  ) => Promise<void>,
   over: Partial<SignInAgentDeps> = {},
 ) {
-  const runTurn = vi.fn(async (options: { tools: object; abortSignal: AbortSignal }) => {
-    await script(options.tools as never);
-    return {} as never;
-  });
+  const runTurn = vi.fn(
+    async (options: { tools: object; abortSignal: AbortSignal }) => {
+      await script(options.tools as never);
+      return {} as never;
+    },
+  );
   const deps: SignInAgentDeps = {
     handle: {} as never,
     features: ["secret-origins", "navigation-stop-persistent"],
@@ -94,7 +105,10 @@ function agentWith(
     attemptId: "att_1",
     projectId: "proj_1",
     sandbox: { sandboxRowId: "row_1", sandboxId: "box_1" },
-    password: { mark: vi.fn(async () => undefined), giveBack: vi.fn(async () => {}) },
+    password: {
+      mark: vi.fn(async () => undefined),
+      giveBack: vi.fn(async () => {}),
+    },
     storeScreenshot: vi.fn(async () => "shot_1"),
     runTurn: runTurn as never,
     buildTools: browser.build as never,
@@ -129,15 +143,44 @@ describe("a sign-in that reaches MCPJam's callback", () => {
       shot(`${AUTH}/consent?org=acme`),
       { url: CALLBACK },
     ]);
-    const { run, recorded, runTurn, deps } = agentWith(browser, async (tools) => {
-      await tools.browser_act!.execute({ verb: "type", ref: "e1", value: "{{secret:MCPJAM_REVIEWER_EMAIL}}" }, call);
-      await tools.browser_act!.execute({ verb: "type", ref: "e2", value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}" }, call);
-      await tools.browser_observe!.execute({}, call);
-      await tools.browser_act!.execute({ verb: "select", ref: "e3", value: "Acme" }, call);
-      await tools.browser_act!.execute({ verb: "click", ref: "e4" }, call);
+    const { run, recorded, runTurn, deps } = agentWith(
+      browser,
+      async (tools) => {
+        await tools.browser_act!.execute(
+          {
+            verb: "type",
+            ref: "e1",
+            value: "{{secret:MCPJAM_REVIEWER_EMAIL}}",
+          },
+          call,
+        );
+        await tools.browser_act!.execute(
+          {
+            verb: "type",
+            ref: "e2",
+            value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}",
+          },
+          call,
+        );
+        await tools.browser_observe!.execute({}, call);
+        await tools.browser_act!.execute(
+          { verb: "select", ref: "e3", value: "Acme" },
+          call,
+        );
+        await tools.browser_act!.execute({ verb: "click", ref: "e4" }, call);
+      },
+    );
+    expect(await run()).toEqual({
+      kind: "callback",
+      url: `${CALLBACK}?code=c1&state=s1`,
     });
-    expect(await run()).toEqual({ kind: "callback", url: `${CALLBACK}?code=c1&state=s1` });
-    expect(recorded.map((stage) => [stage.stage, stage.status, stage.evidence?.screenshotStatus])).toEqual([
+    expect(
+      recorded.map((stage) => [
+        stage.stage,
+        stage.status,
+        stage.evidence?.screenshotStatus,
+      ]),
+    ).toEqual([
       ["connect-link", "passed", "captured"],
       ["sign-in", "passed", "captured"],
       ["consent", "passed", "captured"],
@@ -148,8 +191,14 @@ describe("a sign-in that reaches MCPJam's callback", () => {
       runtime: {
         kind: "hosted",
         endpointPath: "/stream/platform",
-        extraBodyFields: { billingFeature: "readiness_sign_in", reviewerAttemptId: "att_1" },
-        extraHeaders: { "x-mcpjam-readiness-run-id": "run_1", "x-mcpjam-readiness-job-id": "job_1" },
+        extraBodyFields: {
+          billingFeature: "readiness_sign_in",
+          reviewerAttemptId: "att_1",
+        },
+        extraHeaders: {
+          "x-mcpjam-readiness-run-id": "run_1",
+          "x-mcpjam-readiness-job-id": "job_1",
+        },
       },
       sourceType: "readiness",
       origin: "readiness",
@@ -167,11 +216,123 @@ describe("a sign-in that reaches MCPJam's callback", () => {
     const opts = browser.options();
     expect(opts.approvalDelivery).toEqual({
       kind: "unattended",
-      policy: { mode: "allowlist", toolAllowlist: ["browser_navigate", "browser_act", "browser_observe"] },
+      policy: {
+        mode: "allowlist",
+        toolAllowlist: ["browser_navigate", "browser_act", "browser_observe"],
+      },
     });
-    expect(opts.secrets!.available.every((secret) => secret.origins?.[0] === AUTH)).toBe(true);
+    expect(
+      opts.secrets!.available.every((secret) => secret.origins?.[0] === AUTH),
+    ).toBe(true);
     expect(opts.navigationStop!.url).toBe(CALLBACK);
-    expect(opts.sandboxTarget).toEqual({ sandboxRowId: "row_1", sandboxId: "box_1", record: false });
+    expect(opts.sandboxTarget).toEqual({
+      sandboxRowId: "row_1",
+      sandboxId: "box_1",
+      record: false,
+    });
+  });
+});
+
+describe("a page that moves on after the password", () => {
+  const typePassword = (
+    tools: Record<
+      string,
+      { execute: (input: object, call: Call) => Promise<unknown> }
+    >,
+  ) =>
+    tools.browser_act!.execute(
+      { verb: "type", ref: "e2", value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}" },
+      call,
+    );
+
+  it("is progress, not a sign-in: a stop there records no passed sign-in", async () => {
+    const browser = fakeBrowser([
+      shot(`${AUTH}/sign-in`),
+      shot(`${AUTH}/sign-in`),
+      shot(`${AUTH}/mfa`),
+    ]);
+    const { run, recorded } = agentWith(browser, async (tools) => {
+      await typePassword(tools);
+      await tools.browser_observe!.execute({}, call);
+      await (
+        tools.stop_sign_in as never as {
+          execute: (input: object) => Promise<unknown>;
+        }
+      ).execute({
+        stage: "verification",
+        reason: "The page asked for a code sent by email.",
+        needsPerson: true,
+      });
+    });
+    expect(await run()).toMatchObject({
+      kind: "stopped",
+      stage: "verification",
+    });
+    expect(recorded.map((stage) => [stage.stage, stage.status])).toEqual([
+      ["connect-link", "passed"],
+    ]);
+  });
+
+  it("keeps the first safe picture of it, not a suppressed one before it", async () => {
+    const browser = fakeBrowser([
+      shot(`${AUTH}/sign-in`),
+      shot(`${AUTH}/sign-in`),
+      { url: `${AUTH}/next`, screenshotSuppressed: true },
+      shot(`${AUTH}/next`),
+      shot(`${AUTH}/consent`),
+      { url: CALLBACK },
+    ]);
+    const { run, recorded } = agentWith(browser, async (tools) => {
+      await typePassword(tools);
+      await tools.browser_act!.execute({ verb: "click", ref: "e3" }, call);
+      await tools.browser_observe!.execute({}, call);
+      await tools.browser_act!.execute({ verb: "click", ref: "e4" }, call);
+      await tools.browser_act!.execute({ verb: "click", ref: "e5" }, call);
+    });
+    expect((await run()).kind).toBe("callback");
+    expect(
+      recorded.map((stage) => [
+        stage.stage,
+        stage.status,
+        stage.evidence?.screenshotStatus,
+      ]),
+    ).toEqual([
+      ["connect-link", "passed", "captured"],
+      ["sign-in", "passed", "captured"],
+      ["consent", "passed", "captured"],
+    ]);
+  });
+
+  it("is not confirmed by a callback without a code", async () => {
+    const browser = fakeBrowser(
+      [
+        shot(`${AUTH}/sign-in`),
+        shot(`${AUTH}/sign-in`),
+        shot(`${AUTH}/error`),
+        { url: CALLBACK },
+      ],
+      `${CALLBACK}?error=access_denied&state=s1`,
+    );
+    const { run, recorded } = agentWith(browser, async (tools) => {
+      await typePassword(tools);
+      await tools.browser_observe!.execute({}, call);
+      await tools.browser_act!.execute({ verb: "click", ref: "e5" }, call);
+    });
+    expect(await run()).toEqual({
+      kind: "callback",
+      url: `${CALLBACK}?error=access_denied&state=s1`,
+    });
+    expect(
+      recorded.map((stage) => [
+        stage.stage,
+        stage.status,
+        stage.evidence?.screenshotStatus,
+      ]),
+    ).toEqual([
+      ["connect-link", "passed", "captured"],
+      ["sign-in", "blocked", "captured"],
+    ]);
+    expect(recorded[1]!.detail).toContain("no code");
   });
 });
 
@@ -179,8 +340,19 @@ describe("a sign-in that does not reach it", () => {
   it("stops where the agent stops, never showing the form as it was before the password", async () => {
     const browser = fakeBrowser([shot(`${AUTH}/sign-in`)]);
     const { run, recorded } = agentWith(browser, async (tools) => {
-      await tools.browser_act!.execute({ verb: "type", ref: "e2", value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}" }, call);
-      await (tools.stop_sign_in as never as { execute: (input: object) => Promise<unknown> }).execute({
+      await tools.browser_act!.execute(
+        {
+          verb: "type",
+          ref: "e2",
+          value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}",
+        },
+        call,
+      );
+      await (
+        tools.stop_sign_in as never as {
+          execute: (input: object) => Promise<unknown>;
+        }
+      ).execute({
         stage: "sign-in",
         reason: "The page said the password is incorrect.",
         needsPerson: false,
@@ -198,27 +370,45 @@ describe("a sign-in that does not reach it", () => {
 
   it("refuses a second password try, and gives back one the browser never typed", async () => {
     const browser = fakeBrowser([shot(`${AUTH}/sign-in`)]);
-    const mark = vi.fn(async () => "password_already_submitted: already typed once.");
+    const mark = vi.fn(
+      async () => "password_already_submitted: already typed once.",
+    );
     const giveBack = vi.fn(async () => {});
     let answer: unknown;
     const { run } = agentWith(
       browser,
       async (tools) => {
-        answer = await tools.browser_act!.execute({ verb: "type", ref: "e2", value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}" }, call);
-        await browser.options().secrets!.afterDeliver!(["MCPJAM_REVIEWER_PASSWORD"], { commandId: "cmd-9", outcome: "not_typed" });
+        answer = await tools.browser_act!.execute(
+          {
+            verb: "type",
+            ref: "e2",
+            value: "{{secret:MCPJAM_REVIEWER_PASSWORD}}",
+          },
+          call,
+        );
+        await browser.options().secrets!.afterDeliver!(
+          ["MCPJAM_REVIEWER_PASSWORD"],
+          { commandId: "cmd-9", outcome: "not_typed" },
+        );
       },
       { password: { mark, giveBack } },
     );
     expect(await run()).toMatchObject({ kind: "ended" });
-    expect(answer).toEqual({ error: "password_already_submitted: already typed once." });
+    expect(answer).toEqual({
+      error: "password_already_submitted: already typed once.",
+    });
     expect(giveBack).toHaveBeenCalledWith("cmd-9");
   });
 
   it("ends with the engine's reason when the turn stops on its own", async () => {
     const browser = fakeBrowser([shot(`${AUTH}/sign-in`)]);
     const { run } = agentWith(browser, async () => {}, {
-      runTurn: (async (options: { onEngineError: (event: { message: string }) => void }) => {
-        options.onEngineError({ message: "MCPJam's daily budget for this feature is spent." });
+      runTurn: (async (options: {
+        onEngineError: (event: { message: string }) => void;
+      }) => {
+        options.onEngineError({
+          message: "MCPJam's daily budget for this feature is spent.",
+        });
         return {};
       }) as never,
     });
@@ -239,6 +429,8 @@ describe("what the agent is told", () => {
     expect(told).toContain('choose "Acme"');
     expect(told).toMatch(/Never create an account/);
     const untold = signInInstructions({ ...ATTEMPT, tenant: undefined });
-    expect(untold).toMatch(/more than one choice, call stop_sign_in with needsPerson true/);
+    expect(untold).toMatch(
+      /more than one choice, call stop_sign_in with needsPerson true/,
+    );
   });
 });

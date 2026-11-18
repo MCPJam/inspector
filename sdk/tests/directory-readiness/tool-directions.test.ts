@@ -301,6 +301,7 @@ describe("the shapes the brief names", () => {
     ]).map((candidate) => candidate.quote);
 
   it.each([
+    "Use this tool before calling list_notes.",
     "Use this before list_orders.",
     "Use it with get_user to show names.",
     "Use after create_order completes.",
@@ -316,6 +317,9 @@ describe("the shapes the brief names", () => {
 
   it.each([
     "Returns the same fields as get_item.",
+    "Retrieves the same notes as calling list_notes.",
+    "Returns a receipt after calling list_notes.",
+    "Use order_id to locate the receipt.",
     "Equivalent to calling list_orders with no filter.",
     "Results are cached by get_context.",
     "Use the same filters as list_orders.",

@@ -6,6 +6,7 @@ import {
   describeConvexFailure,
   formatSupportReference,
   getConvexRequestId,
+  isConvexQueryNotServed,
   splitSupportReference,
 } from "../convex-error";
 
@@ -249,5 +250,39 @@ describe("support references", () => {
     expect(
       splitSupportReference("(ref abc123) came back from support").requestId,
     ).toBeNull();
+  });
+});
+
+describe("isConvexQueryNotServed", () => {
+  const query = "things:list";
+  const prefix = `[CONVEX Q(${query})]`;
+
+  it("reads the dev not-found shape and the production redaction of that query as not served", () => {
+    expect(
+      isConvexQueryNotServed(
+        new Error(`${prefix} Could not find public function for '${query}'`),
+        query,
+      ),
+    ).toBe(true);
+    expect(
+      isConvexQueryNotServed(
+        new Error(`${prefix} [Request ID: da0bbc6cf9261481] Server Error`),
+        query,
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves other queries and worded failures alone", () => {
+    expect(
+      isConvexQueryNotServed(
+        new Error(
+          "[CONVEX Q(other:list)] [Request ID: da0bbc6cf9261481] Server Error",
+        ),
+        query,
+      ),
+    ).toBe(false);
+    expect(
+      isConvexQueryNotServed(new Error(`${prefix} Not a member`), query),
+    ).toBe(false);
   });
 });

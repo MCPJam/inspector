@@ -486,7 +486,7 @@ export async function resolveComposerEnvironments(args: {
         if (name) {
           throw new ComposerResolveError(
             "CLIENT_UNSUPPORTED",
-            orgKeySurfaceRefusal(name, "study"),
+            orgKeySurfaceRefusal(name),
           );
         }
       }

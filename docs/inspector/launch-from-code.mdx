@@ -73,6 +73,8 @@ console.log(`Inspector running at ${inspector.url}`);
 await inspector.stop();
 ```
 
+Pass `silent: true` to keep the inspector's startup banner and logs out of your terminal. The browser still opens on its own, and `inspector.url` is a working link if you need to open it yourself. Treat that link like a password: it carries the session token.
+
 ### LaunchOptions
 
 | Option            | Type                     | Default | Description                                                                               |
@@ -82,6 +84,7 @@ await inspector.stop();
 | `server.headers`  | `Record<string, string>` | -       | Custom headers to send with requests                                                      |
 | `server.useOAuth` | `boolean`                | `false` | Trigger OAuth flow on connect                                                             |
 | `defaultTab`      | `string`                 | -       | Initial tab: `"servers"`, `"tools"`, `"resources"`, `"prompts"`, `"playground"` |
+| `silent`          | `boolean`                | `false` | Keep the inspector's output out of your terminal. Startup errors include its stderr       |
 
 ### InspectorInstance
 
@@ -89,7 +92,7 @@ The returned instance provides:
 
 | Property  | Type                  | Description                         |
 | --------- | --------------------- | ----------------------------------- |
-| `url`     | `string`              | Full URL where inspector is running |
+| `url`     | `string`              | Full URL where inspector is running, including its session token |
 | `process` | `ChildProcess`        | Underlying Node.js child process    |
 | `stop()`  | `() => Promise<void>` | Gracefully stop the inspector       |
 
@@ -158,6 +161,7 @@ When you run `npm run dev`, the inspector automatically launches and connects to
 | `server`     | `object`  | -                | Server configuration (same as programmatic API) |
 | `defaultTab` | `string`  | `"playground"`   | Initial tab to navigate to                      |
 | `autoLaunch` | `boolean` | `true`           | Launch inspector when Vite starts               |
+| `silent`     | `boolean` | `false`          | Keep the inspector's output out of your terminal |
 
 ## Feedback Wanted
 

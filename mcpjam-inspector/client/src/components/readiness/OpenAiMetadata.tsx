@@ -115,8 +115,8 @@ export function OpenAiMetadata({
       </div>
       {fields.every((field) => shown(field, values[field.key]) === BLANK) ? (
         <McpjamNote>
-          The package's values are not imported into this rehearsal. Run checks
-          to grade the package itself.
+          Package values are not shown here. Checks use the selected package's
+          metadata when available.
         </McpjamNote>
       ) : null}
       {column((field) => field.control === "textarea")}
