@@ -48,7 +48,7 @@ export function ReviewerHandover({
     if (await copyToClipboard(url.href)) {
       toast.success("Submission link copied.");
     } else {
-      toast.error("Could not copy the submission link.");
+      toast.error("Could not copy the submission link. Try copying it again.");
     }
   };
   const copy = async () => {
