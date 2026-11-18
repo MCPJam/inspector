@@ -255,6 +255,8 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
       : undefined;
 
     const { manager, body } = await connect(c, rawBody, schema, {
+      // Only the Inspector's own tool, prompt and resource calls run here.
+      observeFeatures: true,
       ...(options?.timeoutMs !== undefined
         ? { timeoutMs: options.timeoutMs }
         : {}),

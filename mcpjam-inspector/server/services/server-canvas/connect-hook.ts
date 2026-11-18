@@ -22,6 +22,10 @@ import { logger } from "../../utils/logger.js";
 import { getManagerConnections } from "../../utils/mcp-connections.js";
 import { captureServerFeatures, type ServerFeatureCapture } from "./capture.js";
 import { startCanvasProbes, type CanvasProbeOptions } from "./canvas-probes.js";
+import {
+  pauseFeatureObservation,
+  suppressFeatureObservation,
+} from "@mcpjam/sdk";
 import { needsConnection } from "./probe-runner.js";
 import { rolloutWithin } from "./rollout-within.js";
 
@@ -117,25 +121,45 @@ export async function onCanvasConnect(
   }).catch(
     logWriteFailure({ logPrefix: "server-canvas", managerKey: event.managerKey }),
   );
+  // Probe traffic is MCPJam's own: no observation until the probes are done
+  // with the connection (HTTP probes never use it).
+  const resume = pauseFeatureObservation(event.manager, event.managerKey);
   const probes = startCanvasProbes(event, options);
+  void probes.connectionReleased.then(resume);
   if (event.hosted && needsConnection(event)) await probes.connectionReleased;
 }
 
-export function defaultConnectionId(
+/**
+ * The account a capture context binds: the caller's account key, else the
+ * connection's default account. Observed traffic uses the same rule.
+ */
+export function captureAccountKey(
   manager: MCPClientManager,
   managerKey: string,
+  accountKey?: string,
 ): string | undefined {
-  return getManagerConnections(manager)?.[managerKey]?.find(
-    (connection) => connection.isDefault,
-  )?.connectionId;
+  return (
+    accountKey ??
+    getManagerConnections(manager)?.[managerKey]?.find(
+      (connection) => connection.isDefault,
+    )?.connectionId
+  );
 }
 
 /**
  * Captures the connected server and starts its inspection write. Resolves
  * once the capture is done, with whether the canvas rollout was on for it.
- * Never throws.
+ * Never throws. Observation is paused on the connection until then.
  */
-export async function recordConnectInspection(
+export function recordConnectInspection(
+  input: ConnectInspectionInput,
+): Promise<{ canvas: boolean }> {
+  return suppressFeatureObservation(input.manager, input.managerKey, () =>
+    captureAndRecord(input),
+  );
+}
+
+async function captureAndRecord(
   input: ConnectInspectionInput,
 ): Promise<{ canvas: boolean }> {
   const { manager, managerKey, serverId, logPrefix } = input;
@@ -155,7 +179,7 @@ export async function recordConnectInspection(
     return { canvas };
   }
   const capture = await captureServerFeatures(manager, managerKey, serverId, {
-    accountKey: input.accountKey ?? defaultConnectionId(manager, managerKey),
+    accountKey: captureAccountKey(manager, managerKey, input.accountKey),
     logPrefix,
     ...(input.signal ? { signal: input.signal } : {}),
   });

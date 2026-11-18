@@ -1,5 +1,9 @@
 import { Hono } from "hono";
-import { runServerDoctor, type OAuthFlowSummary } from "@mcpjam/sdk";
+import {
+  runServerDoctor,
+  suppressFeatureObservation,
+  type OAuthFlowSummary,
+} from "@mcpjam/sdk";
 import {
   HOSTED_MODE,
   WEB_CONNECT_TIMEOUT_MS,
@@ -126,7 +130,10 @@ export async function validateServerCore(
   if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
     await assertHostedServerTarget(String(configuredUrl));
   }
-  await manager.getToolsForAiSdk([body.serverId]);
+  // The Connect button's own listing is not observed use.
+  await suppressFeatureObservation(manager, body.serverId, () =>
+    manager.getToolsForAiSdk([body.serverId]),
+  );
   // Captured before returning: the ephemeral manager disconnects as soon as
   // this function does. Only the Convex write runs after the response. A shared
   // or uploaded account's identity is captured beside the inspection, while

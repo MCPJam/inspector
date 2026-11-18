@@ -17,7 +17,8 @@ import { logger } from "../../utils/logger.js";
 import { resolveServerCanvasRollout } from "../../utils/server-canvas-rollout.js";
 import type { CanvasProbeHandle } from "./canvas-probes.js";
 import { captureServerFeatures } from "./capture.js";
-import { defaultConnectionId, onCanvasConnect } from "./connect-hook.js";
+import { captureAccountKey, onCanvasConnect } from "./connect-hook.js";
+import { suppressFeatureObservation } from "@mcpjam/sdk";
 
 export interface CanvasRefreshTarget {
   hosted: boolean;
@@ -80,11 +81,21 @@ export function claimCanvasRefresh(key: {
 /**
  * Rechecks the rollout, captures, then hands off to the connect path's canvas
  * work with the cadence bypassed. Resolves when the connection may close
- * (hosted) or once the work is queued (local). Never throws.
+ * (hosted) or once the work is queued (local). Never throws. Observation is
+ * paused on the connection until then: this is MCPJam's own traffic.
  */
-export async function runCanvasRefresh(
+export function runCanvasRefresh(
   target: CanvasRefreshTarget,
   dependencies: CanvasRefreshDependencies = {},
+): Promise<CanvasRefreshRun> {
+  return suppressFeatureObservation(target.manager, target.managerKey, () =>
+    refreshCanvas(target, dependencies),
+  );
+}
+
+async function refreshCanvas(
+  target: CanvasRefreshTarget,
+  dependencies: CanvasRefreshDependencies,
 ): Promise<CanvasRefreshRun> {
   const ended = (outcome: CanvasRefreshOutcome): CanvasRefreshRun => ({
     outcome,
@@ -100,7 +111,7 @@ export async function runCanvasRefresh(
       managerKey,
       target.serverId,
       {
-        accountKey: target.accountKey ?? defaultConnectionId(manager, managerKey),
+        accountKey: captureAccountKey(manager, managerKey, target.accountKey),
         logPrefix: "server-canvas-refresh",
       },
     );

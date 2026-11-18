@@ -39,8 +39,12 @@ import audioTranscriptions from "./audio-transcriptions";
 import plugins from "./plugins";
 import { buildHealthMeta } from "../../utils/health-payload.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
+import { localObservationFlushMiddleware } from "../../services/server-canvas/observation-recorders.js";
 
 const mcp = new Hono();
+
+// Observed server features flush with a local request's own bearer.
+mcp.use("*", localObservationFlushMiddleware);
 
 // Health check
 mcp.get("/health", (c) => {
