@@ -4,8 +4,8 @@ import { withSkillsExtensionCapability } from "./mcp-client-manager/index.js";
 import {
   getVerifiedServerSkill,
   isServerSkillRefusalError,
-  listServerSkillCatalog,
 } from "./server-skills.js";
+import { readServerSkillCatalog } from "./server-list-reads.js";
 import {
   listAllPrompts,
   listAllResourceTemplates,
@@ -342,20 +342,25 @@ async function collectSkills(
   manager: MCPClientManager,
   serverId: string
 ): Promise<DoctorSkillsCollectionResult> {
-  let support:
-    | { active?: boolean; declared?: boolean; advertised?: boolean }
-    | undefined;
-  try {
-    support = manager.getSkillsSupport(serverId);
-  } catch {
-    support = undefined;
+  const read = await readServerSkillCatalog(manager, serverId);
+  if (read.status === "inactive") {
+    return {
+      skills: [],
+      check: skippedCheck(inactiveSkillsDetail(read.support)),
+    };
   }
-  if (!support?.active) {
-    return { skills: [], check: skippedCheck(inactiveSkillsDetail(support)) };
-  }
+  const failed = (error: unknown): DoctorSkillsCollectionResult => {
+    const structured = normalizeServerDoctorError(error);
+    return {
+      skills: [],
+      check: errorCheck(structured.message),
+      error: structured,
+    };
+  };
+  if (read.status === "failed") return failed(read.error);
 
   try {
-    const listing = await listServerSkillCatalog(manager, serverId);
+    const listing = read.listing;
     const sample = listing.skills
       .filter((skill) => !skill.unloadable)
       .slice(0, DOCTOR_SKILL_VERIFY_SAMPLE);
@@ -501,12 +506,7 @@ async function collectSkills(
     }
     return { skills: listing.skills, check: okCheck(parts.join(" ")) };
   } catch (error) {
-    const structured = normalizeServerDoctorError(error);
-    return {
-      skills: [],
-      check: errorCheck(structured.message),
-      error: structured,
-    };
+    return failed(error);
   }
 }
 

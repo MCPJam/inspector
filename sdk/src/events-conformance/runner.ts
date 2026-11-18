@@ -28,6 +28,7 @@ import {
 } from "../events/profiles.js";
 import type { EventsConformanceReceiver } from "./receiver.js";
 import { captureConformanceRun } from "../telemetry.js";
+import { readServerEventTypes } from "../server-list-reads.js";
 import {
   EVENTS_CHECK_IDS,
   type EventsCheckId,
@@ -221,16 +222,10 @@ export async function runEventsConformance(
     return finish();
   }
 
-  const descriptors: EventDescriptorWire[] = [];
   const listStarted = Date.now();
-  try {
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await manager.listServerEvents(serverId, cursor !== undefined ? { cursor } : undefined);
-      descriptors.push(...result.events);
-      if (result.nextCursor === undefined || result.nextCursor === cursor) break;
-      cursor = result.nextCursor;
-    }
+  const listing = await readServerEventTypes(manager, serverId);
+  const descriptors = listing.events;
+  if (listing.status === "listed") {
     const unknownModes = descriptors.flatMap((d) =>
       d.delivery.filter((mode) => !(EVENT_DELIVERY_MODES as readonly string[]).includes(mode))
     );
@@ -241,10 +236,13 @@ export async function runEventsConformance(
         (unknownModes.length ? `; unrecognized delivery modes: ${unknownModes.join(", ")}` : ""),
       { startedAt: listStarted }
     );
-  } catch (error) {
-    record("events-list-shape", "violation", error instanceof Error ? error.message : String(error), {
-      startedAt: listStarted,
-    });
+  } else {
+    record(
+      "events-list-shape",
+      "violation",
+      listing.error instanceof Error ? listing.error.message : String(listing.error),
+      { startedAt: listStarted }
+    );
   }
 
   if (isChatgptProfileId(profile)) {
