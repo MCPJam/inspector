@@ -6,6 +6,7 @@ import {
   listEvidenceContexts,
   selectServerEvidence,
   type CheckResultEvidence,
+  type FeatureSetupKind,
   type SelectedServerEvidence,
   type ServerFeatureEvaluation,
 } from "@mcpjam/sdk/browser";
@@ -109,9 +110,18 @@ export function evidenceStamp(
  * Pure: the page re-runs it only when the data, the context or the live
  * connection changes.
  */
+export interface ServerFeatureEvidenceOptions {
+  connected: boolean;
+  contextHash?: string;
+  /** Setup the server has saved in MCPJam; a precondition, never evidence. */
+  configured?: readonly FeatureSetupKind[];
+  /** Setup the page can send the reader to. */
+  setupOffered?: readonly FeatureSetupKind[];
+}
+
 export function deriveServerFeatureEvidence(
   data: ServerFeatureEvidenceResponse | null | undefined,
-  options: { connected: boolean; contextHash?: string },
+  options: ServerFeatureEvidenceOptions,
 ): DerivedServerFeatureEvidence {
   const run = data?.latestConformanceRun ?? null;
   const selected = selectServerEvidence(
@@ -124,6 +134,8 @@ export function deriveServerFeatureEvidence(
       connected: options.connected,
       contextHash: options.contextHash,
       checks: checksFromRun(run),
+      configured: options.configured,
+      setupOffered: options.setupOffered,
     },
   );
   const evaluation = evaluateServerFeatures(
@@ -155,16 +167,22 @@ export function deriveServerFeatureEvidence(
 export function useServerFeatureEvidence(
   projectId: string | null,
   serverId: string | null,
-  options: { connected: boolean; contextHash?: string },
+  options: ServerFeatureEvidenceOptions,
 ): ServerFeatureEvidenceState {
   const result = useSoftQuery<ServerFeatureEvidenceResponse | null>(
     SERVER_FEATURE_EVIDENCE_QUERY,
     projectId && serverId ? { projectId, serverId } : "skip",
   );
-  const { connected, contextHash } = options;
+  const { connected, contextHash, configured, setupOffered } = options;
   const derived = useMemo(
-    () => deriveServerFeatureEvidence(result.data, { connected, contextHash }),
-    [result.data, connected, contextHash],
+    () =>
+      deriveServerFeatureEvidence(result.data, {
+        connected,
+        contextHash,
+        configured,
+        setupOffered,
+      }),
+    [result.data, connected, contextHash, configured, setupOffered],
   );
   return {
     ...derived,
