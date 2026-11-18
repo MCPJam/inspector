@@ -16,6 +16,10 @@ const GITHUB_STAR_PROMPT = {
   reason: ["completed", "return_visit"],
   has_advice: "boolean",
 } as const satisfies Record<string, Rule>;
+
+/** The largest value a `"count"` field keeps; anything above it is dropped. */
+export const STRICT_COUNT_MAX = 1_000_000;
+
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   extension_launch_completed: {
     location: ["host_workspace"],
@@ -158,7 +162,7 @@ export function rebuildStrictPostHogEvent(
         typeof candidate === "number" &&
         Number.isInteger(candidate) &&
         candidate >= 0 &&
-        candidate <= 1_000_000
+        candidate <= STRICT_COUNT_MAX
       )
         properties[key] = candidate;
     } else if (rule === "boolean") {

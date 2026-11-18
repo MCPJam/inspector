@@ -93,7 +93,7 @@ export function StartupStatusTracker(): null {
   // there never gets a user record. That is not a stalled startup.
   const publicPage = !isAuthenticated && shouldSkipGuestSession();
   useAppLoadStallReport(userReady || publicPage, status.stage);
-  useStartupTracking(status);
+  useStartupTracking(status, userReady);
 
   useEffect(() => {
     if (startupSettled) return;
