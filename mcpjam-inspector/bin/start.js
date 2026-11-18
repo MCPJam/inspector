@@ -17,6 +17,7 @@ import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 import { resolveShutdownSettings } from "./shutdown-settings.mjs";
 import { computeInstanceEnv } from "./runtime-profile.mjs";
 import { createStartOutput, hasJsonFlag } from "./start-output.mjs";
+import { startHolderWatchdog } from "./holder-watchdog.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1120,6 +1121,19 @@ async function main() {
 
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(signal, requestShutdown);
+  }
+
+  // Started by a dev command: stay up while any dev command still holds it.
+  const holdersDir = process.env.MCPJAM_INSPECTOR_HOLDERS_DIR;
+  if (holdersDir) {
+    const stopHolderWatchdog = startHolderWatchdog({
+      dir: holdersDir,
+      onIdle: () => {
+        logInfo("No dev command is using MCPJam anymore. Stopping.");
+        requestShutdown();
+      },
+    });
+    abort.signal.addEventListener("abort", stopHolderWatchdog, { once: true });
   }
 
   if (!orphanCheckDisabled && initialParentPid > 1) {
