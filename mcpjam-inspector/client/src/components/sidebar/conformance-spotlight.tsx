@@ -10,6 +10,7 @@ import {
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
 import { SUITE_COPY } from "@/components/conformance/conformance-ui";
+import { useAnnouncementSlot } from "@/components/announcement-slot";
 import { track } from "@/lib/analytics";
 import { buildConformanceRunServerPath } from "@/lib/app-navigation";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -95,7 +96,9 @@ export function ConformanceSpotlight({
   const [ready, setReady] = useState(false);
   const shown = useRef(false);
   const eligible = enabled && !dismissed && !isMobile;
-  const open = eligible && ready && !onConformancePage;
+  const { open, contentRef } = useAnnouncementSlot(
+    eligible && ready && !onConformancePage,
+  );
 
   useEffect(() => {
     if (!eligible) return;
@@ -144,7 +147,7 @@ export function ConformanceSpotlight({
       }}
     >
       <FeatureSpotlightAnchor>{children}</FeatureSpotlightAnchor>
-      <FeatureSpotlightContent>
+      <FeatureSpotlightContent ref={contentRef}>
         <Badge variant="secondary">New</Badge>
         <FeatureSpotlightTitle>
           Check your server against the MCP spec

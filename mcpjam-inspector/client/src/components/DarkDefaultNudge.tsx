@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { hasStoredThemePreference } from "@/lib/theme-utils";
 import { DarkDefaultNudgeCard } from "./DarkDefaultNudgeCard";
+import { useAnnouncementSlot } from "./announcement-slot";
 
 export const DARK_DEFAULT_NUDGE_KEY = "darkDefaultNudgeSeen";
 const TOAST_ID = "dark-default-nudge";
@@ -29,32 +30,59 @@ function markNudgeSeen(): boolean {
   }
 }
 
+function DarkDefaultToast({
+  id,
+  contentRef,
+}: {
+  id: string | number;
+  contentRef: (node: HTMLElement | null) => void;
+}) {
+  const navigate = useAppNavigate();
+  return (
+    <DarkDefaultNudgeCard
+      ref={contentRef}
+      onDismiss={() => toast.dismiss(id)}
+      onOpenSettings={() => {
+        toast.dismiss(id);
+        navigate("/settings/appearance");
+      }}
+    />
+  );
+}
+
 /**
  * Tells people who never picked a theme that dark is now the default, once
  * per device. Renders nothing; mount it after `<Toaster />`.
  */
 export function DarkDefaultNudge({ enabled = true }: { enabled?: boolean }) {
-  const navigate = useAppNavigate();
+  const [pending, setPending] = useState(false);
+  const { open, contentRef } = useAnnouncementSlot(enabled && pending);
 
   useEffect(() => {
-    if (!enabled) {
-      toast.dismiss(TOAST_ID);
+    setPending(enabled && shouldShowNudge());
+    if (enabled) {
+      return () => {
+        toast.dismiss(TOAST_ID);
+      };
+    }
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!shouldShowNudge() || !markNudgeSeen()) {
+      setPending(false);
       return;
     }
-    if (!shouldShowNudge() || !markNudgeSeen()) return;
     toast.custom(
-      (id) => (
-        <DarkDefaultNudgeCard
-          onDismiss={() => toast.dismiss(id)}
-          onOpenSettings={() => {
-            toast.dismiss(id);
-            navigate("/settings/appearance");
-          }}
-        />
-      ),
-      { id: TOAST_ID, duration: 20_000 },
+      (id) => <DarkDefaultToast id={id} contentRef={contentRef} />,
+      {
+        id: TOAST_ID,
+        duration: 20_000,
+        onDismiss: () => setPending(false),
+        onAutoClose: () => setPending(false),
+      },
     );
-  }, [enabled, navigate]);
+  }, [contentRef, open]);
 
   return null;
 }

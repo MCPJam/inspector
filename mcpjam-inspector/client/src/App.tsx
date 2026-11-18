@@ -29,6 +29,8 @@ import { toast } from "@/lib/toast";
 import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
+import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
+import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
@@ -154,8 +156,6 @@ import {
 } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
@@ -2966,6 +2966,14 @@ export function HomeRoute() {
 }
 
 export default function App() {
+  return (
+    <AnnouncementQueueProvider>
+      <InspectorApp />
+    </AnnouncementQueueProvider>
+  );
+}
+
+function InspectorApp() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
   const billingLocation = useCurrentLocationParts();
@@ -6721,61 +6729,54 @@ export default function App() {
             />
           </div>
         </div>
-        <Dialog
-          open={announcementsEnabled && showTrialDecisionModal}
-          onOpenChange={(open) => {
-            if (!open)
-              setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-          }}
+        <TrialDecisionDialog
+          eligible={announcementsEnabled && showTrialDecisionModal}
+          onDismiss={() =>
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null)
+          }
         >
-          <DialogContent
-            onPointerDownOutside={(e) => e.preventDefault()}
-            onEscapeKeyDown={(e) => e.preventDefault()}
-            data-testid="trial-decision-modal"
-          >
-            <DialogHeader>
-              <DialogTitle>Choose how to continue</DialogTitle>
-              <DialogDescription>
-                Your trial has ended. Upgrade to keep paid features, or move
-                this organization to the Free plan.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter className="gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={isSelectingFreeAfterTrial}
-                onClick={() => {
-                  void (async () => {
-                    try {
-                      await selectFreeAfterTrial();
-                      toast.success(
-                        "This organization is now on the Free plan.",
-                      );
-                    } catch {
-                      toast.error("Could not update plan. Try again.");
-                    }
-                  })();
-                }}
-              >
-                {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setTrialModalDismissedForOrg(billingOrganizationId ?? null);
-                  if (billingOrganizationId) {
-                    navigateToTarget(
-                      `organizations/${billingOrganizationId}/billing`,
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move
+              this organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success(
+                      "This organization is now on the Free plan.",
                     );
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
                   }
-                }}
-              >
-                Upgrade
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+                if (billingOrganizationId) {
+                  navigateToTarget(
+                    `organizations/${billingOrganizationId}/billing`,
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </TrialDecisionDialog>
       </SidebarProvider>
     </SettingsDraftProvider>
   );
