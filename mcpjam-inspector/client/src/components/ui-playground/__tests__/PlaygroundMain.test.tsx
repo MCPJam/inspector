@@ -5717,3 +5717,110 @@ describe("multi-model columns", () => {
     });
   });
 });
+
+describe("PlaygroundMain tester rules", () => {
+  const study = {
+    serverName: "asana",
+    pendingExecution: null,
+    onExecutionInjected: vi.fn(),
+    tester: {
+      hostedContext: {
+        scenarioId: "sbx_1",
+        projectId: "ws_1",
+        accessVersion: 3,
+        scenarioSurface: "share_link" as const,
+        selectedServerIds: ["srv_asana"],
+        requiresWebChatApi: true,
+      },
+      executionConfig: {
+        modelId: "openai/gpt-5-mini",
+        systemPrompt: "You are helpful.",
+        temperature: 0.4,
+        requireToolApproval: true,
+      },
+      selectedServerNames: ["asana", "down"],
+      serverConfigs: {
+        asana: {
+          name: "asana",
+          config: { url: "https://scenario-chat.invalid" },
+          lastConnectionTime: new Date(),
+          connectionStatus: "connected" as const,
+          retryCount: 0,
+          enabled: true,
+        },
+        down: {
+          name: "down",
+          config: { url: "https://scenario-chat.invalid" },
+          lastConnectionTime: new Date(),
+          connectionStatus: "failed" as const,
+          retryCount: 0,
+          enabled: true,
+        },
+      },
+      composerBlocked: true,
+      composerBlockedReason: "Get started or authorize to send messages…",
+      optionalServers: [
+        { serverId: "srv_opt", serverName: "optional", useOAuth: false },
+      ],
+      onEnableOptionalServer: vi.fn(),
+    },
+  };
+
+  it("locks the study into the shared chat session and quiets the composer", () => {
+    render(<PlaygroundMain {...study} />);
+
+    expect(capturedChatSessionOptions.executionConfig).toEqual(
+      study.tester.executionConfig,
+    );
+    expect(capturedChatSessionOptions.minimalMode).toBe(true);
+    expect(capturedChatSessionOptions.rememberPickedTarget).toBe(false);
+    expect(capturedChatSessionOptions.reasoningEffortEnabled).toBe(false);
+    expect(capturedChatSessionOptions.selectionIntent).toBe("inherit");
+    expect(capturedChatSessionOptions.hostedContext).toEqual(
+      expect.objectContaining({
+        scenarioId: "sbx_1",
+        projectId: "ws_1",
+        selectedServerIds: ["srv_asana"],
+        requiresWebChatApi: true,
+      }),
+    );
+    expect(capturedChatSessionOptions.hostedContext.executionTarget).toBeUndefined();
+    expect(capturedChatSessionOptions.selectedServers).toEqual(["asana"]);
+
+    const composer = mockChatInputProps.mock.calls.at(-1)?.[0] as {
+      minimalMode?: boolean;
+      showContextPopover?: boolean;
+      clientSelector?: unknown;
+      placeholder?: string;
+      submitDisabled?: boolean;
+      scenarioAttachableServers?: Array<{ serverId: string }>;
+    };
+    expect(composer.minimalMode).toBe(true);
+    expect(composer.showContextPopover).toBe(false);
+    expect(composer.clientSelector).toBeUndefined();
+    expect(composer.placeholder).toBe(
+      "Get started or authorize to send messages…",
+    );
+    expect(composer.submitDisabled).toBe(true);
+    expect(composer.scenarioAttachableServers).toEqual([
+      { serverId: "srv_opt", serverName: "optional", useOAuth: false },
+    ]);
+    expect(
+      screen.queryByText(/This is your playground for MCP/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves the Playground uncontrolled when no study is mounted", () => {
+    render(
+      <PlaygroundMain
+        serverName="test-server"
+        pendingExecution={null}
+        onExecutionInjected={vi.fn()}
+      />,
+    );
+    expect(capturedChatSessionOptions.executionConfig).toBeUndefined();
+    expect(capturedChatSessionOptions.minimalMode).toBeUndefined();
+    expect(capturedChatSessionOptions.rememberPickedTarget).toBe(true);
+    expect(capturedChatSessionOptions.hostedContext.scenarioId).toBeUndefined();
+  });
+});
