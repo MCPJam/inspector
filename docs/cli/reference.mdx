@@ -1067,7 +1067,7 @@ Only the access token is delivered to the local process. Refresh tokens and clie
 
 Removing a member, disabling local runs, or deleting an account stops future deliveries. An access token already delivered can remain valid until the issuer expires or revokes it.
 
-Set `--expires-in` to the token’s remaining lifetime in seconds when known. Omitting it is supported, but MCPJam then relies on the server to reject the token when it expires. Shared and uploaded accounts require HTTPS for remote MCP servers; loopback development addresses are allowed.
+Set `--expires-in` to the token’s remaining lifetime in seconds when known. Omitting it is supported. A JWT’s `exp` claim then sets when MCPJam stops using the token; for an opaque token, MCPJam relies on the server to reject it when it expires. When both `--expires-in` and `exp` are present, the earlier one applies. Shared and uploaded accounts require HTTPS for remote MCP servers; loopback development addresses are allowed.
 
 The token comes from a file, an environment variable or stdin. A token typed on the command line is refused, because shell history keeps it and other processes can see it. Whitespace around a token is dropped.
 
@@ -1501,6 +1501,20 @@ runs. `--reporter` replaces that output with the canonical structured report.
 `--out` writes the same report atomically, including on failed-run and
 post-completion reporting-error paths, before the command sets its exit code.
 
+With `--wait`, human format (the default in a terminal) also prints one line
+per server naming the accounts the runs used there:
+
+```text
+Account on orders-api: test-automation-1 (project, test-automation-1@example.com)
+```
+
+Each account shows its name, its kind (`personal`, `project` or `XAA`), and
+its email when you may see it, or else the identity's name when it differs
+from the account name. With `--format json` (the default when output is
+piped), each run in `runs` carries its full `accounts` list instead. See
+[Which accounts a run used](/reference/public-api#which-accounts-a-run-used)
+for the fields and who sees an email.
+
 Without `--wait`, a partial or wholly failed fan-out **exits 1**; with
 `--wait` it exits **4** (see the exit-code table above). A per-target failure
 does not abort its siblings, so exiting 0 would let a pipeline read "1 of 3
@@ -1715,6 +1729,10 @@ per-case grades. `status: null` means that judge was never requested for the
 run, different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
 
+The run's `accounts` list says which account it used on each server. In
+`--format human` it prints as one line per server, the same lines
+[`eval run --wait`](#output-and-exit-codes) prints.
+
 Goal completion reports per-iteration `status`: `scored`, `error`, or `skipped`.
 Legacy scored rows are returned as `scored`. A failed job retains completed
 measurements alongside any unscored error or skipped rows; job failure does not
@@ -1769,6 +1787,9 @@ trend point, or a comparison baseline.
 A run that is still executing or grading, or one where nothing qualifies, is
 refused with `409` (`details.reason` is `RERUN_SOURCE_NOT_TERMINAL` or
 `RERUN_NOTHING_TO_RERUN`) before anything starts.
+
+With `--wait`, human format also prints the account lines that
+[`eval run --wait`](#output-and-exit-codes) prints.
 
 ```bash
 mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
