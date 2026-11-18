@@ -53,6 +53,7 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "sharing",
   "audit-log",
   "data-management",
+  "security",
   "api-keys",
   "plans",
   "integrations",
@@ -79,6 +80,7 @@ export function parseOrganizationSection(
     segment === "sharing" ||
     segment === "audit-log" ||
     segment === "data-management" ||
+    segment === "security" ||
     segment === "integrations"
   )
     return segment;
@@ -488,6 +490,7 @@ export function buildOrganizationPath(
     section === "sharing" ||
     section === "audit-log" ||
     section === "data-management" ||
+    section === "security" ||
     section === "integrations"
   )
     return `/organizations/${orgId}/${section}`;
