@@ -70,6 +70,7 @@ import {
 import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
 import { CREDENTIAL_EXPORT_SETTING_HINT } from "../../../shared/credential-export-setting.js";
+import { hostedOnlyFallback } from "../../utils/local-oauth-refusal.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -2142,7 +2143,14 @@ export async function createAuthorizedManager(
           ErrorCode.FORBIDDEN,
           hostedOnly
             ? (auth.oauthUnavailableMessage ??
-                `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`)
+              // Local runs being off is the one cause a project admin fixes,
+              // so it gets the same sentence as the other local paths.
+              (auth.oauthUnavailableCause === "not_acknowledged"
+                ? hostedOnlyFallback(
+                    `"${displayServerName}"`,
+                    auth.oauthUnavailableCause,
+                  )
+                : `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`))
             : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they can't be used from here. ${CREDENTIAL_EXPORT_SETTING_HINT}`,
           {
             exportDenied: true,
