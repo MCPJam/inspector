@@ -78,8 +78,71 @@ describe("launchInspector", () => {
     const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
     expect(token).toMatch(/^[A-Za-z0-9_-]{24,}$/);
     expect(inspector.url).toBe(
-      `http://localhost:6274/#token=${token}&tab=chat-v2`,
+      `http://localhost:6274/#token=${token}&tab=playground`,
     );
+  });
+
+  it.each(["chat", "app-builder", "chat-v2"])(
+    "opens Playground for the older tab name %s",
+    async (defaultTab) => {
+      fakeSpawn();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+      const inspector = await launchInspector({ defaultTab });
+
+      const { env } = spawnOptions();
+      expect(env.MCP_INITIAL_TAB).toBe("playground");
+      expect(inspector.url).toBe(
+        `http://localhost:6274/#token=${env.MCPJAM_SESSION_TOKEN}&tab=playground`,
+      );
+    },
+  );
+
+  it("passes a current tab through unchanged", async () => {
+    fakeSpawn();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+    const inspector = await launchInspector({ defaultTab: "tools" });
+
+    const { env } = spawnOptions();
+    expect(env.MCP_INITIAL_TAB).toBe("tools");
+    expect(inspector.url).toMatch(/&tab=tools$/);
+  });
+
+  it("accepts a tab written with a leading # or /, as the Inspector does", async () => {
+    for (const defaultTab of ["#playground", "/playground"]) {
+      spawnMock.mockReset();
+      fakeSpawn();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+      const inspector = await launchInspector({ defaultTab });
+
+      expect(spawnOptions().env.MCP_INITIAL_TAB).toBe("playground");
+      expect(inspector.url).toMatch(/&tab=playground$/);
+    }
+  });
+
+  it("rejects a tab the Inspector does not have, before starting it", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const error: Error = await launchInspector({
+      defaultTab: "app-bulder",
+    }).then(
+      () => {
+        throw new Error("launch resolved");
+      },
+      (err: Error) => err,
+    );
+
+    expect(error.message).toMatch(
+      /^Could not launch the Inspector because defaultTab "app-bulder" is not a tab\. Set defaultTab to one of .*\.$/,
+    );
+    for (const tab of ["playground", "servers", "tools", "resources"]) {
+      expect(error.message).toContain(tab);
+    }
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reuses a session token from the environment", async () => {
