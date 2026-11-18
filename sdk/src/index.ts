@@ -2319,3 +2319,6 @@ export type {
   MCPTasksRunOptions,
   MCPTasksRunGroup,
 } from "./tasks-conformance/index.js";
+
+// Server feature model for the server canvas (KES-886). Browser-safe.
+export * from "./server-features/index.js";
