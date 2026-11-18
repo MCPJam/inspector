@@ -11,7 +11,7 @@
  * Every route answers 404 unless the spike's environment is set, so the
  * branch can be deployed to a dev environment without exposing anything else.
  */
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { z } from "zod";
 import { forwardNativeMcp } from "../../utils/harness/forwarding/native-transport.js";
 import {
@@ -34,6 +34,39 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const NO_LIVE_TURN_CODE = -32001;
 const NO_LIVE_TURN_MESSAGE =
   "No MCPJam test turn is running. Start a turn, then send the prompt again.";
+
+/** The only headers an MCP answer keeps; see `claudeLiveSpikeResponseCleanup`. */
+const MCP_RESPONSE_HEADERS = [
+  "content-type",
+  "mcp-session-id",
+  "mcp-protocol-version",
+  "retry-after",
+  "cache-control",
+  "last-event-id",
+];
+
+/**
+ * claude.ai stops after `initialize` when the app's global headers ride along:
+ * a raw server sending the same set fails the same way. Registered before
+ * every other middleware, so it runs last and sees the final answer. It keeps
+ * only the MCP server's own headers and streams the body, as a raw server does.
+ */
+export const claudeLiveSpikeResponseCleanup: MiddlewareHandler = async (c, next) => {
+  await next();
+  if (!/\/mcp$/.test(c.req.path)) return;
+  const answer = c.res;
+  const headers = new Headers();
+  for (const name of MCP_RESPONSE_HEADERS) {
+    const value = answer.headers.get(name);
+    if (value !== null) headers.set(name, value);
+  }
+  const body = answer.body
+    ? answer.body.pipeThrough(new TransformStream())
+    : null;
+  // Clearing first stops Hono from copying the old headers onto the new answer.
+  c.res = undefined;
+  c.res = new Response(body, { status: answer.status, headers });
+};
 
 const turnBody = z.object({
   live: z.boolean(),
@@ -90,14 +123,33 @@ export function createClaudeLiveSpikeRouter(
   const presentedKey = (c: {
     req: { header(name: string): string | undefined; param(name: string): string | undefined };
   }) => {
-    const bearer = /^Bearer\s+(.+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+    const auth = c.req.header("authorization")?.trim();
+    const bearer = auth ? (/^Bearer\s+(.+)$/i.exec(auth)?.[1] ?? auth) : undefined;
     return c.req.header(SPIKE_KEY_HEADER) ?? bearer ?? c.req.param("key");
   };
 
   router.on(["POST", "GET", "DELETE"], ["/mcp", "/k/:key/mcp"], async (c) => {
     const request = c.req.raw;
-    if (!secretMatches(presentedKey(c), config.connectorSecret))
+    if (!secretMatches(presentedKey(c), config.connectorSecret)) {
+      // Names only: shows which headers the host actually sent, never their values.
+      const names: string[] = [];
+      request.headers.forEach((_value, name) => names.push(name));
+      // The authorization header's shape (first word, length), never its value.
+      const auth = request.headers.get("authorization");
+      // Without a space the first word is the credential itself, so it is not shown.
+      const shape = auth
+        ? `; authorization: ${
+            auth.trim().includes(" ")
+              ? `scheme "${auth.trim().split(/\s+/)[0].slice(0, 12)}"`
+              : "no scheme"
+          }, ${auth.length} chars`
+        : "";
+      recorder.refused(
+        request,
+        `unauthorized; headers: ${names.sort().join(", ")}${shape}`,
+      );
       return c.json({ error: "Unauthorized" }, 401);
+    }
 
     let raw: string | undefined;
     let message: NativeMessage | undefined;

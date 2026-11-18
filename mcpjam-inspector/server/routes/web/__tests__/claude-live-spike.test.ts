@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
-import { createClaudeLiveSpikeRouter } from "../claude-live-spike.js";
+import {
+  claudeLiveSpikeResponseCleanup,
+  createClaudeLiveSpikeRouter,
+} from "../claude-live-spike.js";
 import {
   readClaudeLiveSpikeConfig,
   type ClaudeLiveSpikeConfig,
@@ -161,6 +164,27 @@ describe("claude live spike route", () => {
     );
     expect(start.status).toBe(401);
     expect((await control("/records", {}, config.connectorSecret)).status).toBe(401);
+  });
+});
+
+describe("claudeLiveSpikeResponseCleanup", () => {
+  it("leaves an MCP answer with only the server's own headers", async () => {
+    const app = new Hono();
+    app.use("*", claudeLiveSpikeResponseCleanup);
+    app.use("*", async (c, next) => {
+      c.header("X-Frame-Options", "SAMEORIGIN");
+      c.header("X-Robots-Tag", "noindex");
+      await next();
+      c.res.headers.append("Vary", "Origin");
+    });
+    app.post("/k/secret/mcp", () =>
+      new Response('{"jsonrpc":"2.0","id":1,"result":{}}', {
+        headers: { "content-type": "application/json", "mcp-session-id": "s1" },
+      }),
+    );
+    const response = await app.request("/k/secret/mcp", { method: "POST" });
+    expect([...response.headers.keys()].sort()).toEqual(["content-type", "mcp-session-id"]);
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", id: 1, result: {} });
   });
 });
 
