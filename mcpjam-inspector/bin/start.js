@@ -1264,7 +1264,9 @@ async function main() {
             confirmLaunchOwnership(host, parseInt(PORT, 10), launchToken, abort.signal),
         ),
         serverExit.then((exit) => {
-          if (exit.failed) throw serverExitError(exit);
+          // Any exit before the server is listening is a failed start, even a
+          // clean one; only a shutdown this process asked for is not.
+          if (!cancelled) throw serverExitError(exit);
           return false;
         }),
       ]);
@@ -1280,9 +1282,12 @@ async function main() {
       } else if (!cancelled) {
         report: {
         const base = await resolveBrowserBaseUrl(apiBaseUrl);
-        // A shutdown, or the server exiting, during the lookup is not a launch
-        // to report; the wait for the exit below reports the failure.
-        if (cancelled || serverProcessClosed) break report;
+        // A shutdown during the lookup is not a launch to report. A server
+        // that exited during it is a failed start, whatever its exit code.
+        if (serverProcessClosed && !cancelled) {
+          throw serverExitError(await serverExit);
+        }
+        if (cancelled) break report;
         const url = createAccessLink(base, launchToken, initialTab);
         output.ready({ url, port: Number(PORT) });
         const docker = process.env.DOCKER_CONTAINER === "true";

@@ -278,6 +278,25 @@ test("--json: a server that exits before it is ready is one error event, not an 
   }
 });
 
+test("--json: a server that exits cleanly before it is ready is still a failed start", async () => {
+  const root = stubProject('console.error("done early"); process.exit(0);');
+  try {
+    const port = 44500 + Math.floor(Math.random() * 3000);
+    const result = await runStub(root, ["--json", "--port", String(port)]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    const events = result.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(events, [
+      { event: "error", message: "Server process exited with code 0" },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a listener that does not accept this launch's token is not reported as ready", async () => {
   // Answers 401 to every token: the TCP port is open, but it is not this launch.
   const root = stubProject(`
