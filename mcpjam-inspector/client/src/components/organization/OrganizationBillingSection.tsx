@@ -1047,8 +1047,14 @@ export function OrganizationBillingSection({
     });
   };
 
+  // A staff plan set while the confirmation is open withdraws the offer;
+  // the server would refuse the change anyway (PLAN_SET_BY_MCPJAM).
+  useEffect(() => {
+    if (isStaffPlan) setPendingPlanChange(null);
+  }, [isStaffPlan]);
+
   const handleConfirmPlanChange = async () => {
-    if (!pendingPlanChange) return;
+    if (!pendingPlanChange || isStaffPlan) return;
     const { plan, interval } = pendingPlanChange;
     track("plans_upgrade_confirm_submitted", {
       location: "org_plans",

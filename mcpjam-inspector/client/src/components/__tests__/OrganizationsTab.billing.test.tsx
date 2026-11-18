@@ -702,6 +702,52 @@ describe("OrganizationsTab billing", () => {
     },
   );
 
+  it("withdraws an open plan confirmation when a staff plan arrives", async () => {
+    const startPlanChange = vi.fn();
+    const freeOrg = {
+      catalogPlanId: "free",
+      priceModel: "free" as const,
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(freeOrg),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    const { rerender } = render(
+      <OrganizationsTab organizationId="org-1" section="plans" />,
+    );
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+    await screen.findByRole("dialog", { name: "Confirm your plan" });
+
+    // A CSM sets Team from Backstage while the owner is still deciding.
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          ...freeOrg,
+          effectivePlan: "team",
+          source: "subscription",
+          catalogPlanId: "team",
+          priceModel: "flat",
+          staffPlan: { expiresAt: null },
+        }),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    rerender(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm your plan" }),
+      ).toBeNull(),
+    );
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
   it("still offers self-serve upgrades to a free org whose price model is free", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({

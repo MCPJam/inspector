@@ -269,8 +269,7 @@ export function OrganizationCurrentPlanPanel({
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
   // A staff plan has no Stripe subscription: the card names its tier and end.
-  const isStaffPlan =
-    !isTrial && !isSimulation && isStaffSetPlan(billingStatus);
+  const isStaffPlan = isStaffSetPlan(billingStatus);
   const showSubscriptionNotices = canShowSubscriptionNotices(billingStatus);
   const currentEntry = planCatalog?.plans[currentPlan];
   const isLegacyTeam =

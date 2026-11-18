@@ -15,6 +15,7 @@ function billingStatusFixture(
   return {
     plan: "free",
     effectivePlan: "free",
+    source: "subscription",
     ...overrides,
   };
 }
@@ -35,6 +36,27 @@ describe("isStaffSetPlan", () => {
     expect(isStaffSetPlan(billingStatusFixture({ staffPlan: null }))).toBe(
       false,
     );
+  });
+
+  it("yields to a staff simulation, as the panel and the grid both must", () => {
+    expect(
+      isStaffSetPlan(
+        billingStatusFixture({
+          staffPlan: { expiresAt: null },
+          source: "simulation",
+          effectivePlan: "pro",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      getDisplayedCurrentPlan(
+        billingStatusFixture({
+          staffPlan: { expiresAt: null },
+          source: "simulation",
+          effectivePlan: "pro",
+        }),
+      ),
+    ).toBe("free");
   });
 
   it("reads an older backend that omits the field as no staff plan", () => {

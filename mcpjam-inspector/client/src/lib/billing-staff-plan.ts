@@ -5,7 +5,7 @@ import type {
 
 type StaffPlanBillingStatus = Pick<
   OrganizationBillingStatus,
-  "plan" | "effectivePlan" | "staffPlan"
+  "plan" | "effectivePlan" | "staffPlan" | "source"
 >;
 
 const STAFF_PLAN_END_FORMAT = new Intl.DateTimeFormat("en-US", {
@@ -17,13 +17,21 @@ const STAFF_PLAN_END_FORMAT = new Intl.DateTimeFormat("en-US", {
 
 /**
  * Whether MCPJam staff set this org's plan outside Stripe. A missing
- * `staffPlan` (an older backend) is treated as none.
+ * `staffPlan` (an older backend) is treated as none. A staff simulation
+ * takes over `effectivePlan` while it runs, so the page shows the simulation
+ * rather than the staff plan, in the panel and the grid alike.
  */
 export function isStaffSetPlan(
   billingStatus:
-    Pick<OrganizationBillingStatus, "staffPlan"> | null | undefined,
+    | Pick<OrganizationBillingStatus, "staffPlan" | "source">
+    | null
+    | undefined,
 ): boolean {
-  return billingStatus?.staffPlan != null;
+  return (
+    billingStatus?.staffPlan != null &&
+    billingStatus.source !== "simulation" &&
+    billingStatus.source !== "trial"
+  );
 }
 
 /**
