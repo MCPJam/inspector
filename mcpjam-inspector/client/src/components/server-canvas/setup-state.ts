@@ -1,4 +1,7 @@
-import type { FeatureSetupKind } from "@mcpjam/sdk/browser";
+import type {
+  ConformanceSuiteKey,
+  FeatureSetupKind,
+} from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
 
 /**
@@ -11,6 +14,18 @@ import type { ServerWithName } from "@/state/app-types";
  */
 export const CANVAS_SETUP_OFFERED: readonly FeatureSetupKind[] = [
   "pre-registered-client",
+];
+
+/**
+ * The suites Run checks can run from the conformance page. The app has no
+ * events suite, so a feature only an events check proves gets no Run checks
+ * step.
+ */
+export const CANVAS_CHECK_SUITES: readonly ConformanceSuiteKey[] = [
+  "protocol",
+  "apps",
+  "tasks",
+  "oauth",
 ];
 
 type SetupFields = Pick<
