@@ -3367,6 +3367,7 @@ function writeExportRefusal(
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
+    .alias("evals")
     .description("Author and run eval suites in your hosted MCPJam projects")
     .addHelpText(
       "after",

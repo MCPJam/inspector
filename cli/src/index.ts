@@ -41,6 +41,7 @@ import {
 import { installDeploymentPreflight } from "./lib/deployment-preflight.js";
 import { installProxyDispatcher } from "./lib/network-proxy.js";
 import { addGlobalOptions } from "./lib/server-config.js";
+import { installUnknownSubcommandHelpGuard } from "./lib/unknown-subcommand-help.js";
 import {
   captureCommandEvent,
   captureUsageErrorEvent,
@@ -138,6 +139,7 @@ export async function main(
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
   installDeploymentPreflight(program);
+  installUnknownSubcommandHelpGuard(program);
 
   registerCliCommands(program, dependencies);
 

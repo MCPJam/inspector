@@ -29,7 +29,7 @@ export function registerCloudCommands(program: Command): Command {
   const cloud = program
     .command("cloud")
     .description(
-      "MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam cloud login` is your MCPJam account."
+      "MCPJam Cloud account commands (login, projects, eval, tunnels). Local MCP testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam cloud login` is your MCPJam account."
     );
 
   addPlatformOptions(cloud);
