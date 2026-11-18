@@ -67,4 +67,16 @@ describe("generateSkillFileContent", () => {
       path: "weather/SKILL.md",
     });
   });
+
+  it("keeps a body that opens with its own --- block as written", () => {
+    const body = "---\nauthor: someone\n---\nBody";
+    const fileContent = generateSkillFileContent("weather", "Weather", body);
+
+    expect(parseSkillFile(fileContent, "weather/SKILL.md")).toEqual({
+      name: "weather",
+      description: "Weather",
+      content: body,
+      path: "weather/SKILL.md",
+    });
+  });
 });

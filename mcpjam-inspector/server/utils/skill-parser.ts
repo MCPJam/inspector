@@ -269,5 +269,8 @@ export function generateSkillFileContent(
   content: string,
 ): string {
   // Quotes a description that YAML would misread, such as "Fetches: weather".
-  return matter.stringify(content, { name, description });
+  // A string first argument is parsed as a document of its own, which strips a
+  // body that opens with `---` and merges its keys into the frontmatter; the
+  // `{ content }` form keeps the body as written.
+  return matter.stringify({ content }, { name, description });
 }
