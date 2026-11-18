@@ -346,6 +346,7 @@ describe("the connection", () => {
                 requestId: "req_1",
                 serverUrl: "https://connector.example.com/mcp",
                 authorizationServerUrl: null,
+                callbackUrl: "https://preview.example.org/oauth/callback",
                 registrationMode: "dynamic",
                 requestedName: "Acme",
                 account: { name: "reviewer-sub_1" },
@@ -383,7 +384,7 @@ describe("the connection", () => {
 
     expect(prepareAuthorization).toHaveBeenCalledWith({
       serverUrl: "https://connector.example.com/mcp",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       requestedName: "Acme",
     });
     expect(
@@ -393,14 +394,14 @@ describe("the connection", () => {
       requestId: "req_1",
       clientId: "client_1",
       codeVerifier: "verifier-1",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       state: "st_1",
       issuer: "https://acme.authkit.app",
     });
     expect(link).toEqual({
       authorizationUrl: "https://acme.authkit.app/oauth2/authorize?state=st_1",
       authorizationServerOrigin: "https://acme.authkit.app",
-      callbackUrl: "https://app.mcpjam.com/oauth/callback",
+      callbackUrl: "https://preview.example.org/oauth/callback",
     });
     expect(JSON.stringify(link)).not.toContain("verifier-1");
   });
