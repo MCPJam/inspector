@@ -76,6 +76,7 @@ import {
   DECISION_SUMMARY_STALE_ANALYZER_DISAGREEMENT_NEXT_ACTION,
   DECISION_SUMMARY_VERDICT_CHAIN_DISAGREEMENT_NEXT_ACTION,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  NEXT_ACTION_BY_INFRA_CLASS,
 } from "./decision-labels.js";
 import {
   STAGE_ANALYZER_VERSION,
@@ -629,6 +630,8 @@ export type EvalRunDecisionIterationInput = {
   failureCategory?: unknown;
   stageAnalyzerVersion?: unknown;
   stageResultsUnverified?: unknown;
+  /** Present when MCPJam's own infrastructure failed the trial. */
+  infraError?: { class?: unknown } | null;
 };
 
 export type EvalRunDecisionAssemblyInput = {
@@ -818,10 +821,38 @@ function assembleDiagnostic(
         }
       : {}),
     evidence: assembleEvidence(input, iteration, chain),
-    nextAction: category
-      ? NEXT_ACTION_BY_FAILURE_CATEGORY[category]
-      : uncategorisedNextAction(chain, iteration.result),
+    nextAction:
+      infraNextAction(chain, iteration.infraError) ??
+      (category
+        ? NEXT_ACTION_BY_FAILURE_CATEGORY[category]
+        : uncategorisedNextAction(chain, iteration.result)),
   };
+}
+
+/**
+ * The action for a trial MCPJam's own infrastructure failed.
+ *
+ * Only for a `setup` category that no stage failed into: that is the shape a
+ * model-call failure or a stopped trial takes, where nothing was measured
+ * against the server. When a stage did fail, the chain measured the server
+ * and its own category stays the better guide.
+ */
+function infraNextAction(
+  chain: EvalRunDecisionChain,
+  infraError: EvalRunDecisionIterationInput["infraError"]
+): string | undefined {
+  if (
+    chain.status !== "verified" ||
+    chain.failureCategory !== "setup" ||
+    chain.firstFailedStage !== undefined
+  ) {
+    return undefined;
+  }
+  const infraClass = infraError?.class;
+  return typeof infraClass === "string" &&
+    Object.hasOwn(NEXT_ACTION_BY_INFRA_CLASS, infraClass)
+    ? NEXT_ACTION_BY_INFRA_CLASS[infraClass]
+    : undefined;
 }
 
 /**
