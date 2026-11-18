@@ -346,6 +346,42 @@ describe("syncSentryReplay", () => {
     expect(replay.start).toHaveBeenCalledTimes(1);
   });
 
+  describe("analytics consent", () => {
+    afterEach(() => {
+      window.localStorage.clear();
+    });
+
+    it("never constructs the recorder before a visitor who needs consent allows it", async () => {
+      window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+      getClient.mockReturnValue({ getIntegrationByName: () => undefined });
+      const { syncSentryReplay } = await loadAt("full");
+
+      syncSentryReplay("/servers");
+      expect(addIntegration).not.toHaveBeenCalled();
+    });
+
+    it("stops a running replay when consent is withdrawn and resumes it on a new grant", async () => {
+      window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+      window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+      const { initSentry } = await loadAt("full");
+      const { setAnalyticsConsent } = await import("../analytics-consent");
+      const replay = stubReplay(true);
+      initSentry();
+      const posthog = {
+        opt_in_capturing: vi.fn(),
+        opt_out_capturing: vi.fn(),
+        set_config: vi.fn(),
+      };
+
+      setAnalyticsConsent(posthog, "denied");
+      expect(replay.stop).toHaveBeenCalledTimes(1);
+      expect(replay.start).not.toHaveBeenCalled();
+
+      setAnalyticsConsent(posthog, "granted");
+      expect(replay.start).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("is a no-op on a self-hosted build", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
     vi.resetModules();

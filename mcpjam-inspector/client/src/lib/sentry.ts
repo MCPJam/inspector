@@ -9,6 +9,10 @@ import {
 import { createConvexQueryEventProcessor } from "./convex-query-diagnostics";
 import { createSentryDropPolicy } from "./sentry-drop-policy";
 import { subscribeTelemetryPolicy } from "./telemetry-context";
+import {
+  hasAnalyticsConsent,
+  subscribeAnalyticsConsent,
+} from "./analytics-consent";
 import { telemetryOptedOut } from "../../../shared/sentry-identity";
 import { matchAppRoute } from "./app-routes";
 import { parseProjectPath } from "./project-route";
@@ -190,6 +194,7 @@ export function initSentry() {
   Sentry.getClient()?.on?.("spanStart", stampSentrySpanStart);
   Sentry.getClient()?.on?.("beforeAddBreadcrumb", stampSentryBreadcrumb);
   subscribeTelemetryPolicy(() => syncSentryReplay(window.location));
+  subscribeAnalyticsConsent(() => syncSentryReplay(window.location));
 
 }
 
@@ -203,6 +208,8 @@ export function initSentry() {
  * Sentry replay. It records only at `full`, with `SENTRY_REPLAY_OPTIONS`, and is held off:
  *
  *  - while `pending` and at `off`;
+ *  - without analytics consent (`hasAnalyticsConsent`), which the banner
+ *    asks for replay as well as analytics;
  *  - on a credential location (`isCredentialBearingPath`: path, query or
  *    fragment), at any level. `installRecorderNavigationGuard` stops it
  *    BEFORE a navigation onto one; this keeps it stopped and resumes it on
@@ -233,6 +240,7 @@ export function syncSentryReplay(location: string | LocationLike): void {
     const privacy = currentSessionPrivacy();
     const blocked =
       privacy !== "full" ||
+      !hasAnalyticsConsent() ||
       strictSentryRequired() ||
       recordingSurface() !== "hosted" ||
       isCredentialBearingPath(location);
