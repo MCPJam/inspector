@@ -42,6 +42,7 @@ import type {
   SwarmReport,
 } from "../contract/index.js";
 import type { CaseJudgeSettings } from "../contract/judge-settings.js";
+import type { CreditRecovery } from "../contract/credit-recovery.js";
 import type { PlatformGoalJudge } from "./goal-judge.js";
 export type {
   PlatformGoalJudge,
@@ -3595,6 +3596,11 @@ export interface PlatformEvalInfraError {
   code?: string;
   /** The upstream HTTP status, when there was one. */
   httpStatus?: number;
+  /**
+   * The next step a credit refusal named (`account_limit` only). Read it
+   * through `parseCreditRecovery`; an older deployment omits it.
+   */
+  recovery?: CreditRecovery;
 }
 
 export interface PlatformEvalIteration {

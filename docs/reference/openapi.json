@@ -20037,6 +20037,47 @@
           "httpStatus": {
             "type": "integer",
             "description": "The upstream HTTP status, when there was one."
+          },
+          "recovery": {
+            "type": "object",
+            "description": "On an `account_limit` trial whose credit refusal named a next step: what to do, who does it, and where. Give the person `url` first. Omitted when the refusal named none.",
+            "required": ["version", "reason", "action", "actor"],
+            "properties": {
+              "version": { "type": "integer", "enum": [1] },
+              "reason": {
+                "type": "string",
+                "description": "Why credits were refused, e.g. `allowance_exhausted` or `budget_reached`."
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "upgrade_plan",
+                  "buy_credits",
+                  "ask_admin",
+                  "raise_budget",
+                  "contact_support",
+                  "wait"
+                ]
+              },
+              "actor": {
+                "type": "string",
+                "enum": ["caller", "owner_or_admin", "support"],
+                "description": "Who has to act. `owner_or_admin`: forward the link to someone with billing access."
+              },
+              "url": {
+                "type": "string",
+                "format": "uri",
+                "description": "The MCPJam app page where the step is taken."
+              },
+              "plan": {
+                "type": "string",
+                "description": "The plan tier to upgrade to, for `upgrade_plan`."
+              },
+              "resetAt": {
+                "type": "integer",
+                "description": "When the allowance resets, epoch milliseconds."
+              }
+            }
           }
         }
       },

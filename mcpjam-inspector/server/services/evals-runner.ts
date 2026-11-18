@@ -18,6 +18,11 @@ import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
+import {
+  findCreditRecovery,
+  type CreditRecovery,
+} from "@mcpjam/sdk/contract";
+import { creditStopNote } from "./evals/credit-stop.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
 import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
@@ -699,12 +704,17 @@ export type RunEvalSuiteOptions = {
   benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
+/** Set by the first trial credits stop; read by skipped trials and finalize. */
+type CreditStop = { exhausted: boolean; recovery?: CreditRecovery };
+
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /** The step the credit refusal named; it words the run's stop. */
+  creditRecovery?: CreditRecovery;
   /**
    * OUR infrastructure failed this trial. The run summary leaves it out of
    * `total`/`passed`/`failed`, as the backend's legacy header does.
@@ -1012,7 +1022,8 @@ type IterationMetadataValue =
   | number
   | boolean
   | DescriptionExperimentIterationStamp
-  | TimeoutMetadata;
+  | TimeoutMetadata
+  | CreditRecovery;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
 
@@ -3143,7 +3154,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
-  creditStop?: { exhausted: boolean };
+  creditStop?: CreditStop;
   compareRunId?: string;
   /**
    * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
@@ -3272,7 +3283,7 @@ const executeTestCase = async (params: {
   // Run a single iteration under the per-iteration timeout + run-abort guards.
   // Bails immediately if the run was already stopped; on timeout it aborts the
   // whole run (via `abortRun`) and marks the row `timed_out`.
-  const creditStop = params.creditStop ?? { exhausted: false };
+  const creditStop: CreditStop = params.creditStop ?? { exhausted: false };
   const runSingleIteration = async <T extends EvalIterationOutcome>(
     runner: (
       iterationSignal: AbortSignal,
@@ -3314,6 +3325,7 @@ const executeTestCase = async (params: {
       const outcome = await runner(signal, deadline, noteIterationStarted);
       if (outcome.creditsExhausted && !creditStop.exhausted) {
         creditStop.exhausted = true;
+        creditStop.recovery = outcome.creditRecovery;
         logger.info("[evals] credits exhausted; remaining iterations skipped", {
           event: "evals.credits_exhausted",
           iterationId: startedIterationId,
@@ -3750,8 +3762,7 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error:
-            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          error: creditStopNote(creditStop.recovery),
         });
       }
       continue;
@@ -4352,7 +4363,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
-    const creditStop = { exhausted: false };
+    const creditStop: CreditStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -4682,10 +4693,7 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? {
-              notes:
-                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
-            }
+          ? { notes: creditStopNote(creditStop.recovery) }
           : {}),
         summary: {
           total: summary.total,
@@ -5813,6 +5821,12 @@ const runLocalIteration = async ({
           // it reached a first-party hosted provider.
           byokEndpointOwnership(modelDefinition.provider),
         );
+    const creditRefusal = {
+      message: acc.iterationError,
+      details: acc.iterationErrorDetails,
+    };
+    const creditRecovery = findCreditRecovery(creditRefusal);
+    if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     const finishParams = buildIterationFinishParams({
       iterationId,
       // The layer that failed, when this driver could tell — the local twin of
@@ -5945,10 +5959,8 @@ const runLocalIteration = async ({
     });
 
     return {
-      creditsExhausted: isCreditExhaustion({
-        message: acc.iterationError,
-        details: acc.iterationErrorDetails,
-      }),
+      creditsExhausted: isCreditExhaustion(creditRefusal),
+      ...(creditRecovery ? { creditRecovery } : {}),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -6129,6 +6141,15 @@ const runLocalIteration = async ({
             byokEndpointOwnership(modelDefinition.provider),
           )
         : undefined;
+    // This rail runs on the customer's own key, so a provider's "insufficient
+    // credits" is their provider balance, not MCPJam's: it must not stop the
+    // run as out of MCPJam credits.
+    const creditRefusal = { message: errorMessage, details: errorDetails };
+    const creditsExhausted =
+      acc.stepErrorEvidence?.source !== "provider_call" &&
+      isCreditExhaustion(creditRefusal);
+    const creditRecovery = findCreditRecovery(creditRefusal);
+    if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
     // success path.
@@ -6225,15 +6246,8 @@ const runLocalIteration = async ({
       finishParams: failParams,
     });
     return {
-      // This rail runs on the customer's own key, so a provider's "insufficient
-      // credits" is their provider balance, not MCPJam's: it must not stop the
-      // run as out of MCPJam credits.
-      creditsExhausted:
-        acc.stepErrorEvidence?.source !== "provider_call" &&
-        isCreditExhaustion({
-          message: errorMessage,
-          details: errorDetails,
-        }),
+      creditsExhausted,
+      ...(creditRecovery ? { creditRecovery } : {}),
       evaluation,
       iterationId: iterationId ?? undefined,
       ...(toolPolicyGate?.blocks.length
@@ -7055,6 +7069,10 @@ const runHostedIterationWithBrowser = async (
         false,
       );
     }
+    const setupCreditRecovery = findCreditRecovery(error);
+    if (setupCreditRecovery) {
+      iterationMetadataBase.creditRecovery = setupCreditRecovery;
+    }
     await persistSetupFailedIteration({
       iterationId,
       runStartedAt,
@@ -7101,6 +7119,7 @@ const runHostedIterationWithBrowser = async (
     failedEvaluation.passed = false;
     return {
       creditsExhausted: isCreditExhaustion(error),
+      ...(setupCreditRecovery ? { creditRecovery: setupCreditRecovery } : {}),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
@@ -7623,6 +7642,18 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     uploadTarget: evalSnapshotUploadTarget(convexAuthToken, iterationId),
   });
+  // An external-account turn spends no MCPJam credits, so its errors (the
+  // vendor's own words) never stop the run as if MCPJam's had run out.
+  const creditRefusal = {
+    message: iterationError,
+    details: iterationErrorDetails,
+  };
+  const creditsExhausted =
+    modelSource !== "external-account" && isCreditExhaustion(creditRefusal);
+  // On the row, where the v1 projection reads it back as `infraError.recovery`
+  // (a spend cap names its step too, without stopping the run).
+  const creditRecovery = findCreditRecovery(creditRefusal);
+  if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
   // above still applies the prefix to LIVE SSE `trace_snapshot` events
@@ -7775,14 +7806,8 @@ const runHostedIterationWithBrowser = async (
   });
 
   return {
-    // An external-account turn spends no MCPJam credits, so its errors (the
-    // vendor's own words) never stop the run as if MCPJam's had run out.
-    creditsExhausted:
-      modelSource !== "external-account" &&
-      isCreditExhaustion({
-        message: iterationError,
-        details: iterationErrorDetails,
-      }),
+    creditsExhausted,
+    ...(creditRecovery ? { creditRecovery } : {}),
     evaluation,
     iterationId: iterationId ?? undefined,
     ...(toolPolicyGate?.blocks.length

@@ -1,5 +1,7 @@
 import path from "node:path";
 import {
+  type CreditRecovery,
+  formatCreditRecovery,
   formatEvalRunDecisionSummary,
   type FormatEvalRunDecisionSummaryOptions,
   renderStructuredRunHtml,
@@ -62,6 +64,20 @@ export function writeEvalDecisionSummary(
 ): void {
   if (format !== "human" || !summary) return;
   destination.write(`${formatEvalRunDecisionSummary(summary, options)}\n`);
+}
+
+/**
+ * Human-only: the step a credit stop named, from the structured field rather
+ * than the run's prose, so the link survives any surface that rewrites prose.
+ * JSON carries the field itself.
+ */
+export function writeCreditRecovery(
+  format: string,
+  recovery: CreditRecovery | undefined,
+  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
+): void {
+  if (format !== "human" || !recovery) return;
+  destination.write(`Recovery: ${formatCreditRecovery(recovery)}\n`);
 }
 
 /**
