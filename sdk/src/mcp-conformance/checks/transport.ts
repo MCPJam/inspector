@@ -232,6 +232,39 @@ async function modernPostResponseContentTypeCheck(
   }
 }
 
+/**
+ * Finish the handshake the way a client must: "After successful
+ * initialization, the client MUST send an `initialized` notification"
+ * (basic/lifecycle#initialization, every 2025 revision). Every probe after
+ * this one is ordinary operation, so none of them reaches the server ahead of
+ * the notification the lifecycle requires first.
+ *
+ * The response is also the evidence `notification-post-accepted` grades, so
+ * the notification is sent exactly once per run.
+ */
+async function sendInitializedNotification(
+  ctx: RawHttpCheckContext,
+  sessionId: string | undefined,
+): Promise<{ response: RawHttpResult } | { error: unknown }> {
+  try {
+    return {
+      response: await rawRequest(ctx, {
+        headers: legacyHeaders({
+          protocolVersion:
+            ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+          sessionId,
+        }),
+        // `notifications/initialized` is the one notification every client
+        // sends, so "cannot accept" has no legitimate reading here.
+        body: { jsonrpc: "2.0", method: "notifications/initialized" },
+      }),
+    };
+  } catch (error) {
+    ctx.config.signal?.throwIfAborted();
+    return { error };
+  }
+}
+
 async function terminateSession(
   ctx: RawHttpCheckContext,
   sessionId: string | undefined,
@@ -464,6 +497,17 @@ export async function runTransportChecks(
       selectedCheckIds.has("server-accepts-multiple-post-streams") ||
       selectedCheckIds.has("server-sse-streams-functional");
 
+    // Sent before any other request on the session, and only when a check
+    // below needs the session to be in normal operation.
+    const initializedStartedAt = Date.now();
+    const initialized =
+      needsMultiStreamChecks ||
+      selectedCheckIds.has("notification-post-accepted") ||
+      selectedCheckIds.has("get-stream-or-405")
+        ? await sendInitializedNotification(ctx, sessionId)
+        : undefined;
+    const initializedDurationMs = Date.now() - initializedStartedAt;
+
     if (needsMultiStreamChecks) {
       const activeSessionId = sessionId;
       const multiStreamStartedAt = Date.now();
@@ -479,11 +523,15 @@ export async function runTransportChecks(
               }),
               Accept: "text/event-stream, application/json",
             },
+            // `ping`, not a feature method: every server answers it ("The
+            // receiver MUST respond promptly with an empty response",
+            // basic/utilities/ping), whereas `tools/list` exists only on a
+            // server that declared the tools capability. A server without
+            // tools would refuse these and fail a check about concurrency.
             body: {
               jsonrpc: "2.0",
               id: 1000 + index,
-              method: "tools/list",
-              params: {},
+              method: "ping",
             },
           }),
         ),
@@ -620,19 +668,16 @@ export async function runTransportChecks(
         }
       }
     }
-    if (selectedCheckIds.has("notification-post-accepted")) {
-      const startedAt = Date.now();
-      try {
-        const response = await rawRequest(ctx, {
-          headers: legacyHeaders({
-            protocolVersion:
-              ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
-            sessionId,
-          }),
-          // `notifications/initialized` is the one notification every client
-          // sends, so "cannot accept" has no legitimate reading here.
-          body: { jsonrpc: "2.0", method: "notifications/initialized" },
-        });
+    if (selectedCheckIds.has("notification-post-accepted") && initialized) {
+      if ("error" in initialized) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+            `Notification POST could not be delivered: ${errorMessage(initialized.error)}`,
+          ),
+        );
+      } else {
+        const response = initialized.response;
         const hasBody = response.bodyText !== "";
         results.push(
           // A body that could not be read to completion leaves the "no body"
@@ -648,12 +693,12 @@ export async function runTransportChecks(
             : response.status === 202 && !hasBody
             ? passedResult(
                 TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                Date.now() - startedAt,
+                initializedDurationMs,
                 { status: response.status },
               )
             : failedResult(
                 TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                Date.now() - startedAt,
+                initializedDurationMs,
                 response.status === 202
                   ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
                   : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
@@ -663,14 +708,6 @@ export async function runTransportChecks(
                   bodyPreview: response.bodyText.slice(0, 200),
                 },
               ),
-        );
-      } catch (error) {
-        ctx.config.signal?.throwIfAborted();
-        results.push(
-          couldNotRunResult(
-            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-            `Notification POST could not be delivered: ${errorMessage(error)}`,
-          ),
         );
       }
     }

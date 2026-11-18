@@ -8,9 +8,9 @@ import {
 import { runTokenFormatCheck } from "../../src/oauth-conformance/checks/oauth-token-format.js";
 import {
   runResourceMetadataChallengeCheck,
-  runStaleSessionRejectionCheck,
   runUnauthenticatedChallengeCheck,
 } from "../../src/oauth-conformance/checks/oauth-server-obligations.js";
+import { runStaleSessionRejectionCheck } from "../../src/oauth-conformance/checks/oauth-stale-session.js";
 
 const baseNegativeInput = {
   config: {
@@ -1169,20 +1169,70 @@ describe("oauth server obligation checks", () => {
     });
   });
 
-  // Finding 5 — stale Mcp-Session-Id → 4xx (404 preferred), never 500.
+  // Finding 5 — an ended session's id must be answered with exactly 404.
+  // basic/transports#session-management: "The server MAY terminate the session
+  // at any time, after which it MUST respond to requests containing that
+  // session ID with HTTP 404 Not Found."
   describe("stale session rejection", () => {
-    it("sends a valid bearer token with an unknown Mcp-Session-Id", async () => {
+    type Reply = {
+      status: number;
+      headers?: Record<string, string>;
+      body?: unknown;
+    };
+
+    /** A server that opens a session, then answers the DELETE and the request
+     * that follows it however the test says. */
+    function sessionServer(replies: {
+      initialize?: Reply;
+      terminate?: Reply;
+      afterTermination?: Reply;
+    }) {
+      const requests: Array<{
+        method: string;
+        rpcMethod?: string;
+        sessionId?: string;
+        authorization?: string;
+        protocolVersion?: string;
+      }> = [];
+      const respond = (reply: Reply) => ({
+        ok: reply.status >= 200 && reply.status < 300,
+        status: reply.status,
+        statusText: "",
+        headers: reply.headers ?? {},
+        body: reply.body,
+      });
       const trackedRequest = jest.fn().mockImplementation(async (request) => {
-        expect(request.headers.Authorization).toBe("Bearer valid-access-token");
-        expect(request.headers["Mcp-Session-Id"]).toBeDefined();
-        expect(request.body).toMatchObject({ method: "tools/list" });
-        return {
-          ok: false,
-          status: 404,
-          statusText: "Not Found",
-          headers: {},
-          body: { error: "session not found" },
-        };
+        const rpcMethod = request.body?.method as string | undefined;
+        requests.push({
+          method: request.method,
+          rpcMethod,
+          sessionId: request.headers["Mcp-Session-Id"],
+          authorization: request.headers.Authorization,
+          protocolVersion: request.headers["MCP-Protocol-Version"],
+        });
+        if (request.method === "DELETE") {
+          return respond(replies.terminate ?? { status: 200 });
+        }
+        if (rpcMethod === "initialize") {
+          return respond(
+            replies.initialize ?? {
+              status: 200,
+              headers: { "mcp-session-id": "session-abc" },
+              body: { jsonrpc: "2.0", id: 1002, result: {} },
+            },
+          );
+        }
+        if (rpcMethod === "notifications/initialized") {
+          return respond({ status: 202 });
+        }
+        return respond(replies.afterTermination ?? { status: 404 });
+      });
+      return { trackedRequest, requests };
+    }
+
+    it("ends a real session and passes when the ended id gets 404", async () => {
+      const { trackedRequest, requests } = sessionServer({
+        afterTermination: { status: 404, body: { error: "session not found" } },
       });
 
       const result = await runStaleSessionRejectionCheck({
@@ -1195,57 +1245,47 @@ describe("oauth server obligation checks", () => {
         status: "passed",
       });
       expect(result.error).toBeUndefined();
+      expect(result.warnings).toBeUndefined();
+      // Initialize, finish the handshake, end the session, then reuse its id.
+      expect(requests).toEqual([
+        {
+          method: "POST",
+          rpcMethod: "initialize",
+          sessionId: undefined,
+          authorization: "Bearer valid-access-token",
+          protocolVersion: "2025-11-25",
+        },
+        {
+          method: "POST",
+          rpcMethod: "notifications/initialized",
+          sessionId: "session-abc",
+          authorization: "Bearer valid-access-token",
+          protocolVersion: "2025-11-25",
+        },
+        {
+          method: "DELETE",
+          rpcMethod: undefined,
+          sessionId: "session-abc",
+          authorization: "Bearer valid-access-token",
+          protocolVersion: "2025-11-25",
+        },
+        {
+          method: "POST",
+          rpcMethod: "ping",
+          sessionId: "session-abc",
+          authorization: "Bearer valid-access-token",
+          protocolVersion: "2025-11-25",
+        },
+      ]);
     });
 
-    it("fails when the server crashes with a 500 on a stale session", async () => {
+    it("passes a 404 whatever its body, since the spec mandates none", async () => {
+      const { trackedRequest } = sessionServer({
+        afterTermination: { status: 404, body: "" },
+      });
       const result = await runStaleSessionRejectionCheck({
         ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: false,
-          status: 500,
-          statusText: "Internal Server Error",
-          headers: {},
-          body: "stack trace",
-        }),
-      });
-
-      expect(result).toMatchObject({
-        step: "oauth_stale_session_rejection",
-        status: "failed",
-        error: { message: expect.stringContaining("instead of a 4xx") },
-      });
-    });
-
-    it("passes a non-404 4xx and records it as a warning, not an error", async () => {
-      const result = await runStaleSessionRejectionCheck({
-        ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: false,
-          status: 400,
-          statusText: "Bad Request",
-          headers: {},
-          body: { error: "bad session" },
-        }),
-      });
-
-      expect(result).toMatchObject({
-        step: "oauth_stale_session_rejection",
-        status: "passed",
-        warnings: [expect.stringContaining("prefers 404")],
-      });
-      expect(result.error).toBeUndefined();
-    });
-
-    it("treats a 404 with an empty JSON object body as parseable", async () => {
-      const result = await runStaleSessionRejectionCheck({
-        ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: false,
-          status: 404,
-          statusText: "Not Found",
-          headers: {},
-          body: {},
-        }),
+        trackedRequest,
       });
 
       expect(result).toMatchObject({
@@ -1253,46 +1293,132 @@ describe("oauth server obligation checks", () => {
         status: "passed",
       });
       expect(result.warnings).toBeUndefined();
-      expect(result.error).toBeUndefined();
     });
 
-    it("warns when a 404 rejection has an empty body", async () => {
-      const result = await runStaleSessionRejectionCheck({
-        ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: false,
-          status: 404,
-          statusText: "Not Found",
-          headers: {},
-          body: "",
-        }),
-      });
+    for (const status of [400, 401, 403, 410, 500, 200]) {
+      it(`fails when the ended session id gets HTTP ${status} instead of 404`, async () => {
+        const { trackedRequest } = sessionServer({
+          afterTermination: { status, body: { error: "nope" } },
+        });
+        const result = await runStaleSessionRejectionCheck({
+          ...(baseObligationInput as any),
+          trackedRequest,
+        });
 
-      expect(result).toMatchObject({
-        step: "oauth_stale_session_rejection",
-        status: "passed",
-        warnings: [expect.stringContaining("empty or unparseable")],
+        expect(result).toMatchObject({
+          step: "oauth_stale_session_rejection",
+          status: "failed",
+          error: {
+            message: expect.stringContaining(
+              `returned HTTP ${status} for a request carrying the session id it had just ended`,
+            ),
+            details: { status, deleteStatus: 200 },
+          },
+        });
+        expect(result.error?.message).toContain("requires HTTP 404 Not Found");
       });
-      expect(result.error).toBeUndefined();
-    });
+    }
 
-    it("skips when the server accepts an unknown session id", async () => {
-      const result = await runStaleSessionRejectionCheck({
-        ...(baseObligationInput as any),
-        trackedRequest: jest.fn().mockResolvedValue({
-          ok: true,
+    it("reads the session id header whatever its casing", async () => {
+      const { trackedRequest, requests } = sessionServer({
+        initialize: {
           status: 200,
-          statusText: "OK",
-          headers: {},
-          body: { jsonrpc: "2.0", result: { tools: [] } },
-        }),
+          headers: { "Mcp-Session-Id": "Session-XYZ" },
+          body: {},
+        },
+      });
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(requests.at(-1)).toMatchObject({
+        rpcMethod: "ping",
+        sessionId: "Session-XYZ",
+      });
+    });
+
+    it("skips a server that assigns no session id, which is allowed", async () => {
+      const { trackedRequest, requests } = sessionServer({
+        initialize: { status: 200, headers: {}, body: {} },
+      });
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
       });
 
       expect(result).toMatchObject({
         step: "oauth_stale_session_rejection",
         status: "skipped",
-        error: { message: expect.stringContaining("does not appear to enforce session state") },
+        error: {
+          message: expect.stringContaining("did not assign an Mcp-Session-Id"),
+        },
       });
+      // Nothing is sent under a session that does not exist.
+      expect(requests.map((request) => request.rpcMethod)).toEqual([
+        "initialize",
+      ]);
+    });
+
+    it("skips a server that refuses the client DELETE with 405, which is allowed", async () => {
+      const { trackedRequest, requests } = sessionServer({
+        terminate: { status: 405 },
+      });
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "skipped",
+        error: {
+          message: expect.stringContaining("session DELETE with HTTP 405"),
+        },
+      });
+      // The session is still live, so its id is never graded as an ended one.
+      expect(requests.some((request) => request.rpcMethod === "ping")).toBe(
+        false,
+      );
+    });
+
+    it("skips when the authenticated initialize is refused", async () => {
+      const { trackedRequest } = sessionServer({
+        initialize: { status: 403, body: { error: "forbidden" } },
+      });
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        trackedRequest,
+      });
+
+      expect(result).toMatchObject({
+        step: "oauth_stale_session_rejection",
+        status: "skipped",
+        error: {
+          message: expect.stringContaining("no session could be opened"),
+        },
+      });
+    });
+
+    it("omits MCP-Protocol-Version on 2025-03-26, which has no such header", async () => {
+      const { trackedRequest, requests } = sessionServer({});
+      const result = await runStaleSessionRejectionCheck({
+        ...(baseObligationInput as any),
+        config: {
+          ...baseObligationInput.config,
+          protocolVersion: "2025-03-26",
+        },
+        trackedRequest,
+      });
+
+      expect(result.status).toBe("passed");
+      expect(requests.map((request) => request.protocolVersion)).toEqual([
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+      ]);
     });
 
     it("skips on the stateless 2026-07-28 transport", async () => {

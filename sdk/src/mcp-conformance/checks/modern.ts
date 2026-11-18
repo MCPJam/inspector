@@ -1443,6 +1443,23 @@ async function runUnsupportedVersionCheck(
     : passedResult(meta, Date.now() - startedAt, details);
 }
 
+/**
+ * The method of every request an `InputRequiredResult` carries, in key order.
+ * An entry with no readable method is still counted: it is a request the
+ * server sent, whatever it turns out to be.
+ */
+function inputRequestMethods(inputRequests: unknown): string[] {
+  if (inputRequests === null || typeof inputRequests !== "object") {
+    return [];
+  }
+  return Object.values(inputRequests as Record<string, unknown>).map(
+    (request) => {
+      const method = (request as { method?: unknown } | null)?.method;
+      return typeof method === "string" ? method : "(unknown)";
+    }
+  );
+}
+
 async function runUndeclaredCapabilityCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -1475,11 +1492,37 @@ async function runUndeclaredCapabilityCheck(
 
   const payload = jsonRpcResult(result);
   if (payload?.resultType === "input_required") {
-    return failedResult(
+    // Only `inputRequests` can need a client capability: each entry is an
+    // elicitation, sampling or roots request, and "Servers MUST NOT send an
+    // `inputRequests` that the client has not declared support for"
+    // (basic/patterns/mrtr#server-requirements-basic-workflow). The same list
+    // lets an `InputRequiredResult` carry `requestState` alone, which asks the
+    // client only to retry and relies on no capability at all.
+    const requestedInputs = inputRequestMethods(payload.inputRequests);
+    if (requestedInputs.length > 0) {
+      return failedResult(
+        meta,
+        Date.now() - startedAt,
+        "Server requested input although the request declared no client capabilities; it must answer JSON-RPC -32021 instead",
+        {
+          httpStatus: result.status,
+          resultType: payload.resultType,
+          requestedInputs,
+        }
+      );
+    }
+    return couldNotRunResult(
       meta,
-      Date.now() - startedAt,
-      "Server requested input although the request declared no client capabilities; it must answer JSON-RPC -32021 instead",
-      { httpStatus: result.status, resultType: payload.resultType }
+      `Tool "${probe.toolName}" answered input_required without any inputRequests, which needs no client capability, so the undeclared-capability path was never exercised`,
+      {
+        httpStatus: result.status,
+        resultType: payload.resultType,
+        hasRequestState: typeof payload.requestState === "string",
+        ...needsSetupDetails(
+          "inputRequiredProbe",
+          `Your tool "${probe.toolName}" asked the client to retry without requesting any input, so there was nothing to check. Select a tool that asks for input in setup, then run again.`
+        ),
+      }
     );
   }
 
@@ -2250,8 +2293,6 @@ function unavailableLogProbe(
   return undefined;
 }
 
-const SUPPLIED_TOOL_NO_LOGS = "the supplied tool produced no logs.";
-
 async function runLogLevelCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -2316,8 +2357,10 @@ async function runLogLevelCheck(
     );
   }
 
-  // Supplying the tool is the caller's assertion that it logs. A completed
-  // requested call with no records breaks that assertion and fails the test.
+  // The same call again, this time opted in. What it returns is evidence, not
+  // a requirement: with a log level the server MAY send log notifications
+  // (server/utilities/logging#per-request-log-level), so a server that stays
+  // silent here is as conformant as one that logs.
   const requested = await captureLogProbe(ctx, state, meta, {
     id: 7901,
     method: "tools/call",
@@ -2351,9 +2394,7 @@ async function runLogLevelCheck(
     requestedLogLevel: "debug",
     logNotificationCountWithLevel: logRecords(requested.response).length,
   };
-  return details.logNotificationCountWithLevel === 0
-    ? failedResult(meta, Date.now() - startedAt, SUPPLIED_TOOL_NO_LOGS, details)
-    : passedResult(meta, Date.now() - startedAt, details);
+  return passedResult(meta, Date.now() - startedAt, details);
 }
 
 async function runNoSessionIdCheck(
@@ -2438,9 +2479,9 @@ async function runNoSessionIdCheck(
  * Outcome of the shared subscription probe: either an observed stream, or a
  * reason none could be observed. A reason is always a SKIP for all three
  * checks — "this server has nothing to subscribe to" and "this server would
- * not open a stream" are not violations of the three MUSTs asserted here, and
- * a check that failed on them would be reporting a conformance failure it did
- * not observe.
+ * not open a stream" are not violations of the requirements asserted here,
+ * and a check that failed on them would be reporting a conformance failure it
+ * did not observe.
  */
 /**
  * Forward the probe's own classification: one call site funnels three distinct
@@ -2766,14 +2807,16 @@ async function runSubscriptionGracefulCloseCheck(
     return passedResult(meta, Date.now() - startedAt, details);
   }
   if (observation.outcome === "stream-ended") {
-    // The body ended cleanly: the server chose to end the subscription, and
-    // the completion result is what the spec says that choice looks like on
-    // the wire. An UNCLEAN end never reaches here — it is a `stream-error`,
-    // which the probe reports as a skip.
-    return failedResult(
+    // The stream ended with no completion result. That is not a violation:
+    // the spec says a server ending a subscription on its own initiative
+    // SHOULD answer the listen request first, and lists a transport close
+    // (HTTP timeout, TCP disconnect) as a third way a subscription ends, one
+    // that "carries no response" (basic/patterns/subscriptions#cancellation
+    // and #graceful-closure). From outside, the two are indistinguishable, so
+    // no graceful close was observed and there is nothing to grade.
+    return notApplicableResult(
       meta,
-      Date.now() - startedAt,
-      `Server closed the ${LISTEN_METHOD} stream without returning the completion result for subscription ${observation.subscriptionId}`,
+      `The ${LISTEN_METHOD} stream ended without a completion result. The spec recommends one when the server ends a subscription and also allows the transport to close without it, so no graceful close was observed.`,
       details
     );
   }

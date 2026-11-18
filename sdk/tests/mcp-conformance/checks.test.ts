@@ -568,6 +568,12 @@ describe("mcp conformance unit checks", () => {
         );
       }
 
+      // The handshake's closing notification is not one of the concurrent
+      // requests under test.
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
       postCount += 1;
       if (postCount === 1) {
         throw new Error("request boom");
@@ -600,6 +606,84 @@ describe("mcp conformance unit checks", () => {
         eventCounts: [1, 0],
         readErrors: [undefined, "stream boom"],
       }),
+    });
+  });
+
+  // basic/lifecycle#initialization (2025 revisions): "After successful
+  // initialization, the client MUST send an `initialized` notification", and a
+  // feature method like tools/list exists only where the server declared that
+  // capability. The concurrency probes therefore finish the handshake first and
+  // use `ping`, which every server answers.
+  it("finishes the handshake before the concurrent probes and assumes no tools capability", async () => {
+    const methods: string[] = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        return new Response(null, { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}")) as {
+        id?: number;
+        method?: string;
+      };
+      methods.push(String(body.method));
+
+      if (body.method === "initialize") {
+        return jsonResponse(
+          {
+            jsonrpc: "2.0",
+            id: body.id,
+            // A server with no tools: it declares no `tools` capability.
+            result: {
+              protocolVersion: "2025-11-25",
+              capabilities: {},
+              serverInfo: { name: "no-tools", version: "1.0.0" },
+            },
+          },
+          { headers: { "mcp-session-id": "session-1" } },
+        );
+      }
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      if (body.method === "ping") {
+        return jsonResponse({ jsonrpc: "2.0", id: body.id, result: {} });
+      }
+      // Anything else (tools/list included) is a method this server lacks.
+      return jsonResponse(
+        {
+          jsonrpc: "2.0",
+          id: body.id,
+          error: { code: -32601, message: "Method not found" },
+        },
+        { status: 404 },
+      );
+    }) as typeof fetch;
+
+    const results = await runTransportChecks(
+      createTransportContext(fetchFn) as any,
+      new Set([
+        "server-accepts-multiple-post-streams",
+        "server-sse-streams-functional",
+        "notification-post-accepted",
+      ]),
+    );
+    const byId = Object.fromEntries(results.map((result) => [result.id, result]));
+
+    expect(methods).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "ping",
+      "ping",
+      "ping",
+    ]);
+    expect(byId["server-accepts-multiple-post-streams"]).toMatchObject({
+      status: "passed",
+      details: expect.objectContaining({ statuses: [200, 200, 200] }),
+    });
+    expect(byId["server-sse-streams-functional"].status).toBe("passed");
+    // The one notification the run sent is the evidence this check grades.
+    expect(byId["notification-post-accepted"]).toMatchObject({
+      status: "passed",
+      details: { status: 202 },
     });
   });
 });

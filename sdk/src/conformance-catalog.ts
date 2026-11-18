@@ -125,7 +125,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-client-handshake": {
     title: "Modern Client Handshake",
     description:
-      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+      "The official client negotiates the modern revision and receives the server capabilities.",
   },
   "modern-server-discover": {
     title: "Modern Server Discovery",
@@ -261,7 +261,7 @@ export const APPS_CHECK_CATALOG = {
   "ui-listed-resources-valid": {
     title: "Listed UI Resources Valid",
     description:
-      "UI resources returned by resources/list use ui:// URIs and the MCP Apps HTML MIME type.",
+      "UI resources returned by resources/list use ui:// URIs. The MCP Apps HTML MIME type is recommended there and reported as a warning when missing.",
   },
   "ui-resources-readable": {
     title: "UI Resources Readable",

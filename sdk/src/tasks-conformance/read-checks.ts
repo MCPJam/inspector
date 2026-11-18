@@ -1,7 +1,9 @@
 import { TASKS_READINESS_CATALOG } from "../conformance-catalog.js";
 
+import { isRequestTimeoutError } from "../conformance-timeout.js";
 import {
   isRecord,
+  errorCode,
   errorMessage,
   passed,
   failed,
@@ -118,14 +120,32 @@ export async function runReadChecks(context: TaskCheckContext) {
               )
         );
       } catch (error) {
+        // A JSON-RPC error from tasks/result is the CORRECT answer when the
+        // underlying request ended in one: "If the underlying request resulted
+        // in a JSON-RPC error, `tasks/result` MUST return that same JSON-RPC
+        // error" (basic/utilities/tasks, Result Retrieval). Only a task that
+        // reports `completed` promises a result, so only there is an error a
+        // failure. A request that never got an answer is not a forwarded error.
+        const forwardedCode =
+          finalTask.status !== "completed" && !isRequestTimeoutError(error)
+            ? errorCode(error)
+            : undefined;
         checks.push(
-          failed(
-            "tasks-inline-result",
-            Date.now() - stepStartedAt,
-            `legacy tasks/result failed: ${errorMessage(error)}`,
-            undefined,
-            error
-          )
+          forwardedCode !== undefined
+            ? passed("tasks-inline-result", Date.now() - stepStartedAt, {
+                status: finalTask.status,
+                forwardedError: {
+                  code: forwardedCode,
+                  message: errorMessage(error),
+                },
+              })
+            : failed(
+                "tasks-inline-result",
+                Date.now() - stepStartedAt,
+                `legacy tasks/result failed: ${errorMessage(error)}`,
+                undefined,
+                error
+              )
         );
       }
     }

@@ -73,7 +73,7 @@ export const APPS_CHECK_METADATA: Record<
     category: "resources",
     title: "Listed UI Resources Valid",
     description:
-      "UI resources returned by resources/list use ui:// URIs and the MCP Apps HTML MIME type.",
+      "UI resources returned by resources/list use ui:// URIs. The MCP Apps HTML MIME type is recommended there and reported as a warning when missing.",
   },
   "ui-resources-readable": {
     id: "ui-resources-readable",
@@ -833,6 +833,13 @@ export class MCPAppsConformanceTest {
               );
             } else {
               const violations: string[] = [];
+              // The declaration's MIME type is a SHOULD: the UIResource
+              // interface says `mimeType` "SHOULD be
+              // `text/html;profile=mcp-app`" (apps.mdx, UI Resource Format).
+              // The MUST binds the fetched content, which
+              // `ui-resource-contents-valid` grades. A different value here is
+              // reported beside the verdict and never fails it.
+              const warnings: string[] = [];
 
               for (const resource of listedUiResources) {
                 if (!resource.uri.startsWith("ui://")) {
@@ -841,8 +848,8 @@ export class MCPAppsConformanceTest {
                   );
                 }
                 if (resource.mimeType !== MCP_UI_RESOURCE_MIME_TYPE) {
-                  violations.push(
-                    `Listed UI resource ${resource.uri} uses mimeType "${resource.mimeType ?? "<missing>"}" instead of "${MCP_UI_RESOURCE_MIME_TYPE}"`,
+                  warnings.push(
+                    `Listed UI resource ${resource.uri} declares mimeType "${resource.mimeType ?? "<missing>"}"; the spec recommends "${MCP_UI_RESOURCE_MIME_TYPE}"`,
                   );
                 }
               }
@@ -859,6 +866,8 @@ export class MCPAppsConformanceTest {
                         (resource) => resource.uri,
                       ),
                     },
+                    undefined,
+                    warnings,
                   ),
                 );
               } else {
@@ -872,6 +881,7 @@ export class MCPAppsConformanceTest {
                         (resource) => resource.uri,
                       ),
                     },
+                    warnings,
                   ),
                 );
               }

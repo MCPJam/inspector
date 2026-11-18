@@ -45,8 +45,8 @@ import {
   buildUnauthenticatedMcpRequest,
   runUnauthenticatedChallengeCheck,
   runResourceMetadataChallengeCheck,
-  runStaleSessionRejectionCheck,
 } from "./checks/oauth-server-obligations.js";
+import { runStaleSessionRejectionCheck } from "./checks/oauth-stale-session.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { withEphemeralClient, listTools } from "../operations.js";
 import {

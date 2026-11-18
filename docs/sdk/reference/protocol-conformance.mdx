@@ -75,9 +75,9 @@ requested. The check calls it without a log level and with `debug`. The
 `MCPConformanceTest`.
 
 Logs on the request without a level fail `modern-logs-require-log-level`.
-A successful supplied tool call that returns no requested logs fails with
-"the supplied tool produced no logs." A missing `logProbe` or an unsuccessful
-probe call reports `could-not-run` instead. The runner never picks tools to call
+A supplied tool that stays silent on both calls passes: with a log level,
+sending logs is optional. A missing `logProbe` or an unsuccessful probe call
+reports `could-not-run` instead. The runner never picks tools to call
 on your behalf.
 
 From the CLI, pass `--log-probe-tool <name>`, plus `--log-probe-args <json>` and

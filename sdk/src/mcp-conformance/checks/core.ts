@@ -233,7 +233,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
     category: "core",
     title: "Modern Client Handshake",
     description:
-      "The official client negotiates the modern revision and receives the server identity and capabilities.",
+      "The official client negotiates the modern revision and receives the server capabilities.",
     async run(ctx) {
       const startedAt = Date.now();
       const info = ctx.initializationInfo;
@@ -258,9 +258,13 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
       if (!info.serverCapabilities) {
         problems.push("server capabilities are missing");
       }
-      if (!info.serverVersion?.name) {
-        problems.push("server identity (name) is missing");
-      }
+      // Server identity is NOT a problem when absent: the spec says servers
+      // SHOULD include `io.modelcontextprotocol/serverInfo` (basic/index#meta,
+      // server/discover#discoverresult), never MUST. Whether it arrived is
+      // reported in the details below.
+      const serverIdentityPresent =
+        typeof info.serverVersion?.name === "string" &&
+        info.serverVersion.name.length > 0;
 
       if (problems.length > 0) {
         return failedResult(
@@ -270,6 +274,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
           {
             protocolVersion: info.protocolVersion,
             serverVersion: info.serverVersion as Record<string, unknown>,
+            serverIdentityPresent,
           },
         );
       }
@@ -279,6 +284,7 @@ export const CORE_CHECKS: MCPClientCheckDefinition[] = [
         transport: info.transport,
         serverCapabilities: info.serverCapabilities as Record<string, unknown>,
         serverVersion: info.serverVersion as Record<string, unknown>,
+        serverIdentityPresent,
       });
     },
   },

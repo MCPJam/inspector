@@ -156,11 +156,32 @@ describe("client readiness advice", () => {
     );
 
     expect(deprecated?.specStrength).toBe("Deprecation Notice");
-    expect(deprecated?.message).toContain(
-      "Server advertises superseded functionality: logging is deprecated as of protocol version 2026-07-28; resources.subscribe"
+    expect(deprecated?.message).toBe(
+      "Server advertises superseded functionality: logging is deprecated as of protocol version 2026-07-28"
     );
     expect(deprecated?.message).not.toContain("logging/setLevel");
-    expect(deprecated?.message).toMatch(/subscriptions\/listen/);
+    // resources.subscribe is current in 2026-07-28: it advertises resource
+    // updates delivered through subscriptions/listen.
+    expect(deprecated?.message).not.toContain("resources.subscribe");
+    expect(deprecated?.details).toEqual({
+      findings: ["logging is deprecated as of protocol version 2026-07-28"],
+    });
+  });
+
+  it("does not treat resources.subscribe as deprecated on a modern server", async () => {
+    const capabilities = {
+      resources: { subscribe: true, listChanged: true },
+    };
+    const ctx = clientContext({
+      protocolVersion: "2026-07-28",
+      serverCapabilities: capabilities,
+    });
+    ctx.config.readinessIds = ["readiness-deprecated-feature-use"];
+    const warnings = await collectClientReadiness(
+      ctx,
+      surface({ serverCapabilities: capabilities })
+    );
+    expect(warnings).toEqual([]);
   });
 
   it("does not warn about logging on a legacy revision", async () => {

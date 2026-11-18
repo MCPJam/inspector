@@ -85,10 +85,79 @@ describe("modern logging unavailable probes", () => {
           status: "skipped",
           skipReason: "could-not-run",
         });
-        expect(check.error?.message).not.toContain(
-          "the supplied tool produced no logs"
-        );
       });
     }
   }
+});
+
+describe("modern-logs-require-log-level verdicts", () => {
+  const LOG_LEVEL_META = "io.modelcontextprotocol/logLevel";
+
+  function logged(id: unknown) {
+    const frames = [
+      {
+        jsonrpc: "2.0",
+        method: "notifications/message",
+        params: { level: "info", data: "working" },
+      },
+      { jsonrpc: "2.0", id, result: { resultType: "complete", content: [] } },
+    ];
+    return new Response(
+      frames
+        .map((frame) => `event: message
+data: ${JSON.stringify(frame)}
+
+`)
+        .join(""),
+      { headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
+
+  // server/utilities/logging#per-request-log-level: with the field present the
+  // server MAY send notifications/message. Emitting none is conformant.
+  it("passes a server that emits no logs after the client opts in", async () => {
+    const levels: unknown[] = [];
+    const check = await runCheck(
+      "modern-logs-require-log-level",
+      async (_input, init) => {
+        const body = JSON.parse(String(init?.body));
+        levels.push(body.params?._meta?.[LOG_LEVEL_META]);
+        return completed(body.id);
+      }
+    );
+    expect(levels).toEqual([undefined, "debug"]);
+    expect(check.status).toBe("passed");
+    expect(check.error).toBeUndefined();
+    expect(check.details).toMatchObject({
+      logNotificationCount: 0,
+      logNotificationCountWithLevel: 0,
+    });
+  });
+
+  it("passes a server that logs only after the client opts in", async () => {
+    const check = await runCheck(
+      "modern-logs-require-log-level",
+      async (_input, init) => {
+        const body = JSON.parse(String(init?.body));
+        return body.params?._meta?.[LOG_LEVEL_META]
+          ? logged(body.id)
+          : completed(body.id);
+      }
+    );
+    expect(check.status).toBe("passed");
+    expect(check.details).toMatchObject({ logNotificationCountWithLevel: 1 });
+  });
+
+  // The MUST NOT half is unchanged: logs on a request with no level fail.
+  it("fails a server that logs on a request that carried no log level", async () => {
+    const check = await runCheck(
+      "modern-logs-require-log-level",
+      async (_input, init) => logged(JSON.parse(String(init?.body)).id)
+    );
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain(
+      "for a request that carried no modern log level"
+    );
+    expect(check.details).toMatchObject({ logNotificationCount: 1 });
+  });
 });

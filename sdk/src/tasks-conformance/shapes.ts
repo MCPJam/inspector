@@ -56,8 +56,19 @@ export function validateTaskTtlShape(
       violations.push("extension task pollIntervalMs must be a number");
     }
   } else {
-    if (task.ttl !== undefined && typeof task.ttl !== "number") {
-      violations.push("legacy task ttl must be a number when present");
+    // 2025-11-25 `Task.ttl` is `number | null` and not optional, and
+    // "Receivers MUST include the actual `ttl` duration (or `null` for
+    // unlimited) in `tasks/get` responses" (basic/utilities/tasks, TTL and
+    // Resource Management). So `null` is a valid value and absence is not.
+    const ttl = task.ttl;
+    if (!(ttl === null || typeof ttl === "number")) {
+      violations.push(
+        ttl === undefined
+          ? "legacy task carries no ttl; tasks/get must include it as a number, or null for unlimited"
+          : `legacy task ttl must be a number or null (got ${JSON.stringify(
+              ttl
+            )})`
+      );
     }
     if (
       task.pollInterval !== undefined &&

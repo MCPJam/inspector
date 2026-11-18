@@ -170,6 +170,116 @@ describe("MCPAppsConformanceTest", () => {
     }
   });
 
+  // apps.mdx, UI Resource Format: the declaration's `mimeType` "SHOULD be
+  // `text/html;profile=mcp-app`", while the resources/read content "MUST be"
+  // that value. Only the fetched content can fail a check.
+  describe("listed UI resource MIME type", () => {
+    function serve(options: { listedMimeType?: string; readMimeType: string }) {
+      return jest
+        .spyOn(operations, "withEphemeralClient")
+        .mockImplementation(async (_config, fn) => {
+          const mockManager = {
+            listTools: jest.fn().mockResolvedValue({
+              tools: [
+                {
+                  name: "ui_tool",
+                  inputSchema: { type: "object" },
+                  _meta: { ui: { resourceUri: CONFORMANCE_UI_RESOURCE_URI } },
+                },
+              ],
+            }),
+            listResources: jest.fn().mockResolvedValue({
+              resources: [
+                {
+                  name: "UI Dashboard",
+                  uri: CONFORMANCE_UI_RESOURCE_URI,
+                  ...(options.listedMimeType === undefined
+                    ? {}
+                    : { mimeType: options.listedMimeType }),
+                },
+              ],
+            }),
+            readResource: jest.fn().mockResolvedValue({
+              contents: [
+                {
+                  uri: CONFORMANCE_UI_RESOURCE_URI,
+                  mimeType: options.readMimeType,
+                  text: "<!DOCTYPE html><html><body>App</body></html>",
+                },
+              ],
+            }),
+          } as any;
+
+          return fn(mockManager, "__apps_conformance__");
+        });
+    }
+
+    async function run() {
+      const result = await new MCPAppsConformanceTest({
+        url: "https://example.com/mcp",
+        timeout: 10_000,
+        checkIds: ["ui-listed-resources-valid", "ui-resource-contents-valid"],
+      }).run();
+      return Object.fromEntries(result.checks.map((check) => [check.id, check]));
+    }
+
+    for (const listedMimeType of ["text/html", undefined]) {
+      it(`passes a listing that declares ${listedMimeType ?? "no mimeType"}, with a warning`, async () => {
+        const spy = serve({
+          listedMimeType,
+          readMimeType: "text/html;profile=mcp-app",
+        });
+        try {
+          const checks = await run();
+          expect(checks["ui-listed-resources-valid"]).toMatchObject({
+            status: "passed",
+            warnings: [
+              `Listed UI resource ${CONFORMANCE_UI_RESOURCE_URI} declares mimeType "${listedMimeType ?? "<missing>"}"; the spec recommends "text/html;profile=mcp-app"`,
+            ],
+          });
+          expect(checks["ui-resource-contents-valid"].status).toBe("passed");
+        } finally {
+          spy.mockRestore();
+        }
+      });
+    }
+
+    it("passes without a warning when the listing declares the recommended type", async () => {
+      const spy = serve({
+        listedMimeType: "text/html;profile=mcp-app",
+        readMimeType: "text/html;profile=mcp-app",
+      });
+      try {
+        const checks = await run();
+        expect(checks["ui-listed-resources-valid"].status).toBe("passed");
+        expect(checks["ui-listed-resources-valid"].warnings).toBeUndefined();
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it("still fails the fetched content when its MIME type is not the required one", async () => {
+      const spy = serve({
+        listedMimeType: "text/html;profile=mcp-app",
+        readMimeType: "text/html",
+      });
+      try {
+        const checks = await run();
+        expect(checks["ui-listed-resources-valid"].status).toBe("passed");
+        expect(checks["ui-resource-contents-valid"]).toMatchObject({
+          status: "failed",
+          details: {
+            violations: [
+              `${CONFORMANCE_UI_RESOURCE_URI} contents[0] returned mimeType "text/html" instead of "text/html;profile=mcp-app"`,
+            ],
+          },
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
   it("reports the deprecated flat ui/resourceUri as a deprecation notice, not a warning", async () => {
     // apps.mdx: the flat field "is deprecated" and "will be removed before
     // GA", with no SHOULD or MAY behind it.
