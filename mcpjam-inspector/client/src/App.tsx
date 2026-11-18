@@ -30,6 +30,8 @@ import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
+import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
+import { useLauncherAttach } from "./hooks/use-launcher-attach";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -3815,6 +3817,38 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
+  // Dev commands (launchInspector, the Vite plugin) attach their server here.
+  const launcherSignedIn = Boolean(workOsUser) && isCloudSyncActive;
+  useLauncherAttach({
+    enabled: !HOSTED_MODE,
+    // The developer's sign-in, not whether this tab has loaded: a signed-in
+    // tab still loading its project must not ask them to sign in.
+    signedIn: Boolean(workOsUser),
+    // Only once the project's saved servers have loaded: before that a
+    // same-name server the project already has is invisible to the tab.
+    project:
+      launcherSignedIn && areServersHydrated && activeProject?.sharedProjectId
+        ? { id: activeProject.sharedProjectId, name: activeProject.name }
+        : null,
+    servers: projectServers,
+    selectedServer: appState.selectedServer,
+    saveAndConnect: (formData, onSaved) =>
+      handleConnect(formData, {
+        suppressSuccessToast: true,
+        onConfigSaved: onSaved,
+      }),
+    connectSaved: (serverName) =>
+      reconnectServerWithResult(serverName, { suppressSuccessToast: true }),
+    saveWithoutConnecting: async (formData) =>
+      (await saveServerConfigWithoutConnecting(formData)) !== false,
+    removeServer: (serverName) => handleRemoveServer(serverName),
+    disconnectServer: (serverName) => handleDisconnect(serverName),
+    selectServer: setSelectedServer,
+    requestSignIn: () => {
+      captureAppSignInReturnPath();
+      void signIn();
+    },
+  });
   // MCPJam UI tools: registered in both modes; the always-available side
   // panel drives whichever inspector surface is open, so registration lives
   // at the App root. Disabled on the standalone scenario chat route: its end
@@ -6875,6 +6909,7 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />
+            <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}
