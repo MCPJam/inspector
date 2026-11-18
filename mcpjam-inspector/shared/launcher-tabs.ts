@@ -71,8 +71,13 @@ function isLauncherTab(tab: string): tab is LauncherTab {
   return launcherTabs.has(tab);
 }
 
-/** The tab a name opens, or undefined when the Inspector has no such tab. */
+/**
+ * The tab a name opens, or undefined when the Inspector has no such tab.
+ * A leading `#` or `/` is ignored, as the client ignores it when it opens
+ * the launcher's initial tab, so names that already worked keep working.
+ */
 export function resolveLauncherTab(tab: string): LauncherTab | undefined {
-  const resolved = aliasTargets.get(tab) ?? tab;
+  const name = tab.replace(/^[#/]+/, "");
+  const resolved = aliasTargets.get(name) ?? name;
   return isLauncherTab(resolved) ? resolved : undefined;
 }

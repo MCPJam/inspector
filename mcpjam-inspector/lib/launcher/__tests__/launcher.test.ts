@@ -109,6 +109,19 @@ describe("launchInspector", () => {
     expect(inspector.url).toMatch(/&tab=tools$/);
   });
 
+  it("accepts a tab written with a leading # or /, as the Inspector does", async () => {
+    for (const defaultTab of ["#playground", "/playground"]) {
+      spawnMock.mockReset();
+      fakeSpawn();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true }));
+
+      const inspector = await launchInspector({ defaultTab });
+
+      expect(spawnOptions().env.MCP_INITIAL_TAB).toBe("playground");
+      expect(inspector.url).toMatch(/&tab=playground$/);
+    }
+  });
+
   it("rejects a tab the Inspector does not have, before starting it", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", fetchMock);
