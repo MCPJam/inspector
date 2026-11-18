@@ -26,6 +26,7 @@ import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import { logger } from "../../utils/logger.js";
 import { ensureLiveBrowserSession } from "../browserd/live-session-deps.js";
 import { getInternalBackendConfig } from "../internal-backend.js";
+import { runConnectionJob } from "../server-connection-worker.js";
 import { prepareAuthorization } from "../server-connection-authorize.js";
 import {
   parseJsonObject,
@@ -208,10 +209,6 @@ export function liveReviewerSignInDeps(input: {
   let reservationId: string | undefined;
   let sandboxRowId: string | undefined;
   let requestId = "";
-  const redirectUri = new URL(
-    "/oauth/callback",
-    MCPJAM_HOSTED_ORIGIN,
-  ).toString();
 
   return {
     record: (write) => recordReviewerAttempt(lease, attemptId, write),
@@ -309,10 +306,20 @@ export function liveReviewerSignInDeps(input: {
       prepare: async (signal) => {
         const created = await leasePost(lease, CONNECTIONS);
         requestId = String(created.requestId);
+        // The preview backend cannot call back into a local Inspector. This run
+        // already holds the request id needed to wake the leased worker.
+        if (process.env.MCPJAM_LOCAL_DOORBELL_MS && created.status === "discovering") {
+          await runConnectionJob(requestId);
+        }
         const claim = await retrying(
           () => leasePost(lease, `${CONNECTIONS}/claim`, { requestId }),
           { code: "INVALID_STATE", waitMs: CLAIM_WAIT_MS, signal },
         );
+        // The backend validates the callback against its own app origin. Use the
+        // value from this leased claim, with the hosted default for older backends.
+        const redirectUri = typeof claim.callbackUrl === "string"
+          ? claim.callbackUrl
+          : new URL("/oauth/callback", MCPJAM_HOSTED_ORIGIN).toString();
         const prepared = await prepareAuthorization({
           serverUrl: String(claim.serverUrl),
           redirectUri,
@@ -344,10 +351,13 @@ export function liveReviewerSignInDeps(input: {
       },
       complete: async (callback, signal) => {
         try {
-          await leasePost(lease, `${CONNECTIONS}/complete`, {
+          const completed = await leasePost(lease, `${CONNECTIONS}/complete`, {
             requestId,
             ...callback,
           });
+          if (process.env.MCPJAM_LOCAL_DOORBELL_MS && completed.status === "validating") {
+            await runConnectionJob(requestId);
+          }
           const deadline = Date.now() + CONNECT_WAIT_MS;
           for (;;) {
             const status = await leasePost(lease, `${CONNECTIONS}/status`, {

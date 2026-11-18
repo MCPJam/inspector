@@ -101,6 +101,80 @@ describe("collectConnectedServerDoctorState", () => {
     });
     expect(result.errors).toEqual([]);
   });
+
+  it("keeps the parts already listed when the signal ends collection", async () => {
+    const manager = createMockManager({
+      listPrompts: jest.fn().mockReturnValue(new Promise(() => undefined)),
+    });
+    const controller = new AbortController();
+
+    const collecting = collectConnectedServerDoctorState(manager, "srv", {
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    const result = await collecting;
+
+    expect(result.checks.tools.status).toBe("ok");
+    expect(result.tools).toEqual([{ name: "echo", description: "Echo input" }]);
+    expect(result.checks.prompts).toEqual({
+      status: "error",
+      detail: "Listing did not finish before the collection deadline.",
+    });
+    expect(result.prompts).toEqual([]);
+  });
+
+  it("cancels the list requests still in flight when the signal fires", async () => {
+    const received: AbortSignal[] = [];
+    const untilCancelled = (
+      _serverId: string,
+      _params: unknown,
+      options?: { signal?: AbortSignal }
+    ) =>
+      new Promise((_resolve, reject) => {
+        const signal = options?.signal;
+        if (!signal) throw new Error("the list request got no signal");
+        received.push(signal);
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    const manager = createMockManager({
+      listTools: jest.fn(untilCancelled),
+      listResources: jest.fn(untilCancelled),
+      listPrompts: jest.fn(untilCancelled),
+      listResourceTemplates: jest.fn(untilCancelled),
+      getSkillsSupport: jest.fn().mockReturnValue({
+        declared: true,
+        advertised: true,
+        directoryRead: false,
+        active: true,
+      }),
+      listServerSkills: jest.fn(untilCancelled),
+    });
+    const controller = new AbortController();
+
+    const collecting = collectConnectedServerDoctorState(manager, "srv", {
+      signal: controller.signal,
+      verifySkills: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(received).toHaveLength(5);
+    expect(received.some((signal) => signal.aborted)).toBe(false);
+    controller.abort();
+    const result = await collecting;
+
+    expect(received.every((signal) => signal.aborted)).toBe(true);
+    const stopped = {
+      status: "error",
+      detail: "Listing did not finish before the collection deadline.",
+    };
+    expect(result.checks.tools).toEqual(stopped);
+    expect(result.checks.resources).toEqual(stopped);
+    expect(result.checks.prompts).toEqual(stopped);
+    expect(result.checks.resourceTemplates).toEqual(stopped);
+    expect(result.checks.skills).toEqual(stopped);
+  });
 });
 
 describe("the skills check", () => {
@@ -249,6 +323,22 @@ describe("the skills check", () => {
     expect(result.checks.skills.status).toBe("ok");
     expect(result.checks.skills.detail).toContain("5 of 8 sampled and verified");
     expect(result.skills).toHaveLength(8);
+  });
+
+  it("lists skills without reading any when verification is off", async () => {
+    const manager = await manySkillsManager(2);
+
+    const result = await collectConnectedServerDoctorState(manager, "srv", {
+      verifySkills: false,
+    });
+
+    expect(result.checks.skills).toEqual({
+      status: "ok",
+      detail: "2 skills discovered.",
+    });
+    expect(result.skills).toHaveLength(2);
+    expect(manager.getServerSkillResult).not.toHaveBeenCalled();
+    expect(manager.readResource).not.toHaveBeenCalled();
   });
 
   it("does not claim a sample when it verified the whole catalog", async () => {

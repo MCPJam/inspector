@@ -79,6 +79,9 @@ export async function playgroundCredentialRefusal(args: {
   harnessId: string;
   bearer?: string;
   projectId?: string;
+  /** The model the turn will run, so one the account no longer offers is
+   *  refused here, before a box, not after it. */
+  modelId?: string;
   signal?: AbortSignal;
 }): Promise<string | null> {
   try {
@@ -86,6 +89,7 @@ export async function playgroundCredentialRefusal(args: {
       harness: getHarnessAdapter(args.harnessId),
       ...(args.bearer ? { bearer: args.bearer } : {}),
       ...(args.projectId ? { projectId: args.projectId } : {}),
+      ...(args.modelId ? { modelId: args.modelId } : {}),
       ...(args.signal ? { signal: args.signal } : {}),
     });
     return null;

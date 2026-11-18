@@ -9,6 +9,10 @@
  */
 
 import {
+  authorizationServerMetadataUrls,
+  MCP_AUTHORIZATION_SERVER_METADATA_FORMS,
+} from "../metadata-candidates.js";
+import {
   describeAuthenticatedRequestFailure,
   describeTokenRequestFailure,
 } from "./shared/response-error.js";
@@ -134,46 +138,10 @@ export function buildActions_2025_11_25(
 // Helper: Build authorization server metadata URLs to try (RFC 8414 + OIDC Discovery)
 // 2025-11-25 spec: Path insertion first, then path appending (NO root fallback for paths)
 function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
-  const url = new URL(authServerUrl);
-  const urls: string[] = [];
-
-  if (url.pathname === "/" || url.pathname === "") {
-    // Root path - standard endpoints
-    urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString()
-    );
-    urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString()
-    );
-  } else {
-    // Path-aware discovery
-    const pathname = url.pathname.endsWith("/")
-      ? url.pathname.slice(0, -1)
-      : url.pathname;
-
-    // 2025-11-25 spec: OAuth path insertion, OIDC path insertion, OIDC path appending
-    // Key difference: NO root fallback
-    urls.push(
-      new URL(
-        `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin
-      ).toString()
-    );
-    urls.push(
-      new URL(
-        `/.well-known/openid-configuration${pathname}`,
-        url.origin
-      ).toString()
-    );
-    urls.push(
-      new URL(
-        `${pathname}/.well-known/openid-configuration`,
-        url.origin
-      ).toString()
-    );
-  }
-
-  return urls;
+  return authorizationServerMetadataUrls(
+    authServerUrl,
+    MCP_AUTHORIZATION_SERVER_METADATA_FORMS.current
+  ).map(({ url }) => url);
 }
 
 // Factory function to create the 2025-11-25 state machine

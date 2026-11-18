@@ -10,7 +10,7 @@ import {
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { RoleSegment } from "@/components/evals/scorer-role-control";
+import { RoleSegmentGroup } from "@/components/evals/scorer-role-control";
 import {
   roleOfPredicate,
   withPredicateRole,
@@ -68,7 +68,7 @@ export const NonBlockingChip = () => (
     tone="outline"
     title="Shown on the result. Never fails the iteration."
   >
-    Non-blocking
+    Advisory
   </StepChip>
 );
 
@@ -122,12 +122,7 @@ export function StepMenu({
   );
 }
 
-const ROLE_TITLE = {
-  required: "If this fails, the run fails and later steps are skipped.",
-  advisory: "If this fails, you get a warning. The run can still pass.",
-} as const;
-
-/** "If this misses": Blocking / Non-blocking. */
+/** "If this misses": the shared Required / Advisory switch. */
 export function RoleControl({
   predicate,
   onChange,
@@ -138,40 +133,23 @@ export function RoleControl({
   readOnly: boolean;
 }) {
   const allowed = rolesForPredicateKind(predicate.type);
-  const role = roleOfPredicate(predicate);
-  const option = (value: "required" | "advisory", label: string) => {
-    const disabled = readOnly || !allowed.includes(value);
-    return (
-      <span
-        title={
-          value === "required" && !allowed.includes(value)
-            ? "This assertion can only warn."
-            : ROLE_TITLE[value]
-        }
-      >
-        <RoleSegment
-          pressed={role === value}
-          disabled={disabled}
-          onClick={() => onChange(withPredicateRole(predicate, value))}
-        >
-          {label}
-        </RoleSegment>
-      </span>
-    );
-  };
+  const warnOnly = !allowed.includes("required");
   return (
-    <div className="space-y-1">
+    <div
+      className="space-y-1"
+      title={warnOnly ? "This assertion can only warn." : undefined}
+    >
       <Label className="text-xs font-medium text-muted-foreground">
         If this misses
       </Label>
-      <div
-        role="group"
-        aria-label="If this assertion misses"
-        className="inline-flex rounded-md border border-border/60"
-      >
-        {option("required", "Blocking")}
-        {option("advisory", "Non-blocking")}
-      </div>
+      <RoleSegmentGroup
+        value={roleOfPredicate(predicate)}
+        disabledRoles={
+          readOnly ? ["required", "advisory"] : warnOnly ? ["required"] : []
+        }
+        ariaLabel="If this assertion misses"
+        onChange={(role) => onChange(withPredicateRole(predicate, role))}
+      />
     </div>
   );
 }

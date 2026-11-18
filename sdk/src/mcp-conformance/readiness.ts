@@ -45,8 +45,7 @@ const DEPRECATED_MODERN_CAPABILITIES: Array<{
 }> = [
   {
     key: "logging",
-    advice:
-      "the logging capability advertises the removed logging/setLevel handshake; modern clients carry the log level per request",
+    advice: "logging is deprecated as of protocol version 2026-07-28",
   },
 ];
 

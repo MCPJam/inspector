@@ -495,6 +495,8 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format; `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
+In human format, `eval run --wait` and `eval status` also print which account each server used, one line per server, such as `Account on orders-api: test-automation-1 (project)`. In JSON, each run carries an `accounts` list instead. To run a suite as a test user from CI, see [Run evals as test users](/inspector/eval-test-users).
+
 Use `--wait-timeout <ms>` to replace the 35-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead, or `--reporter html` for a self-contained HTML page (decision summary + failures only; traces, parity, and history are paid tiers not included here). When `--reporter` is present, the same report is also written to stdout.
 
 <Warning>

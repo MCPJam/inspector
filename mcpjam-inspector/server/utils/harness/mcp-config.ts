@@ -67,6 +67,12 @@ export interface HarnessProxyServerInput {
    * is what makes a fully-off run byte-identical to a pre-evidence one.
    */
   evidenceTurnId?: string;
+  /**
+   * Open a new connection for every request. Box egress pins the credential it
+   * injects to the outbound connection, so an agent that outlives a turn must
+   * not carry the previous turn's session grant on a reused connection.
+   */
+  closeConnection?: true;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -139,9 +145,11 @@ export function buildHarnessProxyMcpJson(
       ...(server.sealedProxyToken ||
       server.proxyToken ||
       server.scopeStepUpCorrelationId ||
-      server.evidenceTurnId
+      server.evidenceTurnId ||
+      server.closeConnection
         ? {
             headers: {
+              ...(server.closeConnection ? { Connection: "close" } : {}),
               ...(server.sealedProxyToken
                 ? { "X-MCPJam-Proxy-Token": server.sealedProxyToken }
                 : server.proxyToken

@@ -94,6 +94,8 @@ const scenariosSeen = (text: string) => /SCENARIOS=([A-Z,]*)/.exec(text)?.[1] ??
 const MOCKS: Partial<Record<string, { script: string; env: Record<string, string> }>> = {
   // MCPJam's host tools reach a non-Codex runtime as plain functions.
   "openai-responses": { script: "mock-responses.mjs", env: { MOCK_PROBE_NAMESPACE: "" } },
+  // Under whatever prefix the runtime's MCP client gives the relay's tools.
+  "anthropic-messages": { script: "mock-anthropic.mjs", env: { MOCK_PROBE_SUFFIX: "mcp__probe__echo" } },
 };
 
 // A CI log, not the server's: plain lines on stdout, failures on stderr.

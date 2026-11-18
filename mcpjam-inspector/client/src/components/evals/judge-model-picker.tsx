@@ -132,6 +132,8 @@ export function JudgeModelPicker({
       requireOrgKeys={requireOrgKeys}
       onManageOrgProviders={onManageOrgProviders}
       onAddProvider={onAddProvider}
+      // A judge grades outside the client, so no runtime applies.
+      harnessScope="not-client-run"
       analyticsLocation="eval_judge"
       rowTag={(model) =>
         currentIneligible &&

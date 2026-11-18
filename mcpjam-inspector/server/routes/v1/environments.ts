@@ -43,7 +43,7 @@ import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
 import type { RequestedModelSelection } from "@mcpjam/sdk";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
-import { requireProjectIdArg } from "./convex-id-param.js";
+import { looksLikeConvexId, requireProjectIdArg } from "./convex-id-param.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
@@ -452,6 +452,12 @@ const skillSelectionSchema = z.strictObject({
 
 const pluginVersionIdsSchema = z.array(z.string().trim().min(1)).min(1);
 
+/** A body field that must name one Convex document. */
+const convexIdSchema = z
+  .string()
+  .trim()
+  .refine(looksLikeConvexId, "must be an id");
+
 /**
  * `.min(1)` for the same reason every other selection has it: the backend
  * rejects an empty selection with "clear the selection instead", so `[]` is a
@@ -571,17 +577,22 @@ const updateEnvironmentSchema = z
  * Deliberately the create schema's field set: an ad-hoc environment IS an
  * environment, and a second vocabulary for the same axes is how the two
  * descriptions drift.
+ *
+ * The id fields are shape-checked here because Convex rejects an id that
+ * doesn't parse as `v.id(...)` before the mutation runs, and production
+ * redacts that to the same "Server Error" a crash produces, which the write
+ * translator can only answer with a 500.
  */
 const ensureAdhocEnvironmentSchema = z.strictObject({
-  hostId: z.string().trim().min(1),
-  serverAttachmentId: z.string().trim().min(1).optional(),
+  hostId: convexIdSchema,
+  serverAttachmentId: convexIdSchema.optional(),
   modelId: z.string().trim().min(1).optional(),
   /** See the create schema: the saved selection behind `modelId`. */
   modelSelection: requestedModelSelectionSchema.optional(),
   skillSelection: skillSelectionSchema.optional(),
   secretSelection: secretSelectionSchema.optional(),
   pluginVersionIds: pluginVersionIdsSchema.optional(),
-  sandboxImageId: z.string().trim().min(1).optional(),
+  sandboxImageId: convexIdSchema.optional(),
 }).superRefine(refineSelectionMatchesModel);
 
 /**
@@ -824,7 +835,10 @@ environments.post("/projects/:projectId/environments", async (c) => {
 environments.post(
   "/projects/:projectId/environments/ensure-adhoc",
   async (c) => {
-    const projectId = c.req.param("projectId");
+    const projectId = requireProjectIdArg(
+      c.req.param("projectId"),
+      "v1.environments",
+    );
     const body = pinSelectionModel(
       parseWithSchema(ensureAdhocEnvironmentSchema, await readJsonObjectBody(c)),
     );

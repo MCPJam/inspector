@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "@/lib/credential-refusal";
 import { authorizationFlowDigest } from "@/lib/oauth/flow-digest";
 import {
   cancelPendingChatScopeStepUpForCallback,
@@ -127,6 +128,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./use-project-client-config-sync-pending";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useProjects";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import { writeCliSignInReturnPath } from "@/lib/cli-signin-return-path";
 import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
@@ -152,6 +154,7 @@ import type { ConnectionDefaults } from "@/shared/connection-defaults";
 export interface HostedServerWriteTarget {
   projectId: string;
   serverId: string;
+  publishedPluginId?: string | null;
 }
 
 function extractRequestHeaders(
@@ -732,6 +735,7 @@ export type EnsureServerConnectionStatus =
 export interface EnsureServerConnectionResult {
   status: EnsureServerConnectionStatus;
   error?: string;
+  credentialFailure?: string;
 }
 
 interface ReconnectServerInternalOptions {
@@ -858,6 +862,7 @@ export interface EnsureServersReadyResult {
   readyServerNames: string[];
   missingServerNames: string[];
   failedServerNames: string[];
+  failedServerErrors?: Record<string, string>;
   reauthServerNames: string[];
 }
 
@@ -1956,6 +1961,7 @@ export function useServerState({
         projectId: string;
         serverId?: string | null;
         exactServerId?: boolean;
+        publishedPluginId?: string | null;
       },
     ): Promise<ServerSyncResult> => {
       const latestUseLocalFallback = useLocalFallbackRef.current;
@@ -2297,6 +2303,12 @@ export function useServerState({
           const updatePayload = {
             serverId: serverIdToUpdate,
             ...payload,
+            ...(target?.publishedPluginId !== undefined
+              ? {
+                  projectId: latestProjectId,
+                  publishedPluginId: target.publishedPluginId,
+                }
+              : {}),
             ...(hasClientSecretValue ? { clientSecret } : {}),
             ...(clearClientSecret ? { clearClientSecret: true } : {}),
             ...(clearXaaConfig ? { clearXaaConfig: true } : {}),
@@ -2695,7 +2707,7 @@ export function useServerState({
               : `Cannot start: failed to save server "${serverName}" to the project.`,
           );
         }
-        injectHostedServerMapping(serverName, synced.serverId);
+        injectHostedServerMapping(serverName, synced.serverId, synced.projectId);
         out.push({ serverName, serverId: synced.serverId });
       }
       return out;
@@ -2740,14 +2752,11 @@ export function useServerState({
   );
 
   /**
-   * The Convex row a rename should update in place, found the way
-   * `removeServerFromConvex` finds the row it deletes. A rename used to delete
-   * that row and create a new one, losing everything stored under the old id:
-   * the client secret (the edit form never holds it), hosted OAuth tokens, app
-   * views. Undefined where the old path had no row to delete, so those renames
-   * keep their current behavior.
+   * Resolve the active project's Convex row for an in-place edit. The server
+   * snapshot includes sibling projects, which can have servers with the same
+   * name. Updating by id preserves stored secrets, OAuth tokens and app views.
    */
-  const resolveRenameWriteTarget = useCallback(
+  const resolveProjectServerWriteTarget = useCallback(
     (originalServerName: string): HostedServerWriteTarget | undefined => {
       if (
         useLocalFallback ||
@@ -2757,17 +2766,16 @@ export function useServerState({
       ) {
         return undefined;
       }
-      const row = (
-        activeProjectServersFlatRef.current ?? activeProjectServersFlat
-      )?.find((s) => s.name === originalServerName);
-      if (!row) return undefined;
-      return {
-        projectId:
-          row.projectId ||
-          effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ||
-          effectiveActiveProjectId,
-        serverId: row._id,
-      };
+      const projectId =
+        effectiveProjects[effectiveActiveProjectId]?.sharedProjectId ??
+        effectiveActiveProjectId;
+      const rows =
+        activeProjectServersFlatRef.current ?? activeProjectServersFlat;
+      const row = indexProjectServersByName(rows ?? [], projectId).get(
+        originalServerName,
+      );
+      if (!row || !remoteServerBelongsToProject(row, projectId)) return undefined;
+      return { projectId, serverId: row._id };
     },
     [
       useLocalFallback,
@@ -4024,7 +4032,11 @@ export function useServerState({
             projectId: synced.projectId,
             serverId: synced.serverId,
           };
-          injectHostedServerMapping(formData.name, synced.serverId);
+          injectHostedServerMapping(
+            formData.name,
+            synced.serverId,
+            synced.projectId,
+          );
         } else {
           workspaceNameTaken = synced.reason === "workspace-name-taken";
         }
@@ -4228,7 +4240,11 @@ export function useServerState({
                     projectId: resynced.projectId,
                     serverId: resynced.serverId,
                   };
-                  injectHostedServerMapping(formData.name, resynced.serverId);
+                  injectHostedServerMapping(
+                    formData.name,
+                    resynced.serverId,
+                    resynced.projectId,
+                  );
                 }
                 serverEntryForSave = updatedEntry;
                 saveOAuthConfigToLocalStorage(formData);
@@ -4633,7 +4649,7 @@ export function useServerState({
       const hostedWriteTarget =
         options?.hostedWriteTarget ??
         (isRename && originalServerName
-          ? resolveRenameWriteTarget(originalServerName)
+          ? resolveProjectServerWriteTarget(originalServerName)
           : undefined);
 
       const existingServer = appState.servers[originalServerName ?? serverName];
@@ -4802,11 +4818,11 @@ export function useServerState({
       if (shouldUpdateActiveProjectState) {
         // Drop the old local row only once the new one is stored. An exact-ID
         // hosted rename already renamed the same Convex row, so its cleanup
-        // must not issue a second name-based cloud delete against a stale
-        // snapshot.
+        // must only remove local state. If no project row was resolved, a
+        // cloud delete by name could remove a sibling project's row.
         if (isRename && originalServerName) {
           await handleRemoveServerRef.current?.(originalServerName, {
-            removeFromCloud: !hostedWriteTarget,
+            removeFromCloud: false,
           });
         }
 
@@ -4839,7 +4855,7 @@ export function useServerState({
       effectiveProjects,
       syncServerToConvex,
       persistServerToLocalProject,
-      resolveRenameWriteTarget,
+      resolveProjectServerWriteTarget,
     ],
   );
 
@@ -5594,10 +5610,14 @@ export function useServerState({
       serverName: string,
       options?: ReconnectServerInternalOptions,
     ): Promise<EnsureServerConnectionResult> => {
-      const reconnectForAttempt = (
+      let credentialFailure: string | undefined;
+      const reconnectForAttempt = async (
         ...args: Parameters<typeof guardedReconnectServer>
-      ) =>
-        guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+      ) => {
+        const result = await guardedReconnectServer(args[0], args[1], args[2], options?.queueSignal);
+        credentialFailure = credentialFailureMessage(result);
+        return result;
+      };
       const select = options?.select ?? true;
       const suppressErrors = options?.suppressErrors ?? false;
       // Snapshot before anything awaits. `reportError` runs at the END of a
@@ -5642,6 +5662,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5692,6 +5713,7 @@ export function useServerState({
         return {
           status: "missing",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -5997,6 +6019,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
 
@@ -6113,6 +6136,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6159,6 +6183,7 @@ export function useServerState({
             return {
               status: "failed",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6168,6 +6193,7 @@ export function useServerState({
             return {
               status: "superseded",
               error: errorMessage,
+              ...(credentialFailure ? { credentialFailure } : {}),
             };
           }
 
@@ -6311,6 +6337,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       } catch (error) {
         if (options?.queueSignal?.aborted) throw options.queueSignal.reason;
@@ -6337,6 +6364,7 @@ export function useServerState({
         return {
           status: "failed",
           error: errorMessage,
+          ...(credentialFailure ? { credentialFailure } : {}),
         };
       }
     },
@@ -6675,6 +6703,7 @@ export function useServerState({
       const readyServerNames: string[] = [];
       const missingServerNames: string[] = [];
       const failedServerNames: string[] = [];
+      const failedServerErrors: Record<string, string> = {};
       const reauthServerNames: string[] = [];
 
       for (const [serverName, outcome] of outcomes) {
@@ -6697,6 +6726,7 @@ export function useServerState({
           case "failed":
           default:
             failedServerNames.push(serverName);
+            if (outcome.credentialFailure) failedServerErrors[serverName] = outcome.credentialFailure;
             break;
         }
       }
@@ -6705,6 +6735,7 @@ export function useServerState({
         readyServerNames,
         missingServerNames,
         failedServerNames,
+        ...(Object.keys(failedServerErrors).length ? { failedServerErrors } : {}),
         reauthServerNames,
       };
     },
@@ -6813,16 +6844,32 @@ export function useServerState({
       // stored client secret, hosted OAuth tokens and app views stay on it.
       // Without a row to target, the old name is removed as before.
       const renameTarget = isRename
-        ? resolveRenameWriteTarget(originalServerName)
+        ? resolveProjectServerWriteTarget(originalServerName)
         : undefined;
+      let editTarget = renameTarget;
+      if (formData.publishedPluginId !== undefined) {
+        const savedTarget =
+          renameTarget ?? resolveProjectServerWriteTarget(originalServerName);
+        if (!savedTarget) {
+          toast.error(
+            "Save this server in a project before setting a published plugin ID.",
+          );
+          return { ok: false, serverName: originalServerName };
+        }
+        editTarget = {
+          ...savedTarget,
+          publishedPluginId: formData.publishedPluginId,
+        };
+      }
 
       if (skipAutoConnect) {
         const mcpConfig = toMCPConfig(formData);
-        if (isRename) {
+        if (isRename && !renameTarget) {
+          await handleRemoveServer(originalServerName, {
+            removeFromCloud: false,
+          });
+        } else if (isRename) {
           await handleDisconnect(originalServerName);
-          if (!renameTarget) {
-            await removeServerFromStateAndCloud(originalServerName);
-          }
         }
 
         const updatedServer: ServerWithName = {
@@ -6889,7 +6936,7 @@ export function useServerState({
             nextServerName,
             updatedServer,
             undefined,
-            renameTarget ? { ...renameTarget, exactServerId: true } : undefined,
+            editTarget ? { ...editTarget, exactServerId: true } : undefined,
           );
           // Nothing was written, so the success toast below would be a lie.
           if (!synced.ok) {
@@ -6939,6 +6986,7 @@ export function useServerState({
 
       const shouldPreserveOAuth =
         hadOAuthTokens &&
+        formData.publishedPluginId === undefined &&
         !pathScopedIssuerChanged &&
         formData.useOAuth &&
         nextServerName === originalServerName &&
@@ -6986,13 +7034,14 @@ export function useServerState({
 
       saveOAuthConfigToLocalStorage(formData);
 
-      await handleDisconnect(originalServerName);
       if (isRename && !renameTarget) {
-        await removeServerFromStateAndCloud(originalServerName);
+        await handleRemoveServer(originalServerName, { removeFromCloud: false });
+      } else {
+        await handleDisconnect(originalServerName);
       }
       let configSaved = false;
       await handleConnect(formData, {
-        hostedWriteTarget: renameTarget,
+        hostedWriteTarget: editTarget,
         onConfigSaved: () => {
           configSaved = true;
           if (renameTarget) {
@@ -7026,9 +7075,9 @@ export function useServerState({
       handleDisconnect,
       handleConnect,
       isAuthenticated,
-      removeServerFromStateAndCloud,
+      handleRemoveServer,
       cleanupServerLocalArtifacts,
-      resolveRenameWriteTarget,
+      resolveProjectServerWriteTarget,
       setSelectedServer,
       syncServerToConvex,
       useLocalFallback,
