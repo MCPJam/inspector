@@ -226,6 +226,7 @@ function runStub(root, args, { stopAfterReady = false } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      release();
       resolve({ status, stdout, stderr });
     };
     child.stdout.on("data", (chunk) => {
@@ -250,6 +251,12 @@ function runStub(root, args, { stopAfterReady = false } = {}) {
       child.stdin.end();
       setTimeout(() => settle(null), 1000);
     }, 30_000);
+    // Release the pipe handles once the result is in, so a process that
+    // outlived the launcher cannot keep the test runner alive.
+    const release = () => {
+      child.stdout.destroy();
+      child.stderr.destroy();
+    };
   });
 }
 
@@ -315,6 +322,10 @@ test("a listener that does not accept this launch's token is not reported as rea
   // Answers 401 to every token: the TCP port is open, but it is not this launch.
   const root = stubProject(`
     import { createServer } from "node:http";
+    // Ends with its stdin, like the ready-path stub, so a killed launcher
+    // cannot leave this process holding the output pipes.
+    process.stdin.resume();
+    process.stdin.on("end", () => process.exit(0));
     createServer((req, res) => { res.writeHead(401); res.end(); })
       .listen(Number(process.env.PORT), "127.0.0.1");
   `);
