@@ -575,4 +575,42 @@ describe("LauncherAttachRegistry", () => {
     expect(registry.releaseState("r0")).toEqual({ status: "done" });
     expect(registry.releaseState(`r${MAX_ATTACH_REQUESTS + 4}`)).toEqual({ status: "pending" });
   });
+
+  it("asking again while a tab is still connecting keeps that request, and its save", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "saved", decision: decision() });
+
+    // A Vite restart sends the same attach while the tab is still connecting.
+    expect(registry.attach(request()).ok).toBe(true);
+    expect(registry.state("a1")).toMatchObject({ status: "claimed", projectName: ACME.name });
+    expect(registry.poll("acme", tab(ACME, 10)).cancelledAttachIds).toEqual([]);
+
+    // The tab's final report is still its own, not a stale one.
+    expect(
+      registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() }),
+    ).toBeUndefined();
+    expect(registry.state("a1")).toMatchObject({ status: "connected" });
+    registry.release("a1");
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: decision() }),
+    ]);
+  });
+
+  it("asking again after the attach finished hands it to a tab again, to reconnect", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+
+    registry.attach(request());
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "attach", decision: decision() }),
+    ]);
+  });
 });

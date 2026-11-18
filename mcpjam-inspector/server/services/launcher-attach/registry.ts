@@ -108,6 +108,14 @@ export class LauncherAttachRegistry {
     if (!existing && this.attaches.size >= MAX_ATTACH_REQUESTS) {
       return { ok: false, error: "too_many_requests" };
     }
+    // The same dev command asking again while a tab is still working on it,
+    // for example a Vite restart mid-connect. The id is the server's identity,
+    // so this is the same request: leave it be, or the tab's save would be
+    // treated as stale and undone.
+    if (existing && (existing.status === "pending" || existing.status === "claimed")) {
+      existing.request = request;
+      return { ok: true, state: this.state(request.attachId)! };
+    }
     // A restart that released and attached again before any tab undid the
     // release keeps its entry: the undo is dropped and the decision reused.
     let decision = existing?.decision;
@@ -115,9 +123,6 @@ export class LauncherAttachRegistry {
       if (release.attachId !== request.attachId || release.deliveredAt) continue;
       this.releases.delete(key);
       decision ??= release.decision;
-    }
-    if (existing?.claimedBy) {
-      this.cancel(existing.claimedBy, request.attachId);
     }
     this.abandoned.delete(request.attachId);
     this.attaches.set(request.attachId, {
