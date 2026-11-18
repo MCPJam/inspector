@@ -135,10 +135,7 @@ export function addCasePredicate(
   return setCasePredicates(draft, (list) => [...list, predicate]);
 }
 
-/**
- * Edits the case's own list. Save blanks an inherit list, so inherit starts
- * an empty extend list instead, as adding a predicate does.
- */
+/** The case's own list; inherit, which save blanks, starts an empty extend. */
 export function setCasePredicates(
   draft: CaseStepsDraft,
   update: (list: Predicate[]) => Predicate[],
@@ -251,9 +248,12 @@ export function addAnything(
   if (choice.kind === "step") {
     const step = blankStepOfKind(choice.stepKind, context.suiteServers);
     return {
+      // With no step yet it goes last, so leading assertions stay leading.
       edit: (draft) => ({
         ...draft,
-        steps: insertStepAfter(draft.steps, context.lastActionId, step),
+        steps: context.lastActionId
+          ? insertStepAfter(draft.steps, context.lastActionId, step)
+          : [...draft.steps, step],
       }),
       openKey: step.kind === "prompt" ? null : `action:${step.id}`,
     };

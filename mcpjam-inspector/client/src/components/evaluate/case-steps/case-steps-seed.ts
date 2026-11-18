@@ -1,13 +1,15 @@
 /**
  * The editor's draft from a stored case, and whether the draft has changed
  * since. The comparison is today's editor's (hasUnsavedChanges): normalized
- * steps, title, runs, scenario, outcome, config, envelopes, kind, the judge opt-out
- * and the negative flag the draft would save.
+ * steps, title, runs, scenario, outcome, config, envelopes, kind, the judge
+ * opt-out and the negative flag the draft would save.
  */
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 import { normalizeAdvancedConfig } from "@/components/evals/case-save-payload";
 import { DEFAULTS } from "@/components/evals/constants";
 import { loadCaseSteps } from "@/components/evals/load-case-steps";
 import type { EvalCase } from "@/components/evals/types";
+import type { CasePredicates } from "@/shared/eval-matching";
 import {
   initialToolsChoice,
   readSimpleCase,
@@ -33,32 +35,24 @@ export function seedCaseStepsDraft(testCase: EvalCase): CaseStepsDraft {
       tools,
       isNegativeTest: testCase.isNegativeTest,
     }),
-    stashedTools: tools,
+    // Only No tools fills the stash, from the steps it removes.
+    stashedTools: [],
   };
 }
 
 /**
- * JSON with sorted keys; null and undefined compare equal, and a key set to
- * undefined matches a missing one: Convex drops undefined fields on save, so
- * `{ serverId: undefined }` must match the `{}` that comes back. An explicit
- * null inside an object is kept, since it can be a real edit.
+ * JSON with sorted keys, where a key set to undefined matches a missing one:
+ * Convex drops undefined fields on save, so `{ serverId: undefined }` must
+ * match the `{}` that comes back. An explicit null inside an object is kept,
+ * since it can be a real edit; at the top, null and undefined are equal.
  */
-function stable(value: unknown): string {
-  const normalize = (item: unknown): unknown => {
-    if (item === null || item === undefined) return null;
-    if (Array.isArray(item)) return item.map(normalize);
-    if (typeof item === "object") {
-      const record = item as Record<string, unknown>;
-      return Object.fromEntries(
-        Object.keys(record)
-          .filter((key) => record[key] !== undefined)
-          .sort()
-          .map((key) => [key, normalize(record[key])]),
-      );
-    }
-    return item;
-  };
-  return JSON.stringify(normalize(value));
+const stable = (value: unknown) => stableStringifyJson(value ?? null);
+
+/** None when it grades like no envelope: inherit, or extend with no rows. */
+function ownEnvelope(predicates: CasePredicates | undefined) {
+  if (!predicates || predicates.mode === "inherit") return undefined;
+  const empty = predicates.mode === "extend" && predicates.list.length === 0;
+  return empty ? undefined : predicates;
 }
 
 export function isCaseStepsDirty(
@@ -76,8 +70,14 @@ export function isCaseStepsDirty(
     ],
     [draft.matchOptions, testCase.matchOptions],
     [
-      [draft.predicates, draft.suppressedSuiteStandardCheckIds ?? []],
-      [testCase.predicates, testCase.suppressedSuiteStandardCheckIds ?? []],
+      [
+        ownEnvelope(draft.predicates),
+        draft.suppressedSuiteStandardCheckIds ?? [],
+      ],
+      [
+        ownEnvelope(testCase.predicates),
+        testCase.suppressedSuiteStandardCheckIds ?? [],
+      ],
     ],
     [draft.expectedOutput.trim(), (testCase.expectedOutput ?? "").trim()],
     [draft.kind, testCase.kind],

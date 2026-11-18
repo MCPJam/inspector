@@ -21,50 +21,16 @@ import {
   moveAssertionTo,
   STEP_COPY,
 } from "../case-steps/case-steps-model";
-
-const prompt = (id: string, text = "ask"): TestStep => ({
-  id,
-  kind: "prompt",
-  prompt: text,
-});
-const check = (id: string, assertion: Predicate = { type: "noToolErrors" }) =>
-  ({ id, kind: "assert", assertion }) satisfies TestStep;
-const interact = (
-  id: string,
-  action: InteractStep["action"] = { kind: "click", target: { testId: "x" } },
-  toolName = "cart_view",
-): TestStep => ({ id, kind: "interact", toolName, action });
-const tool = (id: string, toolName = "get_me"): TestStep => ({
-  id,
-  kind: "toolCall",
-  serverName: "accounts",
-  toolName,
-  arguments: {},
-});
-const toolAssert = (id: string, toolName: string) =>
-  check(id, { type: "toolCalledWith", toolName, args: { args: {} } });
+import {
+  check,
+  FIXTURES,
+  interact,
+  prompt,
+  tool,
+  toolAssert,
+} from "./case-steps-fixtures";
 
 const ids = (steps: { step: TestStep }[]) => steps.map((row) => row.step.id);
-
-const FIXTURES: [string, TestStep[]][] = [
-  ["no steps", []],
-  ["[p]", [prompt("p")]],
-  ["[a]", [check("a")]],
-  ["[a, p, a]", [check("a0"), prompt("p"), check("a1")]],
-  [
-    "[p, a, i, a, a, t]",
-    [
-      prompt("p"),
-      check("a1"),
-      interact("i"),
-      check("a2"),
-      check("a3"),
-      tool("t"),
-    ],
-  ],
-  ["[p, p]", [prompt("p1"), prompt("p2")]],
-  ["[t, a]", [tool("t"), check("a")]],
-];
 
 describe("groupCaseSteps", () => {
   it.each<[string, TestStep[], string[], [string, number, string[]][]]>([
@@ -232,20 +198,29 @@ describe("afterRunSection", () => {
     expect(s.caseRows.map((row) => row.predicateIndex)).toEqual([0, 1]);
   });
 
-  it("keeps a row without an index after the indexed ones", () => {
+  it("keeps suite order across groups, a row without an index last", () => {
+    const standard: Predicate = { type: "noToolErrors" };
     const card = buildCaseScorecard({
       ...base,
-      suiteDefaultPredicates: [D1, D2],
+      suiteDefaultPredicates: [standard, D1, D2],
     });
+    const groupsWithSuite = card.groups.filter((group) =>
+      group.rows.some((row) => row.provenance === "suite"),
+    );
+    expect(groupsWithSuite.length).toBeGreaterThan(1);
+    expect(preds(afterRunSection(card).suiteRows)).toEqual([standard, D1, D2]);
     const groups = card.groups.map((group) => ({
       ...group,
       rows: group.rows.map((row) =>
-        row.predicate === D1 ? { ...row, predicateIndex: undefined } : row,
+        row.predicate === standard
+          ? { ...row, predicateIndex: undefined }
+          : row,
       ),
     }));
     expect(preds(afterRunSection({ ...card, groups }).suiteRows)).toEqual([
-      D2,
       D1,
+      D2,
+      standard,
     ]);
   });
 
