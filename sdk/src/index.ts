@@ -1501,8 +1501,13 @@ export type {
 export {
   MCPAppsConformanceTest,
   MCPAppsConformanceSuite,
+  gradeMCPApps,
+  planMCPAppsResourceReads,
 } from "./apps-conformance/index.js";
 export type {
+  MCPAppsGrading,
+  MCPAppsGradingInput,
+  MCPAppsResourceReadPlan,
   MCPAppsCheckCategory,
   MCPAppsCheckId,
   MCPAppsCheckResult,
