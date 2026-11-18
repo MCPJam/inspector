@@ -30,7 +30,7 @@ function Announcements({
 }) {
   const [trialDismissed, setTrialDismissed] = useState(false);
   return (
-    <AnnouncementQueueProvider>
+    <AnnouncementQueueProvider enabled={enabled}>
       <Toaster />
       <DarkDefaultNudge enabled={enabled && dark} />
       <ConformanceSpotlight
@@ -41,7 +41,7 @@ function Announcements({
         <button type="button">Conformance</button>
       </ConformanceSpotlight>
       <TrialDecisionDialog
-        eligible={enabled && trial && !trialDismissed}
+        eligible={trial && !trialDismissed}
         onDismiss={() => setTrialDismissed(true)}
       >
         <DialogTitle>{TRIAL}</DialogTitle>

@@ -2966,14 +2966,6 @@ export function HomeRoute() {
 }
 
 export default function App() {
-  return (
-    <AnnouncementQueueProvider>
-      <InspectorApp />
-    </AnnouncementQueueProvider>
-  );
-}
-
-function InspectorApp() {
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
   const billingLocation = useCurrentLocationParts();
@@ -6836,7 +6828,7 @@ function InspectorApp() {
     };
   })();
 
-  return (
+  const shell = (
     <PreferencesStoreProvider
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
@@ -6978,5 +6970,11 @@ function InspectorApp() {
         </ServerActionsProvider>
       </AppStateProvider>
     </PreferencesStoreProvider>
+  );
+
+  return (
+    <AnnouncementQueueProvider enabled={announcementsEnabled}>
+      {shell}
+    </AnnouncementQueueProvider>
   );
 }

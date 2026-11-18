@@ -10,10 +10,17 @@ import {
 
 const AnnouncementQueue = createContext<{
   active: string | undefined;
+  enabled: boolean;
   enqueue: (id: string) => () => void;
 } | null>(null);
 
-export function AnnouncementQueueProvider({ children }: { children: ReactNode }) {
+export function AnnouncementQueueProvider({
+  enabled = true,
+  children,
+}: {
+  enabled?: boolean;
+  children: ReactNode;
+}) {
   const [queue, setQueue] = useState<string[]>([]);
   const enqueue = useCallback((id: string) => {
     setQueue((current) => [...current, id]);
@@ -21,7 +28,7 @@ export function AnnouncementQueueProvider({ children }: { children: ReactNode })
   }, []);
 
   return (
-    <AnnouncementQueue.Provider value={{ active: queue[0], enqueue }}>
+    <AnnouncementQueue.Provider value={{ active: queue[0], enabled, enqueue }}>
       {children}
     </AnnouncementQueue.Provider>
   );
@@ -35,14 +42,16 @@ export function useAnnouncementSlot(eligible: boolean) {
     setIsMounted(node !== null);
   }, []);
   // Keep the slot through exit animations, not just until dismissal is requested.
-  const needsSlot = eligible || isMounted;
+  const enabled = queue?.enabled ?? true;
+  const needsSlot = (enabled && eligible) || isMounted;
   const enqueue = queue?.enqueue;
   useLayoutEffect(() => {
     if (needsSlot) return enqueue?.(id);
   }, [enqueue, id, needsSlot]);
 
   return {
-    open: eligible && (!queue || queue.active === id),
+    enabled,
+    open: enabled && eligible && (!queue || queue.active === id),
     contentRef,
   };
 }

@@ -1,5 +1,4 @@
 import { ArrowRight, Moon, Sun, X } from "lucide-react";
-import type { Ref } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import {
   Card,
@@ -11,7 +10,6 @@ import {
 import { ThemePreview } from "./settings/ThemePreview";
 
 type DarkDefaultNudgeCardProps = {
-  ref?: Ref<HTMLDivElement>;
   onOpenSettings: () => void;
   onDismiss: () => void;
 };
@@ -22,15 +20,11 @@ type DarkDefaultNudgeCardProps = {
  * its own surface instead of sonner's default row.
  */
 export function DarkDefaultNudgeCard({
-  ref,
   onOpenSettings,
   onDismiss,
 }: DarkDefaultNudgeCardProps) {
   return (
-    <Card
-      ref={ref}
-      className="relative w-[356px] gap-0 overflow-hidden py-0 shadow-lg"
-    >
+    <Card className="relative w-[356px] gap-0 overflow-hidden py-0 shadow-lg">
       <div className="relative border-b border-border bg-muted/40 p-3">
         <ThemePreview mode="system" />
         <div

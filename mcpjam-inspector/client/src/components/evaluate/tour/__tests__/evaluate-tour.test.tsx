@@ -11,6 +11,9 @@ import { track } from "@/lib/analytics";
 import { EvaluateTour } from "../evaluate-tour";
 import { useEvaluateTour } from "../use-evaluate-tour";
 import { TOUR_STOPS } from "../evaluate-tour-steps";
+import { AnnouncementDialog } from "@/components/announcement-popups";
+import { AnnouncementQueueProvider } from "@/components/announcement-slot";
+import { DialogDescription, DialogTitle } from "@mcpjam/design-system/dialog";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -61,6 +64,32 @@ describe("EvaluateTour", () => {
   it("stays closed until the landing is eligible", () => {
     render(<Harness eligible={false} />);
     expect(screen.getByTestId("phase")).toHaveTextContent("closed");
+  });
+
+  it("does not mark the automatic tour seen while another announcement owns the slot", () => {
+    const tree = (blocker: boolean, enabled: boolean) => (
+      <AnnouncementQueueProvider enabled={enabled}>
+        <AnnouncementDialog eligible={blocker} onDismiss={vi.fn()}>
+          <DialogTitle>Earlier announcement</DialogTitle>
+          <DialogDescription>Test announcement.</DialogDescription>
+        </AnnouncementDialog>
+        <Harness />
+      </AnnouncementQueueProvider>
+    );
+    const { rerender } = render(tree(true, false));
+    expect(screen.queryByTestId("evaluate-tour-intro")).not.toBeInTheDocument();
+    expect(localStorage.getItem("mcpjam-evaluate-tour-seen")).toBeNull();
+
+    rerender(tree(true, true));
+    expect(
+      screen.getByRole("dialog", { name: "Earlier announcement" }),
+    ).toBeVisible();
+    expect(screen.queryByTestId("evaluate-tour-intro")).not.toBeInTheDocument();
+    expect(localStorage.getItem("mcpjam-evaluate-tour-seen")).toBeNull();
+
+    rerender(tree(false, true));
+    expect(screen.getByTestId("evaluate-tour-intro")).toBeVisible();
+    expect(localStorage.getItem("mcpjam-evaluate-tour-seen")).toBe("1");
   });
 
   it("still runs transitions after StrictMode's dev remount", async () => {
