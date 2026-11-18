@@ -1,6 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -155,4 +164,123 @@ test("start.js --json fails with one redacted error event and no stdout", () => 
   assert.deepEqual(events, [
     { event: "error", message: "Invalid port: [redacted]" },
   ]);
+});
+
+// A copy of bin/ beside a stub dist/server/index.js, so start.js runs end to
+// end without a real build. The stub prints to stdout, confirms the launch's
+// session token and listens on PORT, like the real server does.
+function stubProject(serverSource) {
+  const root = mkdtempSync(join(tmpdir(), "mcpjam-start-"));
+  const here = dirname(fileURLToPath(import.meta.url));
+  cpSync(join(here, "..", "..", "bin"), join(root, "bin"), { recursive: true });
+  mkdirSync(join(root, "dist", "server"), { recursive: true });
+  writeFileSync(join(root, "dist", "server", "index.js"), serverSource);
+  symlinkSync(
+    join(here, "..", "..", "..", "node_modules"),
+    join(root, "node_modules"),
+  );
+  return root;
+}
+
+const LISTENING_STUB = `
+import { createServer } from "node:http";
+console.log("STUB server log line on stdout");
+createServer((req, res) => {
+  const ok = req.headers["x-mcp-session-auth"] === "Bearer " + process.env.MCPJAM_SESSION_TOKEN;
+  res.writeHead(ok ? 200 : 401, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ ok }));
+}).listen(Number(process.env.PORT), "127.0.0.1");
+`;
+
+function runStub(root, args, { stopAfterReady = false } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [join(root, "bin", "start.js"), ...args], {
+      env: { ...process.env, MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN: "1" },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (stopAfterReady && stdout.includes('"event":"ready"')) {
+        setTimeout(() => child.kill("SIGTERM"), 300);
+      }
+    });
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.on("close", (status) => {
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    });
+  });
+}
+
+test("--json with a running server: stdout is exactly one ready line, the server's output goes to stderr", async () => {
+  const root = stubProject(LISTENING_STUB);
+  try {
+    const port = 41000 + Math.floor(Math.random() * 3000);
+    const result = await runStub(root, ["--json", "--port", String(port)], {
+      stopAfterReady: true,
+    });
+    const lines = result.stdout.trim().split("\n");
+    assert.equal(lines.length, 1, result.stdout);
+    const ready = JSON.parse(lines[0]);
+    assert.equal(ready.event, "ready");
+    assert.equal(ready.port, port);
+    assert.match(ready.url, /#token=/);
+    assert.match(result.stderr, /STUB server log line on stdout/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("--json: a server that exits before it is ready is one error event, not an unhandled rejection", async () => {
+  const root = stubProject('console.error("boom"); process.exit(1);');
+  try {
+    const port = 44500 + Math.floor(Math.random() * 3000);
+    const result = await runStub(root, ["--json", "--port", String(port)]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.doesNotMatch(result.stderr, /unhandled|UnhandledPromiseRejection/i);
+    const events = result.stderr
+      .split("\n")
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(events, [
+      { event: "error", message: "Server process exited with code 1" },
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a listener that does not accept this launch's token is not reported as ready", async () => {
+  // Answers 401 to every token: the TCP port is open, but it is not this launch.
+  const root = stubProject(`
+    import { createServer } from "node:http";
+    createServer((req, res) => { res.writeHead(401); res.end(); })
+      .listen(Number(process.env.PORT), "127.0.0.1");
+  `);
+  try {
+    const port = 47500 + Math.floor(Math.random() * 3000);
+    const result = await runStub(root, ["--json", "--port", String(port)]);
+    assert.equal(result.stdout, "");
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Server did not become ready/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("-H with no = does not echo the value", () => {
+  const secret = "Bearer sk-live-0123456789abcdef";
+  const result = runStart(["-H", `Authorization: ${secret}`, "--port", "notaport"]);
+  assert.ok(!result.stdout.includes(secret));
+  assert.ok(!result.stderr.includes(secret));
+  assert.match(result.stderr, /Invalid header format for -H/);
+});
+
+test("a session token passed with -e is redacted from the port error", () => {
+  const result = runStart(["--json", "-e", `MCPJAM_SESSION_TOKEN=${TOKEN}`, "--port", TOKEN]);
+  assert.ok(!result.stderr.includes(TOKEN));
+  assert.match(result.stderr, /Invalid port: \[redacted\]/);
 });

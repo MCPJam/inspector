@@ -1,6 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -8,18 +16,28 @@ import {
   inspectorAttachId,
   releaseInspectorAttach,
   requestInspectorAttach,
+  waitForInspectorReleases,
   type InspectorAttachServer,
   type InspectorAttachState,
 } from "./attach-client.js";
-import { operationalError } from "./errors.js";
+import { isInspectorError, operationalError } from "./errors.js";
 import { holdInspector, inspectorHoldersDir, otherInspectorHolders } from "./holders.js";
-import { DEFAULT_INSPECTOR_PORT, choosePort } from "./ports.js";
-import { fetchInspectorSessionToken } from "./session-token.js";
+import { delay, openUrl } from "./launch.js";
+import { DEFAULT_INSPECTOR_PORT, choosePort, isPortFree } from "./ports.js";
+import {
+  clearInspectorSessionTokenCache,
+  fetchInspectorSessionToken,
+} from "./session-token.js";
 
 const READY_TIMEOUT_MS = 30_000;
 const OUTPUT_TAIL_CHARS = 4_000;
 const OUTPUT_DRAIN_MS = 1_000;
 const STOP_TIMEOUT_MS = 5_000;
+/** A tab applies a release on its next poll (every 2 s), then removes the server. */
+const RELEASE_WAIT_MS = 6_000;
+/** How long a launch waits for a dev command that is starting MCPJam right now. */
+const START_RACE_WAIT_MS = 4_000;
+const LOG_MAX_BYTES = 1024 * 1024;
 
 export interface EmbedInspectorOptions {
   /** The command that starts MCPJam (`node <inspector>/bin/start.js`). */
@@ -40,7 +58,18 @@ export interface EmbedInspectorOptions {
   env?: Record<string, string>;
   /** Tab to open, already validated by the caller. */
   tab?: string;
+  /**
+   * Open the access link in the browser when this launch starts MCPJam.
+   * A reused MCPJam is never reopened. Defaults to false.
+   */
+  open?: boolean;
+  /** Told when something degrades but the launch still works. */
+  onWarning?: (message: string) => void;
   readyTimeoutMs?: number;
+  /** How long `stop()` waits for a tab to undo this launch's servers. */
+  releaseWaitMs?: number;
+  /** How long a launch waits for a dev command that is starting MCPJam right now. */
+  startRaceWaitMs?: number;
 }
 
 export interface EmbeddedInspector {
@@ -69,15 +98,47 @@ export async function embedInspector(
   options: EmbedInspectorOptions,
 ): Promise<EmbeddedInspector> {
   const preferred = options.port ?? DEFAULT_INSPECTOR_PORT;
+  const raceWaitMs = options.startRaceWaitMs ?? START_RACE_WAIT_MS;
+  let warned = false;
+  const hold = (port: number) => {
+    const release = holdInspector(port);
+    if (!release && !warned) {
+      warned = true;
+      options.onWarning?.(
+        `Could not share MCPJam with other dev commands: ${inspectorHoldersDir(port)} is not writable. MCPJam stops when this command quits.`,
+      );
+    }
+    return release;
+  };
 
-  if (options.reuse) {
-    // Held before the reuse check, so the MCPJam found never sees zero holders.
-    const release = holdInspector(preferred);
-    const token = await reusableToken(preferred);
-    if (token) {
-      return handle({ port: preferred, token, started: false, release, options });
+  // Held before the reuse check, so the MCPJam found never sees zero holders.
+  const reuseRunning = async (port: number, waitMs: number) => {
+    const release = hold(port);
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const token = await reusableToken(port);
+      if (token) {
+        return handle({ port, token, started: false, release, options });
+      }
+      if (Date.now() >= deadline) break;
+      await delay(250);
     }
     release?.();
+    return undefined;
+  };
+
+  if (options.reuse) {
+    const running = await reuseRunning(preferred, 0);
+    if (running) return running;
+    if (!(await isPortFree(preferred)) && otherInspectorHolders(preferred) > 0) {
+      // Two dev commands started together (for example `turbo dev`) both look
+      // for MCPJam before either has bound the port. A live holder file means
+      // another dev command is bringing it up, so give it a moment before
+      // treating the busy port as another program's. With no holder there is
+      // nothing to wait for.
+      const joined = await reuseRunning(preferred, raceWaitMs);
+      if (joined) return joined;
+    }
   }
 
   const port = await choosePort({ preferred, strictPort: options.strictPort });
@@ -88,21 +149,37 @@ export async function embedInspector(
       ? undefined
       : (env.MCPJAM_SESSION_TOKEN ?? randomBytes(24).toString("base64url"));
   // Written before the spawn, so the new MCPJam's watchdog finds its starter.
-  const release = options.reuse ? holdInspector(port) : undefined;
+  const release = options.reuse ? hold(port) : undefined;
   const held = release !== undefined;
   let child: ChildProcess;
   try {
     child = await startAndWait({ options, env, port, token, held });
   } catch (error) {
     release?.();
+    if (options.reuse && exitedEarly(error)) {
+      // Lost the race to start on this port; the winner is the MCPJam to join.
+      const joined = await reuseRunning(port, raceWaitMs * 2);
+      if (joined) return joined;
+    }
     throw error;
   }
-  return handle({ port, token, started: true, release, options, child, held });
+  const inspector = handle({ port, token, started: true, release, options, child, held });
+  if (held && options.open) openUrl(inspector.url);
+  return inspector;
+}
+
+function exitedEarly(error: unknown): boolean {
+  if (!isInspectorError(error)) return false;
+  const { details } = error;
+  return typeof details === "object" && details !== null && "earlyExit" in details;
 }
 
 async function reusableToken(port: number): Promise<string | undefined> {
+  const baseUrl = `http://127.0.0.1:${port}`;
   try {
-    return await fetchInspectorSessionToken(`http://127.0.0.1:${port}`);
+    // A cached token can outlive the MCPJam it was read from (up to 5 minutes).
+    clearInspectorSessionTokenCache(baseUrl);
+    return await fetchInspectorSessionToken(baseUrl);
   } catch {
     // No MCPJam of this user's on the port: anything there is another program.
     return undefined;
@@ -118,7 +195,7 @@ function handle(args: {
   port: number;
   token: string | undefined;
   started: boolean;
-  release: (() => void) | undefined;
+  release: (() => boolean) | undefined;
   options: EmbedInspectorOptions;
   child?: ChildProcess;
   held?: boolean;
@@ -148,13 +225,23 @@ function handle(args: {
     async stop() {
       if (stopped) return;
       stopped = true;
+      const attachIds = [...attached];
       await Promise.all(
-        [...attached].map((attachId) => releaseInspectorAttach(apiBase, token, attachId)),
+        attachIds.map((attachId) => releaseInspectorAttach(apiBase, token, attachId)),
       );
-      release?.();
-      if (!child) return;
+      // True while another launch in this process still holds the same MCPJam.
+      const heldHere = release?.() ?? false;
+      if (!child || heldHere) return;
       // A shared MCPJam stays up for the other dev commands still holding it.
       if (args.held && otherInspectorHolders(port) > 0) return;
+      // Releasing only queues the undo; a tab applies it on its next poll. If
+      // MCPJam stopped first, the server this launch added would stay saved.
+      await waitForInspectorReleases(
+        apiBase,
+        token,
+        attachIds,
+        options.releaseWaitMs ?? RELEASE_WAIT_MS,
+      );
       await stopChild(child);
     },
   };
@@ -180,13 +267,23 @@ async function startAndWait(args: {
     // starter's terminal or pipes; its output goes to a log file instead.
     env.MCPJAM_INSPECTOR_HOLDERS_DIR = inspectorHoldersDir(port);
     env.MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK = "1";
+    // start.js prints the access link, session token included, unless auto
+    // open is suppressed; the log stays on disk after MCPJam exits, so the
+    // link must never reach it. The engine opens the browser itself.
+    env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN = "1";
     logFile = path.join(os.homedir(), ".mcpjam", "inspector", `${port}.log`);
     mkdirSync(path.dirname(logFile), { recursive: true, mode: 0o700 });
-    logFd = openSync(logFile, "w", 0o600);
+    logFd = openStartupLog(logFile);
   }
   const child = spawn(
     options.start.command,
-    [...options.start.args, "--port", String(port)],
+    [
+      ...options.start.args,
+      "--port",
+      String(port),
+      // A shared MCPJam is opened by the engine; otherwise start.js opens it.
+      ...(!held && !options.open ? ["--no-open"] : []),
+    ],
     {
       env,
       detached: held,
@@ -233,7 +330,11 @@ async function startAndWait(args: {
       settle(() => {
         const reason = signal ? `signal ${signal}` : `code ${code}`;
         void waitForClose(child, OUTPUT_DRAIN_MS).then(() =>
-          reject(operationalError(withOutput(`MCPJam exited before it was ready (${reason}).`))),
+          reject(
+            operationalError(withOutput(`MCPJam exited before it was ready (${reason}).`), {
+              earlyExit: true,
+            }),
+          ),
         );
       }),
     );
@@ -323,6 +424,22 @@ function stopChild(child: ChildProcess): Promise<void> {
     });
     child.kill("SIGTERM");
   });
+}
+
+/**
+ * Appends, so a launch that loses a race to start MCPJam cannot truncate the
+ * winner's log, and rotates past 1 MiB. The mode is set explicitly because
+ * `openSync` keeps the mode of a file that already exists.
+ */
+function openStartupLog(file: string): number {
+  try {
+    if (statSync(file).size > LOG_MAX_BYTES) renameSync(file, `${file}.1`);
+  } catch {
+    // No log yet, or it could not be rotated: appending still works.
+  }
+  const fd = openSync(file, "a", 0o600);
+  chmodSync(file, 0o600);
+  return fd;
 }
 
 function readTail(file: string): string {
