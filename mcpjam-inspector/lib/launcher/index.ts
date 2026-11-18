@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from "child_process";
+import { randomBytes } from "crypto";
 import { createRequire } from "module";
 import path from "path";
 
@@ -40,10 +41,15 @@ export interface LaunchOptions {
   defaultTab?: string;
 
   /**
-   * Enable verbose logging output.
-   * When false (default), the inspector runs silently.
+   * Add HTTP request logs to the inspector's output.
    */
   verbose?: boolean;
+
+  /**
+   * Keep the inspector's output out of your terminal. If the inspector fails
+   * to start, the rejected error includes the end of its stderr.
+   */
+  silent?: boolean;
 
   /**
    * Content Security Policy mode for the App Builder sandbox.
@@ -58,7 +64,7 @@ export interface LaunchOptions {
  */
 export interface InspectorInstance {
   /**
-   * The URL where the inspector is running
+   * The URL where the inspector is running, including its session token
    */
   url: string;
 
@@ -88,6 +94,20 @@ async function waitForServer(port: number, timeout = 30000): Promise<void> {
     await new Promise((r) => setTimeout(r, 100));
   }
   throw new Error(`Inspector failed to start within ${timeout}ms`);
+}
+
+const STDERR_TAIL_CHARS = 4000;
+
+function createSessionToken(env: Record<string, string>): string | undefined {
+  if (env.VITE_MCPJAM_HOSTED_MODE === "true") return undefined;
+  return env.MCPJAM_SESSION_TOKEN ?? randomBytes(24).toString("base64url");
+}
+
+function accessLinkHash(token: string | undefined, tab: string | undefined) {
+  if (token) {
+    return `#${new URLSearchParams({ token, ...(tab ? { tab } : {}) })}`;
+  }
+  return tab ? `#${tab}` : "";
 }
 
 /**
@@ -140,10 +160,15 @@ export async function launchInspector(
     env.MCP_AUTO_CONNECT_SERVER = options.server.name;
   }
 
-  if (options.defaultTab) {
-    // Map public API "chat" to internal "chat-v2" tab
-    const tab = options.defaultTab === "chat" ? "chat-v2" : options.defaultTab;
+  // Map public API "chat" to internal "chat-v2" tab
+  const tab = options.defaultTab === "chat" ? "chat-v2" : options.defaultTab;
+  if (tab) {
     env.MCP_INITIAL_TAB = tab;
+  }
+
+  const token = createSessionToken(env);
+  if (token) {
+    env.MCPJAM_SESSION_TOKEN = token;
   }
 
   if (options.verbose) {
@@ -157,9 +182,18 @@ export async function launchInspector(
   // Spawn the process
   const child = spawn("node", [binPath], {
     env,
-    stdio: "inherit",
+    stdio: options.silent ? ["ignore", "ignore", "pipe"] : "inherit",
     detached: false,
   });
+
+  let stderrTail = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_CHARS);
+  });
+  const withStderr = (message: string) =>
+    stderrTail.trim()
+      ? `${message}\nInspector stderr:\n${stderrTail.trimEnd()}`
+      : message;
 
   // Wait for server to be ready, racing against spawn errors
   await new Promise<void>((resolve, reject) => {
@@ -172,6 +206,18 @@ export async function launchInspector(
       }
     });
 
+    child.once("exit", (code, signal) => {
+      if (!resolved) {
+        resolved = true;
+        const reason = signal ? `signal ${signal}` : `code ${code}`;
+        reject(
+          new Error(
+            withStderr(`Inspector exited before it was ready (${reason})`),
+          ),
+        );
+      }
+    });
+
     waitForServer(INSPECTOR_PORT)
       .then(() => {
         if (!resolved) {
@@ -179,18 +225,16 @@ export async function launchInspector(
           resolve();
         }
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         if (!resolved) {
           resolved = true;
-          reject(err);
+          child.kill("SIGTERM");
+          reject(new Error(withStderr(err.message)));
         }
       });
   });
 
-  const tabHash = options.defaultTab
-    ? `#${options.defaultTab === "chat" ? "chat-v2" : options.defaultTab}`
-    : "";
-  const url = `http://localhost:${INSPECTOR_PORT}${tabHash}`;
+  const url = `http://localhost:${INSPECTOR_PORT}/${accessLinkHash(token, tab)}`;
 
   return {
     url,
