@@ -4145,14 +4145,14 @@ describe("PlaygroundMain", () => {
       fireEvent.click(screen.getByTestId("chat-submit-button"));
 
       await waitFor(() => {
-        expect(mockUseChatSession.setMessages).toHaveBeenCalled();
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
       });
-      // The prepend lands in the thread BEFORE the user turn, so the request
-      // carries it as history instead of trailing the model's answer.
-      const updater = mockUseChatSession.setMessages.mock.calls.at(-1)![0];
-      const next = typeof updater === "function" ? updater([]) : updater;
-      expect(JSON.stringify(next)).toContain("release-notes");
-      expect(mockUseChatSession.sendMessage).toHaveBeenCalled();
+      // The session writes these after it admits the send, so the request
+      // carries them as history and a refused send never leaves them behind.
+      const sent = mockUseChatSession.sendMessage.mock.calls.at(-1)![0] as {
+        prependMessages?: unknown[];
+      };
+      expect(JSON.stringify(sent.prependMessages)).toContain("release-notes");
     });
 
     it("shows the guided prompt in the input when post-connect onboarding is active", () => {
@@ -5873,8 +5873,14 @@ describe("PlaygroundMain tester rules", () => {
     });
     mockUseChatSession.sendMessage.mockClear();
 
-    const pending = act(async () => {
-      fireEvent.submit(screen.getByTestId("chat-input"));
+    const submit = (
+      mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        onSubmit: (event: { preventDefault: () => void }) => Promise<boolean>;
+      }
+    ).onSubmit;
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = submit({ preventDefault: () => {} });
     });
     await waitFor(() => expect(ensureServersReady).toHaveBeenCalledTimes(1));
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
@@ -5892,13 +5898,81 @@ describe("PlaygroundMain tester rules", () => {
         failedServerNames: [],
         reauthServerNames: [],
       });
+      await pending;
     });
-    await pending;
 
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     expect(screen.getByTestId("chat-input-field")).toHaveValue(
       "hello from the study",
     );
+  });
+
+  it("keeps the draft when the study blocks during chat-session preparation", async () => {
+    mockSharedAppState.servers.asana = { connectionStatus: "connected" };
+    let releaseSend!: () => void;
+    let admittedAtDispatch = true;
+    mockUseChatSession.sendMessage.mockImplementation(
+      (options: { isCurrent?: () => boolean; prependMessages?: unknown[] }) =>
+        new Promise<boolean>((resolve) => {
+          releaseSend = () => {
+            admittedAtDispatch =
+              Boolean(options.isCurrent?.()) &&
+              (options.prependMessages?.length ?? 0) === 1;
+            resolve(admittedAtDispatch);
+          };
+        }),
+    );
+    const open = {
+      ...study,
+      tester: { ...study.tester, composerBlocked: false },
+    };
+    try {
+    const view = render(<PlaygroundMain {...open} />);
+    fireEvent.click(screen.getByTestId("chat-input-attach-skill"));
+    fireEvent.change(screen.getByTestId("chat-input-field"), {
+      target: { value: "hello from the study" },
+    });
+    mockUseChatSession.sendMessage.mockClear();
+    mockUseChatSession.setMessages.mockClear();
+
+    const submit = (
+      mockChatInputProps.mock.calls.at(-1)?.[0] as {
+        onSubmit: (event: { preventDefault: () => void }) => Promise<boolean>;
+      }
+    ).onSubmit;
+    let pending!: Promise<boolean>;
+    await act(async () => {
+      pending = submit({ preventDefault: () => {} });
+    });
+    await waitFor(() =>
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+    );
+    expect(mockUseChatSession.setMessages).not.toHaveBeenCalled();
+
+    view.rerender(
+      <PlaygroundMain
+        {...open}
+        tester={{ ...open.tester, composerBlocked: true }}
+      />,
+    );
+    await act(async () => {
+      releaseSend();
+      await pending;
+    });
+
+    expect(admittedAtDispatch).toBe(false);
+    expect(screen.getByTestId("chat-input-field")).toHaveValue(
+      "hello from the study",
+    );
+    expect(screen.getByTestId("chat-input")).toHaveAttribute(
+      "data-skill-count",
+      "1",
+    );
+    expect(mockUseChatSession.setMessages).not.toHaveBeenCalled();
+    } finally {
+      delete mockSharedAppState.servers.asana;
+      mockUseChatSession.sendMessage.mockReset();
+    }
   });
 
   it("drops a widget follow-up that finishes preparing after the study blocks", async () => {

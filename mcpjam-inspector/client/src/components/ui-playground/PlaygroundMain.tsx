@@ -4988,6 +4988,9 @@ export function PlaygroundMain({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
+          // The gates above can finish and this call can still await server
+          // preparation. The study block has to be read again at dispatch.
+          isCurrent: () => !conversationSendBlockedRef.current,
         });
         setModelContextQueue([]);
         // Settles once the message is dispatched, so Retry's lock covers the
@@ -5694,12 +5697,9 @@ export function PlaygroundMain({
       setModelContextQueue([]);
     } else {
       trackSendMessage({ single_model_send: true });
-      // Single-model mode has no broadcast consumer, so the prepends have to
-      // land in the thread here — before `sendMessage`, so the request carries
-      // them as history rather than arriving after the model answered.
-      if (prependMessages.length > 0) {
-        setMessages((prev) => [...prev, ...prependMessages]);
-      }
+      // `sendMessage` writes the prompt and skill turns after its own
+      // admission check, so a study block during server preparation neither
+      // sends nor leaves those turns in the thread.
       const sent = await sendMessage({
         text: composerText,
         files,
@@ -5707,6 +5707,9 @@ export function PlaygroundMain({
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
         extraParts: draftItems.map((item) => item.part),
+        prependMessages:
+          prependMessages.length > 0 ? prependMessages : undefined,
+        isCurrent: () => !conversationSendBlockedRef.current,
       });
       if (!sent) return false;
       composerMentions.clear();
@@ -5742,7 +5745,6 @@ export function PlaygroundMain({
     trackSendMessage,
     modelContextQueue,
     sendMessage,
-    setMessages,
     outgoingSenderMetadata,
     onFirstMessageSent,
     computerAttachmentsActive,
