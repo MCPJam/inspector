@@ -3821,15 +3821,22 @@ export default function App() {
   const launcherSignedIn = Boolean(workOsUser) && isCloudSyncActive;
   useLauncherAttach({
     enabled: !HOSTED_MODE,
-    signedIn: launcherSignedIn,
+    // The developer's sign-in, not whether this tab has loaded: a signed-in
+    // tab still loading its project must not ask them to sign in.
+    signedIn: Boolean(workOsUser),
+    // Only once the project's saved servers have loaded: before that a
+    // same-name server the project already has is invisible to the tab.
     project:
-      launcherSignedIn && activeProject?.sharedProjectId
+      launcherSignedIn && areServersHydrated && activeProject?.sharedProjectId
         ? { id: activeProject.sharedProjectId, name: activeProject.name }
         : null,
     servers: projectServers,
     selectedServer: appState.selectedServer,
-    saveAndConnect: (formData) =>
-      handleConnect(formData, { suppressSuccessToast: true }),
+    saveAndConnect: (formData, onSaved) =>
+      handleConnect(formData, {
+        suppressSuccessToast: true,
+        onConfigSaved: onSaved,
+      }),
     connectSaved: (serverName) =>
       reconnectServerWithResult(serverName, { suppressSuccessToast: true }),
     saveWithoutConnecting: async (formData) =>

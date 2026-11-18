@@ -46,11 +46,22 @@ export async function routeLauncherAttach(
   });
 }
 
+/**
+ * True when MCPJam took the report. A refusal means it no longer knows the
+ * request (the dev command quit, or MCPJam restarted); a network failure is
+ * reported as refused too, since either way nothing will act on the entry.
+ */
 export async function reportLauncherAttach(
   attachId: string,
   result: LauncherAttachResult,
-): Promise<void> {
-  await post(`/attach/${encodeURIComponent(attachId)}/result`, result);
+): Promise<boolean> {
+  try {
+    const res = await post(`/attach/${encodeURIComponent(attachId)}/result`, result);
+    return res.ok;
+  } catch (error) {
+    console.warn("[launcher-attach] Could not report to MCPJam", error);
+    return false;
+  }
 }
 
 export async function reportLauncherReleased(

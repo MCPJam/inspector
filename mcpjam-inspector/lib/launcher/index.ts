@@ -152,8 +152,12 @@ export function launchInspector(
   options: LaunchOptions & { reuse: true },
 ): Promise<ReusedInspectorInstance>;
 export function launchInspector(
-  options?: LaunchOptions,
+  options?: LaunchOptions & { reuse?: false },
 ): Promise<InspectorInstance>;
+// A `reuse` known only at run time may be either, so the result may lack `process`.
+export function launchInspector(
+  options: LaunchOptions,
+): Promise<InspectorInstance | ReusedInspectorInstance>;
 export async function launchInspector(
   options: LaunchOptions = {},
 ): Promise<InspectorInstance | ReusedInspectorInstance> {
@@ -174,7 +178,10 @@ export async function launchInspector(
     options.open !== false && !process.env.CI && Boolean(process.stdout.isTTY);
 
   const inspector = await embedInspector({
-    start: { command: "node", args: [binPath, ...(shouldOpen ? [] : ["--no-open"])] },
+    start: { command: "node", args: [binPath] },
+    open: shouldOpen,
+    // Not for a silent launch: its output is kept out of the terminal.
+    onWarning: options.silent ? undefined : (message) => console.warn(message),
     port: options.port,
     strictPort: options.strictPort,
     reuse: options.reuse,

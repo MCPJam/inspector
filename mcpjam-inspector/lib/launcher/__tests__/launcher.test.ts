@@ -25,6 +25,8 @@ type EmbedCall = {
   reuse?: boolean;
   silent?: boolean;
   tab?: string;
+  open?: boolean;
+  onWarning?: (message: string) => void;
   env: Record<string, string>;
 };
 const embedCall = () =>
@@ -52,8 +54,9 @@ describe("launchInspector", () => {
     const instance = await launchInspector();
 
     expect(embedCall().start.command).toBe("node");
+    expect(embedCall().start.args).toHaveLength(1);
     expect(embedCall().start.args[0]).toMatch(/bin[\\/]start\.js$/);
-    expect(embedCall().start.args).not.toContain("--no-open");
+    expect(embedCall().open).toBe(true);
     expect(instance).toEqual({
       url: engine.inspector.url,
       port: 6274,
@@ -88,8 +91,20 @@ describe("launchInspector", () => {
     await launchInspector();
 
     for (const [call] of engine.embedInspector.mock.calls as unknown as [EmbedCall][]) {
-      expect(call.start.args).toContain("--no-open");
+      expect(call.open).toBe(false);
     }
+  });
+
+  it("prints the engine's warnings, unless the launch is silent", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await launchInspector();
+    embedCall().onWarning?.("Could not share MCPJam");
+    expect(warn).toHaveBeenCalledWith("Could not share MCPJam");
+
+    engine.embedInspector.mockClear();
+    await launchInspector({ silent: true });
+    expect(embedCall().onWarning).toBeUndefined();
+    warn.mockRestore();
   });
 
   it("passes a current tab through unchanged and maps old names to Playground", async () => {
