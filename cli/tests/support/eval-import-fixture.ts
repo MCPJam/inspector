@@ -72,6 +72,10 @@ export type FixtureOptions = {
   toolsByServer?: Record<string, string[]>;
   /** Servers the project holds, in list order. */
   servers?: Array<{ id: string; name: string }>;
+  /** Server NAMES the project lists with `enabled: false`. */
+  disabledServers?: readonly string[];
+  /** Fail the project's server list with this status instead of answering. */
+  serversListStatus?: number;
   /** Environment name → the server names it resolves to. */
   environments?: Record<string, string[]>;
   /**
@@ -190,11 +194,18 @@ export async function startFixture(
     }
 
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
+      if (options.serversListStatus !== undefined) {
+        json(
+          { error: { code: "INTERNAL_ERROR", message: "listing failed" } },
+          options.serversListStatus
+        );
+        return;
+      }
       json({
         items: servers.map((entry) => ({
           ...entry,
           projectId: "proj-alpha",
-          enabled: true,
+          enabled: !options.disabledServers?.includes(entry.name),
           transportType: "http",
           url: `https://example.test/${entry.name}`,
           useOAuth: false,

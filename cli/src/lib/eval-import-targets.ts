@@ -3,10 +3,13 @@
  * project with the launch's own precedence and matching rules.
  *
  * `eval-import-live-validation.ts` builds the tool-reference check on top of
- * this.
+ * this. A target that cannot run as named (a server the project lacks, or one
+ * it has disabled) is reported from here, because it is a fact about the
+ * target whether or not any case makes a deterministic call.
  */
 
 import type { ResolvedEvalSuiteFile } from "@mcpjam/sdk";
+import { suiteFilePointer } from "@mcpjam/sdk";
 import {
   resolveEnvironmentOperation,
   type PlatformApiClient,
@@ -16,11 +19,45 @@ import { cliError } from "./output.js";
 /** Refusing to launch is the same "no verdict was reached" exit a bad file gets. */
 export const IMPORT_VALIDATION_EXIT_CODE = 2;
 
+export type ImportTargetFindingCode = "SERVER_UNRESOLVED" | "SERVER_DISABLED";
+
+/**
+ * A target that cannot run as named, whatever its cases do.
+ *
+ * Separate from `ImportToolFinding` because it belongs to no case: a
+ * prompt-only suite naming a server the project lacks has no deterministic
+ * reference to hang the failure on, and it still cannot run.
+ */
+export type ImportTargetFinding = {
+  code: ImportTargetFindingCode;
+  /**
+   * Path into the AUTHORED file, e.g. `["target", "servers", 0]` — absent when
+   * the server came from `--server` or from an environment's resolved set.
+   */
+  path?: Array<string | number>;
+  pointer?: string;
+  /** The selector as written when unresolved; the server's name when disabled. */
+  server: string;
+  /** The project server's id. Absent when nothing resolved. */
+  serverId?: string;
+  targetLabel: string;
+  message: string;
+};
+
+type TargetServer = {
+  id: string;
+  name: string;
+  /** Unknown for a server the project's list does not carry (a plugin's). */
+  enabled?: boolean;
+};
+
 /** One execution target, with the closed server set a run would connect. */
 export type ImportValidationTarget = {
   /** Human-readable, and stable: it lands in findings and in error text. */
   label: string;
-  servers: Array<{ id: string; name: string }>;
+  servers: TargetServer[];
+  /** Selectors this target names that match no project server. */
+  unresolved: Array<{ selector: string; path?: Array<string | number> }>;
 };
 
 /** The knobs that can move a file run off the target its file declares. */
@@ -33,6 +70,55 @@ export type ImportValidationKnobs = {
   /** `--case` selectors, when the launch narrows the run. */
   case?: string[];
 };
+
+/** Every server a target names that the project lacks or has disabled. */
+export function findTargetProblems(
+  target: ImportValidationTarget
+): ImportTargetFinding[] {
+  const unresolved = target.unresolved.map(
+    ({ selector, path }): ImportTargetFinding => ({
+      code: "SERVER_UNRESOLVED",
+      ...(path ? { path, pointer: suiteFilePointer(path) } : {}),
+      server: selector,
+      targetLabel: target.label,
+      message: `Server "${selector}" in ${target.label} is not a server in this project.`,
+    })
+  );
+  const disabled = target.servers
+    .filter((server) => server.enabled === false)
+    .map(
+      (server): ImportTargetFinding => ({
+        code: "SERVER_DISABLED",
+        server: server.name,
+        serverId: server.id,
+        targetLabel: target.label,
+        message: `Server "${server.name}" in ${target.label} is disabled in this project. Enable it or remove it from the target.`,
+      })
+    );
+  return [...unresolved, ...disabled];
+}
+
+/**
+ * Refuse a launch whose target cannot run as named, before anything is
+ * written. Every selected case would fail on it, so no per-case outcome
+ * (persisting a disabled case, rewriting a claim) is worth syncing first.
+ */
+export function refuseTargetProblems(
+  findings: readonly ImportTargetFinding[]
+): void {
+  if (findings.length === 0) return;
+  throw cliError(
+    "IMPORT_TARGET_UNRESOLVED",
+    `${findings.length} server(s) this run targets cannot run. Nothing was written and no run was started.\n` +
+      findings
+        .map(
+          (found) => `  ${found.pointer ?? found.targetLabel}: ${found.message}`
+        )
+        .join("\n"),
+    IMPORT_VALIDATION_EXIT_CODE,
+    { targetFindings: findings }
+  );
+}
 
 // ── resolving what the run will actually connect ─────────────────────────────
 
@@ -77,18 +163,23 @@ export async function resolveValidationTargets(
   }
 
   if (knobs.server?.length) {
+    const selectors = knobs.server;
+    // EXPLICIT: `--server` is resolved at launch by `resolveByIdOrName`,
+    // which requires a unique name. See `resolveServersByName`.
+    const { servers, unresolved } = await resolveServersByName(
+      client,
+      params.projectId,
+      selectors,
+      params.signal,
+      "explicit"
+    );
     return [
       {
-        label: `servers ${knobs.server.join(", ")}`,
-        // EXPLICIT: `--server` is resolved at launch by `resolveByIdOrName`,
-        // which requires a unique name. See `resolveServersByName`.
-        servers: await resolveServersByName(
-          client,
-          params.projectId,
-          knobs.server,
-          params.signal,
-          "explicit"
-        ),
+        label: `servers ${selectors.join(", ")}`,
+        servers,
+        unresolved: unresolved.map((index) => ({
+          selector: selectors[index],
+        })),
       },
     ];
   }
@@ -130,7 +221,7 @@ export async function resolveValidationTargets(
     // absent from another's is exactly the multi-target false positive a union
     // would hide.
     return Promise.all(
-      target.hosts.map(async (host) => {
+      target.hosts.map(async (host, hostIndex) => {
         const selector = host.id ?? host.name;
         // `undefined` and `[]` are DIFFERENT, and the suite-file contract says
         // so in as many words ("an empty set is meaningful and preserved").
@@ -148,28 +239,42 @@ export async function resolveValidationTargets(
             params.signal
           );
         }
+        const selectors = host.servers.map(
+          (server) => server.id ?? server.name
+        );
+        const { servers, unresolved } = await resolveServersByName(
+          client,
+          params.projectId,
+          selectors,
+          params.signal
+        );
         return {
           label: `host ${host.name}`,
-          servers: await resolveServersByName(
-            client,
-            params.projectId,
-            host.servers.map((server) => server.id ?? server.name),
-            params.signal
-          ),
+          servers,
+          unresolved: unresolved.map((index) => ({
+            selector: selectors[index],
+            path: ["target", "hosts", hostIndex, "servers", index],
+          })),
         };
       })
     );
   }
 
+  const selectors = fileServers.map((server) => server.id ?? server.name);
+  const { servers, unresolved } = await resolveServersByName(
+    client,
+    params.projectId,
+    selectors,
+    params.signal
+  );
   return [
     {
       label: "the file's target.servers",
-      servers: await resolveServersByName(
-        client,
-        params.projectId,
-        fileServers.map((server) => server.id ?? server.name),
-        params.signal
-      ),
+      servers,
+      unresolved: unresolved.map((index) => ({
+        selector: selectors[index],
+        path: ["target", "servers", index],
+      })),
     },
   ];
 }
@@ -256,16 +361,19 @@ async function hostTarget(
     );
   }
   const pinned = serverIds.filter((id): id is string => typeof id === "string");
-  const servers = await resolveServersByName(client, projectId, pinned, signal);
+  const { servers, unresolved } = await resolveServersByName(
+    client,
+    projectId,
+    pinned,
+    signal
+  );
   // A host pinning a server the project no longer has is an inconsistency in
   // the PROJECT, not in the file. Silently validating against the narrowed set
   // would still fail closed, but it would fail closed with the wrong sentence —
   // reporting "your file names a tool that does not exist" and sending the
   // author to edit YAML that is fine.
-  const missing = pinned.filter(
-    (id) => !servers.some((server) => server.id === id)
-  );
-  if (missing.length > 0) {
+  if (unresolved.length > 0) {
+    const missing = unresolved.map((index) => pinned[index]);
     throw cliError(
       "TOOL_DISCOVERY_UNAVAILABLE",
       `Host "${host.name}" pins server(s) ${missing.join(
@@ -274,7 +382,11 @@ async function hostTarget(
       IMPORT_VALIDATION_EXIT_CODE
     );
   }
-  return { label: `host ${displayName ?? host.name}`, servers };
+  return {
+    label: `host ${displayName ?? host.name}`,
+    servers,
+    unresolved: [],
+  };
 }
 
 async function environmentTarget(
@@ -291,23 +403,36 @@ async function environmentTarget(
     { project: projectId, environment: selector },
     { client, signal }
   );
+  // The resolve carries no `enabled` flag, so the project's own list answers
+  // it. A server missing from that list (a plugin's) stays unknown rather than
+  // being reported disabled.
+  const page = await client.listProjectServers({ projectId }, { signal });
+  const enabledById = new Map(
+    page.items.map((server) => [server.id, server.enabled])
+  );
   return {
     label: `environment ${resolvedEnvironment.environment.name}`,
-    servers: resolvedEnvironment.servers.map((server) => ({
-      id: server.serverId,
-      name: server.name,
-    })),
+    servers: resolvedEnvironment.servers.map((server) => {
+      const enabled = enabledById.get(server.serverId);
+      return {
+        id: server.serverId,
+        name: server.name,
+        ...(enabled !== undefined ? { enabled } : {}),
+      };
+    }),
+    unresolved: [],
   };
 }
 
 /**
  * Turn the file's server selectors into live project servers.
  *
- * A selector that matches nothing is dropped rather than raised: the file's
- * `target.servers` names servers by the name a project may not have yet, and
- * the resulting findings ("tool X on server Y does not resolve") say more than
- * a bare "no such server" would. The one thing that is NOT dropped is a failure
- * to READ the project's servers — that is the check being unavailable.
+ * A selector that matches nothing comes back by its index in `unresolved`, so
+ * the caller can report it where it was written. Dropping it left a prompt-only
+ * suite naming a server the project lacks reported valid, and blamed every
+ * deterministic call on that server with "not part of the target" instead of
+ * naming the missing server. A failure to READ the project's servers is not a
+ * finding: it throws, because the check is unavailable.
  */
 async function resolveServersByName(
   client: PlatformApiClient,
@@ -334,8 +459,8 @@ async function resolveServersByName(
    * that never started.
    */
   rule: "binding" | "explicit" = "binding"
-): Promise<Array<{ id: string; name: string }>> {
-  if (selectors.length === 0) return [];
+): Promise<{ servers: TargetServer[]; unresolved: number[] }> {
+  if (selectors.length === 0) return { servers: [], unresolved: [] };
   const page = await client.listProjectServers({ projectId }, { signal });
   const byId = new Map(page.items.map((server) => [server.id, server]));
   const byName = new Map(page.items.map((server) => [server.name, server]));
@@ -347,15 +472,23 @@ async function resolveServersByName(
     if (bucket) bucket.push(server);
     else foldedMatches.set(key, [server]);
   }
-  const resolvedServers: Array<{ id: string; name: string }> = [];
-  for (const rawSelector of selectors) {
+  const resolvedServers: TargetServer[] = [];
+  const unresolved: number[] = [];
+  const toTargetServer = (
+    server: (typeof page.items)[number]
+  ): TargetServer => ({
+    id: server.id,
+    name: server.name,
+    enabled: server.enabled,
+  });
+  for (const [index, rawSelector] of selectors.entries()) {
     const selector = rawSelector.trim();
     if (!selector) continue;
     // An exact ID short-circuits under BOTH rules — every runtime resolver
     // checks ids first, and an id is unique by construction.
     const byIdHit = byId.get(selector);
     if (byIdHit) {
-      resolvedServers.push({ id: byIdHit.id, name: byIdHit.name });
+      resolvedServers.push(toTargetServer(byIdHit));
       continue;
     }
     // An exact DISPLAY NAME short-circuits only under the binding rule.
@@ -368,7 +501,7 @@ async function resolveServersByName(
     if (rule === "binding") {
       const byNameHit = byName.get(selector);
       if (byNameHit) {
-        resolvedServers.push({ id: byNameHit.id, name: byNameHit.name });
+        resolvedServers.push(toTargetServer(byNameHit));
         continue;
       }
     }
@@ -381,9 +514,10 @@ async function resolveServersByName(
       );
     }
     const hit = folded[0];
-    if (hit) resolvedServers.push({ id: hit.id, name: hit.name });
+    if (hit) resolvedServers.push(toTargetServer(hit));
+    else unresolved.push(index);
   }
-  return resolvedServers;
+  return { servers: resolvedServers, unresolved };
 }
 
 /**

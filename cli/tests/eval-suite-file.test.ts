@@ -1808,6 +1808,73 @@ async function startFileRunFixture(options?: {
       return;
     }
 
+    // The pre-launch check resolves the file's target servers even when no
+    // case makes a deterministic call.
+    if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "srv_billing",
+              projectId: "proj-alpha",
+              name: "billing",
+              enabled: true,
+              transportType: "http",
+              url: "https://example.test/billing",
+              useOAuth: false,
+              hasClientSecret: false,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    // Every host and environment this fixture knows runs the one server.
+    if (url.pathname === "/api/v1/projects/proj-alpha/hosts") {
+      const hostIds = new Set([
+        ...hosts.map((host) => host.id),
+        ...(options?.existingEnvironments ?? []).map((env) => env.hostId),
+      ]);
+      res.end(
+        JSON.stringify({
+          items: [...hostIds].map((id) => ({ id, name: id })),
+        })
+      );
+      return;
+    }
+    const hostMatch = url.pathname.match(
+      /^\/api\/v1\/projects\/proj-alpha\/hosts\/([^/]+)$/
+    );
+    if (hostMatch) {
+      res.end(
+        JSON.stringify({
+          id: decodeURIComponent(hostMatch[1]),
+          config: { serverIds: ["srv_billing"] },
+        })
+      );
+      return;
+    }
+    if (
+      /^\/api\/v1\/projects\/proj-alpha\/environments\/[^/]+\/resolve$/.test(
+        url.pathname
+      )
+    ) {
+      res.end(
+        JSON.stringify({
+          environment: {
+            id: "env-prod",
+            name: options?.environmentName ?? "prod",
+            revision: 1,
+          },
+          servers: [{ serverId: "srv_billing", name: "billing" }],
+        })
+      );
+      return;
+    }
+
     if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-suites/from-file" &&
       method === "POST"
