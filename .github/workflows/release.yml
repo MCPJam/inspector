@@ -104,7 +104,8 @@ permissions:
   packages: write
   # Read only: the local harness gate verifies pinned packs' provenance.
   # `local-harness-contract` grants itself the OIDC and attestation writes it
-  # needs; no other job gets them.
+  # needs, and `publish-packages` the OIDC token npm trusted publishing needs;
+  # no other job gets them.
   attestations: read
 
 jobs:
@@ -804,6 +805,16 @@ jobs:
         needs.deploy-backend-prod.result == 'success'
       )
     runs-on: ${{ vars.RELEASE_RUNNER || 'ubuntu-latest' }}
+    # npm trusted publishing: `npm publish` trades this job's OIDC token for a
+    # one-time publish token for each package that names release.yml as its
+    # trusted publisher, and attaches provenance. A package without one falls
+    # back to NPM_TOKEN, which npm stops honouring for publishes in January
+    # 2027. A new trusted publisher expires unless it publishes within two
+    # days, so each package gets one just before a release that ships it.
+    # Once every package has published this way, drop NPM_TOKEN.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
