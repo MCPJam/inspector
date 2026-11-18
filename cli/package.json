@@ -26,15 +26,15 @@
   },
   "dependencies": {
     "@mcpjam/sdk": "^10.11.0",
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "commander": "^14.0.3",
-    "posthog-node": "^5.54.1",
+    "posthog-node": "^5.74.0",
     "undici": "^7.30.0",
-    "ws": "^8.22.0",
+    "ws": "^8.23.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/client": "2.4.0",
     "@types/node": "^26.6.3",
     "@types/ws": "^8.18.2",
     "tsup": "^8.3.5",
