@@ -27,5 +27,8 @@ describe("useTestCaseStepsEditorEnabled", () => {
     expect(result.current).toBeUndefined();
     act(() => vi.advanceTimersByTime(STEPS_EDITOR_FLAG_WAIT_MS));
     expect(result.current).toBe(false);
+    // Later cases in the same page load don't wait again.
+    const next = renderHook(() => useTestCaseStepsEditorEnabled());
+    expect(next.result.current).toBe(false);
   });
 });
