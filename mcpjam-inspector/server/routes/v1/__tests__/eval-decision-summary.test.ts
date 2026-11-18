@@ -43,6 +43,11 @@ vi.mock("convex/browser", () => ({
   }),
 }));
 
+import {
+  deriveStageResults,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  NEXT_ACTION_BY_INFRA_CLASS,
+} from "@mcpjam/sdk/contract";
 import v1Routes from "../index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -219,6 +224,72 @@ describe("GET …/eval-runs/:runId/decision-summary", () => {
       expect(await res.json()).toEqual(expected);
     });
   }
+
+  it("chooses the next action from a stored infraError when the model call failed", async () => {
+    // The iteration doc as the hosted runner writes it: the provider died after
+    // the server connected, so the chain is `setup` with no failed stage, and
+    // `infraError` names what broke. Without the class reaching the assembler
+    // the action pointed at the server connection, which had worked.
+    const derivation = deriveStageResults({
+      authored: {
+        mode: "model_driven",
+        expectsToolCall: true,
+        assertionCount: 1,
+      },
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok" },
+          discovery: { outcome: "ok" },
+        },
+        stepError: { source: "model" },
+      },
+      iteration: { status: "failed" },
+    });
+    const run = runDoc("p1", {
+      id: "run-1",
+      status: "completed",
+      result: "failed",
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuiteRun") return Promise.resolve(run);
+      if (name === "testSuites:listTestSuiteRunIterations") {
+        return Promise.resolve({
+          page: [
+            {
+              ...iterationDoc("run-1", {
+                id: "it-1",
+                iterationNumber: 1,
+                status: "failed",
+                result: "failed",
+                error: "rate limit exceeded",
+                stageResults: derivation.stageResults,
+                failureCategory: derivation.failureCategory,
+                stageAnalyzerVersion: derivation.stageAnalyzerVersion,
+              }),
+              infraError: {
+                class: "rate_limited",
+                layer: "model",
+                retryable: true,
+              },
+            },
+          ],
+          isDone: true,
+          continueCursor: "",
+        });
+      }
+      return Promise.resolve(null);
+    });
+    const res = await request(
+      `/projects/p1/eval-runs/${REQUEST_RUN_ID}/decision-summary`
+    );
+    const body = (await res.json()) as any;
+    expect(body.diagnostics.items[0].nextAction).toBe(
+      NEXT_ACTION_BY_INFRA_CLASS.rate_limited
+    );
+    expect(body.diagnostics.items[0].nextAction).not.toBe(
+      NEXT_ACTION_BY_FAILURE_CATEGORY.setup
+    );
+  });
 
   it("admits a guest the way the run and its iterations already do", async () => {
     // Guests can GET `/eval-runs/:id` and `/iterations`. This route composes

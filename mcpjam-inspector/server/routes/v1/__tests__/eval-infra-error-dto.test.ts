@@ -4,7 +4,20 @@
  * one — so every existing row's DTO is byte-identical.
  */
 import { describe, expect, it } from "vitest";
+import { NEXT_ACTION_BY_INFRA_CLASS } from "@mcpjam/sdk/contract";
+import { EVAL_INFRA_ERROR_CLASSES } from "@/shared/eval-infra-error";
 import { toInfraErrorProjection } from "../eval-infra-error-projection.js";
+
+describe("decision summary next actions for infra classes", () => {
+  it("has an action for exactly the classes the runner can write", () => {
+    // The SDK keys its map by string because it does not own this list; a
+    // class added here without an action would fall back to "check the
+    // server connection" on trials whose connection worked.
+    expect(Object.keys(NEXT_ACTION_BY_INFRA_CLASS).sort()).toEqual(
+      [...EVAL_INFRA_ERROR_CLASSES].sort(),
+    );
+  });
+});
 
 describe("iteration infraError projection", () => {
   it("projects the known keys of a stored marker", () => {

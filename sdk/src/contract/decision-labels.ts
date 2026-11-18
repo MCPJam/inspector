@@ -359,6 +359,34 @@ export const NEXT_ACTION_BY_FAILURE_CATEGORY = Object.freeze({
 } satisfies Record<FailureCategory, string>);
 
 /**
+ * The operator action when MCPJam's own infrastructure failed a trial, keyed
+ * on the iteration's `infraError.class`.
+ *
+ * A model-call failure is filed under the `setup` category so the chain never
+ * blames the server under test, but `setup`'s action points at the server
+ * connection — which, on these trials, worked. The class says what actually
+ * broke, so it chooses the action instead. Keyed by string because the class
+ * list is owned by the platform: a class this build does not know falls back
+ * to the category's action.
+ */
+export const NEXT_ACTION_BY_INFRA_CLASS: Readonly<Record<string, string>> =
+  Object.freeze({
+    provider_unavailable:
+      "the model provider was unavailable for this run; re-run the case",
+    rate_limited:
+      "the model provider rate-limited this run; wait a few minutes, then re-run",
+    capacity: "MCPJam was at capacity when this ran; re-run in a few minutes",
+    auth: "the model provider rejected the API key for this run; replace the key if it is your organization's, otherwise contact MCPJam support",
+    configuration:
+      "the model or provider settings for this run were refused; check the model id and the organization's model settings",
+    sandbox:
+      "MCPJam's eval sandbox failed before the server was measured; re-run the case",
+    // Placeholder until structured credit-recovery guidance lands (KES-941).
+    account_limit:
+      "the MCPJam usage limit stopped this run; see the run notes for how to continue",
+  });
+
+/**
  * The action when no failure category was established.
  *
  * Deliberately says to go and look rather than naming a system: with no
