@@ -5,15 +5,34 @@ export const DEFAULT_INSPECTOR_PORT = 6274;
 /** How many ports after the preferred one a launch tries before giving up. */
 export const PORT_SCAN_WINDOW = 20;
 
-/** True when nothing listens on the port on the loopback address. */
-export function isPortFree(port: number): Promise<boolean> {
+/** Hosts a listener may hold the port on and still make `localhost` ambiguous. */
+const PROBE_HOSTS = ["127.0.0.1", "::1"];
+/** No such address on this machine (for example, IPv6 is off): not a listener. */
+const NO_SUCH_ADDRESS = new Set(["EADDRNOTAVAIL", "EAFNOSUPPORT"]);
+
+function bindsFree(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createServer();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => {
+    server.once("error", (error: NodeJS.ErrnoException) =>
+      resolve(NO_SUCH_ADDRESS.has(error.code ?? "")),
+    );
+    server.listen(port, host, () => {
       server.close(() => resolve(true));
     });
   });
+}
+
+/**
+ * True when nothing listens on the port on the loopback addresses. Both
+ * `127.0.0.1` and `::1` are tried: on macOS a listener on `::`, `::1` or
+ * `0.0.0.0` does not stop a bind to `127.0.0.1`, and the `localhost` link we
+ * hand out could then resolve to the other program.
+ */
+export async function isPortFree(port: number): Promise<boolean> {
+  for (const host of PROBE_HOSTS) {
+    if (!(await bindsFree(port, host))) return false;
+  }
+  return true;
 }
 
 /**

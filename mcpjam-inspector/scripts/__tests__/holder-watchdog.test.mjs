@@ -68,7 +68,7 @@ test("stops only after two checks in a row with no live holder", async () => {
   }
 });
 
-test("a holder that arrives between checks resets the count", async () => {
+test("a holder that arrives between checks restarts the two-check count", async () => {
   const dir = holdersDir([]);
   let idle = 0;
   const stop = startHolderWatchdog({
@@ -77,14 +77,24 @@ test("a holder that arrives between checks resets the count", async () => {
       idle += 1;
     },
     isAlive: () => true,
-    intervalMs: 25,
+    intervalMs: 100,
     firstCheckDelayMs: 0,
   });
   try {
-    await waitFor(5);
-    writeFileSync(join(dir, "404.json"), JSON.stringify({ pid: 404 }));
-    await waitFor(100);
-    assert.equal(idle, 0);
+    // The first check finds no holder: one idle check so far.
+    await waitFor(30);
+    const holder = join(dir, "404.json");
+    writeFileSync(holder, JSON.stringify({ pid: 404 }));
+    await waitFor(250);
+    assert.equal(idle, 0, "a live holder keeps MCPJam up");
+
+    rmSync(holder);
+    // One check after the holder leaves is not enough. If the count had not
+    // restarted, the idle check from before would make this the second.
+    await waitFor(60);
+    assert.equal(idle, 0, "the earlier idle check was not forgotten");
+    await waitFor(300);
+    assert.equal(idle, 1, "two idle checks in a row stop MCPJam");
   } finally {
     stop();
     rmSync(dir, { recursive: true, force: true });
