@@ -157,6 +157,11 @@ import {
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
+import { ServerCanvasPage } from "./server-canvas/ServerCanvasPage";
+import {
+  useServerCanvasEnabled,
+  useServerCanvasRoute,
+} from "./server-canvas/use-server-canvas-route";
 import { HostsConnectAddServerSlotContext } from "./hosts/HostsConnectAddServerSlotContext";
 import { useHostsConnectViewPhase } from "./hosts/HostsConnectViewPhaseContext";
 import {
@@ -619,6 +624,7 @@ export function ServersTab({
   );
   const viewPhase = useHostsConnectViewPhase();
   const extensionSettingsEnabled = useFeatureFlagEnabled("plugin-extensions-enabled") === true;
+  const serverCanvasEnabled = useServerCanvasEnabled();
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();
 
@@ -930,7 +936,9 @@ export function ServersTab({
   }, [detailModalServer, detailModalState.isOpen]);
 
   useEffect(() => {
-    if (detailModalState.isOpen) {
+    // On a canvas route the page resumes itself: the OAuth return path
+    // brought the reader back to it.
+    if (detailModalState.isOpen || (serverCanvasEnabled && routeServerId)) {
       return;
     }
 
@@ -952,7 +960,7 @@ export function ServersTab({
       serverSnapshot: resumeServer,
     }));
     clearServerDetailModalOAuthResume();
-  }, [detailModalState.isOpen, projectServers]);
+  }, [detailModalState.isOpen, projectServers, serverCanvasEnabled, routeServerId]);
 
   useEffect(() => {
     track("servers_tab_viewed", {
@@ -1116,7 +1124,8 @@ export function ServersTab({
     routeServerState.kind === "found" ? routeServerState.target?.name : null;
 
   useEffect(() => {
-    if (!routeServerName) return;
+    // With the server canvas on, the route renders the page instead.
+    if (!routeServerName || serverCanvasEnabled) return;
     const server = projectServers[routeServerName];
     if (!server) return;
     setDetailModalState((prev) =>
@@ -1130,7 +1139,7 @@ export function ServersTab({
             serverSnapshot: server,
           }
     );
-  }, [routeServerName, projectServers]);
+  }, [routeServerName, projectServers, serverCanvasEnabled]);
 
 
   /**
@@ -1221,6 +1230,29 @@ export function ServersTab({
     },
     []
   );
+  const serverCanvas = useServerCanvasRoute({
+    enabled: serverCanvasEnabled,
+    routeServerId,
+    routeServerName,
+    routeLoading: routeServerState.kind === "loading" && isAuthenticated,
+    hostedProjectId,
+    projectServers,
+    hostedServerIdFor: (name) => sharedProjectServersRecord[name]?._id,
+    openModal: handleOpenDetailModal,
+  });
+  // Flags are evaluated for the anonymous id first and replaced once the
+  // signed-in actor's refresh lands, and the flag hook cannot tell the two
+  // apart. So a reload or an OAuth return on /servers/:serverId can open the
+  // modal, and take the OAuth resume marker, before server-canvas turns on.
+  // When the page takes the route over, close that modal so it never sits
+  // over the page.
+  const canvasServerName = serverCanvas.server?.name;
+  useEffect(() => {
+    if (!canvasServerName) return;
+    setDetailModalState((prev) =>
+      prev.isOpen ? { ...prev, isOpen: false } : prev
+    );
+  }, [canvasServerName]);
 
   const focusLoggerOnServer = useCallback(
     (serverName: string | null, sinceTimestamp = Date.now()) => {
@@ -1249,9 +1281,9 @@ export function ServersTab({
     () =>
       onCredentialReentryRequest((serverName) => {
         const server = projectServersRef.current[serverName];
-        if (server) handleOpenDetailModal(server, "configuration");
+        if (server) serverCanvas.openDetail(server, "configuration");
       }),
-    [handleOpenDetailModal]
+    [serverCanvas.openDetail]
   );
 
   const handleCloseDetailModal = useCallback(() => {
@@ -2032,7 +2064,7 @@ export function ServersTab({
                         onRemove(serverName);
                       }}
                       hostedServerId={sharedProjectServersRecord[name]?._id}
-                      onOpenDetailModal={handleOpenDetailModal}
+                      onOpenDetailModal={serverCanvas.openDetail}
                       projectId={activeProjectId}
                       moveTargets={moveTargets}
                       onMoveToProject={handleMoveServerToProject}
@@ -2222,6 +2254,41 @@ export function ServersTab({
     </div>
   );
 
+  // What the detail modal and the server canvas page share.
+  const serverDetailProps = {
+    onSubmit: handleSubmitDetailModal,
+    onDisconnect,
+    onReconnect: handleReconnectServer,
+    existingServerNames: Object.keys(projectServers),
+    projectClientConfig: selectedProject?.clientConfig,
+    projectId: hostedProjectId,
+    extensionLaunchProfile: pluginExtensionProfileForHost(previewedHost?.config),
+    organizationId: selectedProject?.organizationId ?? null,
+    isSignedIn: Boolean(signedInUser),
+    // The tab now mounts under ActiveMcpProfileProvider (see the root
+    // wrapper), which is the source for general host-profile reads (e.g. the
+    // auth section's enterprise-policy guidance). The protocol chip stays
+    // PROP-FIRST: this explicit value wins over the provider (see the modal's
+    // resolution comment), so its source attribution is unchanged.
+    hostDefaultMcpProtocolVersion:
+      previewedHost?.config?.mcpProfile?.mcpProtocolVersion,
+    projectXaaDefaultIdentity:
+      selectedProject?.xaaTestDefaults?.defaultIdentity ?? null,
+  };
+  /** One settings thread per detail surface: a modal session, a plugin, a page. */
+  const extensionSettingsScopeFor = (key: string) =>
+    extensionSettingsEnabled && hostedProjectId && previewedHostId
+      ? {
+          projectId: hostedProjectId,
+          hostId: previewedHostId,
+          threadId: `settings:${key}`,
+          pluginWorkspace: {
+            version: 1 as const,
+            workspaceId: `connect-settings:${key}`,
+          },
+        }
+      : null;
+
   return (
     // The previewed host's mcpProfile scopes this tab so the server
     // add/edit modals' AuthenticationSection can read the host's
@@ -2240,6 +2307,22 @@ export function ServersTab({
           ? shouldQueryProjectId(activeProjectId)
             ? renderLoadingContent()
             : renderNoProjectContent()
+          : serverCanvas.pending
+          ? renderLoadingContent()
+          : serverCanvas.server && hostedProjectId && routeServerId
+          ? (
+            <ServerCanvasPage
+              key={routeServerId}
+              server={serverCanvas.server}
+              {...serverDetailProps}
+              projectId={hostedProjectId}
+              hostedServerId={routeServerId}
+              extensionSettingsScope={extensionSettingsScopeFor(
+                `canvas:${routeServerId}`
+              )}
+              onBack={serverCanvas.back}
+            />
+          )
           : hasAnyServers
           ? renderConnectedContent()
           : renderEmptyContent()}
@@ -2314,34 +2397,11 @@ export function ServersTab({
             onClose={handleCloseDetailModal}
             server={detailModalServer}
             defaultTab={detailModalState.defaultTab}
-            onSubmit={handleSubmitDetailModal}
-            onDisconnect={onDisconnect}
-            onReconnect={handleReconnectServer}
-            existingServerNames={Object.keys(projectServers)}
-            projectClientConfig={selectedProject?.clientConfig}
-            projectId={hostedProjectId}
-            extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
-            extensionSettingsScope={extensionSettingsEnabled && hostedProjectId && previewedHostId ? {
-              projectId: hostedProjectId,
-              hostId: previewedHostId,
-              threadId: `settings:${detailModalState.sessionKey}`,
-              pluginWorkspace: { version: 1, workspaceId: `connect-settings:${detailModalState.sessionKey}` },
-            } : null}
+            {...serverDetailProps}
+            extensionSettingsScope={extensionSettingsScopeFor(
+              `${detailModalState.sessionKey}`
+            )}
             hostedServerId={detailModalHostedServerId}
-            organizationId={selectedProject?.organizationId ?? null}
-            isSignedIn={Boolean(signedInUser)}
-            // The tab now mounts under ActiveMcpProfileProvider (see the
-            // root wrapper), which is the source for general host-profile
-            // reads (e.g. the auth section's enterprise-policy guidance).
-            // The protocol chip stays PROP-FIRST: this explicit value wins
-            // over the provider (see the modal's resolution comment), so
-            // its source attribution is unchanged.
-            hostDefaultMcpProtocolVersion={
-              previewedHost?.config?.mcpProfile?.mcpProtocolVersion
-            }
-            projectXaaDefaultIdentity={
-              selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
-            }
           />
         )}
 
@@ -2353,19 +2413,9 @@ export function ServersTab({
             onClose={() => pluginParts.setDetail(null)}
             projectId={hostedProjectId}
             extensionLaunchProfile={pluginExtensionProfileForHost(previewedHost?.config)}
-            extensionSettingsScope={
-              extensionSettingsEnabled && hostedProjectId && previewedHostId
-                ? {
-                    projectId: hostedProjectId,
-                    hostId: previewedHostId,
-                    threadId: `settings:plugin:${pluginParts.detail.pluginId}`,
-                    pluginWorkspace: {
-                      version: 1,
-                      workspaceId: `connect-settings:plugin:${pluginParts.detail.pluginId}`,
-                    },
-                  }
-                : null
-            }
+            extensionSettingsScope={extensionSettingsScopeFor(
+              `plugin:${pluginParts.detail.pluginId}`
+            )}
           />
         ) : null}
 

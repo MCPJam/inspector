@@ -368,6 +368,10 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Apps bridge observations for the server canvas: the route authorizes the
   // server and checks the rollout with the caller's bearer.
   "/api/mcp/server-features/observations",
+  // Server canvas Refresh: the route checks the rollout, authorizes the
+  // server and writes the new capture and probe results with the caller's
+  // bearer, so without this entry it answers 401.
+  "/api/mcp/servers/canvas/refresh",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",
