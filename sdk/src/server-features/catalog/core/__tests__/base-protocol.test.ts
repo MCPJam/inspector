@@ -4,6 +4,7 @@ import {
   makeProbe,
   makeSurface,
 } from "../../../__tests__/fixtures.js";
+import { CORE_FEATURES } from "../index.js";
 import { declared, isGap, kindOf, probed } from "./helpers.js";
 
 describe("server information", () => {
@@ -201,5 +202,138 @@ describe("transports", () => {
     };
     expect(kindOf(probed("transport.http-sse", failed))).toBe("unknown");
     expect(probed("transport.http-sse", {})).toBeNull();
+  });
+});
+
+describe("transport behavior", () => {
+  const behavior = CORE_FEATURES.filter(
+    (entry) =>
+      entry.family === "transport-behavior" &&
+      entry.id !== "transport-behavior.stdio-discover-shutdown"
+  );
+
+  it("is not applicable on stdio servers", () => {
+    const stdio = makeSurface({ transport: "stdio" });
+    expect(behavior.length).toBeGreaterThan(10);
+    for (const entry of behavior) {
+      expect(kindOf(entry.assessment.declared?.(stdio) ?? null), entry.id).toBe(
+        "not-applicable"
+      );
+    }
+    expect(
+      kindOf(
+        declared("transport-behavior.stdio-discover-shutdown", makeSurface())
+      )
+    ).toBe("not-applicable");
+    expect(
+      kindOf(
+        declared(
+          "transport-behavior.stdio-discover-shutdown",
+          makeSurface({ transport: "stdio", protocolVersion: "2026-07-28" })
+        )
+      )
+    ).toBe("present");
+  });
+
+  it("reads sessions per revision from the transport probe", () => {
+    const legacyIssued = {
+      "http-transport": makeProbe("http-transport", {
+        protocolVersion: "2025-11-25",
+        sessionIdIssued: true,
+      }),
+    };
+    expect(kindOf(probed("transport-behavior.session-id", legacyIssued))).toBe(
+      "present"
+    );
+
+    const legacyNone = {
+      "http-transport": makeProbe("http-transport", {
+        protocolVersion: "2025-11-25",
+        sessionIdIssued: false,
+      }),
+    };
+    expect(kindOf(probed("transport-behavior.session-id", legacyNone))).toBe(
+      "absent"
+    );
+    expect(
+      probed("transport-behavior.stateless-sessions", legacyNone)
+    ).toBeNull();
+
+    const modernNone = {
+      "http-transport": makeProbe("http-transport", {
+        protocolVersion: "2026-07-28",
+        sessionIdIssued: false,
+      }),
+    };
+    expect(
+      kindOf(probed("transport-behavior.stateless-sessions", modernNone))
+    ).toBe("present");
+    expect(probed("transport-behavior.session-id", modernNone)).toBeNull();
+
+    const modernMinted = {
+      "http-transport": makeProbe("http-transport", {
+        protocolVersion: "2026-07-28",
+        sessionIdIssued: true,
+      }),
+    };
+    expect(
+      kindOf(probed("transport-behavior.stateless-sessions", modernMinted))
+    ).toBe("absent");
+  });
+
+  it("reads the response mode the probe saw", () => {
+    const sse = {
+      "http-transport": makeProbe("http-transport", {
+        responseContentType: "text/event-stream",
+      }),
+    };
+    expect(probed("transport-behavior.response-mode", sse)).toMatchObject({
+      kind: "present",
+      detail: "Answers with an event stream.",
+    });
+    const odd = {
+      "http-transport": makeProbe("http-transport", {
+        responseContentType: "text/html",
+      }),
+    };
+    expect(probed("transport-behavior.response-mode", odd)).toBeNull();
+  });
+
+  it("finds x-mcp-header anywhere in a tool's input schema", () => {
+    const withHeader = makeSurface({
+      tools: [
+        {
+          name: "search",
+          inputSchema: {
+            type: "object",
+            properties: {
+              region: { type: "string", "x-mcp-header": "Region" },
+            },
+          },
+        },
+        { name: "ping", inputSchema: { type: "object" } },
+      ],
+    });
+    expect(
+      declared("transport-behavior.x-mcp-header", withHeader)
+    ).toMatchObject({
+      kind: "present",
+      count: 1,
+    });
+
+    const without = makeSurface({
+      tools: [{ name: "ping", inputSchema: { type: "object" } }],
+    });
+    expect(
+      isGap(declared("transport-behavior.x-mcp-header", without), without)
+    ).toBe(true);
+
+    const lossy = makeSurface({
+      tools: [{ name: "ping", inputSchema: { type: "object" } }],
+      coverage: fullCoverage({ toolSchemas: "partial" }),
+    });
+    expect(
+      isGap(declared("transport-behavior.x-mcp-header", lossy), lossy)
+    ).toBe(false);
   });
 });
