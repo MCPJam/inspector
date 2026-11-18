@@ -466,6 +466,28 @@ interface PlaygroundCompareThemeScopeProps {
   hostShellStyle: CSSProperties;
 }
 
+/**
+ * A study already provides the capability override from its session. Wrapping
+ * again with the visitor's Playground preference, even `undefined`, replaces
+ * that value. Ordinary Playground chats keep the preference provider.
+ */
+function PlaygroundCapabilitiesScope({
+  inheritOuter,
+  value,
+  children,
+}: {
+  inheritOuter: boolean;
+  value: Record<string, unknown> | undefined;
+  children: ReactNode;
+}) {
+  if (inheritOuter) return children;
+  return (
+    <ScenarioHostCapabilitiesOverrideProvider value={value}>
+      {children}
+    </ScenarioHostCapabilitiesOverrideProvider>
+  );
+}
+
 function PlaygroundCompareThemeScope({
   children,
   hostStyle,
@@ -473,10 +495,12 @@ function PlaygroundCompareThemeScope({
   chatUiOverride,
   effectiveThreadTheme,
   hostShellStyle,
-}: PlaygroundCompareThemeScopeProps) {
+  inheritCapabilities,
+}: PlaygroundCompareThemeScopeProps & { inheritCapabilities?: boolean }) {
   return (
     <ScenarioHostStyleProvider value={hostStyle}>
-      <ScenarioHostCapabilitiesOverrideProvider
+      <PlaygroundCapabilitiesScope
+        inheritOuter={inheritCapabilities === true}
         value={hostCapabilitiesOverride}
       >
         <ScenarioChatUiOverrideProvider value={chatUiOverride}>
@@ -495,7 +519,7 @@ function PlaygroundCompareThemeScope({
             </div>
           </ScenarioHostThemeProvider>
         </ScenarioChatUiOverrideProvider>
-      </ScenarioHostCapabilitiesOverrideProvider>
+      </PlaygroundCapabilitiesScope>
     </ScenarioHostStyleProvider>
   );
 }
@@ -1594,10 +1618,15 @@ export function PlaygroundMain({
   });
 
   const onOAuthRequired = tester?.onOAuthRequired;
+  const reportedOAuthErrorRef = useRef<unknown>(null);
   useEffect(() => {
     if (!onOAuthRequired || !error) return;
+    // `selectedServers` is a new array when a server connects. Reporting the
+    // same chat error again would reopen the study's authorize step.
+    if (reportedOAuthErrorRef.current === error) return;
     const parsed = oauthRequiredFromChatError(error);
     if (!parsed.required) return;
+    reportedOAuthErrorRef.current = error;
     onOAuthRequired(withSingleServerName(parsed.details, selectedServers));
   }, [error, onOAuthRequired, selectedServers]);
 
@@ -2439,7 +2468,10 @@ export function PlaygroundMain({
   // host list caught up, since the ref doesn't survive a remount).
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
-  const isComparingHosts = !isSharedSession && comparePanes.length > 1;
+  // A study is one chat. Saved Playground panes would otherwise render a
+  // comparison whose panes do not carry the study's session.
+  const isComparingHosts =
+    !tester && !isSharedSession && comparePanes.length > 1;
   // Whether this page load came back from a comparison's sign-in. Read once:
   // a Connect click on this page adds the request before it redirects.
   const [comparisonRecoveryRequested, setComparisonRecoveryRequested] =
@@ -3407,7 +3439,10 @@ export function PlaygroundMain({
     apiSessionViewOnly ||
     needsConversationTargetAck ||
     loadingHistorySessionId !== null ||
-    restoringTarget !== null;
+    restoringTarget !== null ||
+    // The composer reads this through `sendBlocked`. Widget follow-ups, edits,
+    // and App messages read the ref, so the study block has to be here too.
+    studyComposerBlocked;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -6816,7 +6851,8 @@ export function PlaygroundMain({
                     interactive={
                       !apiSessionViewOnly &&
                       loadingHistorySessionId === null &&
-                      restoringTarget === null
+                      restoringTarget === null &&
+                      !studyComposerBlocked
                     }
                     onToolApprovalResponse={(response) => {
                       if (!conversationSendBlockedRef.current)
@@ -7089,7 +7125,10 @@ export function PlaygroundMain({
         {/* The global owner remains mounted in both single chat and Compare. */}
         {globalFormScope ? (
           <ScenarioHostStyleProvider value={hostStyle}>
-            <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+            <PlaygroundCapabilitiesScope
+              inheritOuter={Boolean(tester)}
+              value={hostCapabilitiesOverride}
+            >
               <ScenarioHostThemeProvider value={effectiveThreadTheme}>
                 <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
                   <ChatDeepLinkProvider value={chatDeepLinks}>
@@ -7103,7 +7142,7 @@ export function PlaygroundMain({
                   </ChatDeepLinkProvider>
                 </WidgetFullscreenPlacementContext.Provider>
               </ScenarioHostThemeProvider>
-            </ScenarioHostCapabilitiesOverrideProvider>
+            </PlaygroundCapabilitiesScope>
           </ScenarioHostStyleProvider>
         ) : null}
         {hasExtensionProvider ? (
@@ -7248,6 +7287,7 @@ export function PlaygroundMain({
             <PlaygroundCompareThemeScope
               hostStyle={hostStyle}
               hostCapabilitiesOverride={hostCapabilitiesOverride}
+              inheritCapabilities={Boolean(tester)}
               chatUiOverride={chatUiOverride}
               // The compare shell is workspace chrome: the canvas and shared
               // composer follow the app theme, not the selected client's saved
@@ -7688,7 +7728,8 @@ export function PlaygroundMain({
             <>
               {showLiveTraceDiagnostics && (
                 <ScenarioHostStyleProvider value={hostStyle}>
-                  <ScenarioHostCapabilitiesOverrideProvider
+                  <PlaygroundCapabilitiesScope
+                    inheritOuter={Boolean(tester)}
                     value={hostCapabilitiesOverride}
                   >
                     <ScenarioHostThemeProvider value={effectiveThreadTheme}>
@@ -7759,7 +7800,7 @@ export function PlaygroundMain({
                         </div>
                       </div>
                     </ScenarioHostThemeProvider>
-                  </ScenarioHostCapabilitiesOverrideProvider>
+                  </PlaygroundCapabilitiesScope>
                 </ScenarioHostStyleProvider>
               )}
 
@@ -7771,7 +7812,8 @@ export function PlaygroundMain({
                 }
               >
                 <ScenarioHostStyleProvider value={hostStyle}>
-                  <ScenarioHostCapabilitiesOverrideProvider
+                  <PlaygroundCapabilitiesScope
+                    inheritOuter={Boolean(tester)}
                     value={hostCapabilitiesOverride}
                   >
                     <ScenarioHostThemeProvider value={effectiveThreadTheme}>
@@ -7805,7 +7847,7 @@ export function PlaygroundMain({
                         </div>
                       </div>
                     </ScenarioHostThemeProvider>
-                  </ScenarioHostCapabilitiesOverrideProvider>
+                  </PlaygroundCapabilitiesScope>
                 </ScenarioHostStyleProvider>
               </div>
             </>

@@ -73,6 +73,11 @@ describe("oauthRequiredFromChatError", () => {
       ),
     ).toEqual({ required: true });
     expect(
+      oauthRequiredFromChatError(
+        new Error("Authentication failed: invalid_token"),
+      ),
+    ).toEqual({ required: true });
+    expect(
       oauthRequiredFromChatError(new Error("the model refused")),
     ).toEqual({ required: false });
   });

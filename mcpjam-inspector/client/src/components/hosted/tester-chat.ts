@@ -87,9 +87,8 @@ export function oauthRequiredFromChatError(
   }
 
   const isOAuthError =
-    message.includes("requires OAuth authentication") ||
-    (message.includes("Authentication failed") &&
-      message.includes("invalid_token"));
+    /requires OAuth authentication/.test(message) ||
+    (/Authentication failed/.test(message) && /invalid_token/.test(message));
   return isOAuthError ? { required: true } : { required: false };
 }
 

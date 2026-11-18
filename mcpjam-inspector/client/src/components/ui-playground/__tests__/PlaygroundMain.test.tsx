@@ -5823,4 +5823,51 @@ describe("PlaygroundMain tester rules", () => {
     expect(capturedChatSessionOptions.rememberPickedTarget).toBe(true);
     expect(capturedChatSessionOptions.hostedContext.scenarioId).toBeUndefined();
   });
+
+  it("drops a widget follow-up while the study composer is blocked", async () => {
+    const originalMessages = mockUseChatSession.messages;
+    mockUseChatSession.messages = [
+      { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+    ];
+    try {
+      render(<PlaygroundMain {...study} />);
+      const threadProps = mockThread.mock.calls.at(-1)?.[0] as {
+        sendFollowUpMessage?: (text: string) => Promise<void> | void;
+        interactive?: boolean;
+      };
+      mockUseChatSession.sendMessage.mockClear();
+      await threadProps.sendFollowUpMessage?.("widget follow-up");
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(threadProps.interactive).toBe(false);
+    } finally {
+      mockUseChatSession.messages = originalMessages;
+    }
+  });
+
+  it("asks the study to authorize once for the same chat error", () => {
+    const onOAuthRequired = vi.fn();
+    mockUseChatSession.error = new Error(
+      "Server requires OAuth authentication",
+    );
+    const props = {
+      ...study,
+      tester: { ...study.tester, onOAuthRequired, composerBlocked: false },
+    };
+    try {
+      const view = render(<PlaygroundMain {...props} />);
+      expect(onOAuthRequired).toHaveBeenCalledTimes(1);
+      view.rerender(
+        <PlaygroundMain
+          {...props}
+          tester={{
+            ...props.tester,
+            selectedServerNames: ["asana"],
+          }}
+        />,
+      );
+      expect(onOAuthRequired).toHaveBeenCalledTimes(1);
+    } finally {
+      mockUseChatSession.error = null;
+    }
+  });
 });
