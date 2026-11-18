@@ -5844,6 +5844,121 @@ describe("PlaygroundMain tester rules", () => {
     }
   });
 
+  it("keeps the draft when the study blocks the composer during send preparation", async () => {
+    let releaseReady!: (value: {
+      readyServerNames: string[];
+      missingServerNames: string[];
+      failedServerNames: string[];
+      reauthServerNames: string[];
+    }) => void;
+    const ensureServersReady = vi.fn(
+      () =>
+        new Promise<{
+          readyServerNames: string[];
+          missingServerNames: string[];
+          failedServerNames: string[];
+          reauthServerNames: string[];
+        }>((resolve) => {
+          releaseReady = resolve;
+        }),
+    );
+    const open = {
+      ...study,
+      tester: { ...study.tester, composerBlocked: false },
+      ensureServersReady,
+    };
+    const view = render(<PlaygroundMain {...open} />);
+    fireEvent.change(screen.getByTestId("chat-input-field"), {
+      target: { value: "hello from the study" },
+    });
+    mockUseChatSession.sendMessage.mockClear();
+
+    const pending = act(async () => {
+      fireEvent.submit(screen.getByTestId("chat-input"));
+    });
+    await waitFor(() => expect(ensureServersReady).toHaveBeenCalledTimes(1));
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+    view.rerender(
+      <PlaygroundMain
+        {...open}
+        tester={{ ...open.tester, composerBlocked: true }}
+      />,
+    );
+    await act(async () => {
+      releaseReady({
+        readyServerNames: ["asana"],
+        missingServerNames: [],
+        failedServerNames: [],
+        reauthServerNames: [],
+      });
+    });
+    await pending;
+
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByTestId("chat-input-field")).toHaveValue(
+      "hello from the study",
+    );
+  });
+
+  it("drops a widget follow-up that finishes preparing after the study blocks", async () => {
+    const originalMessages = mockUseChatSession.messages;
+    mockUseChatSession.messages = [
+      { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+    ];
+    let releaseReady!: (value: {
+      readyServerNames: string[];
+      missingServerNames: string[];
+      failedServerNames: string[];
+      reauthServerNames: string[];
+    }) => void;
+    const ensureServersReady = vi.fn(
+      () =>
+        new Promise<{
+          readyServerNames: string[];
+          missingServerNames: string[];
+          failedServerNames: string[];
+          reauthServerNames: string[];
+        }>((resolve) => {
+          releaseReady = resolve;
+        }),
+    );
+    try {
+      const open = {
+        ...study,
+        tester: { ...study.tester, composerBlocked: false },
+        ensureServersReady,
+      };
+      const view = render(<PlaygroundMain {...open} />);
+      const threadProps = mockThread.mock.calls.at(-1)?.[0] as {
+        sendFollowUpMessage?: (text: string) => Promise<void> | void;
+      };
+      mockUseChatSession.sendMessage.mockClear();
+      const pending = threadProps.sendFollowUpMessage?.("widget follow-up");
+      await waitFor(() => expect(ensureServersReady).toHaveBeenCalledTimes(1));
+
+      view.rerender(
+        <PlaygroundMain
+          {...open}
+          tester={{ ...open.tester, composerBlocked: true }}
+        />,
+      );
+      await act(async () => {
+        releaseReady({
+          readyServerNames: ["asana"],
+          missingServerNames: [],
+          failedServerNames: [],
+          reauthServerNames: [],
+        });
+        await pending;
+      });
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      mockUseChatSession.messages = originalMessages;
+    }
+  });
+
   it("asks the study to authorize once for the same chat error", () => {
     const onOAuthRequired = vi.fn();
     mockUseChatSession.error = new Error(

@@ -4978,6 +4978,12 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
+        // The first check is stale once the gates above have yielded. A study
+        // block, a target disclosure, or a history restore that landed in that
+        // window has to win, or the follow-up still goes out.
+        if (conversationSendBlockedRef.current) {
+          return;
+        }
         const sent = sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -5653,6 +5659,11 @@ export function PlaygroundMain({
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
+
+    // Re-read after server prep, thread sync, and attachment work. Those
+    // awaits can outlive the check at the top, and a study that blocked in
+    // that window must keep the draft: it is cleared only after a send.
+    if (conversationSendBlockedRef.current) return false;
 
     // EXPLICIT injection (INS-4): a prompt the user expanded and a skill they
     // attached are turn CONTENT, not context the model has to go fetch. The
