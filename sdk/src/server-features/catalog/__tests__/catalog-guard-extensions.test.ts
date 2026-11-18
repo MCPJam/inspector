@@ -8,6 +8,8 @@ import {
 import { EXTENSION_FEATURES } from "../extensions/index.js";
 import {
   MODERN,
+  TASKS_CORE_VERSION,
+  TASKS_EXT,
   declared,
   feature,
   plainTool,
@@ -400,5 +402,166 @@ describe("MCP Apps", () => {
     ).toMatchObject({
       kind: "unknown",
     });
+  });
+});
+
+describe("Tasks, per negotiated form", () => {
+  const coreCapability = {
+    list: {},
+    cancel: {},
+    requests: { tools: { call: {} } },
+  };
+
+  it("reads the core utility on 2025-11-25", () => {
+    const surface = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities: { tasks: coreCapability },
+      tools: [
+        { name: "slow", execution: { taskSupport: "optional" } },
+        plainTool,
+      ],
+    });
+    expect(declared("tasks.core.capability", surface)).toEqual({
+      kind: "present",
+      via: "advertised",
+      detail: "list, cancel, requests.tools.call",
+    });
+    expect(declared("tasks.core.tool-task-support", surface)).toMatchObject({
+      kind: "present",
+      count: 1,
+    });
+    expect(declared("tasks.core.list", surface)).toMatchObject({
+      kind: "present",
+    });
+    expect(declared("tasks.core.cancel", surface)).toMatchObject({
+      kind: "present",
+    });
+    const experimental = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities: { experimental: { tasks: { list: {} } } },
+    });
+    expect(declared("tasks.core.capability", experimental)).toMatchObject({
+      kind: "present",
+    });
+  });
+
+  it("makes the core capability the only gap when it is missing", () => {
+    const surface = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities: {},
+    });
+    expect(declared("tasks.core.capability", surface)).toEqual({
+      kind: "absent",
+      basis: ["capabilities"],
+    });
+    expect(declared("tasks.core.list", surface)).toMatchObject({
+      kind: "not-applicable",
+    });
+    expect(declared("tasks.core.augmented-call", surface)).toMatchObject({
+      kind: "not-applicable",
+    });
+    const partial = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities: {},
+      coverage: fullCoverage({ capabilities: "partial" }),
+    });
+    expect(declared("tasks.core.augmented-call", partial)).toBeNull();
+  });
+
+  it("does not count taskSupport forbidden or omitted as task support", () => {
+    const surface = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities: { tasks: coreCapability },
+      tools: [
+        { name: "a", execution: { taskSupport: "forbidden" } },
+        plainTool,
+      ],
+    });
+    expect(declared("tasks.core.tool-task-support", surface)).toEqual({
+      kind: "absent",
+      basis: ["tools"],
+    });
+  });
+
+  it("reads the extension on 2026-07-28 and says nothing about which tools return tasks", () => {
+    const surface = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: { extensions: { [TASKS_EXT]: {} } },
+    });
+    expect(declared("tasks.ext.declaration", surface)).toMatchObject({
+      kind: "present",
+      via: "advertised",
+    });
+    // An ordinary result later does not undo the declaration; execution stays unobserved.
+    expect(declared("tasks.ext.create-task-result", surface)).toBeNull();
+    const without = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: { extensions: {} },
+    });
+    expect(declared("tasks.ext.declaration", without)).toEqual({
+      kind: "absent",
+      basis: ["capabilities"],
+    });
+    expect(declared("tasks.ext.update", without)).toMatchObject({
+      kind: "not-applicable",
+    });
+    const malformed = makeSurface({
+      protocolVersion: MODERN,
+      capabilities: { extensions: { [TASKS_EXT]: true } },
+    });
+    expect(declared("tasks.ext.declaration", malformed)).toMatchObject({
+      kind: "unknown",
+    });
+  });
+
+  it("scopes a server that advertises both forms to the negotiated revision", () => {
+    const capabilities = {
+      tasks: coreCapability,
+      extensions: { [TASKS_EXT]: {} },
+    };
+    const legacy = makeSurface({
+      protocolVersion: TASKS_CORE_VERSION,
+      capabilities,
+    });
+    expect(declared("tasks.core.capability", legacy)).toMatchObject({
+      kind: "present",
+    });
+    expect(declared("tasks.ext.declaration", legacy)).toBeNull();
+    const modern = makeSurface({ protocolVersion: MODERN, capabilities });
+    expect(declared("tasks.core.capability", modern)).toBeNull();
+    expect(declared("tasks.ext.declaration", modern)).toMatchObject({
+      kind: "present",
+    });
+    for (const surface of [legacy, modern]) {
+      for (const entry of EXTENSION_FEATURES.filter(
+        (item) => item.family === "tasks"
+      )) {
+        expect(entry.assessment.declared?.(surface)?.kind, entry.id).not.toBe(
+          "absent"
+        );
+      }
+    }
+    expect(feature("tasks.core.capability").lifecycle).toEqual({
+      introduced: "2025-11-25",
+      removed: "2026-07-28",
+    });
+    expect(feature("tasks.ext.declaration").lifecycle).toEqual({
+      introduced: "2026-07-28",
+    });
+  });
+
+  it("never borrows rules for a missing or unknown revision", () => {
+    for (const protocolVersion of [undefined, "2027-01-01"]) {
+      const surface = makeSurface({
+        protocolVersion,
+        capabilities: { tasks: coreCapability },
+      });
+      expect(declared("tasks.core.capability", surface)).toMatchObject({
+        kind: "unknown",
+      });
+      expect(declared("tasks.ext.declaration", surface)).toMatchObject({
+        kind: "unknown",
+      });
+    }
   });
 });
