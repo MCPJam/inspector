@@ -70,6 +70,14 @@ export type ErrorCatalogEntry = {
 const ORG_KEYS_CREDIT_GUIDANCE =
   "Your own API key covers supported model inference. MCPJam features can still require credits; Swarm generation and persona turns always do, unless your organization uses its own keys for all AI features. Then they run on the organization's default AI model and its providers bill the tokens; MCPJam's fixed product fees still use credits.";
 
+/**
+ * The plan-generic step on the credit entries. Exported so the describer can
+ * replace it with the step a refusal's `recovery` names, which is specific to
+ * the plan and the caller's role and carries the link.
+ */
+export const PLAN_CREDIT_GUIDANCE =
+  "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.";
+
 const DOCS_BASE = "/troubleshooting/error-codes";
 
 /**
@@ -891,7 +899,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Chat, evals and swarm generation all draw on one daily bucket, shared across the organization.",
     ],
     [
-      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      PLAN_CREDIT_GUIDANCE,
       "Wait for the daily allowance to reset.",
       ORG_KEYS_CREDIT_GUIDANCE,
     ],
@@ -906,7 +914,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Paid plans include a monthly credit allowance shared across the organization. It renews with the billing period.",
     ],
     [
-      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      PLAN_CREDIT_GUIDANCE,
       "Wait for the billing period to renew.",
       ORG_KEYS_CREDIT_GUIDANCE,
     ],
@@ -922,7 +930,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     ],
     [
       "Try a cheaper model or a shorter conversation.",
-      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      PLAN_CREDIT_GUIDANCE,
       ORG_KEYS_CREDIT_GUIDANCE,
     ],
     "out-of-mcpjam-credits",
@@ -981,7 +989,7 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
       "Chat, evals and swarm generation all draw on the same MCPJam allowance.",
     ],
     [
-      "On Free, upgrade for a larger monthly allowance and access to top-ups. On eligible paid plans, buy shared credits to continue testing.",
+      PLAN_CREDIT_GUIDANCE,
       "Wait for the allowance to reset.",
       ORG_KEYS_CREDIT_GUIDANCE,
     ],

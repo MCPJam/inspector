@@ -1,6 +1,7 @@
 import { LOCAL_EVAL_MODEL } from "../../../test/support/local-eval-model";
 import { logger } from "../../../utils/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import creditRefusalCorpus from "../../../../../sdk/tests/fixtures/credit-refusal-fixtures.json";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -312,6 +313,44 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       ]);
     },
   );
+
+  // The shared corpus (see `credit-recovery-parity.test.ts`): the refusal's
+  // own step leads the skipped trials' text and lands on the refused row.
+  it.each(
+    creditRefusalCorpus.cases
+      .filter((fixture) => fixture.stopsRun)
+      .map((fixture) => [fixture.__name, fixture] as const),
+  )("words a credit stop from the %s refusal", async (_name, fixture) => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock.mockImplementationOnce(success).mockImplementationOnce(() => {
+      throw Object.assign(new Error(fixture.body.error), {
+        responseBody: JSON.stringify(fixture.body),
+      });
+    });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+    let nextId = 0;
+    convexClient.action.mockImplementation(async (name) =>
+      name === "testSuites:startQuickRunIteration"
+        ? { iterationId: `iteration-${++nextId}` }
+        : { iterationId: "iteration" },
+    );
+    await runEvalSuiteWithAiSdk(config as any);
+    const writes = convexClient.action.mock.calls.filter(
+      ([name]) => name === "testSuites:updateTestIteration",
+    );
+    const skipped = writes.find(([, args]) => args.status === "skipped")?.[1];
+    const refused = writes.find(([, args]) => args.iterationId === "iteration-2");
+    if (fixture.expectedRecovery === null) {
+      expect(skipped?.error).toMatch(/^Out of MCPJam credits\. /);
+      expect(refused?.[1].metadata?.creditRecovery).toBeUndefined();
+      return;
+    }
+    expect(skipped?.error.startsWith(fixture.expectedRecovery)).toBe(true);
+    expect(refused?.[1].metadata?.creditRecovery).toEqual(
+      fixture.body.recovery,
+    );
+  });
 
   // OpenRouter answers a BYOK key with no balance with a 402 whose message
   // matches the MCPJam exhaustion phrases.

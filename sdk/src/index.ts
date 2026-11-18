@@ -690,6 +690,14 @@ export type {
   EvalRunDecisionSummary,
   EvalRunDecisionVerdict,
 } from "./contract/index.js";
+export {
+  creditRecoveryOfIterations,
+  findCreditRecovery,
+  formatCreditRecovery,
+  parseCreditRecovery,
+} from "./contract/index.js";
+export type { CreditRecovery } from "./contract/index.js";
+export { readEvalRunCreditRecovery } from "./eval-credit-recovery.js";
 export type {
   EvalDecisionSummary,
   EvalDecisionSummaryCase,

@@ -1,3 +1,5 @@
+import { parseCreditRecovery, type CreditRecovery } from "@mcpjam/sdk/contract";
+
 /**
  * The public projection of `testIteration.infraError`: MCPJam's own
  * infrastructure (the model provider, the sandbox, the platform) failed the
@@ -13,14 +15,30 @@ export type InfraErrorDto = {
   retryable: boolean;
   code?: string;
   httpStatus?: number;
+  /** The step a credit refusal named. */
+  recovery?: CreditRecovery;
 };
 
-export function toInfraErrorProjection(raw: unknown): {
+/**
+ * `metadata` is the iteration's: the runner records a credit refusal's
+ * `recovery` there (`metadata.creditRecovery`), because the row's
+ * `infraError` validator is closed and the metadata record is not.
+ */
+export function toInfraErrorProjection(
+  raw: unknown,
+  metadata?: unknown,
+): {
   infraError?: InfraErrorDto;
 } {
   if (!raw || typeof raw !== "object") return {};
   const row = raw as Record<string, unknown>;
   if (typeof row.class !== "string" || typeof row.layer !== "string") return {};
+  const recovery =
+    row.class === "account_limit" && metadata && typeof metadata === "object"
+      ? parseCreditRecovery(
+          (metadata as Record<string, unknown>).creditRecovery,
+        )
+      : undefined;
   return {
     infraError: {
       class: row.class,
@@ -30,6 +48,7 @@ export function toInfraErrorProjection(raw: unknown): {
       ...(typeof row.httpStatus === "number"
         ? { httpStatus: row.httpStatus }
         : {}),
+      ...(recovery ? { recovery } : {}),
     },
   };
 }

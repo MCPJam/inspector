@@ -356,8 +356,19 @@ function num(value: unknown): number | undefined {
     : undefined;
 }
 
+/**
+ * A colon that introduced a URL goes with it, and the sentence's own closing
+ * punctuation stays: the backend's credit refusal reads "Upgrade to Pro to
+ * keep going: <url>. BYOK …", which scrubbed to "keep going: BYOK …".
+ */
+const INTRODUCED_URL_PATTERN = /:\s*https?:\/\/\S+?([.,;]?)(?=\s|$)/g;
+
 function scrub(text: string): string {
-  return text.replace(URL_PATTERN, "").replace(/\s+/g, " ").trim();
+  return text
+    .replace(INTRODUCED_URL_PATTERN, "$1")
+    .replace(URL_PATTERN, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**

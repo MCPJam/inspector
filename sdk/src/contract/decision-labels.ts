@@ -381,7 +381,8 @@ export const NEXT_ACTION_BY_INFRA_CLASS: Readonly<Record<string, string>> =
       "the model or provider settings for this run were refused; check the model id and the organization's model settings",
     sandbox:
       "MCPJam's eval sandbox failed before the server was measured; re-run the case",
-    // Placeholder until structured credit-recovery guidance lands (KES-941).
+    // Only for a refusal without a `recovery`: one that carries it gets the
+    // step it names (`formatCreditRecovery`) instead.
     account_limit:
       "the MCPJam usage limit stopped this run; see the run notes for how to continue",
   });

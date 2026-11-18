@@ -96,7 +96,11 @@ A run's decision summary can carry a `nextAction` that says to check the server 
 
 ### When a run stops for credits
 
-A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, or a required platform fee means the organization is out of allowance. In this order:
+A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, a spend budget, or a required platform fee means the organization is out of allowance.
+
+Read the refusal's `recovery` first: `creditRecovery` in `eval status` or `eval run --wait` JSON (the `Recovery:` line in human output), `infraError.recovery` on the refused iteration, or `details.recovery` on a launch refusal. Give the user its `url` first, with the step its `action` names. When `actor` is `owner_or_admin`, say the user has to forward that link to an organization owner or admin. The run's `notes` and the decision summary's `nextAction` lead with the same sentence.
+
+Without a `recovery` (an older deployment), in this order:
 
 1. Tell the user first that upgrading the plan (Free to Pro) is the immediate fix, and send them to `https://app.mcpjam.com/billing`. Free plans cannot buy credits; paid plans can buy them on the same page.
 2. Bring your own provider keys (BYOK) to stop MCPJam inference charges. BYOK does not remove platform fees.
