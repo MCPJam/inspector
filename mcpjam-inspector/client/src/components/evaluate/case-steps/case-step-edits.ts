@@ -132,22 +132,24 @@ export function addCasePredicate(
   draft: CaseStepsDraft,
   predicate: Predicate,
 ): CaseStepsDraft {
-  const current = draft.predicates;
-  const mode = !current || current.mode === "inherit" ? "extend" : current.mode;
-  const list = current && current.mode !== "inherit" ? current.list : [];
-  return { ...draft, predicates: { mode, list: [...list, predicate] } };
+  return setCasePredicates(draft, (list) => [...list, predicate]);
 }
 
+/**
+ * Edits the case's own list. Save blanks an inherit list, so inherit starts
+ * an empty extend list instead, as adding a predicate does.
+ */
 export function setCasePredicates(
   draft: CaseStepsDraft,
   update: (list: Predicate[]) => Predicate[],
 ): CaseStepsDraft {
   const current = draft.predicates;
+  const own = current && current.mode !== "inherit" ? current : undefined;
   return {
     ...draft,
     predicates: {
-      mode: current?.mode ?? "extend",
-      list: update(current?.list ?? []),
+      mode: own?.mode ?? "extend",
+      list: update(own?.list ?? []),
     },
   };
 }

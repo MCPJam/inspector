@@ -157,6 +157,11 @@ function widgetValue(assertion: WidgetAssertion): string {
 }
 
 function widgetSummary(assertion: WidgetAssertion): AssertionSummary {
+  const Icon = iconFor(`widget:${assertion.kind}`);
+  // A kind from a newer build has no label here; show its name, as above.
+  if (!Object.hasOwn(WIDGET_ASSERTION_LABELS, assertion.kind)) {
+    return { label: String(assertion.kind), Icon };
+  }
   const view = trimmed(assertion.toolName);
   const value = widgetValue(assertion);
   return {
@@ -167,7 +172,7 @@ function widgetSummary(assertion: WidgetAssertion): AssertionSummary {
         ? { value }
         : { missing: FILL_IN }),
     ...(view ? { extra: `in ${view}` } : {}),
-    Icon: iconFor(`widget:${assertion.kind}`),
+    Icon,
   };
 }
 

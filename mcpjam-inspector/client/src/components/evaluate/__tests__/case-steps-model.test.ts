@@ -232,6 +232,23 @@ describe("afterRunSection", () => {
     expect(s.caseRows.map((row) => row.predicateIndex)).toEqual([0, 1]);
   });
 
+  it("keeps a row without an index after the indexed ones", () => {
+    const card = buildCaseScorecard({
+      ...base,
+      suiteDefaultPredicates: [D1, D2],
+    });
+    const groups = card.groups.map((group) => ({
+      ...group,
+      rows: group.rows.map((row) =>
+        row.predicate === D1 ? { ...row, predicateIndex: undefined } : row,
+      ),
+    }));
+    expect(preds(afterRunSection({ ...card, groups }).suiteRows)).toEqual([
+      D2,
+      D1,
+    ]);
+  });
+
   it("replace drops the suite rows and counts them", () => {
     const s = section({
       suiteDefaultPredicates: [D1, D2],

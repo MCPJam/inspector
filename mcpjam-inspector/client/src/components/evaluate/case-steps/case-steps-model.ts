@@ -130,14 +130,17 @@ function afterRunRoute(row: ScorecardRow): AfterRunRoute | null {
   return null;
 }
 
+/** By list index; a row without one keeps its place after those that have one. */
 function rowsOf(
   card: CaseScorecard,
   provenance: "suite" | "case",
 ): ScorecardRow[] {
+  const at = (row: ScorecardRow) =>
+    row.predicateIndex ?? Number.MAX_SAFE_INTEGER;
   return card.groups
     .flatMap((group) => group.rows)
     .filter((row) => row.provenance === provenance)
-    .sort((a, b) => (a.predicateIndex ?? 0) - (b.predicateIndex ?? 0));
+    .sort((a, b) => at(a) - at(b));
 }
 
 export function afterRunSection(card: CaseScorecard): AfterRunSection {

@@ -78,12 +78,20 @@ describe("isCaseStepsDirty", () => {
 
   it.each([
     ["the title", { title: "Renamed" }],
+    ["the trials", { runs: 5 }],
     ["the expected outcome", { expectedOutput: "One workspace" }],
     ["the steps", { steps: [steps[0]] }],
   ])("is dirty after editing %s", (_name, edit) => {
     const testCase = makeCase();
     const draft = { ...seedCaseStepsDraft(testCase), ...edit };
     expect(isCaseStepsDirty(draft, testCase)).toBe(true);
+  });
+
+  it("is clean for a case with no stored trials", () => {
+    const testCase = makeCase({ runs: undefined });
+    expect(isCaseStepsDirty(seedCaseStepsDraft(testCase), testCase)).toBe(
+      false,
+    );
   });
 
   it("is dirty after turning the tool-error switch off or back on", () => {

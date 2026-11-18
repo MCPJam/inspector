@@ -156,6 +156,14 @@ describe("assertionSummary edge cases", () => {
     },
   );
 
+  it.each(["futureKind", "constructor", "toString"])(
+    "shows an unknown widget kind's name, not a blank row: %s",
+    (kind) => {
+      const future = { kind, toolName: "v" } as unknown as WidgetAssertion;
+      expect(summary(future)).toEqual({ label: kind });
+    },
+  );
+
   it("reads an empty onlyToolsCalled list as no tool", () => {
     expect(summary({ type: "onlyToolsCalled", toolNames: [] })).toEqual({
       label: "No tool should be called",

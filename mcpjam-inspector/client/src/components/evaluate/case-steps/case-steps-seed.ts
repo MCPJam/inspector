@@ -1,7 +1,7 @@
 /**
  * The editor's draft from a stored case, and whether the draft has changed
  * since. The comparison is today's editor's (hasUnsavedChanges): normalized
- * steps, title, scenario, outcome, config, envelopes, kind, the judge opt-out
+ * steps, title, runs, scenario, outcome, config, envelopes, kind, the judge opt-out
  * and the negative flag the draft would save.
  */
 import { normalizeAdvancedConfig } from "@/components/evals/case-save-payload";
@@ -67,6 +67,7 @@ export function isCaseStepsDirty(
 ): boolean {
   const pairs: [unknown, unknown][] = [
     [draft.title, testCase.title],
+    [draft.runs, testCase.runs ?? DEFAULTS.RUNS_PER_TEST],
     [(draft.scenario ?? "").trim(), (testCase.scenario ?? "").trim()],
     [draft.steps, loadCaseSteps(testCase)],
     [

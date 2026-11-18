@@ -8,6 +8,7 @@ import {
   chooseNoTool,
   chooseTools,
   setCaseKind,
+  setCasePredicates,
   type CaseStepsDraft,
 } from "../case-steps/case-step-edits";
 
@@ -194,6 +195,18 @@ describe("adding", () => {
     expect(next.predicates).toEqual({
       mode: "extend",
       list: [{ type: "noToolErrors" }],
+    });
+  });
+
+  it("an edit in inherit mode starts an empty extend list", () => {
+    const stale = { type: "noToolErrors" } as const;
+    const next = setCasePredicates(
+      draft({ predicates: { mode: "inherit", list: [stale] } }),
+      (list) => [...list, { type: "responseContains", needle: "ok" }],
+    );
+    expect(next.predicates).toEqual({
+      mode: "extend",
+      list: [{ type: "responseContains", needle: "ok" }],
     });
   });
 
