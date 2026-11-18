@@ -191,6 +191,11 @@
   ],
   "author": "MCPJam",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MCPJam/inspector.git",
+    "directory": "sdk"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/node": "2.1.2",
