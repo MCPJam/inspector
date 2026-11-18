@@ -41,6 +41,7 @@ const CLOUD_COMMAND_FILES = [
   "studies.ts",
   "secrets.ts",
   "server-accounts.ts",
+  "server-connect.ts",
   "server-revisions.ts",
   "sessions.ts",
   "sessions-browser.ts",
