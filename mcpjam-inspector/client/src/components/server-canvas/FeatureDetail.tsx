@@ -151,7 +151,7 @@ function FeatureBody({
       <Section title="Who provides it">{OWNER_LABELS[feature.owner]}</Section>
       <Section title="What we saw">
         {assessment.evidence.length === 0 ? (
-          <p>No evidence yet for this connection.</p>
+          <p>No evidence yet for this server.</p>
         ) : (
           <ul className="mt-1 flex flex-col gap-2">
             {assessment.evidence.map((evidence, index) => (

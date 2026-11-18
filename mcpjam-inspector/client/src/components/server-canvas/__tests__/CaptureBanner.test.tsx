@@ -94,7 +94,9 @@ describe("CaptureBanner", () => {
       latestAttempt: { status: "failed", at },
     });
     expect(
-      screen.getByText("Disconnected. Nothing was saved for this server."),
+      screen.getByText(
+        "Server disconnected. Nothing was saved. Reconnect it to capture its features.",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(
       `The capture on ${formatEvidenceTime(at)} failed. Connect to try again.`,

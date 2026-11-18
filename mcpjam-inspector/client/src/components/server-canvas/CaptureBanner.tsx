@@ -108,7 +108,7 @@ function captureLine(
     if (capturedAt)
       return `Disconnected. Showing what was saved on ${formatEvidenceTime(capturedAt)}.`;
     return attemptFailed
-      ? "Disconnected. Nothing was saved for this server."
+      ? "Server disconnected. Nothing was saved. Reconnect it to capture its features."
       : "Disconnected. Nothing was saved for this server yet. Connect it to check its features.";
   }
   if (capturedAt) return `Captured ${formatEvidenceTime(capturedAt)}.`;
