@@ -103,7 +103,10 @@ export async function findReleaseEvidence({
     if (now() >= deadline) {
       return { runId: null, reason: `Evidence run ${active.id} is still ${active.status} after the wait; running the gate here.` };
     }
-    log(`Evidence run ${active.id} for ${sha} is ${active.status}; checking again shortly.`);
+    log(
+      `Evidence run ${active.id} for ${sha} is ${active.status}; checking again shortly. ` +
+        "Cancel that run to run the gate in this release instead.",
+    );
     await sleep(pollMs);
   }
 }
