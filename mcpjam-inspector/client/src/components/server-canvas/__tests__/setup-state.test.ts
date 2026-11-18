@@ -18,6 +18,15 @@ describe("configuredSetup", () => {
     expect(configuredSetup({ registrationMode: "dcr" })).toEqual([]);
   });
 
+  it("does not read an XAA server's pre-registered client as OAuth setup", () => {
+    expect(
+      configuredSetup({ registrationMode: "preregistered", authMethod: "xaa" }),
+    ).toEqual([]);
+    expect(
+      configuredSetup({ registrationMode: "preregistered", useXaa: true }),
+    ).toEqual([]);
+  });
+
   it("offers only the setup whose result the page can record", () => {
     expect(CANVAS_SETUP_OFFERED).toEqual(["pre-registered-client"]);
   });

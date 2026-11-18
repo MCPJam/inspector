@@ -423,7 +423,7 @@ function assess(
   const unknown = evidence.find((e) => e.outcome === "unknown");
   // Setup comes before connecting: connecting without it shows nothing.
   if (feature.assessment.primary === "configured")
-    return needsSetup(feature, input, evidence.length, unknown, result);
+    return needsSetup(feature, input, unknown, result);
   if (!input.connected && evidence.length === 0) {
     return result("not-checked", {
       reason: "Connect this server to check it.",
@@ -446,7 +446,6 @@ function assess(
 function needsSetup(
   feature: FeatureDefinition,
   input: ServerFeatureEvidenceInput,
-  evidenceCount: number,
   unknown: FeatureEvidence | undefined,
   result: (
     state: FeatureUserState,
@@ -465,9 +464,10 @@ function needsSetup(
       nextAction: "set-up",
     });
   }
-  if (!input.connected && evidenceCount === 0) {
+  // An inconclusive probe is not a connection, so it keeps Connect.
+  if (!input.connected) {
     return result("not-checked", {
-      reason: "Set up in MCPJam. Connect this server to check it.",
+      reason: unknown?.detail ?? "Set up in MCPJam. Connect this server to check it.",
       nextAction: "connect",
     });
   }
@@ -475,7 +475,7 @@ function needsSetup(
   return result("not-checked", {
     reason:
       unknown?.detail ??
-      "Set up in MCPJam. MCPJam records the result the next time you sign in to this server.",
+      "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
   });
 }
 

@@ -13,12 +13,18 @@ export const CANVAS_SETUP_OFFERED: readonly FeatureSetupKind[] = [
   "pre-registered-client",
 ];
 
-type SetupFields = Pick<ServerWithName, "registrationMode" | "oauthFlowProfile">;
+type SetupFields = Pick<
+  ServerWithName,
+  "registrationMode" | "oauthFlowProfile" | "useXaa" | "authMethod"
+>;
 
 /** Setup this server has saved, read from its stored auth settings. */
 export function configuredSetup(server: SetupFields): FeatureSetupKind[] {
-  return server.registrationMode === "preregistered" ||
-    server.oauthFlowProfile?.registrationStrategy === "preregistered"
-    ? ["pre-registered-client"]
-    : [];
+  // An XAA server saves its own pre-registered client, but signs in without
+  // the OAuth flow summary the pre-registration feature reads.
+  const usesXaa = server.authMethod === "xaa" || server.useXaa === true;
+  const preregistered =
+    server.registrationMode === "preregistered" ||
+    server.oauthFlowProfile?.registrationStrategy === "preregistered";
+  return preregistered && !usesXaa ? ["pre-registered-client"] : [];
 }

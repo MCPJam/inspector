@@ -563,7 +563,11 @@ export interface ServerFeatureEvaluation {
 /** Everything the evaluator reads, already filtered to one context. */
 export interface ServerFeatureEvidenceInput {
   context?: CaptureContext;
-  /** Never connected: every feature is "Not checked yet" with "connect". */
+  /**
+   * Never connected: features read "Not checked yet". Most offer Connect; one
+   * that needs setup offers Set up first, or no step when this surface cannot
+   * offer that setup.
+   */
   connected: boolean;
   declared?: { surface: DeclaredSurface; capturedAt: number };
   probes?: ProbeSurface;

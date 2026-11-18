@@ -260,7 +260,7 @@ describe("evaluateServerFeatures", () => {
     expect(configured.assessments["test.setup"]).toMatchObject({
       state: "not-checked",
       reason:
-        "Set up in MCPJam. MCPJam records the result the next time you sign in to this server.",
+        "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
       evidence: [],
     });
     // Reconnecting with saved tokens records nothing, so no Reconnect step.
@@ -270,6 +270,26 @@ describe("evaluateServerFeatures", () => {
       ...offered,
     });
     expect(notConnected.assessments["test.setup"].nextAction).toBe("connect");
+  });
+
+  it("keeps Connect for a set-up server whose only evidence is an inconclusive probe", () => {
+    const setup = feature("test.setup", {
+      assessment: {
+        primary: "configured",
+        setup: "client-credentials",
+        probed: () => ({ kind: "unknown", reason: "The probe could not finish." }),
+      },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"]).toMatchObject({
+      reason: "The probe could not finish.",
+      nextAction: "connect",
+    });
   });
 
   it("asks for setup before connecting a server that never connected", () => {

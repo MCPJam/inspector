@@ -179,7 +179,7 @@ export const AUTHORIZATION_EXTENSION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The client requests a token with its own credentials and calls the server with it.",
     howTo:
-      "Give the client a client id and secret or key. The MCPJam app cannot run this grant yet; test it with mcpjam oauth login --url <server-url> --auth-mode client_credentials.",
+      "Issue the client a client id and secret. The MCPJam app cannot run this grant yet; test it with mcpjam oauth login --url <server-url> --auth-mode client_credentials, adding --registration preregistered --client-id <id> --client-secret <secret> for a pre-registered client.",
     owner: "client",
     spec: specAt("client-credentials", "flow-steps"),
     assessment: {
