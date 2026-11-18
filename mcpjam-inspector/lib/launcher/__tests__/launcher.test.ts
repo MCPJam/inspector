@@ -94,7 +94,8 @@ describe("launchInspector", () => {
 
   it("rejects with the inspector's stderr when it exits before it is ready", async () => {
     const child = fakeSpawn();
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
+    const fetchMock = vi.fn().mockRejectedValue(new Error("refused"));
+    vi.stubGlobal("fetch", fetchMock);
 
     const launch = launchInspector({ silent: true });
     child().stderr?.write("Port 6274 is already in use\n");
@@ -104,5 +105,9 @@ describe("launchInspector", () => {
     await expect(launch).rejects.toThrow(
       /exited before it was ready \(code 1\)\nInspector stderr:\nPort 6274 is already in use/,
     );
+
+    const healthChecksAtRejection = fetchMock.mock.calls.length;
+    await new Promise((r) => setTimeout(r, 300));
+    expect(fetchMock.mock.calls.length).toBe(healthChecksAtRejection);
   });
 });

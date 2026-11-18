@@ -82,17 +82,30 @@ export interface InspectorInstance {
 /**
  * Waits for the inspector server to be ready by polling the health endpoint.
  */
-async function waitForServer(port: number, timeout = 30000): Promise<void> {
+async function waitForServer(
+  port: number,
+  signal: AbortSignal,
+  timeout = 30000,
+): Promise<void> {
   const start = Date.now();
-  while (Date.now() - start < timeout) {
+  while (!signal.aborted && Date.now() - start < timeout) {
     try {
-      const res = await fetch(`http://localhost:${port}/health`);
+      const res = await fetch(`http://localhost:${port}/health`, { signal });
       if (res.ok) return;
     } catch {
       // Server not ready yet
     }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise<void>((r) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        r();
+      };
+      const timer = setTimeout(done, 100);
+      signal.addEventListener("abort", done, { once: true });
+    });
   }
+  if (signal.aborted) return;
   throw new Error(`Inspector failed to start within ${timeout}ms`);
 }
 
@@ -198,10 +211,12 @@ export async function launchInspector(
   // Wait for server to be ready, racing against spawn errors
   await new Promise<void>((resolve, reject) => {
     let resolved = false;
+    const readiness = new AbortController();
 
     child.on("error", (err) => {
       if (!resolved) {
         resolved = true;
+        readiness.abort();
         reject(new Error(`Failed to spawn inspector process: ${err.message}`));
       }
     });
@@ -209,6 +224,7 @@ export async function launchInspector(
     child.once("exit", (code, signal) => {
       if (!resolved) {
         resolved = true;
+        readiness.abort();
         const reason = signal ? `signal ${signal}` : `code ${code}`;
         reject(
           new Error(
@@ -218,7 +234,7 @@ export async function launchInspector(
       }
     });
 
-    waitForServer(INSPECTOR_PORT)
+    waitForServer(INSPECTOR_PORT, readiness.signal)
       .then(() => {
         if (!resolved) {
           resolved = true;
