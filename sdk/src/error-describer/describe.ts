@@ -29,7 +29,7 @@ import {
   type ErrorOrigin,
 } from "./catalog.js";
 import {
-  findCreditRecovery,
+  creditRecoveryOfRefusal,
   formatCreditRecovery,
 } from "../contract/credit-recovery.js";
 import { extractNodeErrno } from "./node-errno.js";
@@ -1057,7 +1057,7 @@ function applyCreditRecovery(
   error: unknown,
 ): ErrorCatalogEntry {
   if (!CREDIT_SLUGS.has(slug)) return entry;
-  const recovery = findCreditRecovery(error);
+  const recovery = creditRecoveryOfRefusal(error);
   if (!recovery) return entry;
   return {
     ...entry,

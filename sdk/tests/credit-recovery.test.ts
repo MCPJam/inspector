@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assembleEvalRunDecisionSummary,
   deriveStageResults,
-  findCreditRecovery,
+  creditRecoveryOfRefusal,
   formatCreditRecovery,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   NEXT_ACTION_BY_INFRA_CLASS,
@@ -133,13 +133,21 @@ describe("parseCreditRecovery", () => {
   });
 
   it.each([
-    "http://app.mcpjam.com/organizations/org_1/billing",
-    "https://app.mcpjam.com.evil.example/billing",
-    "https://evil.example/?u=app.mcpjam.com",
-    "https://user:pass@app.mcpjam.com/billing",
-    "javascript:alert(1)",
-    "not a url",
-  ])("drops %s and keeps the step", (url) => {
+    ["not https", "http://app.mcpjam.com/organizations/org_1/billing"],
+    ["a lookalike host", "https://app.mcpjam.com.evil.example/billing"],
+    ["a lookalike host", "https://app-mcpjam.com/billing"],
+    ["a subdomain off the allowlist", "https://evil.mcpjam.com/billing"],
+    ["the app host only in the query", "https://evil.com/?x=app.mcpjam.com"],
+    ["the app host as userinfo", "https://app.mcpjam.com@evil.com/billing"],
+    ["credentials", "https://user:pass@app.mcpjam.com/billing"],
+    ["an explicit port", "https://app.mcpjam.com:8443/billing"],
+    ["a javascript: URL", "javascript:alert(1)"],
+    ["an embedded newline", "https://app.mcpjam.com/billing\nhttps://evil.com"],
+    ["a tab", "https://app.mcpjam.com/\tbilling"],
+    ["surrounding spaces", " https://app.mcpjam.com/billing "],
+    ["a form the parser rewrites", "https://APP.mcpjam.com/a/../billing"],
+    ["not a URL", "not a url"],
+  ])("drops a URL with %s and keeps the step", (_why, url) => {
     const parsed = parseCreditRecovery({ ...valid, url });
     expect(parsed).toBeDefined();
     expect(parsed?.url).toBeUndefined();
@@ -148,23 +156,49 @@ describe("parseCreditRecovery", () => {
     );
   });
 
-  it("finds the recovery inside a refusal however it is wrapped", () => {
+  it("keeps an app URL as its normalized href, on Cloud and staging", () => {
+    for (const url of [
+      "https://app.mcpjam.com/organizations/org_1/billing?topup=open",
+      "https://staging.mcpjam.com/organizations/org_1/plans",
+    ]) {
+      expect(parseCreditRecovery({ ...valid, url })?.url).toBe(
+        new URL(url).href
+      );
+    }
+  });
+
+  it("reads the recovery from the top of MCPJam's envelope only", () => {
     const [fixture] = recoveryCases;
     const expected = parseCreditRecovery(fixture!.body.recovery);
-    const wrapped = `https://x.convex.site/stream failed (429): ${JSON.stringify(fixture!.body)}`;
-    expect(findCreditRecovery(fixture!.body)).toEqual(expected);
-    expect(findCreditRecovery(wrapped)).toEqual(expected);
+    const body = JSON.stringify(fixture!.body);
+    expect(creditRecoveryOfRefusal(fixture!.body)).toEqual(expected);
+    expect(creditRecoveryOfRefusal(body)).toEqual(expected);
     expect(
-      findCreditRecovery({ message: "refused", details: wrapped })
+      creditRecoveryOfRefusal({ message: "refused", details: body })
     ).toEqual(expected);
     expect(
-      findCreditRecovery(
+      creditRecoveryOfRefusal(
         Object.assign(new Error(fixture!.body.error), {
           details: fixture!.body,
         })
       )
     ).toEqual(expected);
-    expect(findCreditRecovery({ message: "{not json" })).toBeUndefined();
+    // JSON inside free-form text, or deeper than the envelope, is not read.
+    expect(
+      creditRecoveryOfRefusal(
+        `https://x.convex.site/stream failed (429): ${body}`
+      )
+    ).toBeUndefined();
+    expect(
+      creditRecoveryOfRefusal({
+        message: "refused",
+        details: `provider said: ${body}`,
+      })
+    ).toBeUndefined();
+    expect(
+      creditRecoveryOfRefusal({ error: { upstream: fixture!.body } })
+    ).toBeUndefined();
+    expect(creditRecoveryOfRefusal({ message: "{not json" })).toBeUndefined();
   });
 });
 

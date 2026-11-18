@@ -748,8 +748,8 @@ export {
   CREDIT_RECOVERY_ACTIONS,
   CREDIT_RECOVERY_ACTORS,
   creditRecoveryOfIterations,
+  creditRecoveryOfRefusal,
   creditRecoverySchema,
-  findCreditRecovery,
   formatCreditRecovery,
   parseCreditRecovery,
 } from "./credit-recovery.js";
