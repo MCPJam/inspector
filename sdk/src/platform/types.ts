@@ -3,6 +3,11 @@ export type {
   PlatformReadinessStartBody,
   PlatformReadinessLazyAuthProbe,
 } from "./readiness-start-types.js";
+import type { PlatformEvalRunAccount } from "./eval-run-account-types.js";
+export type {
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
+} from "./eval-run-account-types.js";
 export type {
   PlatformConformanceCheck,
   PlatformConformanceReport,
@@ -1135,6 +1140,12 @@ export interface PlatformEvalRun {
    * the credential carried no attribution claims.
    */
   attribution?: PlatformEvalRunAttribution;
+  /**
+   * The account the run used on each server, recorded when it started.
+   * ABSENT when the run recorded none (runs from before accounts were
+   * recorded); `[]` means it recorded that it used none.
+   */
+  accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
    * The project environment this run executed against, read from the run's
