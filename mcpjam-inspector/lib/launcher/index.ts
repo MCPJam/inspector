@@ -225,7 +225,7 @@ export async function launchInspector(
   }
 
   // Silent mode pipes stdout as well as stderr: bin/start.js prints startup
-  // failures such as a taken port on stdout.
+  // failures such as a taken port on stderr.
   const child = spawn("node", [binPath], {
     env,
     stdio: options.silent ? ["ignore", "pipe", "pipe"] : "inherit",

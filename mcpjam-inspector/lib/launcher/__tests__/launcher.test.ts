@@ -183,7 +183,7 @@ describe("launchInspector", () => {
 
     const launch = launchInspector({ silent: true });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    // bin/start.js reports this on stdout, in color.
+    // bin/start.js reports this on stderr, in color.
     child().stdout?.write(
       "\u001b[31m❌ Default port 6274 is already in use. Please free the port\u001b[0m\n",
     );

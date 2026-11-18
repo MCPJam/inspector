@@ -16,6 +16,7 @@ import {
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 import { resolveShutdownSettings } from "./shutdown-settings.mjs";
 import { computeInstanceEnv } from "./runtime-profile.mjs";
+import { createStartOutput, hasJsonFlag } from "./start-output.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -52,9 +53,13 @@ const colors = {
   bgCyan: "\x1b[46m",
 };
 
+// Human progress goes to stdout; warnings and errors go to stderr. `--json`
+// drops the progress and adds machine-readable events (see start-output.mjs).
+const output = createStartOutput();
+
 // Utility functions for beautiful output
 function log(message, color = colors.reset) {
-  console.log(`${color}${message}${colors.reset}`);
+  output.out(`${color}${message}${colors.reset}`);
 }
 
 function printBanner() {
@@ -76,11 +81,11 @@ function logInfo(message) {
 }
 
 function logWarning(message) {
-  log(`⚠️  ${message}`, colors.yellow);
+  output.warn(`${colors.yellow}⚠️  ${message}${colors.reset}`);
 }
 
 function logError(message) {
-  log(`❌ ${message}`, colors.red);
+  output.error(message, `${colors.red}❌ ${message}${colors.reset}`);
 }
 
 function logStep(step, message) {
@@ -642,12 +647,20 @@ async function main() {
     return runHarnessSubcommand(rawArgs);
   }
 
-  // Show MCP banner at startup
-  console.clear();
-  printBanner();
-
   // Parse command line arguments
   const args = process.argv.slice(2);
+
+  // --json: stdout carries only the ready event, so no banner and no browser.
+  if (hasJsonFlag(args)) {
+    output.useJson();
+    output.addSecret(process.env.MCPJAM_SESSION_TOKEN);
+    process.on("exit", (code) => output.failOnExit(code));
+  } else {
+    // Show MCP banner at startup
+    console.clear();
+    printBanner();
+  }
+
   const envVars = {};
   let parsingFlags = true;
   let ollamaModel = null;
@@ -663,7 +676,8 @@ async function main() {
   let initialTab = null;
   let bearerToken = null;
   let useOAuth = false;
-  let openBrowser = process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1";
+  let openBrowser =
+    !output.json && process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1";
   const customHeaders = [];
   let verboseLogs = false;
 
@@ -759,6 +773,11 @@ async function main() {
 
     if (parsingFlags && (arg === "--no-open" || arg === "--no-browser")) {
       openBrowser = false;
+      continue;
+    }
+
+    // Read before parsing by hasJsonFlag; skipped here.
+    if (parsingFlags && arg === "--json") {
       continue;
     }
 
@@ -1130,6 +1149,7 @@ async function main() {
     // have no way back to where the user actually was.
     const launchWorkspace = launchWorkspaceCandidate({ projectRoot });
     const launchToken = createLaunchToken();
+    output.addSecret(launchToken);
     const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
@@ -1143,7 +1163,8 @@ async function main() {
         ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,
-      stdio: "inherit",
+      // With --json the server's own logs move to stderr, off the event stream.
+      stdio: output.json ? ["inherit", process.stderr, "inherit"] : "inherit",
     });
 
     let serverProcessClosed = false;
@@ -1220,13 +1241,18 @@ async function main() {
         abort.signal,
       );
 
-      if (!ready && !cancelled) {
+      if (!ready && !cancelled && output.json) {
+        throw new Error(
+          `Server did not become ready within 30s at ${apiBaseUrl}`,
+        );
+      } else if (!ready && !cancelled) {
         logWarning(
           `Server did not become ready within 30s. Please visit ${apiBaseUrl} manually.`,
         );
       } else if (!cancelled) {
         const base = await resolveBrowserBaseUrl(apiBaseUrl);
         const url = createAccessLink(base, launchToken, initialTab);
+        output.ready({ url, port: Number(PORT) });
         const docker = process.env.DOCKER_CONTAINER === "true";
         let opened = false;
         if (openBrowser && !docker) {
@@ -1305,6 +1331,7 @@ main()
     process.exit(0);
   })
   .catch((e) => {
+    output.fail(e.message);
     logError("Fatal error occurred");
     logError(e.stack || e.message);
     process.exit(1);
