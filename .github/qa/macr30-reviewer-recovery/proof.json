@@ -1,0 +1,40 @@
+{
+  "claude": {
+    "submission": "g97y8vx8hjhjj6nrw5gf7sdn198jehq1",
+    "attempt": "zx71f6bqqrc3nwtmy86t76tnkn8jewkk",
+    "startedBy": "gd8mqj8qherhb9dxdgd2n77wnh8je7m4",
+    "resumedBy": "gd8q3fq6qkzsdywbxchx6cxcr18jfe7q",
+    "runs": [
+      "w5791g5e3k9bv2yatw2adeqaw98jfb10",
+      "w576r3c02408vrhztj9n54fa858jfn0m",
+      "w578nzv6zwvx1wwg7h27v8ntes8jfvgh"
+    ],
+    "gradedRun": "w578nzv6zwvx1wwg7h27v8ntes8jfvgh",
+    "check": "both.reviewer.identity",
+    "tool": "get_reviewer",
+    "observed": {
+      "identity": "qa-reviewer-n18",
+      "organization": "review-fixtures"
+    },
+    "outcome": "verified"
+  },
+  "openai": {
+    "submission": "g97vjr2sfkk0dwj7ng34yqh6r18jf8cn",
+    "attempt": "zx72ztjst2hr42jgwjx54ypvh98jenfn",
+    "startedBy": "gd8mqj8qherhb9dxdgd2n77wnh8je7m4",
+    "resumedBy": "gd8q3fq6qkzsdywbxchx6cxcr18jfe7q",
+    "runs": [
+      "w5702kz1n10gzcgzk5ygvwhffd8jer3m",
+      "w57enhep9ndwymrzg38njy6eys8jfyte"
+    ],
+    "gradedRun": "w57enhep9ndwymrzg38njy6eys8jfyte",
+    "pluginVersion": "zn7n8gckmwkfmh9ryxka2yg9818jfw94",
+    "check": "both.reviewer.identity",
+    "tool": "get_reviewer",
+    "observed": {
+      "identity": "qa-reviewer-n18",
+      "organization": "review-fixtures"
+    },
+    "outcome": "verified"
+  }
+}
