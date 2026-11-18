@@ -3,9 +3,10 @@ import {
   cancelProjectServerConnectionOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { openUrlInBrowser } from "@mcpjam/sdk";
-import { setProcessExitCode, writeResult } from "../lib/output.js";
+import { setProcessExitCode, usageError, writeResult } from "../lib/output.js";
 import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   platformOptionsOf,
@@ -61,7 +62,6 @@ function describeHandoffAudience(audience: {
     ? `This link belongs to ${audience.email} on ${host}. Open it in a browser signed in to that account.\n`
     : `This link belongs to the account this CLI is logged into, on ${host}. Open it in a browser signed in to that account — \`mcpjam cloud whoami\` names it.\n`;
 }
-
 /**
  * The handoff-first connection flow under `cloud projects servers`: `connect`
  * and the `connect-status` / `connect-cancel` pair that follow a request it
@@ -105,17 +105,19 @@ export function registerServerConnectCommands(servers: Command): void {
         // hands back whatever was typed, so without this `--url " "` and
         // `--url file:///etc/passwd` travel all the way to the API to be
         // rejected there — a slower, vaguer error for a mistake visible now.
-        const input = connectProjectServerOperation.inputSchema.parse({
+        const resolved = resolveCloudProjectArgs(platformOptions);
+        const input = validateInput(connectProjectServerOperation, {
           url: options.url,
           // NOT `options.project` — the `servers` group declares `--project` too
           // and therefore consumes it, so the subcommand's own copy is always
           // undefined and this command quietly connected to the default project
           // instead of the one that was named.
-          project: resolveCloudProjectArgs(platformOptions).project,
+          project: resolved.project,
           serverId: options.server,
           name: options.name,
           reauthorize: options.reauthorize,
         });
+        const projectChosenInBrowser = resolved.project === undefined;
 
         // The same client and deployment answer who the link belongs to.
         const { created, context } = await runPlatformCommand(
@@ -128,9 +130,62 @@ export function registerServerConnectCommands(servers: Command): void {
             }),
             context: { client, webOrigin },
           }),
+          {
+            cloudScope: projectChosenInBrowser
+              ? { kind: "project", source: "browser" }
+              : resolved.projectScope,
+          },
         );
 
-        if (created.handoffUrl) {
+        const writeProjectHint = (status: string) => {
+          if (status === "awaiting_project" && projectChosenInBrowser) {
+            process.stderr.write(
+              "No project was given, so the link asks which project to save the server in. " +
+                "Pass --project <id-or-name> to skip that step (`mcpjam cloud projects list` lists them).\n",
+            );
+          }
+        };
+
+        if (options.wait === false) {
+          if (!isTerminalConnectionStatus(created.status)) {
+            process.stderr.write(
+              `Not waiting on request ${created.connectionRequestId}.\n`,
+            );
+            if (created.handoffUrl) {
+              // A fresh request is usually still `discovering`, so whether a
+              // person is needed is not known yet and the wording must not say so.
+              process.stderr.write(
+                `If the server needs sign-in or a project choice, open:\n  ${created.handoffUrl}\n`,
+              );
+              process.stderr.write(
+                describeHandoffAudience(await resolveHandoffAudience(context)),
+              );
+            }
+            writeProjectHint(created.status);
+            process.stderr.write(
+              `Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
+                `Or stop it with:\n  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`,
+            );
+          }
+          writeResult(withoutSpentHandoff(created), globalOptions.format);
+          reportSettledConnection(created);
+          return;
+        }
+
+        // The backend mints the link on every create, before discovery knows
+        // whether anyone has to act. Showing it only once the request waits on a
+        // person keeps a server that connects unattended from sending the user
+        // off to sign in.
+        let handoffShown = false;
+        const showHandoffIfNeeded = async (status: string) => {
+          if (
+            handoffShown ||
+            !created.handoffUrl ||
+            !NEEDS_PERSON_STATUSES.has(status)
+          ) {
+            return;
+          }
+          handoffShown = true;
           // Printed even when we open it: a browser that fails to launch, or
           // launches on the wrong machine over SSH, otherwise leaves the user
           // with a request they cannot finish and no link to finish it with.
@@ -140,6 +195,7 @@ export function registerServerConnectCommands(servers: Command): void {
           process.stderr.write(
             describeHandoffAudience(await resolveHandoffAudience(context)),
           );
+          writeProjectHint(status);
           if (options.browser !== false) {
             await openUrlInBrowser(created.handoffUrl).catch(() => {
               process.stderr.write(
@@ -147,59 +203,53 @@ export function registerServerConnectCommands(servers: Command): void {
               );
             });
           }
-        }
+        };
 
-        if (
-          options.wait === false ||
-          isTerminalConnectionStatus(created.status)
-        ) {
-          if (
-            options.wait === false &&
-            !isTerminalConnectionStatus(created.status)
-          ) {
-            process.stderr.write(
-              `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
-                `Or stop it with:\n  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`,
-            );
-          }
-          writeResult(created, globalOptions.format);
+        if (isTerminalConnectionStatus(created.status)) {
+          writeResult(withoutSpentHandoff(created), globalOptions.format);
+          reportSettledConnection(created);
           return;
         }
+        await showHandoffIfNeeded(created.status);
 
         const settled = await pollConnection(
           platformOptions,
           globalOptions.timeout,
           created.connectionRequestId,
           created.expiresAt,
+          showHandoffIfNeeded,
         );
         // An interrupt during the first request leaves no fresher status than the
         // one the create call returned, so report that rather than nothing.
         const latest = settled.result ?? created;
-        writeResult(latest, globalOptions.format);
+        writeResult(withoutSpentHandoff(latest), globalOptions.format);
         if (settled.gaveUp) {
           // A script must be able to tell "it finished" from "I stopped
           // watching". Returning the last poll silently made those identical.
           process.stderr.write(
             `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
+              (handoffShown ? "Open the link above to finish it, or:\n" : "") +
               `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n` +
               `  mcpjam cloud projects servers connect-cancel --request ${created.connectionRequestId}\n`,
           );
           setProcessExitCode(1);
+          return;
         }
+        reportSettledConnection(latest);
       },
     );
 
   servers
     .command("connect-status")
-    .description("Check a connection request started by `server connect`")
+    .description(
+      "Check a connection request started by `cloud projects servers connect`",
+    )
     .requiredOption("--request <id>", "Connection request id (scr_…)")
     .action(async (options: PlatformOptions & { request: string }, command) => {
       const globalOptions = getGlobalOptions(command);
-      const input = getProjectServerConnectionStatusOperation.inputSchema.parse(
-        {
-          connectionRequestId: options.request,
-        },
-      );
+      const input = validateInput(getProjectServerConnectionStatusOperation, {
+        connectionRequestId: options.request,
+      });
       const payload = await runPlatformCommand(
         platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
@@ -216,12 +266,12 @@ export function registerServerConnectCommands(servers: Command): void {
   servers
     .command("connect-cancel")
     .description(
-      "Cancel a pending connection request started by `server connect`",
+      "Cancel a pending connection request started by `cloud projects servers connect`",
     )
     .requiredOption("--request <id>", "Connection request id (scr_…)")
     .action(async (options: PlatformOptions & { request: string }, command) => {
       const globalOptions = getGlobalOptions(command);
-      const input = cancelProjectServerConnectionOperation.inputSchema.parse({
+      const input = validateInput(cancelProjectServerConnectionOperation, {
         connectionRequestId: options.request,
       });
       const payload = await runPlatformCommand(
@@ -247,6 +297,68 @@ const TERMINAL_CONNECTION_STATUSES = new Set([
 
 function isTerminalConnectionStatus(status: string): boolean {
   return TERMINAL_CONNECTION_STATUSES.has(status);
+}
+
+/** The statuses where the request cannot move until a person opens the link. */
+const NEEDS_PERSON_STATUSES = new Set([
+  "awaiting_project",
+  "awaiting_authorization",
+]);
+
+type ServerConnection = Awaited<
+  ReturnType<typeof connectProjectServerOperation.execute>
+>;
+
+/**
+ * A settled request's link can no longer be used, and it is a bearer
+ * capability, so it stays out of output an agent may copy elsewhere.
+ */
+function withoutSpentHandoff(connection: ServerConnection): ServerConnection {
+  if (!isTerminalConnectionStatus(connection.status)) return connection;
+  const { handoffUrl: _spent, ...rest } = connection;
+  return rest;
+}
+
+/**
+ * Exit non-zero for every settled outcome that did not leave a usable server,
+ * so a script cannot read a failed or disabled connection as success.
+ */
+function reportSettledConnection(connection: ServerConnection): void {
+  if (connection.status === "ready") {
+    if (connection.server?.enabled === false) {
+      // Connect adopted a saved server someone disabled on purpose. Turning it
+      // back on is their decision, not a side effect of connecting.
+      process.stderr.write(
+        `Connected, but the saved server ${connection.server.id} is disabled, so nothing will use it. ` +
+          "It stays disabled until you enable it yourself.\n",
+      );
+      setProcessExitCode(1);
+    }
+    return;
+  }
+  if (!isTerminalConnectionStatus(connection.status)) return;
+  const reason = connection.error
+    ? `: ${connection.error.code}: ${connection.error.message}`
+    : "";
+  process.stderr.write(
+    `Connection request ${connection.connectionRequestId} ${connection.status}${reason}\n`,
+  );
+  setProcessExitCode(1);
+}
+
+/** Validate an input object against an operation's schema. */
+function validateInput<TInput>(
+  op: PlatformOperation<TInput, unknown>,
+  raw: unknown,
+): TInput {
+  const parsed = op.inputSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    throw usageError(`Invalid input: ${detail}`);
+  }
+  return parsed.data;
 }
 
 /** How long to keep watching when the server did not say when it expires. */
@@ -278,7 +390,8 @@ async function pollConnection(
   options: PlatformOptions,
   timeoutMs: number,
   connectionRequestId: string,
-  expiresAt?: string | null,
+  expiresAt: string | null | undefined,
+  onStatus: (status: string) => Promise<void>,
 ): Promise<{
   /**
    * Undefined only when Ctrl-C landed during the very first status request, so
@@ -322,7 +435,7 @@ async function pollConnection(
     interrupted = true;
     recordCommandOutcome("interrupted");
     process.stderr.write(
-      "\nStopped watching. The request continues in the cloud — open the link above to finish it.\n",
+      "\nStopped watching. The request continues in the cloud.\n",
     );
     wakeSleep?.();
     interruptController.abort(new Error("Interrupted by the user."));
@@ -357,6 +470,7 @@ async function pollConnection(
         return { result: lastResult, gaveUp: true };
       }
       lastResult = current;
+      await onStatus(current.status);
 
       if (isTerminalConnectionStatus(current.status)) {
         return { result: current, gaveUp: false };
