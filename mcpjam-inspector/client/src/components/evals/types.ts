@@ -948,13 +948,17 @@ export type EvalRunAccount = {
 
 /**
  * Whose an account's token was: from the server's profile tool (`profile`)
- * or from the token's own unverified claims (`token`). Never an email.
+ * or from the token's own unverified claims (`token`). Only `email` holds an
+ * address, and the backend leaves it out for a viewer who may not see it.
  */
 export type EvalRunAccountIdentity = {
   source: "profile" | "token";
   name?: string;
   subject?: string;
   issuer?: string;
+  email?: string;
+  /** Where `email` came from, which can differ from `source`. */
+  emailSource?: "profile" | "token";
 };
 
 export type EvalSuiteRun = {

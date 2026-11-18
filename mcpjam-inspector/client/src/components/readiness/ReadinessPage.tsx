@@ -4,10 +4,14 @@
  * screen and the server's saved rehearsals, then Claude's form or ChatGPT's
  * plugin page.
  */
+import { AddPluginModal } from "@/components/plugins/AddPluginModal";
+import { PreviewServerIconSource } from "./PreviewServerIcon";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Blocks, Plug, Upload } from "lucide-react";
+import { usePluginsEnabledState } from "@/hooks/usePluginsEnabled";
+import { createDirectorySubmission, listServerSubmissions } from "@/lib/apis/directory-submissions-api";
+import { MarketplaceOverview } from "./MarketplaceOverview";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { directoryFlowField } from "@mcpjam/sdk/browser";
 import { Button } from "@mcpjam/design-system/button";
@@ -22,31 +26,17 @@ import { useDirectoryTestPlan } from "@/hooks/use-directory-test-plan";
 import { useProjectServers } from "@/hooks/useViews";
 import { routePaths } from "@/lib/app-navigation";
 import { useAppRouteContext } from "@/lib/app-route-context";
-import {
-  createDirectorySubmission,
-  listServerSubmissions,
-  type SubmissionSummary,
-} from "@/lib/apis/directory-submissions-api";
 import type { ServerWithName } from "@/state/app-types";
 import { NO_PEOPLE, type People } from "./AnswerOrigin";
 import { FieldLabels } from "./EvidenceStatus";
-import { McpjamMark } from "./McpjamChecks";
 import { OpenAiPortal } from "./OpenAiPortal";
+import { MarketplaceCards, type Marketplace } from "./MarketplaceCards";
 import { PortalFrame } from "./PortalFrame";
-import { McpjamNote } from "./PortalWidgets";
-import { DIRECTORY_NAMES, RehearsalBar } from "./RehearsalBar";
+import { ChatGptPackageTitle, RehearsalBar } from "./RehearsalBar";
 import { isConfirmed, recordConfirmed } from "./test-plan-consent";
 import { TestPlanConsentDialog } from "./TestPlanConsentDialog";
 import "./portal-theme.css";
 
-/** The flow each directory rehearses. */
-const DIRECTORIES = ["claude", "openai"] as const;
-type Directory = (typeof DIRECTORIES)[number];
-const FLOWS = { claude: "claude-connector", openai: "chatgpt-plugin" };
-const FLOW_NAMES: Record<string, string> = {
-  "claude-connector": "MCP connector",
-  "chatgpt-plugin": "ChatGPT plugin",
-};
 const SCOPES = { claude: "portal-claude", openai: "portal-openai" };
 const NO_SERVER = { name: "" };
 
@@ -54,9 +44,6 @@ export interface SavedServer {
   id: string;
   server: ServerWithName;
 }
-
-const messageOf = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
 
 function Notice({ children }: { children: ReactNode }) {
   return (
@@ -69,243 +56,25 @@ function Notice({ children }: { children: ReactNode }) {
 const DAY = { month: "short", day: "numeric", year: "numeric" } as const;
 
 /** The last run, and the date of the portal capture its rules come from. */
-function runStatus(run: DirectoryReadinessState, flowVersion: string): string {
+function runProvenance(run: DirectoryReadinessState, flowVersion?: string): string {
+  if (!flowVersion) return "";
   const day = new Date(flowVersion).toLocaleDateString("en-US", {
     ...DAY,
     timeZone: "UTC",
   });
-  const rules = ` · Rules as of ${day}`;
-  const last = run.run;
-  if (run.status === "running") return "Checking your server and answers…";
-  if (run.status === "error")
-    return `The checks did not start. ${run.error} Try running them again.`;
-  if (run.status === "unavailable") {
-    return "Checks need a remote server. Choose one with an HTTP URL.";
-  }
-  if (last?.status === "failed") {
-    const why = last.errorMessage ? ` ${last.errorMessage}` : "";
-    return `The last run failed.${why} Run checks again.`;
-  }
-  if (last?.status !== "completed") return `Not checked yet${rules}`;
-  return `Checked ${formatDistanceToNow(last.updatedAt, { addSuffix: true })}${rules}`;
+  const checked = run.run?.status === "completed"
+    ? `Checked ${formatDistanceToNow(run.run.updatedAt, { addSuffix: true })} · `
+    : "";
+  return `${checked}Rules as of ${day}`;
 }
 
-/** MCPJam's choice of the directory whose portal the page copies. */
-function DirectoryChoice({
-  value,
-  onChange,
-}: {
-  value: Directory;
-  onChange: (directory: Directory) => void;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Directory"
-      className="flex items-center justify-center gap-2 text-sm"
-    >
-      <McpjamMark />
-      <span className="text-muted-foreground">Rehearse a submission to</span>
-      {DIRECTORIES.map((entry) => (
-        <Button
-          key={entry}
-          type="button"
-          size="sm"
-          variant={entry === value ? "secondary" : "ghost"}
-          aria-pressed={entry === value}
-          onClick={() => onChange(entry)}
-        >
-          {DIRECTORY_NAMES[entry]}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
-/** ChatGPT's plugins page: its upload stands for choosing a stored plugin. */
-function ChatGptStart({ busy, onStart }: { busy: boolean; onStart: () => void }) {
-  return (
-    <div className="space-y-4 text-left">
-      <h1 className="text-2xl font-semibold">Plugins</h1>
-      <button
-        type="button"
-        disabled={busy}
-        onClick={onStart}
-        className="flex w-full flex-col items-center gap-3 rounded-2xl border border-dashed border-border px-8 py-10 outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className="flex size-12 items-center justify-center rounded-full bg-accent">
-          <Upload aria-hidden="true" className="size-5" />
-        </span>
-        <span className="font-medium">Upload new or existing plugin</span>
-      </button>
-      <McpjamNote>
-        MCPJam rehearses a plugin stored in this project. Choose it on the next
-        screen.
-      </McpjamNote>
-    </div>
-  );
-}
-
-/** Claude's first screen: what to submit. */
-function ClaudeStart({ busy, onStart }: { busy: boolean; onStart: () => void }) {
-  const card =
-    "flex flex-1 flex-col items-center gap-3 rounded-2xl bg-card px-8 py-8 text-center";
-  const icon =
-    "flex size-12 items-center justify-center rounded-full bg-accent";
-  return (
-    <>
-      <div className="space-y-3">
-        <h1 className="font-serif text-3xl">
-          What would you like to submit?
-        </h1>
-        <p className="text-muted-foreground">
-          Everything in the Claude Directory is called a plugin, whether it’s
-          a full bundle or a single MCP connector.
-        </p>
-      </div>
-      <div className="flex gap-6">
-        <div className={cn(card, "opacity-60")}>
-          <span className={icon}>
-            <Plug aria-hidden="true" className="size-5" />
-          </span>
-          <span className="font-medium">Plugin bundle</span>
-          <span className="text-sm text-muted-foreground">
-            A hosted collection of files, served from a GitHub repository. It
-            can include skills, commands, agents, hooks, and MCP servers.
-          </span>
-          <span className="rounded bg-foreground/10 px-1.5 py-0.5 text-xs">
-            MCPJam: rehearsal not available yet
-          </span>
-        </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={onStart}
-          className={cn(
-            card,
-            "outline-none hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring",
-          )}
-        >
-          <span className={icon}>
-            <Blocks aria-hidden="true" className="size-5" />
-          </span>
-          <span className="font-medium">MCP connector</span>
-          <span className="text-sm text-muted-foreground">
-            One remote MCP server, which can be listed by itself with its own
-            controls and metrics. MCP connectors can also be linked to Plugin
-            bundles.
-          </span>
-        </button>
-      </div>
-    </>
-  );
-}
-
-/** The portal's first screen, then the server's saved rehearsals. */
-function PortalStart({
-  projectId,
-  serverId,
-  directory,
-  onDirectory,
-  onOpen,
-}: {
-  projectId: string;
-  serverId: string;
-  directory: Directory;
-  onDirectory: (directory: Directory) => void;
-  onOpen: (submissionId: string) => void;
-}) {
-  const [saved, setSaved] = useState<SubmissionSummary[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // A rehearsal created after the page moved on is not opened over it.
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-  useEffect(() => {
-    const controller = new AbortController();
-    listServerSubmissions(projectId, serverId, controller.signal).then(
-      setSaved,
-      (failure: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(
-          `Saved rehearsals did not load. ${messageOf(failure)} Reload the page to try again.`,
-        );
-      },
-    );
-    return () => controller.abort();
-  }, [projectId, serverId]);
-  const start = async () => {
-    setBusy(true);
-    try {
-      const scope = { projectId, serverId, flowId: FLOWS[directory] };
-      const key = `ui-${serverId}-${Date.now()}`;
-      const created = await createDirectorySubmission(scope, key);
-      if (mounted.current) onOpen(created.id);
-    } catch (failure) {
-      if (!mounted.current) return;
-      setError(
-        `The rehearsal did not start. ${messageOf(failure)} Try starting it again.`,
-      );
-      setBusy(false);
-    }
-  };
-  const ours = saved.filter((entry) => entry.directory === directory);
-  return (
-    <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-4xl space-y-8 px-10 py-14 text-center">
-        <DirectoryChoice value={directory} onChange={onDirectory} />
-        {directory === "openai" ? (
-          <ChatGptStart busy={busy} onStart={() => void start()} />
-        ) : (
-          <ClaudeStart busy={busy} onStart={() => void start()} />
-        )}
-        {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        ) : null}
-        {ours.length > 0 ? (
-          <section className="space-y-2 text-left">
-            <h2 className="flex items-center gap-2 text-sm font-medium">
-              <McpjamMark />
-              Saved rehearsals for this server
-            </h2>
-            <ul className="divide-y divide-border rounded-xl bg-card px-4">
-              {ours.map((entry) => (
-                <li
-                  key={entry.id}
-                  className="flex items-center gap-4 py-3 text-sm"
-                >
-                  <span className="min-w-0 flex-1">
-                    {entry.title ?? FLOW_NAMES[entry.flowId]}
-                    <span className="block text-muted-foreground">
-                      Edited{" "}
-                      {formatDistanceToNow(entry.updatedAt, {
-                        addSuffix: true,
-                      })}
-                    </span>
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => onOpen(entry.id)}
-                  >
-                    Open
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ) : null}
-      </div>
-    </div>
-  );
+function runStatus(run: DirectoryReadinessState) {
+  if (run.status === "running") return "Checking…";
+  if (run.status === "error") return run.error ? `Checks could not start. ${run.error} Try again.` : "Checks could not start. Try again.";
+  if (run.status === "unavailable") return "Choose a remote server to run checks.";
+  if (run.run?.status === "failed") return run.run.errorMessage ? `Last run failed. ${run.run.errorMessage} Run checks again.` : "Last run failed. Run checks again.";
+  if (run.run?.status === "cancelled") return "Last run cancelled";
+  return undefined;
 }
 
 /** Answers and events name a signed-in principal by id; the page shows names. */
@@ -343,13 +112,16 @@ export function ReadinessPage({
   onSubmissionChange?: (id: string | null) => void;
   onSelect: (name: string) => void;
 }) {
+  const pluginsEnabled = usePluginsEnabledState() === true;
+  const autoStart = useRef<string | null>(null);
   const selectedServer = servers.find((entry) => entry.server.name === selected);
   const [open, setOpen] = useState<{ serverId: string; id: string } | null>(
     null,
   );
-  // A submission belongs to one server: choosing another closes it.
+  // Each server has its own submission and saved answers.
   const openId = linkedSubmissionId ?? (open && open.serverId === selectedServer?.id ? open.id : null);
-  const [choice, setChoice] = useState<Directory>("claude");
+  const [lastSubmissionId, setLastSubmissionId] = useState<string>();
+  const [choice, setChoice] = useState<Marketplace | null>(null);
   const session = useDirectorySubmission({
     projectId: projectId ?? "",
     submissionId: projectId ? openId : null,
@@ -365,7 +137,32 @@ export function ReadinessPage({
       onSelect(chosen.server.name);
     }
   }, [linkedSubmissionId, chosen, selected, onSelect]);
+  const serverSwitch = useRef<AbortController | null>(null);
+  const [upload, setUpload] = useState<{ submissionId: string; open: boolean } | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState("");
+  const visitedSubmissions = useRef(new Map<string, string>());
+  const position = useRef<{ submissionId: string; step: string } | null>(null);
+  useEffect(() => {
+    setSwitching(false);
+    setUpload(null);
+    setSwitchError("");
+    return () => serverSwitch.current?.abort();
+  }, [projectId, openId]);
+  const rememberStep = (step: string) => {
+    if (openId) position.current = { submissionId: openId, step };
+  };
+  const initialStep = position.current && position.current.submissionId === openId
+    ? position.current.step : undefined;
   const close = () => {
+    serverSwitch.current?.abort();
+    position.current = null;
+    visitedSubmissions.current.clear();
+    if (view && view.id === openId) {
+      setLastSubmissionId(view.id);
+      setChoice(view.directory);
+    }
+    autoStart.current = null;
     setOpen(null);
     onSubmissionChange?.(null);
   };
@@ -380,16 +177,58 @@ export function ReadinessPage({
       starting.current = false;
     }
   };
-  // Another server closes the open submission, so its edits are saved
-  // first; a save that fails or conflicts keeps it open with its notice.
   const select = async (name: string) => {
-    if (openId && !(await session.saveNow())) return;
-    close();
-    onSelect(name);
+    serverSwitch.current?.abort();
+    setSwitching(false);
+    setSwitchError("");
+    const target = servers.find(entry => entry.server.name === name);
+    if (!target || target.id === chosen?.id) return;
+    if (!openId) {
+      onSelect(name);
+      return;
+    }
+    if (!projectId || view?.id !== openId || !flow) return;
+
+    const request = new AbortController();
+    serverSwitch.current = request;
+    setSwitching(true);
+    autoStart.current = null;
+    try {
+      if (!(await session.saveNow()) || request.signal.aborted) return;
+      const rows = await listServerSubmissions(projectId, target.id, request.signal, flow.id);
+      if (request.signal.aborted) return;
+      const matches = rows.filter(row => row.serverId === target.id && row.flowId === flow.id);
+      const previous = visitedSubmissions.current.get(target.id);
+      const saved = matches.find(row => row.id === previous) ?? matches.sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (!saved && flow.directory === "openai" && !pluginsEnabled) {
+        setSwitchError("Enable Agent Plugins to open a new ChatGPT submission.");
+        return;
+      }
+      const next = saved ?? await createDirectorySubmission(
+        { projectId, serverId: target.id, flowId: flow.id },
+        `ui-switch-${openId}-${target.id}`,
+      );
+      if (request.signal.aborted) return;
+      if (view.serverId) visitedSubmissions.current.set(view.serverId, openId);
+      if (position.current?.submissionId === openId) position.current.submissionId = next.id;
+      setChoice(flow.directory);
+      setOpen({ serverId: target.id, id: next.id });
+      onSubmissionChange?.(next.id);
+      onSelect(name);
+    } catch (error) {
+      if (!request.signal.aborted) {
+        setSwitchError(`Could not switch to ${name}. ${error instanceof Error ? error.message : "Try selecting it again."}`);
+      }
+    } finally {
+      if (!request.signal.aborted) setSwitching(false);
+    }
   };
   // The flow outlives a closed submission: it names the directory only
   // while one is open.
-  const directory = view && flow ? flow.directory : choice;
+  const directory = view && flow ? flow.directory : choice ?? "claude";
+  const openUpload = openId && view?.id === openId && directory === "openai" && pluginsEnabled && !switching
+    ? () => setUpload({ submissionId: openId, open: true })
+    : undefined;
   // A ChatGPT run grades a stored version of the plugin, so it needs one.
   const needsVersion = flow?.directory === "openai" && !view?.pluginVersionId;
   // A run starts with the saved plan revision the run button names.
@@ -419,6 +258,16 @@ export function ReadinessPage({
       void launch(planRevision);
     }
   };
+  useEffect(() => {
+    if (
+      !openId || autoStart.current !== openId || view?.id !== openId || !flow ||
+      !chosen || chosen.id !== selectedServer?.id || plan.saved === undefined ||
+      needsVersion || run.status === "unavailable" ||
+      (flow.directory === "openai" && !pluginsEnabled)
+    ) return;
+    autoStart.current = null;
+    if (run.status !== "running") startRun();
+  });
   // Shown only while the saved plan is the revision the run would send, so
   // what the person reads is what runs. A newer save hides it unanswered.
   const saved = plan.saved;
@@ -456,9 +305,13 @@ export function ReadinessPage({
         </Button>
       </Notice>
     );
-  } else if (openId && (!view || (linkedSubmissionId && !linkedView))) {
+  } else if (openId && view?.id !== openId) {
     body = <Notice>Opening the rehearsal…</Notice>;
-  } else if (!chosen) {
+  } else if (!openId && !choice) {
+    body = (
+      <MarketplaceCards key={`${projectId}:${chosen?.id}`} projectId={projectId} serverId={chosen?.id} onSelect={setChoice} />
+    );
+  } else if (!chosen && openId) {
     body = (
       <Notice>
         {servers.length === 0 && !loading
@@ -468,15 +321,21 @@ export function ReadinessPage({
     );
   } else if (!openId) {
     body = (
-      <PortalStart
+      <MarketplaceOverview
         // Another server or project starts over: its own list, nothing busy.
-        key={`${projectId}:${chosen.id}`}
+        key={`${projectId}:${chosen?.id ?? "project"}:${directory}`}
         projectId={projectId}
-        serverId={chosen.id}
-        directory={choice}
-        onDirectory={setChoice}
-        onOpen={(id) => {
-          setOpen({ serverId: chosen.id, id });
+        serverId={chosen?.id}
+        directory={choice ?? "claude"}
+        pluginsEnabled={pluginsEnabled}
+        initialSubmissionId={lastSubmissionId}
+        onOpen={(id, automatic, serverId) => {
+          const target = servers.find(entry => entry.id === serverId);
+          if (target && target.server.name !== selected) onSelect(target.server.name);
+          position.current = null;
+          visitedSubmissions.current.clear();
+          autoStart.current = automatic ? id : null;
+          setOpen({ serverId, id });
           onSubmissionChange?.(id);
         }}
       />
@@ -484,6 +343,10 @@ export function ReadinessPage({
   } else if (flow && view && flow.directory === "openai") {
     body = (
       <OpenAiPortal
+        key={view.id}
+        initialTab={initialStep}
+        onTabChange={rememberStep}
+        onUpload={openUpload}
         flow={flow}
         view={view}
         session={session}
@@ -498,12 +361,15 @@ export function ReadinessPage({
     body = (
       <FieldLabels.Provider value={labelOf}>
         <PortalFrame
+          key={view.id}
+          initialStep={initialStep}
+          onStepChange={rememberStep}
           flow={flow}
           view={view}
           session={session}
           testPlan={plan}
           serverUrl={serverUrl}
-          serverName={chosen.server.name}
+          serverName={chosen?.server.name ?? ""}
           people={people}
           onClose={close}
         />
@@ -524,9 +390,16 @@ export function ReadinessPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <RehearsalBar
-        directory={DIRECTORY_NAMES[directory]}
+      {openId ? <RehearsalBar
+        title={directory === "openai" ? (
+          <ChatGptPackageTitle projectId={projectId} pluginId={view?.pluginId} versionId={view?.pluginVersionId} />
+        ) : "Claude preview"}
         counts={counts}
+        packageAction={openUpload && (
+          <Button type="button" size="sm" variant="outline" onClick={openUpload}>
+            Upload ZIP
+          </Button>
+        )}
         server={
           <ConformanceServerPicker
             servers={servers.map((entry) => entry.server)}
@@ -536,26 +409,44 @@ export function ReadinessPage({
           />
         }
         status={
-          !view || !flow
+          switching ? "Switching server…" : !view || !flow
             ? "Not checked yet"
             : needsVersion
-              ? "Choose a plugin version to run checks."
-              : runStatus(run, flow.version)
+              ? view.pluginId ? "Choose a ZIP version to run checks." : "Choose a plugin ZIP to run checks."
+              : runStatus(run)
         }
-        canRun={Boolean(view) && run.status !== "unavailable" && !needsVersion}
+        provenance={runProvenance(run, flow?.version)}
+        canRun={!session.pluginSaving && !switching && view?.id === openId && Boolean(view) && (directory !== "openai" || pluginsEnabled) && run.status !== "unavailable" && !needsVersion}
         running={run.status === "running"}
         hasRun={Boolean(view?.lastRunId)}
         planRevision={planRevision}
         onRun={startRun}
-      />
+      /> : null}
+      {choice && !openId && <div className="flex items-center justify-between gap-4 px-6 pt-4">
+        <Button variant="ghost" size="sm" onClick={() => { setLastSubmissionId(undefined); setChoice(null); }}>All marketplaces</Button>
+        <ConformanceServerPicker servers={servers.map(entry => entry.server)} loading={loading} selectedName={chosen?.server.name ?? null} onSelect={name => void select(name)} />
+      </div>}
+      {switchError && <p role="alert" className="px-4 py-2 text-sm text-destructive">{switchError}</p>}
       <div
+        inert={switching}
         className={cn(
-          SCOPES[directory],
+          openId && SCOPES[directory],
           "flex min-h-0 flex-1 flex-col bg-background text-foreground",
         )}
       >
-        {body}
+        <PreviewServerIconSource.Provider value={{ url: serverUrl, icons: chosen?.server.initializationInfo?.serverVersion?.icons }}>
+          {body}
+        </PreviewServerIconSource.Provider>
       </div>
+      {openUpload && upload && upload.submissionId === openId && (
+        <AddPluginModal
+          key={upload.submissionId}
+          isOpen={upload.open}
+          onClose={() => setUpload({ ...upload, open: false })}
+          projectId={projectId}
+          onInstalled={(plugin) => void session.setPlugin(plugin)}
+        />
+      )}
       {pending ? (
         <TestPlanConsentDialog
           saved={pending.saved}

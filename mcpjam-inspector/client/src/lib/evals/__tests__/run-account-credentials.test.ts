@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { EvalRunAccount } from "@/components/evals/types";
 import {
   runAccountCredentialFacts,
+  runAccountEmailText,
   runAccountIdentityText,
 } from "../run-account-credentials";
 
@@ -33,7 +34,7 @@ describe("runAccountCredentialFacts", () => {
     ]);
   });
 
-  it("says signed in for a token from a sign-in, and leaves out what was not recorded", () => {
+  it("says signed in for a token from a sign-in, and that a token stating no expiry has an unknown one", () => {
     expect(
       runAccountCredentialFacts(
         {
@@ -45,7 +46,39 @@ describe("runAccountCredentialFacts", () => {
         },
         at,
       ),
-    ).toEqual(["Signed in by Ana Ruiz"]);
+    ).toEqual(["Signed in by Ana Ruiz", "Expiry unknown"]);
+  });
+
+  it("says an opaque upload's expiry is unknown, even with no other fact", () => {
+    expect(
+      runAccountCredentialFacts({
+        serverId: "srv-linear",
+        kind: "shared",
+        name: "test-automation-1",
+        tokenUploaded: true,
+      }),
+    ).toEqual(["Expiry unknown"]);
+  });
+
+  it("adds the email after the identity when the backend returned it", () => {
+    expect(
+      runAccountCredentialFacts(
+        {
+          ...uploaded,
+          identity: {
+            ...uploaded.identity!,
+            email: "automation@example.test",
+            emailSource: "token",
+          },
+        },
+        at,
+      ),
+    ).toEqual([
+      "Uploaded t1000 by Ana Ruiz",
+      "Expires t2000",
+      "Identity: test-automation-1 (svc-automation), from the token",
+      "Email: automation@example.test, from the token",
+    ]);
   });
 
   it("is empty for an account recorded before these facts existed", () => {
@@ -88,5 +121,26 @@ describe("runAccountIdentityText", () => {
     );
     expect(runAccountIdentityText({ source: "token" })).toBeUndefined();
     expect(runAccountIdentityText(undefined)).toBeUndefined();
+  });
+});
+
+describe("runAccountEmailText", () => {
+  it("labels where the email came from, which can differ from the identity", () => {
+    expect(
+      runAccountEmailText({
+        source: "profile",
+        name: "Automation",
+        email: "automation@example.test",
+        emailSource: "token",
+      }),
+    ).toBe("Email: automation@example.test, from the token");
+    expect(
+      runAccountEmailText({ source: "profile", email: "ana@example.test" }),
+    ).toBe("Email: ana@example.test, from the server's profile tool");
+  });
+
+  it("is nothing when the backend left the email out", () => {
+    expect(runAccountEmailText({ source: "token", name: "ci" })).toBeUndefined();
+    expect(runAccountEmailText(undefined)).toBeUndefined();
   });
 });
