@@ -101,7 +101,7 @@ const suite = {
   updatedAt: 0,
 } satisfies EvalSuite;
 
-/** Setup Run's org-key verdict for the saved target. */
+/** The Set up run sheet's org-key verdict for the saved target. */
 function setupRunProblems(
   target: ModelTarget,
   config: OrgVisibleConfig = orgConfig,

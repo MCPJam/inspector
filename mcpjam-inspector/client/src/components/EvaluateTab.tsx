@@ -601,7 +601,7 @@ function EvaluateTabContent({
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
   // A case and a run both start from a suite. With none there is nothing to
-  // pick, so Add case and Setup Run go straight to creating one instead of
+  // pick, so Add case and Set up run go straight to creating one instead of
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
@@ -1782,7 +1782,7 @@ function EvaluateTabContent({
           >
             <SheetHeader>
               <SheetTitle>
-                {suiteAction === "run" ? "Setup Run" : "Add case"}
+                {suiteAction === "run" ? "Set up run" : "Add case"}
               </SheetTitle>
               <SheetDescription>
                 {suiteAction === "run"

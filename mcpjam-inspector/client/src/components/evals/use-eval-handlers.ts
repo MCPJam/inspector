@@ -772,7 +772,7 @@ export function useEvalHandlers({
         skipJudge?: boolean;
         caseLaunchId?: string;
         /**
-         * Throw a launch failure instead of toasting it, so the Setup Run
+         * Throw a launch failure instead of toasting it, so the Set up run
          * sheet can show it inline and stay open. Unlike `stayOnPage`, the
          * launch still navigates and may still replay.
          */

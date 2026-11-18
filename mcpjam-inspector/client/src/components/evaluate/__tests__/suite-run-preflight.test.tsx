@@ -452,7 +452,7 @@ describe("RunPreflightNotices", () => {
   });
 });
 
-describe("Setup Run with a preflight", () => {
+describe("Set up run with a preflight", () => {
   const suite = {
     _id: "suite",
     name: "Checkout",
@@ -1179,7 +1179,7 @@ describe("an organization model chosen for an environment or matrix cell, under 
   });
 });
 
-describe("Setup Run — the backend's AI key policy refusal", () => {
+describe("Set up run — the backend's AI key policy refusal", () => {
   const suite = {
     _id: "suite",
     name: "Checkout",
