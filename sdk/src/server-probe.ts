@@ -259,10 +259,14 @@ async function probeMcpServerOnce(
   attempts.push(initializeAttempt);
 
   try {
+    // A Streamable HTTP server may answer initialize as an event stream; its
+    // first message is the result `extractInitializeInfo` reads.
     const initializeResponse = await performRequest(
       config.fetchFn ?? fetch,
       initializeAttempt,
-      config.timeoutMs
+      config.timeoutMs,
+      undefined,
+      { firstEventStreamMessage: true }
     );
     const initializeInfo = extractInitializeInfo(
       initializeResponse.body,

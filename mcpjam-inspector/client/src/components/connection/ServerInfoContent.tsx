@@ -29,6 +29,11 @@ interface ServerInfoContentProps {
   server: ServerWithName;
   projectId?: string | null;
   hostedServerId?: string | null;
+  /**
+   * Capability names the server canvas evaluated from saved evidence. When
+   * given, they replace this view's own reading of `initializationInfo`.
+   */
+  evaluatedCapabilities?: readonly string[];
 }
 
 export function ServerInfoContent({
@@ -36,6 +41,7 @@ export function ServerInfoContent({
   server,
   projectId = null,
   hostedServerId = null,
+  evaluatedCapabilities,
 }: ServerInfoContentProps) {
   // Keyed by connection id ("" is the default connection, and the only key a
   // single-account server ever uses).
@@ -464,12 +470,14 @@ export function ServerInfoContent({
             </div>
           )}
 
-          {capabilities.length > 0 && (
+          {(evaluatedCapabilities ?? capabilities).length > 0 && (
             <div>
               <div className="text-sm font-medium text-muted-foreground mb-1">
                 Capabilities
               </div>
-              <div className="text-sm">{capabilities.join(", ")}</div>
+              <div className="text-sm">
+                {(evaluatedCapabilities ?? capabilities).join(", ")}
+              </div>
             </div>
           )}
 

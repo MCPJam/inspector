@@ -31,6 +31,7 @@ import { captureConformanceRun } from "../telemetry.js";
 import { readServerEventTypes } from "../server-list-reads.js";
 import {
   EVENTS_CHECK_IDS,
+  EVENTS_WEBHOOK_CHECK_IDS,
   type EventsCheckId,
   type EventsCheckResult,
   type EventsCheckStrength,
@@ -295,24 +296,7 @@ export async function runEventsConformance(
   }
 
   // ---- webhook ---------------------------------------------------------------
-  const webhookChecks: EventsCheckId[] = [
-    "events-subscribe-rejects-http-callback",
-    "events-subscribe-rejects-invalid-secret",
-    "events-subscribe-result-shape",
-    "events-subscribe-idempotent",
-    "events-granted-lifetime",
-    "events-no-expiry-only-when-requested",
-    "events-receiver-consent",
-    "events-consent-failure-blocks-delivery",
-    "events-no-redirect-follow",
-    "events-private-callback-rejected",
-    "events-delivery-signature",
-    "events-webhook-id-equals-event-id",
-    "events-subscription-id-header",
-    "events-delivery-content-type",
-    "events-delivery-body-size",
-    "events-unsubscribe-twice",
-  ];
+  const webhookChecks: EventsCheckId[] = [...EVENTS_WEBHOOK_CHECK_IDS];
   const webhookType = usable("webhook");
   if (!webhookType) {
     const note = missingNote("webhook");

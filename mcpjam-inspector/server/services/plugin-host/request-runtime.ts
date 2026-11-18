@@ -665,6 +665,8 @@ export function createPluginRequestRuntime(
         projectServerSchema,
         {
           lazyConnect: true,
+          // An App's calls in a member's chat are that member's use.
+          observeFeatures: true,
           extensionRequestHandlers: legacyForms
             ? {
                 [binding.serverId]: [

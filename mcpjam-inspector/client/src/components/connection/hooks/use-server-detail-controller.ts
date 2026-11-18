@@ -84,6 +84,14 @@ export interface ServerDetailControllerOptions {
   server: ServerWithName;
   /** The tab to open on, for an explicit deep link. Defaults to Config. */
   defaultTab?: ServerDetailTab;
+  /**
+   * The active tab when the caller owns it (a page that keeps it in the
+   * URL). Selecting a tab then calls `onTabChange` instead of storing it.
+   */
+  activeTab?: ServerDetailTab;
+  onTabChange?: (tab: ServerDetailTab) => void;
+  /** Where analytics events say the details were shown. */
+  analyticsLocation?: "server_detail_modal" | "server_canvas";
   onSubmit: (
     formData: ServerFormData,
     originalServerName: string
@@ -264,6 +272,9 @@ export function useServerDetailController({
   isOpen,
   server,
   defaultTab = "configuration",
+  activeTab: controlledTab,
+  onTabChange,
+  analyticsLocation = "server_detail_modal",
   onSubmit,
   onDisconnect,
   onReconnect,
@@ -283,13 +294,21 @@ export function useServerDetailController({
     hostedServerId
   );
   const [settingsVisited, setSettingsVisited] = useState(
-    defaultTab === "settings"
+    (controlledTab ?? defaultTab) === "settings"
   );
-  const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
-  const selectTab = useCallback((tab: ServerDetailTab) => {
-    setActiveTab(tab);
-    if (tab === "settings") setSettingsVisited(true);
-  }, []);
+  const [ownTab, setOwnTab] = useState<ServerDetailTab>(defaultTab);
+  const activeTab = controlledTab ?? ownTab;
+  const selectTab = useCallback(
+    (tab: ServerDetailTab) => {
+      if (onTabChange) onTabChange(tab);
+      else setOwnTab(tab);
+      if (tab === "settings") setSettingsVisited(true);
+    },
+    [onTabChange]
+  );
+  useEffect(() => {
+    if (controlledTab === "settings") setSettingsVisited(true);
+  }, [controlledTab]);
   const settingsLaunch = useSettingsLaunchObservation(
     JSON.stringify([extensionSettingsScope, hostedServerId]),
     extensionLaunchProfile ?? "chatgpt",
@@ -402,7 +421,7 @@ export function useServerDetailController({
     }
 
     track("update_server_button_clicked", {
-      location: "server_detail_modal",
+      location: analyticsLocation,
     });
 
     setIsSaving(true);
@@ -455,7 +474,7 @@ export function useServerDetailController({
   const handleConnect = async (options?: ServerReconnectOptions) => {
     setReconnectsInFlight((count) => count + 1);
     track("server_detail_modal_connect_clicked", {
-      location: "server_detail_modal",
+      location: analyticsLocation,
       server_id: server.name,
     });
     try {
@@ -471,7 +490,7 @@ export function useServerDetailController({
 
   const handleDisconnect = () => {
     track("server_detail_modal_disconnect_clicked", {
-      location: "server_detail_modal",
+      location: analyticsLocation,
       server_id: server.name,
     });
     onDisconnect(server.name);
@@ -492,7 +511,7 @@ export function useServerDetailController({
 
   const handleClose = () => {
     track("server_detail_modal_closed", {
-      location: "server_detail_modal",
+      location: analyticsLocation,
       server_id: server.name,
     });
     onClose();

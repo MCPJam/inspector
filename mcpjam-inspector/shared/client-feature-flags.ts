@@ -51,6 +51,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "run-disclosure-enabled",
   "sandbox-images-enabled",
   "scheduled-evals-enabled",
+  "server-canvas",
   "shared-slack-channel-enabled",
   "skills-enabled",
   "slack-agent-org-settings",

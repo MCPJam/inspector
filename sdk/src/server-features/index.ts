@@ -38,6 +38,38 @@ export {
 } from "./applicability.js";
 export { evaluateServerFeatures } from "./evaluate.js";
 export {
+  APPS_CHECK_INTRUSIVENESS,
+  BackgroundCheckRefusedError,
+  CHECK_INTRUSIVENESS,
+  EVENTS_CHECK_INTRUSIVENESS,
+  OAUTH_CHECK_INTRUSIVENESS,
+  PROTOCOL_CHECK_INTRUSIVENESS,
+  TASKS_CHECK_INTRUSIVENESS,
+  assertBackgroundSafeCheck,
+  checkIntrusiveness,
+  isBackgroundSafeCheck,
+} from "./check-intrusiveness.js";
+export {
+  MAX_PROBE_LIST_ENTRIES,
+  MAX_PROBE_STRING_LENGTH,
+  PROBE_VALUE_KEYS,
+  boundedProbeValues,
+} from "./probe-value-keys.js";
+export {
+  OBSERVABLE_FEATURE_IDS,
+  classifyFrame,
+  requestContextOf,
+  type FrameDirection,
+  type FrameEra,
+  type FrameRequestContext,
+} from "./classify-frame.js";
+export {
+  APPS_BRIDGE_FEATURE_IDS,
+  classifyAppsBridgeMessage,
+  type BridgeDirection,
+  type BridgeMessage,
+} from "./classify-bridge.js";
+export {
   checkEvidenceFromDigest,
   isConformanceCheckRef,
   isConformanceSuiteKey,

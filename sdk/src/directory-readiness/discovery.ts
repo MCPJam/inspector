@@ -171,6 +171,8 @@ export function parseSseEventData(
 
 /**
  * Read an SSE response only as far as its first JSON-RPC message, then stop.
+ * With `responseTo`, read as far as the response to that request id instead:
+ * a server may send notifications or its own requests on the stream first.
  *
  * Stopping is the point: the server is entitled to hold the stream open after
  * answering, so reading to `done` would hang until the probe's timeout and
@@ -180,7 +182,13 @@ export function parseSseEventData(
 export async function readSseJsonRpc(
   response: Response,
   maxBytes: number = DIRECTORY_DISCOVERY_DEFAULTS.maxMetadataBytes,
+  responseTo?: string | number,
 ): Promise<Record<string, unknown> | undefined> {
+  // A server request can reuse the id, since ids are per sender; a response
+  // carries no method.
+  const wanted = (message: Record<string, unknown>) =>
+    responseTo === undefined ||
+    (message.id === responseTo && !("method" in message));
   const body = response.body;
   if (!body || typeof body.getReader !== "function") return undefined;
 
@@ -203,11 +211,12 @@ export async function readSseJsonRpc(
       buffered = events.pop() ?? "";
       for (const event of events) {
         const document = parseSseEventData(event);
-        if (document) return document;
+        if (document && wanted(document)) return document;
       }
     }
     // A stream that closed without a final blank line still left one event.
-    return parseSseEventData(buffered);
+    const last = parseSseEventData(buffered);
+    return last && wanted(last) ? last : undefined;
   } finally {
     await reader.cancel().catch(() => undefined);
     reader.releaseLock?.();
@@ -223,7 +232,7 @@ export async function readSseJsonRpc(
  * long-lived caller signal accumulates one listener per request without it,
  * and a readiness run makes dozens.
  */
-function linkAbortSignal(
+export function linkAbortSignal(
   signal: AbortSignal | undefined,
   controller: AbortController,
 ): () => void {

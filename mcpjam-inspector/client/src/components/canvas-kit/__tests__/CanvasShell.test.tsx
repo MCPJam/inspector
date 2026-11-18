@@ -9,6 +9,7 @@ const NODES: Node[] = [
 
 function renderShell(props: {
   edgeRevealDelayMs?: number;
+  alignTopAfterFit?: boolean;
   onNodeClick?: (node: Node) => void;
   onPaneClick?: () => void;
 }) {
@@ -22,6 +23,7 @@ function renderShell(props: {
           edgeTypes={{}}
           backgroundId="test-dots"
           edgeRevealDelayMs={props.edgeRevealDelayMs}
+          alignTopAfterFit={props.alignTopAfterFit}
           onNodeClick={props.onNodeClick ?? (() => {})}
           onPaneClick={props.onPaneClick ?? (() => {})}
         />
@@ -57,5 +59,18 @@ describe("CanvasShell", () => {
     expect(onNodeClick).toHaveBeenCalledWith(
       expect.objectContaining({ id: "root" }),
     );
+  });
+
+  // jsdom never measures nodes, so the first fit never settles here: this
+  // covers the fallback. The top alignment itself was checked in a browser.
+  it("reveals a top-aligned canvas even if its first fit never settles", async () => {
+    vi.useFakeTimers();
+    const { container } = renderShell({ alignTopAfterFit: true });
+    const shell = container.querySelector(".host-redesign-canvas");
+    expect(shell).toHaveAttribute("data-viewport-ready", "false");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(shell).toHaveAttribute("data-viewport-ready", "true");
   });
 });
