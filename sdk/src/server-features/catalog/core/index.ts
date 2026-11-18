@@ -1,8 +1,14 @@
 import type { FeatureDefinition } from "../../types.js";
+import { CLIENT_FEATURES } from "./client-features.js";
 import {
   LIFECYCLE_FEATURES,
   TRANSPORT_FEATURES,
 } from "./lifecycle-transports.js";
+import {
+  PROMPT_FEATURES,
+  RESOURCE_FEATURES,
+  RESOURCE_TEMPLATE_FEATURES,
+} from "./resources-prompts.js";
 import { SERVER_INFO_FEATURES } from "./server-info.js";
 import { TOOL_RESULT_FEATURES } from "./tool-results.js";
 import {
@@ -23,4 +29,8 @@ export const CORE_FEATURES: readonly FeatureDefinition[] = [
   ...TOOLS_DISCOVERY_FEATURES,
   ...TOOL_ANNOTATION_SCHEMA_FEATURES,
   ...TOOL_RESULT_FEATURES,
+  ...RESOURCE_FEATURES,
+  ...RESOURCE_TEMPLATE_FEATURES,
+  ...PROMPT_FEATURES,
+  ...CLIENT_FEATURES,
 ];
