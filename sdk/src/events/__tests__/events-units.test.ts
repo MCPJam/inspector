@@ -161,6 +161,39 @@ describe("capability capture (C10)", () => {
       declared: false,
     });
   });
+
+  it("keeps the raw serverInfo, _meta and supportedVersions parsing drops", () => {
+    const capture = new EventsCapabilityCapture(() => 7);
+    capture.observe({
+      direction: "send",
+      serverId: "s",
+      message: { jsonrpc: "2.0", id: "d", method: "server/discover" },
+    } as any);
+    capture.observe({
+      direction: "receive",
+      serverId: "s",
+      message: {
+        jsonrpc: "2.0",
+        id: "d",
+        result: {
+          supportedVersions: ["2026-07-28", 3],
+          capabilities: { extensions: { "x.example/ext": {} }, vendor: {} },
+          serverInfo: { name: "srv", version: "1", vendorField: "kept" },
+          _meta: { "io.example/build": "abc" },
+        },
+      },
+    } as any);
+    expect(capture.read("s")).toEqual({
+      source: "server/discover",
+      events: undefined,
+      listChanged: false,
+      rawCapabilities: { extensions: { "x.example/ext": {} }, vendor: {} },
+      supportedVersions: ["2026-07-28"],
+      rawServerInfo: { name: "srv", version: "1", vendorField: "kept" },
+      rawMeta: { "io.example/build": "abc" },
+      observedAt: 7,
+    });
+  });
 });
 
 describe("profiles (C1)", () => {

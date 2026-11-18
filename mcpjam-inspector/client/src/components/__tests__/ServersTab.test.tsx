@@ -16,6 +16,7 @@ import type { Project } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
 import {
   captureServerDetailModalOAuthResume,
+  readServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
@@ -348,6 +349,25 @@ vi.mock("../connection/ServerConnectionCard", () => ({
       <div data-testid={`server-card-${server.name}`}>
         {server.name}:{server.connectionStatus}
       </div>
+    </div>
+  ),
+}));
+
+vi.mock("../server-canvas/ServerCanvasPage", () => ({
+  ServerCanvasPage: ({
+    server,
+    projectId,
+    hostedServerId,
+    onBack,
+  }: {
+    server: ServerWithName;
+    projectId: string;
+    hostedServerId: string;
+    onBack: () => void;
+  }) => (
+    <div data-testid="server-canvas-page">
+      {server.name}:{projectId}:{hostedServerId}
+      <button onClick={onBack}>Back to servers</button>
     </div>
   ),
 }));
@@ -1942,6 +1962,13 @@ describe("ServersTab installed plugins", () => {
     expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent("cad");
   });
 
+  it("keeps a plugin's Settings modal with the server canvas on", () => {
+    mockEnabledFlags.add("server-canvas");
+    render(<ServersTab {...props} routePluginId="pl_bits" />);
+    expect(screen.getByTestId("plugin-server-modal")).toHaveTextContent("cad");
+    expect(screen.queryByTestId("server-canvas-page")).toBeNull();
+  });
+
   it("says a permalinked plugin that is gone is not available", () => {
     render(<ServersTab {...props} routePluginId="pl_gone" />);
     expect(
@@ -1997,5 +2024,158 @@ describe("ServersTab installed plugins", () => {
     mockEnabledFlags.clear();
     render(<ServersTab {...props} />);
     expect(screen.queryByTestId("plugin-server-card")).toBeNull();
+  });
+});
+
+describe("ServersTab server canvas route", () => {
+  const server = createServer();
+  const local = createServer({ name: "local-only" });
+  const projectServers = { [server.name]: server, [local.name]: local };
+  const props = {
+    projectServers,
+    onConnect: vi.fn(),
+    onDisconnect: vi.fn(),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
+    onUpdate: vi.fn(),
+    onRemove: vi.fn(),
+    onSaveServerConfig: vi.fn().mockResolvedValue(true),
+    projects: {
+      "project-1": {
+        ...createProject(projectServers),
+        sharedProjectId: "convex-project-1",
+      },
+    },
+    activeProjectId: "project-1",
+    organizationId: "org-1",
+    isBillingContextPending: false,
+    isLoadingProjects: false,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    window.history.replaceState({}, "", "/servers");
+    mockEnabledFlags.clear();
+    mockIsAuthenticated = true;
+    mockViewProjectServers = [{ _id: "srv_1", name: "test-server" }];
+    mockUseQuery.mockImplementation(() => undefined);
+    mockUseProjectBillingGate.mockImplementation(() => ({
+      decision: null,
+      isLoading: false,
+      isDenied: false,
+      denialMessage: null,
+    }));
+  });
+
+  afterAll(() => {
+    mockEnabledFlags.clear();
+    mockViewProjectServers = undefined;
+  });
+
+  it("opens the modal from /servers/:serverId while the flag is off", () => {
+    render(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
+      "test-server"
+    );
+    expect(screen.queryByTestId("server-canvas-page")).toBeNull();
+  });
+
+  it("renders the canvas page for /servers/:serverId with the flag on", () => {
+    mockEnabledFlags.add("server-canvas");
+    render(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.getByTestId("server-canvas-page")).toHaveTextContent(
+      "test-server:convex-project-1:srv_1"
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("Open test-server")).toBeNull();
+  });
+
+  it("keeps the list and its notice for a permalink to a gone server", () => {
+    mockEnabledFlags.add("server-canvas");
+    render(<ServersTab {...props} routeServerId="srv_gone" />);
+    expect(screen.getByTestId("permalink-unavailable")).toBeInTheDocument();
+    expect(screen.queryByTestId("server-canvas-page")).toBeNull();
+  });
+
+  it("waits for the permalink to resolve instead of flashing the list", () => {
+    mockEnabledFlags.add("server-canvas");
+    mockViewProjectServers = undefined;
+    render(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.queryByText("Open test-server")).toBeNull();
+    expect(screen.queryByTestId("server-canvas-page")).toBeNull();
+  });
+
+  it("opens a project server's page from its card with the flag on", () => {
+    mockEnabledFlags.add("server-canvas");
+    render(<ServersTab {...props} />);
+    fireEvent.click(screen.getByText("Open test-server"));
+    expect(window.location.pathname).toBe("/servers/srv_1");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("still opens the modal for a server not saved to the project", () => {
+    mockEnabledFlags.add("server-canvas");
+    render(<ServersTab {...props} />);
+    fireEvent.click(screen.getByText("Open local-only"));
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
+      "local-only"
+    );
+    expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("opens the modal from a card with the flag off", () => {
+    render(<ServersTab {...props} />);
+    fireEvent.click(screen.getByText("Open test-server"));
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
+      "test-server"
+    );
+    expect(window.location.pathname).toBe("/servers");
+  });
+
+  it("leaves an OAuth return to the canvas page instead of reopening the modal", () => {
+    mockEnabledFlags.add("server-canvas");
+    writeOpenServerDetailModalState("test-server");
+    captureServerDetailModalOAuthResume("test-server");
+    render(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.getByTestId("server-canvas-page")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes the modal a route opened before the flag turned on", () => {
+    const { rerender } = render(
+      <ServersTab {...props} routeServerId="srv_1" />
+    );
+    expect(screen.getByTestId("modal-server-name")).toHaveTextContent(
+      "test-server"
+    );
+
+    mockEnabledFlags.add("server-canvas");
+    rerender(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.getByTestId("server-canvas-page")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes the modal an OAuth return reopened before the flag turned on", () => {
+    writeOpenServerDetailModalState("test-server");
+    captureServerDetailModalOAuthResume("test-server");
+    const { rerender } = render(
+      <ServersTab {...props} routeServerId="srv_1" />
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    mockEnabledFlags.add("server-canvas");
+    rerender(<ServersTab {...props} routeServerId="srv_1" />);
+    expect(screen.getByTestId("server-canvas-page")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // The marker is spent, so going back to the list does not reopen it.
+    expect(readServerDetailModalOAuthResume()).toBeNull();
+  });
+
+  it("goes back to the server list from the page", () => {
+    mockEnabledFlags.add("server-canvas");
+    window.history.replaceState({}, "", "/servers/srv_1");
+    render(<ServersTab {...props} routeServerId="srv_1" />);
+    fireEvent.click(screen.getByText("Back to servers"));
+    expect(window.location.pathname).toBe("/servers");
   });
 });

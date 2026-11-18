@@ -397,12 +397,10 @@ type HarnessRuntimeAdapterBase = {
   mcpDelivery: HarnessMcpDelivery;
   /** Qualified vendor continuation hook for the shared forwarding route. */
   forwardingRuntime?: ForwardingRuntimeContract;
-  /** The runtime refuses to resume when its MCP config changes, so each lane
-   *  gets session handles in place of per-turn tokens. */
-  sessionStableMcpConfig?: boolean;
-  /** Booting and bootstrapping this runtime's hosted box may start before
-   *  Send (`prepare-conversation-box.ts`). */
-  preparesBeforeSend?: true;
+  /** The runtime refuses to resume a session whose MCP configuration changed,
+   *  header values included, so its lane's configuration carries nothing that
+   *  varies between turns: no tool-catalog version, no added headers. */
+  fingerprintsMcpConfig?: true;
   /**
    * How an agent kept running in a hosted box between messages takes each
    * message's MCP configuration: `refresh` applies it to the live agent
@@ -840,7 +838,6 @@ function claudeCodeModelPins(modelId: string): Record<string, string> {
 
 const claudeCodeAdapter: HarnessRuntimeAdapter = {
   id: "claude-code",
-  preparesBeforeSend: true,
   hostedWarmAgent: "refresh",
   promptImageInput: true,
   displayName: HARNESS_DESCRIPTORS["claude-code"].displayName,
@@ -904,6 +901,8 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
   forwardingRuntime: {
     runtimeVersion: "2.1.290",
     configurationVersion: "tool-search-auto-v1",
+    // Claude Code stamps its tool use id on every MCP call it sends.
+    correlationKey: "claudecode/toolUseId",
     ownedInput: true,
     nativeClient: CLAUDE_CODE_NATIVE_CLIENT,
     refresh: withClaudeForwardingResume,
@@ -1033,7 +1032,6 @@ const claudeCodeAdapter: HarnessRuntimeAdapter = {
  */
 const codexAdapter: HarnessRuntimeAdapter = {
   id: "codex",
-  preparesBeforeSend: true,
   hostedWarmAgent: "refresh",
   promptImageInput: true,
   // Folded into the runtime fingerprint, so a lane saved under the retired
@@ -1087,7 +1085,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
     correlationKey: "callId",
     ownedInput: true,
     nativeClient: CODEX_NATIVE_CLIENT,
-    refresh: withForwardingResume,
+    refresh: (runtime, servers, policyDigest) =>
+      withForwardingResume(runtime, servers, policyDigest),
   },
   // INS-8: skills ARE delivered. The adapter writes every `skills` entry to
   // `$HOME/.agents/skills/<name>/SKILL.md` before it starts Codex, the same
@@ -1144,6 +1143,8 @@ const codexAdapter: HarnessRuntimeAdapter = {
 
 const cursorAdapter: HarnessRuntimeAdapter = {
   id: "cursor",
+  // No `hostedWarmAgent`: a CLI kept running between messages would hold the
+  // turn's Cursor login after the turn removed it from the box.
   promptImageInput: true,
   // "Cursor CLI", not "Cursor" — the emulated `cursor` host style (the IDE's
   // chat panel) keeps that name, and the two are different products with
@@ -1195,8 +1196,8 @@ const cursorAdapter: HarnessRuntimeAdapter = {
   // mechanism — which is exactly the distinction this field carries.
   mcpNativeDelivery: "session-config",
   // The ACP adapter fingerprints its MCP servers, headers included, on every
-  // resume, so a per-turn token there would end the session each turn.
-  sessionStableMcpConfig: true,
+  // resume, so any value that varies between turns would end the session.
+  fingerprintsMcpConfig: true,
   // Approval bindings correlate calls (no tool-call id reaches the server),
   // Cursor declines elicitation itself, and the session-stable config never
   // changes between turns, so there is nothing to refresh.
@@ -1289,7 +1290,10 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
     // Stamped by the bridge's pre-call hook with the stream's tool call id.
     correlationKey: COPILOT_CORRELATION_KEY,
     nativeClient: COPILOT_CLI_NATIVE_CLIENT,
-    refresh: (runtime) => refuseForwardedContinuation(runtime),
+    // The lane's session configuration is the one the paused turn started
+    // with, so only a turn on per-turn credentials has anything to refuse.
+    refresh: (runtime, _servers, _policyDigest, context) =>
+      context?.sessionStable ? runtime : refuseForwardedContinuation(runtime),
   },
   supportsSkills: true,
   skills: HARNESS_SKILLS["copilot-cli"],
@@ -1313,6 +1317,9 @@ const copilotCliAdapter: HarnessRuntimeAdapter = {
 
 const opencodeAdapter: HarnessRuntimeAdapter = {
   id: "opencode",
+  // No `hostedWarmAgent`: its bridge keeps the OpenCode server it started
+  // until `openCodeConfig` changes, so an agent kept between messages would
+  // answer with the previous message's tools and MCP servers.
   promptImageInput: false,
   displayName: HARNESS_DESCRIPTORS.opencode.displayName,
   supportedReasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,

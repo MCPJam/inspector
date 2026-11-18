@@ -1258,7 +1258,7 @@ it("opens SDK setup from the suite header", async () => {
   );
   await userEvent
     .setup()
-    .click(screen.getByRole("button", { name: "Setup SDK" }));
+    .click(screen.getByRole("button", { name: "Set up SDK" }));
   expect(onSetupSdk).toHaveBeenCalledTimes(1);
 });
 
@@ -1601,8 +1601,8 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
       "Test Cases",
       "Add case",
       "Configure suite evaluators",
-      "Setup SDK",
-      "Setup Run",
+      "Set up SDK",
+      "Set up run",
     ]) {
       expect(screen.queryByText(text)).toBeNull();
     }
@@ -1673,7 +1673,7 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
     );
     expect(onViewChange).toHaveBeenCalledWith("test-cases");
     await user.click(within(panel).getByRole("button", { name: "Run" }));
-    expect(await screen.findByText(/^Setup Run · /)).toBeInTheDocument();
+    expect(await screen.findByText(/^Set up run · /)).toBeInTheDocument();
   });
 
   it("shows today's Test Cases list on the Test cases tab, without the Runs card", () => {

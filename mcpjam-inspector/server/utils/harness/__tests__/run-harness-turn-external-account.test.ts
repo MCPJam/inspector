@@ -357,37 +357,24 @@ describe("runHarnessTurn — external-account (org key)", () => {
     expect(registryState.createHarness).not.toHaveBeenCalled();
   });
 
-  it.each([
-    [
-      "a User Testing turn",
-      "scenario",
-      "Choose a different client for this study.",
-    ],
-    [
-      "an MCP Events run",
-      "event",
-      "Use it there, or choose a different client.",
-    ],
-  ])(
-    "refuses %s before asking about any key",
-    async (_label, sourceType, next) => {
-      const onEngineError = vi.fn();
-      await runHarnessTurn(
-        baseOptions({
-          sourceType,
-          scenarioId: "scenario-1",
-          onEngineError,
-        }) as never,
-        "none",
-      );
-      expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(
-        `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
-      );
-      expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
-      expect(reserveHarnessBox).not.toHaveBeenCalled();
-      expect(registryState.createHarness).not.toHaveBeenCalled();
-    },
-  );
+  it("refuses a User Testing turn before asking about any key", async () => {
+    const onEngineError = vi.fn();
+    await runHarnessTurn(
+      baseOptions({
+        sourceType: "scenario",
+        scenarioId: "scenario-1",
+        onEngineError,
+      }) as never,
+      "none",
+    );
+    expect((onEngineError.mock.calls[0]![0] as Error).message).toBe(
+      "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
+        "Choose a different client for this study.",
+    );
+    expect(getHarnessCredentialReadiness).not.toHaveBeenCalled();
+    expect(reserveHarnessBox).not.toHaveBeenCalled();
+    expect(registryState.createHarness).not.toHaveBeenCalled();
+  });
 
   it("hands the box back at teardown (the claim is held, not leaked)", async () => {
     await runHarnessTurn(baseOptions() as never, "none");

@@ -212,7 +212,7 @@ describe("resolveTurnRuntime — runtime shape", () => {
     ).not.toHaveProperty("maxOutputTokens");
   });
 
-  it.each(["swarm", "eval"] as const)(
+  it.each(["swarm", "eval", "direct"] as const)(
     "a Cursor client on a %s run is a harness turn on the organization's key",
     async (sourceType) => {
       // The sentinel names no provider model, so nothing is resolved against
@@ -241,26 +241,20 @@ describe("resolveTurnRuntime — runtime shape", () => {
     },
   );
 
-  it.each([
-    ["the v1 chat-session API", "direct", "Use it there, or choose a different client."],
-    ["an MCP Events run", "event", "Use it there, or choose a different client."],
-    ["User Testing session simulation", "scenario", "Choose a different client for this study."],
-  ] as const)(
-    "a Cursor client is refused on %s, whatever the model, before anything resolves",
-    async (_label, sourceType, next) => {
-      for (const modelDefinition of [CURSOR_SENTINEL_MODEL, MCPJAM_MODEL]) {
-        await expect(
-          resolveTurnRuntime(
-            baseArgs({ modelDefinition, harness: "cursor", sourceType }),
-          ),
-        ).rejects.toThrow(
-          `Cursor CLI runs only in the Playground, evals and swarms. ${next}`,
-        );
-      }
-      expect(resolveSyntheticModelSourceMock).not.toHaveBeenCalled();
-      expect(fetchMock).not.toHaveBeenCalled();
-    },
-  );
+  it("a Cursor client is refused in User Testing session simulation, whatever the model, before anything resolves", async () => {
+    for (const modelDefinition of [CURSOR_SENTINEL_MODEL, MCPJAM_MODEL]) {
+      await expect(
+        resolveTurnRuntime(
+          baseArgs({ modelDefinition, harness: "cursor", sourceType: "scenario" }),
+        ),
+      ).rejects.toThrow(
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
+          "Choose a different client for this study.",
+      );
+    }
+    expect(resolveSyntheticModelSourceMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
   it.each(["direct", "event", "swarm"] as const)(
     "the sentinel without its harness is refused on %s, not routed to a provider",
@@ -767,6 +761,53 @@ describe("resolveTurnRuntime — local usage writeback (finalizeUsage)", () => {
       eventRunId: "event-run-1",
     });
     expect(body).not.toHaveProperty("journeyRunId");
+  });
+
+  it("puts each call's returned price on that call's llm span of the turn", async () => {
+    const cost = (amountUsd: number) => ({
+      calculationVersion: 1,
+      currency: "USD",
+      completeness: "complete",
+      amountUsd,
+      source: "customer_rate",
+      funding: "customer",
+    });
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        costs: { "turn-1:0": cost(0.01), "turn-1:1": cost(0.5) },
+      }),
+    );
+    const span = (id: string, category: "step" | "llm", stepIndex: number) => ({
+      id,
+      name: id,
+      category,
+      stepIndex,
+      startMs: 0,
+      endMs: 1,
+    });
+    const result = successResult();
+    result.turnTrace!.spans = [
+      span("step-0", "step", 0),
+      span("llm-0", "llm", 0),
+      span("llm-1", "llm", 1),
+    ];
+    result.modelCalls = [0, 1].map((stepIndex) => ({
+      callId: `turn-1:${stepIndex}`,
+      stepIndex,
+      usage: { totalTokens: 5 },
+      finishedAt: 1,
+    }));
+    const rt = await resolveTurnRuntime(localArgs());
+
+    await rt.finalizeUsage(result);
+
+    expect(
+      result.turnTrace!.spans.map((s) => [s.id, s.callId, s.cost?.amountUsd]),
+    ).toEqual([
+      ["step-0", undefined, undefined],
+      ["llm-0", "turn-1:0", 0.01],
+      ["llm-1", "turn-1:1", 0.5],
+    ]);
   });
 
   it("does NOT fire on an aborted result", async () => {
