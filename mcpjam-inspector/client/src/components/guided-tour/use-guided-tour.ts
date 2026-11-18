@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { track } from "@/lib/analytics";
 import type { ClientAnalyticsEventName } from "@/shared/analytics-events";
+import { useAnnouncementSlot } from "../announcement-slot";
 
 /**
  * Whether this browser has already been shown the tour stored under `key`.
@@ -78,11 +79,18 @@ export function useGuidedTour<StopId extends string>({
 }: GuidedTourConfig): GuidedTourController<StopId> {
   const [phase, setPhase] = useState<GuidedTourPhase>("closed");
   const autoOpenedRef = useRef(false);
+  const triggerRef = useRef<GuidedTourTrigger | null>(null);
   const openedAtRef = useRef(0);
   const { opened, stepViewed, skipped, completed, handoffEnded } = events;
+  const canAutoOpen =
+    autoOpenEligible && !autoOpenedRef.current && !hasSeenTour(seenKey);
+  const { open: hasAnnouncementSlot } = useAnnouncementSlot(
+    phase === "closed" ? canAutoOpen : triggerRef.current === "auto",
+  );
 
   const open = useCallback(
     (trigger: GuidedTourTrigger) => {
+      triggerRef.current = trigger;
       markTourSeen(seenKey);
       openedAtRef.current = Date.now();
       track(opened, { location, trigger });
@@ -92,10 +100,10 @@ export function useGuidedTour<StopId extends string>({
   );
 
   useEffect(() => {
-    if (!autoOpenEligible || autoOpenedRef.current) return;
+    if (phase !== "closed" || !canAutoOpen || !hasAnnouncementSlot) return;
     autoOpenedRef.current = true;
-    if (!hasSeenTour(seenKey)) open("auto");
-  }, [autoOpenEligible, seenKey, open]);
+    open("auto");
+  }, [phase, canAutoOpen, hasAnnouncementSlot, open]);
 
   const begin = useCallback(() => setPhase("stage"), []);
 
