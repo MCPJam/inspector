@@ -14,6 +14,7 @@ import {
   type CheckResultEvidence,
   type CheckStatus,
   type ConformanceCheckRef,
+  type ConformanceSuiteKey,
   type FeatureObservation,
   type FeatureSetupKind,
   type OAuthFlowSummary,
@@ -276,6 +277,7 @@ export function selectServerEvidence(
     checks?: readonly CheckResultEvidence[];
     configured?: readonly FeatureSetupKind[];
     setupOffered?: readonly FeatureSetupKind[];
+    checksOffered?: readonly ConformanceSuiteKey[];
   },
 ): SelectedServerEvidence {
   const contexts = listEvidenceContexts(stored);
@@ -339,6 +341,7 @@ export function selectServerEvidence(
     checks: options.checks,
     configured: options.configured,
     setupOffered: options.setupOffered,
+    checksOffered: options.checksOffered,
   };
   return { input, contextHash, capturedAt, latestAttempt, probeFailures, contexts };
 }

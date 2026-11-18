@@ -46,6 +46,7 @@ import {
 import { featuresForCheck } from "./check-map/index.js";
 import { computeCaptureContextHash } from "./context.js";
 import { isConformanceCheckRef } from "./check-evidence.js";
+import { nextStepFor } from "./next-step.js";
 
 const SERVER_SIDE_OWNERS = new Set(["server", "authorization-server"]);
 
@@ -273,31 +274,6 @@ function collectEvidence(
   return evidence;
 }
 
-const NEXT_ACTION_FOR_PRIMARY: Record<
-  FeatureDefinition["assessment"]["primary"],
-  FeatureNextAction
-> = {
-  declared: "reconnect",
-  probed: "reconnect",
-  "oauth-flow": "reconnect",
-  observed: "use-in-playground",
-  checked: "run-checks",
-  configured: "set-up",
-};
-
-const REASON_FOR_PRIMARY: Record<
-  FeatureDefinition["assessment"]["primary"],
-  string
-> = {
-  declared: "Nothing was captured for this yet. Reconnect to capture it.",
-  probed:
-    "Background checks have not run for this connection. Reconnect or refresh to run them.",
-  "oauth-flow": "Shown after you connect with OAuth.",
-  observed: "Seen only when it is used. Try it in the Playground.",
-  checked: "Only a conformance run can show this. Run checks to test it.",
-  configured: "Needs setup in MCPJam before it can be checked.",
-};
-
 function newest(evidence: readonly FeatureEvidence[]): number | undefined {
   let at: number | undefined;
   for (const entry of evidence) {
@@ -430,10 +406,10 @@ function assess(
       nextAction: "connect",
     });
   }
-  const primary = feature.assessment.primary;
+  const step = nextStepFor(feature, input);
   return result("not-checked", {
-    reason: unknown?.detail ?? REASON_FOR_PRIMARY[primary],
-    nextAction: NEXT_ACTION_FOR_PRIMARY[primary],
+    reason: unknown?.detail ?? step.reason,
+    ...(step.nextAction ? { nextAction: step.nextAction } : {}),
   });
 }
 
@@ -454,13 +430,16 @@ function needsSetup(
 ): FeatureAssessment {
   const setup = feature.assessment.setup;
   if (!setup || !input.setupOffered?.includes(setup)) {
+    // Setup this surface cannot offer: another source may still reach it.
+    const step = nextStepFor(feature, input);
     return result("not-checked", {
-      reason: unknown?.detail ?? "MCPJam cannot check this yet.",
+      reason: unknown?.detail ?? step.reason,
+      ...(step.nextAction ? { nextAction: step.nextAction } : {}),
     });
   }
   if (!input.configured?.includes(setup)) {
     return result("not-checked", {
-      reason: unknown?.detail ?? REASON_FOR_PRIMARY.configured,
+      reason: unknown?.detail ?? "Needs setup in MCPJam before it can be checked.",
       nextAction: "set-up",
     });
   }

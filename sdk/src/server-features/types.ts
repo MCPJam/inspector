@@ -505,6 +505,7 @@ export type FeatureNextAction =
   | "run-checks"
   | "use-in-playground"
   | "set-up"
+  | "refresh"
   | "upgrade-version";
 
 /**
@@ -581,4 +582,9 @@ export interface ServerFeatureEvidenceInput {
    * says MCPJam cannot check it yet, instead of offering a Set up step.
    */
   setupOffered?: readonly FeatureSetupKind[];
+  /**
+   * Conformance suites this MCPJam surface can run. Absent means any suite;
+   * a feature whose checks are all in other suites gets no Run checks step.
+   */
+  checksOffered?: readonly ConformanceSuiteKey[];
 }
