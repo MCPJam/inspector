@@ -961,7 +961,7 @@ Launch a goal run. **Spends model credits**: fans out into `targets × iteration
 
 ## `cloud projects servers` commands
 
-Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+Manage the MCP servers saved in a project and connect new ones. `cloud projects servers` and `cloud projects servers list` both list the saved servers. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
 
 ### Shared platform flags
 
@@ -1328,7 +1328,7 @@ Read a finished run's findings, ordered most-consequential-first and capped. `tr
 
 ## `cloud eval` commands
 
-All `eval` commands accept the shared platform flags below.
+`cloud evals` is an alias for `cloud eval`. All `eval` commands accept the shared platform flags below.
 
 ### Shared platform flags
 
