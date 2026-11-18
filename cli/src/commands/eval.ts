@@ -61,6 +61,10 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "../lib/eval-import-live-validation.js";
+import {
+  runAccountServerNames,
+  writeRunAccounts,
+} from "../lib/eval-run-accounts.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -3967,6 +3971,7 @@ export function registerEvalCommands(program: Command): void {
           }
           throw error;
         }
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         const completion = await runPlatformCommand(
           platformOptionsOf(command),
           // The extension has to be in the OUTER budget too. That budget aborts
@@ -4016,6 +4021,13 @@ export function registerEvalCommands(program: Command): void {
             );
             const runs = waited.flatMap((entry) =>
               entry.ok ? [entry.run] : []
+            );
+            accountServerNames = await runAccountServerNames(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              globalOptions.format
             );
             const waitErrors = waited.flatMap((entry) =>
               !entry.ok
@@ -4235,6 +4247,11 @@ export function registerEvalCommands(program: Command): void {
             },
             globalOptions.format
           );
+          writeRunAccounts(
+            globalOptions.format,
+            completion.runs,
+            accountServerNames
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
           // Human only, and after the receipt: the receipt carries the run ids
           // and must reach stdout first whatever else happens.
@@ -4316,6 +4333,7 @@ export function registerEvalCommands(program: Command): void {
         const globalOptions = evalGlobalOptions(command);
         // Set by the operation's first step, before any use.
         let webOrigin = "";
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
         // VALIDATED, not cast. The cast this replaced asserted a shape rather
@@ -4355,6 +4373,13 @@ export function registerEvalCommands(program: Command): void {
               client: context.client,
               signal: context.signal,
             });
+            accountServerNames = await runAccountServerNames(
+              context.client,
+              context.signal,
+              result.project.id,
+              [result.run],
+              globalOptions.format
+            );
             // Any terminal run that did NOT pass — not just a failed one.
             // `inconclusive` and a run that stopped without a verdict are the
             // outcomes a reader is least able to explain on their own, and the
@@ -4393,6 +4418,7 @@ export function registerEvalCommands(program: Command): void {
               })()
             : result;
         writeResult(resultForOutput, globalOptions.format);
+        writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
         writeJudgeSummary(globalOptions.format, result.run.judges);
         // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
         // it is the one thing a reader acts on after reading the rest, and a
@@ -4831,6 +4857,7 @@ export function registerEvalCommands(program: Command): void {
       const resolved = resolveCloudProjectArgs(options);
       // Set by the operation's first step, before any use.
       let webOrigin = "";
+      let accountServerNames: ReadonlyMap<string, string> = new Map();
 
       let outcome;
       try {
@@ -4884,6 +4911,13 @@ export function registerEvalCommands(program: Command): void {
                 Date.now() + waitTimeoutMs,
                 gradingExtensionMs
               );
+              accountServerNames = await runAccountServerNames(
+                client,
+                signal,
+                projectId,
+                [run],
+                format
+              );
               return { projectId, rerun, run };
             } catch (error) {
               // Not thrown from here: the receipt below is the only place the
@@ -4933,6 +4967,7 @@ export function registerEvalCommands(program: Command): void {
         { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
         format
       );
+      writeRunAccounts(format, run ? [run] : [], accountServerNames);
       writeRunLink(format, webOrigin, {
         projectId: outcome.projectId,
         suiteId: rerun.suiteId,

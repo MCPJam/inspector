@@ -47,6 +47,7 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
+import { toRunAccountsProjection } from "./eval-run-accounts.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -1846,6 +1847,9 @@ function toRunDto(run: RunDoc) {
           },
         }
       : {}),
+    // Which account the run used on each server, as the API key's owner may
+    // see it. Omitted when the run recorded none. See `toRunAccountsProjection`.
+    ...toRunAccountsProjection(run.accountsAtRun),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(run.client

@@ -314,6 +314,8 @@ export type {
   PlatformEvalRunEnvironment,
   PlatformEvalRunLauncher,
   PlatformEvalRunAttribution,
+  PlatformEvalRunAccount,
+  PlatformEvalRunAccountIdentity,
   PlatformEvalRunDisclosure,
   PlatformDisclosureRailDestination,
   PlatformManagedRailDisclosure,
