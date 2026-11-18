@@ -132,4 +132,72 @@ describe("/api/mcp/launcher", () => {
     const res = await post("/attach/a1/result", { tabId: "t1", outcome: "connected" });
     expect(res.status).toBe(400);
   });
+
+  it("reports a saved checkpoint, then tracks the release until a tab acknowledges it", async () => {
+    const { app, post } = createApp();
+    const decision = {
+      projectId: "proj-acme",
+      projectName: "Acme Tools",
+      serverName: "billing-mcp",
+      createdByAttach: true,
+    };
+    await post("/attach", {
+      attachId: "a1",
+      server: { name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" },
+    });
+    await post("/tabs/t1/poll", POLL);
+    await post("/attach/a1/claim", { tabId: "t1" });
+
+    // The tab saved the entry and is still connecting.
+    const saved = await post("/attach/a1/result", { tabId: "t1", outcome: "saved", decision });
+    expect(saved.status).toBe(200);
+    const state = await (await app.request("/api/mcp/launcher/attach/a1")).json();
+    expect(state).toMatchObject({ status: "claimed", projectName: "Acme Tools" });
+
+    // The dev command quits: the undo is pending until the tab acknowledges it.
+    await app.request("/api/mcp/launcher/attach/a1", { method: "DELETE" });
+    const pending = await app.request("/api/mcp/launcher/attach/a1/release");
+    expect(await pending.json()).toEqual({ status: "pending" });
+
+    await post("/tabs/t1/poll", POLL);
+    await post("/attach/a1/released", { tabId: "t1" });
+    const done = await app.request("/api/mcp/launcher/attach/a1/release");
+    expect(await done.json()).toEqual({ status: "done" });
+  });
+
+  it("a saved report needs the decision", async () => {
+    const { post } = createApp();
+    await post("/attach", {
+      attachId: "a1",
+      server: { name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" },
+    });
+    await post("/tabs/t1/poll", POLL);
+    await post("/attach/a1/claim", { tabId: "t1" });
+    expect((await post("/attach/a1/result", { tabId: "t1", outcome: "saved" })).status).toBe(400);
+  });
+
+  it("a request released mid-save still accepts the tab's report", async () => {
+    const { app, post } = createApp();
+    await post("/attach", {
+      attachId: "a1",
+      server: { name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" },
+    });
+    await post("/tabs/t1/poll", POLL);
+    await post("/attach/a1/claim", { tabId: "t1" });
+    await app.request("/api/mcp/launcher/attach/a1", { method: "DELETE" });
+
+    const report = await post("/attach/a1/result", {
+      tabId: "t1",
+      outcome: "saved",
+      decision: {
+        projectId: "proj-acme",
+        projectName: "Acme Tools",
+        serverName: "billing-mcp",
+        createdByAttach: true,
+      },
+    });
+    expect(report.status).toBe(200);
+    const undo = await (await post("/tabs/t1/poll", POLL)).json();
+    expect(undo.tasks).toEqual([expect.objectContaining({ kind: "release" })]);
+  });
 });

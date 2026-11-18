@@ -55,6 +55,12 @@ export function createLauncherRoutes(registry: LauncherAttachRegistry) {
       : fail(c, "unknown_attach");
   });
 
+  // Whether a tab still has to undo what this attach added. A dev command
+  // about to stop MCPJam waits for `done`, or the entry would stay saved.
+  routes.get("/attach/:attachId/release", (c) =>
+    c.json(registry.releaseState(c.req.param("attachId"))),
+  );
+
   routes.post("/attach/:attachId/claim", async (c) => {
     const tabId = readTabId(await readJson(c.req.raw));
     if (!tabId) return c.json({ code: "invalid_request", message: "tabId is required." }, 400);
@@ -163,8 +169,8 @@ function parseResult(body: unknown): LauncherAttachResult | undefined {
   if (!tabId) return undefined;
   const record = body as Record<string, unknown>;
   const decision = parseDecision(record.decision);
-  if (record.outcome === "connected") {
-    return decision ? { tabId, outcome: "connected", decision } : undefined;
+  if (record.outcome === "saved" || record.outcome === "connected") {
+    return decision ? { tabId, outcome: record.outcome, decision } : undefined;
   }
   if (record.outcome === "failed") {
     const message = readString(body, "message");
