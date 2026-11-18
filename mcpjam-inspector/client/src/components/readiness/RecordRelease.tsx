@@ -75,7 +75,7 @@ export function RecordRelease({
           setError(
             failure instanceof Error
               ? failure.message
-              : "Could not record the release.",
+              : "Could not record the release. Try saving again.",
           );
         } finally {
           setSaving(false);

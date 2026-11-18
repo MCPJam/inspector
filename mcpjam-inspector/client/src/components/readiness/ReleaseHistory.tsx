@@ -61,7 +61,7 @@ function CatalogDiff({
     return (
       <p>
         {error
-          ? "Could not load the catalog comparison."
+          ? "Could not load the catalog comparison. Reopen the release history to try again."
           : "Loading catalog comparison…"}
       </p>
     );
@@ -149,7 +149,7 @@ export function ReleaseHistory({
         if (!abort.signal.aborted) setData({ events, revisions });
       })
       .catch(() => {
-        if (!abort.signal.aborted) setError("Could not load release history.");
+        if (!abort.signal.aborted) setError("Could not load release history. Try again.");
       });
     return () => abort.abort();
   }, [projectId, serverId, submissionId, refresh]);
@@ -179,7 +179,7 @@ export function ReleaseHistory({
       )}
       {revisionError && (
         <p role="alert">
-          Could not load server revisions.{" "}
+          Could not load server revisions. Try again.{" "}
           <Button variant="link" onClick={() => setRefresh((x) => x + 1)}>
             Retry
           </Button>
