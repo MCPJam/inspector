@@ -86,14 +86,6 @@ export interface CloudSkillDetail extends CloudSkillListItem {
   content: string;
 }
 
-export interface CloudSkillMaterializeItem {
-  skillId: string;
-  name: string;
-  aggregateHash: string;
-  /** Full generated SKILL.md (safe frontmatter) — written verbatim on the box. */
-  skillMd: string;
-}
-
 /**
  * Raw fields for adapter-agnostic harness delivery (the `skills` param). The
  * adapter builds its own frontmatter, so `description`/`content` are unescaped.
@@ -160,7 +152,6 @@ const FN = {
   list: "projectSkills:listSkills",
   get: "projectSkills:getSkill",
   getByName: "projectSkills:getSkillByName",
-  forMaterialize: "projectSkills:listSkillsForMaterialize",
   forRuntime: "projectSkills:listSkillsForRuntime",
   // Execution-scoped runtime skills (reachable by guests / swarm grants). Keyed
   // on an opaque executionScope the backend re-resolves — never a raw projectId.
@@ -218,15 +209,6 @@ export async function convexGetSkillByName(
   return await makeClient(bearer).query(FN.getByName as any, {
     projectId,
     name,
-  });
-}
-
-export async function convexListSkillsForMaterialize(
-  bearer: string,
-  projectId: string,
-): Promise<CloudSkillMaterializeItem[]> {
-  return await makeClient(bearer).query(FN.forMaterialize as any, {
-    projectId,
   });
 }
 

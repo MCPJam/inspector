@@ -16,7 +16,6 @@
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../skill-tools.js", () => ({
-  getSkillToolsAndPrompt: vi.fn(),
   listLocalRuntimeSkills: vi.fn(async () => []),
 }));
 
