@@ -3,9 +3,9 @@ import {
   type CreditRecovery,
 } from "@mcpjam/sdk/contract";
 
-/** What a credit-stopped run said before refusals carried `recovery`. */
+/** The note for a credit stop whose refusal carries no `recovery` (an older backend). */
 const CREDIT_STOP_FALLBACK_NOTE =
-  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.";
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Upgrade the plan to keep going: https://app.mcpjam.com/billing";
 
 /**
  * The run notes and the skipped trials' error once credits stop a run. The

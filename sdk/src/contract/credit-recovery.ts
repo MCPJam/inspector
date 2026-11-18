@@ -184,20 +184,14 @@ const PLAN_NAMES: Readonly<Record<string, string>> = Object.freeze({
   enterprise: "Enterprise",
 });
 
-/**
- * Model-spend refusals only. BYOK does not lift a platform fee (charged per
- * eval step whatever the model runs on) or a frozen wallet.
- */
-const BYOK_REASONS = new Set([
-  "allowance_exhausted",
-  "insufficient_for_request",
-  "budget_reached",
-  "auto_topup_declined",
-]);
-
 function stepSentence(recovery: CreditRecovery): string {
-  const link = recovery.url ? `: ${recovery.url}` : "";
+  // A URL ends its sentence with no period, so a copied link stays exact.
+  const link = recovery.url ? `: ${recovery.url}` : ".";
   const forwarded = recovery.actor === "owner_or_admin";
+  // A member can't act, so the step is to pass the link on.
+  const sendLink = recovery.url
+    ? ` Send them this link: ${recovery.url}`
+    : " Ask one of them.";
   switch (recovery.action) {
     case "upgrade_plan": {
       const plan =
@@ -205,17 +199,17 @@ function stepSentence(recovery: CreditRecovery): string {
           ? PLAN_NAMES[recovery.plan]
           : "a paid plan";
       return forwarded
-        ? `Ask an organization owner or admin to upgrade to ${plan}${link}.`
-        : `Upgrade to ${plan} to keep going${link}.`;
+        ? `Only an organization owner or admin can upgrade to ${plan}.${sendLink}`
+        : `Upgrade to ${plan} to keep going${link}`;
     }
     case "buy_credits":
       return forwarded
-        ? `Ask an organization owner or admin to buy credits${link}.`
-        : `Buy credits to keep going${link}.`;
+        ? `Only an organization owner or admin can buy credits.${sendLink}`
+        : `Buy credits to keep going${link}`;
     case "raise_budget":
       return forwarded
-        ? `Ask an organization owner or admin to raise the organization's spend budget${link}.`
-        : `Raise the organization's spend budget${link}.`;
+        ? `Only an organization owner or admin can raise the spend budget.${sendLink}`
+        : `Raise the organization's spend budget${link}`;
     case "ask_admin":
       return "Ask an organization owner or admin to arrange more MCPJam credits.";
     case "contact_support":
@@ -240,10 +234,10 @@ function formatResetAt(resetAt: number): string {
 }
 
 /**
- * The recovery as the text every surface shows: the step first (with its
- * link), then the BYOK note when BYOK would avoid the charge, then the reset
- * time last and only when the refusal named one. `options.resetAt` stands in
- * for a recovery that carries none.
+ * The recovery as the text every surface shows. A step is shown alone:
+ * agents offered "upgrade, BYOK, or wait" chose to wait, so BYOK and the
+ * reset time stay in the structured fields. Only a `wait` names the reset
+ * time; `options.resetAt` stands in for a recovery that carries none.
  */
 export function formatCreditRecovery(
   recovery: CreditRecovery,
@@ -255,12 +249,5 @@ export function formatCreditRecovery(
       ? stepSentence(recovery)
       : `Retry after the MCPJam allowance resets at ${formatResetAt(resetAt)}.`;
   }
-  const parts = [stepSentence(recovery)];
-  if (BYOK_REASONS.has(recovery.reason)) {
-    parts.push("BYOK avoids MCPJam model charges.");
-  }
-  if (resetAt !== undefined) {
-    parts.push(`The allowance resets at ${formatResetAt(resetAt)}.`);
-  }
-  return parts.join(" ");
+  return stepSentence(recovery);
 }
