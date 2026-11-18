@@ -1,4 +1,8 @@
 import type { FeatureDefinition } from "../../types.js";
+import {
+  LIFECYCLE_FEATURES,
+  TRANSPORT_FEATURES,
+} from "./lifecycle-transports.js";
 import { SERVER_INFO_FEATURES } from "./server-info.js";
 
 /**
@@ -7,4 +11,6 @@ import { SERVER_INFO_FEATURES } from "./server-info.js";
  */
 export const CORE_FEATURES: readonly FeatureDefinition[] = [
   ...SERVER_INFO_FEATURES,
+  ...LIFECYCLE_FEATURES,
+  ...TRANSPORT_FEATURES,
 ];
