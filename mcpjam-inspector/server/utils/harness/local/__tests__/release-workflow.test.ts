@@ -386,10 +386,13 @@ describe("pack release boundaries", () => {
     const { jobs } = workflow("release");
     const lookup = jobs["local-harness-evidence-lookup"];
     expect(lookup.needs).toBe("preflight");
-    expect(lookup.permissions).toEqual({ contents: "read", actions: "read" });
+    // `actions: write` only to cancel this commit's evidence run when it has
+    // not started, so the release runs the gate instead of waiting on it.
+    expect(lookup.permissions).toEqual({ contents: "read", actions: "write" });
     const find = lookup.steps.find((step: any) => step.id === "find");
     expect(find.with.script).toContain("findReleaseEvidence");
     expect(find.with.script).toContain("computeConformanceInputsDigest");
+    expect(find.with.script).toContain("cancelWorkflowRun");
     for (const name of ["local-harness-evidence", "local-harness-evidence-permitted"]) {
       expect(jobs[name].needs, name).toContain("local-harness-evidence-lookup");
       expect(String(jobs[name].if), name).toContain("needs.local-harness-evidence-lookup.outputs.run_id == ''");
