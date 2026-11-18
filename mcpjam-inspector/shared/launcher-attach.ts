@@ -107,8 +107,20 @@ export interface LauncherPollResponse {
   waitingForSignIn: Array<{ attachId: string; serverName: string }>;
 }
 
-/** `POST /api/mcp/launcher/attach/:attachId/result` body. */
+/**
+ * `POST /api/mcp/launcher/attach/:attachId/result` body.
+ *
+ * A tab reports `saved` the moment the entry is in the project, before it
+ * connects (which can take a minute or wait on stdio approval). From then on
+ * the registry knows the attach created the entry, whatever happens next: a
+ * release, a reset after the tab reloads, or a restart.
+ */
 export type LauncherAttachResult =
+  | {
+      tabId: string;
+      outcome: "saved";
+      decision: LauncherDecision;
+    }
   | {
       tabId: string;
       outcome: "connected";
@@ -121,6 +133,12 @@ export type LauncherAttachResult =
       /** Set when the entry was saved even though connecting failed. */
       decision?: LauncherDecision;
     };
+
+/** `GET /api/mcp/launcher/attach/:attachId/release` response. */
+export interface LauncherReleaseState {
+  /** `pending` until a tab has undone what the attach added. */
+  status: "pending" | "done";
+}
 
 /** True when the server is a stdio command rather than an HTTP URL. */
 export function isStdioLauncherServer(server: LauncherServer): boolean {

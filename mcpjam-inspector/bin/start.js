@@ -287,6 +287,29 @@ function normalizeBrowserBaseUrl(value) {
   }
 }
 
+/**
+ * Waits until the server on the port confirms THIS launch's session token, so
+ * another listener that won the port is never reported as this launch. Without
+ * a token (hosted mode) there is nothing to confirm and the TCP probe stands.
+ */
+async function confirmLaunchOwnership(host, port, token, signal, timeoutMs = 10000) {
+  if (!token) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (!signal?.aborted && Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://${host}:${port}/api/session-token`, {
+        headers: { "X-MCP-Session-Auth": `Bearer ${token}` },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (response.ok) return true;
+    } catch (error) {
+      if (process.env.DEBUG) logWarning(`Readiness check: ${error.message}`);
+    }
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  return false;
+}
+
 async function resolveBrowserBaseUrl(apiBaseUrl) {
   const explicitFrontendUrl =
     normalizeBrowserBaseUrl(process.env.MCPJAM_INSPECTOR_FRONTEND_URL) ||
@@ -801,9 +824,9 @@ async function main() {
         const value = headerValue.substring(equalsIndex + 1);
         customHeaders.push({ key, value });
       } else {
-        logWarning(
-          `Invalid header format: ${headerValue}. Use "Key=Value" format.`,
-        );
+        // The value is not echoed: a curl-style "Authorization: Bearer ..."
+        // has no "=", and the credential would land in the terminal or logs.
+        logWarning('Invalid header format for -H. Use "Key=Value" format.');
       }
       continue;
     }
@@ -816,6 +839,7 @@ async function main() {
         const key = envVar.substring(0, equalsIndex);
         const value = envVar.substring(equalsIndex + 1);
         envVars[key] = value;
+        if (key === "MCPJAM_SESSION_TOKEN") output.addSecret(value);
       } else {
         envVars[envVar] = "";
       }
@@ -1191,23 +1215,22 @@ async function main() {
       }
     }
 
-    const serverExit = new Promise((resolve, reject) => {
+    // Resolves on every exit (never rejects), so an exit during startup is
+    // raced against readiness below instead of surfacing as an unhandled
+    // rejection while nothing is awaiting it yet.
+    const serverExit = new Promise((resolve) => {
       serverProcess.on("close", (code, signal) => {
         serverProcessClosed = true;
         clearForceKillTimer();
-        if (code === 0 || cancelled) {
-          resolve({ code, signal });
-        } else {
-          reject(
-            new Error(
-              signal
-                ? `Server process exited from signal ${signal}`
-                : `Server process exited with code ${code}`,
-            ),
-          );
-        }
+        resolve({ code, signal, failed: !(code === 0 || cancelled) });
       });
     });
+    const serverExitError = ({ code, signal }) =>
+      new Error(
+        signal
+          ? `Server process exited from signal ${signal}`
+          : `Server process exited with code ${code}`,
+      );
 
     function killServerProcess() {
       if (serverProcessClosed) return;
@@ -1248,12 +1271,17 @@ async function main() {
       const apiBaseUrl = process.env.BASE_URL || `http://${host}:${PORT}`;
 
       // Wait until the server is actually accepting connections
-      const ready = await waitForServerReady(
-        parseInt(PORT, 10),
-        host,
-        30000,
-        abort.signal,
-      );
+      const ready = await Promise.race([
+        waitForServerReady(parseInt(PORT, 10), host, 30000, abort.signal).then(
+          (listening) =>
+            listening &&
+            confirmLaunchOwnership(host, parseInt(PORT, 10), launchToken, abort.signal),
+        ),
+        serverExit.then((exit) => {
+          if (exit.failed) throw serverExitError(exit);
+          return false;
+        }),
+      ]);
 
       if (!ready && !cancelled && output.json) {
         throw new Error(
@@ -1264,7 +1292,10 @@ async function main() {
           `Server did not become ready within 30s. Please visit ${apiBaseUrl} manually.`,
         );
       } else if (!cancelled) {
+        report: {
         const base = await resolveBrowserBaseUrl(apiBaseUrl);
+        // A shutdown that arrived during the lookup is not a launch to report.
+        if (cancelled) break report;
         const url = createAccessLink(base, launchToken, initialTab);
         output.ready({ url, port: Number(PORT) });
         const docker = process.env.DOCKER_CONTAINER === "true";
@@ -1303,11 +1334,13 @@ async function main() {
               "Using another port or computer? Keep the #token=… part and change the address.",
             );
         }
+        }
       }
     }
 
     // Wait for the server process to exit
     const result = await serverExit;
+    if (result.failed) throw serverExitError(result);
     if (cancelled) {
       if (result.signal === "SIGKILL") {
         logWarning("Server process was force-killed after shutdown timeout");
@@ -1348,5 +1381,9 @@ main()
     output.fail(e.message);
     logError("Fatal error occurred");
     logError(e.stack || e.message);
-    process.exit(1);
+    // An empty write completes after the writes queued before it, so a pipe
+    // that was full still receives the error record. The timer is the way out
+    // if the reader never drains.
+    setTimeout(() => process.exit(1), 2000);
+    process.stderr.write("", () => process.exit(1));
   });

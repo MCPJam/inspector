@@ -1,12 +1,24 @@
 import { createServer, type Server } from "node:http";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { embedInspector, type EmbeddedInspector } from "../embed.js";
 import { choosePort, isPortFree } from "../ports.js";
 import { holdInspector, inspectorHoldersDir, otherInspectorHolders } from "../holders.js";
-import { clearInspectorSessionTokenCache } from "../session-token.js";
+import {
+  clearInspectorSessionTokenCache,
+  fetchInspectorSessionToken,
+} from "../session-token.js";
 import { inspectorAttachId } from "../attach-client.js";
 
 /**
@@ -16,17 +28,27 @@ import { inspectorAttachId } from "../attach-client.js";
  */
 const FAKE_START = `
 import { createServer } from "node:http";
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 const port = Number(process.argv[process.argv.indexOf("--port") + 1]);
 const token = process.env.MCPJAM_SESSION_TOKEN;
 const record = process.env.FAKE_RECORD;
-writeFileSync(record + ".env.json", JSON.stringify({
+writeFileSync(record + "." + process.pid + ".env.json", JSON.stringify({
   holders: process.env.MCPJAM_INSPECTOR_HOLDERS_DIR ?? null,
   orphanCheck: process.env.MCPJAM_INSPECTOR_DISABLE_ORPHAN_CHECK ?? null,
+  suppressOpen: process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN ?? null,
   tab: process.env.MCP_INITIAL_TAB ?? null,
+  args: process.argv.slice(2),
 }));
 if (process.env.FAKE_EXIT) { console.error("port " + port + " is broken, token " + token); process.exit(3); }
-createServer((req, res) => {
+// Like bin/start.js: the access link is printed unless auto open is suppressed.
+if (process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1") {
+  console.log("Local http://localhost:" + port + "/#token=" + token);
+}
+const releasedAt = new Map();
+const delay = Number(process.env.FAKE_RELEASE_DELAY_MS ?? 0);
+const server = createServer((req, res) => {
   const authed = req.headers["x-mcp-session-auth"] === "Bearer " + token;
   if (!authed) { res.writeHead(401); res.end(); return; }
   if (req.url === "/api/session-token") { res.end(JSON.stringify({ ok: true })); return; }
@@ -34,11 +56,29 @@ createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     appendFileSync(record + ".requests", req.method + " " + req.url + " " + body + "\\n");
+    const id = req.url.split("/")[5];
+    if (req.method === "DELETE") releasedAt.set(id, Date.now());
+    if (req.method === "GET" && req.url.endsWith("/release")) {
+      const at = releasedAt.get(id);
+      const pending = at !== undefined && Date.now() - at < delay;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: pending ? "pending" : "done" }));
+      return;
+    }
     res.writeHead(req.method === "POST" ? 202 : 200, { "Content-Type": "application/json" });
     const parsed = body ? JSON.parse(body) : {};
     res.end(JSON.stringify({ attachId: parsed.attachId, status: "pending", serverName: parsed.server?.name }));
   });
-}).listen(port, "127.0.0.1");
+});
+// Losing a race for the port ends the process, as the real server does.
+server.on("error", () => process.exit(1));
+server.listen(port, "127.0.0.1", () => {
+  const dir = path.join(os.homedir(), ".mcpjam", "inspector");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(path.join(dir, port + ".json"), JSON.stringify({
+    port, pid: process.pid, token, startedAt: new Date().toISOString(),
+  }), { mode: 0o600 });
+});
 `;
 
 let home: string;
@@ -65,6 +105,11 @@ function launch(overrides: Partial<Parameters<typeof embedInspector>[0]> = {}) {
     launched.push(inspector);
     return inspector;
   });
+}
+
+function envFile(): string {
+  const name = readdirSync(path.dirname(record)).find((f) => f.endsWith(".env.json"));
+  return path.join(path.dirname(record), name!);
 }
 
 function requests(): string[] {
@@ -136,10 +181,29 @@ describe("holdInspector", () => {
 });
 
 describe("inspectorAttachId", () => {
+  const http = { name: "a", url: "http://127.0.0.1:7102/mcp" };
+
   it("is stable for one process, port and server", () => {
-    expect(inspectorAttachId(1, 6274, "a")).toBe(inspectorAttachId(1, 6274, "a"));
-    expect(inspectorAttachId(1, 6274, "a")).not.toBe(inspectorAttachId(2, 6274, "a"));
-    expect(inspectorAttachId(1, 6274, "a")).not.toBe(inspectorAttachId(1, 6275, "a"));
+    expect(inspectorAttachId(1, 6274, http)).toBe(inspectorAttachId(1, 6274, { ...http }));
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(inspectorAttachId(2, 6274, http));
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(inspectorAttachId(1, 6275, http));
+  });
+
+  it("tells two servers with the same name but different targets apart", () => {
+    expect(inspectorAttachId(1, 6274, http)).not.toBe(
+      inspectorAttachId(1, 6274, { name: "a", url: "http://127.0.0.1:9999/mcp" }),
+    );
+    const stdio = { name: "a", command: "node", args: ["server.js"] };
+    expect(inspectorAttachId(1, 6274, stdio)).not.toBe(
+      inspectorAttachId(1, 6274, { ...stdio, args: ["other.js"] }),
+    );
+    expect(inspectorAttachId(1, 6274, stdio)).not.toBe(inspectorAttachId(1, 6274, http));
+  });
+
+  it("ignores headers and environment, which do not make a different server", () => {
+    expect(inspectorAttachId(1, 6274, { ...http, headers: { Authorization: "Bearer x" } })).toBe(
+      inspectorAttachId(1, 6274, http),
+    );
   });
 });
 
@@ -157,7 +221,10 @@ describe("embedInspector", () => {
 
     const state = await inspector.connect({ name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" });
     expect(state).toMatchObject({ status: "pending", serverName: "billing-mcp" });
-    const attachId = inspectorAttachId(process.pid, port, "billing-mcp");
+    const attachId = inspectorAttachId(process.pid, port, {
+      name: "billing-mcp",
+      url: "http://127.0.0.1:7102/mcp",
+    });
     expect(requests()[0]).toContain(`POST /api/mcp/launcher/attach`);
     expect(JSON.parse(requests()[0].split(" ").slice(2).join(" "))).toEqual({
       attachId,
@@ -237,7 +304,7 @@ describe("embedInspector", () => {
     const inspector = await launch({ port, reuse: true });
 
     expect(inspector.started).toBe(true);
-    const env = JSON.parse(readFileSync(`${record}.env.json`, "utf8"));
+    const env = JSON.parse(readFileSync(envFile(), "utf8"));
     expect(env).toMatchObject({
       holders: inspectorHoldersDir(port),
       orphanCheck: "1",
@@ -262,5 +329,199 @@ describe("embedInspector", () => {
     const failing = launch({ port, env: { FAKE_RECORD: record, FAKE_EXIT: "1" } });
     await expect(failing).rejects.toThrow(/exited before it was ready \(code 3\)/);
     await expect(failing).rejects.toThrow(/token <session token>/);
+  });
+});
+
+describe("a shared MCPJam's log and lifecycle", () => {
+  it("never writes the session token to the shared log, and keeps it owner-only", async () => {
+    const port = await freePort();
+    const log = path.join(home, ".mcpjam", "inspector", `${port}.log`);
+    // A log left by an earlier run keeps its looser mode unless it is reset.
+    mkdirSync(path.dirname(log), { recursive: true });
+    writeFileSync(log, "from an earlier run\n", { mode: 0o644 });
+
+    const inspector = await launch({ port, reuse: true });
+    const token = new URL(inspector.url).hash.match(/token=([^&]+)/)![1];
+
+    const env = JSON.parse(readFileSync(envFile(), "utf8"));
+    expect(env.suppressOpen).toBe("1");
+    expect(readFileSync(log, "utf8")).not.toContain(token);
+    expect(readFileSync(log, "utf8")).toContain("from an earlier run");
+    if (process.platform !== "win32") {
+      expect(statSync(log).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  it("lets start.js open an unshared MCPJam itself, and passes --no-open only when asked not to", async () => {
+    const port = await freePort();
+    await launch({ port, open: true });
+    expect(JSON.parse(readFileSync(envFile(), "utf8")).args).not.toContain("--no-open");
+  });
+
+  it("passes --no-open to an unshared MCPJam by default", async () => {
+    const port = await freePort();
+    await launch({ port });
+    expect(JSON.parse(readFileSync(envFile(), "utf8")).args).toContain("--no-open");
+  });
+
+  it("waits for a tab to undo this launch's server before it stops MCPJam", async () => {
+    const port = await freePort();
+    const inspector = await launch({
+      port,
+      env: { FAKE_RECORD: record, FAKE_RELEASE_DELAY_MS: "900" },
+      releaseWaitMs: 5_000,
+    });
+    await inspector.connect({ name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" });
+
+    const child = inspector.process!;
+    const startedAt = Date.now();
+    await inspector.stop();
+
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(800);
+    expect(requests().filter((line) => line.startsWith("GET")).length).toBeGreaterThan(1);
+    expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+  });
+
+  it("gives up waiting after releaseWaitMs, so a missing tab cannot hold stop() forever", async () => {
+    const port = await freePort();
+    const inspector = await launch({
+      port,
+      env: { FAKE_RECORD: record, FAKE_RELEASE_DELAY_MS: "60000" },
+      releaseWaitMs: 600,
+    });
+    await inspector.connect({ name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" });
+
+    const startedAt = Date.now();
+    await inspector.stop();
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  it("does not wait when MCPJam stays up for another dev command", async () => {
+    const port = await freePort();
+    const inspector = await launch({
+      port,
+      reuse: true,
+      env: { FAKE_RECORD: record, FAKE_RELEASE_DELAY_MS: "60000" },
+      releaseWaitMs: 5_000,
+    });
+    await inspector.connect({ name: "billing-mcp", url: "http://127.0.0.1:7102/mcp" });
+    writeFileSync(
+      path.join(inspectorHoldersDir(port), `${process.ppid}.json`),
+      JSON.stringify({ pid: process.ppid }),
+    );
+
+    const startedAt = Date.now();
+    await inspector.stop();
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    inspector.process!.kill("SIGKILL");
+  });
+
+  it("keeps MCPJam up while another launch in this process still holds it", async () => {
+    const port = await freePort();
+    const first = await launch({ port, reuse: true });
+    const second = await launch({ port, reuse: true });
+    expect(first.started).toBe(true);
+    expect(second.started).toBe(false);
+
+    const child = first.process!;
+    await first.stop();
+    expect(child.exitCode).toBeNull();
+    expect(child.signalCode).toBeNull();
+
+    await second.stop();
+    child.kill("SIGKILL");
+  });
+
+  it("two dev commands that start together end up on one MCPJam", async () => {
+    const port = await freePort();
+    const [a, b] = await Promise.all([
+      launch({ port, reuse: true, startRaceWaitMs: 3_000 }),
+      launch({ port, reuse: true, startRaceWaitMs: 3_000 }),
+    ]);
+
+    expect(a.port).toBe(port);
+    expect(b.port).toBe(port);
+    expect([a.started, b.started].sort()).toEqual([false, true]);
+    for (const inspector of [a, b]) inspector.process?.kill("SIGKILL");
+  });
+
+  it("starts a new MCPJam when the one it last saw is gone, instead of trusting a cached token", async () => {
+    const port = await freePort();
+    const token = "c".repeat(32);
+    const discovery = path.join(home, ".mcpjam", "inspector", `${port}.json`);
+    mkdirSync(path.dirname(discovery), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      discovery,
+      JSON.stringify({ port, pid: process.pid, token, startedAt: new Date().toISOString() }),
+      { mode: 0o600 },
+    );
+    const gone = createServer((_req, res) => res.end(JSON.stringify({ ok: true })));
+    await new Promise<void>((r) => gone.listen(port, "127.0.0.1", r));
+    // Prime the 5 minute token cache, then take the MCPJam away.
+    await fetchInspectorSessionToken(`http://127.0.0.1:${port}`);
+    await new Promise((r) => gone.close(r));
+    rmSync(discovery);
+
+    const inspector = await launch({ port, reuse: true });
+    expect(inspector.started).toBe(true);
+  });
+
+  it("warns once, and still launches, when the holders directory cannot be written", async () => {
+    const port = await freePort();
+    const dir = inspectorHoldersDir(port);
+    mkdirSync(path.dirname(dir), { recursive: true });
+    writeFileSync(dir, "a file where the directory should be");
+
+    const warnings: string[] = [];
+    const inspector = await launch({
+      port,
+      reuse: true,
+      onWarning: (message) => warnings.push(message),
+    });
+
+    expect(inspector.started).toBe(true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/Could not share MCPJam.*not writable/);
+  });
+});
+
+describe("holder files", () => {
+  it("deletes the files of processes that are gone, when holding and when counting", () => {
+    const dir = inspectorHoldersDir(6274, home);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "111.json"), "{}");
+    writeFileSync(path.join(dir, "222.json"), "{}");
+
+    const alive = (pid: number) => pid === 222 || pid === 4242;
+    const release = holdInspector(6274, { home, pid: 4242, isAlive: alive })!;
+    expect(readdirSync(dir).sort()).toEqual(["222.json", "4242.json"]);
+
+    writeFileSync(path.join(dir, "333.json"), "{}");
+    expect(otherInspectorHolders(6274, { home, pid: 4242, isAlive: alive })).toBe(1);
+    expect(readdirSync(dir).sort()).toEqual(["222.json", "4242.json"]);
+    release();
+  });
+
+  it("reports whether the process still holds the port after a release", () => {
+    const first = holdInspector(6274, { home, pid: 4242 })!;
+    const second = holdInspector(6274, { home, pid: 4242 })!;
+    expect(first()).toBe(true);
+    expect(second()).toBe(false);
+    expect(second()).toBe(false);
+  });
+});
+
+describe("isPortFree", () => {
+  it("treats a listener on ::1 as taking the port", async () => {
+    const port = await freePort();
+    const server = createServer((_req, res) => res.end());
+    servers.push(server);
+    const listening = await new Promise<boolean>((resolve) => {
+      server.once("error", () => resolve(false));
+      server.listen(port, "::1", () => resolve(true));
+    });
+    // A machine without IPv6 has no such listener to find.
+    if (!listening) return;
+    expect(await isPortFree(port)).toBe(false);
   });
 });

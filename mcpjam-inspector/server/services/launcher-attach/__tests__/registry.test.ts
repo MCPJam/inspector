@@ -251,17 +251,25 @@ describe("LauncherAttachRegistry", () => {
     expect(registry.state("a1")).toBeUndefined();
   });
 
-  it("quitting with no tab on that project leaves the entry saved", () => {
+  it("an undo with no tab showing the project waits for one instead of being dropped", () => {
     const { registry } = setup();
     registry.poll("acme", tab(ACME, 10));
     registry.attach(request());
     registry.poll("acme", tab(ACME, 10));
     registry.claim("a1", "acme");
     registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+    // The developer moves the only tab to another project, then quits.
     registry.poll("acme", tab(BILLING, 11));
 
     registry.release("a1");
     expect(registry.poll("acme", tab(BILLING, 11)).tasks).toHaveLength(0);
+    expect(registry.releaseState("a1")).toEqual({ status: "pending" });
+
+    // Back on the project: the undo that was promised is delivered.
+    const tasks = registry.poll("acme", tab(ACME, 12)).tasks;
+    expect(tasks).toEqual([expect.objectContaining({ kind: "release", decision: decision() })]);
+    registry.released("a1", "acme");
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
   });
 
   it("quitting before a tab saved anything cancels the tab's work", () => {
@@ -340,5 +348,269 @@ describe("LauncherAttachRegistry", () => {
     });
     // The same id again is an update, not a new request.
     expect(registry.attach(request({ attachId: "a0" })).ok).toBe(true);
+  });
+
+  it("reports a release as pending until a tab acknowledges it", () => {
+    const { registry } = setup();
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+
+    registry.release("a1");
+    expect(registry.releaseState("a1")).toEqual({ status: "pending" });
+    registry.poll("acme", tab(ACME, 10));
+    expect(registry.releaseState("a1")).toEqual({ status: "pending" });
+    registry.released("a1", "acme");
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
+  });
+
+  it("a saved checkpoint credits the attach before the tab finishes connecting", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+
+    expect(registry.result("a1", { tabId: "acme", outcome: "saved", decision: decision() })).toBeUndefined();
+    expect(registry.state("a1")).toMatchObject({ status: "claimed", projectName: ACME.name });
+
+    // Quitting while the tab still connects undoes the entry it saved.
+    registry.release("a1");
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: decision() }),
+    ]);
+  });
+
+  it("quitting mid-save undoes what the tab reports having saved", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+
+    // The dev command quits before the tab has reported anything.
+    registry.release("a1");
+    expect(registry.releaseState("a1")).toEqual({ status: "pending" });
+    expect(registry.poll("acme", tab(ACME, 10)).cancelledAttachIds).toEqual(["a1"]);
+
+    // The tab was already saving: its report is not lost.
+    expect(registry.result("a1", { tabId: "acme", outcome: "saved", decision: decision() })).toBeUndefined();
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: decision() }),
+    ]);
+
+    // The final report does not queue a second undo.
+    expect(registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() })).toBeUndefined();
+    registry.released("a1", "acme");
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toHaveLength(0);
+  });
+
+  it("quitting mid-save with nothing saved leaves nothing to undo once the tab says so", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.release("a1");
+
+    expect(registry.result("a1", { tabId: "acme", outcome: "failed", message: "no" })).toBeUndefined();
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
+    expect(registry.result("a1", { tabId: "other", outcome: "failed", message: "no" })).toBe("unknown_attach");
+  });
+
+  it("a claim reset by a slow tab withdraws the request from that tab", () => {
+    const { registry, advance } = setup();
+    registry.poll("t1", tab(ACME, 10));
+    registry.poll("t2", tab(ACME, 20));
+    registry.attach(request());
+    registry.poll("t2", tab(ACME, 20));
+    registry.claim("a1", "t2");
+
+    // t2 sleeps; t1 takes the request over.
+    advance(TAB_TTL_MS + 1);
+    expect(registry.poll("t1", tab(ACME, 10)).tasks).toHaveLength(1);
+    // t2 wakes up: it must drop the request it was working on.
+    expect(registry.poll("t2", tab(ACME, 20)).cancelledAttachIds).toEqual(["a1"]);
+  });
+
+  it("undoes what a tab saved after its claim was reset, in another project", () => {
+    const { registry, advance } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("billing", tab(BILLING, 20));
+    registry.attach(request());
+    registry.poll("billing", tab(BILLING, 20));
+    registry.claim("a1", "billing");
+
+    advance(TAB_TTL_MS + 1);
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+
+    // billing wakes and reports a save into its own project.
+    const stale = decision({ projectId: BILLING.id, projectName: BILLING.name });
+    registry.poll("billing", tab(BILLING, 20));
+    expect(registry.result("a1", { tabId: "billing", outcome: "connected", decision: stale })).toBeUndefined();
+    expect(registry.poll("billing", tab(BILLING, 20)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: stale }),
+    ]);
+    // The live attach keeps its own decision.
+    expect(registry.state("a1")).toMatchObject({ projectName: ACME.name });
+  });
+
+  it("credits the attach with an entry a stale claimant created in the same project", () => {
+    const { registry, advance } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "saved", decision: decision() });
+
+    // A reload loses the claim; the same tab claims again and finds its own
+    // entry already saved, so it reports the entry as pre-existing.
+    advance(TAB_TTL_MS + 1);
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", {
+      tabId: "acme",
+      outcome: "connected",
+      decision: decision({ createdByAttach: false }),
+    });
+
+    // Quitting still removes it: the entry was created by this attach.
+    registry.release("a1");
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: decision({ createdByAttach: true }) }),
+    ]);
+  });
+
+  it("does not hand a release to a second tab while the first is alive but busy", () => {
+    const { registry, advance } = setup();
+    registry.poll("t1", tab(ACME, 10));
+    registry.poll("t2", tab(ACME, 20));
+    registry.attach(request());
+    registry.poll("t2", tab(ACME, 20));
+    registry.claim("a1", "t2");
+    registry.result("a1", { tabId: "t2", outcome: "connected", decision: decision() });
+    registry.release("a1");
+
+    expect(registry.poll("t2", tab(ACME, 20)).tasks).toHaveLength(1);
+    // t2 is busy with a dialog for longer than the claim timeout.
+    advance(CLAIM_TIMEOUT_MS + 1);
+    registry.poll("t2", tab(ACME, 20));
+    expect(registry.poll("t1", tab(ACME, 10)).tasks).toHaveLength(0);
+
+    // Only when it is gone does the other tab take it.
+    advance(TAB_TTL_MS + 1);
+    expect(registry.poll("t1", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release" }),
+    ]);
+  });
+
+  it("keeps a routed request on the tabs showing the chosen project instead of bouncing", () => {
+    const { registry, advance } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("billing", tab(BILLING, 20));
+    registry.attach(request());
+    registry.poll("billing", tab(BILLING, 20));
+    registry.claim("a1", "billing");
+    registry.route("a1", "billing", ACME.id);
+
+    // The Acme tab is busy and does not claim within the timeout.
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toHaveLength(1);
+    advance(CLAIM_TIMEOUT_MS + 1);
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("billing", tab(BILLING, 20));
+
+    // The request stays with Acme's tab; the Billing tab is not asked again.
+    expect(registry.poll("billing", tab(BILLING, 20)).tasks).toHaveLength(0);
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toHaveLength(1);
+    expect(registry.claim("a1", "acme")).toBeUndefined();
+  });
+
+  it("keeps a release for each project an attach left an entry in", () => {
+    const { registry, advance } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("billing", tab(BILLING, 20));
+    registry.attach(request());
+    registry.poll("billing", tab(BILLING, 20));
+    registry.claim("a1", "billing");
+    advance(TAB_TTL_MS + 1);
+    registry.poll("acme", tab(ACME, 10));
+    registry.poll("billing", tab(BILLING, 20));
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+    const stale = decision({ projectId: BILLING.id, projectName: BILLING.name });
+    registry.result("a1", { tabId: "billing", outcome: "connected", decision: stale });
+
+    registry.release("a1");
+    const acme = registry.poll("acme", tab(ACME, 10)).tasks;
+    const billing = registry.poll("billing", tab(BILLING, 20)).tasks;
+    expect(acme).toEqual([expect.objectContaining({ kind: "release", decision: decision() })]);
+    expect(billing).toEqual([expect.objectContaining({ kind: "release", decision: stale })]);
+
+    registry.released("a1", "acme");
+    expect(registry.releaseState("a1")).toEqual({ status: "pending" });
+    registry.released("a1", "billing");
+    expect(registry.releaseState("a1")).toEqual({ status: "done" });
+  });
+
+  it("caps undelivered releases, dropping the oldest", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(BILLING, 10));
+    for (let i = 0; i < MAX_ATTACH_REQUESTS + 5; i += 1) {
+      const attachId = `r${i}`;
+      registry.attach(request({ attachId }));
+      registry.poll("acme", tab(BILLING, 10));
+      registry.claim(attachId, "acme");
+      registry.result(attachId, { tabId: "acme", outcome: "saved", decision: decision() });
+      registry.release(attachId);
+    }
+    expect(registry.releaseState("r0")).toEqual({ status: "done" });
+    expect(registry.releaseState(`r${MAX_ATTACH_REQUESTS + 4}`)).toEqual({ status: "pending" });
+  });
+
+  it("asking again while a tab is still connecting keeps that request, and its save", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "saved", decision: decision() });
+
+    // A Vite restart sends the same attach while the tab is still connecting.
+    expect(registry.attach(request()).ok).toBe(true);
+    expect(registry.state("a1")).toMatchObject({ status: "claimed", projectName: ACME.name });
+    expect(registry.poll("acme", tab(ACME, 10)).cancelledAttachIds).toEqual([]);
+
+    // The tab's final report is still its own, not a stale one.
+    expect(
+      registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() }),
+    ).toBeUndefined();
+    expect(registry.state("a1")).toMatchObject({ status: "connected" });
+    registry.release("a1");
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "release", decision: decision() }),
+    ]);
+  });
+
+  it("asking again after the attach finished hands it to a tab again, to reconnect", () => {
+    const { registry } = setup();
+    registry.poll("acme", tab(ACME, 10));
+    registry.attach(request());
+    registry.poll("acme", tab(ACME, 10));
+    registry.claim("a1", "acme");
+    registry.result("a1", { tabId: "acme", outcome: "connected", decision: decision() });
+
+    registry.attach(request());
+    expect(registry.poll("acme", tab(ACME, 10)).tasks).toEqual([
+      expect.objectContaining({ kind: "attach", decision: decision() }),
+    ]);
   });
 });
