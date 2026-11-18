@@ -493,8 +493,7 @@ Annotate once, get all three. **Do not** introduce a second attribute for this.
 truth.
 
 Truncation is not masking: a truncated token prefix is still credential
-material. That is why `OAuthFlowProgress`'s token rows carry `sensitive: true`
-even though they display `truncateValue(...)`.
+material.
 
 ## Existing annotated surfaces
 
@@ -502,8 +501,6 @@ even though they display `truncateValue(...)`.
   `sk_…` reveal.
 - `client/src/components/evals/copyable-code-block.tsx`: the `sensitive` prop.
 - `client/src/components/billing/PaymentsHistorySection.tsx`: invoice links.
-- `client/src/components/oauth/OAuthFlowProgress.tsx`: truncated access and
-  refresh token rows (`sensitive: true` on the detail shape).
 
 ## Two recorders, one boundary
 
