@@ -277,7 +277,10 @@ describe("evaluateServerFeatures", () => {
       assessment: {
         primary: "configured",
         setup: "client-credentials",
-        probed: () => ({ kind: "unknown", reason: "The probe could not finish." }),
+        probed: () => ({
+          kind: "unknown",
+          reason: "The probe could not finish.",
+        }),
       },
     });
     const result = evaluateServerFeatures([setup], {
@@ -290,6 +293,15 @@ describe("evaluateServerFeatures", () => {
       reason: "The probe could not finish.",
       nextAction: "connect",
     });
+    const connectedSetUp = evaluateServerFeatures([setup], {
+      connected: true,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(connectedSetUp.assessments["test.setup"].reason).toBe(
+      "The probe could not finish. Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+    );
   });
 
   it("asks for setup before connecting a server that never connected", () => {

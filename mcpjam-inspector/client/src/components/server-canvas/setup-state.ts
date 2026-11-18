@@ -23,8 +23,9 @@ export function configuredSetup(server: SetupFields): FeatureSetupKind[] {
   // An XAA server saves its own pre-registered client, but signs in without
   // the OAuth flow summary the pre-registration feature reads.
   const usesXaa = server.authMethod === "xaa" || server.useXaa === true;
-  const preregistered =
-    server.registrationMode === "preregistered" ||
-    server.oauthFlowProfile?.registrationStrategy === "preregistered";
-  return preregistered && !usesXaa ? ["pre-registered-client"] : [];
+  // The saved mode wins; the profile's strategy is a legacy fallback that can
+  // be stale after the mode changes (to "auto", say).
+  const mode =
+    server.registrationMode ?? server.oauthFlowProfile?.registrationStrategy;
+  return mode === "preregistered" && !usesXaa ? ["pre-registered-client"] : [];
 }

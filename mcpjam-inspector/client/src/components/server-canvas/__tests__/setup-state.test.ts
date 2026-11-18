@@ -18,6 +18,15 @@ describe("configuredSetup", () => {
     expect(configuredSetup({ registrationMode: "dcr" })).toEqual([]);
   });
 
+  it("lets the saved registration mode override a stale profile strategy", () => {
+    expect(
+      configuredSetup({
+        registrationMode: "auto",
+        oauthFlowProfile: { registrationStrategy: "preregistered" } as never,
+      }),
+    ).toEqual([]);
+  });
+
   it("does not read an XAA server's pre-registered client as OAuth setup", () => {
     expect(
       configuredSetup({ registrationMode: "preregistered", authMethod: "xaa" }),

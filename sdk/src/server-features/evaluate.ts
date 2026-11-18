@@ -467,15 +467,17 @@ function needsSetup(
   // An inconclusive probe is not a connection, so it keeps Connect.
   if (!input.connected) {
     return result("not-checked", {
-      reason: unknown?.detail ?? "Set up in MCPJam. Connect this server to check it.",
+      reason:
+        unknown?.detail ?? "Set up in MCPJam. Connect this server to check it.",
       nextAction: "connect",
     });
   }
-  // Reconnecting with saved tokens records nothing; only a new sign-in does.
+  // Reconnecting with saved tokens records nothing; only a new sign-in does,
+  // so the way to record it stays even beside an inconclusive probe.
+  const signIn =
+    "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.";
   return result("not-checked", {
-    reason:
-      unknown?.detail ??
-      "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+    reason: unknown?.detail ? `${unknown.detail} ${signIn}` : signIn,
   });
 }
 
