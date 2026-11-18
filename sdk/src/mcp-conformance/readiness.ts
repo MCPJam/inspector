@@ -204,16 +204,11 @@ function deprecatedFeatureWarning(
         findings.push(advice);
       }
     }
-    const resources = capabilities.resources;
-    if (
-      resources !== null &&
-      typeof resources === "object" &&
-      (resources as Record<string, unknown>).subscribe === true
-    ) {
-      findings.push(
-        "resources.subscribe advertises the removed resources/subscribe flow; modern clients subscribe through subscriptions/listen"
-      );
-    }
+    // `resources.subscribe` is deliberately NOT a finding. In 2026-07-28 the
+    // flag is current: it advertises per-resource update notifications
+    // delivered through `subscriptions/listen` (server/resources#capabilities).
+    // Only the `resources/subscribe` RPC was removed, and a capability flag
+    // cannot show a server still answering that.
   } else if (negotiatedBefore(ctx, "2025-11-25") === true) {
     findings.push(
       `the negotiated revision ${ctx.initializationInfo?.protocolVersion} is superseded; newer clients negotiate a later revision`

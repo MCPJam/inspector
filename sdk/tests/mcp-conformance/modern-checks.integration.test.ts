@@ -369,7 +369,9 @@ describe("modern logging conformance", () => {
     expect(filteringAdvice(result)).toBeUndefined();
   });
 
-  it("fails a supplied tool that produces no requested logs, and advises", async () => {
+  // With a log level the server MAY send log notifications; emitting none is
+  // conformant. Only logs on the request WITHOUT a level violate the MUST NOT.
+  it("passes a supplied tool that produces no requested logs, and advises", async () => {
     const serverUrl = await serve(
       createLoggingFixtureHandler({ mode: "silent" })
     );
@@ -381,11 +383,14 @@ describe("modern logging conformance", () => {
       checkTimeout: 10_000,
     }).run();
     const check = byId(result.checks, LOG_LEVEL_CHECK);
-    expect(check.status).toBe("failed");
+    expect(check.status).toBe("passed");
     expect(check.skipReason).toBeUndefined();
-    expect(check.error?.message).toBe("the supplied tool produced no logs.");
-    expect(check.details).toMatchObject({ logNotificationCountWithLevel: 0 });
-    expect(result.outcome).toBe("failed");
+    expect(check.error).toBeUndefined();
+    expect(check.details).toMatchObject({
+      logNotificationCount: 0,
+      logNotificationCountWithLevel: 0,
+    });
+    expect(result.outcome).toBe("passed");
     expect(filteringAdvice(result)?.details).toMatchObject({
       logNotificationCount: 0,
     });
@@ -473,7 +478,7 @@ describe("modern logging conformance", () => {
     );
     expect(report.outcome).toBe("passed");
   });
-  it("reports the supplied silent tool failure through runConformance", async () => {
+  it("reports the supplied silent tool as passed through runConformance", async () => {
     const serverUrl = await serve(
       createLoggingFixtureHandler({ mode: "silent" })
     );
@@ -491,10 +496,9 @@ describe("modern logging conformance", () => {
       (group) => group.cases
     );
     expect(cases.find((test) => test.id === LOG_LEVEL_CHECK)).toMatchObject({
-      status: "failed",
-      error: "the supplied tool produced no logs.",
+      status: "passed",
     });
-    expect(report.outcome).toBe("failed");
+    expect(report.outcome).toBe("passed");
   });
 });
 

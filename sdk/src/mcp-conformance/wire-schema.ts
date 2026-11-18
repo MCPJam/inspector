@@ -176,6 +176,36 @@ function errorResponseDefinition(
 interface ResultTarget {
   definition: string;
   ref: string;
+  /**
+   * Whether the document itself lets this method answer `input_required`. The
+   * 2026-07-28 schema types the response to `tools/call`, `resources/read` and
+   * `prompts/get` as `anyOf [InputRequiredResult, <method>Result]`, so a server
+   * that answers with an `InputRequiredResult` there is conforming.
+   */
+  inputRequiredRef?: string;
+}
+
+/** The result a `resultType` of `input_required` carries (basic/index#resulttype). */
+const INPUT_REQUIRED_RESULT_TYPE = "input_required";
+const INPUT_REQUIRED_RESULT_DEFINITION = "InputRequiredResult";
+
+/**
+ * The definitions a `…ResultResponse` allows in its `result` member, by name.
+ * The document states the permitted answers there: one `$ref`, or an `anyOf`
+ * of them.
+ */
+function responseResultNames(definition: unknown): string[] {
+  const result = (
+    definition as { properties?: { result?: unknown } } | undefined
+  )?.properties?.result as { $ref?: unknown; anyOf?: unknown } | undefined;
+  if (!result) return [];
+  const branches = Array.isArray(result.anyOf) ? result.anyOf : [result];
+  return branches.flatMap((branch) => {
+    const ref = (branch as { $ref?: unknown } | null)?.$ref;
+    if (typeof ref !== "string") return [];
+    const name = ref.slice(ref.lastIndexOf("/") + 1);
+    return name.length > 0 ? [name] : [];
+  });
 }
 
 /**
@@ -223,12 +253,25 @@ function deriveResultDefinitions(
     if (typeof method !== "string") continue;
     const resultName = `${name.slice(0, -"Request".length)}Result`;
     if (definitions[resultName] !== undefined) {
+      // What else the document lets this method answer with, read off its
+      // `…ResultResponse` rather than assumed: only the methods the schema
+      // gives a union to get one.
+      const allowsInputRequired =
+        definitions[INPUT_REQUIRED_RESULT_DEFINITION] !== undefined &&
+        responseResultNames(definitions[`${resultName}Response`]).includes(
+          INPUT_REQUIRED_RESULT_DEFINITION,
+        );
       // The `$ref` travels with the name: an extension declares its methods in
       // ITS document, so resolving them against the core schema id would either
       // fail to compile or grade against the wrong definition.
       map.set(method, {
         definition: resultName,
         ref: `${schemaId}#/${key}/${resultName}`,
+        ...(allowsInputRequired
+          ? {
+              inputRequiredRef: `${schemaId}#/${key}/${INPUT_REQUIRED_RESULT_DEFINITION}`,
+            }
+          : {}),
       });
     }
   }
@@ -358,6 +401,11 @@ export class WireSchemaValidator {
      * every other member are still graded in full.
      */
     dropId?: boolean;
+    /**
+     * The target grades the `result` payload of a response we attributed to a
+     * method, not the whole frame.
+     */
+    gradesResult?: boolean;
   } {
     const record =
       observation.message !== null && typeof observation.message === "object"
@@ -376,12 +424,33 @@ export class WireSchemaValidator {
       : undefined;
 
     if (isResultResponse && resultDefinition) {
+      // `resultType` is the discriminator the protocol defines, and the schema
+      // does not encode it: `InputRequiredResult` requires only `resultType`,
+      // so offering it as one more `anyOf` branch would wave through any
+      // result at all. The result is graded against the one definition its own
+      // `resultType` names.
+      const resultType = (record?.result as { resultType?: unknown } | null)
+        ?.resultType;
+      if (
+        resultType === INPUT_REQUIRED_RESULT_TYPE &&
+        resultDefinition.inputRequiredRef !== undefined
+      ) {
+        return {
+          definition: INPUT_REQUIRED_RESULT_DEFINITION,
+          refs: [resultDefinition.inputRequiredRef],
+          gradesResult: true,
+        };
+      }
       const method = observation.requestMethod as string;
       const refs = [
         resultDefinition.ref,
         ...(this.extensionResultOverrides.get(method) ?? []),
       ];
-      return { definition: resultDefinition.definition, refs };
+      return {
+        definition: resultDefinition.definition,
+        refs,
+        gradesResult: true,
+      };
     }
 
     // JSON-RPC 2.0 REQUIRES `id: null` on an error whose request id could not
@@ -459,9 +528,7 @@ export class WireSchemaValidator {
 
     for (const observation of observations) {
       const target = this.targetFor(observation);
-      const isMethodSpecific =
-        this.resultDefinitions.get(observation.requestMethod ?? "")
-          ?.definition === target.definition;
+      const isMethodSpecific = target.gradesResult === true;
       if (isMethodSpecific) correlated += 1;
 
       // The id echo, which no schema can state: `RequestId` admits both a

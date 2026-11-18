@@ -193,19 +193,38 @@ describe("subscription checks against streams that break one MUST each", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("fails the graceful-close check when the stream ends without the completion result", async () => {
+});
+
+// basic/patterns/subscriptions#graceful-closure: a server ending a subscription
+// on its own initiative SHOULD answer the listen request first, and a transport
+// close "carries no response". Neither is a MUST, so a stream that ends without
+// the completion result is never a failure.
+describe("subscription stream that ends without a completion result", () => {
+  it("does not fail the graceful-close check", async () => {
     const serverUrl = await serve(
       createMisbehavingSubscriptionHandler("close-without-completion")
     );
     const result = await runSubscriptionChecks(serverUrl);
 
     const graceful = byId(result.checks, "modern-subscription-graceful-close");
-    expect(graceful.status).toBe("failed");
+    expect(graceful.status).toBe("skipped");
+    expect(graceful.skipReason).toBe("not-applicable");
     expect(graceful.error?.message).toMatch(
-      /without returning the completion result/
+      /ended without a completion result/
     );
     expect(graceful.details).toMatchObject({ streamOutcome: "stream-ended" });
-    expect(result.passed).toBe(false);
+    // The two subscription MUSTs the stream did exercise still pass, and the
+    // run is not failed by the missing completion result.
+    expect(
+      byId(result.checks, "modern-subscription-ack-precedes-notifications")
+        .status
+    ).toBe("passed");
+    expect(
+      byId(result.checks, "modern-subscription-filter-and-tagging").status
+    ).toBe("passed");
+    expect(result.checks.some((check) => check.status === "failed")).toBe(
+      false
+    );
   });
 });
 

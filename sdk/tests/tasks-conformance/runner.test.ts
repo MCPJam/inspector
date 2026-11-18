@@ -521,10 +521,36 @@ describe("shape validators", () => {
       violations: [],
       warnings: [],
     });
-    expect(validateTaskTtlShape("legacy", { ttlMs: 5 })).toEqual({
+  });
+
+  // 2025-11-25: `Task.ttl` is `number | null` and required, and "Receivers
+  // MUST include the actual `ttl` duration (or `null` for unlimited) in
+  // `tasks/get` responses".
+  it("accepts a legacy ttl of null, which means unlimited", () => {
+    expect(validateTaskTtlShape("legacy", { ttl: null })).toEqual({
       violations: [],
       warnings: [],
     });
+    expect(validateTaskTtlShape("legacy", { ttl: 0 })).toEqual({
+      violations: [],
+      warnings: [],
+    });
+  });
+
+  it("rejects a legacy task that carries no ttl", () => {
+    expect(validateTaskTtlShape("legacy", {}).violations).toEqual([
+      "legacy task carries no ttl; tasks/get must include it as a number, or null for unlimited",
+    ]);
+    // The extension's field does not stand in for the legacy one.
+    expect(validateTaskTtlShape("legacy", { ttlMs: 5 }).violations).toHaveLength(
+      1
+    );
+  });
+
+  it("rejects a legacy ttl that is neither a number nor null", () => {
+    expect(validateTaskTtlShape("legacy", { ttl: "60000" }).violations).toEqual(
+      ['legacy task ttl must be a number or null (got "60000")']
+    );
   });
 });
 
@@ -1036,6 +1062,157 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("passed");
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
+  });
+
+  describe("legacy wire: ttl and tasks/result follow the 2025-11-25 text", () => {
+    /** A 2025-11-25 tasks server whose task and tasks/result the test sets. */
+    function legacyManager(options: {
+      task: Record<string, unknown>;
+      getTaskResult: () => Promise<unknown>;
+    }) {
+      return extensionManager({
+        getNegotiatedProtocolVersion: () => "2025-11-25",
+        getServerCapabilities: () => ({
+          tools: {},
+          tasks: { requests: { tools: { call: true } } },
+        }),
+        getTasksSupport: () => ({
+          wire: "legacy",
+          toolCalls: true,
+          list: false,
+          cancel: true,
+          update: false,
+          inlineResult: false,
+        }),
+        executeTool: async () => ({
+          task: { taskId: "task-1", status: "working", ttl: 60_000 },
+        }),
+        getTask: async () => ({ taskId: "task-1", ...options.task }),
+        getTaskResult: options.getTaskResult,
+      });
+    }
+
+    function check(
+      result: Awaited<ReturnType<MCPTasksConformanceTest["run"]>>,
+      id: string
+    ) {
+      return result.checks.find((c) => c.id === id);
+    }
+
+    const config = { toolName: "long_job", pollTimeoutMs: 500 };
+
+    // "Receivers MUST include the actual `ttl` duration (or `null` for
+    // unlimited) in `tasks/get` responses."
+    it("passes a task whose ttl is null, which means unlimited", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "completed", ttl: null },
+          getTaskResult: async () => ({ content: [] }),
+        }),
+        { config }
+      );
+      expect(check(result, "tasks-ttl-shape")?.status).toBe("passed");
+    });
+
+    it("fails a task that carries no ttl", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "completed" },
+          getTaskResult: async () => ({ content: [] }),
+        }),
+        { config }
+      );
+      const ttl = check(result, "tasks-ttl-shape");
+      expect(ttl?.status).toBe("failed");
+      expect(ttl?.details).toMatchObject({
+        violations: [
+          "legacy task carries no ttl; tasks/get must include it as a number, or null for unlimited",
+        ],
+      });
+    });
+
+    // "If the underlying request resulted in a JSON-RPC error, `tasks/result`
+    // MUST return that same JSON-RPC error."
+    for (const status of ["failed", "cancelled"]) {
+      it(`passes when tasks/result forwards the JSON-RPC error of a ${status} task`, async () => {
+        const result = await runAgainst(
+          legacyManager({
+            task: { status, ttl: 60_000 },
+            getTaskResult: async () => {
+              throw Object.assign(new Error("Upstream service unavailable"), {
+                code: -32603,
+              });
+            },
+          }),
+          { config }
+        );
+        const inline = check(result, "tasks-inline-result");
+        expect(inline?.status).toBe("passed");
+        expect(inline?.details).toMatchObject({
+          status,
+          forwardedError: {
+            code: -32603,
+            message: "Upstream service unavailable",
+          },
+        });
+      });
+    }
+
+    it("passes when tasks/result returns a result object for a failed task", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "failed", ttl: 60_000 },
+          getTaskResult: async () => ({ content: [], isError: true }),
+        }),
+        { config }
+      );
+      expect(check(result, "tasks-inline-result")?.status).toBe("passed");
+    });
+
+    it("still fails when a completed task has no result to return", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "completed", ttl: 60_000 },
+          getTaskResult: async () => {
+            throw Object.assign(new Error("Internal error"), { code: -32603 });
+          },
+        }),
+        { config }
+      );
+      const inline = check(result, "tasks-inline-result");
+      expect(inline?.status).toBe("failed");
+      expect(inline?.error?.message).toBe(
+        "legacy tasks/result failed: Internal error"
+      );
+    });
+
+    it("does not read a tasks/result that never answered as a forwarded error", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "failed", ttl: 60_000 },
+          getTaskResult: async () => {
+            throw Object.assign(new Error("Request timed out"), {
+              code: "REQUEST_TIMEOUT",
+            });
+          },
+        }),
+        { config }
+      );
+      expect(check(result, "tasks-inline-result")?.status).toBe("failed");
+    });
+
+    it("does not read a broken connection as a forwarded error", async () => {
+      const result = await runAgainst(
+        legacyManager({
+          task: { status: "failed", ttl: 60_000 },
+          getTaskResult: async () => {
+            throw new TypeError("fetch failed");
+          },
+        }),
+        { config }
+      );
+      expect(check(result, "tasks-inline-result")?.status).toBe("failed");
+    });
   });
 
   it("leaves checks out of the verdict when the extension wire has no probe tool to select", async () => {

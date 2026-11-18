@@ -33,10 +33,12 @@ import type {
 //     challenge, never a 500 (RFC 6750 §3 / MCP authorization). A 2xx is not a
 //     violation — the spec permits anonymous `initialize` with authorization
 //     enforced on later requests — so it skips as unverifiable.
-//   Finding 5 — a stale `Mcp-Session-Id` must be rejected with a 4xx, never a
-//     500 (MCP Streamable HTTP transport). Per HP-17 the spec prefers 404 and
-//     does NOT mandate a parseable body, so only the 5xx crash is a failure;
-//     the status specificity and body shape are reported as evidence only.
+//   Finding 5 — once a session has ended, a request carrying its id must be
+//     answered with 404 (MCP Streamable HTTP transport: "MUST respond ... with
+//     HTTP 404 Not Found"). The check ends a real session and requires exactly
+//     404. The spec states no status for an id the server never issued, so
+//     that is not probed, and no body shape is mandated. It lives in
+//     `oauth-stale-session.ts`.
 
 type OAuthServerObligationStep = Extract<
   OAuthConformanceCheckId,
@@ -53,15 +55,11 @@ export interface OAuthServerObligationOutcome {
   warnings?: StepResult["warnings"];
 }
 
-interface OAuthServerObligationInput {
+export interface OAuthServerObligationInput {
   config: NormalizedOAuthConformanceConfig;
   state: OAuthFlowState;
   trackedRequest: TrackedRequestFn;
 }
-
-// A syntactically valid (visible-ASCII) session id that the server never
-// issued — the "stale session" the transport spec says must be rejected.
-const STALE_SESSION_ID = "00000000-0000-0000-0000-000000000000";
 
 function errorDetails(error: unknown) {
   if (error instanceof Error) {
@@ -92,7 +90,7 @@ function redactRequestForDetails(request: {
   return { ...request, headers };
 }
 
-function buildTransportFailure(
+export function buildTransportFailure(
   step: OAuthServerObligationStep,
   startedAt: number,
   request: {
@@ -165,17 +163,6 @@ function isAbsoluteHttpUrl(value: string): boolean {
   } catch {
     return false;
   }
-}
-
-function bodyIsParseable(body: unknown): boolean {
-  if (body === undefined || body === null) {
-    return false;
-  }
-  if (typeof body === "string") {
-    return body.trim().length > 0;
-  }
-  // Any object (including {}) got here by parsing successfully.
-  return true;
 }
 
 // Exported for the runner's pre-flight authorization-requirement probe, which
@@ -625,156 +612,4 @@ function safeJsonParse(text: string): unknown {
   } catch {
     return null;
   }
-}
-
-// Unlike every other check, this request carries the REAL access token.
-// buildTransportFailure redacts the Authorization header before embedding the
-// request in error details, so the token never enters a StepResult regardless
-// of whether the consumer applies the report-level redaction.
-function buildStaleSessionMcpRequest(
-  config: NormalizedOAuthConformanceConfig,
-  accessToken: string,
-): {
-  method: string;
-  url: string;
-  headers: Record<string, string>;
-  body: Record<string, unknown>;
-} {
-  const headers: Record<string, string> = {
-    ...(config.customHeaders ?? {}),
-    Authorization: `Bearer ${accessToken}`,
-    "Content-Type": "application/json",
-    Accept: "application/json, text/event-stream",
-    "Mcp-Session-Id": STALE_SESSION_ID,
-  };
-
-  if (config.protocolVersion !== "2025-03-26") {
-    headers["MCP-Protocol-Version"] = config.protocolVersion;
-  }
-
-  // A non-initialize method: `initialize` creates sessions, so a stale session
-  // id is only meaningful on a subsequent request. `tools/list` needs a live
-  // session, so an unknown session id is exactly the stale-session scenario.
-  return {
-    method: "POST",
-    url: config.serverUrl,
-    headers,
-    body: {
-      jsonrpc: "2.0",
-      method: "tools/list",
-      params: {},
-      id: 1002,
-    },
-  };
-}
-
-/**
- * Finding 5: a request carrying a stale/unknown `Mcp-Session-Id` must be
- * rejected with a 4xx (the transport spec prefers 404) — never a 500. Per
- * HP-17 the spec does NOT mandate a parseable body, so a non-parseable body is
- * reported as evidence but does not fail the check; only a 5xx crash does.
- */
-export async function runStaleSessionRejectionCheck(
-  input: OAuthServerObligationInput,
-): Promise<OAuthServerObligationOutcome> {
-  const startedAt = Date.now();
-
-  // The 2026-07-28 wire is stateless — there is no Mcp-Session-Id to go stale.
-  if (input.config.protocolVersion === "2026-07-28") {
-    return {
-      step: "oauth_stale_session_rejection",
-      status: "skipped",
-      durationMs: 0,
-      error: {
-        message:
-          "The 2026-07-28 transport is stateless; there is no session id to invalidate",
-      },
-    };
-  }
-
-  const accessToken = input.state.accessToken;
-  if (!accessToken) {
-    return {
-      step: "oauth_stale_session_rejection",
-      status: "skipped",
-      durationMs: 0,
-      error: {
-        message:
-          "No access token is available to isolate stale-session handling from authentication",
-      },
-    };
-  }
-
-  const request = buildStaleSessionMcpRequest(input.config, accessToken);
-  let response: Awaited<ReturnType<TrackedRequestFn>>;
-
-  try {
-    response = await input.trackedRequest(request);
-  } catch (error) {
-    return buildTransportFailure(
-      "oauth_stale_session_rejection",
-      startedAt,
-      request,
-      error,
-      "Stale-session MCP request failed",
-    );
-  }
-
-  const durationMs = Date.now() - startedAt;
-
-  if (response.status >= 500) {
-    return {
-      step: "oauth_stale_session_rejection",
-      status: "failed",
-      durationMs,
-      error: {
-        message: `MCP server returned HTTP ${response.status} for a stale Mcp-Session-Id instead of a 4xx rejection`,
-        details: {
-          status: response.status,
-          statusText: response.statusText,
-          response: response.body,
-        },
-      },
-    };
-  }
-
-  if (response.status >= 400) {
-    // Evidence only — 404 is spec-preferred and a parseable body is nice to
-    // have, but neither is mandated, so they never downgrade a passing 4xx.
-    // Recorded as warnings, not error: the UI renders error as a failure
-    // banner regardless of status.
-    const warnings: string[] = [];
-    if (response.status !== 404) {
-      warnings.push(
-        `Rejected with HTTP ${response.status} (the transport spec prefers 404)`,
-      );
-    }
-    if (!bodyIsParseable(response.body)) {
-      warnings.push(
-        `Rejected with ${response.status} but the response body was empty or unparseable`,
-      );
-    }
-    return {
-      step: "oauth_stale_session_rejection",
-      status: "passed",
-      durationMs,
-      ...(warnings.length ? { warnings } : {}),
-    };
-  }
-
-  // 2xx: the server ignored an unknown session id. A stateless/non-session
-  // server legitimately does this, so it is not a violation — just unverifiable.
-  return {
-    step: "oauth_stale_session_rejection",
-    status: "skipped",
-    durationMs,
-    error: {
-      message:
-        "MCP server accepted a request with an unknown Mcp-Session-Id; it does not appear to enforce session state",
-      details: {
-        status: response.status,
-        statusText: response.statusText,
-      },
-    },
-  };
 }

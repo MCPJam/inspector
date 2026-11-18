@@ -134,9 +134,9 @@ export const CONFORMANCE_CHECK_METADATA: Record<
   oauth_stale_session_rejection: {
     title: "OAuth Check: Stale Session Rejection",
     summary:
-      "Send an authenticated request carrying an unknown Mcp-Session-Id and confirm the server rejects it with a 4xx, never a 500.",
+      "Open an authenticated session, end it, and confirm the server answers a request carrying the ended session id with HTTP 404.",
     teachableMoments: [
-      "The Streamable HTTP transport requires a stale or unknown session id to fail with a clean 4xx (404 preferred), not crash the server with a 500.",
+      "The Streamable HTTP transport requires a server that has terminated a session to answer requests carrying that session id with HTTP 404 Not Found.",
     ],
   },
 };

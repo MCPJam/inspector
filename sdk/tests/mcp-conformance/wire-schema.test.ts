@@ -208,6 +208,68 @@ describe("extension awareness", () => {
   });
 });
 
+// The 2026-07-28 schema types the response to tools/call, resources/read and
+// prompts/get as `anyOf [InputRequiredResult, <method>Result]`
+// (`CallToolResultResponse.result` and its siblings), and server/tools says
+// "Servers MAY respond to `tools/call` with an `InputRequiredResult`". Grading
+// those responses against the method's result alone failed every server that
+// used multi round-trip requests.
+describe("input_required is a valid answer where the schema allows it", () => {
+  const requestStateOnly = {
+    resultType: "input_required",
+    requestState: "opaque-state",
+  };
+  const withInputRequests = {
+    resultType: "input_required",
+    inputRequests: {
+      q: {
+        method: "elicitation/create",
+        params: {
+          mode: "form",
+          message: "Continue?",
+          requestedSchema: { type: "object", properties: {} },
+        },
+      },
+    },
+    requestState: "opaque-state",
+  };
+
+  for (const method of ["tools/call", "resources/read", "prompts/get"]) {
+    it(`accepts an InputRequiredResult answering ${method}`, () => {
+      const report = MODERN().validate([
+        answer(method, requestStateOnly),
+        answer(method, withInputRequests, 2),
+      ]);
+      expect(report.violations).toEqual([]);
+    });
+  }
+
+  it("still grades a complete tools/call result against CallToolResult", () => {
+    // No `content`: neither branch of the union accepts it.
+    const report = MODERN().validate([
+      answer("tools/call", { resultType: "complete" }),
+    ]);
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].definition).toBe("CallToolResult");
+    expect(report.violations[0].errors.join(" ")).toContain("content");
+  });
+
+  it("still fails an input_required result the schema does not allow", () => {
+    // `requestState` must be a string.
+    const report = MODERN().validate([
+      answer("tools/call", { resultType: "input_required", requestState: 7 }),
+    ]);
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it("does not accept input_required where the schema names one result only", () => {
+    // `ListToolsResultResponse.result` is `ListToolsResult`, with no union.
+    const report = MODERN().validate([answer("tools/list", requestStateOnly)]);
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].definition).toBe("ListToolsResult");
+  });
+});
+
 describe("every vendored revision compiles and validates", () => {
   const VERSIONS = [
     "2025-03-26",
