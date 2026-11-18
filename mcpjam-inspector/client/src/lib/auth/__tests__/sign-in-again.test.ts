@@ -56,4 +56,13 @@ describe("signInAgain", () => {
     await pending;
     expect(signIn).toHaveBeenCalledTimes(1);
   });
+
+  it("leaves saved servers and workspaces in local storage", async () => {
+    // Recovery must not cost the user their local setup.
+    localStorage.setItem("mcp-inspector-state", "servers");
+    localStorage.setItem("mcp-inspector-projects", "workspaces");
+    await signInAgain({ signOut: vi.fn(async () => {}), signIn: vi.fn() });
+    expect(localStorage.getItem("mcp-inspector-state")).toBe("servers");
+    expect(localStorage.getItem("mcp-inspector-projects")).toBe("workspaces");
+  });
 });

@@ -44,9 +44,14 @@ export async function probeLocalServer(
       signal: AbortSignal.timeout(LOCAL_SERVER_PROBE_TIMEOUT_MS),
     });
     const latencyMs = Math.round(performance.now() - started);
-    return response.ok
+    if (!response.ok) {
+      return { result: "http_error", status: response.status, latencyMs };
+    }
+    // A dev server can answer any path with the app's HTML; only the local
+    // server's own health body means it is up.
+    return (await isHealthBody(response))
       ? { result: "ok", latencyMs }
-      : { result: "http_error", status: response.status, latencyMs };
+      : { result: "network" };
   } catch (error) {
     // A DOMException is not an Error in every runtime; read its name directly.
     const name =
@@ -60,6 +65,19 @@ export async function probeLocalServer(
       ? { result: "timeout" }
       : { result: "network" };
   }
+}
+
+async function isHealthBody(response: Response): Promise<boolean> {
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    return false;
+  }
+  const body: unknown = await response.json();
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    "status" in body &&
+    body.status === "ok"
+  );
 }
 
 export function buildStartupDiagnostics(input: {

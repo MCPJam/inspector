@@ -20,13 +20,28 @@ const status: StartupStatus = {
   retrying: false,
 };
 
+const probed = () =>
+  waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Copy diagnostics" }),
+    ).toBeEnabled(),
+  );
+
 describe("StartupDiagnostics", () => {
   beforeEach(() => {
     state.copyWorks = false;
   });
 
+  it("holds Copy until the local server check has finished", async () => {
+    render(<StartupDiagnostics status={status} />);
+    const copy = screen.getByRole("button", { name: "Copy diagnostics" });
+    expect(copy).toBeDisabled();
+    await waitFor(() => expect(copy).toBeEnabled());
+  });
+
   it("opens the copyable text when the clipboard refuses, and Hide details still closes it", async () => {
     render(<StartupDiagnostics status={status} />);
+    await probed();
     fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
     const text = await screen.findByLabelText("Startup diagnostics");
     expect((text as HTMLTextAreaElement).value).toContain(
@@ -43,6 +58,7 @@ describe("StartupDiagnostics", () => {
   it("confirms a successful copy without opening the details", async () => {
     state.copyWorks = true;
     render(<StartupDiagnostics status={status} />);
+    await probed();
     fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
     expect(await screen.findByText("Copied")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Show details" })).toBeTruthy();

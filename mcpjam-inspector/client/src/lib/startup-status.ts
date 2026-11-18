@@ -8,6 +8,7 @@ import {
   appLoadStallCode,
   type AppLoadStallCode,
 } from "@/shared/app-load-stall";
+import { shouldSkipGuestSession } from "./vanity-landing-hosts";
 import {
   getGuestSessionRefusal,
   subscribeGuestSessionChanges,
@@ -80,13 +81,17 @@ export function reportUserReadiness(
  * record is ready, so a Retry in progress keeps the recovery card on screen.
  */
 export function StartupStatusTracker(): null {
+  const { isAuthenticated } = useConvexAuth();
   const userReady = useStartupStore((s) => s.userReady);
   const deadlinePassed = useStartupStore((s) => s.deadlinePassed);
   const failed = useSessionRefreshStore((s) => s.status !== "idle");
   const failedNow = useSessionRefreshStore((s) => s.status === "failed");
   const kind = useSessionRefreshStore((s) => s.kind);
   const { stage } = useStartupStatus();
-  useAppLoadStallReport(userReady, stage);
+  // `/redeem` and the caniuse host work signed out by design, so a visitor
+  // there never gets a user record. That is not a stalled startup.
+  const publicPage = !isAuthenticated && shouldSkipGuestSession();
+  useAppLoadStallReport(userReady || publicPage, stage);
 
   useEffect(() => {
     if (startupSettled) return;
@@ -104,8 +109,18 @@ export function StartupStatusTracker(): null {
     }
   }, [failedNow, kind]);
 
+  // Once Convex accepts a token again, the failure is over even if the user
+  // record is still on its way: the card should name that step, and Retry
+  // should not stay busy waiting for a readiness that is a different problem.
+  const authRecovered = isAuthenticated && !failed;
   useEffect(() => {
-    if (userReady) {
+    if (authRecovered) {
+      useStartupStore.setState({ lastFailureKind: null, retryPending: false });
+    }
+  }, [authRecovered]);
+
+  useEffect(() => {
+    if (userReady || publicPage) {
       useStartupStore.setState({
         escalated: false,
         lastFailureKind: null,
@@ -116,7 +131,7 @@ export function StartupStatusTracker(): null {
     if (failed || (deadlinePassed && !startupSettled)) {
       useStartupStore.setState({ escalated: true });
     }
-  }, [userReady, failed, deadlinePassed]);
+  }, [userReady, publicPage, failed, deadlinePassed]);
 
   return null;
 }
