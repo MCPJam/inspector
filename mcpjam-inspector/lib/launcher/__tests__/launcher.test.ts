@@ -8,11 +8,13 @@ vi.mock("child_process", () => ({ spawn: spawnMock }));
 import { launchInspector } from "../index";
 
 class FakeChild extends EventEmitter {
+  stdout: PassThrough | null;
   stderr: PassThrough | null;
   kill = vi.fn();
-  constructor(withStderr: boolean) {
+  constructor(piped: boolean) {
     super();
-    this.stderr = withStderr ? new PassThrough() : null;
+    this.stdout = piped ? new PassThrough() : null;
+    this.stderr = piped ? new PassThrough() : null;
   }
 }
 
@@ -64,7 +66,7 @@ describe("launchInspector", () => {
 
     await launchInspector({ silent: true });
 
-    expect(spawnOptions().stdio).toEqual(["ignore", "ignore", "pipe"]);
+    expect(spawnOptions().stdio).toEqual(["ignore", "pipe", "pipe"]);
   });
 
   it("returns a link carrying the session token it gave the inspector", async () => {
@@ -92,6 +94,60 @@ describe("launchInspector", () => {
     expect(inspector.url).toBe(`http://localhost:6274/#token=${token}`);
   });
 
+  it("waits for the inspector to confirm its own session token", async () => {
+    fakeSpawn();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await launchInspector();
+
+    const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:6274/api/session-token",
+      expect.objectContaining({
+        headers: { "X-MCP-Session-Auth": `Bearer ${token}` },
+      }),
+    );
+  });
+
+  it("does not mistake an inspector already on the port for its own", async () => {
+    const child = fakeSpawn();
+    // Another inspector holds the port: it is healthy but rejects this token.
+    const fetchMock = vi.fn(async (url: string) =>
+      url.endsWith("/health") ? { ok: true } : { ok: false, status: 401 },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const launch = launchInspector({ silent: true });
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    // bin/start.js reports this on stdout, in color.
+    child().stdout?.write(
+      "\u001b[31m❌ Default port 6274 is already in use. Please free the port\u001b[0m\n",
+    );
+    await new Promise((r) => setImmediate(r));
+    child().emit("exit", 1, null);
+    child().emit("close", 1, null);
+
+    await expect(launch).rejects.toThrow(
+      /exited before it was ready \(code 1\)\nInspector output:\n❌ Default port 6274 is already in use/,
+    );
+  });
+
+  it("checks plain health in hosted mode, where there is no session token", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    fakeSpawn();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const inspector = await launchInspector();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:6274/health",
+      expect.objectContaining({ headers: undefined }),
+    );
+    expect(inspector.url).toBe("http://localhost:6274/");
+  });
+
   it("rejects with the inspector's stderr when it exits before it is ready", async () => {
     const child = fakeSpawn();
     const fetchMock = vi.fn().mockRejectedValue(new Error("refused"));
@@ -104,7 +160,7 @@ describe("launchInspector", () => {
     child().emit("close", 1, null);
 
     await expect(launch).rejects.toThrow(
-      /exited before it was ready \(code 1\)\nInspector stderr:\nPort 6274 is already in use/,
+      /exited before it was ready \(code 1\)\nInspector output:\nPort 6274 is already in use/,
     );
 
     const healthChecksAtRejection = fetchMock.mock.calls.length;
@@ -124,7 +180,28 @@ describe("launchInspector", () => {
     child().emit("close", 1, null);
 
     await expect(launch).rejects.toThrow(
-      /Inspector stderr:\nError: Cannot find module dist\/server/,
+      /Inspector output:\nError: Cannot find module dist\/server/,
     );
+  });
+
+  it("keeps the session token out of startup errors", async () => {
+    const child = fakeSpawn();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("refused")));
+
+    const launch = launchInspector({ silent: true });
+    const token = spawnOptions().env.MCPJAM_SESSION_TOKEN;
+    child().stdout?.write(`http://127.0.0.1:6274/#token=${token}\n`);
+    await new Promise((r) => setImmediate(r));
+    child().emit("exit", 1, null);
+    child().emit("close", 1, null);
+
+    const error: Error = await launch.then(
+      () => {
+        throw new Error("launch resolved");
+      },
+      (err: Error) => err,
+    );
+    expect(error.message).toContain("#token=<session token>");
+    expect(error.message).not.toContain(token);
   });
 });

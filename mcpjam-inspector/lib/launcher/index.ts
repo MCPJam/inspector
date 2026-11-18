@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from "child_process";
 import { randomBytes } from "crypto";
 import { createRequire } from "module";
 import path from "path";
+import { stripVTControlCharacters } from "util";
 
 const require = createRequire(import.meta.url);
 
@@ -47,7 +48,7 @@ export interface LaunchOptions {
 
   /**
    * Keep the inspector's output out of your terminal. If the inspector fails
-   * to start, the rejected error includes the end of its stderr.
+   * to start, the rejected error includes the end of its output.
    */
   silent?: boolean;
 
@@ -80,17 +81,26 @@ export interface InspectorInstance {
 }
 
 /**
- * Waits for the inspector server to be ready by polling the health endpoint.
+ * Waits until this launch's inspector is serving. With a session token, the
+ * server must confirm that token, so an inspector already listening on the
+ * port answers 401 and is never mistaken for the one just started.
  */
 async function waitForServer(
   port: number,
+  token: string | undefined,
   signal: AbortSignal,
   timeout = 30000,
 ): Promise<void> {
+  const readinessUrl = token
+    ? `http://localhost:${port}/api/session-token`
+    : `http://localhost:${port}/health`;
+  const headers = token
+    ? { "X-MCP-Session-Auth": `Bearer ${token}` }
+    : undefined;
   const start = Date.now();
   while (!signal.aborted && Date.now() - start < timeout) {
     try {
-      const res = await fetch(`http://localhost:${port}/health`, { signal });
+      const res = await fetch(readinessUrl, { headers, signal });
       if (res.ok) return;
     } catch {
       // Server not ready yet
@@ -109,8 +119,8 @@ async function waitForServer(
   throw new Error(`Inspector failed to start within ${timeout}ms`);
 }
 
-const STDERR_TAIL_CHARS = 4000;
-const STDERR_DRAIN_MS = 1000;
+const OUTPUT_TAIL_CHARS = 4000;
+const OUTPUT_DRAIN_MS = 1000;
 
 function waitForStdioClose(child: ChildProcess, timeoutMs: number) {
   return new Promise<void>((resolve) => {
@@ -203,21 +213,28 @@ export async function launchInspector(
     env.MCP_CSP_MODE = options.cspMode;
   }
 
-  // Spawn the process
+  // Silent mode pipes stdout as well as stderr: bin/start.js prints startup
+  // failures such as a taken port on stdout.
   const child = spawn("node", [binPath], {
     env,
-    stdio: options.silent ? ["ignore", "ignore", "pipe"] : "inherit",
+    stdio: options.silent ? ["ignore", "pipe", "pipe"] : "inherit",
     detached: false,
   });
 
-  let stderrTail = "";
-  child.stderr?.on("data", (chunk: Buffer) => {
-    stderrTail = (stderrTail + chunk.toString()).slice(-STDERR_TAIL_CHARS);
-  });
-  const withStderr = (message: string) =>
-    stderrTail.trim()
-      ? `${message}\nInspector stderr:\n${stderrTail.trimEnd()}`
-      : message;
+  // Both pipes stay drained for the inspector's whole life so a full pipe
+  // never blocks it.
+  let outputTail = "";
+  for (const stream of [child.stdout, child.stderr]) {
+    stream?.setEncoding("utf8");
+    stream?.on("data", (chunk: string) => {
+      outputTail = (outputTail + chunk).slice(-OUTPUT_TAIL_CHARS);
+    });
+  }
+  const withOutput = (message: string) => {
+    let tail = stripVTControlCharacters(outputTail).trimEnd();
+    if (token) tail = tail.split(token).join("<session token>");
+    return tail.trim() ? `${message}\nInspector output:\n${tail}` : message;
+  };
 
   // Wait for server to be ready, racing against spawn errors
   await new Promise<void>((resolve, reject) => {
@@ -237,17 +254,17 @@ export async function launchInspector(
         resolved = true;
         readiness.abort();
         const reason = signal ? `signal ${signal}` : `code ${code}`;
-        waitForStdioClose(child, STDERR_DRAIN_MS).then(() =>
+        waitForStdioClose(child, OUTPUT_DRAIN_MS).then(() =>
           reject(
             new Error(
-              withStderr(`Inspector exited before it was ready (${reason})`),
+              withOutput(`Inspector exited before it was ready (${reason})`),
             ),
           ),
         );
       }
     });
 
-    waitForServer(INSPECTOR_PORT, readiness.signal)
+    waitForServer(INSPECTOR_PORT, token, readiness.signal)
       .then(() => {
         if (!resolved) {
           resolved = true;
@@ -258,7 +275,7 @@ export async function launchInspector(
         if (!resolved) {
           resolved = true;
           child.kill("SIGTERM");
-          reject(new Error(withStderr(err.message)));
+          reject(new Error(withOutput(err.message)));
         }
       });
   });
