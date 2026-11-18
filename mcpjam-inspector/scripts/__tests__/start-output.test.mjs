@@ -174,6 +174,9 @@ function stubProject(serverSource) {
   const here = dirname(fileURLToPath(import.meta.url));
   cpSync(join(here, "..", "..", "bin"), join(root, "bin"), { recursive: true });
   mkdirSync(join(root, "dist", "server"), { recursive: true });
+  // Outside the repo's package scope the .js files are CommonJS on Node
+  // before 22.7, which does not detect module syntax.
+  writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
   writeFileSync(join(root, "dist", "server", "index.js"), serverSource);
   symlinkSync(
     join(here, "..", "..", "..", "node_modules"),
@@ -185,6 +188,11 @@ function stubProject(serverSource) {
 const LISTENING_STUB = `
 import { createServer } from "node:http";
 console.log("STUB server log line on stdout");
+// The test closes the launcher's stdin when it is done. Killing the launcher
+// on Windows is abrupt and leaves this process holding the output pipes, so
+// the stub ends itself when its stdin does.
+process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
 createServer((req, res) => {
   const ok = req.headers["x-mcp-session-auth"] === "Bearer " + process.env.MCPJAM_SESSION_TOKEN;
   res.writeHead(ok ? 200 : 401, { "Content-Type": "application/json" });
@@ -199,18 +207,35 @@ function runStub(root, args, { stopAfterReady = false } = {}) {
     });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const settle = (status) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ status, stdout, stderr });
+    };
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
       if (stopAfterReady && stdout.includes('"event":"ready"')) {
-        setTimeout(() => child.kill("SIGTERM"), 300);
+        setTimeout(() => {
+          // The stub server ends with its stdin; then the launcher is stopped.
+          child.stdin.end();
+          child.kill("SIGTERM");
+        }, 300);
       }
     });
     child.stderr.on("data", (chunk) => (stderr += chunk));
-    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
-    child.on("close", (status) => {
-      clearTimeout(timer);
-      resolve({ status, stdout, stderr });
+    // A pipe held open by a process that outlived the launcher must not keep
+    // the test from finishing: `exit` is enough once output has had a moment.
+    child.on("exit", (status) => {
+      setTimeout(() => settle(status), 500);
     });
+    child.on("close", (status) => settle(status));
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      child.stdin.end();
+      setTimeout(() => settle(null), 1000);
+    }, 30_000);
   });
 }
 
