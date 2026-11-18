@@ -314,10 +314,20 @@ describe("adding", () => {
       kind: "regression",
       matchOptions: matchOptionsForKind("regression"),
     });
+    // The suite's defaults are capability, so the case inherits them again.
     const next = setCaseKind(strict, "capability", undefined);
+    expect(next.kind).toBeUndefined();
+    expect(next.matchOptions).toBeUndefined();
+  });
+
+  it("keeps an override the suite's options don't give", () => {
+    const strictSuite = matchOptionsForKind("regression");
+    const next = setCaseKind(draft(), "capability", strictSuite);
     expect(next.kind).toBe("capability");
     expect(next.matchOptions).toEqual(matchOptionsForKind("capability"));
-    expect(next.matchOptions?.toolCallOrder).not.toBe("strict");
+    const back = setCaseKind(next, "regression", strictSuite);
+    expect(back.kind).toBeUndefined();
+    expect(back.matchOptions).toBeUndefined();
   });
 
   it.each<[string, TestStep[]]>([
