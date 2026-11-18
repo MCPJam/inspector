@@ -213,7 +213,7 @@ cases:
         arguments: {}
 `;
 
-/** Prompt-only: nothing deterministic, so nothing to resolve and nothing to fetch. */
+/** Prompt-only: nothing deterministic, so no tool listing to fetch. */
 const PROMPT_ONLY = `schemaVersion: "1"
 mode: agentWorkflow
 reportingMode: standard
@@ -528,8 +528,8 @@ describe("eval validate --project", () => {
         assert.equal(run.result.exitCode, 0, run.stderr);
         const envelope = JSON.parse(run.stdout) as ValidateEnvelope;
         assert.deepEqual(envelope.projectValidation?.findings, []);
-        // …and it never even looked: with nothing deterministic in the file
-        // there is nothing to resolve, so a target listing here would be a
+        // …and it listed no tools: with nothing deterministic in the file
+        // there is no tool name to look up, so a listing here would be a
         // round trip bought for no question.
         assert.deepEqual(fixture.toolListings, []);
       });
@@ -817,7 +817,7 @@ describe("eval run --file validates before it writes", () => {
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         // The check is mandatory, but a file with nothing deterministic in it
-        // asks no question — so a native suite pays nothing for it.
+        // only has its target resolved — no tool listing is paid for.
         assert.deepEqual(fixture.toolListings, []);
         assert.equal(fixture.runBodies.length, 1);
       });

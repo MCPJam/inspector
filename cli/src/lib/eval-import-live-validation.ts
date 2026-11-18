@@ -48,9 +48,11 @@ import {
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
 import {
+  findTargetProblems,
   foldServerName,
   IMPORT_VALIDATION_EXIT_CODE,
   resolveValidationTargets,
+  type ImportTargetFinding,
   type ImportValidationKnobs,
   type ImportValidationTarget,
 } from "./eval-import-targets.js";
@@ -100,6 +102,8 @@ export type ImportToolFinding = {
 export type ImportToolValidationResult = {
   /** Every target the run resolved to, in resolution order. */
   targets: ImportValidationTarget[];
+  /** Servers a target names that are missing or disabled, in target order. */
+  targetFindings: ImportTargetFinding[];
   /** Sorted deterministically; see {@link compareFindings}. */
   findings: ImportToolFinding[];
 };
@@ -216,15 +220,15 @@ export async function validateImportToolReferences(
   }
 ): Promise<ImportToolValidationResult> {
   const references = collectDeterministicToolReferences(params.resolved);
-  // Nothing deterministic to check means nothing to resolve — and, importantly,
-  // no network call at all. A native prompt-only suite must not start paying
-  // for target resolution just because this check is mandatory.
-  if (references.length === 0) return { targets: [], findings: [] };
-
+  // Targets resolve BEFORE the zero-reference return: a prompt-only suite
+  // naming a server the project lacks cannot run either, and returning early
+  // reported it valid. Resolving costs the project's server list, never a
+  // tool listing.
   const targets = await resolveValidationTargets(client, params);
   if (targets === null) {
     return {
       targets: [],
+      targetFindings: [],
       findings: references.map((reference) =>
         finding(reference, {
           code: "TOOL_DISCOVERY_UNAVAILABLE",
@@ -239,6 +243,8 @@ export async function validateImportToolReferences(
       ),
     };
   }
+  const targetFindings = targets.flatMap(findTargetProblems);
+  if (references.length === 0) return { targets, targetFindings, findings: [] };
 
   // One listing per server, shared across every target and every case that
   // references it. Without the cache a 40-case suite over 3 servers pays 120
@@ -276,6 +282,10 @@ export async function validateImportToolReferences(
           )
         : serverByDisplayName(target.servers, reference.step.serverName);
       if (!server) {
+        // A call on a server the target names but the project lacks is
+        // already a SERVER_UNRESOLVED finding. Repeating it per call as "not
+        // part of the target" would send the author to the wrong fix.
+        if (namesUnresolvedServer(target, reference.step)) continue;
         findings.push(
           finding(reference, {
             code: "TOOL_REFERENCE_UNRESOLVED",
@@ -288,6 +298,9 @@ export async function validateImportToolReferences(
         );
         continue;
       }
+      // Reported as SERVER_DISABLED; listing a disabled server's tools could
+      // fail and turn that finding into a command error.
+      if (server.enabled === false) continue;
       const names = await toolsFor(server);
       if (names.has(reference.step.toolName)) continue;
       findings.push(
@@ -303,7 +316,18 @@ export async function validateImportToolReferences(
   }
 
   findings.sort(compareFindings);
-  return { targets, findings };
+  return { targets, targetFindings, findings };
+}
+
+function namesUnresolvedServer(
+  target: ImportValidationTarget,
+  step: ToolCallStep
+): boolean {
+  return target.unresolved.some(({ selector }) =>
+    step.serverId
+      ? selector.trim() === step.serverId
+      : foldServerName(selector) === foldServerName(step.serverName)
+  );
 }
 
 function finding(

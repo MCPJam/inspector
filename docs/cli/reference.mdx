@@ -2237,6 +2237,25 @@ live half is additive, under its own key:
 }
 ```
 
+The servers each target names are checked too, including for a suite with no
+`toolCall` steps. A server the project lacks or has disabled is reported once
+per target, with no `caseId`, ahead of the tool findings:
+
+```jsonc
+{
+  "code": "SERVER_UNRESOLVED",                // or SERVER_DISABLED
+  "path": ["target", "servers", 0],           // absent for --server and environment servers
+  "pointer": "target.servers[0]",
+  "server": "ghost",                          // the selector as written; the name when disabled
+  "serverId": "srv_123",                      // SERVER_DISABLED only
+  "targetLabel": "the file's target.servers",
+  "message": "Server \"ghost\" in the file's target.servers is not a server in this project."
+}
+```
+
+`eval run --file` refuses the same targets with `IMPORT_TARGET_UNRESOLVED`
+before it writes anything.
+
 Three properties of the live check are worth knowing before you rely on it:
 
 - **Only `toolCall` steps count.** A tool named in prompt text is a hint the
