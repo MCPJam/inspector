@@ -85,12 +85,19 @@ export function createClaudeLiveSpikeRouter(
     return c.json(recorder.snapshot());
   });
 
-  router.all("/mcp", async (c) => {
+  // claude.ai sends only custom header names Anthropic has approved, so the
+  // secret is also accepted as a bearer token or in the path (`/k/<secret>/mcp`).
+  const presentedKey = (c: {
+    req: { header(name: string): string | undefined; param(name: string): string | undefined };
+  }) => {
+    const bearer = /^Bearer\s+(.+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
+    return c.req.header(SPIKE_KEY_HEADER) ?? bearer ?? c.req.param("key");
+  };
+
+  router.on(["POST", "GET", "DELETE"], ["/mcp", "/k/:key/mcp"], async (c) => {
     const request = c.req.raw;
-    if (!secretMatches(c.req.header(SPIKE_KEY_HEADER), config.connectorSecret))
+    if (!secretMatches(presentedKey(c), config.connectorSecret))
       return c.json({ error: "Unauthorized" }, 401);
-    if (!["POST", "GET", "DELETE"].includes(request.method))
-      return c.json({ error: "Method not allowed" }, 405);
 
     let raw: string | undefined;
     let message: NativeMessage | undefined;

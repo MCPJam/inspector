@@ -123,6 +123,26 @@ describe("claude live spike route", () => {
     ]);
   });
 
+  it("accepts the secret as a bearer token or in the path, and never forwards it", async () => {
+    const { app, startTurn, upstream } = setup();
+    await startTurn("prompt-1");
+    const send = (path: string, headers: Record<string, string> = {}) =>
+      app.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", ...headers },
+        body: JSON.stringify(initialize),
+      });
+    expect((await send("/spike/mcp", { authorization: `Bearer ${config.connectorSecret}` })).status).toBe(200);
+    expect((await send(`/spike/k/${config.connectorSecret}/mcp`)).status).toBe(200);
+    expect((await send("/spike/k/wrong/mcp")).status).toBe(401);
+    expect((await send("/spike/mcp", { authorization: "Bearer wrong" })).status).toBe(401);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    for (const [url, init] of upstream.mock.calls) {
+      expect(String(url)).toBe(config.upstreamUrl);
+      expect(new Headers(init?.headers).get("authorization")).toBeNull();
+    }
+  });
+
   it("stops forwarding once the turn is switched off", async () => {
     const { mcp, control, startTurn, upstream } = setup();
     await startTurn("prompt-1");
