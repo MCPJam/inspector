@@ -6,8 +6,8 @@
  * the Convex write in the background; neither connect response waits on
  * Convex. With `server-canvas` off it writes the v2 tool snapshot exactly as
  * before. With it on it writes the v3 snapshot with its capture context, then
- * hands the event to `onCanvasConnect`, the place later canvas work after
- * connect (background probes) joins.
+ * hands the event to `onCanvasConnect`, which also starts the background
+ * probes (`canvas-probes.ts`).
  */
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference, type FunctionArgs } from "convex/server";
@@ -21,6 +21,9 @@ import { exportSingleServerForInspection } from "../../utils/export-helpers.js";
 import { logger } from "../../utils/logger.js";
 import { getManagerConnections } from "../../utils/mcp-connections.js";
 import { captureServerFeatures, type ServerFeatureCapture } from "./capture.js";
+import { startCanvasProbes, type CanvasProbeOptions } from "./canvas-probes.js";
+import { needsConnection } from "./probe-runner.js";
+import { rolloutWithin } from "./rollout-within.js";
 
 export interface CanvasConnectEvent {
   /**
@@ -61,18 +64,6 @@ export interface ConnectInspectionInput
  */
 const ROLLOUT_WAIT_MS = 1_000;
 
-async function rolloutWithin(rollout: Promise<boolean>): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(false), ROLLOUT_WAIT_MS);
-  });
-  try {
-    return await Promise.race([rollout.catch(() => false), late]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** `captureContext` and its hash ride with v3 snapshots only. */
 const recordFromConnect = makeFunctionReference<
   "mutation",
@@ -108,11 +99,17 @@ function logWriteFailure(input: { logPrefix: string; managerKey: string }) {
 }
 
 /**
- * Canvas work after a v3 capture: today, the inspection write with its
- * capture context. Never throws, and no connect response waits on it.
+ * Canvas work after a v3 capture: the inspection write with its capture
+ * context, then the background probes. Never throws. Resolves at once for a
+ * local connect, and for a hosted one with nothing to read on the connection;
+ * otherwise a hosted connect waits until the probes are done with its
+ * ephemeral connection (at most 3 s), and the rest continues in the background.
  */
-export async function onCanvasConnect(event: CanvasConnectEvent): Promise<void> {
-  await writeInspection(event.convexBearer, {
+export async function onCanvasConnect(
+  event: CanvasConnectEvent,
+  options: CanvasProbeOptions = {},
+): Promise<void> {
+  void writeInspection(event.convexBearer, {
     projectId: event.projectId,
     snapshot: event.capture.snapshot,
     captureContext: event.capture.context,
@@ -120,9 +117,11 @@ export async function onCanvasConnect(event: CanvasConnectEvent): Promise<void> 
   }).catch(
     logWriteFailure({ logPrefix: "server-canvas", managerKey: event.managerKey }),
   );
+  const probes = startCanvasProbes(event, options);
+  if (event.hosted && needsConnection(event)) await probes.connectionReleased;
 }
 
-function defaultConnectionId(
+export function defaultConnectionId(
   manager: MCPClientManager,
   managerKey: string,
 ): string | undefined {
@@ -140,7 +139,7 @@ export async function recordConnectInspection(
   input: ConnectInspectionInput,
 ): Promise<{ canvas: boolean }> {
   const { manager, managerKey, serverId, logPrefix } = input;
-  const canvas = await rolloutWithin(input.canvasRollout);
+  const canvas = await rolloutWithin(input.canvasRollout, ROLLOUT_WAIT_MS);
   if (!canvas) {
     const snapshot = await exportSingleServerForInspection(
       manager,
@@ -161,7 +160,7 @@ export async function recordConnectInspection(
     ...(input.signal ? { signal: input.signal } : {}),
   });
   if (input.signal?.aborted) return { canvas };
-  void onCanvasConnect({
+  await onCanvasConnect({
     hosted: input.hosted,
     projectId: input.projectId,
     serverId,
