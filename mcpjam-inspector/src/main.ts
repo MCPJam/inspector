@@ -15,7 +15,9 @@ import {
 } from "./strict-sentry.js";
 import { recordUpdateShutdown } from "./ipc/update/update-shutdown.js";
 import { installDesktopDiagnostics } from "./desktop-diagnostics-electron.js";
-import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain } from "electron";
+import { app, BrowserWindow, shell, Menu, dialog, session, ipcMain, clipboard } from "electron";
+import { release } from "node:os";
+import { buildHelpMenu } from "./desktop-help-menu.js";
 import {
   registerMainProcessCrashHandlers,
 } from "./crash-reporting.js";
@@ -244,6 +246,11 @@ function shouldForceElectronOAuthFallback(): boolean {
   );
 }
 
+/** Packaged builds bind IPv4 loopback; dev binds `localhost`, often `::1`. */
+function serverBindHost(): string {
+  return app.isPackaged ? "127.0.0.1" : "localhost";
+}
+
 function getServerUrl(): string {
   return `http://127.0.0.1:${serverPort}`;
 }
@@ -468,7 +475,7 @@ async function startHonoServer(): Promise<number> {
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
-    const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
+    const hostname = serverBindHost();
 
     let port: number;
     if (cachedProbedPort !== null) {
@@ -972,6 +979,18 @@ function createAppMenu(): void {
           : []),
       ],
     },
+    buildHelpMenu({
+      snapshot: desktopDiagnostics.snapshot,
+      // Probe the host the server is bound to, not getServerUrl's 127.0.0.1.
+      serverUrl: () =>
+        serverPort > 0 ? `http://${serverBindHost()}:${serverPort}` : null,
+      appVersion: () => app.getVersion(),
+      electronVersion: process.versions.electron,
+      os: `${process.platform}-${release()}`,
+      writeClipboard: (text) => clipboard.writeText(text),
+      confirm: (message) =>
+        void dialog.showMessageBox({ type: "info", message }),
+    }),
   ];
 
   const menu = Menu.buildFromTemplate(template);
