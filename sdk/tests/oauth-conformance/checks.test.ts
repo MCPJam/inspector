@@ -1218,7 +1218,7 @@ describe("oauth server obligation checks", () => {
             replies.initialize ?? {
               status: 200,
               headers: { "mcp-session-id": "session-abc" },
-              body: { jsonrpc: "2.0", id: 1002, result: {} },
+              body: { jsonrpc: "2.0", id: 1002, result: { protocolVersion: request.body.params.protocolVersion } },
             },
           );
         }
@@ -1228,6 +1228,29 @@ describe("oauth server obligation checks", () => {
         return respond(replies.afterTermination ?? { status: 404 });
       });
       return { trackedRequest, requests };
+    }
+
+    it("uses the negotiated version after a downgrade, including SSE replies", async () => {
+      const { trackedRequest, requests } = sessionServer({ initialize: {
+        status: 200, headers: { "mcp-session-id": "session-abc" },
+        body: 'data: {"jsonrpc":"2.0","id":1002,"result":{"protocolVersion":"2025-06-18"}}\n\n',
+      }});
+      await runStaleSessionRejectionCheck({ ...baseObligationInput, trackedRequest });
+      expect(requests.slice(1).map(r => r.protocolVersion)).toEqual([
+        "2025-06-18", "2025-06-18", "2025-06-18",
+      ]);
+    });
+
+    for (const version of ["2025-03-26", "2025-06-18"] as const) {
+      it(`initializes using the selected ${version} revision`, async () => {
+        const { trackedRequest } = sessionServer({});
+        await runStaleSessionRejectionCheck({
+          ...baseObligationInput,
+          config: { ...baseObligationInput.config, protocolVersion: version },
+          trackedRequest,
+        });
+        expect(trackedRequest.mock.calls[0][0].body.params.protocolVersion).toBe(version);
+      });
     }
 
     it("ends a real session and passes when the ended id gets 404", async () => {
@@ -1324,7 +1347,7 @@ describe("oauth server obligation checks", () => {
         initialize: {
           status: 200,
           headers: { "Mcp-Session-Id": "Session-XYZ" },
-          body: {},
+          body: { jsonrpc: "2.0", id: 1002, result: { protocolVersion: "2025-11-25" } },
         },
       });
       const result = await runStaleSessionRejectionCheck({

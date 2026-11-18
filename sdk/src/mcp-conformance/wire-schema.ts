@@ -566,6 +566,13 @@ export class WireSchemaValidator {
         ? []
         : (validate.errors ?? []).map(describeError);
 
+      // The schema describes this MUST but does not encode it in required.
+      if (target.definition === INPUT_REQUIRED_RESULT_DEFINITION &&
+          subject !== null && typeof subject === "object" &&
+          !("inputRequests" in subject) && !("requestState" in subject)) {
+        errors.push("input_required must include inputRequests or requestState");
+      }
+
       // Correlation must not make the check WEAKER. Grading only `result` left
       // the envelope of every correlated response ungraded — so a `tools/list`
       // answer carrying `jsonrpc: "1.0"`, or the `id: null` this suite exists to

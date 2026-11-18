@@ -480,3 +480,11 @@ describe("correlation adds coverage, never trades it away", () => {
     expect(report.violations).toEqual([]);
   });
 });
+
+for (const method of ["tools/call", "resources/read", "prompts/get"]) {
+  it(`rejects an empty input_required answer to ${method}`, () => {
+    const report = MODERN().validate([answer(method, { resultType: "input_required" })]);
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].errors).toContain("input_required must include inputRequests or requestState");
+  });
+}

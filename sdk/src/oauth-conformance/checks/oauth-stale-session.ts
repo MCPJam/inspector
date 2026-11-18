@@ -1,7 +1,7 @@
+import { parseSseEvents } from "../../mcp-conformance/raw-capture.js";
 import { mergeHeaders } from "../../oauth/state-machines/shared/headers.js";
 import {
   buildInitializeRequestBody,
-  resolveInitializeProtocolVersion,
 } from "../../oauth/state-machines/shared/initialize.js";
 import type {
   NormalizedOAuthConformanceConfig,
@@ -125,9 +125,7 @@ export async function runStaleSessionRejectionCheck(
   const initializeRequest = buildSessionMcpRequest(input.config, accessToken, {
     method: "POST",
     body: buildInitializeRequestBody({
-      protocolVersion: resolveInitializeProtocolVersion(
-        input.config.protocolVersion,
-      ),
+      protocolVersion: input.config.protocolVersion,
       authMode: input.config.auth.mode,
       clientName: "MCPJam SDK OAuth Conformance",
       clientVersion: "1.0.0",
@@ -164,11 +162,26 @@ export async function runStaleSessionRejectionCheck(
     );
   }
 
+  const messages: unknown[] = typeof initialized.body === "string"
+    ? parseSseEvents(initialized.body).map((event) => event.json)
+    : [initialized.body];
+  const reply = messages.find((message) =>
+    message !== null && typeof message === "object" &&
+    "id" in message && message.id === 1002 && "result" in message);
+  const result = reply && typeof reply === "object" && "result" in reply
+    ? reply.result : undefined;
+  const version = result && typeof result === "object" && "protocolVersion" in result
+    ? result.protocolVersion : undefined;
+  if (version !== "2025-03-26" && version !== "2025-06-18" && version !== "2025-11-25") {
+    return skipped("Initialize did not negotiate a supported legacy protocol version");
+  }
+  const sessionConfig: NormalizedOAuthConformanceConfig = { ...input.config, protocolVersion: version };
+
   // 2. Finish the handshake, as the lifecycle requires of a client, before
   //    any other request on the session. Its outcome is not graded here.
   try {
     await input.trackedRequest(
-      buildSessionMcpRequest(input.config, accessToken, {
+      buildSessionMcpRequest(sessionConfig, accessToken, {
         method: "POST",
         sessionId,
         body: { jsonrpc: "2.0", method: "notifications/initialized" },
@@ -183,7 +196,7 @@ export async function runStaleSessionRejectionCheck(
   let terminated: Awaited<ReturnType<TrackedRequestFn>> | undefined;
   try {
     terminated = await input.trackedRequest(
-      buildSessionMcpRequest(input.config, accessToken, {
+      buildSessionMcpRequest(sessionConfig, accessToken, {
         method: "DELETE",
         sessionId,
       }),
@@ -207,7 +220,7 @@ export async function runStaleSessionRejectionCheck(
 
   // 4. Use the ended session id once more. `ping` is the one request every
   //    server answers, so the status reflects the session and nothing else.
-  const staleRequest = buildSessionMcpRequest(input.config, accessToken, {
+  const staleRequest = buildSessionMcpRequest(sessionConfig, accessToken, {
     method: "POST",
     sessionId,
     body: { jsonrpc: "2.0", method: "ping", id: 1003 },
