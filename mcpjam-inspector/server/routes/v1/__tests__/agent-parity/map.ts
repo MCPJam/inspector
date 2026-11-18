@@ -67,7 +67,12 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * App calls agents should not have: a function, or `module:*` for a whole
  * module → a one-line reason.
  */
-export const NOT_EXPOSED: Readonly<Record<string, string>> = {};
+export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "credentials:getCredentialExportPolicy":
+    "Organization security setting; agents see its effect when a credential delivery is refused",
+  "credentials:setCredentialExportPolicy":
+    "Organization security setting that controls where credentials can go; only admins change it, in the app",
+};
 
 /**
  * The length of `backlog.json`: app calls from before this check existed,
