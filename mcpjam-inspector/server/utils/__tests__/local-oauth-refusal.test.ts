@@ -56,6 +56,10 @@ describe("oauthRefusalFromAuthorize", () => {
       SERVER,
     );
     expect(refusal?.message).toMatch(/organization admin/);
+    // An admin reading it can find the switch.
+    expect(refusal?.message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
+    );
     expect(refusal?.details).toMatchObject({
       policy: "credentialExportPolicy",
     });

@@ -9,6 +9,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureLiveBrowserSession = vi.fn();
 const prepareAuthorization = vi.fn();
+const runConnectionJob = vi.fn();
+vi.mock("../../server-connection-worker.js", () => ({
+  runConnectionJob: (id: string) => runConnectionJob(id),
+}));
 /** What the live seams handed the agent, and how the fake agent answers. */
 let agentDeps:
   | import("../reviewer-sign-in-agent.js").SignInAgentDeps
@@ -342,6 +346,7 @@ describe("the connection", () => {
                 requestId: "req_1",
                 serverUrl: "https://connector.example.com/mcp",
                 authorizationServerUrl: null,
+                callbackUrl: "https://preview.example.org/oauth/callback",
                 registrationMode: "dynamic",
                 requestedName: "Acme",
                 account: { name: "reviewer-sub_1" },
@@ -379,7 +384,7 @@ describe("the connection", () => {
 
     expect(prepareAuthorization).toHaveBeenCalledWith({
       serverUrl: "https://connector.example.com/mcp",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       requestedName: "Acme",
     });
     expect(
@@ -389,14 +394,14 @@ describe("the connection", () => {
       requestId: "req_1",
       clientId: "client_1",
       codeVerifier: "verifier-1",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       state: "st_1",
       issuer: "https://acme.authkit.app",
     });
     expect(link).toEqual({
       authorizationUrl: "https://acme.authkit.app/oauth2/authorize?state=st_1",
       authorizationServerOrigin: "https://acme.authkit.app",
-      callbackUrl: "https://app.mcpjam.com/oauth/callback",
+      callbackUrl: "https://preview.example.org/oauth/callback",
     });
     expect(JSON.stringify(link)).not.toContain("verifier-1");
   });
@@ -425,6 +430,19 @@ describe("the connection", () => {
       state: "st_1",
       code: "code_1",
     });
+  });
+
+  it("drives discovery and validation for its own request on a local Inspector", async () => {
+    vi.stubEnv("MCPJAM_LOCAL_DOORBELL_MS", "2000");
+    try {
+      const live = deps().connect;
+      const signal = new AbortController().signal;
+      await live.prepare(signal);
+      await live.complete({ state: "st_1", code: "code_1" }, signal);
+      expect(runConnectionJob.mock.calls).toEqual([["req_1"], ["req_1"]]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("answers a refused completion and a failed request with the backend's words", async () => {

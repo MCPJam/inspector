@@ -60,6 +60,7 @@ export type UploadedAccountRecovery = {
   sending(token: string): void;
   /** The error every rejected exchange gets once recovery has given up. */
   stopped(): WebRouteError | undefined;
+  reject(): never;
   /**
    * After a refresh that can't renew `sent`, the token the rejected exchange
    * carried: a newer uploaded token bound to `targetOrigin`, or throws.
@@ -236,6 +237,7 @@ export function uploadedAccountRecoveries(reResolve: ReResolveConnection) {
           current = token;
         },
         stopped: () => stopped && again(stopped),
+        reject: () => stop(uploadFresh()),
         async recover(serverKey, sent, targetOrigin) {
           if (stopped) throw again(stopped);
           // Another exchange already replaced the token this one was
@@ -274,7 +276,7 @@ export function withUploadedAccountRecovery(
     try {
       const result = await handler(context);
       recovery.sending(result.accessToken);
-      return result;
+      return { ...result, onRetryRejected: () => recovery.reject() };
     } catch (error) {
       if (!cannotRenew(error, context.error)) throw error;
       logger.debug("[uploaded account] refresh can't renew; resolving again", {
@@ -284,6 +286,7 @@ export function withUploadedAccountRecovery(
     }
     try {
       return {
+        onRetryRejected: () => recovery.reject(),
         accessToken: await recovery.recover(
           context.serverId,
           sent,

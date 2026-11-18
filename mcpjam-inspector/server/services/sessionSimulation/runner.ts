@@ -43,10 +43,12 @@ import { hostedCatalogModelDefinitions } from "../hosted-model-catalog.js";
 // when the scenario modelId isn't in SUPPORTED_MODELS, which is the common
 // case for org-BYOK scenarios (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
+import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js";
 import {
   SYNTHETIC_SESSION_APPROVAL_DENIAL,
-  type MCPJamHandlerOptions,
-} from "../../utils/mcpjam-stream-handler.js";
+  appliedToolApproval,
+  engineApprovalMode,
+} from "@/shared/tool-approval";
 import { replaceActingServerSkillGateWithRefusal } from "../../utils/server-skill-acting-gate.js";
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
@@ -570,7 +572,6 @@ export async function runSyntheticHostSession(
     temperature,
     maxSteps,
     maxOutputTokens,
-    requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
@@ -592,6 +593,10 @@ export async function runSyntheticHostSession(
     modelSelection,
     reasoningEffort,
   } = runtime;
+  const requireToolApproval = appliedToolApproval(
+    "synthetic",
+    runtime.requireToolApproval,
+  );
   // What the session records for each turn: the selection it ran, effort
   // included. (A swarm session's backend pins it from the run snapshot.)
   const sessionModelSelection = ranTurnSelection({
@@ -2355,9 +2360,9 @@ export async function drainAssistantTurn(
     authContext: { kind: "user_bearer", token: args.authHeader ?? "" },
     sourceType,
     origin: "scenario",
-    // Synthetic runs have no human-in-the-loop. Auto-deny approval-required
-    // tool calls inside the loop so the run makes forward progress.
-    approvalMode: "auto-deny",
+    // Nobody answers a synthetic run: each gated call is denied inside the
+    // loop, and the run makes forward progress.
+    approvalMode: engineApprovalMode("synthetic"),
     chatSessionId: args.chatSessionId,
     ...(args.projectId ? { projectId: args.projectId } : {}),
     ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),

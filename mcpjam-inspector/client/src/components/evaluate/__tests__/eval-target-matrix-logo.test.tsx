@@ -42,4 +42,43 @@ describe("EvalTargetMatrix client logo", () => {
       getHostLogoSrc("codex"),
     );
   });
+
+  it("hands a paired client's model cell its agent loop as the harness", () => {
+    const renderModels = vi.fn(() => null);
+    render(
+      <EvalTargetMatrix
+        hostIds={["host-claude", "host-emulated"]}
+        hosts={[
+          {
+            hostId: "host-claude",
+            name: "Claude",
+            hostStyle: "claude",
+            harness: null,
+            agentLoop: "claude-code",
+          },
+          {
+            hostId: "host-emulated",
+            name: "MCPJam",
+            hostStyle: "mcpjam",
+            harness: null,
+            agentLoop: null,
+          },
+        ]}
+        modelSelection={undefined}
+        availableModels={[]}
+        maxTargets={4}
+        projectId="proj-1"
+        modelsEditable={false}
+        renderModels={renderModels}
+        onHostsChange={() => {}}
+        onModelSelectionChange={() => {}}
+        onRemoveClient={() => {}}
+      />,
+    );
+
+    expect(renderModels).toHaveBeenCalledWith("host-claude", {
+      harnessId: "claude-code",
+    });
+    expect(renderModels).toHaveBeenCalledWith("host-emulated", null);
+  });
 });

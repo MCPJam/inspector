@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "3.23.1",
+  "version": "3.23.3",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -52,6 +52,8 @@
     "predev:app": "node scripts/check-dev-env.mjs --task=dev && npm run sdk:build && npm run bundle:all",
     "dev:app": "node scripts/dev-session-token.mjs dev:app:processes",
     "dev:worktree": "node scripts/dev-worktree.mjs",
+    "qa:start": "node scripts/qa-start.mjs",
+    "qa:stop": "node scripts/qa-stop.mjs",
     "dev:setup-guest-auth": "node scripts/dev-setup-guest-auth.mjs",
     "worktree": "node scripts/worktree.mjs",
     "dev:hosted": "cross-env VITE_MCPJAM_HOSTED_MODE=true node scripts/dev-worktree.mjs",
@@ -178,7 +180,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@lezer/highlight": "^1.2.5",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^10.9.0",
+    "@mcpjam/sdk": "^10.11.0",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@novnc/novnc": "^1.7.0",
@@ -229,7 +231,7 @@
     "playwright": "1.63.0",
     "postcss": "^8.5.28",
     "posthog-js": "^1.435.3",
-    "posthog-node": "^5.54.1",
+    "posthog-node": "5.54.1",
     "proper-lockfile": "4.1.2",
     "radix-ui": "^1.6.7",
     "re2js": "^2.8.7",

@@ -448,11 +448,10 @@ export function harnessReasoningEffortRefusalReason(args: {
  * function exists to make unrepresentable — Codex's MCP tools are host-executed,
  * so `supportsMcpToolApproval` says nothing about them.
  *
- * An UNATTENDED run (evals, swarms: nobody can answer) is refused whatever the
- * adapter can do. A runtime that pauses would otherwise be admitted and then
- * fail at its first gated call (an eval turn has no session to park in) or
- * stall silently (a swarm parks a pause nobody resumes). Refusing up front is
- * the same posture a runtime that can't pause already gets.
+ * Who answers is not decided here. A run nobody can answer (an eval, a swarm,
+ * an API turn) reaches this with the switch as its approval policy applies it
+ * (`appliedToolApproval`), and MCPJam denies each request the runtime pauses
+ * on, so the same capability rules hold for it.
  */
 
 /**
@@ -515,8 +514,9 @@ export function checkHarnessRuntimeAvailable(args: {
   /** Where the turn runs. Guests are decided by the backend's capability map,
    *  and `local` comes from `localExecution`. */
   surface: Exclude<HarnessSurface, "guests" | "local">;
-  /** The host's resolved approval gate. The runtimes can't pause for native/MCP
-   *  tool approval, so an approval host is rejected (capability-driven). */
+  /** The host's switch as the surface's approval policy applies it
+   *  (`appliedToolApproval`): off for evals and the API. With it on, a runtime
+   *  that cannot pause where its tools run is refused (capability-driven). */
   requireToolApproval: boolean;
   /** Whether the host has any selected MCP servers. No longer a refusal on its
    *  own — every harness delivers them — but it still selects which approval
@@ -604,10 +604,6 @@ export function checkHarnessRuntimeAvailable(args: {
    * adapter has not verified it, rather than silently not applied.
    */
   reasoningEffort?: ModelReasoningEffort;
-  /** Nobody can answer an approval on this run (evals, swarms). Not derived
-   *  from `purpose`: a human scenario chat reads models strictly as `eval`
-   *  but can still answer an approval. */
-  unattended?: boolean;
   /**
    * The turn's saved model selection, when it has one. A `source: 'org'`
    * selection naming a connection that serves this harness's API is
@@ -686,7 +682,6 @@ export function checkHarnessRuntimeAvailable(args: {
     mcpClient: args.mcpClient,
     requireToolApproval: args.requireToolApproval,
     hasSelectedMcpServers: args.hasSelectedMcpServers,
-    unattended: args.unattended === true,
   });
   if (approvalRefusal) {
     return { ok: false, kind: "tool-approval", reason: approvalRefusal };

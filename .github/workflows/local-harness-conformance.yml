@@ -74,6 +74,13 @@ on:
         required: false
         type: boolean
         default: false
+      macos_runner:
+        description: >-
+          Runner label for every macOS leg (default `macos-latest`). A release
+          passes an Apple Silicon label outside GitHub's five-job macOS cap.
+        required: false
+        type: string
+        default: ""
     outputs:
       conformance_version:
         description: The identifier to stamp into `lifecycleConformanceVersion`.
@@ -95,6 +102,11 @@ on:
         default: ""
       runtime_pack_versions:
         description: Other runtimes' pinned published packs, `<harnessId>=<version>` pairs (empty builds source).
+        required: false
+        type: string
+        default: ""
+      macos_runner:
+        description: Runner label for every macOS leg (empty means macos-latest).
         required: false
         type: string
         default: ""
@@ -176,6 +188,7 @@ jobs:
           RUNTIME_INPUT: ${{ inputs.runtime_pack_versions }}
           HARNESSES: ${{ inputs.harnesses }}
           CERTIFIED_ONLY: ${{ inputs.certified_only }}
+          MACOS_RUNNER: ${{ inputs.macos_runner }}
         run: node mcpjam-inspector/scripts/plan-local-harness-conformance.mjs >> "$GITHUB_OUTPUT"
 
   unit:

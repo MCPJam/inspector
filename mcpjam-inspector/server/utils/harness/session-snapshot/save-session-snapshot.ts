@@ -28,6 +28,7 @@ import {
   encodeSnapshot,
   type SnapshotFileSession,
 } from "./snapshot-bundle.js";
+import { harnessConversationState } from "../registry.js";
 import { sessionFileSpec } from "./session-files.js";
 
 /** Long enough for a slow box and a large upload; short enough to never pile up. */
@@ -100,6 +101,7 @@ export async function saveSessionSnapshot(
   const home = await boxHome(args.session, signal);
   const spec = sessionFileSpec({
     harnessId: args.owner.harnessId,
+    conversationState: harnessConversationState(args.owner.harnessId),
     harnessSessionId: args.harnessSessionId,
     resumeState: args.resumeState,
     home,

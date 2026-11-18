@@ -30,6 +30,8 @@ import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
+import { LauncherProjectChoiceDialog } from "./components/connection/LauncherProjectChoiceDialog";
+import { useLauncherAttach } from "./hooks/use-launcher-attach";
 import { isSignOutInProgress } from "./lib/auth/sign-out-latch";
 import { useAuthExitCleanup } from "./hooks/use-sign-out";
 import { PendingOrganizationDeletions } from "./components/organization/PendingOrganizationDeletions";
@@ -52,9 +54,7 @@ import { EventsTab } from "./components/EventsTab";
 import { EventTriggersTab } from "./components/EventTriggersTab";
 import { ActiveHostCapsResolverScope } from "./contexts/active-host-client-capabilities-context";
 import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
-import { EvalsTab } from "./components/EvalsTab";
 import { EvaluateTab } from "./components/EvaluateTab";
-import { CiEvalsTab } from "./components/CiEvalsTab";
 import { UserTestingTab } from "./components/UserTestingTab";
 import { SwarmsTab } from "./components/swarms/SwarmsTab";
 import { EmptyState } from "./components/ui/empty-state";
@@ -374,7 +374,6 @@ import { GuestFeaturePreview } from "@/components/guest-preview/GatedFeaturePrev
 import { GuestPreviewCta } from "@/components/guest-preview/GuestPreviewCta";
 import type { GatedFeatureId } from "@/components/guest-preview/feature-highlights";
 import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
-import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
 import { useEventsEnabledState } from "@/hooks/useEventsEnabled";
 import { LegacyEvalRedirect } from "./components/routing/legacy-eval-redirect";
 import {
@@ -386,6 +385,7 @@ import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled"
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
+import { useOpenCodeHostEnabledState } from "./hooks/useOpenCodeHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -420,7 +420,6 @@ import {
   useAppRouteContext,
   type AppRouteContext,
 } from "./lib/app-route-context";
-import { useEvalsMode, type EvalsMode } from "./lib/eval-route-url";
 import {
   Navigate,
   Outlet,
@@ -777,7 +776,7 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
     case "organizations":
       return <OrganizationsRoute />;
     case "evals":
-      return <EvalsRoute />;
+      return <LegacyEvalRedirect />;
     case "evaluate":
       return <EvaluateRoute />;
     case "home":
@@ -1211,6 +1210,7 @@ function useTemplateVerifyDeepLink({
   const codexEnabled = useCodexHostEnabledState();
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabledState();
+  const openCodeEnabled = useOpenCodeHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1282,6 +1282,7 @@ function useTemplateVerifyDeepLink({
       codex: codexEnabled,
       copilotCli: copilotCliEnabled,
       cursorCli: cursorCliEnabled,
+      openCode: openCodeEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1360,6 +1361,7 @@ function useTemplateVerifyDeepLink({
     codexEnabled,
     cursorCliEnabled,
     copilotCliEnabled,
+    openCodeEnabled,
     flagWaitExpired,
     roleLoading,
     canCreateHost,
@@ -1620,59 +1622,6 @@ export function ToolsRoute() {
         />
       </div>
     </ActiveHostCapsResolverScope>
-  );
-}
-
-/**
- * Evaluate — one route, two lenses. Suites authors and runs eval suites;
- * Runs reviews what CI already produced. Both gate on the same `evals`
- * billing feature because they are one tab.
- */
-export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
-  const legacyEnabled = useEvaluateEnabled();
-  if (!legacyEnabled) return <LegacyEvalRedirect />;
-  return (
-    <PricingFeatureSignInGate feature="Evals">
-      <EvalsRouteContent mode={mode} />
-    </PricingFeatureSignInGate>
-  );
-}
-
-function EvalsRouteContent({ mode }: { mode?: EvalsMode } = {}) {
-  const {
-    activeTabBillingLocked,
-    activeTabBillingFeature,
-    convexProjectId,
-    ensureServersReady,
-    handleContinueEvalInChat,
-    handleConnect,
-  } = useAppRouteContext();
-  // The route table passes `mode` explicitly. The no-Router fallback body
-  // (component tests) dispatches on the tab id alone, which is `evals` for
-  // both lenses, so resolve from the URL when the prop is absent.
-  const pathnameMode = useEvalsMode();
-  const activeMode = mode ?? pathnameMode;
-
-  if (activeTabBillingLocked && activeTabBillingFeature) {
-    return <ActiveBillingUpsellGate />;
-  }
-
-  if (activeMode === "runs") {
-    return (
-      <CiEvalsTab
-        convexProjectId={convexProjectId}
-        ensureServersReady={ensureServersReady}
-      />
-    );
-  }
-
-  return (
-    <EvalsTab
-      projectId={convexProjectId}
-      ensureServersReady={ensureServersReady}
-      onContinueInChat={handleContinueEvalInChat}
-      handleConnect={handleConnect}
-    />
   );
 }
 
@@ -2031,8 +1980,8 @@ export function ScenariosRoute() {
   // whichever flag moves last silently decides what a visitor sees — so REEV-6
   // owns these two routes and the wrapper is removed from them.
   //
-  // It STAYS on Evals (`EvalsRoute`, `EvalRunnerRoute`). Evaluate is out of
-  // REEV-6's scope by decision, so nothing here replaces that gate.
+  // Evaluate keeps its own sign-in gate; its access policy is independent of
+  // the User Testing preview.
   //
   // What the preview has that the message does not: it shows the product, and
   // it offers sign-UP. Their message only offers sign-in, which is the wrong
@@ -3868,6 +3817,38 @@ export default function App() {
     [appState],
   );
   useInspectorCommandBus({ onScopeStepUp: handleInspectorScopeStepUp });
+  // Dev commands (launchInspector, the Vite plugin) attach their server here.
+  const launcherSignedIn = Boolean(workOsUser) && isCloudSyncActive;
+  useLauncherAttach({
+    enabled: !HOSTED_MODE,
+    // The developer's sign-in, not whether this tab has loaded: a signed-in
+    // tab still loading its project must not ask them to sign in.
+    signedIn: Boolean(workOsUser),
+    // Only once the project's saved servers have loaded: before that a
+    // same-name server the project already has is invisible to the tab.
+    project:
+      launcherSignedIn && areServersHydrated && activeProject?.sharedProjectId
+        ? { id: activeProject.sharedProjectId, name: activeProject.name }
+        : null,
+    servers: projectServers,
+    selectedServer: appState.selectedServer,
+    saveAndConnect: (formData, onSaved) =>
+      handleConnect(formData, {
+        suppressSuccessToast: true,
+        onConfigSaved: onSaved,
+      }),
+    connectSaved: (serverName) =>
+      reconnectServerWithResult(serverName, { suppressSuccessToast: true }),
+    saveWithoutConnecting: async (formData) =>
+      (await saveServerConfigWithoutConnecting(formData)) !== false,
+    removeServer: (serverName) => handleRemoveServer(serverName),
+    disconnectServer: (serverName) => handleDisconnect(serverName),
+    selectServer: setSelectedServer,
+    requestSignIn: () => {
+      captureAppSignInReturnPath();
+      void signIn();
+    },
+  });
   // MCPJam UI tools: registered in both modes; the always-available side
   // panel drives whichever inspector surface is open, so registration lives
   // at the App root. Disabled on the standalone scenario chat route: its end
@@ -6928,6 +6909,7 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <StdioCommandApprovalDialog />
+            <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
               isAuthenticated={isAuthenticated}
               routeTab={activeTab}

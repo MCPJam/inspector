@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js";
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
+import { bridgeInitializeResult } from "./bridge-initialize.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -284,35 +285,6 @@ export async function parseAndValidateJsonRpc(
   return { ok: true, body: body as JsonRpcBody };
 }
 
-export function buildInitializeResult(serverId: string, mode: BridgeMode) {
-  if (mode === "adapter") {
-    return {
-      protocolVersion: "2025-06-18",
-      capabilities: {
-        tools: { listChanged: true },
-        prompts: {},
-        resources: { listChanged: true, subscribe: true },
-        logging: {},
-        roots: { listChanged: true },
-      },
-      serverInfo: { name: serverId, version: "stdio-adapter" },
-    };
-  }
-  // manager mode (SSE transport facade)
-  return {
-    protocolVersion: "2025-06-18",
-    capabilities: {
-      tools: true,
-      prompts: true,
-      resources: true,
-      logging: false,
-      elicitation: {},
-      roots: { listChanged: true },
-    },
-    serverInfo: { name: serverId, version: "mcpjam-proxy" },
-  };
-}
-
 function toJsonSchemaMaybe(schema: any): any {
   try {
     if (schema && typeof schema === "object") {
@@ -434,32 +406,16 @@ export async function handleJsonRpc(
     switch (method) {
       case "ping":
         return respond({ result: {} });
-      case "initialize": {
-        // Mirror the real upstream handshake (capabilities, serverInfo,
-        // instructions) so remote clients negotiate against what the
-        // connected server actually supports. The fabricated result is
-        // only a fallback for servers that haven't connected yet.
-        const info = clientManager.getInitializationInfo(serverId);
-        if (info) {
-          const result: any = {
-            protocolVersion:
-              options.downstreamProtocolVersion ??
-              info.protocolVersion ??
-              (typeof params?.protocolVersion === "string"
-                ? params.protocolVersion
-                : "2025-06-18"),
-            capabilities: info.serverCapabilities ?? {},
-            serverInfo:
-              info.serverVersion ??
-              ({ name: serverId, version: "unknown" } as any),
-          };
-          if (info.instructions !== undefined) {
-            result.instructions = info.instructions;
-          }
-          return respond({ result });
-        }
-        return respond({ result: buildInitializeResult(serverId, mode) });
-      }
+      case "initialize":
+        return respond({
+          result: bridgeInitializeResult({
+            serverId,
+            mode,
+            manager: clientManager,
+            params,
+            downstreamProtocolVersion: options.downstreamProtocolVersion,
+          }),
+        });
       case "tools/list": {
         const list = await clientManager.listTools(serverId, bridgeRequestParams(params), {
           signal: options.signal,

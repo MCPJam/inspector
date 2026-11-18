@@ -70,19 +70,32 @@ function withOwnSkillsOnly<T extends HarnessV1>(harness: T): T {
   };
 }
 
+/**
+ * A view of the session whose spawns carry {@link OWN_SKILLS_ONLY}. The proxy
+ * stands in front of an empty object rather than the session: a local
+ * session's restricted view is frozen, and a proxy over a frozen object may
+ * not answer a property with anything but the object's own value.
+ *
+ * That makes this a view for named reads and calls only. The pinned adapter
+ * reads `id`, `ports`, `getPortEndpoint` and `addRequestTransformations` by
+ * name and uses `spawn` and `restricted`; it never spreads the session, lists
+ * its keys or checks its prototype, and the proxy would answer each of those
+ * as an empty object. Re-check this when the adapter version changes.
+ */
 function withSpawnEnv<S extends object>(session: S): S {
-  return new Proxy(session, {
-    get(target, key) {
-      const value = Reflect.get(target, key);
+  return new Proxy(Object.create(null) as S, {
+    get(_, key) {
+      const value = Reflect.get(session, key);
       if (key === "restricted" && typeof value === "function")
-        return () => withSpawnEnv(value.call(target));
+        return () => withSpawnEnv(value.call(session));
       if (key === "spawn" && typeof value === "function")
         return (request: { env?: Record<string, string> }) =>
-          value.call(target, {
+          value.call(session, {
             ...request,
             env: { ...request.env, ...OWN_SKILLS_ONLY },
           });
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === "function" ? value.bind(session) : value;
     },
+    has: (_, key) => Reflect.has(session, key),
   });
 }
