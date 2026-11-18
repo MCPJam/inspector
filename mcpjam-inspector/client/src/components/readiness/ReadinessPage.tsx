@@ -70,9 +70,9 @@ function runProvenance(run: DirectoryReadinessState, flowVersion?: string): stri
 
 function runStatus(run: DirectoryReadinessState) {
   if (run.status === "running") return "Checking…";
-  if (run.status === "error") return run.error ? `Checks could not start. ${run.error}` : "Checks could not start";
+  if (run.status === "error") return run.error ? `Checks could not start. ${run.error} Try again.` : "Checks could not start. Try again.";
   if (run.status === "unavailable") return "Choose a remote server to run checks.";
-  if (run.run?.status === "failed") return run.run.errorMessage ? `Last run failed. ${run.run.errorMessage}` : "Last run failed";
+  if (run.run?.status === "failed") return run.run.errorMessage ? `Last run failed. ${run.run.errorMessage} Run checks again.` : "Last run failed. Run checks again.";
   if (run.run?.status === "cancelled") return "Last run cancelled";
   return undefined;
 }

@@ -45,7 +45,7 @@ export function MarketplaceOverview({
           );
       },
       () => {
-        if (!abort.signal.aborted) setError("Could not load submissions.");
+        if (!abort.signal.aborted) setError("Could not load submissions. Try again.");
       },
     );
     return () => {
@@ -88,7 +88,7 @@ export function MarketplaceOverview({
         setError(
           failure instanceof Error
             ? failure.message
-            : "Could not open submission.",
+            : "Could not open the submission. Try opening it again.",
         );
       }
     }
