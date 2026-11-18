@@ -124,6 +124,11 @@ describe("loadCaseSteps", () => {
     expect(loadCaseSteps({ steps })).toEqual(steps);
   });
 
+  it("reads a missing case as no steps", () => {
+    expect(loadCaseSteps(undefined)).toEqual([]);
+    expect(loadCaseSteps(null)).toEqual([]);
+  });
+
   it("bridges a case with no steps through its query", () => {
     const loaded = loadCaseSteps({ query: "List my workspaces" });
     expect(loaded[0]).toMatchObject({
