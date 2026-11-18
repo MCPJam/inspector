@@ -1,25 +1,27 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { ReactNode } from "react";
-import { CircleCheck } from "lucide-react";
+import { CircleCheck, Sparkles } from "lucide-react";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import {
   FeatureSpotlight,
   FeatureSpotlightActions,
   FeatureSpotlightAnchor,
+  FeatureSpotlightBadge,
+  FeatureSpotlightCard,
   FeatureSpotlightClose,
   FeatureSpotlightContent,
   FeatureSpotlightDescription,
   FeatureSpotlightTitle,
 } from "@mcpjam/design-system/feature-spotlight";
+import { ThemePair } from "../_support/theme-pair";
 
 /**
- * FeatureSpotlight stories. When to use it is on the Overview page
- * (FeatureSpotlight.mdx). The Conformance intro in the sidebar is the first
+ * Spotlight stories. When to use it is on the Overview page (Spotlight.mdx). The Conformance intro in the sidebar is the first
  * user; its CTA options are laid out below.
  */
 const meta = {
-  title: "Components/Feature Spotlight",
+  title: "Components/Spotlight",
   component: FeatureSpotlight,
   parameters: { layout: "fullscreen" },
 } satisfies Meta<typeof FeatureSpotlight>;
@@ -56,10 +58,14 @@ function Spotlit({
   );
 }
 
-function ConformanceCopy() {
+function ConformanceCopy({
+  badge = <FeatureSpotlightBadge />,
+}: {
+  badge?: ReactNode;
+}) {
   return (
     <>
-      <Badge variant="secondary">New</Badge>
+      {badge}
       <FeatureSpotlightTitle>
         Check your server against the MCP spec
       </FeatureSpotlightTitle>
@@ -141,6 +147,77 @@ export const CtaOptions: Story = {
           </Button>
         </FeatureSpotlightActions>
       </Spotlit>
+    </div>
+  ),
+};
+
+function StaticCard({ badge }: { badge?: ReactNode }) {
+  return (
+    <FeatureSpotlightCard>
+      <ConformanceCopy badge={badge} />
+      <FeatureSpotlightActions>
+        <Button size="sm">Check excalidraw</Button>
+        <Button size="sm" variant="ghost">
+          Got it
+        </Button>
+      </FeatureSpotlightActions>
+    </FeatureSpotlightCard>
+  );
+}
+
+/** The shipping card in both themes. */
+export const LightAndDark: Story = {
+  globals: { theme: "light" },
+  render: () => (
+    <ThemePair>
+      <StaticCard />
+    </ThemePair>
+  ),
+};
+
+const NEW_BADGES: { caption: string; badge: ReactNode }[] = [
+  {
+    caption: "A. Secondary (before)",
+    badge: <Badge variant="secondary">New</Badge>,
+  },
+  { caption: "B. Primary fill", badge: <Badge>New</Badge> },
+  {
+    caption: "C. Primary fill with icon",
+    badge: (
+      <Badge>
+        <Sparkles aria-hidden />
+        New
+      </Badge>
+    ),
+  },
+  {
+    caption: "D. Primary tint (ships)",
+    badge: <FeatureSpotlightBadge />,
+  },
+  {
+    caption: "E. Outline with a primary dot",
+    badge: (
+      <Badge variant="outline">
+        <span className="size-1.5 rounded-full bg-primary" aria-hidden />
+        New
+      </Badge>
+    ),
+  },
+];
+
+/** Options for the "New" badge, each in both themes. */
+export const NewBadgeOptions: Story = {
+  globals: { theme: "light" },
+  render: () => (
+    <div className="flex flex-col">
+      {NEW_BADGES.map(({ caption, badge }) => (
+        <div key={caption} className="flex flex-col">
+          <p className="px-6 pt-6 text-sm font-medium">{caption}</p>
+          <ThemePair>
+            <StaticCard badge={badge} />
+          </ThemePair>
+        </div>
+      ))}
     </div>
   ),
 };
