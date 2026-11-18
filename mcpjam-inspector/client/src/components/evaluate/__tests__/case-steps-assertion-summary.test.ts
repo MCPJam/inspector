@@ -169,4 +169,22 @@ describe("assertionSummary edge cases", () => {
       label: "No tool should be called",
     });
   });
+
+  const called = (role?: "advisory") =>
+    ({
+      type: "toolCalledWith",
+      toolName: "search",
+      args: { args: { q: "x" } },
+      ...(role ? { role } : {}),
+    }) as Predicate;
+
+  it("grades a gating tool assert by the case's argument matching", () => {
+    const { extra } = assertionSummary(called(), true, "exact");
+    expect(extra).toBe("1 argument, exact match");
+  });
+
+  it("keeps an advisory tool assert's own matching", () => {
+    const { extra } = assertionSummary(called("advisory"), true, "exact");
+    expect(extra).toBe("1 argument, partial match");
+  });
 });
