@@ -5247,6 +5247,9 @@ const runLocalIteration = async ({
   // Maps account-routed calls back to the server's tools. Declared out here
   // because the catch below records a failed turn's calls too.
   let accountRouting: AccountRouting | undefined;
+  // Failed interact / widget-DOM-assert steps. Out here so a failure after
+  // they were recorded still reports them on the `platform:widgetCheck` row.
+  let stepScriptedFailures: { toolName: string; reason: string }[] = [];
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -5565,9 +5568,9 @@ const runLocalIteration = async ({
     // (the clean per-step contract the public /steps API projects).
     let stepResults: unknown[] = [];
     // §2: failed interact / widget-DOM-assert steps recorded in StepExecutionState
-    // (not in browser.scriptedCheckFailures) — folded into the verdict's
-    // scripted-check gate so they actually fail the iteration.
-    let stepScriptedFailures: { toolName: string; reason: string }[] = [];
+    // (not in browser.scriptedCheckFailures) are folded into the verdict's
+    // scripted-check gate, via `stepScriptedFailures` above, so they actually
+    // fail the iteration.
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -6198,7 +6201,12 @@ const runLocalIteration = async ({
         trace: { messages: failMessages, spans: acc.capturedSpans },
         pinnedToolErrors: acc.pinnedToolErrors,
         iterationError: errorMessage ?? acc.iterationError ?? "iteration failed",
-        scriptedCheckFailures: [],
+        // Whatever the widget checks had already found, so the row still says
+        // why when a later step (finalization included) is what threw.
+        scriptedCheckFailures: [
+          ...browser.scriptedCheckFailures,
+          ...stepScriptedFailures,
+        ],
       },
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
