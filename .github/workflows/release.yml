@@ -487,6 +487,10 @@ jobs:
       codex_published_pack_version: ${{ needs.preflight.outputs.codex_desired_pack }}
       runtime_pack_versions: ${{ needs.preflight.outputs.runtime_desired_packs }}
       certified_only: true
+      # Blacksmith's Apple Silicon runners, outside GitHub's five-job macOS
+      # cap that queued these legs for twenty minutes. Same macOS 26 image as
+      # `macos-latest`. Set RELEASE_MACOS_RUNNER to `macos-latest` to go back.
+      macos_runner: ${{ vars.RELEASE_MACOS_RUNNER || 'blacksmith-6vcpu-macos-latest' }}
 
   local-harness-evidence-permitted:
     needs: [preflight, local-harness-evidence-lookup]
@@ -503,6 +507,7 @@ jobs:
       runtime_pack_versions: ${{ needs.preflight.outputs.runtime_permitted_packs }}
       harnesses: ${{ needs.preflight.outputs.permitted_harnesses }}
       certified_only: true
+      macos_runner: ${{ vars.RELEASE_MACOS_RUNNER || 'blacksmith-6vcpu-macos-latest' }}
 
   local-harness-contract:
     needs: [preflight, local-harness-evidence-lookup, local-harness-evidence, local-harness-evidence-permitted]
