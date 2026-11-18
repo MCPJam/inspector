@@ -3,7 +3,9 @@
  * body the backend writes (`sdk/tests/fixtures/credit-refusal-fixtures.json`);
  * every surface's first actionable sentence must be `formatCreditRecovery` of
  * its `recovery`, link included, and none may send the reader to the server
- * connection. A refusal from a backend without `recovery` keeps today's text.
+ * connection. A refusal from a backend without `recovery` keeps today's text,
+ * and so does a refusal that is not credit exhaustion (a spend cap): only
+ * MCPJam's own credit refusal may put its step in front of the reader.
  *
  * The runner's own end-to-end stop is pinned in `evals-runner.test.ts`, and
  * the CLI's `Recovery:` line in `cli/tests/eval-credit-recovery.test.ts` (the
@@ -17,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import {
   assembleEvalRunDecisionSummary,
   deriveStageResults,
-  findCreditRecovery,
+  creditRecoveryOfRefusal,
   formatCreditRecovery,
   NEXT_ACTION_BY_INFRA_CLASS,
   parseCreditRecovery,
@@ -73,8 +75,11 @@ const derivation = deriveStageResults({
 describe.each(
   corpus.cases.map((fixture) => [fixture.__name, fixture] as const),
 )("credit refusal %s", (_name, fixture) => {
-  const recovery = findCreditRecovery(refusalOf(fixture));
-  const expected = fixture.expectedRecovery;
+  // The runner's gate: only an exhaustion refusal's recovery is read.
+  const recovery = isCreditExhaustion(refusalOf(fixture))
+    ? creditRecoveryOfRefusal(refusalOf(fixture))
+    : undefined;
+  const expected = fixture.stopsRun ? fixture.expectedRecovery : null;
 
   /** Every surface's sentence must lead with the expected one. */
   const expectLeads = (text: string | undefined) => {
@@ -113,7 +118,9 @@ describe.each(
       retryable: false,
       code: fixture.body.code,
     },
-    recovery ? { creditRecovery: recovery } : {},
+    // The fixture's own recovery, even where the runner records none, so the
+    // projection's code gate is what keeps a non-credit refusal's step out.
+    fixture.body.recovery ? { creditRecovery: fixture.body.recovery } : {},
   ).infraError;
 
   it("projects on the v1 iteration's infraError", () => {
