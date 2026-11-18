@@ -34,7 +34,7 @@ list_eval_suites → get_eval_run_disclosure → run_eval_suite → get_eval_run
 
 **4. Poll.** `get_eval_run` with `project` and `runId` until `status` is terminal: `completed`, `failed`, `cancelled`, or `timed_out`. Anything else means still running; wait and ask again. Do not re-launch because a result is not ready.
 
-**5. Read the verdict.** On anything other than a pass, **start at `get_eval_run`'s `decisionSummary`** — it carries the verdict and `verdictSource`, which tells you what actually decided the outcome. Do not jump straight to iterations; you will read a lot of rows without knowing what you are looking for. `references/triage.md` is the decision tree from here.
+**5. Read the verdict.** On anything other than a pass, **start at `get_eval_run`'s `decisionSummary`** — it carries the verdict and `verdictSource`, which tells you what actually decided the outcome. Do not jump straight to iterations; you will read a lot of rows without knowing what you are looking for. `references/triage.md` is the decision tree from here. A diagnostic's `nextAction` can say to check the server connection when the cause was a model or credit failure, even with the `connection` and `discovery` stages `passed`. Trust the stage states and the iteration's error over that line.
 
 **6. Compare, when there is a baseline.** `compare_eval_run` with `baseRunId` (or `baseCommitSha`) classifies each case as `regressed`, `fixed`, `new_case`, `removed_case`, `changed`, `unchanged_passed`, or `unchanged_failed`. This is the tool that answers "did my change break anything", which a single run's pass rate cannot.
 
@@ -51,6 +51,7 @@ Rules:
 - **Never call either in a loop, or to poll.** Polling is `get_eval_run`, which is free.
 - **Pass `idempotencyKey` when a launch might be retried.** A transport error is not proof the run did not start; retrying without the key can bill the same run twice.
 - **A failed run has already been paid for.** Re-running to "see if it passes this time" spends again and is rarely the right next step — triage first.
+- **A run that stops for credits** (`user_rate_limit`, a daily or monthly MCPJam model limit, a required platform fee): tell the user first that upgrading the plan (Free to Pro) at `https://app.mcpjam.com/billing` is the immediate fix. Free plans cannot buy credits. BYOK avoids MCPJam inference charges but not platform fees. Waiting for the allowance to reset is the last option. Results the run completed are saved. Do not relaunch on your own; if the user upgrades and asks for a relaunch, use a new `idempotencyKey`, because the old one returns the stopped run. Never pay, upgrade, or buy credits yourself.
 
 ## Polling without being a nuisance
 

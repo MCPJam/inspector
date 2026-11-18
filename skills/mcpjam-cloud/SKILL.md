@@ -9,7 +9,7 @@ description: Drive MCPJam Cloud from the `mcpjam cloud` CLI — sign in, pick a 
 
 ## Setup
 
-- Install with `npm i -g @mcpjam/cli`, or prefix commands with `npx -y @mcpjam/cli@latest` instead of `mcpjam`. `mcpjam cloud <group> <command> --help` is the authoritative flag list; read it before passing a flag this skill does not name.
+- Install with `npm i -g @mcpjam/cli`, or prefix commands with `npx -y @mcpjam/cli@latest` instead of `mcpjam`. `mcpjam cloud <group> <command> --help` is the authoritative flag list; read it before passing a flag this skill does not name. It does not prove a command exists: `<group> <unknown> --help` prints the parent group's help and exits `0`. Check that the command appears in the group's command list.
 - Top-level commands (`mcpjam server`, `mcpjam tools`, `mcpjam oauth`, …) are local and use no account. These use MCPJam credentials: `mcpjam cloud …`, `mcpjam registry …`, the hosted `mcpjam readiness start|status|list|cancel|report` commands, and `mcpjam test`, which needs an MCPJam login or `sk_` key for every run, BYOK included. `mcpjam conformance run` and the single-suite conformance commands with `--upload` also use it, to upload results.
 - `mcpjam cloud login` signs in to MCPJam. `mcpjam oauth login` signs in to an MCP server under test. They never stand in for each other.
 - Credentials, first match wins: `--api-key sk_…`, then `MCPJAM_API_KEY`, then the stored `mcpjam cloud login` session. Only `sk_` keys are accepted. `--api-key`, `--api-url`, and `--api-header` belong to `mcpjam cloud` and work before or after the subcommand.
@@ -50,7 +50,11 @@ Most commands act on one project, chosen in this order: `--project <id-or-name>`
 
 ### Get a server into the project
 
-- Public HTTPS server: `mcpjam cloud projects servers connect --url <url> --project <p>`. If the server needs OAuth, the command prints a private authorization link and opens a browser unless `--no-browser` is set; pass the link to the user rather than completing consent yourself. A pending request holds one of five concurrent-connection slots for up to an hour; cancel abandoned ones with `connect-cancel --request <id>`.
+- Public HTTPS server: `mcpjam cloud projects servers connect --url <url> --project <p>`. Always pass `--project`. Without it the request stops at `awaiting_project`, which needs a person in a browser even for a server with no auth.
+  - Read `status` in the result. A browser is needed only when it is `awaiting_project` or `awaiting_authorization`. In that case the command prints a private link and opens a browser unless `--no-browser` is set; pass the link to the user rather than completing consent yourself, and never post it anywhere shared. Some CLI versions print a link line for other statuses too; go by `status`, not by the link.
+  - `ready` means the server is saved in the project. If `server.enabled` is `false`, someone disabled that server on purpose. Tell the user; do not run `servers update --body '{"enabled":true}'` yourself.
+  - Never edit server state to get past connect. A `failed` status carries an `error`; report it.
+  - A pending request holds one of five concurrent-connection slots for up to an hour; cancel abandoned ones with `connect-cancel --request <id>`.
 - Local server: `mcpjam cloud tunnel --server <name> --project <p> http://localhost:3000/mcp`, or for stdio `mcpjam cloud tunnel --server <name> --project <p> -- node server.js`. The tunnel runs until interrupted, so start it in the background. Its public URL embeds a bearer secret, and every re-run rotates it; an existing server with that name is repointed at the tunnel.
 - `mcpjam cloud projects status --project <p>` runs a hosted doctor against every saved server.
 
@@ -67,12 +71,38 @@ Flags do not carry over between commands, so pass the same `--project` to each s
 ### Run hosted evals from the CLI
 
 1. `mcpjam cloud eval list --project <p>` to find the suite. For a local suite file, `mcpjam cloud eval validate --file <path>` checks it offline first.
-2. `mcpjam cloud eval run --suite <id-or-name> --project <p> --idempotency-key <key>` starts a run and **spends**. `--environment`, `--client`, and `--all-targets` start one paid run per target, and `--iterations` multiplies every case. Say how many runs and iterations before launching. Add `--wait` to block until it finishes.
-3. `mcpjam cloud eval status --run <id> --project <p>` reports status and the verdict. Poll it instead of relaunching.
-4. On a failure: `mcpjam cloud eval iterations --run <id> --project <p>` (paginated; follow the cursor), then `mcpjam cloud eval steps --run <id> --iteration <id> --project <p>` for the step that failed and its evidence. `eval trace`, `eval screenshot`, and `eval video` fetch more.
-5. `mcpjam cloud eval compare --run <id> --project <p> --gate-regressions` exits `1` on a statistically significant pass-rate regression against the previous completed run; without `--gate-regressions` it does not gate pass rate. `mcpjam cloud eval gate --run <id> --project <p> --min-pass-rate-percent <n>` applies an absolute threshold. Both turn a finished run into a CI exit code.
+2. Before launching, tell the user how many runs and iterations this starts and get a yes. `--environment`, `--client`, and `--all-targets` start one paid run per target, and `--iterations` multiplies every case: runs × cases × iterations model conversations. The CLI has no separate disclosure step. In human format, `eval run` prints a `Pre-run disclosure:` block (models, where they route, capture, retention) just before it creates the run, without pausing, and it says nothing about cost. With `--format json` that block is not printed; the receipt carries a `disclosure` field after launch. So the count you tell the user is the only pre-launch cost check.
+3. `mcpjam cloud eval run --suite <id-or-name> --project <p> --idempotency-key <key>` starts the run and **spends**. Add `--wait` to block until every started run is terminal; `--wait-timeout <ms>` caps the wait (default 600000, plus up to 31 minutes for a run held for its judge unless you set the flag).
+4. Without `--wait`, poll `mcpjam cloud eval status --run <id> --project <p>`. Never relaunch to poll. Run statuses: `pending`, `running`, and `grading` (every trial done, waiting for the judge) are still going; `completed`, `failed`, `cancelled`, and `timed_out` are final. Only `completed` carries a verdict in `result`.
+5. On anything but a pass, triage in this order: `eval status` (the verdict and its decision summary, including each stage's state), then `mcpjam cloud eval iterations --run <id> --project <p>` (paginated; follow the cursor) for the failing iteration and its error, then `mcpjam cloud eval steps --run <id> --iteration <id> --project <p>` for the step that failed and its evidence. `eval trace`, `eval screenshot`, and `eval video` fetch more.
+6. `mcpjam cloud eval compare --run <id> --project <p> --gate-regressions` exits `1` on a statistically significant pass-rate regression against the previous completed run; without `--gate-regressions` it does not gate pass rate. `mcpjam cloud eval gate --run <id> --project <p> --min-pass-rate-percent <n>` applies an absolute threshold. Both turn a finished run into a CI exit code.
+
+Exit codes for `eval run --wait` (without `--wait`, `eval run` exits `0` once the launch succeeds):
+
+| Code | Meaning |
+|---|---|
+| `0` | Every waited run completed and passed. |
+| `1` | A run completed with `result: "failed"`. Nothing else produces `1`. |
+| `2` | Usage error or invalid suite file, including an organization AI-key policy refusal. |
+| `3` | Auth failed: no credential, or it was rejected at launch or during the wait. |
+| `4` | Setup or launch failed before evaluation, including a billing or credit refusal at launch. |
+| `5` | No valid verdict: an `inconclusive` result, a run whose status is `failed`, `cancelled`, or `timed_out` (a run stopped by credit exhaustion lands here), or a wait that hit its deadline with the run still going. |
+
+Several targets merge worst-of in the order `1 > 3 > 4 > 5 > 0`. `eval gate` uses a different four-code contract, where `3` means incomplete.
+
+A run's decision summary can carry a `nextAction` that says to check the server connection when the real cause was a model or credit failure, even with the connection and discovery stages `passed`. Trust the stage states and the iteration's error over that line.
 
 `eval judge` and `eval judge-backtest` also spend. The `run-mcpjam-evals` skill covers the same loop through MCPJam's hosted MCP tools and has the triage decision tree; `mcpjam-eval-import` converts an existing test corpus into a suite file.
+
+### When a run stops for credits
+
+A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, or a required platform fee means the organization is out of allowance. In this order:
+
+1. Tell the user first that upgrading the plan (Free to Pro) is the immediate fix, and send them to `https://app.mcpjam.com/billing`. Free plans cannot buy credits; paid plans can buy them on the same page.
+2. Bring your own provider keys (BYOK) to stop MCPJam inference charges. BYOK does not remove platform fees.
+3. Waiting for the allowance to reset is the last option, not the first.
+
+Results the run completed before it stopped are saved. Do not relaunch on your own. If the user upgrades and asks to relaunch, pass a NEW `--idempotency-key`: reusing the old key returns the stopped run instead of starting one. Never pay, upgrade, or buy credits yourself.
 
 ### Swarms goals
 
