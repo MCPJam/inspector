@@ -1,4 +1,4 @@
-import { createServer, type Server } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
@@ -19,23 +19,37 @@ function buildServer(): McpServer {
   return server;
 }
 
-/** Serves the MCP server over stateless Streamable HTTP at `/mcp`. */
-export function startMcpServer(port: number): Promise<Server> {
-  const http = createServer(async (req, res) => {
-    if (!req.url?.startsWith("/mcp")) {
-      res.writeHead(404).end();
-      return;
-    }
-    const server = buildServer();
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    res.on("close", () => {
-      void transport.close();
-      void server.close();
-    });
+/**
+ * Answers one MCP request over stateless Streamable HTTP. Each request gets
+ * its own server and transport, so there is no session to lose when Vite
+ * restarts and reloads this file.
+ */
+export async function handleMcpRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const server = buildServer();
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+  });
+  res.on("close", () => {
+    void transport.close();
+    void server.close();
+  });
+  try {
     await server.connect(transport);
     await transport.handleRequest(req, res);
-  });
-  return new Promise((resolve) => http.listen(port, "127.0.0.1", () => resolve(http)));
+  } catch (error) {
+    console.error("MCP request failed:", error);
+    if (!res.headersSent) {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32603, message: "Internal server error" },
+          id: null,
+        }),
+      );
+    }
+  }
 }
