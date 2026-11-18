@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import posthog from "posthog-js";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const validateHostedServerMock = vi.fn();
@@ -24,6 +25,10 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
   beforeEach(() => {
     vi.useRealTimers();
     validateHostedServerMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("normalizes hosted project timing errors for testConnection", async () => {
@@ -193,6 +198,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
   });
 
   it("sends a finished OAuth flow's summary with the server's next connect only", async () => {
+    vi.spyOn(posthog, "isFeatureEnabled").mockReturnValue(true);
     validateHostedServerMock.mockResolvedValue({ success: true, status: "ok" });
     const summary = {
       completedAt: 1,
@@ -218,6 +224,42 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     const contexts = validateHostedServerMock.mock.calls.map((call) => call[3]);
     expect(contexts[0]).toMatchObject({ oauthFlowSummary: summary });
     expect(contexts[1]).not.toHaveProperty("oauthFlowSummary");
+  });
+
+  it("holds the OAuth flow's summary while server-canvas is off", async () => {
+    const canvasFlag = vi
+      .spyOn(posthog, "isFeatureEnabled")
+      .mockReturnValue(false);
+    validateHostedServerMock.mockResolvedValue({ success: true, status: "ok" });
+    const summary = {
+      completedAt: 2,
+      resourceIndicatorSent: false,
+      scopesRequested: [],
+      scopesGranted: [],
+      issReturned: false,
+      issValidated: false,
+      refreshTokenIssued: true,
+    };
+    rememberOAuthFlowSummary("Notion", summary);
+    const config: MCPServerConfig = { url: "https://mcp.notion.test/mcp" };
+    const connect = () =>
+      testConnection(config, "server-doc-id", {
+        projectId: "project-1",
+        serverName: "Notion",
+      });
+
+    await connect();
+    expect(canvasFlag).toHaveBeenCalledWith("server-canvas", {
+      send_event: false,
+    });
+    // The flag can still be the pre-sign-in evaluation; the next connect
+    // after it turns on carries the summary.
+    canvasFlag.mockReturnValue(true);
+    await connect();
+
+    const contexts = validateHostedServerMock.mock.calls.map((call) => call[3]);
+    expect(contexts[0]).not.toHaveProperty("oauthFlowSummary");
+    expect(contexts[1]).toMatchObject({ oauthFlowSummary: summary });
   });
 
   // Empty/missing pins must remain absent on the wire — the backend
