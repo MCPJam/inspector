@@ -6047,6 +6047,7 @@ describe("PlaygroundMain tester rules", () => {
       JSON.stringify({ "project-1": hostId }),
     );
     const studyImages = { placement: "collapsed" as const };
+    const hostVisibility = { directContent: { image: false } };
     mockHostQueryState.result = {
       hostId,
       name: "Saved host",
@@ -6056,6 +6057,7 @@ describe("PlaygroundMain tester rules", () => {
         temperature: 0.1,
         requireToolApproval: true,
         mcpToolResultImageRendering: { placement: "inline" },
+        modelVisibleMcpToolResults: hostVisibility,
       },
     };
     const originalMessages = mockUseChatSession.messages;
@@ -6086,6 +6088,9 @@ describe("PlaygroundMain tester rules", () => {
       expect(capturedChatSessionOptions.mcpToolResultImageRendering).toEqual(
         studyImages,
       );
+      expect(
+        capturedChatSessionOptions.modelVisibleMcpToolResults,
+      ).toBeUndefined();
 
       view.unmount();
       mockUseChatSession.setSystemPrompt.mockClear();
@@ -6100,6 +6105,9 @@ describe("PlaygroundMain tester rules", () => {
       expect(mockUseChatSession.setSystemPrompt).toHaveBeenCalledWith(
         "from the saved host",
       );
+      expect(capturedChatSessionOptions.modelVisibleMcpToolResults).toEqual(
+        hostVisibility,
+      );
     } finally {
       mockUseChatSession.messages = originalMessages;
       mockConvexAuthState.isAuthenticated = false;
@@ -6107,13 +6115,19 @@ describe("PlaygroundMain tester rules", () => {
     }
   });
 
-  it("keeps widget context when a follow-up is refused", async () => {
+  it("keeps widget context a follow-up did not send", async () => {
     mockSharedAppState.servers.asana = { connectionStatus: "connected" };
     const originalMessages = mockUseChatSession.messages;
     mockUseChatSession.messages = [
       { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
     ];
-    mockUseChatSession.sendMessage.mockResolvedValue(false);
+    const resolvers: Array<(sent: boolean) => void> = [];
+    mockUseChatSession.sendMessage.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
     try {
       render(
         <PlaygroundMain
@@ -6129,32 +6143,196 @@ describe("PlaygroundMain tester rules", () => {
           ) => void;
           sendFollowUpMessage?: (text: string) => Promise<void>;
         };
+      const contextFor = (toolCallId: string, rows: number) =>
+        expect.objectContaining({
+          toolCallId,
+          context: { structuredContent: { rows } },
+        });
       act(() => {
         thread().onModelContextUpdate?.("call_1", {
           structuredContent: { rows: 3 },
         });
       });
-      mockUseChatSession.sendMessage.mockClear();
-      await act(async () => {
-        await thread().sendFollowUpMessage?.("widget follow-up");
+
+      let followUp: Promise<void> | undefined;
+      act(() => {
+        followUp = thread().sendFollowUpMessage?.("refused");
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
       });
       await act(async () => {
-        await thread().sendFollowUpMessage?.("again");
+        resolvers[0]?.(false);
+        await followUp;
       });
-      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
-      for (const call of mockUseChatSession.sendMessage.mock.calls) {
-        expect(call[0]).toEqual(
-          expect.objectContaining({
-            widgetModelContext: [
-              expect.objectContaining({ toolCallId: "call_1" }),
-            ],
-          }),
-        );
-      }
+      expect(mockUseChatSession.sendMessage.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          widgetModelContext: [contextFor("call_1", 3)],
+        }),
+      );
+
+      act(() => {
+        followUp = thread().sendFollowUpMessage?.("admitted");
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
+      });
+      act(() => {
+        thread().onModelContextUpdate?.("call_1", {
+          structuredContent: { rows: 9 },
+        });
+        thread().onModelContextUpdate?.("call_2", {
+          structuredContent: { rows: 1 },
+        });
+      });
+      expect(mockUseChatSession.sendMessage.mock.calls[1]?.[0]).toEqual(
+        expect.objectContaining({
+          widgetModelContext: [contextFor("call_1", 3)],
+        }),
+      );
+      await act(async () => {
+        resolvers[1]?.(true);
+        await followUp;
+      });
+
+      act(() => {
+        followUp = thread().sendFollowUpMessage?.("next");
+      });
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(3);
+      });
+      expect(mockUseChatSession.sendMessage.mock.calls[2]?.[0]).toEqual(
+        expect.objectContaining({
+          widgetModelContext: [contextFor("call_1", 9), contextFor("call_2", 1)],
+        }),
+      );
+      await act(async () => {
+        resolvers[2]?.(true);
+        await followUp;
+      });
     } finally {
       delete mockSharedAppState.servers.asana;
       mockUseChatSession.messages = originalMessages;
       mockUseChatSession.sendMessage.mockReset();
+    }
+  });
+
+  it("sends a study attachment inline instead of uploading it to the visitor's computer", async () => {
+    const hostId = "hlk3m9x2q7v5b8n1t4r6s0dc";
+    mockConvexAuthState.isAuthenticated = true;
+    mockComputersFlag.enabled = true;
+    mockUploadAttachments.mockResolvedValue([
+      { name: "report.csv", path: "/home/user/attachments/report.csv" },
+    ]);
+    localStorage.setItem(
+      "mcp-previewed-host-id",
+      JSON.stringify({ "project-1": hostId }),
+    );
+    mockHostQueryState.result = {
+      hostId,
+      name: "Computer host",
+      config: {
+        id: "config-1",
+        modelId: "",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        serverIds: [],
+        optionalServerIds: [],
+        computer: { kind: "personal" },
+      },
+    };
+    mockSharedAppState.servers.asana = { connectionStatus: "connected" };
+    try {
+      render(
+        <PlaygroundMain
+          {...study}
+          activeProjectId="project-1"
+          tester={{ ...study.tester, composerBlocked: false }}
+        />,
+      );
+      const file = new File(["region,total\nwest,12\n"], "report.csv", {
+        type: "text/csv",
+      });
+      await act(async () => {
+        (
+          mockChatInputProps.mock.calls.at(-1)?.[0] as {
+            onChangeFileAttachments: (next: unknown[]) => void;
+          }
+        ).onChangeFileAttachments([{ id: "attachment-1", file }]);
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "how many rows?" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      await waitFor(() =>
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1),
+      );
+      expect(mockUploadAttachments).not.toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({
+          text: "how many rows?",
+          files: [
+            expect.objectContaining({
+              type: "file",
+              filename: "report.csv",
+            }),
+          ],
+        }),
+      );
+    } finally {
+      mockComputersFlag.enabled = false;
+      mockConvexAuthState.isAuthenticated = false;
+      mockHostQueryState.result = null;
+      delete mockSharedAppState.servers.asana;
+      mockUploadAttachments.mockReset();
+    }
+  });
+
+  it("offers Retry for a temporary study failure", () => {
+    const originalMessages = mockUseChatSession.messages;
+    const originalError = mockUseChatSession.error;
+    mockUseChatSession.messages = [
+      { id: "m1", role: "user", parts: [{ type: "text", text: "hello study" }] },
+    ];
+    try {
+      mockUseChatSession.error = Object.assign(new Error("gateway"), {
+        formatted: { code: "upstream_error_page" },
+      });
+      const upstream = render(<PlaygroundMain {...study} />);
+      expect(screen.getByTestId("error-box-retry")).toBeInTheDocument();
+      upstream.unmount();
+
+      mockUseChatSession.error = Object.assign(new Error("busy"), {
+        formatted: { code: "user_rate_limit", limitKind: "concurrency" },
+      });
+      const busy = render(<PlaygroundMain {...study} />);
+      expect(screen.getByTestId("error-box-retry")).toBeInTheDocument();
+      busy.unmount();
+
+      mockUseChatSession.error = Object.assign(new Error("spent"), {
+        formatted: { code: "user_rate_limit", limitKind: "total" },
+      });
+      const spent = render(<PlaygroundMain {...study} />);
+      expect(screen.queryByTestId("error-box-retry")).not.toBeInTheDocument();
+      spent.unmount();
+
+      mockUseChatSession.error = Object.assign(new Error("gateway"), {
+        formatted: { code: "upstream_error_page" },
+      });
+      render(
+        <PlaygroundMain
+          serverName="test-server"
+          pendingExecution={null}
+          onExecutionInjected={vi.fn()}
+        />,
+      );
+      expect(screen.queryByTestId("error-box-retry")).not.toBeInTheDocument();
+    } finally {
+      mockUseChatSession.messages = originalMessages;
+      mockUseChatSession.error = originalError;
     }
   });
 

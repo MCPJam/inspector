@@ -183,6 +183,7 @@ import {
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
   extractUserMessageText,
+  UPSTREAM_ERROR_PAGE_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
@@ -1348,7 +1349,9 @@ export function PlaygroundMain({
   // harness host: its files ride inline and the server lands them on the box
   // the turn actually runs on.
   const computerAttachmentsActive = isComputerAttachmentUploadActive({
-    computersEnabled: computersEnabled === true,
+    // A study has no Playground computer. This upload uses the visitor's
+    // project, so a study attachment stays an inline file part.
+    computersEnabled: !tester && computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
     hostHasHarness: !!(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
@@ -1583,8 +1586,11 @@ export function PlaygroundMain({
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
-    modelVisibleMcpToolResults:
-      previewedHost?.config?.modelVisibleMcpToolResults,
+    // The hook prefers this option over executionConfig. A study's policy is
+    // on its execution config, so the visitor's saved host must not replace it.
+    modelVisibleMcpToolResults: tester
+      ? undefined
+      : previewedHost?.config?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // effective host's hostConfig. The server re-resolves via the shared
@@ -4997,17 +5003,30 @@ export function PlaygroundMain({
         if (conversationSendBlockedRef.current) {
           return;
         }
+        const sentContext = modelContextQueue;
         const sent = await sendMessage({
           text,
           metadata: outgoingSenderMetadata,
-          widgetModelContext: modelContextQueue,
+          widgetModelContext: sentContext,
           // The gates above can finish and this call can still await server
           // preparation. The study block has to be read again at dispatch.
           isCurrent: () => !conversationSendBlockedRef.current,
         });
-        // A refusal during that preparation must keep the widget context for
-        // the next admitted turn. The composer clears its queue the same way.
-        if (sent) setModelContextQueue([]);
+        // A refusal keeps the queue. A success drops only the objects this
+        // request carried: a widget can replace or add entries during the
+        // preparation above, and those were not sent.
+        if (sent) {
+          setModelContextQueue((current) =>
+            current.filter(
+              (entry) =>
+                !sentContext.some(
+                  (sentEntry) =>
+                    sentEntry.toolCallId === entry.toolCallId &&
+                    sentEntry === entry,
+                ),
+            ),
+          );
+        }
       })();
     },
     [
@@ -6018,10 +6037,18 @@ export function PlaygroundMain({
     handleSendFollowUp,
     composerSend.run,
   ]);
+  // The study chat used to retry a gateway error page and a concurrency
+  // throttle. Both lift on their own. A spent allowance does not, and the
+  // Playground still offers Retry only for a temporary organization-key refusal.
+  const studyTransientFailure =
+    !!tester &&
+    (errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+      (errorMessage?.code === "user_rate_limit" &&
+        errorMessage.limitKind === "concurrency"));
   const errorRetryHandler =
     !isCompareMode &&
     lastUserMessageText &&
-    isRetryableOrgKeysRefusal(errorMessage?.code)
+    (isRetryableOrgKeysRefusal(errorMessage?.code) || studyTransientFailure)
       ? handleRetryLastMessage
       : undefined;
 
