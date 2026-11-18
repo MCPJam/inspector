@@ -5798,64 +5798,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
 });
 
-// POST /v1/projects/:projectId/eval-runs/:runId/insights
-// Request (or with force, regenerate) the run's insights — serverQuality
-// behind the common envelope. SPENDS the org's model budget; 202 receipt,
-// poll the detail's `insights` envelope rather than re-requesting. Same
-// Convex mutation the in-app button uses, so role/limit/billing checks are
-// identical.
-evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
-  const projectId = c.req.param("projectId");
-  const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexClient(await getConvexBearerForRequest(c));
-
-  let run: RunDoc | null;
-  try {
-    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
-  } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval run not found"),
-    );
-  }
-  requireProjectMatch(run, projectId, "Eval run");
-
-  // This endpoint SPENDS, so the body is validated rather than coerced. A
-  // bodyless POST is the common case and stays valid; malformed JSON is a 400
-  // rather than a silently-empty body that bills anyway, and `force` must be
-  // a real boolean — `{"force":"false"}` is a truthy string, and treating it
-  // as consent would charge for a regeneration nobody asked for.
-  const raw = await c.req.text();
-  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
-  // and a literal `null` is a value the schema should reject — treating
-  // either as "no body" would bill for a request nobody wrote.
-  let body: unknown = {};
-  if (raw.length > 0) {
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Request body must be valid JSON.",
-      );
-    }
-  }
-  const force = parseWithSchema(
-    z.object({ force: z.boolean().optional() }).strict(),
-    body,
-  ).force;
-
-  try {
-    await convex.mutation("serverQuality:requestServerQuality" as any, {
-      suiteRunId: runId,
-      ...(force === true ? { force: true } : {}),
-    });
-  } catch (error) {
-    throw translateConvexError(error, { resource: "Eval run insights" });
-  }
-  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
-});
+// The run's insights routes (request, cancel, findings build) live in
+// `./eval-run-insights.ts`.
 
 // POST /v1/projects/:projectId/eval-runs/:runId/judge
 // Request (or with force, re-request) LLM-as-judge grading of a finished run.

@@ -2550,6 +2550,9 @@ describe("operation catalog consistency", () => {
       draft: { assertions: { mode: "replace", list: [] } },
     },
     request_eval_run_judge: { project: "p", runId: "r" },
+    request_eval_run_insights: { project: "p", runId: "r" },
+    cancel_eval_run_insights: { project: "p", runId: "r" },
+    build_eval_run_findings: { project: "p", runId: "r" },
     list_eval_github_repos: {},
     connect_eval_github_repo: {
       suite: "s",
@@ -2856,6 +2859,11 @@ describe("operation catalog consistency", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      // The run page's Analyze button: build findings, request the analysis,
+      // cancel it. Each changes the run's analysis state.
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
+      "build_eval_run_findings",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends
       // eval-iteration credits. `get_eval_description_experiment` stays a
