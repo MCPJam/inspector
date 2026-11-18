@@ -3,6 +3,7 @@ import { randomBytes } from "crypto";
 import { createRequire } from "module";
 import path from "path";
 import { stripVTControlCharacters } from "util";
+import { LAUNCHER_TABS, resolveLauncherTab } from "../../shared/launcher-tabs";
 
 const require = createRequire(import.meta.url);
 
@@ -36,8 +37,9 @@ export interface LaunchOptions {
   };
 
   /**
-   * Initial tab to navigate to.
-   * Options: "servers", "tools", "resources", "prompts", "chat", "playground"
+   * Initial tab to navigate to, such as "playground", "servers", "tools",
+   * "resources" or "prompts". The older names "chat" and "app-builder" open
+   * Playground. A name that is not an Inspector tab makes the launch reject.
    */
   defaultTab?: string;
 
@@ -170,6 +172,17 @@ const INSPECTOR_PORT = 6274;
 export async function launchInspector(
   options: LaunchOptions = {},
 ): Promise<InspectorInstance> {
+  // Resolved before anything starts, so an unknown name fails here instead
+  // of opening Servers. The env and the URL both carry the resolved tab.
+  const tab = options.defaultTab
+    ? resolveLauncherTab(options.defaultTab)
+    : undefined;
+  if (options.defaultTab && !tab) {
+    throw new Error(
+      `Could not launch the Inspector because defaultTab "${options.defaultTab}" is not a tab. Set defaultTab to one of ${LAUNCHER_TABS.join(", ")}.`,
+    );
+  }
+
   const packageJsonPath = require.resolve("@mcpjam/inspector/package.json");
   const binPath = path.resolve(path.dirname(packageJsonPath), "bin/start.js");
 
@@ -194,8 +207,6 @@ export async function launchInspector(
     env.MCP_AUTO_CONNECT_SERVER = options.server.name;
   }
 
-  // Map public API "chat" to internal "chat-v2" tab
-  const tab = options.defaultTab === "chat" ? "chat-v2" : options.defaultTab;
   if (tab) {
     env.MCP_INITIAL_TAB = tab;
   }
