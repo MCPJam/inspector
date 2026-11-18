@@ -28,7 +28,6 @@ import {
   type FeatureEvidence,
   type FeatureFamilyId,
   type FeatureGroupSummary,
-  type FeatureNextAction,
   type FeatureRuleOutcome,
   type FeatureStateCounts,
   type FeatureUserState,
