@@ -135,7 +135,7 @@ export function RepeatPromptTip({
           <div
             ref={contentRef}
             role="status"
-            className="absolute inset-x-0 bottom-full z-10 mb-2 flex items-center gap-3 rounded-lg border border-border bg-card py-2 pl-3 pr-2 text-sm shadow-sm duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
+            className="absolute inset-x-0 bottom-full z-10 mb-2 flex items-center gap-3 rounded-lg bg-card py-2 pl-3 pr-2 text-sm shadow-md duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
           >
             <Badge>Tip</Badge>
             <p className="min-w-0 flex-1 text-foreground">
