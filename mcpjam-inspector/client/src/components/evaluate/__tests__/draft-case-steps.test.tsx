@@ -29,6 +29,9 @@ vi.mock("convex/react", () => ({
   useQuery: () => suite,
   useMutation: () => vi.fn(),
 }));
+vi.mock("@/hooks/use-suite-harness-targets", () => ({
+  useSuiteHarnessTargets: () => [],
+}));
 vi.mock("@/hooks/use-actor-can-query", () => ({
   useActorCanQuery: () => true,
 }));
