@@ -12,7 +12,11 @@ export type AnalyticsConsent = "granted" | "denied";
 export interface AnalyticsConsentClient {
   opt_in_capturing: (options?: { captureEventName?: false }) => void;
   opt_out_capturing: () => void;
-  set_config: (config: { disable_conversations: boolean }) => void;
+  set_config: (config: {
+    disable_conversations: boolean;
+    opt_out_capturing_by_default: boolean;
+    opt_out_persistence_by_default: boolean;
+  }) => void;
   sessionRecording?: { startIfEnabledOrStop: () => void };
   conversations?: { reset: () => void };
 }
@@ -70,10 +74,15 @@ export function setAnalyticsConsent(
     client.opt_in_capturing({ captureEventName: false });
   } else {
     client.opt_out_capturing();
-    // posthog-js read the disable_conversations getter once at init, so a
-    // remote config that lands after this would reload the widget unless the
-    // live config says otherwise.
-    client.set_config({ disable_conversations: true });
+    // posthog-js read these getters once at init. A remote config that lands
+    // after this would reload Conversations, and `reset()` deletes the stored
+    // opt-out and falls back to the opt-out defaults, unless the live config
+    // carries the refusal. Persistence off also removes what PostHog stored.
+    client.set_config({
+      disable_conversations: true,
+      opt_out_capturing_by_default: true,
+      opt_out_persistence_by_default: true,
+    });
     // Outside cookieless mode, opting out leaves a running recorder and a
     // loaded Conversations widget in place. Re-checking stops the recorder
     // now that capture is off; reset removes the widget and its stored session.

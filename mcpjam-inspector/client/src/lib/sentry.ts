@@ -209,9 +209,9 @@ export function initSentry() {
  * Sentry replay. It records only at `full`, with `SENTRY_REPLAY_OPTIONS`, and is held off:
  *
  *  - while `pending` and at `off`;
- *  - without the analytics consent PostHog replay needs
- *    (`hasAnalyticsConsent`). Error reporting does not wait for it; replay
- *    does, and a withdrawal stops a running replay;
+ *  - without analytics consent (`hasAnalyticsConsent`), which the banner
+ *    asks for replay as well as analytics. Error reporting does not wait for
+ *    it; replay does, and a withdrawal stops a running replay;
  *  - on a credential location (`isCredentialBearingPath`: path, query or
  *    fragment), at any level. `installRecorderNavigationGuard` stops it
  *    BEFORE a navigation onto one; this keeps it stopped and resumes it on

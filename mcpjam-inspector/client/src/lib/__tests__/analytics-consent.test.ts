@@ -17,6 +17,7 @@ function client() {
 
 afterEach(() => {
   window.localStorage.clear();
+  vi.unstubAllGlobals();
 });
 
 describe("analytics consent", () => {
@@ -80,6 +81,8 @@ describe("analytics consent", () => {
     setAnalyticsConsent(posthog, "denied");
     expect(posthog.set_config).toHaveBeenCalledWith({
       disable_conversations: true,
+      opt_out_capturing_by_default: true,
+      opt_out_persistence_by_default: true,
     });
     expect(posthog.set_config.mock.invocationCallOrder[0]).toBeLessThan(
       posthog.conversations.reset.mock.invocationCallOrder[0],
@@ -93,6 +96,33 @@ describe("analytics consent", () => {
     expect(options.opt_out_capturing_by_default).toBe(true);
     expect(options.opt_out_persistence_by_default).toBe(true);
     expect(options.disable_conversations).toBe(true);
+  });
+
+  it("keeps a withdrawal through a posthog-js reset", async () => {
+    // Granted on an earlier visit, so posthog-js initialised opted in.
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}")),
+    );
+    const { PostHog } = await import("posthog-js");
+    const posthog = new PostHog();
+    posthog.init("phc_consent_reset_test", {
+      ...options,
+      api_host: window.location.origin,
+      persistence: "memory",
+      advanced_disable_flags: true,
+      disable_session_recording: true,
+      capture_pageview: false,
+      autocapture: false,
+    });
+    expect(posthog.is_capturing()).toBe(true);
+
+    setAnalyticsConsent(posthog, "denied");
+    posthog.reset();
+
+    expect(posthog.is_capturing()).toBe(false);
   });
 
   it("restores a granted choice after a reset, and nothing else", () => {
