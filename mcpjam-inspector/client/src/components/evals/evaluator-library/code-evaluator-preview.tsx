@@ -75,13 +75,13 @@ export function CodeEvaluatorPreview({
       });
       const body = (await response.json()) as { outcome?: Outcome; error?: string };
       if (!response.ok || !body.outcome) {
-        setFailure(body.error ?? "The test could not run.");
+        setFailure(body.error ?? "Could not test the code. Try again.");
         setOutcome(null);
       } else {
         setOutcome(body.outcome);
       }
     } catch {
-      setFailure("The test could not run.");
+      setFailure("Could not test the code. Try again.");
     } finally {
       setRunning(false);
     }
