@@ -6662,7 +6662,10 @@ export function PlaygroundMain({
    * condition that matters here), and the trace-diagnostics shell has its own
    * composer with the device frame behind it set to `display: none`.
    */
-  const threadLayoutEmpty = isThreadEmpty && !showsInlineApp;
+  // A study has no welcome hero. The centered shell would float the shared
+  // composer in the middle of the page, so an empty study uses the same
+  // docked footer as a conversation.
+  const threadLayoutEmpty = isThreadEmpty && !showsInlineApp && !tester;
   const showPinnedConversationTargetNotice =
     !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
@@ -7018,8 +7021,9 @@ export function PlaygroundMain({
             </StickToBottom>
           )}
 
-          {/* Footer ChatInput: with messages, or empty when center has no composer
-          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
+          {/* Footer ChatInput: with messages, an empty study, or an empty thread
+          whose center has no composer (auth loading / upsell). The
+          Playground's empty thread uses the centered composer only. */}
           {!isWidgetFullTakeover &&
             !showFullscreenChatOverlay &&
             (!threadLayoutEmpty || shouldShowUpsell || isAuthLoading) && (

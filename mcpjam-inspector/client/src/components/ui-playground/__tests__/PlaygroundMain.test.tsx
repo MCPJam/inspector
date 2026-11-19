@@ -5799,6 +5799,7 @@ describe("PlaygroundMain tester rules", () => {
       clientSelector?: unknown;
       placeholder?: string;
       submitDisabled?: boolean;
+      hasMessages?: boolean;
       scenarioAttachableServers?: Array<{ serverId: string }>;
     };
     expect(composer.minimalMode).toBe(true);
@@ -5814,6 +5815,13 @@ describe("PlaygroundMain tester rules", () => {
     expect(
       screen.queryByText(/This is your playground for MCP/),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("playground-empty-state-shell"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("playground-thread-shell")).toContainElement(
+      screen.getByTestId("chat-input"),
+    );
+    expect(composer.hasMessages).toBe(false);
   });
 
   it("leaves the Playground uncontrolled when no study is mounted", () => {
@@ -5828,6 +5836,9 @@ describe("PlaygroundMain tester rules", () => {
     expect(capturedChatSessionOptions.minimalMode).toBeUndefined();
     expect(capturedChatSessionOptions.rememberPickedTarget).toBe(true);
     expect(capturedChatSessionOptions.hostedContext.scenarioId).toBeUndefined();
+    expect(screen.getByTestId("playground-empty-state-shell")).toContainElement(
+      screen.getByTestId("chat-input"),
+    );
   });
 
   it("drops a widget follow-up while the study composer is blocked", async () => {
