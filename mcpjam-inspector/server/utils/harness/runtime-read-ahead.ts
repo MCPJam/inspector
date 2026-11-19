@@ -98,12 +98,9 @@ export async function readAheadRuntime(
 ): Promise<void> {
   // Even a cache-residency check costs a remote command. Resume already has
   // a loaded runtime; keep that path free of this cold-start-only hint.
-  if (
-    env.NODE_ENV !== "development" ||
-    env.MCPJAM_HARNESS_READ_AHEAD !== "1" ||
-    resuming ||
-    !harnessId
-  ) return;
+  if (resuming || !harnessId) return;
+  const setting = env.MCPJAM_HARNESS_READ_AHEAD?.trim().toLowerCase();
+  if (setting === "0" || setting === "false") return;
   const command = runtimeReadAheadCommand(harnessId);
   if (!command) return;
   signal?.throwIfAborted();

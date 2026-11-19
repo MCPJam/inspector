@@ -6,10 +6,13 @@ const enabled = { NODE_ENV: "development", MCPJAM_HARNESS_READ_AHEAD: "1" };
 afterEach(() => vi.restoreAllMocks());
 
 describe("runtime read-ahead", () => {
-  it.each([{}, { NODE_ENV: "development" }, { ...enabled, NODE_ENV: "production" }])(
-    "does no work outside explicit development opt-in: %j", async (env) => {
+  it.each(["0", "false", " FALSE "])(
+    "skips the remote command when the operator sets %j", async (setting) => {
       const run = vi.fn();
-      await readAheadRuntime(run, { harnessId: "codex" }, undefined, env);
+      await readAheadRuntime(run, { harnessId: "codex" }, undefined, {
+        NODE_ENV: "production",
+        MCPJAM_HARNESS_READ_AHEAD: setting,
+      });
       expect(run).not.toHaveBeenCalled();
     },
   );
@@ -25,11 +28,11 @@ describe("runtime read-ahead", () => {
     await readAheadRuntime(run, { harnessId, resuming: true }, undefined, enabled);
     expect(run).not.toHaveBeenCalled();
   });
-  it.each(["codex", "copilot-cli", "opencode"])("warms a fresh %s session with a bounded timeout and no credential environment", async (harnessId) => {
+  it.each(["claude-code", "codex", "copilot-cli", "opencode"])("warms a fresh %s production session by default with a bounded timeout and no credential environment", async (harnessId) => {
     const signal = new AbortController().signal;
     const run = vi.fn().mockResolvedValue({ stdout: '{"outcome":"cached","bytes":0,"durationMs":1}' });
     const log = vi.spyOn(logger, "info").mockImplementation(() => {});
-    await readAheadRuntime(run, { harnessId }, signal, enabled);
+    await readAheadRuntime(run, { harnessId }, signal, { NODE_ENV: "production" });
     const command = runtimeReadAheadCommand(harnessId);
     expect(command?.endsWith(`'${harnessId}'`)).toBe(true);
     expect(run).toHaveBeenCalledWith(command, { signal, timeoutMs: 5000 });

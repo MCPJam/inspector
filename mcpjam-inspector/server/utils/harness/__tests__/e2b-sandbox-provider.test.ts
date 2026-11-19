@@ -87,15 +87,15 @@ const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 
 describe("optional runtime read-ahead", () => {
   it("does not add a read-ahead call to a resumed session", async () => {
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
     await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).resumeSession!({ sessionId: "existing" });
     expect(mocks.run).toHaveBeenCalledTimes(1);
     expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
   });
 
   it("keeps normal commands unchanged with the flag off", async () => {
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "0");
     await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).createSession();
     expect(mocks.run).toHaveBeenCalledTimes(1);
@@ -103,8 +103,8 @@ describe("optional runtime read-ahead", () => {
   });
 
   it("overlaps the immutable hint with the guard without delivering session credentials", async () => {
-    vi.stubEnv("NODE_ENV", "development");
-    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "1");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
     let finishHint!: () => void;
     const hint = new Promise<void>((resolve) => { finishHint = resolve; });
     mocks.run.mockImplementation(async (command: string) => {
