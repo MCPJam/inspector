@@ -122,8 +122,11 @@ Otherwise, the backend CLI path:
    - **Blocked:** each check you couldn't run and why. Say blocked; never
      passed.
    - **Evidence:** a screenshot or recording where it helps someone judge the
-     behavior. An agent that can't attach images to a PR uploads them to the
-     Kestral task and links them.
+     behavior. A file on your machine never reaches the reviewer, and one in
+     a cloud session is gone when it ends: upload each to the Kestral task (or
+     attach it to the PR, if you can) and put its link in the report. If you
+     can't upload anywhere, say so under Blocked; never give a local path as
+     evidence.
 8. Keep the environment for follow-ups ("does it survive signing out and
    back in?"): a new grant and `qa:start` give a fresh browser in the same
    workspace, with the same data.
