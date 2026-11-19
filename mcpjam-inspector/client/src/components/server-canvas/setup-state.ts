@@ -1,4 +1,7 @@
-import type { FeatureSetupKind } from "@mcpjam/sdk/browser";
+import type {
+  ConformanceSuiteKey,
+  FeatureSetupKind,
+} from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/state/app-types";
 
 /**
@@ -7,10 +10,23 @@ import type { ServerWithName } from "@/state/app-types";
  * summary the feature reads. XAA can be set up there too, but nothing records
  * which auth a connect used, so its result would never show here. The client
  * credentials grant, event webhooks and OpenAI onboarding are not set up in
- * Configuration. Every other setup kind reads "MCPJam cannot check this yet".
+ * Configuration. Every other setup kind gets no Set up step; the feature
+ * offers another source's step if one can show something, else none.
  */
 export const CANVAS_SETUP_OFFERED: readonly FeatureSetupKind[] = [
   "pre-registered-client",
+];
+
+/**
+ * The suites Run checks can run from the conformance page. The app has no
+ * events suite, so a feature only an events check proves gets no Run checks
+ * step.
+ */
+export const CANVAS_CHECK_SUITES: readonly ConformanceSuiteKey[] = [
+  "protocol",
+  "apps",
+  "tasks",
+  "oauth",
 ];
 
 type SetupFields = Pick<

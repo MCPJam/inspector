@@ -1,11 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../check-map/index.js", () => ({
-  featuresForCheck: (ref: string) =>
-    ref === "protocol:tools-list" || ref === "apps:ui-resources-readable"
-      ? ["test.tools"]
-      : [],
-}));
+vi.mock("../check-map/index.js", () => {
+  const MAPPED: Record<string, string[]> = {
+    "protocol:tools-list": ["test.tools", "test.checked"],
+    "apps:ui-resources-readable": ["test.tools"],
+    "events:events-poll": ["test.events-only"],
+  };
+  return {
+    featuresForCheck: (ref: string) => MAPPED[ref] ?? [],
+    checksForFeature: (id: string) =>
+      Object.keys(MAPPED).filter((ref) => MAPPED[ref].includes(id)),
+  };
+});
 
 import { evaluateServerFeatures } from "../evaluate.js";
 import { coreSpec } from "../catalog/spec-refs.js";
@@ -246,6 +252,69 @@ describe("evaluateServerFeatures", () => {
     expect(result.assessments["test.observed"].nextAction).toBe("use-in-playground");
     expect(result.assessments["test.checked"].nextAction).toBe("run-checks");
     expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
+
+  it("offers only a step that can produce evidence for the feature", () => {
+    const unobservable = feature("test.unobservable", {
+      assessment: { primary: "observed" },
+    });
+    const eventsOnly = feature("test.events-only", {
+      assessment: { primary: "checked" },
+    });
+    const result = evaluateServerFeatures(
+      [unobservable, eventsOnly],
+      connected({ checksOffered: ["protocol", "apps", "tasks", "oauth"] }),
+    );
+    for (const id of ["test.unobservable", "test.events-only"]) {
+      expect(result.assessments[id]).toMatchObject({
+        state: "not-checked",
+        reason: "MCPJam cannot check this yet.",
+      });
+      expect(result.assessments[id].nextAction).toBeUndefined();
+    }
+    const anySuite = evaluateServerFeatures([eventsOnly], connected());
+    expect(anySuite.assessments["test.events-only"].nextAction).toBe("run-checks");
+  });
+
+  it("offers Refresh before the probes run and nothing once they said nothing", () => {
+    const probed = feature("test.probed", {
+      assessment: { primary: "probed", probed: () => null },
+    });
+    const before = evaluateServerFeatures([probed], connected());
+    expect(before.assessments["test.probed"].nextAction).toBe("refresh");
+    const after = evaluateServerFeatures(
+      [probed],
+      connected({ probes: { "http-transport": makeProbe("http-transport", {}) } }),
+    );
+    expect(after.assessments["test.probed"]).toMatchObject({
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(after.assessments["test.probed"].nextAction).toBeUndefined();
+  });
+
+  it("asks to reconnect only while nothing was captured", () => {
+    const declared = feature("test.declared", {
+      assessment: { primary: "declared", declared: () => null },
+    });
+    const captured = evaluateServerFeatures([declared], connected());
+    expect(captured.assessments["test.declared"].nextAction).toBeUndefined();
+    const notCaptured = evaluateServerFeatures([declared], {
+      connected: true,
+      context: { transport: "streamable-http" },
+    });
+    expect(notCaptured.assessments["test.declared"].nextAction).toBe("reconnect");
+  });
+
+  it("says when an OAuth sign-in records the feature instead of offering Reconnect", () => {
+    const oauth = feature("test.oauth", {
+      assessment: { primary: "oauth-flow", oauthFlow: () => null },
+    });
+    const result = evaluateServerFeatures([oauth], connected());
+    expect(result.assessments["test.oauth"]).toMatchObject({
+      state: "not-checked",
+      reason: "Recorded the next time you sign in to this server with OAuth.",
+    });
+    expect(result.assessments["test.oauth"].nextAction).toBeUndefined();
   });
 
   it("never counts setup in MCPJam as the server supporting a feature", () => {
