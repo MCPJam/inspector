@@ -92,6 +92,7 @@ import { convexReadFetch } from "../convex-read-errors.js";
 import { createConvexClient } from "../convex-client.js";
 import { createConvexClients } from "../../shared/evals.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
+import { ErrorCode, WebRouteError } from "../../web/errors.js";
 import {
   __resetHostedModelCatalogForTests,
   __setHostedCatalogForTests,
@@ -2214,6 +2215,50 @@ describe("v1 write routes", () => {
       // them to the wrong place entirely.
       expect(body.targets[0]?.error?.code).toBe("VALIDATION_ERROR");
       expect(body.targets[0]?.error?.message).toMatch(/approximated/);
+    });
+
+    it("keeps a credit refusal's recovery on the failed target", async () => {
+      hostSuiteQueries();
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const recovery = {
+        version: 1,
+        reason: "allowance_exhausted",
+        action: "upgrade_plan",
+        actor: "caller",
+        url: "https://app.mcpjam.com/billing",
+        plan: "pro",
+      };
+      // What the recorder throws when the organization cannot pay to start.
+      prepareEvalRunMock.mockRejectedValue(
+        new WebRouteError(403, ErrorCode.FORBIDDEN, "Out of credits.", {
+          reason: "PLATFORM_FEE_REQUIRED",
+          recovery,
+        })
+      );
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups",
+        {
+          suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+          targets: [{ namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as {
+        targets: Array<{ error?: Record<string, unknown> }>;
+      };
+      expect(body.targets[0]?.error).toEqual({
+        code: "FORBIDDEN",
+        message: "Out of credits.",
+        recovery,
+      });
     });
 
     it("refuses a caller-supplied approver on the group body (400, no launch)", async () => {

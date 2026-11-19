@@ -18543,6 +18543,10 @@
                     },
                     "message": {
                       "type": "string"
+                    },
+                    "recovery": {
+                      "type": "object",
+                      "description": "When MCPJam credits refused this target: the one next step (`action`, `actor`, `url`), same shape as an iteration's `infraError.recovery`. No run was created for the target; launch it again once the step is done."
                     }
                   }
                 }

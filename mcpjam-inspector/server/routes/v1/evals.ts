@@ -9,6 +9,7 @@ import {
   evalAuthoringDraftSchema,
   authoringDraftCheckReason,
   parseCreditRecovery,
+  type CreditRecovery,
 } from "@mcpjam/sdk/contract";
 import {
   suiteJudgeSettingsSchema,
@@ -4677,11 +4678,18 @@ function describeRunGroupTarget(target: {
 function describeLaunchFailure(error: unknown): {
   code: string;
   message: string;
+  recovery?: CreditRecovery;
 } {
   if (error instanceof WebRouteError) {
+    // A credit refusal's one next step rides on the entry, re-parsed so only a
+    // well-formed, on-origin recovery is echoed. Without it a fan-out target
+    // refused for credits reads like any other failure, and the caller cannot
+    // tell it apart from a fault.
+    const recovery = parseCreditRecovery(error.details?.recovery);
     return {
       code: String(error.code ?? ErrorCode.INTERNAL_ERROR),
       message: error.message.slice(0, 500),
+      ...(recovery ? { recovery } : {}),
     };
   }
   return {
