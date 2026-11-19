@@ -140,6 +140,15 @@ describe("runStopRefusal — the harness model proxy", () => {
       action: "contact_support",
     });
   });
+
+  it("does not stop on a hold: in-flight credits settle in seconds", () => {
+    const turn = {
+      message: "API Error: 409",
+      details: JSON.stringify({ message: "API Error: 409", code: "spend_held" }),
+    };
+    expect(isCreditExhaustion(turn)).toBe(false);
+    expect(runStopRefusal(turn)).toBeUndefined();
+  });
 });
 
 describe("runStopRefusal — not a stop", () => {
