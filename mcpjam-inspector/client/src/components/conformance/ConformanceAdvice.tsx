@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { Check, ChevronRight, Info } from "lucide-react";
 import {
+  APPS_READINESS_CATALOG,
   OAUTH_READINESS_CATALOG,
   READINESS_CATALOG,
   TASKS_READINESS_CATALOG,
@@ -164,11 +165,19 @@ function strengthLabel(specStrength: string): string {
   return `${specStrength === "MAY" ? "Optional" : "Suggested"} (${specStrength})`;
 }
 
-/** What each advice asks for, for a passed row that carries no message. */
-const ADVICE_DESCRIPTIONS: Record<string, string> = Object.fromEntries(
-  [READINESS_CATALOG, TASKS_READINESS_CATALOG, OAUTH_READINESS_CATALOG].flatMap(
-    (catalog) =>
-      Object.entries(catalog).map(([id, entry]) => [id, entry.description]),
+/**
+ * What each advice asks for, for a passed row that carries no message. A Map,
+ * not an object: ids come from saved reports, and `"__proto__"` must find
+ * nothing rather than the prototype.
+ */
+const ADVICE_DESCRIPTIONS = new Map<string, string>(
+  [
+    READINESS_CATALOG,
+    APPS_READINESS_CATALOG,
+    TASKS_READINESS_CATALOG,
+    OAUTH_READINESS_CATALOG,
+  ].flatMap((catalog) =>
+    Object.entries(catalog).map(([id, entry]) => [id, entry.description]),
   ),
 );
 
@@ -293,7 +302,7 @@ export function ConformanceAdvice({ groups }: { groups: AdviceGroup[] }) {
               label={strengthLabel(item.specStrength)}
               suite={item.suite}
               title={item.title}
-              detail={ADVICE_DESCRIPTIONS[item.id]}
+              detail={ADVICE_DESCRIPTIONS.get(item.id)}
               passed
             />
           ))}

@@ -6,6 +6,7 @@
  */
 
 import { isAuthorizationRefusal } from "../conformance-authorization.js";
+import { APPS_READINESS_CATALOG } from "../conformance-catalog.js";
 import type { ConformanceCredentialSource } from "../conformance-login.js";
 import {
   MCP_UI_RESOURCE_MIME_TYPE,
@@ -326,7 +327,9 @@ export function gradeMCPApps(input: MCPAppsGradingInput): MCPAppsGrading {
         readiness.push({
           id: "apps-readiness-deprecated-resource-uri",
           checkId: "ui-tool-metadata-valid",
-          title: "Deprecated ui/resourceUri Field",
+          title:
+            APPS_READINESS_CATALOG["apps-readiness-deprecated-resource-uri"]
+              .title,
           severity: "warning",
           specStrength: "Deprecation Notice",
           message: `${legacyFieldTools.join(", ")} still use _meta["ui/resourceUri"], which will be removed before GA; use _meta.ui.resourceUri instead.`,
@@ -336,7 +339,9 @@ export function gradeMCPApps(input: MCPAppsGradingInput): MCPAppsGrading {
       } else {
         passedAdvice.push({
           id: "apps-readiness-deprecated-resource-uri",
-          title: "Deprecated ui/resourceUri Field",
+          title:
+            APPS_READINESS_CATALOG["apps-readiness-deprecated-resource-uri"]
+              .title,
           specStrength: "Deprecation Notice",
         });
       }

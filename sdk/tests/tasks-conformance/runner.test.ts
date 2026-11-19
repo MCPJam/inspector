@@ -3,6 +3,7 @@ import {
   MCPTasksConformanceTest,
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
+  failedTaskLacksStatusMessage,
   findDeclarationViolations,
   findRawTaskStates,
   sentRequestIds,
@@ -474,6 +475,18 @@ describe("completion acknowledgements", () => {
 });
 
 describe("shape validators", () => {
+  it("reads a failed task without a readable statusMessage as lacking one", () => {
+    for (const statusMessage of [undefined, null, 42, "", "  "]) {
+      expect(
+        failedTaskLacksStatusMessage({ status: "failed", statusMessage })
+      ).toBe(true);
+    }
+    expect(
+      failedTaskLacksStatusMessage({ status: "failed", statusMessage: "boom" })
+    ).toBe(false);
+    expect(failedTaskLacksStatusMessage({ status: "completed" })).toBe(false);
+  });
+
   it("requires a flat CreateTaskResult; extra fields are not judged", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
@@ -1342,6 +1355,30 @@ describe("MCPTasksConformanceTest", () => {
         specStrength: "SHOULD",
       },
     ]);
+  });
+
+  it("claims no unknown-id pass when one mutation never got an answer", async () => {
+    const manager = extensionManager({
+      updateTask: async () => {
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+      cancelTaskExt: async () => {
+        // No JSON-RPC code: the call failed locally, so cancel judged nothing.
+        throw new Error("socket hang up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: {
+        toolName: "long_job",
+        pollTimeoutMs: 1000,
+        checkIds: ["tasks-invalid-task-id-rejected"],
+        readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+      },
+    });
+
+    expect(result.readiness).toBeUndefined();
+    expect(result.passedAdvice).toBeUndefined();
   });
 
   it("reports a connection failure as a failed run", async () => {

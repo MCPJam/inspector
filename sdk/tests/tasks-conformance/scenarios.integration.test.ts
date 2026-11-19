@@ -255,6 +255,21 @@ describe("tasks-status-payload-shape", () => {
     expect(result.uncheckedAdvice).toBeUndefined();
   });
 
+  // A `null` never reaches this path end to end: the client's task schema
+  // rejects it first. The helper's own test covers it.
+  it("advises, not passes, when a failed task's statusMessage is blank", async () => {
+      const phases = failedTaskPhases();
+      phases[phases.length - 1] = {
+        ...phases[phases.length - 1]!,
+        statusMessage: "  ",
+      };
+      const result = await run(await serve(phases), [ID]);
+      expect(result.passedAdvice).toBeUndefined();
+      expect(result.readiness).toEqual([
+        expect.objectContaining({ id: "tasks-readiness-failed-status-message" }),
+      ]);
+  });
+
   it("says the failed-task advice was not checked when the task did not fail", async () => {
     const result = await run(await serve(quickPhases()), [ID]);
     expect(result.readiness).toBeUndefined();

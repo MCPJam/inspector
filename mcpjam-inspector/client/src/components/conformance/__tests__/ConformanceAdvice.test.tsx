@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { ConformanceAdvice, reportAdviceGroups } from "../ConformanceAdvice";
 
+/** A row's lines: the heading (strength, suite, title), then its detail. */
+const rowLines = (row: HTMLElement) =>
+  Array.from(row.querySelectorAll(":scope > span:last-child > span")).map(
+    (line) => line.textContent,
+  );
+
 const advice = (id: string, specStrength: string) => ({
   id,
   title: id,
@@ -111,15 +117,22 @@ describe("ConformanceAdvice passed advice", () => {
     fireEvent.click(header);
 
     const rows = screen.getAllByRole("listitem");
-    expect(rows.map((row) => row.textContent)).toEqual([
-      "Suggested (SHOULD) Protocol ttlttl message",
+    // Each row as [heading line, detail line].
+    expect(rows.map(rowLines)).toEqual([
+      ["Suggested (SHOULD) Protocol ttl", "ttl message"],
       // A passed row has no message, so it says what the advice asks for.
-      "Suggested (SHOULD) Protocol readiness-tool-order-deterministic title" +
+      [
+        "Suggested (SHOULD) Protocol readiness-tool-order-deterministic title",
         "tools/list returns the tools in the same order on every call.",
-      "Suggested (SHOULD) OAuth readiness-oauth-iss-advertised title" +
+      ],
+      [
+        "Suggested (SHOULD) OAuth readiness-oauth-iss-advertised title",
         "The authorization server advertises authorization_response_iss_parameter_supported.",
-      "Optional (MAY) Protocol readiness-log-level-filtering title" +
+      ],
+      [
+        "Optional (MAY) Protocol readiness-log-level-filtering title",
         "A tool called at a log level sends logs at or above that level.",
+      ],
     ]);
     // Advice to act on keeps the blue info icon and label; a pass turns green.
     expect(rows[0].querySelector("span.font-medium")).toHaveClass("text-info");
@@ -129,6 +142,34 @@ describe("ConformanceAdvice passed advice", () => {
     expect(rows[0].querySelector("svg.text-info")).not.toBeNull();
     expect(rows[1].querySelector("svg.text-info")).toBeNull();
     expect(rows[1].querySelector("[class*=\"bg-emerald-500\"]")).not.toBeNull();
+  });
+
+  it("says what a passed Apps advice asks for, and nothing for an unknown id", () => {
+    render(
+      <ConformanceAdvice
+        groups={[
+          {
+            suite: "Apps",
+            passed: [
+              met("apps-readiness-deprecated-resource-uri", "Deprecation Notice"),
+              // A saved report is untrusted: no prototype key may become text.
+              met("__proto__", "SHOULD"),
+            ],
+          },
+        ]}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /^Additional enhancements/ }),
+    );
+
+    expect(screen.getAllByRole("listitem").map(rowLines)).toEqual([
+      [
+        "Suggested (Deprecated) Apps apps-readiness-deprecated-resource-uri title",
+        'UI tools point at their resource with _meta.ui.resourceUri, not the deprecated flat _meta["ui/resourceUri"].',
+      ],
+      ["Suggested (SHOULD) Apps __proto__ title"],
+    ]);
   });
 
   it("shows the section when every advice passed", () => {

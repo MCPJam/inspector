@@ -291,9 +291,12 @@ export async function collectClientAdvice(
 
   if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
     try {
+      // Bypass the cache: a cached first listing would make any server look
+      // stable, and the advice can now be reported as met.
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
         signal: ctx.config.signal,
+        cacheMode: "bypass",
       });
       const orderWarning = toolOrderAdvice(
         surface.toolNames,
@@ -384,12 +387,13 @@ async function sessionTerminationAdvice(
       ...(get && get.status !== 405 ? [`GET got HTTP ${get.status}`] : []),
       ...(del && del.status !== 405 ? [`DELETE got HTTP ${del.status}`] : []),
     ];
-    if (!get && !del) {
-      // Neither probe completed, so there is no answer to judge.
-      return undefined;
-    }
     if (offenders.length === 0) {
-      return passed("readiness-session-termination", "SHOULD");
+      // A pass needs both answers: one probe that never completed leaves
+      // half the clause unchecked. An observed violation is still reported
+      // below even when the other probe failed.
+      return get && del
+        ? passed("readiness-session-termination", "SHOULD")
+        : undefined;
     }
     return warning(
       "readiness-session-termination",
@@ -489,9 +493,15 @@ async function protocolVersionHeaderAdvice(
     timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
   });
 
-  if (result.status >= 400 || jsonRpcError(result)) {
-    // Rejected: the strict reading, and unobjectionable.
+  if (result.status === 400) {
+    // Rejected with the 400 Bad Request SEP-2243 names: the strict reading,
+    // and unobjectionable.
     return passed("readiness-protocol-version-header-required", "SHOULD");
+  }
+  if (result.status >= 400 || jsonRpcError(result)) {
+    // Some other failure (auth, upstream, an unrelated JSON-RPC error) says
+    // nothing about the missing header either way.
+    return undefined;
   }
 
   return informational(

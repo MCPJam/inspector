@@ -85,11 +85,13 @@ export async function runMutationChecks(context: TaskCheckContext) {
           informational: true,
         });
       } else if (
-        probe.mutations.some((entry) => entry.outcome !== "local-failure")
+        probe.mutations.length > 0 &&
+        probe.mutations.every((entry) => entry.outcome !== "local-failure")
       ) {
-        // Only when a mutating call actually reached the server: a run that
-        // left this advice out sends none, and a call that never got an
-        // answer judged nothing.
+        // Only when every mutating call reached the server and was rejected
+        // as asked: a run that left this advice out sends none, and a call
+        // that never got an answer judged nothing, so a pass on update alone
+        // would vouch for cancel unseen.
         passedAdvice.push({
           id: "tasks-readiness-unknown-task-id-mutations",
           title:
