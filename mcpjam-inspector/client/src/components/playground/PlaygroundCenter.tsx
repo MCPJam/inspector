@@ -121,14 +121,17 @@ export function PlaygroundCenter({
         // sent while Excalidraw is still connecting — or failed to — finishes
         // the run all the same, and is its only exit now that a run resumes.
         autoRunInput={homeAutorun?.prompt}
+        onAutoRunSent={
+          homeAutorun
+            ? () =>
+                updateChecklistProgress(homeAutorun.progressKey, {
+                  chat: true,
+                })
+            : undefined
+        }
         onFirstMessageSent={
-          isFirstRunUnfinished || firstRunPrompt || homeAutorun
+          isFirstRunUnfinished || firstRunPrompt
             ? () => {
-                if (homeAutorun) {
-                  updateChecklistProgress(homeAutorun.progressKey, {
-                    chat: true,
-                  });
-                }
                 if (isFirstRunUnfinished) {
                   state.onboarding.completeOnboarding();
                 }

@@ -585,6 +585,8 @@ interface PlaygroundMainProps {
    * Used by the eval preview to "run on open" when the case renders a widget.
    */
   autoRunInput?: string;
+  /** Fires once the `autoRunInput` prompt is actually sent. */
+  onAutoRunSent?: () => void;
   /**
    * Increment to re-run the case in the live preview from outside (eval Quick
    * Run). Each new value resets the thread and re-sends the case prompt
@@ -695,6 +697,7 @@ export function PlaygroundMain({
   hideWelcomeHero = false,
   hideCenterHeaderChrome = false,
   autoRunInput,
+  onAutoRunSent,
   runPreviewRequest,
   onMessagesChange,
   onStreamingChange,
@@ -4841,10 +4844,10 @@ export function PlaygroundMain({
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
         if (conversationSendBlockedRef.current) {
-          return;
+          return false;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
-          return;
+          return false;
         }
         // Every send entry point takes the same thread preflight, not just the
         // composer: a resumed session that moved between subscription updates
@@ -4852,7 +4855,7 @@ export function PlaygroundMain({
         // hosted route honors it, the turn runs in full and only THEN takes a
         // 409 and a conflict detach. A no-op when no history thread is open.
         if (!(await ensureThreadReadyForSend())) {
-          return;
+          return false;
         }
         // The local-execution gate runs at EVERY send entry point, exactly as
         // the thread preflight above does. Reaching the transport without it
@@ -4867,7 +4870,7 @@ export function PlaygroundMain({
           // prompt it was talking about gone. Putting it there is what makes
           // that instruction true.
           composer.setInput(text);
-          return;
+          return false;
         }
         const sent = sendMessage({
           text,
@@ -4878,6 +4881,7 @@ export function PlaygroundMain({
         // Settles once the message is dispatched, so Retry's lock covers the
         // hosted preflight too.
         await sent;
+        return true;
       })();
     },
     [
@@ -4927,7 +4931,9 @@ export function PlaygroundMain({
     // be there. `autoRanRef` is already set, so the only send that can follow
     // is the user's own.
     composer.setInput("");
-    handleSendFollowUp(autoRunInput as string);
+    void handleSendFollowUp(autoRunInput as string).then((sent) => {
+      if (sent) onAutoRunSent?.();
+    });
   }, [
     autoRunInput,
     composer,
@@ -4937,6 +4943,7 @@ export function PlaygroundMain({
     isThreadEmpty,
     isStreaming,
     handleSendFollowUp,
+    onAutoRunSent,
   ]);
 
   // Surface the live conversation to embedders (eval preview captures it back
