@@ -95,7 +95,9 @@ describe("PromptEditor", () => {
       "true",
     );
     expect(
-      screen.getByText("Replace cart with variables from the list."),
+      screen.getByText(
+        "Unknown variable: cart. Type {{ to pick one from the list.",
+      ),
     ).toBeInTheDocument();
   });
 
