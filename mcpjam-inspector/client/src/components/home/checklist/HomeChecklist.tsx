@@ -115,7 +115,8 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const firstOpen = STEP_ORDER.find((step) => !signals.done[step]) ?? null;
   // null follows the first unfinished step until the user picks one.
   const [openStep, setOpenStep] = useState<StepId | null>(null);
-  const shownStep: StepId = openStep ?? firstOpen ?? "connect";
+  const shownStep: StepId =
+    openStep ?? firstOpen ?? STEP_ORDER[STEP_ORDER.length - 1];
   const viewedRef = useRef<StepId | null>(null);
   useEffect(() => {
     if (!firstOpen || viewedRef.current === firstOpen) return;
