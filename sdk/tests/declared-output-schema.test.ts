@@ -195,6 +195,7 @@ describe("a not-applicable declared-schema row downstream", () => {
       iteration: { status: "completed" },
     }).stageResults;
     expect(stateOf(passing)).toBe("passed");
-    expect(stateOf(stageResults)).not.toBe("passed");
+    // With no gating evidence left, the stage is unmeasured, not passed or failed.
+    expect(stateOf(stageResults)).toBe("notMeasured");
   });
 });
