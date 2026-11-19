@@ -283,7 +283,15 @@ const EVALUATE_PREVIEW: Surface = {
         source: { kind: "environment", spec, attribution, frozen: true },
         runtime: runtimeOf(engine),
       }),
-      box: await harnessBox(engine, skills),
+      // The box is the run's, not the preview's: the preview plans what the
+      // run will deliver.
+      box: await harnessBox(
+        engine,
+        resolveTurnSkills({
+          source: run.pinnedSkillSource,
+          runtime: runtimeOf(engine),
+        }),
+      ),
     };
   },
   expected: previewing(EVAL.expected),

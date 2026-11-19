@@ -72,6 +72,7 @@ vi.mock("../registry.js", async () => {
         baseUrl: "https://broker.example",
       },
     })),
+    harnessSupportsSkills: () => true,
     getHarnessAdapter: vi.fn(() => ({
       id: "codex",
       pinnedRuntimeVersion: "0.163.0",
