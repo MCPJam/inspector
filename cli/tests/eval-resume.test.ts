@@ -11,8 +11,6 @@ import {
   buildResumeCommand,
   creditRecoveryOfCliError,
   idempotencyKeyOfErrorDetails,
-  isCreditBlock,
-  resumeSourceOfRun,
   shellQuoteArg,
 } from "../src/lib/eval-resume.js";
 
@@ -26,30 +24,6 @@ function recovery(overrides: Partial<CreditRecovery> = {}): CreditRecovery {
     ...overrides,
   };
 }
-
-// ---------------------------------------------------------------------------
-// isCreditBlock
-// ---------------------------------------------------------------------------
-
-test("isCreditBlock: a person-must-act action is a block", () => {
-  for (const action of [
-    "upgrade_plan",
-    "buy_credits",
-    "ask_admin",
-    "raise_budget",
-    "contact_support",
-  ] as const) {
-    assert.equal(isCreditBlock(recovery({ action })), true);
-  }
-});
-
-test("isCreditBlock: wait is NOT a block (never steer toward waiting)", () => {
-  assert.equal(isCreditBlock(recovery({ action: "wait" })), false);
-});
-
-test("isCreditBlock: no recovery is not a block", () => {
-  assert.equal(isCreditBlock(undefined), false);
-});
 
 // ---------------------------------------------------------------------------
 // shellQuoteArg
@@ -157,33 +131,6 @@ test("buildResumeCommand: stopped run on an attached host resumes on that host",
   );
   assert.ok(command.includes("--client host_3"));
   assert.ok(!command.includes("--environment"));
-});
-
-test("resumeSourceOfRun: reads the suite and the run's own target", () => {
-  assert.deepEqual(
-    resumeSourceOfRun({
-      suiteId: "s1",
-      environment: { id: "env_1" },
-      client: { id: "host_1", source: "environment" },
-    }),
-    { suiteId: "s1", environmentId: "env_1" },
-  );
-  assert.deepEqual(
-    resumeSourceOfRun({
-      suiteId: "s1",
-      environment: null,
-      client: { id: "host_1", source: "attached_host" },
-    }),
-    { suiteId: "s1", hostId: "host_1" },
-  );
-  // A suite-default client is not a selectable target; omit it.
-  assert.deepEqual(
-    resumeSourceOfRun({
-      suiteId: "s1",
-      client: { id: "host_1", source: "suite_default" },
-    }),
-    { suiteId: "s1" },
-  );
 });
 
 test("buildResumeCommand: --host folds into --client, repetitions into --iterations", () => {

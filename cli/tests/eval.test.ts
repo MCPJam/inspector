@@ -288,7 +288,10 @@ interface EvalFixtureOptions {
     hosts?: Array<{ id: string; name: string }>;
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
-  groupFailures?: Record<string, { code: string; message: string }>;
+  groupFailures?: Record<
+    string,
+    { code: string; message: string; recovery?: unknown }
+  >;
   runCaseResult?: "passed" | "failed" | "inconclusive" | null;
   /** The execution record `run-case`'s iteration carries (absent: none). */
   runCaseExecution?: Record<string, unknown>;
@@ -6618,6 +6621,65 @@ test("eval run exits non-zero and names each failure on a partial fan-out", asyn
     assert.match(run.stdout, /View: .*\/runs\/run-group-1/);
     assert.match(run.stderr, /Failed: ChatGPT — VALIDATION_ERROR: no servers/);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait exits 6 and prints a resume per credit-refused target", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": {
+        code: "FORBIDDEN",
+        message: "Out of credits.",
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      },
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--idempotency-key",
+          "k1",
+          "--format",
+          "human"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    // The launch was partial (4 alone), but the failure is one a person can
+    // clear, so the block wins.
+    assert.equal(run.result.exitCode, 6);
+    assert.match(
+      run.stdout,
+      /Recovery: Buy credits to keep going: https:\/\/app\.mcpjam\.com\/billing\n/
+    );
+    assert.match(
+      run.stdout,
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --client host-chatgpt --wait --idempotency-key k1:host-chatgpt --resume\n/
+    );
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });

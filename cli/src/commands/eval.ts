@@ -196,24 +196,23 @@ import {
 } from "../lib/eval-run-exit-code.js";
 import {
   buildResumeCommand,
-  resumeSourceOfRun,
-  creditBlockJsonFields,
   creditRecoveryOfCliError,
   idempotencyKeyOfErrorDetails,
-  isCreditBlock,
-  writeCreditBlockGuidance,
 } from "../lib/eval-resume.js";
+import {
+  creditBlocksJsonFields,
+  launchCreditExitCode,
+  readRunCreditStops,
+  refusedTargetCreditBlocks,
+  stoppedRunCreditBlock,
+  writeCreditBlocks,
+} from "../lib/eval-credit-blocks.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
-import {
-  creditRecoveryOfIterations,
-  parseCreditRecovery,
-  readEvalRunCreditRecovery,
-  type EvalRunDecisionSummary,
-} from "@mcpjam/sdk";
+import { isCreditBlock, type EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -3987,9 +3986,10 @@ export function registerEvalCommands(program: Command): void {
             });
             if (globalOptions.format === "human") {
               process.stderr.write(`${error.message}\n`);
-              writeCreditBlockGuidance(
+              writeCreditBlocks(
                 "human",
-                { recovery: launchRecovery, resumeCommand, resumed },
+                [{ target: "", recovery: launchRecovery, resumeCommand }],
+                resumed,
                 process.stderr,
               );
             } else {
@@ -3997,7 +3997,11 @@ export function registerEvalCommands(program: Command): void {
                 {
                   error: { code: error.code, message: error.message },
                   creditRecovery: launchRecovery,
-                  ...creditBlockJsonFields(resumeCommand, resumed),
+                  ...creditBlocksJsonFields(
+                    [{ target: "", recovery: launchRecovery, resumeCommand }],
+                    resumed,
+                    true,
+                  ),
                 },
                 globalOptions.format,
               );
@@ -4026,19 +4030,30 @@ export function registerEvalCommands(program: Command): void {
           }
           throw error;
         }
+        // Fan-out targets credits refused: each gets its own resume command.
+        const refusedBlocks = refusedTargetCreditBlocks(result, options);
         // EXACTLY ONE JSON document on `--format json`: the receipt already
         // carries every run, so appending human lines to it would make the
         // stream unparseable for the CI callers that read it. The human-mode
         // block already printed from `onDisclosure`, ahead of the launch
         // itself — nothing to print again here.
         if (!options.wait) {
-          writeResult(result, globalOptions.format);
+          writeResult(
+            globalOptions.format === "json"
+              ? {
+                  ...result,
+                  ...creditBlocksJsonFields(refusedBlocks, resumed, false),
+                }
+              : result,
+            globalOptions.format,
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
+          writeCreditBlocks(globalOptions.format, refusedBlocks, resumed);
           // A partial or wholly failed fan-out is not a success. Exiting 0 would
-          // let a pipeline treat "1 of 3 runs never started" as a clean launch.
-          if (result.outcome !== "started") {
-            setProcessExitCode(1);
-          }
+          // let a pipeline treat "1 of 3 runs never started" as a clean launch;
+          // a target refused for credits a person must add exits 6 instead.
+          const launchCode = launchCreditExitCode(result, refusedBlocks);
+          if (launchCode !== 0) setProcessExitCode(launchCode);
           return;
         }
 
@@ -4161,18 +4176,12 @@ export function registerEvalCommands(program: Command): void {
                       runs[0]!,
                     )
                   : undefined;
-              const soloRecovery =
-                result.targets.length === 1 && runs.length === 1
-                  ? // Prefer the recovery the run record now carries; fall back
-                    // to the per-iteration read on a backend that predates it.
-                    (parseCreditRecovery(runs[0]!.creditRecovery) ??
-                    (await readEvalRunCreditRecovery(
-                      client,
-                      signal,
-                      result.project.id,
-                      runs[0]!,
-                    )))
-                  : undefined;
+              const creditStops = await readRunCreditStops(
+                client,
+                signal,
+                result.project.id,
+                runs,
+              );
               // Deliberately does NOT throw on `waitErrors` here. Throwing from
               // inside the platform command skips the receipt below, and the
               // receipt is the only place the launched run ids are printed: a
@@ -4187,7 +4196,7 @@ export function registerEvalCommands(program: Command): void {
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
-                ...(soloRecovery ? { creditRecovery: soloRecovery } : {}),
+                creditStops,
               };
             }
 
@@ -4245,19 +4254,31 @@ export function registerEvalCommands(program: Command): void {
                     },
                   })
                 : undefined;
-            // Prefer the recovery the run record carries; otherwise read it off
-            // the walk above, like the summary, with no extra read.
-            const creditRecovery = solo
-              ? (parseCreditRecovery(solo.run.creditRecovery) ??
-                creditRecoveryOfIterations(solo.iterations))
-              : undefined;
+            // Read off the walk above where it succeeded, with no extra read.
+            const creditStops = await readRunCreditStops(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              new Map(
+                reportInputs
+                  .filter((input) => input.iterationError === undefined)
+                  .map((input) => [
+                    input.run.id,
+                    {
+                      iterations: input.iterations,
+                      complete: input.iterationsComplete,
+                    },
+                  ]),
+              ),
+            );
             return {
               runs,
               waitErrors,
               reportInputs,
               iterationErrorCodes,
               ...(decisionSummary ? { decisionSummary } : {}),
-              ...(creditRecovery ? { creditRecovery } : {}),
+              creditStops,
             };
           },
           {
@@ -4312,28 +4333,28 @@ export function registerEvalCommands(program: Command): void {
             ),
           }),
         );
-        // A credit stop whose step a person must take (anything but `wait`) is
-        // a block: the run finalized `failed` (base code 5), but the actionable
-        // outcome is "a person must add credits, then resume", so it merges to
-        // 6. A `wait` recovery keeps the base code. Only the solo path carries a
-        // recovery, so the resume command targets that one run's id.
-        const creditBlock = isCreditBlock(completion.creditRecovery)
-          ? completion.creditRecovery
-          : undefined;
-        const blockedRun = creditBlock ? completion.runs[0] : undefined;
-        const resumeCommand = blockedRun
-          ? buildResumeCommand(options, {
-              sourceRunId: blockedRun.id,
-              source: resumeSourceOfRun(blockedRun),
-            })
-          : undefined;
+        // A credit stop or refusal whose step a person must take (anything but
+        // `wait`) is a block: the run finalized `failed` (base code 5), or the
+        // target never launched (4), but the actionable outcome is "a person
+        // must add credits, then resume", so it merges to 6, per target. A
+        // `wait` recovery keeps the base code.
+        const soloRecovery =
+          result.targets.length === 1
+            ? completion.creditStops[0]?.recovery
+            : undefined;
+        const creditBlocks = [
+          ...refusedBlocks,
+          ...completion.creditStops
+            .filter((stop) => isCreditBlock(stop.recovery))
+            .map((stop) => stoppedRunCreditBlock(stop, options)),
+        ];
         const code = worstOf([
           evalRunWaitExitCode({
             launchOutcome: result.outcome,
             runs: runOutcomes,
             waitErrors: completion.waitErrors,
           }),
-          ...(creditBlock ? [EVAL_RUN_BLOCKED_EXIT_CODE] : []),
+          ...(creditBlocks.length > 0 ? [EVAL_RUN_BLOCKED_EXIT_CODE] : []),
         ]);
 
         // Captured, NOT thrown here: the receipt below (or the reporter
@@ -4373,13 +4394,15 @@ export function registerEvalCommands(program: Command): void {
               ...(globalOptions.format === "json" && completion.decisionSummary
                 ? { decisionSummary: completion.decisionSummary }
                 : {}),
-              ...(globalOptions.format === "json" && completion.creditRecovery
-                ? { creditRecovery: completion.creditRecovery }
+              ...(globalOptions.format === "json" && soloRecovery
+                ? { creditRecovery: soloRecovery }
                 : {}),
-              ...(globalOptions.format === "json" &&
-              creditBlock &&
-              resumeCommand
-                ? creditBlockJsonFields(resumeCommand, resumed)
+              ...(globalOptions.format === "json"
+                ? creditBlocksJsonFields(
+                    creditBlocks,
+                    resumed,
+                    result.targets.length === 1,
+                  )
                 : {}),
             },
             globalOptions.format,
@@ -4397,21 +4420,14 @@ export function registerEvalCommands(program: Command): void {
             completion.decisionSummary,
             process.stdout,
           );
-          // A person-must-act credit stop prints the one step and the command
-          // to resume once the user tops up; `Still blocked` instead when this
-          // run was already a resume. Any other recovery (a `wait`) keeps the
-          // plain `Recovery:` line.
-          if (creditBlock && resumeCommand) {
-            writeCreditBlockGuidance(globalOptions.format, {
-              recovery: creditBlock,
-              resumeCommand,
-              resumed,
-            });
+          // A person-must-act block prints the one step and a command per
+          // blocked target to resume once the user tops up; `Still blocked`
+          // instead when this run was already a resume. Any other recovery (a
+          // `wait`) keeps the plain `Recovery:` line.
+          if (creditBlocks.length > 0) {
+            writeCreditBlocks(globalOptions.format, creditBlocks, resumed);
           } else {
-            writeCreditRecovery(
-              globalOptions.format,
-              completion.creditRecovery,
-            );
+            writeCreditRecovery(globalOptions.format, soloRecovery);
           }
         }
 
@@ -4563,17 +4579,18 @@ export function registerEvalCommands(program: Command): void {
         // as the source); `status` carries no launch knobs, so it is the exact
         // minimum that runs the unfinished cases.
         const statusBlock = isCreditBlock(result.creditRecovery)
-          ? result.creditRecovery
-          : undefined;
-        const statusResumeCommand = statusBlock
-          ? buildResumeCommand(
-              { project: result.project.id },
+          ? stoppedRunCreditBlock(
               {
-                sourceRunId: result.run.id,
-                source: resumeSourceOfRun(result.run),
+                run: result.run,
+                recovery: result.creditRecovery,
+                ...(result.incompleteCases
+                  ? { incompleteCases: result.incompleteCases }
+                  : {}),
               },
+              { project: result.project.id },
             )
           : undefined;
+        const statusResumeCommand = statusBlock?.resumeCommand;
         // The wire-shaped result is useful in JSON, but human output must not
         // leak raw decision enums (for example `argumentMismatch`) before the
         // label-aware summary below. The operation still returns the canonical
@@ -4585,6 +4602,8 @@ export function registerEvalCommands(program: Command): void {
                 const {
                   decisionSummary: _decisionSummary,
                   creditRecovery: _creditRecovery,
+                  resume: _resume,
+                  incompleteCases: _incompleteCases,
                   ...humanResult
                 } = result;
                 return humanResult;
@@ -4608,12 +4627,8 @@ export function registerEvalCommands(program: Command): void {
           process.stdout,
           { stages: options.stages === true },
         );
-        if (statusBlock && statusResumeCommand) {
-          writeCreditBlockGuidance(globalOptions.format, {
-            recovery: statusBlock,
-            resumeCommand: statusResumeCommand,
-            resumed: false,
-          });
+        if (statusBlock) {
+          writeCreditBlocks(globalOptions.format, [statusBlock], false);
         } else {
           writeCreditRecovery(globalOptions.format, result.creditRecovery);
         }

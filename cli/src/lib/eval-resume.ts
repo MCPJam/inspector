@@ -1,29 +1,17 @@
 import {
   type CreditRecovery,
   creditRecoveryOfRefusal,
-  formatCreditRecovery,
 } from "@mcpjam/sdk/contract";
+import type { EvalResumeSource } from "@mcpjam/sdk";
 
 /**
  * When MCPJam credits refuse a launch or stop a run partway, the one step the
  * refusal names is only useful if the agent can act on it without inventing a
  * command. These helpers turn the parsed launch options back into the exact
- * `mcpjam cloud eval run …` to run once the user has topped up, and decide
- * whether the refusal is a person-must-act block (exit 6) or a `wait` that
- * clears on its own (keeps its old code).
- *
- * A `wait` recovery is NOT a block: steering an agent toward waiting is the
- * exact behavior KES-941 removes. Every other action — upgrade, buy credits,
- * raise the budget, ask an admin, contact support — needs a person, so it is a
- * block and the CLI prints one action and one resume command.
+ * `mcpjam cloud eval run …` to run once the user has topped up. Whether a
+ * refusal is a block at all is `isCreditBlock` in the SDK: a `wait` is not,
+ * because steering an agent toward waiting is what the one-action rule removes.
  */
-
-/** True when the refusal names a step a PERSON must take (anything but `wait`). */
-export function isCreditBlock(
-  recovery: CreditRecovery | undefined,
-): recovery is CreditRecovery {
-  return recovery !== undefined && recovery.action !== "wait";
-}
 
 /**
  * The credit recovery a thrown launch refusal carried, read from the CLI
@@ -35,33 +23,6 @@ export function creditRecoveryOfCliError(
 ): CreditRecovery | undefined {
   const details = (error as { details?: unknown } | null)?.details;
   return creditRecoveryOfRefusal(details);
-}
-
-/** What a stopped run's own record says about where it ran. */
-export interface ResumeSource {
-  suiteId?: string;
-  environmentId?: string;
-  hostId?: string;
-}
-
-/**
- * The suite and target a stopped run executed on, read from the run record
- * (its immutable config snapshot), so a resume lands on the same target.
- */
-export function resumeSourceOfRun(run: {
-  suiteId?: string;
-  environment?: { id: string } | null;
-  client?: { id: string | null; source: string };
-}): ResumeSource {
-  const hostId =
-    run.client?.source === "attached_host" && run.client.id
-      ? run.client.id
-      : undefined;
-  return {
-    ...(run.suiteId ? { suiteId: run.suiteId } : {}),
-    ...(run.environment?.id ? { environmentId: run.environment.id } : {}),
-    ...(hostId ? { hostId } : {}),
-  };
 }
 
 /** The launch options this module reconstructs a resume command from. */
@@ -142,7 +103,7 @@ export function buildResumeCommand(
   resume: {
     sourceRunId?: string;
     idempotencyKey?: string;
-    source?: ResumeSource;
+    source?: EvalResumeSource;
   } = {},
 ): string {
   const argv: string[] = ["mcpjam", "cloud", "eval", "run"];
@@ -228,34 +189,4 @@ export function buildResumeCommand(
   }
 
   return argv.map(shellQuoteArg).join(" ");
-}
-
-/** The JSON fields a credit block adds to a receipt or an error document. */
-export function creditBlockJsonFields(
-  resumeCommand: string,
-  resumed: boolean,
-): { resumeCommand: string } | { stillBlocked: true } {
-  return resumed ? { stillBlocked: true } : { resumeCommand };
-}
-
-/**
- * The human lines for a credit block. A first refusal prints the one step and
- * the resume command to run after the user tops up; a refusal that happened
- * UNDER `--resume` (the user already said they fixed it, and it is still
- * refused) prints `Still blocked` and no command — the CLI never retries on its
- * own.
- */
-export function writeCreditBlockGuidance(
-  format: string,
-  args: { recovery: CreditRecovery; resumeCommand: string; resumed: boolean },
-  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
-): void {
-  if (format !== "human") return;
-  const sentence = formatCreditRecovery(args.recovery);
-  if (args.resumed) {
-    destination.write(`Still blocked: ${sentence}\n`);
-    return;
-  }
-  destination.write(`Recovery: ${sentence}\n`);
-  destination.write(`Resume: ${args.resumeCommand}\n`);
 }
