@@ -24,6 +24,15 @@ test("redactCloudApiKey hides short secrets and does not assume sk_", () => {
   assert.equal(redactCloudApiKey("short"), "…");
 });
 
+test("redactCloudApiKey prints only the last four of a token without a type tag", () => {
+  const jwt =
+    "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyXzAxIiwic2lkIjoic2Vzc2lvbl8wMSJ9.c2lnbmF0dXJl_dGFpbA";
+  assert.equal(redactCloudApiKey(jwt), "…FpbA");
+  assert.equal(redactCloudApiKey("Q9vX2mLpR7tWk3Hd_8sYb"), "…8sYb");
+  // Nine letters is longer than any type tag, so it stays hidden.
+  assert.equal(redactCloudApiKey("abcdefghi_jklmnopq"), "…nopq");
+});
+
 test("credential precedence is flag, usable env key, oauth, missing", () => {
   const authFilePath = authFile({
     issuer: "https://login.example.com",
