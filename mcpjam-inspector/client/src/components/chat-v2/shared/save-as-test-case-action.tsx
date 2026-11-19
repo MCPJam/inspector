@@ -233,7 +233,8 @@ export function SaveAsTestCaseAction({
         projectId,
         testCaseTitle: caseTitle.trim(),
         updateSuiteEnvironment: true,
-        assertToolCalls,
+        // Older backends reject the field, so send it only when on.
+        ...(assertToolCalls ? { assertToolCalls: true } : {}),
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
           : {

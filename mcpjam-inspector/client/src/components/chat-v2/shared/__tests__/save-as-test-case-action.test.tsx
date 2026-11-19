@@ -126,7 +126,7 @@ vi.mock("@mcpjam/design-system/select", async () => {
 
 import { SaveAsTestCaseAction } from "../save-as-test-case-action";
 
-async function promoteToExistingSuite() {
+async function promoteToExistingSuite({ toolCalls = false } = {}) {
   const user = userEvent.setup();
   render(
     <SaveAsTestCaseAction
@@ -143,10 +143,20 @@ async function promoteToExistingSuite() {
   await user.click(
     await screen.findByRole("button", { name: "Excalidraw suite" }),
   );
+  if (toolCalls) await user.click(screen.getByRole("switch"));
   await user.click(screen.getByRole("button", { name: "Save as test case" }));
 }
 
 describe("SaveAsTestCaseAction", () => {
+  it("asks the backend to keep tool calls only when the switch is on", async () => {
+    await promoteToExistingSuite({ toolCalls: true });
+    await waitFor(() =>
+      expect(saveAction).toHaveBeenCalledWith(
+        expect.objectContaining({ assertToolCalls: true }),
+      ),
+    );
+  });
+
   beforeEach(() => {
     projectHosts.value = [{ hostId: "host-first" }];
   });
@@ -214,7 +224,6 @@ describe("SaveAsTestCaseAction", () => {
           chatSessionId: "chat-session-1",
           promptIndex: 2,
           destinationSuiteId: "suite-1",
-          assertToolCalls: false,
         }),
       ),
     );
