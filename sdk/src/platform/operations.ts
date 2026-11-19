@@ -1208,7 +1208,7 @@ export const listServerToolsOperation: PlatformOperation<
   name: "list_server_tools",
   title: "List MCPJam server tools",
   description:
-    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the tools a saved MCP server exposes: names, descriptions, and input schemas. A server's tools are the actions it offers, such as a documentation server's search, and call_server_tool runs one of them by name. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1250,7 +1250,7 @@ export const listServerResourcesOperation: PlatformOperation<
   name: "list_server_resources",
   title: "List MCPJam server resources",
   description:
-    "List the resources a saved MCP server exposes: uris, names, and mime types. Paginated — pass nextCursor back as cursor for the next page.",
+    "List the resources a saved MCP server exposes: uris, names, and mime types. A resource is content the server publishes to be read whole by uri; searching or querying a server is one of its tools, which this listing does not include. Paginated — pass nextCursor back as cursor for the next page.",
   readOnly: true,
   permalink: derivePermalinks((result) => [serverRef(result)]),
   inputSchema: serverPagedInput,
@@ -1403,7 +1403,7 @@ export const callServerToolOperation: PlatformOperation<
   name: "call_server_tool",
   title: "Call MCPJam server tool",
   description:
-    "Execute a tool on a saved MCP server and return its result. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
+    "Execute a tool on a saved MCP server and return its result. This is how a saved server does work for the caller: searching a documentation server, for example, is a call to that server's search tool. Sends an MCP tools/call request (https://modelcontextprotocol.io/specification/2025-11-25/server/tools) with `toolName` and `parameters` exactly as given; the tool name and its parameter schema come from that server's own listing (list_server_tools). Runs with the caller's own authorization for that server and may have side effects there, including modifying or deleting data. If the server asks for sign-in on this call, the error is AUTH_REQUIRED (HTTP 403) with the parsed challenge in details.authChallenge; a completed result can also carry authChallenge beside it. Nothing signs in automatically: the user must connect the server with OAuth, then call again.",
   readOnly: false,
   mayBeDestructive: true,
   permalink: noPermalink(
