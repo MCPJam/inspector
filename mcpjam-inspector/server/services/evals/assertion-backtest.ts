@@ -4,6 +4,7 @@ import {
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "./score-definitions.js";
 import { buildHostedScoreContract } from "./score-rows.js";
+import { HOSTED_PLATFORM_GATE_SCORER_IDS } from "./platform-gate-rows.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
   buildIterationTranscript,
@@ -228,6 +229,9 @@ export function backtestIteration(
   }
   for (const definition of definitions) {
     if (seen.has(definition.scorerId)) continue;
+    // The platform's own checks are never authored, so a draft can't remove
+    // them; listing them would show a removal on every run graded with them.
+    if (HOSTED_PLATFORM_GATE_SCORER_IDS.has(definition.scorerId)) continue;
     const previous = stored.find(
       (item) => item.definitionHash === definitionHash(definition),
     );

@@ -940,6 +940,44 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     });
   });
 
+  it("declares the same checks on the recovery write as on the finished one", async () => {
+    finalizeFault.throwsLeft = 1;
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            ...LOCAL_MODEL,
+            expectedToolCalls: [],
+            promptTurns: PROMPT_ONLY,
+            successPredicates: [{ type: "finalAssistantMessageNonEmpty" }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      gradingMode: "dual_write",
+    } as any);
+    expect(finalizeFault.calls).toHaveLength(2);
+    const [finished, recovered] = finalizeFault.calls.map(
+      (call) =>
+        (call as { metadata?: { evaluationConfig?: { hash?: string } } })
+          .metadata?.evaluationConfig?.hash,
+    );
+    expect(finished).toEqual(expect.any(String));
+    expect(recovered).toBe(finished);
+  });
+
   it("§2: a failed widget DOM assert FAILS the iteration (flag-on)", async () => {
     // The browser mock's evaluateWidgetAssertion returns { ok: false }, so the
     // widgetCheck assert step fails. It lands in state.assertionResults (NOT

@@ -1,4 +1,5 @@
 import { hostedPredicateScoreDefinition } from "../score-definitions";
+import { hostedPlatformGateDefinitions } from "../platform-gate-rows";
 import { it, expect, vi } from "vitest";
 import { backtestIteration, runAssertionBacktest } from "../assertion-backtest";
 import {
@@ -202,6 +203,34 @@ it("joins unchanged hosted content-derived identities without renumbering them",
   ]);
   expect(changed.every((item) => !item.comparable)).toBe(true);
 });
+it("does not list the platform's checks as removed by an assertion draft", () => {
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  const platform = hostedPlatformGateDefinitions({ failOnToolError: true }).map(
+    resolveScoreDefinition,
+  );
+  const differences = backtestIteration(
+    {
+      ...row,
+      evaluationConfig: { definitions: [hosted, ...platform] },
+      results: [stored],
+    },
+    { assertions: { mode: "replace", list: [oldRule] } },
+  );
+  expect(differences).toHaveLength(1);
+  expect(differences[0]).toMatchObject({
+    evaluatorId: hosted.scorerId,
+    change: "unchanged",
+  });
+});
+
 it("returns a resumable cursor after bounded pages and binds continuation to the draft", async () => {
   let page = 0;
   const readPage = vi.fn(async () => ({
