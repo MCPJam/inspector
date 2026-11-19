@@ -146,6 +146,41 @@ describe("identifyHarnessTool", () => {
     ).toEqual({ serverId: "bits", toolName: "cad.tray" });
   });
 
+  it("uses the registered name Cursor wraps in the call's input", () => {
+    const hostToolRegistry = new Map([
+      ["mcp__shop__a_b", { serverId: "shop", toolName: "a_b" }],
+      ["mcp__shop__a_b_2", { serverId: "shop", toolName: "a.b" }],
+    ]);
+    expect(
+      identifyHarnessTool({
+        rawToolName: "acp_tool_call",
+        input: {
+          providerIdentifier: "ai-sdk-harness-tools",
+          toolName: "mcp__shop__a_b_2",
+          args: {},
+        },
+        attributed: { serverId: "shop", toolName: "a_b_2" },
+        hostToolRegistry,
+        serverToolNames: () => ["a.b", "a_b"],
+      }),
+    ).toEqual({ serverId: "shop", toolName: "a.b" });
+  });
+
+  it("ignores a wrapped name from any other channel", () => {
+    const hostToolRegistry = new Map([
+      ["mcp__shop__a_b_2", { serverId: "shop", toolName: "a.b" }],
+    ]);
+    expect(
+      identifyHarnessTool({
+        rawToolName: "acp_tool_call",
+        input: { providerIdentifier: "forged", toolName: "mcp__shop__a_b_2" },
+        attributed: { toolName: "mcp__shop__a_b_2" },
+        hostToolRegistry,
+        serverToolNames: () => [],
+      }),
+    ).toEqual({ toolName: "mcp__shop__a_b_2" });
+  });
+
   it("maps Claude Code's renamed tool back to the server's tool", () => {
     expect(
       identifyHarnessTool({

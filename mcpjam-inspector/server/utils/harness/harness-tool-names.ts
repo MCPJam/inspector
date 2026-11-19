@@ -17,6 +17,7 @@
  */
 import { createToolNameAliases } from "@mcpjam/sdk";
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
+import { hostChannelToolName } from "./mcp-config.js";
 
 /** What Claude Code shows the model for one tool-name segment. */
 export function runtimeToolNameSegment(name: string): string {
@@ -133,18 +134,24 @@ function identityKey(serverId: string, toolName: string): string {
 /**
  * The server and real tool name for a call a runtime reported.
  *
- * In order: a name MCPJam registered for a host-executed tool; otherwise the
+ * In order: a name MCPJam registered for a host-executed tool (the raw name,
+ * or the one Cursor wraps in the call's input); otherwise the
  * adapter's attribution, with its tool name matched to the server's tool list
  * exactly, or to the one tool the runtime renames to it (collisions are
  * refused up front, so there is at most one); otherwise the attribution as is.
  */
 export function identifyHarnessTool(args: {
   rawToolName: string;
+  /** The call's input, where Cursor wraps the registered name. */
+  input?: unknown;
   attributed: { serverId?: string; toolName: string };
   hostToolRegistry: ReadonlyMap<string, HarnessToolIdentity>;
   serverToolNames: (serverId: string) => readonly string[];
 }): { serverId?: string; toolName: string } {
-  const registered = args.hostToolRegistry.get(args.rawToolName);
+  const hostToolName = hostChannelToolName(args.input);
+  const registered =
+    args.hostToolRegistry.get(args.rawToolName) ??
+    (hostToolName ? args.hostToolRegistry.get(hostToolName) : undefined);
   if (registered) return { ...registered };
   const { serverId, toolName } = args.attributed;
   if (!serverId) return args.attributed;
