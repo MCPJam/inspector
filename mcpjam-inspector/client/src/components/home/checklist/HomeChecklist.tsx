@@ -118,6 +118,24 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   // Completing the last step holds on "5 of 5" long enough to see the bar
   // fill. Skipping the rest, or arriving with everything done, goes straight
   // to today's Home.
+  // Steps 1, 2, 4 and 5 finish elsewhere, so `completed` is sent the first
+  // time Home sees them done. `already_done` marks steps done before the
+  // checklist ever loaded for this user.
+  useEffect(() => {
+    if (!loaded || handedBack) return;
+    const reported = progress.reported ?? [];
+    const fresh = STEP_ORDER.filter(
+      (step) =>
+        step !== "onboard_agent" &&
+        signals.done[step] &&
+        !reported.includes(step),
+    );
+    if (fresh.length === 0 && progress.reported) return;
+    for (const step of fresh) {
+      trackStep(step, "completed", { already_done: !progress.reported });
+    }
+    update({ reported: [...reported, ...fresh] });
+  }, [loaded, handedBack, progress.reported, signals.done, update]);
   useEffect(() => {
     if (handedBack) {
       onFinished();
@@ -125,6 +143,12 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     }
     if (!loaded || !allDone) return;
     const finish = () => {
+      track("home_checklist_finished", {
+        location: "home",
+        outcome: "completed",
+        done_count: STEP_ORDER.length,
+        already_done: Boolean(doneOnArrival.current),
+      });
       update({ finished: true });
       onFinished();
     };
@@ -426,6 +450,12 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
                 update({ skippedAll: true });
                 trackStep(firstOpen ?? "create_eval", "skipped", {
                   rest: true,
+                });
+                track("home_checklist_finished", {
+                  location: "home",
+                  outcome: "skipped",
+                  done_count: doneCount,
+                  already_done: false,
                 });
               }}
             >

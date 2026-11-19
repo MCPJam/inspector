@@ -12,6 +12,8 @@ export interface ChecklistProgress {
   skippedAgent?: boolean;
   /** Set once the checklist hands Home back, so it doesn't show again. */
   finished?: boolean;
+  /** Steps already sent as `completed`, so each is counted once. */
+  reported?: string[];
 }
 
 const PREFIX = "mcpjam.home-checklist.v1";

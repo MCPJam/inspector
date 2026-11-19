@@ -2,6 +2,7 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { HomeChecklist } from "../HomeChecklist";
 import { checklistProgressKey } from "../checklist-progress";
+import { track } from "@/lib/analytics";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/lib/app-navigation", () => ({
@@ -53,6 +54,7 @@ const key = checklistProgressKey("me", "p");
 const stored = () => JSON.parse(window.localStorage.getItem(key) ?? "{}");
 
 afterEach(() => {
+  vi.mocked(track).mockClear();
   vi.useRealTimers();
   window.localStorage.clear();
   query.loaded = true;
@@ -77,6 +79,67 @@ it("holds on 5 of 5 when the last step completes, then remembers it", () => {
   act(() => vi.advanceTimersByTime(600));
   expect(onFinished).toHaveBeenCalled();
   expect(stored().finished).toBe(true);
+});
+
+const completedSteps = () =>
+  vi
+    .mocked(track)
+    .mock.calls.filter(
+      ([name, props]) =>
+        name === "home_checklist_step" && props?.action === "completed",
+    )
+    .map(([, props]) => [props?.step, props?.already_done]);
+
+it("reports each step's completion once, marking ones done before the checklist", () => {
+  window.localStorage.setItem(key, JSON.stringify({ reported: ["connect"] }));
+  const view = render(<HomeChecklist onFinished={vi.fn()} />);
+  expect(completedSteps()).toEqual([
+    ["check_server", false],
+    ["create_eval", false],
+  ]);
+  act(() => {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ ...stored(), chat: true }),
+    );
+    window.dispatchEvent(new Event("mcpjam:home-checklist-progress"));
+  });
+  view.unmount();
+  render(<HomeChecklist onFinished={vi.fn()} />);
+  expect(completedSteps()).toEqual([
+    ["check_server", false],
+    ["create_eval", false],
+    ["chat", false],
+  ]);
+});
+
+it("marks steps already done on the checklist's first load", () => {
+  render(<HomeChecklist onFinished={vi.fn()} />);
+  expect(completedSteps()).toEqual([
+    ["connect", true],
+    ["check_server", true],
+    ["create_eval", true],
+  ]);
+});
+
+it("reports the finish with its outcome", () => {
+  vi.useFakeTimers();
+  window.localStorage.setItem(key, JSON.stringify({ chat: true }));
+  render(<HomeChecklist onFinished={vi.fn()} />);
+  act(() => {
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ ...stored(), agent: true }),
+    );
+    window.dispatchEvent(new Event("mcpjam:home-checklist-progress"));
+  });
+  act(() => vi.advanceTimersByTime(1600));
+  expect(track).toHaveBeenCalledWith("home_checklist_finished", {
+    location: "home",
+    outcome: "completed",
+    done_count: 5,
+    already_done: false,
+  });
 });
 
 it("cancels the hold when it unmounts first", () => {
