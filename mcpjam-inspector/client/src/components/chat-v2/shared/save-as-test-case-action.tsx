@@ -1,6 +1,6 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
-import { FlaskConical, Loader2 } from "lucide-react";
+import { FlaskConical, Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   Dialog,
@@ -35,6 +35,7 @@ import { ClientMultiSelect } from "@/components/hosts/client-multi-select";
 import { DestinationCard } from "@/components/chat-v2/history/convert-session-dialog-core";
 import { RadioGroup } from "@mcpjam/design-system/radio-group";
 import { ServerPicker } from "@/components/hosts/server-picker";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
@@ -125,7 +126,8 @@ export function SaveAsTestCaseAction({
       isAuthenticated: open && attachmentPickersEnabled,
       projectId: open && attachmentPickersEnabled ? projectId : null,
     });
-  const { hosts: projectHosts } = useHostList({
+  const [createHostOpen, setCreateHostOpen] = useState(false);
+  const { hosts: projectHosts, isLoading: projectHostsLoading } = useHostList({
     isAuthenticated: open && attachmentPickersEnabled,
     projectId: open && attachmentPickersEnabled ? projectId : null,
   });
@@ -403,6 +405,18 @@ export function SaveAsTestCaseAction({
                           triggerId="save-as-test-case-clients"
                           inModal
                         />
+                        {!projectHostsLoading && projectHosts.length === 0 ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCreateHostOpen(true)}
+                            disabled={submitting}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />
+                            Create a client
+                          </Button>
+                        ) : null}
                       </div>
                       <div className="min-w-0 space-y-2">
                         <Label htmlFor="save-as-test-case-server">Server</Label>
@@ -449,6 +463,23 @@ export function SaveAsTestCaseAction({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {projectId ? (
+        <CreateHostDialog
+          isOpen={createHostOpen}
+          onClose={() => setCreateHostOpen(false)}
+          projectId={projectId}
+          onCreated={(hostId: string) =>
+            setHostAttachments((current) =>
+              current.some((draft) => draft.namedHostId === hostId)
+                ? current
+                : [
+                    ...current,
+                    { namedHostId: hostId, enabledOptionalServerIds: [] },
+                  ],
+            )
+          }
+        />
+      ) : null}
     </>
   );
 }

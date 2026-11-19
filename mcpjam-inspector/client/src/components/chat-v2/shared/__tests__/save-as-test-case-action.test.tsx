@@ -43,6 +43,9 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-picker" />,
 }));
+vi.mock("@/components/hosts/CreateHostDialog", () => ({
+  CreateHostDialog: () => null,
+}));
 vi.mock("@/components/hosts/client-multi-select", () => ({
   ClientMultiSelect: () => <div data-testid="client-multi-select" />,
 }));
