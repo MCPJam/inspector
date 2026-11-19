@@ -516,6 +516,10 @@ text the same way rrweb does, so it follows the same level:
 
 - `syncSessionRecording` (PostHog) and `syncSentryReplay` (Sentry) both read
   `currentSessionPrivacy()`.
+- Both also wait for analytics consent (`hasAnalyticsConsent()` in
+  `analytics-consent.ts`). Sentry error reporting does not. `initSentry`
+  re-syncs Sentry Replay on every consent change, so a grant adds the
+  integration and a withdrawal stops a running replay without a navigation.
 - `useSessionPrivacy` and `useSessionRecordingPathGuard` always call both.
 - Sentry's sample rates are set at init only on surfaces that are not `off`.
   Its integration is added lazily, once, at the first moment recording is

@@ -171,8 +171,9 @@ export function initSentry() {
       options.recordDroppedEvent,
     ),
     // No replay integration here, on any surface. `syncSentryReplay` adds it
-    // at the first moment the privacy level allows recording — never while
-    // `pending`, never on `/results/<token>`. Starting it at init and stopping
+    // at the first moment the privacy level and the visitor's analytics
+    // consent allow recording — never while `pending`, never before consent,
+    // never on `/results/<token>`. Starting it at init and stopping
     // it later would not do: `replay.stop()` FLUSHES the buffered segment,
     // which is exactly the content that had to stay out.
     integrations: [
@@ -209,7 +210,8 @@ export function initSentry() {
  *
  *  - while `pending` and at `off`;
  *  - without analytics consent (`hasAnalyticsConsent`), which the banner
- *    asks for replay as well as analytics;
+ *    asks for replay as well as analytics. Error reporting does not wait for
+ *    it; replay does, and a withdrawal stops a running replay;
  *  - on a credential location (`isCredentialBearingPath`: path, query or
  *    fragment), at any level. `installRecorderNavigationGuard` stops it
  *    BEFORE a navigation onto one; this keeps it stopped and resumes it on

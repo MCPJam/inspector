@@ -102,6 +102,7 @@ export function reapplyAnalyticsConsent(client: AnalyticsConsentClient): void {
   }
 }
 
+/** Calls `listener` after every choice `setAnalyticsConsent` applies. */
 export function subscribeAnalyticsConsent(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
