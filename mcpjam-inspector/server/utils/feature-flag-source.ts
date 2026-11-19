@@ -6,10 +6,12 @@
  *   1. `MCPJAM_FEATURE_FLAGS_FILE` names a JSON file: its answers, for every
  *      actor, and PostHog is never asked. A self-hosted install that cannot
  *      reach PostHog decides its flags here.
- *   2. Otherwise, under `DO_NOT_TRACK`: every flag off, and PostHog is never
+ *   2. Telemetry-disabled previews can supply the same JSON in
+ *      `MCPJAM_FEATURE_FLAGS` when they cannot mount a file.
+ *   3. Otherwise, under `DO_NOT_TRACK`: every flag off, and PostHog is never
  *      asked. Evaluating a flag sends PostHog the actor's id, so the opt-out
  *      covers it.
- *   3. Otherwise: PostHog, which already answers every flag off when it
+ *   4. Otherwise: PostHog, which already answers every flag off when it
  *      cannot be reached.
  *
  * The file holds one JSON object of flag key to answer: `true` or `false` for
@@ -21,7 +23,7 @@
  * change applies on restart. A file that cannot be read or is not a JSON
  * object answers every flag off, never PostHog; an entry whose answer is
  * neither a boolean nor a variant name is off. The server reads the file at
- * boot (`loadFeatureFlagFileAtBoot`) and prints both problems on stderr; a
+ * boot (`loadFeatureFlagsAtBoot`) and prints both problems on stderr; a
  * process that never ran the boot step reports them through the logger at
  * the first evaluation. A report never quotes the file.
  */
@@ -33,10 +35,12 @@ export type FeatureFlagAnswers = Readonly<Record<string, boolean | string>>;
 
 export type FeatureFlagSource =
   | { kind: "file"; answers: FeatureFlagAnswers }
+  | { kind: "preview"; answers: FeatureFlagAnswers }
   | { kind: "off" }
   | { kind: "posthog" };
 
 let loadedFile: { path: string; answers: FeatureFlagAnswers } | undefined;
+let loadedPreview: { text: string; answers: FeatureFlagAnswers } | undefined;
 
 type Report = (problem: string) => void;
 
@@ -51,20 +55,31 @@ function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
     );
     return {};
   }
+  return parseAnswers(text, "MCPJAM_FEATURE_FLAGS_FILE", report);
+}
+
+function parseAnswers(
+  text: string,
+  setting: "MCPJAM_FEATURE_FLAGS_FILE" | "MCPJAM_FEATURE_FLAGS",
+  report: Report,
+): FeatureFlagAnswers {
+  const isFile = setting === "MCPJAM_FEATURE_FLAGS_FILE";
+  const fix = isFile
+    ? "Fix the file and restart."
+    : "Fix the preview setting and restart.";
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    // Not the parser's message: it quotes the start of the file, which may be
-    // something other than flags.
+    // The parser's message can quote misconfigured input.
     report(
-      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
+      `[flags] ${setting} is not valid JSON, so every feature flag is off. ${fix}`,
     );
     return {};
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     report(
-      "[flags] MCPJAM_FEATURE_FLAGS_FILE must hold one JSON object of flag keys to answers, so every feature flag is off. Fix the file and restart.",
+      `[flags] ${setting} must hold one JSON object of flag keys to answers, so every feature flag is off. ${fix}`,
     );
     return {};
   }
@@ -79,17 +94,14 @@ function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
     .filter((entry) => !isAnswer(entry))
     .map(([key]) => `"${key}"`);
   if (invalid.length > 0) {
+    const subject = isFile ? invalid.join(", ") : "some flags";
     report(
-      `[flags] MCPJAM_FEATURE_FLAGS_FILE answers ${invalid.join(", ")} with something other than true, false or a variant name, so those flags are off. Fix the file and restart.`,
+      `[flags] ${setting} answers ${subject} with something other than true, false or a variant name, so those flags are off. ${fix}`,
     );
   }
   // `fromEntries` defines each key as its own property, so a `__proto__` key
   // is a flag name like any other rather than a prototype.
   return Object.fromEntries(valid);
-}
-
-function flagFilePath(): string | undefined {
-  return process.env.MCPJAM_FEATURE_FLAGS_FILE?.trim() || undefined;
 }
 
 function loadFlagFile(path: string, report: Report): FeatureFlagAnswers {
@@ -100,27 +112,34 @@ function loadFlagFile(path: string, report: Report): FeatureFlagAnswers {
 }
 
 /**
- * Reads `MCPJAM_FEATURE_FLAGS_FILE` at boot, when it is set, so a missing or
- * malformed file is reported before the first flag is evaluated. On stderr,
- * because the logger prints in production only with `VERBOSE_LOGS=true`, and
- * under DO_NOT_TRACK, where a flag file is used, it reports nowhere else.
+ * Reports invalid static flags on stderr before the first evaluation.
+ * Under DO_NOT_TRACK the logger does not ship the error elsewhere.
  */
-export function loadFeatureFlagFileAtBoot(): void {
-  const path = flagFilePath();
-  if (path) {
-    loadFlagFile(path, (problem) => process.stderr.write(`${problem}\n`));
-  }
+export function loadFeatureFlagsAtBoot(): void {
+  resolveSource((problem) => process.stderr.write(`${problem}\n`));
 }
 
 export function resolveFeatureFlagSource(): FeatureFlagSource {
-  const path = flagFilePath();
+  return resolveSource((problem) => logger.error(problem));
+}
+
+function resolveSource(report: Report): FeatureFlagSource {
+  const path = process.env.MCPJAM_FEATURE_FLAGS_FILE?.trim();
   if (path) {
-    const answers = loadFlagFile(path, (problem) => logger.error(problem));
-    return { kind: "file", answers };
+    return { kind: "file", answers: loadFlagFile(path, report) };
   }
-  return telemetryOptedOut(process.env.DO_NOT_TRACK)
-    ? { kind: "off" }
-    : { kind: "posthog" };
+  if (!telemetryOptedOut(process.env.DO_NOT_TRACK)) return { kind: "posthog" };
+  const text = process.env.MCPJAM_FEATURE_FLAGS;
+  if (process.env.ENVIRONMENT !== "preview" || text === undefined) {
+    return { kind: "off" };
+  }
+  if (loadedPreview?.text !== text) {
+    loadedPreview = {
+      text,
+      answers: parseAnswers(text, "MCPJAM_FEATURE_FLAGS", report),
+    };
+  }
+  return { kind: "preview", answers: loadedPreview.answers };
 }
 
 /**
@@ -130,5 +149,5 @@ export function resolveFeatureFlagSource(): FeatureFlagSource {
 export function rolloutAnswerWithoutPostHog(key: string): boolean | undefined {
   const source = resolveFeatureFlagSource();
   if (source.kind === "posthog") return undefined;
-  return source.kind === "file" && source.answers[key] === true;
+  return source.kind !== "off" && source.answers[key] === true;
 }

@@ -173,3 +173,22 @@ describe("a hosted server under DO_NOT_TRACK", () => {
     expect(vendors.some((host) => /(^|\.)sentry\.io$/i.test(host)), control.output()).toBe(true);
   });
 });
+
+it("serves Jamroom preview flags without contacting telemetry vendors", async () => {
+  const preview = await startGuardedServer({
+    env: {
+      ENVIRONMENT: "preview",
+      DO_NOT_TRACK: "1",
+      MCPJAM_FEATURE_FLAGS: '{"evaluator-library":true,"not-a-client-flag":true}',
+    },
+  });
+  try {
+    const { flags } = await exercise(preview);
+    expect(flags).toEqual({ flags: { "evaluator-library": true } });
+    expect(await preview.stop(), preview.output()).toBe(0);
+    expect(preview.attempts().filter(isTelemetryVendor)).toEqual([]);
+  } finally {
+    await preview.stop();
+    removeScratch(preview);
+  }
+}, 90_000);

@@ -76,7 +76,7 @@ let client: PostHog | null = null;
 // Feature evaluation controls product availability, so it bypasses
 // `isAnalyticsDisabled()`. DO_NOT_TRACK still stops it: callers reach this
 // client only when `resolveFeatureFlagSource` names PostHog, which it never
-// does under DO_NOT_TRACK or when a flag file answers instead. Callers must
+// does under DO_NOT_TRACK or when static flags answer instead. Callers must
 // also suppress feature-flag exposure events.
 function getClient(forFeatureFlags = false): PostHog | null {
   if (!forFeatureFlags && isAnalyticsDisabled()) return null;
@@ -265,8 +265,8 @@ export async function serverRolloutAnswer(
  * Values for the flags the web client reads, for `GET /api/web/flags`
  * (MJ-015). Only allowlisted keys are evaluated or returned, no exposure
  * events are sent, and any failure yields `{}` so the client keeps its own
- * fallback instead of failing the page. A flag file's answers are the same for
- * every visitor; under DO_NOT_TRACK without one, every flag is off.
+ * fallback instead of failing the page. Static flags are the same for every
+ * visitor; under DO_NOT_TRACK without static answers, every flag is off.
  */
 export async function evaluateClientFeatureFlags(
   distinctId: string,
@@ -275,8 +275,8 @@ export async function evaluateClientFeatureFlags(
 ): Promise<ClientFeatureFlagValues> {
   if (!rolloutActorId(distinctId)) return {};
   const source = resolveFeatureFlagSource();
-  if (source.kind === "file") return pickClientFeatureFlags(source.answers);
   if (source.kind === "off") return {};
+  if (source.kind !== "posthog") return pickClientFeatureFlags(source.answers);
   try {
     const values = await getClient(true)?.getAllFlags(distinctId, {
       flagKeys: [...CLIENT_FEATURE_FLAG_KEYS],
