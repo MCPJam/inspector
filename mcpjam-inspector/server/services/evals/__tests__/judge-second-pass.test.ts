@@ -1413,8 +1413,15 @@ describe("a steps-authored case keeps its tool-call definition through the secon
     } & Record<string, unknown>;
   }
 
-  async function secondPass(authored: Authored) {
+  async function secondPass(
+    authored: Authored,
+    { storedConfig = true }: { storedConfig?: boolean } = {},
+  ) {
     const first = firstPass(authored);
+    // Without a stored config the second pass rebuilds the tool-call
+    // definitions itself; the rows still have to join the first pass's.
+    const { evaluationConfig: _stored, ...withoutConfig } = first;
+    const firstMetadata = storedConfig ? first : withoutConfig;
     const { value, applied } = ports({
       fetchRun: vi.fn(async () =>
         runRow({
@@ -1426,7 +1433,7 @@ describe("a steps-authored case keeps its tool-call definition through the secon
               matchOptions,
               ...(authored.isNegativeTest ? { isNegativeTest: true } : {}),
               messages: [{ role: "user", content: "hi" }],
-              metadata: { ...first, judgeVerdict },
+              metadata: { ...firstMetadata, judgeVerdict },
             },
           ],
         }),
@@ -1515,6 +1522,42 @@ describe("a steps-authored case keeps its tool-call definition through the secon
     expect(mergedRowsJoin(result)).toEqual([]);
   });
 
+  // A negative test lists no expected call, yet the first pass grades "no
+  // call at all" with `toolCalls:match` so a call it made has a row saying so.
+  // Only the selection half: there are no arguments to compare.
+  const negative: Authored = {
+    isNegativeTest: true,
+    steps: [promptStep("p1", "do nothing"), expectCall("a1", "list_files")],
+  };
+
+  test("keeps a negative test's toolCalls:match from the stored config", async () => {
+    const result = await secondPass(negative);
+
+    expect(toolMatchIds(result.first.evaluationConfig?.definitions)).toEqual([
+      HOSTED_TOOL_MATCH_SCORER_ID,
+    ]);
+    expect(
+      result.config?.definitions.map((definition) => definition.scorerId),
+    ).not.toContain(HOSTED_TOOL_ARGUMENTS_SCORER_ID);
+    expect(toolMatchIds(result.config?.definitions)).toEqual([
+      HOSTED_TOOL_MATCH_SCORER_ID,
+    ]);
+    expect(mergedRowsJoin(result)).toEqual([]);
+  });
+
+  test("redeclares a negative test's toolCalls:match with no stored config", async () => {
+    const result = await secondPass(negative, { storedConfig: false });
+
+    expect(toolMatchIds(result.config?.definitions)).toEqual([
+      HOSTED_TOOL_MATCH_SCORER_ID,
+    ]);
+    expect(
+      result.config?.definitions.map((definition) => definition.scorerId),
+    ).not.toContain(HOSTED_TOOL_ARGUMENTS_SCORER_ID);
+    // The same definition the first pass minted its row against.
+    expect(mergedRowsJoin(result)).toEqual([]);
+  });
+
   test.each([
     [
       "an advisory toolCalledWith (a predicate, not a matcher expectation)",
@@ -1538,13 +1581,6 @@ describe("a steps-authored case keeps its tool-call definition through the secon
           },
           expectCall("a1", "list_files"),
         ],
-      },
-    ],
-    [
-      "a negative test",
-      {
-        isNegativeTest: true,
-        steps: [promptStep("p1", "do nothing"), expectCall("a1", "list_files")],
       },
     ],
   ])(
