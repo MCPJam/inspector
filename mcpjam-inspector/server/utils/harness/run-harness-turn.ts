@@ -264,7 +264,6 @@ import {
   hostToolApproval,
   withServerSkillCommandGate,
 } from "./server-skill-command-gate.js";
-import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
   boxSkillsFolder,
   failedBoxSkills,
