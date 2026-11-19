@@ -1214,7 +1214,7 @@ export function expectationOf(row: ScorecardRow): string {
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
-  if (row.provenance === "code") return `The code passes: ${row.label}`;
+  if (row.provenance === "code") return `“${row.label}” returns a pass.`;
   if (row.provenance === "rubricCheck") {
     return row.rubricCheck?.criterion
       ? `Yes: ${row.label}`
