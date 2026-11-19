@@ -142,7 +142,6 @@ export function HomeTab({
   const sessionParam = agentEnabled ? searchParams.get("session") : null;
   const composeParam = agentEnabled && searchParams.get("compose") === "1";
   const checklistVariant = useHomeChecklistVariant();
-  // Once the checklist is done or skipped, Home is today's page again.
   const [checklistFinished, setChecklistFinished] = useState(false);
   const finishChecklist = useCallback(() => setChecklistFinished(true), []);
   const showChecklist =

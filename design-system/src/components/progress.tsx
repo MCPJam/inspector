@@ -15,7 +15,6 @@ const progressIndicatorVariants = cva(
       },
       pace: {
         default: "",
-        // Long enough to watch the bar fill as a step completes.
         gradual: "duration-700 ease-out",
       },
     },

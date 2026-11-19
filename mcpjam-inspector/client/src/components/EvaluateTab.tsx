@@ -657,7 +657,6 @@ function EvaluateTabContent({
   useEffect(() => {
     if (route.type === "run-detail") setRunReviewSuiteId(null);
   }, [route.type]);
-  // Home's Run eval opens the same run review the suite list's Run does.
   useRunSuiteOnArrival(
     route.type === "list" && visibleSuites.length > 0,
     setRunReviewSuiteId,

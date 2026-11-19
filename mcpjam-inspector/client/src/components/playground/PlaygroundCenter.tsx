@@ -57,7 +57,6 @@ export function PlaygroundCenter({
   onFirstRunPromptConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
-  // The Home checklist's "Open Playground": its prompt is sent on open.
   const [homeAutorun] = useState(readHomeChecklistAutorun);
   const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
   const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;

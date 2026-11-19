@@ -6541,7 +6541,6 @@ export default function App() {
     activeHostId,
     checkoutIntentForBilling,
     connectedOrConnectingServerConfigs,
-    // The Home checklist keys its saved progress by this user.
     currentUser,
     consumeCheckoutIntent,
     displayServerConfigs,

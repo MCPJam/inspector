@@ -2799,7 +2799,6 @@ export function PlaygroundMain({
   const compareReadiness = useRef(
     new Map<string, { ready: boolean; error?: string }>(),
   );
-  // Bumped when a lane becomes ready, so a pending auto-run can try again.
   const [compareReadyCount, setCompareReadyCount] = useState(0);
   const reportCompareReadiness = useCallback(
     (id: string, ready: boolean, error?: string) => {
