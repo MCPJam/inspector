@@ -6,6 +6,7 @@ import { track } from "@/lib/analytics";
 import {
   buildConformanceRunPath,
   buildEvaluatePath,
+  buildEvaluateSuiteRunPath,
   routePaths,
   useAppNavigate,
 } from "@/lib/app-navigation";
@@ -183,11 +184,10 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const openEvals = () => {
     const suiteId = signals.eval.suiteId;
     trackStep("create_eval", "opened");
-    navigate(
-      buildEvaluatePath(
-        suiteId ? { type: "suite-overview", suiteId } : { type: "create" },
-      ),
-    );
+    if (!suiteId) navigate(buildEvaluatePath({ type: "create" }));
+    else if (signals.done.create_eval)
+      navigate(buildEvaluatePath({ type: "suite-overview", suiteId }));
+    else navigate(buildEvaluateSuiteRunPath(suiteId));
   };
 
   const serverLabel = serverName ?? "your server";
@@ -348,7 +348,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
             </p>
             {cta(
               "create_eval",
-              signals.eval.passRate !== null
+              signals.done.create_eval
                 ? "Open eval"
                 : signals.eval.suiteId
                   ? "Run eval"
