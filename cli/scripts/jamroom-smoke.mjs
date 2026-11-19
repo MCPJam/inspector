@@ -65,7 +65,7 @@ async function api(path, options = {}) {
   });
   const result = await response.json();
   if (!response.ok) {
-    const reason = result.details?.reason ?? result.code ?? "unknown";
+    const reason = [result.code, result.details?.reason, result.message].filter(Boolean).join(" / ");
     throw new Error((options.method ?? "GET") + " " + path + " returned HTTP " + response.status + " (" + reason + ").");
   }
   return result;
@@ -89,9 +89,15 @@ const client = await api(projectPath + "/clients", {
   method: "POST", body: { name: marker, template: "claude-code" },
 });
 assert(client.id && client.configId, "The Claude Code fixture has no configuration revision.");
-await api(projectPath + "/clients/" + encodeURIComponent(client.id), {
+const clientPath = projectPath + "/clients/" + encodeURIComponent(client.id);
+const configured = await api(clientPath, {
   method: "PATCH",
   body: { expectedConfigId: client.configId, set: { requireToolApproval: false } },
+});
+assert(configured.configId, "The configured client has no revision.");
+await api(clientPath + "/servers", {
+  method: "POST",
+  body: { expectedConfigId: configured.configId, serverIds: [server.id] },
 });
 const turn = await api("/chat-sessions/messages", {
   method: "POST",

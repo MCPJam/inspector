@@ -12,16 +12,14 @@ for (const name of ["sdk", "cli"]) {
   }
 }
 
-for (const workspace of ["@mcpjam/sdk", "@mcpjam/cli"]) {
-  execFileSync("npm", ["run", "build", "-w", workspace], {
-    cwd: checkout,
-    stdio: ["ignore", 2, 2],
-  });
-}
-
 const require = createRequire(join(checkout, "cli/package.json"));
 const sdk = realpathSync(require.resolve("@mcpjam/sdk/platform"));
 if (!sdk.startsWith(realpathSync(join(checkout, "sdk")) + "/")) {
   throw new Error("The CLI resolves an SDK outside the selected worktree.");
 }
+// The Inspector launcher prepared the SDK before this build starts.
+execFileSync("npm", ["run", "build", "-w", "@mcpjam/cli"], {
+  cwd: checkout,
+  stdio: ["ignore", 2, 2],
+});
 process.stdout.write(realpathSync(join(checkout, "cli/dist/index.js")) + "\n");
