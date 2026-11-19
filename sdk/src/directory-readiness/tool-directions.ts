@@ -1,6 +1,6 @@
 /**
  * Sentences in tool and parameter descriptions that direct a model to call,
- * or to order its calls of, ANOTHER tool in the same listing.
+ * or to order its calls of, another tool, including an explicitly ordered call to an unlisted tool.
  *
  * Naming another tool is not the problem: "returns the same fields as
  * get_order" states a fact. A candidate is a sentence where an imperative or
@@ -42,6 +42,10 @@ const TOKEN = /[A-Za-z0-9_](?:[A-Za-z0-9_.-]*[A-Za-z0-9_])?/g;
  * only quoted or followed by "tool": as bare text it is the English verb.
  */
 const IDENTIFIER = /[_.\d-]|[a-z][A-Z]/;
+// An unlisted name needs an explicit call boundary: a field such as order_id
+// in "use order_id first" supplies no evidence of another tool.
+const UNLISTED_NAME = /^[a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)+$/i;
+const ORDERED_INVOCATION = /\b(?:before|after)\s+(?:calling|invoking)\s+[`'"]?$/i;
 const SENTENCE_END = /[.!?]+(?=\s)|\n/g;
 /** Abbreviations that never end a sentence ("etc." often does). */
 const ABBREVIATION = /\b(?:e\.g|i\.e|vs|cf|incl)\.$/i;
@@ -188,7 +192,14 @@ function referencesIn(
   const found = new Set<string>();
   for (const token of sentence.matchAll(TOKEN)) {
     const name = token[0];
-    if (name === self || found.has(name) || !names.has(name)) continue;
+    if (name === self || found.has(name)) continue;
+    if (!names.has(name)) {
+      const prefix = sentence.slice(Math.max(0, token.index - 40), token.index);
+      if (UNLISTED_NAME.test(name) && ORDERED_INVOCATION.test(prefix)) {
+        found.add(name);
+      }
+      continue;
+    }
     const before = sentence[token.index - 1] ?? "";
     const after = sentence.slice(token.index + name.length);
     const quoted = /[`'"]/.test(before) && after.startsWith(before);

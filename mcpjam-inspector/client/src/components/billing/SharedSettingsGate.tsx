@@ -74,41 +74,61 @@ function SharedSettingsAccess({
   return (
     <>
       <section
-        className="space-y-3 rounded-lg border border-border p-4"
+        className="@container min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground"
         aria-label="Settings access"
       >
-        <p
-          role={access === "loading" ? "status" : "alert"}
-          className="text-sm text-muted-foreground"
-        >
-          {access === "loading"
-            ? "Checking access…"
-            : access === "upgrade"
-            ? `Editing someone else’s ${resource} requires Team or Enterprise.`
-            : "We couldn’t verify your access to these settings. Refresh the page or ask a project admin."}
-        </p>
-        {access === "upgrade" && organizationId && (
-          <>
-            <p className="text-xs text-muted-foreground">
-              Your project role still determines what you can edit.
+        <div className="flex min-w-0 flex-col gap-4 @min-[640px]:flex-row @min-[640px]:items-center @min-[640px]:justify-between @min-[640px]:gap-6">
+          <div className="min-w-0 space-y-1">
+            <p
+              role={access === "loading" ? "status" : "alert"}
+              className="text-sm font-semibold"
+            >
+              {access === "loading"
+                ? "Checking access…"
+                : access === "upgrade"
+                ? "These settings are read-only on your plan"
+                : "We couldn’t verify your access to these settings. Refresh the page or ask a project admin."}
             </p>
-            {billing?.canManageBilling === true ? (
-              <Button asChild variant="outline" size="sm">
-                <a
-                  href={`/organizations/${encodeURIComponent(
-                    organizationId,
-                  )}/plans`}
-                >
-                  View Team plans
-                </a>
-              </Button>
-            ) : (
-              <p className="text-sm text-foreground">
-                Ask your organization owner to upgrade to Team.
-              </p>
+            {access === "upgrade" && (
+              <>
+                <p className="text-sm text-foreground">
+                  Upgrade to Team to edit a teammate’s {resource}.
+                </p>
+                <p className="text-xs text-foreground">
+                  Project edit permissions still apply. Also included in Enterprise.
+                </p>
+              </>
             )}
-          </>
-        )}
+          </div>
+          {access === "upgrade" && organizationId && (
+            <div className="flex min-w-0 flex-col items-start gap-2 @min-[640px]:shrink-0 @min-[640px]:items-end">
+              {billing?.canManageBilling === true ? (
+                <>
+                  <Button
+                    asChild
+                    variant="contrast"
+                    className="h-auto min-h-9 max-w-full whitespace-normal text-center"
+                  >
+                    <a
+                      href={`/organizations/${encodeURIComponent(
+                        organizationId,
+                      )}/plans`}
+                    >
+                      Review Team upgrade
+                    </a>
+                  </Button>
+                  <p className="text-xs text-foreground">
+                    Next: review plans and pricing
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-foreground">
+                  Ask your organization owner to upgrade to Team.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </section>
       {access === "upgrade" && (
         <fieldset

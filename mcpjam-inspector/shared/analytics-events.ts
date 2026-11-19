@@ -27,6 +27,9 @@
 export const ANALYTICS_EVENTS = {
   // One outcome per logical plugin App launch (closed vocabulary, no content).
   extension_launch_completed: { source: "client" },
+  // One outcome per form response, Settings save or App message
+  // (closed vocabulary, no content; shared/extension-operation-event.ts).
+  extension_operation_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
   // One-time feature callouts (FeatureSpotlight); action is shown | closed.
@@ -48,6 +51,11 @@ export const ANALYTICS_EVENTS = {
   // --- Eval runs (paired) ---
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
+
+  // --- Evals navigation ---
+  // eval_nav_page_viewed: page ("suite"), tab (null outside Suite settings),
+  //   ui ("nav" on a new page), project_id. Ids only, never names.
+  eval_nav_page_viewed: { source: "client" },
 
   // --- Conformance runs (one name everywhere; no server twin) ---
   // The CLI and the SDK send this same name from their own clients, with
@@ -319,6 +327,11 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  evaluate_tour_completed: { source: "client" },
+  evaluate_tour_handoff_ended: { source: "client" },
+  evaluate_tour_opened: { source: "client" },
+  evaluate_tour_skipped: { source: "client" },
+  evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
@@ -590,6 +603,14 @@ export const ANALYTICS_EVENTS = {
   ui_tool_native_published: { source: "client" },
   ui_tool_native_registration_failed: { source: "client" },
   ui_tool_native_call_completed: { source: "client" },
+
+  // --- Header: "Onboard your agent to MCPJam" popover ---
+  // Props: location ("header"). `onboard_agent_command_copied` adds command
+  // (install | login) and copied (false when the clipboard refused);
+  // `onboard_agent_link_clicked` adds link (reference).
+  onboard_agent_opened: { source: "client" },
+  onboard_agent_command_copied: { source: "client" },
+  onboard_agent_link_clicked: { source: "client" },
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),

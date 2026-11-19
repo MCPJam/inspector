@@ -176,7 +176,7 @@ describe("the reviewer path's stages", () => {
     expect(video.currentTime).toBe(14.8);
   });
 
-  it("an approximated consent: labelled, in the rehearsal's words without the prefix", async () => {
+  it("an earlier rehearsal's approximated consent: its words, with no prefix or label", async () => {
     const detail = 'MCPJam approved access on the consent page ("Authorize").';
     renderPath(
       attemptIn("passed", {
@@ -189,10 +189,8 @@ describe("the reviewer path's stages", () => {
       }),
     );
     const consent = await rowNamed("Consent screen");
-    expect(consent.getByText("Approximated")).toBeVisible();
     expect(consent.getByText(detail)).toBeVisible();
-    expect(within(region()).queryByText(/Approximated: /)).toBeNull();
-    expect(within(region()).getAllByText("Approximated")).toHaveLength(1);
+    expect(within(region()).queryByText(/Approximated/)).toBeNull();
   });
 
   it("opens a requester-only sign-in link for the paused attempt", async () => {
@@ -304,6 +302,38 @@ describe("the reviewer path's stages", () => {
     expect(
       screen.queryByRole("button", { name: "Screenshot of Fresh sign-in" }),
     ).toBeNull();
+  });
+
+  it("opens a stage's stored screenshot, and says why another stage has none", async () => {
+    world.views = [
+      {
+        reservationId: RESERVATION,
+        recording: null,
+        screenshots: [{ id: "shot_1", url: "https://backend.example.com/web/artifact?t=shot" }],
+      },
+    ];
+    const open = vi.spyOn(window, "open").mockImplementation(() => null);
+    renderPath(
+      attemptIn("passed", {
+        stages: [
+          { ...OPENED, evidence: { screenshotArtifactId: "shot_1", screenshotStatus: "captured" } },
+          { ...SIGNED_IN, evidence: { screenshotStatus: "suppressed" } },
+          CONNECTED,
+        ],
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Screenshot of Sign-in page" }),
+    );
+    expect(open).toHaveBeenCalledWith(
+      "https://backend.example.com/web/artifact?t=shot",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    const signIn = await rowNamed("Fresh sign-in");
+    expect(signIn.getByText(/credential was typed on this page/)).toBeVisible();
+    expect(signIn.queryByRole("button", { name: /Screenshot/ })).toBeNull();
+    open.mockRestore();
   });
 
   it("offers no frames until the recording is kept, and says why", async () => {

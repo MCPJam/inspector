@@ -64,6 +64,8 @@ export interface BootBrowserdOptions {
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */
   display?: string;
+  /** `public`: the browser reaches public internet addresses only (`daemon/public-network.ts`). */
+  networkPolicy?: "public";
   /**
    * Make the window cover the display, with no chrome.
    *
@@ -367,6 +369,8 @@ function buildEnv(
   if (options.profileArchivePath) {
     env.MCPJAM_BROWSERD_PROFILE_ARCHIVE = options.profileArchivePath;
   }
+  if (options.networkPolicy === "public")
+    env.MCPJAM_BROWSERD_NETWORK = "public";
   return env;
 }
 

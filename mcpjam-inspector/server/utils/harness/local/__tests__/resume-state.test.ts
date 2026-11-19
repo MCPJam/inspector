@@ -104,6 +104,20 @@ describe("diskResumeState", () => {
     });
   });
 
+  it("does the same for OpenCode, whose session lives in its data directory on the box", () => {
+    expect(
+      diskResumeState({
+        type: "resume-session",
+        harnessId: "opencode",
+        data: { openCodeSessionId: "ses_1", bridge: { port: 39271, token: "t", lastSeenEventId: 4 } },
+      }),
+    ).toEqual({
+      type: "resume-session",
+      harnessId: "opencode",
+      data: { openCodeSessionId: "ses_1" },
+    });
+  });
+
   it("restarts Cursor from its saved ACP session after the process exits", () => {
     const data = {
       implementationIdentity: "cursor",

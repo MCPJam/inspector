@@ -1,17 +1,19 @@
 name: Daily Inspector release
 
+# Reminds #prs each weekday afternoon when an Inspector release is ready to
+# start. It never starts one: Start release pushes straight to production's
+# path, so a person starts it from Soundcheck.
+
 on:
   schedule:
-    # Prepare release usually takes 2-5 minutes, so the version PR is up by
-    # 5 PM. Also off the top of the hour, when GitHub delays scheduled runs most.
+    # Off the top of the hour, when GitHub delays scheduled runs most.
     - cron: "50 16 * * 0-5"
       timezone: America/Los_Angeles
   workflow_dispatch:
 
 permissions:
   contents: read
-  pull-requests: read
-  actions: write
+  actions: read
 
 concurrency:
   group: daily-inspector-release
@@ -34,14 +36,14 @@ jobs:
         run: npm ci --legacy-peer-deps
       - name: Read pending release plan
         run: npx changeset status --output="$RUNNER_TEMP/daily-release-plan.json"
-      - name: Prepare the full release when eligible
+      - name: Decide whether a release is ready
+        id: decide
         uses: actions/github-script@v9
         with:
           script: |
             const { readFileSync } = require("node:fs");
             const workspace = process.env.GITHUB_WORKSPACE;
             const { activeRunUrl, dailyReleaseDecision } = await import(`${workspace}/.github/scripts/daily-release.mjs`);
-            const { VERSION_PR_BRANCH } = await import(`${workspace}/.github/scripts/release-pr.mjs`);
             const { unpublishedVersions } = await import(`${workspace}/.github/scripts/unpublished-versions.mjs`);
             const { owner, repo } = context.repo;
             let activeRun = null;
@@ -51,22 +53,32 @@ jobs:
               });
               activeRun ??= activeRunUrl(data.workflow_runs);
             }
-            const { data: prs } = await github.rest.pulls.list({
-              owner, repo, state: "open", base: "main", head: `${owner}:${VERSION_PR_BRANCH}`,
-            });
             const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
             const decision = dailyReleaseDecision({
               activeRun,
-              versionPr: prs[0]?.html_url,
               unpublished: unpublishedVersions((path) => readJson(`${workspace}/${path}`)),
               releases: readJson(`${process.env.RUNNER_TEMP}/daily-release-plan.json`).releases,
             });
             core.info(decision.reason);
             await core.summary.addRaw(decision.reason).write();
             if (!decision.dispatch) return;
-            // The version PR still needs review and merge before release-trigger.yml ships it.
-            await github.rest.actions.createWorkflowDispatch({
-              owner, repo, workflow_id: "prepare-release.yml", ref: "main",
-              inputs: { deploy_backend_prod: "true", deploy_webapp: "true", skip_verify: "false" },
-            });
-            await core.summary.addRaw("\nDispatched Prepare release. Review and merge its version PR to start production deployment after CI and staging pass.").write();
+            const pending = readJson(`${process.env.RUNNER_TEMP}/daily-release-plan.json`).releases
+              .filter(({ type }) => type !== "none")
+              .map(({ name, oldVersion, newVersion }) => `• \`${name}\` ${oldVersion} → *${newVersion}*`);
+            core.setOutput("pending", pending.join("\n"));
+
+      - name: Remind #prs
+        if: steps.decide.outputs.pending != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PRS_WEBHOOK_URL }}
+          PENDING: ${{ steps.decide.outputs.pending }}
+        run: |
+          set -uo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::warning::SLACK_PRS_WEBHOOK_URL is not set, so #prs was not reminded."
+            exit 0
+          fi
+          text="$(printf 'An Inspector release is ready. Start it from Soundcheck when you are ready to ship:\n%s' "$PENDING")"
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"

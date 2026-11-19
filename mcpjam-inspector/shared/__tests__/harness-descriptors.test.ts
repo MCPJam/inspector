@@ -19,7 +19,7 @@ describe("harness descriptors", () => {
       "claude-code": "harness",
       codex: "mcpjam",
       cursor: "harness",
-      "copilot-cli": "mcpjam",
+      "copilot-cli": "harness",
       opencode: "mcpjam",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
@@ -31,7 +31,7 @@ describe("harness descriptors", () => {
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
-    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli"]);
+    expect(LOCAL_HARNESS_IDS).toEqual(["claude-code", "codex", "cursor", "copilot-cli", "opencode"]);
   });
   it("grants MCPJam extensions by client ownership", () => {
     expect(usesMcpjamClient({})).toBe(true);
@@ -64,14 +64,15 @@ describe("harness surface support", () => {
         (surface) => `${id} ${surface}`,
       ),
     ).sort();
-    expect(declared).toEqual([
-      "cursor api",
-      "cursor events",
-      "cursor guests",
-      "cursor user-testing",
-      "opencode guests",
-      "opencode local",
-    ]);
+    expect(declared).toEqual(["cursor guests", "cursor user-testing"]);
+  });
+  it("lets signed-in guests run every runtime but Cursor CLI", () => {
+    // The backend derives its guest list from these same exceptions
+    // (`GUEST_ALLOWED_HARNESSES`, pinned by the mirror check); Cursor stays
+    // off because its tokens would sit in a box the guest controls.
+    expect(
+      HARNESS_IDS.filter((id) => !harnessSurfaceRefusal(id, "guests")).sort(),
+    ).toEqual(["claude-code", "codex", "copilot-cli", "opencode"]);
   });
   it("names the surface each turn source runs on", () => {
     expect(

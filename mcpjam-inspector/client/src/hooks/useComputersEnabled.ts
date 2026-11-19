@@ -99,6 +99,7 @@ export function useLocalHarnessRollouts(): Readonly<Record<LocalHarnessId, boole
     codex: useFeatureFlagEnabled("local-codex-enabled") === true,
     "copilot-cli": useFeatureFlagEnabled("local-copilot-cli-enabled") === true,
     cursor: useFeatureFlagEnabled("local-cursor-enabled") === true,
+    opencode: useFeatureFlagEnabled("local-opencode-enabled") === true,
   };
 }
 

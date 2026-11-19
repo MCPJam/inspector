@@ -294,7 +294,7 @@ function attributionFromSnapshot(args: {
 
 /** A downloaded pinned file's bytes, as `runPinnedSkillsToHarnessArtifacts`
  *  stored them (text inline, anything else base64). */
-function downloadedFileBytes(file: PinnedSkillArtifactFile): Uint8Array {
+export function downloadedFileBytes(file: PinnedSkillArtifactFile): Uint8Array {
   return typeof file.content === "string"
     ? new TextEncoder().encode(file.content)
     : new Uint8Array(Buffer.from(file.base64, "base64"));

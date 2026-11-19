@@ -30,6 +30,8 @@ colors:
   chrome-control-border: "oklch(0.856 0.0218 85.9495)"
   chrome-hover: "oklch(0.8957 0.0187 86.151)"
   chrome-control-hover: "oklch(0.83 0.0235 80.6762)"
+  chrome-button: "oklch(0.9818 0.0054 95.0986)"
+  chrome-button-hover: "oklch(0.9468 0.0102 92.3)"
   divider: "oklch(0.8829 0.0171 88.0071)"
   input: "oklch(0.7621 0.0156 98.3528)"
   ring: "oklch(0.6171 0.1375 39.0427)"
@@ -96,6 +98,8 @@ colors:
   chrome-control-border-dark: "oklch(0.3618 0.0101 106.8928)"
   chrome-hover-dark: "oklch(0.213 0.0078 95.4245)"
   chrome-control-hover-dark: "oklch(0.3951 0.0106 106.8928)"
+  chrome-button-dark: "oklch(0.2679 0.0036 106.6427)"
+  chrome-button-hover-dark: "oklch(0.3085 0.0035 106.6039)"
   divider-dark: "oklch(0.3618 0.0101 106.8928)"
   input-dark: "oklch(0.4336 0.0113 100.2195)"
   ring-dark: "oklch(0.6724 0.1308 38.7559)"
@@ -367,6 +371,12 @@ Production Redesign, BB-127): the sidebar and top bar share one linen ground wit
 divider between them, and the content panel sits inset within that frame, its
 rounded top edge doing the separating. See
 `mcpjam-inspector/client/src/components/app-chrome-panel.tsx` and `mcp-sidebar.tsx`.
+
+Top-bar buttons (Onboard, Ask MCPJam, Sign in, Star) use the `chrome` Button
+variant: a paper `chrome-button` fill with the `chrome-control-border` hairline,
+so the server selector is the only beige `chrome-control` fill in the bar. Their
+icons opt into a short hover tip with `data-chrome-icon`, skipped under
+`prefers-reduced-motion`.
 
 In the docs, tables use bottom-hairline rows with no header tint and generous
 padding; callouts are editorial left-rail marks, never soft-filled boxes.

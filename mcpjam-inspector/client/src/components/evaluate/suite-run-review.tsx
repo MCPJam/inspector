@@ -341,7 +341,7 @@ export function SuiteRunReviewContent({
       >
         <SheetHeader className="border-b border-border px-6 py-4 pr-12">
           <SheetTitle className="break-words text-lg tracking-tight">
-            {isCaseRun ? "Setup Run" : `Setup Run · ${suite.name}`}
+            {isCaseRun ? "Set up run" : `Set up run · ${suite.name}`}
           </SheetTitle>
           {isCaseRun && (
             <p className="text-sm text-muted-foreground">
