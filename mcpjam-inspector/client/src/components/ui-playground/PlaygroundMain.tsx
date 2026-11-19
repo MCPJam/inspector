@@ -5074,8 +5074,14 @@ export function PlaygroundMain({
       return;
     }
     // Comparison cards set up after the page does; wait for every one.
-    // Wait out model settings loading too: a send now would be refused.
-    if (submitBlocked || (isCompareMode && !compareLanesReady())) return;
+    // Wait out model settings loading too: a send now would be refused. And a
+    // new project's comparison clients arrive after load, switching modes.
+    if (
+      submitBlocked ||
+      clientInit.settling ||
+      (isCompareMode && !compareLanesReady())
+    )
+      return;
     autoRanRef.current = true;
     // The prompt is auto-sent, so clear it out of the composer. The composer is
     // otherwise seeded with the same `initialInput` (so it mirrors the eval
@@ -5127,6 +5133,7 @@ export function PlaygroundMain({
     isCompareMode,
     compareReadyCount,
     submitBlocked,
+    clientInit.settling,
     modelContextQueue,
     ensureSelectedServerReadyForChat,
     ensureThreadReadyForSend,
