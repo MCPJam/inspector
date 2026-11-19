@@ -536,15 +536,17 @@ export function buildEvaluatePath(route: EvalRoute): string {
   return buildEvalRoutePath(routePaths.evaluate, route);
 }
 
-/** The query key a suite's Overview reads to start a run on arrival. */
+/** The query key Evaluate reads to open a suite's run review on arrival. */
 export const EVAL_RUN_PARAM = "run";
 
 /**
- * A suite's Overview, told to start a run as its Run button would; the run
- * then opens its own page. The page drops the key once it starts.
+ * Evaluate, told to open `suiteId`'s run review as its Run does; starting
+ * the run then opens its run page. The page drops the key once it opens.
  */
 export function buildEvaluateSuiteRunPath(suiteId: string): string {
-  return `${buildEvaluatePath({ type: "suite-overview", suiteId })}?${EVAL_RUN_PARAM}=1`;
+  return `${routePaths.evaluate}?${new URLSearchParams({
+    [EVAL_RUN_PARAM]: suiteId,
+  })}`;
 }
 
 /** Retired Evaluate URLs preserve artifact context; commits open the plain run table. */

@@ -18,8 +18,8 @@ beforeEach(() => {
   navigate.mockReset();
 });
 
-it("starts one run and drops the key once the page is ready", () => {
-  search = "?run=1&view=cases";
+it("opens one run review and drops the key once the page is ready", () => {
+  search = "?run=s1&view=cases";
   const run = vi.fn();
   const { rerender } = renderHook(
     ({ ready }) => useRunSuiteOnArrival(ready, run),
@@ -29,6 +29,7 @@ it("starts one run and drops the key once the page is ready", () => {
   rerender({ ready: true });
   rerender({ ready: true });
   expect(run).toHaveBeenCalledTimes(1);
+  expect(run).toHaveBeenCalledWith("s1");
   expect(navigate).toHaveBeenCalledWith("/evaluate/suite/s1?view=cases", {
     replace: true,
   });

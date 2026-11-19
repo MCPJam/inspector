@@ -6,13 +6,17 @@ import {
 } from "@/lib/app-navigation";
 
 /**
- * Starts `run` once when the page is opened with `?run=1` (Home's Run eval).
+ * Calls `run` once with the suite id when the page is opened with
+ * `?run=<suiteId>` (Home's Run eval).
  * The key is dropped first, so a refresh or Back does not run it again.
  */
-export function useRunSuiteOnArrival(ready: boolean, run: () => void) {
+export function useRunSuiteOnArrival(
+  ready: boolean,
+  run: (suiteId: string) => void,
+) {
   const location = useCurrentLocationParts();
   const navigate = useAppNavigate();
-  const requested = new URLSearchParams(location.search).has(EVAL_RUN_PARAM);
+  const requested = new URLSearchParams(location.search).get(EVAL_RUN_PARAM);
   const handled = useRef(false);
 
   useEffect(() => {
@@ -24,6 +28,6 @@ export function useRunSuiteOnArrival(ready: boolean, run: () => void) {
     navigate(`${location.pathname}${query ? `?${query}` : ""}${location.hash}`, {
       replace: true,
     });
-    run();
+    run(requested);
   }, [requested, ready, run, location, navigate]);
 }

@@ -73,7 +73,6 @@ import {
   runEnvironmentRef,
 } from "./helpers";
 import { SuiteHeader } from "./suite-header";
-import { useRunSuiteOnArrival } from "./use-run-suite-on-arrival";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
@@ -1870,12 +1869,6 @@ export function SuiteIterationsView({
     !caseListInSidebar &&
     !isEditMode &&
     viewMode === "overview";
-
-  const runOnArrival = useCallback(
-    () => void onRerunWithOverride(suite),
-    [onRerunWithOverride, suite],
-  );
-  useRunSuiteOnArrival(viewMode === "overview" && !isEditMode, runOnArrival);
 
   const showEvaluateRunPage =
     suiteDetailOverview &&
