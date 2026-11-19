@@ -5,6 +5,7 @@
  *   node scripts/harness-bench/report.mjs <results.jsonl> [--run <id>] [--metric sendToPainted]
  *   node scripts/harness-bench/report.mjs <results.jsonl> --timeline <row number>
  *   node scripts/harness-bench/report.mjs <results.jsonl> --stages
+ *   node scripts/harness-bench/report.mjs <results.jsonl> --metric harnessFirstText
  *
  * `--stages` adds, under each label, the median of each stage: the browser's
  * Enter-to-request and finish-to-close, the route's stages, and the turn's
@@ -24,6 +25,16 @@ const rows = readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => J
 const run = option("--run");
 const metric = option("--metric") ?? "sendToPainted";
 const selected = rows.filter((r) => !run || r.run === run);
+// `harnessFirstText`: the server's first text minus the route's stages before
+// the harness starts (box acquisition included), for changes inside the turn
+// that box-creation noise would otherwise hide.
+for (const row of rows) {
+  const t = row.server?.timing;
+  if (!row.browser || !t || t.firstTextMs == null) continue;
+  const route = ["setupMs", "turnAuthorizationMs", "connectionsMs", "toolsMs", "streamPreparationMs"]
+    .reduce((sum, key) => sum + (Number(t[key]) || 0), 0);
+  row.browser.harnessFirstText = Math.round(t.firstTextMs - route);
+}
 
 function median(values) {
   const v = [...values].sort((a, b) => a - b);
