@@ -725,14 +725,16 @@ function storedScorerDefinitions(
 }
 
 /**
- * Whether the FIRST pass declared `toolCalls:match` for this case.
+ * Whether the FIRST pass found expected calls for this case.
  *
- * It declares the scorer when the matcher's expected-call list is non-empty
- * (`hostedScoreDefinitionInputs`), so this asks the same matcher for that list,
- * over the turns the runner resolves. The list does not depend on which calls
+ * It declares `toolCalls:match` and `toolCalls:arguments` when the matcher's
+ * expected-call list is non-empty (`hostedScoreDefinitionInputs`), so this
+ * asks the same matcher for that list, over the turns the runner resolves. The list does not depend on which calls
  * were made, which is why none are passed: pinned turns and negative tests
  * contribute nothing, and every other turn's expectations count, not only the
- * first turn's.
+ * first turn's. A negative or capped case with no expected call declares
+ * `toolCalls:match` alone, from the `isNegativeTest` and `matchOptions` this
+ * pass forwards beside this answer.
  *
  * The raw `expectedToolCalls` this replaced is undefined on a steps-authored
  * case, whose expectations live in its steps. Reading it dropped the definition

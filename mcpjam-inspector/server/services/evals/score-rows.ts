@@ -263,9 +263,38 @@ function judgeAbsenceStatus(
     : undefined;
 }
 
-function toolMatchDeclared(inputs: HostedScoreRowInputs): boolean {
+/** The case lists calls that should happen. */
+function toolExpectationsDeclared(inputs: HostedScoreRowInputs): boolean {
   return Boolean(
     inputs.evaluation?.expectedToolCalls?.length || inputs.toolMatchAuthored,
+  );
+}
+
+/**
+ * A case that lists no expected call still says which calls may happen when it
+ * is negative (none) or caps extra calls (at most N). The matcher fails it on
+ * that claim, so it needs a `toolCalls:match` row to say why it failed.
+ */
+export function claimsToolSelectionWithoutExpectations(
+  isNegativeTest: boolean | undefined,
+  matchOptions: Record<string, unknown> | undefined,
+): boolean {
+  return isNegativeTest === true || resolveExtrasCap(matchOptions) !== null;
+}
+
+function toolMatchDeclared(inputs: HostedScoreRowInputs): boolean {
+  if (toolExpectationsDeclared(inputs)) return true;
+  // Only a caller that knows the case: the first pass has the matcher's
+  // output, and the second pass states `toolMatchAuthored`. A second pass that
+  // carries the stored definitions passes neither and declares nothing here.
+  const knowsCase =
+    inputs.evaluation !== undefined || inputs.toolMatchAuthored !== undefined;
+  return (
+    knowsCase &&
+    claimsToolSelectionWithoutExpectations(
+      inputs.isNegativeTest,
+      inputs.matchOptions,
+    )
   );
 }
 
@@ -294,9 +323,9 @@ export function hostedScoreDefinitionInputs(
           })),
         }
       : {}),
-    // A case that authored no expectations has no tool-match scorer at all,
-    // rather than a vacuously passing one. `toolMatchAuthored` says the same
-    // thing for a caller holding the authored case but not the matcher's
+    // A case that makes no claim about its calls has no tool-match scorer at
+    // all, rather than a vacuously passing one. `toolMatchAuthored` says the
+    // same thing for a caller holding the authored case but not the matcher's
     // output — see the field's note.
     ...(toolMatchDeclared(inputs)
       ? {
@@ -306,9 +335,10 @@ export function hostedScoreDefinitionInputs(
           },
         }
       : {}),
-    // Its arguments half, on the same precondition, and only where arguments
-    // are compared at all. A negative case expects no call to compare.
-    ...(toolMatchDeclared(inputs) &&
+    // Its arguments half, only for a case that lists expected calls, and only
+    // where arguments are compared at all. With no expected call there is no
+    // argument to compare.
+    ...(toolExpectationsDeclared(inputs) &&
     !inputs.isNegativeTest &&
     comparesArguments(inputs.matchOptions)
       ? {
@@ -443,7 +473,8 @@ export function buildHostedScoreRows(
     //
     // A NEGATIVE case is the exception, and only in name: "no tool should be
     // called" is a selection claim through and through, and it has no
-    // arguments half, so the matcher's own verdict is the selection verdict.
+    // arguments half. Read off the calls rather than `passed`, which the
+    // failure path forces false before any call was made.
     const selection = toolSelectionOutcome(
       inputs.evaluation,
       inputs.matchOptions,
@@ -452,15 +483,7 @@ export function buildHostedScoreRows(
       fromCriterionResult(toolMatchDefinition, {
         criterionId: HOSTED_TOOL_MATCH_SCORER_ID,
         ...(inputs.isNegativeTest
-          ? {
-              passed: inputs.evaluation.passed === true,
-              reason:
-                inputs.evaluation.passed === true
-                  ? "no tool was called, as the case expects"
-                  : `${
-                      inputs.evaluation.unexpected?.length ?? 0
-                    } tool call(s) made where the case expects none`,
-            }
+          ? negativeSelection(inputs.evaluation)
           : {
               passed: selection.passed,
               reason: describeToolSelection(selection),
@@ -643,6 +666,20 @@ export function toolSelectionOutcome(
     extrasOverCap,
     cap,
   };
+}
+
+/** A negative case's selection verdict: every call breaks it. */
+function negativeSelection(evaluation: HostedEvaluationLike): {
+  passed: boolean;
+  reason: string;
+} {
+  const calls = evaluation.unexpected?.length ?? 0;
+  return calls === 0
+    ? { passed: true, reason: "no tool was called, as the case expects" }
+    : {
+        passed: false,
+        reason: `${calls} tool call(s) made where the case expects none`,
+      };
 }
 
 /** Bounded, content-free summary of the selection verdict. Counts only. */
