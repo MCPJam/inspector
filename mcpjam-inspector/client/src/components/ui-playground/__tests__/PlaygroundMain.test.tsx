@@ -483,9 +483,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         <div data-testid="thread">
           <span data-testid="message-count">{messages.length}</span>
           {isLoading && <span data-testid="thread-loading">Loading...</span>}
-          {/* Stands in for the per-message edit affordance — mirrors the
-              "Edit first message" button in ChatTabV2's test suite. Only
-              rendered when the affordance isn't suppressed, same as the real
+          {/* Stands in for the per-message edit affordance. Only rendered
+              when the affordance isn't suppressed, same as the real
               Thread/MessageView action row. */}
           {onEditUserMessage && (
             <button
@@ -525,7 +524,6 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     // so tests can reach into props the rendered markup below never surfaces
     // — e.g. `onModelSelectorOpenChange`, which drives the layout lock that
     // keeps the single-pane Thread mounted across a compare-mode flip.
-    // Mirrors ChatTabV2.trace-views.test.tsx's `mockChatInput` pattern.
     mockChatInputProps(props);
     const theme = useScenarioHostTheme();
     const {
@@ -3042,10 +3040,7 @@ describe("PlaygroundMain", () => {
       // runs from inside the rewind, since "after it returned" is already late.
       // Deliberately does NOT seed `resumedVersion`: the handler clears it
       // unconditionally, so seeding it would prove nothing here while leaking a
-      // mutation of the shared mock into later tests. The realistic
-      // resumed-thread path — rail attached, version 4, detaching to "none" —
-      // is covered in `ChatTabV2.history-sync.test.tsx`, whose mock reflects
-      // `syncResumedVersion` back onto `resumedVersion`. This pins the ordering.
+      // mutation of the shared mock into later tests. This pins the ordering.
       mockUseChatSession.syncResumedVersion.mockClear();
 
       let clearedBeforeRewind: boolean | undefined = undefined;
@@ -3301,8 +3296,7 @@ describe("PlaygroundMain", () => {
       ).toBeInstanceOf(Function);
 
       // `useModelSelectorLayoutLock` keeps whichever surface was mounted when
-      // the model selector opens mounted through a subsequent mode flip (see
-      // ChatTabV2.trace-views.test.tsx's identical pattern), so opening it
+      // the model selector opens mounted through a subsequent mode flip, so opening it
       // here keeps the single-pane Thread mounted even once compare mode
       // goes live below — isolating the ternary's `isCompareMode` arm from
       // the (separately-tested, and separately real) fact that compare mode
