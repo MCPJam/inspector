@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@mcpjam/design-system/cn";
 import {
@@ -40,6 +40,7 @@ export function ClientMultiSelect({
   inModal,
 }: ClientMultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const selectionId = useId();
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const selected = new Set(value);
   const selectedHosts = hosts.filter((host) => selected.has(host.hostId));
@@ -66,11 +67,7 @@ export function ClientMultiSelect({
           type="button"
           id={triggerId}
           disabled={disabled}
-          aria-label={
-            selectedHosts.length > 1
-              ? selectedHosts.map(clientDisplayName).join(", ")
-              : undefined
-          }
+          aria-describedby={selectionId}
           className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-sm whitespace-nowrap shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30 dark:hover:bg-input/50"
           data-testid="client-multi-select-trigger"
         >
@@ -91,6 +88,11 @@ export function ClientMultiSelect({
             >
               {label}
             </span>
+          </span>
+          <span id={selectionId} className="sr-only">
+            {selectedHosts.length === 0
+              ? placeholder
+              : selectedHosts.map(clientDisplayName).join(", ")}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </button>

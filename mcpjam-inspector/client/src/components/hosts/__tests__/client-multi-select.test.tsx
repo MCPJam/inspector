@@ -35,6 +35,9 @@ describe("ClientMultiSelect", () => {
     expect(screen.getByTestId("client-multi-select-trigger")).toHaveTextContent(
       "Claude +1",
     );
+    expect(
+      screen.getByTestId("client-multi-select-trigger"),
+    ).toHaveAccessibleDescription("Claude, ChatGPT");
   });
 
   it("adds and removes clients without closing", async () => {
