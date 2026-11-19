@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Progress } from "@mcpjam/design-system/progress";
+import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { ErrorCard } from "@/components/ui/error-card";
 import { track } from "@/lib/analytics";
 import {
@@ -20,7 +21,10 @@ import type { ServerWithName } from "@/state/app-types";
 import { AgentStep } from "./AgentStep";
 import { ChecklistStepRow } from "./ChecklistStepRow";
 import { ConnectStep } from "./ConnectStep";
-import { checklistProgressKey, useChecklistProgress } from "./checklist-progress";
+import {
+  checklistProgressKey,
+  useChecklistProgress,
+} from "./checklist-progress";
 import { writeHomeChecklistAutorun } from "./playground-autorun";
 import { computeChecklistSignals, type StepId } from "./checklist-signals";
 
@@ -83,14 +87,21 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
       ? selected
       : (confirmedServers[0] ?? null);
 
-  const { data: conformanceRuns } = useSoftQuery<ConformanceRunListItem[]>(
+  const conformanceQuery = useSoftQuery<ConformanceRunListItem[]>(
     "conformanceRuns:latestRunPerServer",
     convexProjectId ? { projectId: convexProjectId } : "skip",
   );
-  const { data: suites } = useSoftQuery<EvalSuiteOverviewEntry[]>(
+  const suitesQuery = useSoftQuery<EvalSuiteOverviewEntry[]>(
     "testSuites:getTestSuitesOverview",
     convexProjectId ? { projectId: convexProjectId } : "skip",
   );
+  const conformanceRuns = conformanceQuery.data;
+  const suites = suitesQuery.data;
+  // Until both answer, steps 4 and 5 would read as not done.
+  const loaded =
+    !convexProjectId ||
+    ((conformanceRuns !== undefined || conformanceQuery.error !== undefined) &&
+      (suites !== undefined || suitesQuery.error !== undefined));
   const signals = computeChecklistSignals({
     hasServer: confirmedServers.length > 0,
     progress,
@@ -99,21 +110,35 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     suites: suites ?? [],
   });
   const doneCount = STEP_ORDER.filter((step) => signals.done[step]).length;
-  const finished = doneCount === STEP_ORDER.length || progress.skippedAll;
-  // Completing the last step holds on "5 of 5" long enough to see the bar
-  // fill; skipping the rest goes straight to today's Home.
   const allDone = doneCount === STEP_ORDER.length;
+  const handedBack = Boolean(progress.finished || progress.skippedAll);
+  // Whether everything was already done when the checklist first had answers.
+  const doneOnArrival = useRef<boolean | null>(null);
+  if (loaded && doneOnArrival.current === null) doneOnArrival.current = allDone;
+  // Completing the last step holds on "5 of 5" long enough to see the bar
+  // fill. Skipping the rest, or arriving with everything done, goes straight
+  // to today's Home.
   useEffect(() => {
-    if (!finished) return;
-    if (!allDone || progress.skippedAll) {
+    if (handedBack) {
       onFinished();
       return;
     }
-    const timer = window.setTimeout(onFinished, FINISH_HOLD_MS);
+    if (!loaded || !allDone) return;
+    const finish = () => {
+      update({ finished: true });
+      onFinished();
+    };
+    if (doneOnArrival.current) {
+      finish();
+      return;
+    }
+    const timer = window.setTimeout(finish, FINISH_HOLD_MS);
     return () => window.clearTimeout(timer);
-  }, [finished, allDone, progress.skippedAll, onFinished]);
+  }, [handedBack, loaded, allDone, update, onFinished]);
 
-  const firstOpen = STEP_ORDER.find((step) => !signals.done[step]) ?? null;
+  const firstOpen = loaded
+    ? (STEP_ORDER.find((step) => !signals.done[step]) ?? null)
+    : null;
   // null follows the first unfinished step until the user picks one.
   const [openStep, setOpenStep] = useState<StepId | null>(null);
   const shownStep: StepId =
@@ -220,49 +245,45 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     </>
   );
 
-  const steps = useMemo(
-    () =>
-      ({
-        connect: {
-          title: "Connect your server",
-          surface: "Connect",
-          summary: serverName ? `Connected: ${serverName}` : null,
-        },
-        chat: {
-          title: `Try ${serverLabel} in Playground`,
-          surface: "Playground",
-          summary: signals.done.chat ? "First Playground run complete" : null,
-        },
-        onboard_agent: {
-          title: "Add MCPJam to your coding agent",
-          surface: "Claude Code",
-          summary: progress.agent
-            ? "Added to your agent"
-            : progress.skippedAgent
-              ? "Skipped"
-              : null,
-        },
-        check_server: {
-          title: "Check your server",
-          surface: "Conformance",
-          summary: signals.conformance.run
-            ? `${signals.conformance.run.passed} of ${signals.conformance.run.applicable} checks passed`
-            : null,
-        },
-        create_eval: {
-          title: "Run your first eval",
-          surface: "Evaluate",
-          summary:
-            signals.eval.passRate !== null
-              ? `Latest run: ${Math.round(signals.eval.passRate * 100)}% passed`
-              : null,
-        },
-      }) satisfies Record<
-        StepId,
-        { title: string; surface: string; summary: string | null }
-      >,
-    [serverName, serverLabel, signals, progress],
-  );
+  const steps = {
+    connect: {
+      title: "Connect your server",
+      surface: "Connect",
+      summary: serverName ? `Connected: ${serverName}` : null,
+    },
+    chat: {
+      title: `Try ${serverLabel} in Playground`,
+      surface: "Playground",
+      summary: signals.done.chat ? "First Playground run complete" : null,
+    },
+    onboard_agent: {
+      title: "Add MCPJam to your coding agent",
+      surface: "Claude Code",
+      summary: progress.agent
+        ? "Added to your agent"
+        : progress.skippedAgent
+          ? "Skipped"
+          : null,
+    },
+    check_server: {
+      title: "Check your server",
+      surface: "Conformance",
+      summary: signals.conformance.run
+        ? `${signals.conformance.run.passed} of ${signals.conformance.run.applicable} checks passed`
+        : null,
+    },
+    create_eval: {
+      title: "Run your first eval",
+      surface: "Evaluate",
+      summary:
+        signals.eval.passRate !== null
+          ? `Latest run: ${Math.round(signals.eval.passRate * 100)}% passed`
+          : null,
+    },
+  } satisfies Record<
+    StepId,
+    { title: string; surface: string; summary: string | null }
+  >;
 
   const body = (step: StepId) => {
     switch (step) {
@@ -282,7 +303,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
               ctx.setSelectedServer(name);
               setOpenStep(null);
             }}
-            onTrack={(action) => trackStep("connect", action)}
+            onTrack={(action, extra) => trackStep("connect", action, extra)}
           />
         );
       case "chat":
@@ -360,7 +381,8 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     }
   };
 
-  if (progress.skippedAll) return null;
+  if (handedBack || (loaded && doneOnArrival.current)) return null;
+  if (!loaded) return <Skeleton className="h-[30rem] w-full rounded-xl" />;
 
   const shownIndex = STEP_ORDER.indexOf(shownStep);
   const projectName: string = ctx.activeProject?.name ?? "your project";
@@ -381,7 +403,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
           <Progress
             value={(doneCount / STEP_ORDER.length) * 100}
             aria-label="Setup progress"
-            className="h-1.5 w-32 bg-muted [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out motion-reduce:[&_[data-slot=progress-indicator]]:transition-none"
+            tone="success"
+            pace="gradual"
+            className="h-1.5 w-32 bg-muted"
           />
         </div>
       </div>
@@ -400,7 +424,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
               size="sm"
               onClick={() => {
                 update({ skippedAll: true });
-                trackStep(firstOpen ?? "create_eval", "skipped", { rest: true });
+                trackStep(firstOpen ?? "create_eval", "skipped", {
+                  rest: true,
+                });
               }}
             >
               Skip the rest

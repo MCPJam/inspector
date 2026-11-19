@@ -117,9 +117,6 @@ export function PlaygroundCenter({
         // JSDoc).
         showPostConnectGuide={false}
         showPostConnectGuideCopy={isGuidedPostConnect}
-        // The copy needs the server up; retiring the run does not. A message
-        // sent while Excalidraw is still connecting — or failed to — finishes
-        // the run all the same, and is its only exit now that a run resumes.
         autoRunInput={homeAutorun?.prompt}
         onAutoRunSent={
           homeAutorun
@@ -129,6 +126,9 @@ export function PlaygroundCenter({
                 })
             : undefined
         }
+        // The copy needs the server up; retiring the run does not. A message
+        // sent while Excalidraw is still connecting — or failed to — finishes
+        // the run all the same, and is its only exit now that a run resumes.
         onFirstMessageSent={
           isFirstRunUnfinished || firstRunPrompt || homeAutorun
             ? () => {

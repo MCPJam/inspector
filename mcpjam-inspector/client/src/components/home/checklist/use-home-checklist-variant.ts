@@ -1,9 +1,4 @@
-import { useEffect, useState } from "react";
-import {
-  useActiveFeatureFlags,
-  useFeatureFlagVariantKey,
-  usePostHog,
-} from "posthog-js/react";
+import { useLockedFlagVariant } from "@/hooks/use-locked-flag-variant";
 
 export const HOME_CHECKLIST_FLAG = "home-setup-checklist";
 
@@ -20,23 +15,12 @@ export function normalizeHomeChecklistVariant(
 }
 
 /**
- * The Home variant, fixed for the rest of the visit once flags load so a
- * late flag refresh can't swap the page under the user. Until flags load, and
- * when they never do, Home renders control.
+ * The Home variant, fixed for the rest of the visit once flags load. Until
+ * flags load, and when they never do, Home renders control.
  */
 export function useHomeChecklistVariant(): HomeChecklistVariant {
-  const posthog = usePostHog();
-  // Reading the variant fires the PostHog exposure ($feature_flag_called).
-  const raw = useFeatureFlagVariantKey(HOME_CHECKLIST_FLAG);
-  // Re-renders when flags resolve, so `hasLoadedFlags` below is current.
-  useActiveFeatureFlags();
-  const flagsLoaded = posthog?.featureFlags?.hasLoadedFlags ?? false;
-  const [committed, setCommitted] = useState<HomeChecklistVariant | null>(() =>
-    flagsLoaded ? normalizeHomeChecklistVariant(raw) : null,
+  return (
+    useLockedFlagVariant(HOME_CHECKLIST_FLAG, normalizeHomeChecklistVariant) ??
+    "control"
   );
-  useEffect(() => {
-    if (committed !== null || !flagsLoaded) return;
-    setCommitted(normalizeHomeChecklistVariant(raw));
-  }, [committed, flagsLoaded, raw]);
-  return committed ?? "control";
 }

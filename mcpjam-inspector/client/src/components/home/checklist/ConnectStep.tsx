@@ -14,10 +14,7 @@ import type { ServerWithName } from "@/state/app-types";
 export const CONNECT_TYPING_PAUSE_MS = 1000;
 
 export type ConnectAction =
-  | "auto_started"
-  | "confirmed"
-  | "denied"
-  | "retried";
+  "auto_started" | "confirmed" | "denied" | "failed" | "retried";
 
 interface Attempt {
   name: string;
@@ -72,20 +69,51 @@ export function ConnectStep({
   /** Reconnects a saved server as it is, keeping its saved authentication. */
   onReconnect: (name: string) => Promise<unknown>;
   onConfirmed: (name: string) => void;
-  onTrack: (action: ConnectAction) => void;
+  onTrack: (action: ConnectAction, extra?: { error_slug?: string }) => void;
   /** The unconfirmed server, so the step isn't checked before Confirm. */
   onAttemptChange: (name: string | null) => void;
 }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState<Attempt | null>(null);
+  const [attempt, setAttemptState] = useState<Attempt | null>(null);
+  // Read by the unmount cleanup, which outlives the last render's state.
+  const attemptRef = useRef<Attempt | null>(null);
+  const setAttempt = (next: Attempt | null) => {
+    attemptRef.current = next;
+    setAttemptState(next);
+  };
   const timer = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const latest = useRef({ onRemove, onAttemptChange, onTrack });
+  latest.current = { onRemove, onAttemptChange, onTrack };
   const attemptName = attempt?.name ?? null;
   useEffect(() => onAttemptChange(attemptName), [attemptName, onAttemptChange]);
+  // Leaving the step abandons an unconfirmed attempt, as Cancel does.
+  useEffect(
+    () => () => {
+      window.clearTimeout(timer.current);
+      const current = attemptRef.current;
+      if (!current) return;
+      if (current.created) void latest.current.onRemove(current.name);
+      latest.current.onAttemptChange(null);
+    },
+    [],
+  );
 
   const server = attempt ? servers[attempt.name] : undefined;
   const status = attempt ? (server?.connectionStatus ?? "connecting") : null;
+
+  const errorSlug = server?.lastNormalizedError?.slug;
+  // Once per failure; Retry clears it so the next failure counts too.
+  const trackedFailure = useRef<Attempt | null>(null);
+  useEffect(() => {
+    if (status !== "failed" || !attempt) return;
+    if (trackedFailure.current === attempt) return;
+    trackedFailure.current = attempt;
+    latest.current.onTrack(
+      "failed",
+      errorSlug ? { error_slug: errorSlug } : {},
+    );
+  }, [status, attempt, errorSlug]);
 
   const discard = (current: Attempt | null) => {
     if (current?.created) void onRemove(current.name);
@@ -177,7 +205,9 @@ export function ConnectStep({
         />
         <FieldError>{error}</FieldError>
       </div>
-      {attempt && meta && (status === "connecting" || status === "oauth-flow") ? (
+      {attempt &&
+      meta &&
+      (status === "connecting" || status === "oauth-flow") ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <meta.Icon className={meta.iconClassName} aria-hidden />
           <span className="flex-1" role="status">
@@ -233,6 +263,7 @@ export function ConnectStep({
             `Couldn't connect to ${attempt.formData.url}. Check the URL and try again.`
           }
           onRetry={() => {
+            trackedFailure.current = null;
             onTrack("retried");
             connect(attempt);
           }}

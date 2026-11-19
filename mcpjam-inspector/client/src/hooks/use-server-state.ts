@@ -1019,6 +1019,9 @@ export function useServerState({
 
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
+  // The op token each server was removed at. A connect holding that token
+  // deletes the row its in-flight save creates, which the removal missed.
+  const removedAtOpTokenRef = useRef(new Map<string, number>());
   const checkWasConnectedRef = useRef(new Map<string, boolean>());
   useEffect(
     () =>
@@ -2721,18 +2724,23 @@ export function useServerState({
         return;
       }
 
-      const existingServer = activeProjectServersFlat?.find(
-        (s) => s.name === serverName,
-      );
+      // A save that just finished is in the eager name → id mapping before
+      // the project-server subscription catches up.
+      const justSaved = tryResolveProjectServer(serverName);
+      const serverId =
+        activeProjectServersFlat?.find((s) => s.name === serverName)?._id ??
+        (justSaved?.projectId === effectiveActiveProjectId
+          ? justSaved.serverId
+          : undefined);
 
-      if (!existingServer) {
+      if (!serverId) {
         logger.warn("Server not found in Convex for deletion", { serverName });
         return;
       }
 
       try {
         await convexDeleteServer({
-          serverId: existingServer._id,
+          serverId,
         });
       } catch (error) {
         logger.error("Failed to remove server from Convex", {
@@ -4025,7 +4033,21 @@ export function useServerState({
             ? { ...options.hostedWriteTarget, exactServerId: true }
             : undefined,
         );
-        if (isStaleOp(formData.name, token)) return;
+        if (isStaleOp(formData.name, token)) {
+          if (
+            synced.ok &&
+            removedAtOpTokenRef.current.get(formData.name) === token
+          ) {
+            void convexDeleteServer({ serverId: synced.serverId }).catch(
+              (error: unknown) =>
+                logger.error("Failed to remove a server deleted while saving", {
+                  serverName: formData.name,
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+            );
+          }
+          return;
+        }
         if (synced.ok) {
           hostedServerId = synced.serverId;
           syncedConnectionTarget = {
@@ -4595,6 +4617,7 @@ export function useServerState({
       prepareHostedProjectOAuthRedirect,
       resolveOAuthInitiationInputs,
       syncServerToConvex,
+      convexDeleteServer,
       logger,
       storeInitInfo,
       guardedTestConnection,
@@ -5528,6 +5551,10 @@ export function useServerState({
   const handleRemoveServer = useCallback(
     async (serverName: string, options?: { removeFromCloud?: boolean }) => {
       logger.info("Removing server", { serverName });
+      removedAtOpTokenRef.current.set(
+        serverName,
+        opTokenRef.current.get(serverName) ?? 0,
+      );
       await handleDisconnect(serverName);
       if (options?.removeFromCloud === false) {
         cleanupServerLocalArtifacts(serverName);

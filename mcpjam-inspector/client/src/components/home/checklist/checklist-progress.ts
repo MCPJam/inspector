@@ -10,6 +10,8 @@ export interface ChecklistProgress {
   agent?: boolean;
   skippedAll?: boolean;
   skippedAgent?: boolean;
+  /** Set once the checklist hands Home back, so it doesn't show again. */
+  finished?: boolean;
 }
 
 const PREFIX = "mcpjam.home-checklist.v1";

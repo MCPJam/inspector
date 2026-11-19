@@ -69,7 +69,9 @@ describe("ConnectStep", () => {
     const { props, view } = setup();
     typeUrl(URL_VALUE);
     act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
-    view.rerender(<ConnectStep {...props} servers={{ Acme: server("connected") }} />);
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
     expect(screen.getByText("Connected to Acme")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(props.onConfirmed).toHaveBeenCalledWith("Acme");
@@ -80,8 +82,12 @@ describe("ConnectStep", () => {
     const { props, view } = setup();
     typeUrl(URL_VALUE);
     act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
-    view.rerender(<ConnectStep {...props} servers={{ Acme: server("connected") }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Use a different server" }));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use a different server" }),
+    );
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
   });
 
@@ -89,7 +95,9 @@ describe("ConnectStep", () => {
     const { props, view } = setup();
     typeUrl(URL_VALUE);
     act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
-    view.rerender(<ConnectStep {...props} servers={{ Acme: server("connecting") }} />);
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connecting") }} />,
+    );
     typeUrl(`${URL_VALUE}2`);
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
   });
@@ -104,6 +112,65 @@ describe("ConnectStep", () => {
     expect(props.onReconnect).toHaveBeenCalledTimes(2);
     typeUrl("https://other.example.com/mcp");
     expect(props.onRemove).not.toHaveBeenCalled();
+  });
+
+  it("starts connecting right away on paste", () => {
+    const { props } = setup();
+    const input = screen.getByLabelText("Server URL");
+    // jsdom's change event carries no InputEvent, so dispatch the paste one.
+    act(() => {
+      Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set?.call(input, URL_VALUE);
+      input.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          inputType: "insertFromPaste",
+        }),
+      );
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("abandons an unconfirmed attempt when the step closes", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    view.unmount();
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("keeps a confirmed server when the step closes", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    view.unmount();
+    expect(props.onRemove).not.toHaveBeenCalled();
+  });
+
+  it("tracks a failed connection once, with its error slug", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    const failed = {
+      ...server("failed"),
+      lastNormalizedError: { slug: "network/unreachable" },
+    } as unknown as ServerWithName;
+    view.rerender(<ConnectStep {...props} servers={{ Acme: failed }} />);
+    view.rerender(<ConnectStep {...props} servers={{ Acme: { ...failed } }} />);
+    const failures = props.onTrack.mock.calls.filter(([a]) => a === "failed");
+    expect(failures).toEqual([
+      ["failed", { error_slug: "network/unreachable" }],
+    ]);
   });
 
   it("accepts a localhost URL", () => {
