@@ -272,6 +272,7 @@ function ConvertSessionDialogCoreInner({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
+  const hostsSeeded = useRef(false);
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
     [],
   );
@@ -578,6 +579,7 @@ function ConvertSessionDialogCoreInner({
       setIsSubmitting(false);
       setServerAttachmentId(null);
       setHostAttachments([]);
+      hostsSeeded.current = false;
     }
   }, [open]);
 
@@ -603,7 +605,13 @@ function ConvertSessionDialogCoreInner({
     // authoritative `defaultHostId` arrives — silently attaching the wrong
     // host. A user edit before load completes still wins (non-empty guard).
     if (detail.loading) return;
-    if (hostAttachments.length === 0 && projectHosts.length > 0) {
+    // Seed once per open, so clearing the list is not undone.
+    if (
+      !hostsSeeded.current &&
+      hostAttachments.length === 0 &&
+      projectHosts.length > 0
+    ) {
+      hostsSeeded.current = true;
       const preferredHostId =
         defaultHostId &&
         projectHosts.some((host) => host.hostId === defaultHostId)

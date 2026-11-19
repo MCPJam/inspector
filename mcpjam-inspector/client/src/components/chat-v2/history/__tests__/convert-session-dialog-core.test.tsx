@@ -111,13 +111,19 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
 vi.mock("@/components/evals/client-attachments-editor", () => ({
   ClientAttachmentsEditor: ({
     value,
+    onChange,
   }: {
     value: Array<{ namedHostId: string }>;
+    onChange: (next: Array<{ namedHostId: string }>) => void;
   }) => (
     <div
       data-testid="client-picker"
       data-host={value.map((attachment) => attachment.namedHostId).join(",")}
-    />
+    >
+      <button type="button" onClick={() => onChange([])}>
+        Clear clients
+      </button>
+    </div>
   ),
 }));
 
@@ -763,6 +769,22 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.getByTestId("server-picker")).toBeTruthy();
     // ...and the existing branch's picker folds away with it.
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
+  });
+
+  it("keeps the client list empty after the user clears it", async () => {
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).not.toBe(""),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Clear clients" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
+    );
   });
 
   it("names Clients and Server through their labels, not just their values", () => {
