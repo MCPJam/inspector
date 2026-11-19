@@ -698,6 +698,22 @@ export {
 } from "./contract/index.js";
 export type { CreditRecovery } from "./contract/index.js";
 export { readEvalRunCreditRecovery } from "./eval-credit-recovery.js";
+export {
+  INCOMPLETE_CASES_LIMIT,
+  incompleteCasesOfIterations,
+  isCreditBlock,
+  readEvalRunIncompleteCases,
+  refusedTargetResumeInstruction,
+  resumeIdempotencyKeyForTarget,
+  resumeSourceOfRun,
+  stoppedRunResumeInstruction,
+} from "./eval-credit-resume.js";
+export type {
+  EvalResumeInstruction,
+  EvalResumeSource,
+  IncompleteEvalCase,
+  IncompleteEvalCases,
+} from "./eval-credit-resume.js";
 export type {
   EvalDecisionSummary,
   EvalDecisionSummaryCase,

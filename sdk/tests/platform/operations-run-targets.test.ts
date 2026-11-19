@@ -92,7 +92,10 @@ function suiteDetail(
 interface Fixture {
   detail?: Record<string, unknown>;
   /** Target ids whose grouped launch should come back as a failed entry. */
-  groupFailures?: Record<string, { code: string; message: string }>;
+  groupFailures?: Record<
+    string,
+    { code: string; message: string; recovery?: unknown }
+  >;
   /** Model a server with no grouped-launch endpoint. */
   noRunGroupEndpoint?: boolean;
   /** Model the LIVE route answering 404 for a real reason (suite deleted). */
@@ -997,6 +1000,46 @@ describe("run_eval_suite target selection", () => {
       error: {
         code: "ENVIRONMENT_REVISION_CONFLICT",
         message: "revision moved",
+      },
+    });
+  });
+
+  it("gives a credit-refused target its recovery and the call that re-launches it", async () => {
+    const recovery = {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "upgrade_plan",
+      actor: "caller",
+      url: "https://app.mcpjam.com/billing",
+    };
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+      groupFailures: {
+        "env-prod": { code: "FORBIDDEN", message: "Out of credits.", recovery },
+      },
+    });
+    const result = await runEvalSuiteOperation.execute(
+      {
+        suite: "Smoke",
+        allAttached: true,
+        iterations: 2,
+        idempotencyKey: "group-key",
+      },
+      { client },
+    );
+    expect(result.targets[1]).toEqual({
+      status: "failed",
+      environment: { id: "env-prod", name: "Prod", revision: null },
+      error: { code: "FORBIDDEN", message: "Out of credits.", recovery },
+      resume: {
+        tool: "run_eval_suite",
+        arguments: {
+          project: "project-1",
+          suite: "suite-1",
+          environment: "env-prod",
+          iterations: 2,
+          idempotencyKey: "group-key:env-prod",
+        },
       },
     });
   });

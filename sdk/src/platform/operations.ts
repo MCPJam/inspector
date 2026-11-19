@@ -59,6 +59,14 @@ import {
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import { readEvalRunCreditRecovery } from "../eval-credit-recovery.js";
 import {
+  creditStopResumeFields,
+  failedTargetCreditFields,
+} from "./eval-credit-resume-fields.js";
+import type {
+  EvalResumeInstruction,
+  IncompleteEvalCases,
+} from "../eval-credit-resume.js";
+import {
   parseCreditRecovery,
   type CreditRecovery,
 } from "../contract/credit-recovery.js";
@@ -4189,7 +4197,10 @@ export type RunEvalTargetResult =
       status: "failed";
       environment?: PlatformEvalRunCreated["environment"];
       host?: { id: string; name: string };
-      error: { code: string; message: string };
+      /** `recovery`: MCPJam credits refused this target; no run was created. */
+      error: { code: string; message: string; recovery?: CreditRecovery };
+      /** A credit refusal a person must clear: the call that re-launches it. */
+      resume?: EvalResumeInstruction;
     };
 
 export type RunEvalSuiteResult = {
@@ -4272,7 +4283,7 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. Returns immediately with the project and runId; the run status progresses to completed, failed, cancelled, or timed_out. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
+    "Start an asynchronous rerun of an existing eval suite. Returns immediately with the project and runId; the run status progresses to completed, failed, cancelled, or timed_out. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started. A target MCPJam credits refused carries error.recovery (the one step a person takes) and resume (the exact run_eval_suite call to make once they have); call it once, never on a timer.",
   readOnly: false,
   risk: "spend",
   permalink: derivePermalinks((result) => {
@@ -4712,7 +4723,15 @@ export const runEvalSuiteOperation: PlatformOperation<
                 },
               }
             : {}),
-          error: entry.error,
+          ...failedTargetCreditFields(entry.error, {
+            projectId: project.id,
+            suiteId: suite.id,
+            input,
+            target: {
+              environmentId: entry.target.environmentId,
+              hostId: entry.target.namedHostId,
+            },
+          }),
         };
       }
       return {
@@ -7106,6 +7125,10 @@ export type GetEvalRunResult = {
    * other run and on deployments that do not record it.
    */
   creditRecovery?: CreditRecovery;
+  /** A credit stop a person must clear: the call that resumes the run. */
+  resume?: EvalResumeInstruction;
+  /** The cases that resume will run, bounded; see `IncompleteEvalCases`. */
+  incompleteCases?: IncompleteEvalCases;
 };
 
 export const getEvalRunOperation: PlatformOperation<
@@ -7115,7 +7138,7 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. `insights.currentFindings` lists the run's findings, as the run page does (MCP omits it when it repeats `insights.findings` and sets `currentFindingsSameAsFindings`); `insights.unifiedFindings.snapshot.enrichment.status` says whether a model's explanation applies to them (ready) or predates the latest evidence (stale); `insights.status` is the state of the latest analysis. To start, cancel or rebuild an analysis, use request_eval_run_insights, cancel_eval_run_insights and build_eval_run_findings. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
+    "Get an eval run's status and verdict and, once the run is terminal, its `decisionSummary`: the verdict and where it came from (`verdictSource`); the counts and the population they count (`measurementUnit`: `caseVariant` under per-case grading, `trial` under a suite-wide accuracy threshold); the `decision` with the reasons a per-case-graded run passed, failed, or was withheld as inconclusive; and per-iteration `diagnostics` with the user-value chain, the first failed stage, the failure category, the evidence for that stage, and one suggested next action. `verdict: \"notEstablished\"` means no verdict exists (still running, stopped early, or undecidable); it is not a failure. The chain's stages, in order: connection → discovery → selection → call → response → userValue. Each diagnostic's `chain.status` is `verified` (the stored derivation validated, so `stages`, `firstFailedStage` and `failureCategory` are present), `unverified` (a derivation was stored but did not validate, so those fields are withheld), or `absent` (no derivation was stored). A stage row's `state` is `passed` or `failed` (measured), `notReached` (an earlier stage failed), `notMeasured` (the run captured nothing that could decide it), or `notApplicable` (the stage does not apply to the case); none of the last three says the stage was healthy. `firstFailedStage` is where the chain stopped, not its cause; that stage row's `reason` is the closest thing to a cause. `failureCategory` is a coarse bucket and can be present with no `firstFailedStage` (a setup abort or an evaluator error never reaches a stage). Diagnostics are paginated: pass diagnosticsCursor to continue; `diagnostics.complete: false` means the list is partial. Per-step results come from get_eval_run_steps and full transcripts from get_eval_iteration_trace. The result also carries an `insights` envelope of findings aggregated across iterations, with exemplar evidence. `insights.currentFindings` lists the run's findings, as the run page does (MCP omits it when it repeats `insights.findings` and sets `currentFindingsSameAsFindings`); `insights.unifiedFindings.snapshot.enrichment.status` says whether a model's explanation applies to them (ready) or predates the latest evidence (stale); `insights.status` is the state of the latest analysis. To start, cancel or rebuild an analysis, use request_eval_run_insights, cancel_eval_run_insights and build_eval_run_findings. When MCPJam credits stopped the run, `creditRecovery` is the one step a person takes, `resume` is the exact run_eval_suite call that reruns the unfinished cases once they have, and `incompleteCases` lists those cases. Each finding's `actionTarget` says what it concerns: only findings with actionTarget mcp_server and actionability ready describe a change to the server under test; the other targets describe agent, test or environment work.",
   readOnly: true,
   permalink: derivePermalinks((result) => [
     evalRunRef(result.run.id, result.run.suiteId, result.project?.id),
@@ -7156,6 +7179,13 @@ export const getEvalRunOperation: PlatformOperation<
       run,
       ...(decisionSummary ? { decisionSummary } : {}),
       ...(creditRecovery ? { creditRecovery } : {}),
+      ...(await creditStopResumeFields(
+        client,
+        signal,
+        project.id,
+        run,
+        creditRecovery
+      )),
     };
   },
 };

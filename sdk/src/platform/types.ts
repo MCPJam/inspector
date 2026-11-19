@@ -1792,7 +1792,12 @@ export type PlatformEvalRunGroupEntry =
   | {
       status: "failed";
       target: PlatformEvalRunGroupTarget;
-      error: { code: string; message: string };
+      /**
+       * `recovery` is set when MCPJam credits refused this target: no run was
+       * created for it. Unvalidated on the wire; parse it with
+       * `parseCreditRecovery`.
+       */
+      error: { code: string; message: string; recovery?: CreditRecovery };
     };
 
 /**
