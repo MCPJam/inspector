@@ -1153,6 +1153,12 @@ export type {
 // Pure and browser-safe: the Inspector client canonicalizes picker rows with
 // the same rows the SDK sends.
 export { ANTHROPIC_NATIVE_MODEL_IDS } from "./model-native-ids.js";
+/**
+ * Per-call model cost: normalize one request's usage, price it from a
+ * provider-reported amount or a recorded rate, and sum calls into a rollup
+ * that says how much of the total is known. Pure and browser-safe.
+ */
+export * from "./usage-cost/index.js";
 export type { NativeModelIdMapping } from "./model-native-ids.js";
 
 // Saved model selection (also at `@mcpjam/sdk/host-config`). Pure and
@@ -1388,3 +1394,6 @@ export {
   mergeTasksConformanceResults,
   taskGroupFailure,
 } from "./tasks-conformance/report.js";
+
+// Server feature model for the server canvas (KES-886). Browser-safe.
+export * from "./server-features/index.js";

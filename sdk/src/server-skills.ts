@@ -454,9 +454,13 @@ function toSummary(
  */
 export async function listServerSkillCatalog(
   manager: MCPClientManager,
-  serverId: string
+  serverId: string,
+  options: { signal?: AbortSignal } = {}
 ): Promise<ServerSkillListing> {
-  const drained = await listAllServerSkills(manager, { serverId });
+  const drained = await listAllServerSkills(manager, {
+    serverId,
+    signal: options.signal,
+  });
   const skills: ServerSkillSummary[] = [];
   const rejected: ServerSkillListing["rejected"] = [];
   const duplicates = new Set(drained.duplicateUris);
@@ -490,14 +494,24 @@ export async function listServerSkillCatalog(
   };
 }
 
+/**
+ * Reads a skill file in place of `manager.readResource`. A background caller
+ * passes one that reads on the connection's client directly, so a server that
+ * asks for input never reaches the manager's input collector.
+ */
+export type ServerSkillFileReader = (uri: string) => Promise<unknown>;
+
 /** Reads a resource and returns its text, or throws a structured refusal. */
 async function readResourceText(
   manager: MCPClientManager,
   serverId: string,
   uri: string,
-  maxBytes: number
+  maxBytes: number,
+  read?: ServerSkillFileReader
 ): Promise<string> {
-  const result = (await manager.readResource(serverId, { uri })) as {
+  const result = (await (read
+    ? read(uri)
+    : manager.readResource(serverId, { uri }))) as {
     contents?: Array<{ text?: string; blob?: string; mimeType?: string }>;
   };
   const first = result.contents?.[0];
@@ -540,7 +554,13 @@ async function readResourceText(
  */
 export async function getVerifiedServerSkill(
   manager: MCPClientManager,
-  args: { serverId: string; uri: string; entry?: SkillEntry }
+  args: {
+    serverId: string;
+    uri: string;
+    entry?: SkillEntry;
+    /** Reads SKILL.md; `manager.readResource` when absent. */
+    read?: ServerSkillFileReader;
+  }
 ): Promise<VerifiedServerSkill> {
   const { serverId, uri } = args;
   let entry: SkillEntry;
@@ -620,7 +640,8 @@ export async function getVerifiedServerSkill(
       manager,
       serverId,
       entry.uri,
-      MAX_SERVER_SKILL_READ_BYTES
+      MAX_SERVER_SKILL_READ_BYTES,
+      args.read
     ));
 
   let verified;

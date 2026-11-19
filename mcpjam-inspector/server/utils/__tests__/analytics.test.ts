@@ -171,7 +171,7 @@ describe("captureServerEvent", () => {
     flagMock.mockReset();
   });
 
-  it("answers every flag from MCPJAM_FEATURE_FLAGS_FILE instead of PostHog", async () => {
+  it("serves allowlisted flag-file answers without PostHog", async () => {
     const dir = mkdtempSync(join(tmpdir(), "analytics-flags-"));
     const path = join(dir, "flags.json");
     writeFileSync(
@@ -197,7 +197,6 @@ describe("captureServerEvent", () => {
       ).toEqual({
         "hosted-browser-enabled": true,
         "local-harness-enabled": false,
-        "evaluate-enabled": true,
         "guest-credit-wall-copy": "treatment",
       });
       // An identity is still required, as it is for PostHog's answers.

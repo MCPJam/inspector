@@ -25,7 +25,7 @@ export type SuiteAccountsViewState = {
  * rollout flag is on.
  *
  * A soft read: a failure comes back as `error` instead of being thrown during
- * render, because the Setup Run sheet and the settings page must keep working
+ * render, because the Set up run sheet and the settings page must keep working
  * without it. The launch checks the same choice itself and refuses an account
  * that is unavailable.
  */

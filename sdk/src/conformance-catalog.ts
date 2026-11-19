@@ -202,7 +202,7 @@ export const PROTOCOL_CHECK_CATALOG = {
   "modern-resource-not-found-invalid-params": {
     title: "Resource Not Found",
     description:
-      "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+      "Reading an unknown resource answers with JSON-RPC error -32602.",
   },
   "modern-resource-read-no-empty-contents": {
     title: "No Empty Contents For A Missing Resource",

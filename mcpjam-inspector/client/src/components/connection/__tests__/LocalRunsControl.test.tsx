@@ -7,7 +7,10 @@ import { LocalRunsControl } from "../LocalRunsControl";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-function mount(allowed: boolean, onChange = vi.fn().mockResolvedValue(undefined)) {
+function mount(
+  allowed: boolean,
+  onChange = vi.fn().mockResolvedValue(undefined),
+) {
   render(<LocalRunsControl allowed={allowed} onChange={onChange} />);
   return onChange;
 }
@@ -72,6 +75,47 @@ describe("LocalRunsControl", () => {
     // The refetch hasn't landed: a second click must not offer Allow again.
     expect(screen.getByRole("switch")).toBeDisabled();
     rerender(<LocalRunsControl allowed onChange={onChange} />);
+    expect(screen.getByRole("switch")).toBeEnabled();
+  });
+
+  it("re-enables when the reload shows another admin's value", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // Another admin turned it off again: the list reloads, still not allowed.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.getByRole("switch")).not.toBeChecked();
+  });
+
+  it("waits for the save's own reload when another reload lands mid-save", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    const onChange = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    // An unrelated reload lands while the write is still pending.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    finish();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // The reload the save triggered lands.
+    rerender(<LocalRunsControl allowed listVersion={3} onChange={onChange} />);
     expect(screen.getByRole("switch")).toBeEnabled();
   });
 

@@ -151,6 +151,7 @@ import {
   noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
+import type { ModelSelectorHarnessScope } from "@/components/chat-v2/chat-input/model-selector";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -858,6 +859,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The client `availableModels` is locked for, for the model picker. */
+  modelHarnessScope: ModelSelectorHarnessScope;
   /** The authorized catalog before this session's harness filter. */
   catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
@@ -3310,6 +3313,19 @@ export function useChatSession(
         { requireOrgKeys },
       ),
     [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+  );
+  // The same target, for the picker: `availableModels` is already locked for
+  // it, and passing it on keeps the picker honest if a caller mixes in rows.
+  const modelHarnessScope = useMemo<ModelSelectorHarnessScope>(
+    () => ({
+      targets: [
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ],
+      purpose: "chat",
+    }),
+    [harnessId, harnessRuntimeVersion],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -6439,6 +6455,24 @@ export function useChatSession(
     setRespectToolVisibility(executionRespectToolVisibility ?? true);
   }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
+  // Only auth and scope rerun this effect. The id, not the user object, since
+  // AuthKit hands back a new object for the same member on refresh; and the
+  // reset helpers through a ref, since opening a conversation swaps the chat
+  // and with it their identities. Each rerun briefly clears the bootstrap and
+  // unmounts what it gates, Sessions included.
+  const workOsUserId = workOsUser?.id;
+  const bootstrapResetRef = useRef({
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  });
+  bootstrapResetRef.current = {
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  };
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
@@ -6511,7 +6545,7 @@ export function useChatSession(
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const resolvedMemberId =
           resolvedAuthHeaders && authIsMemberRef.current
-            ? workOsUser?.id
+            ? workOsUserId
             : undefined;
         // Token rotation updates transport headers, but must not discard the
         // same member's transcript or detach its pending authorization call.
@@ -6541,12 +6575,13 @@ export function useChatSession(
         ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
-          clearPendingSessionHydration();
+          const reset = bootstrapResetRef.current;
+          reset.clearPendingSessionHydration();
           setChatSessionId(generateId());
-          setMessages([]);
+          reset.setMessages([]);
           setPersistedSnapshotToolCallIds([]);
-          syncResumedVersion(null);
-          syncRestoredToolRenderOverrides({});
+          reset.syncResumedVersion(null);
+          reset.syncRestoredToolRenderOverrides({});
           onResetRef.current?.("auth-bootstrap");
         }
 
@@ -6584,11 +6619,7 @@ export function useChatSession(
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
-    workOsUser,
-    clearPendingSessionHydration,
-    setMessages,
-    syncResumedVersion,
-    syncRestoredToolRenderOverrides,
+    workOsUserId,
   ]);
 
   // Fetch tools metadata
@@ -6940,7 +6971,7 @@ export function useChatSession(
   // a client or an environment. A plugin chat's hidden environment is left out.
   const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
     HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
-    (harnessId === "claude-code" || harnessId === "codex") &&
+    isHarness(harnessId) &&
     messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
     (hostedExecutionTarget || hostedHostId)
       ? {
@@ -6989,6 +7020,7 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     // The authorized catalog before this session's harness filter, so another
     // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
     catalogModels: composedModels,

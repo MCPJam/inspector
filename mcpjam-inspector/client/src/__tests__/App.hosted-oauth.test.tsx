@@ -55,6 +55,7 @@ import {
   writeAppSignInReturnPath,
 } from "../lib/app-signin-return-path";
 import { getGuestSessionRefusal } from "../lib/guest-session";
+import { hasStoredThemePreference } from "../lib/theme-utils";
 
 // The organization key policy binding has its own tests; here a template
 // seed is created as it is.
@@ -193,6 +194,7 @@ const {
     mockDbUserState: {
       isEnsuringUser: false,
       isUserReady: true,
+      isCurrentUserLoading: false,
     },
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
@@ -294,6 +296,9 @@ vi.mock("convex/react", async () =>
   (await import("@/test/mocks/convex-use-queries")).withUseQueries({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: (ref: string, ...args: unknown[]) => {
+    if (ref === "users:getCurrentUser" && mockDbUserState.isCurrentUserLoading) {
+      return undefined;
+    }
     const result = mockUseQuery(ref, ...args);
     if (ref === "users:getCurrentUser" && result === undefined) {
       return existingConvexUser;
@@ -349,6 +354,8 @@ vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
     success: vi.fn(),
+    custom: vi.fn(),
+    dismiss: vi.fn(),
   },
 }));
 
@@ -392,7 +399,7 @@ vi.mock("../lib/config", () => ({
 
 vi.mock("../lib/theme-utils", () => ({
   getInitialThemeMode: () => "light",
-  hasStoredThemePreference: () => true,
+  hasStoredThemePreference: vi.fn(() => true),
   updateThemeMode: vi.fn(),
   getInitialThemePreset: () => "default",
   updateThemePreset: vi.fn(),
@@ -644,6 +651,7 @@ describe("App hosted OAuth callback handling", () => {
     mockConvexAuthState.isLoading = false;
     mockDbUserState.isEnsuringUser = false;
     mockDbUserState.isUserReady = true;
+    mockDbUserState.isCurrentUserLoading = false;
     mockWorkOsAuthState.getAccessToken = vi.fn();
     mockWorkOsAuthState.signIn = vi.fn();
     mockWorkOsAuthState.user = null;
@@ -670,6 +678,9 @@ describe("App hosted OAuth callback handling", () => {
     mockTrack.mockReset();
     vi.mocked(sonnerToast.error).mockReset();
     vi.mocked(sonnerToast.success).mockReset();
+    vi.mocked(sonnerToast.custom).mockClear();
+    vi.mocked(sonnerToast.dismiss).mockClear();
+    vi.mocked(hasStoredThemePreference).mockReturnValue(true);
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockActiveHostServerReconcilerProps.mockReset();
@@ -4730,7 +4741,7 @@ describe("App hosted OAuth callback handling", () => {
     ).toBeDisabled();
 
     const playgroundProps = mockPlaygroundTabProps.mock.calls.at(-1)?.[0] as
-      | { onReady?: () => void }
+      | { onReady?: () => void; onFirstRunPromptConsumed?: () => void }
       | undefined;
     playgroundProps?.onReady?.();
 
@@ -4760,6 +4771,19 @@ describe("App hosted OAuth callback handling", () => {
         authentication: "none",
         tool_count: 6,
       },
+    );
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: false }),
+    );
+
+    act(() => playgroundProps?.onFirstRunPromptConsumed?.());
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: false }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: true }),
     );
   });
 
@@ -5084,6 +5108,31 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("holds announcements while the first-run user's record hydrates", async () => {
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/tools");
+    vi.mocked(hasStoredThemePreference).mockReturnValue(false);
+    mockDbUserState.isCurrentUserLoading = true;
+
+    const view = render(<App />);
+
+    expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    expect(mockMCPSidebar).not.toHaveBeenCalled();
+    expect(sonnerToast.custom).not.toHaveBeenCalled();
+    expect(localStorage.getItem("darkDefaultNudgeSeen")).toBeNull();
+
+    mockDbUserState.isCurrentUserLoading = false;
+    mockFreshGuestUser();
+    view.rerender(<App />);
+
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: true }),
+    );
+    expect(sonnerToast.custom).toHaveBeenCalledTimes(1);
+  });
+
   it("dismisses first-run onboarding when a guest skips it", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
@@ -5094,6 +5143,7 @@ describe("App hosted OAuth callback handling", () => {
     mockWorkOsAuthState.user = null;
     mockHostedShellGateState.value = "ready";
     mockFreshGuestUser();
+    vi.mocked(hasStoredThemePreference).mockReturnValue(false);
 
     render(<App />);
 
@@ -5103,12 +5153,23 @@ describe("App hosted OAuth callback handling", () => {
       ).toBeInTheDocument();
     });
 
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: false }),
+    );
+    expect(sonnerToast.custom).not.toHaveBeenCalled();
+    expect(localStorage.getItem("darkDefaultNudgeSeen")).toBeNull();
+
     fireEvent.click(screen.getByRole("button", { name: "Get started" }));
     fireEvent.click(screen.getByRole("button", { name: "Set up later" }));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
+
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: true }),
+    );
+    expect(sonnerToast.custom).toHaveBeenCalledTimes(1);
 
     expect(window.location.pathname).toBe("/");
     expect(
@@ -5311,6 +5372,10 @@ describe("App hosted OAuth callback handling", () => {
       await screen.findByRole("heading", { name: "Connected to OAuth server" }),
     ).toBeInTheDocument();
     expect(screen.getByText("1 tool ready to use.")).toBeInTheDocument();
+    expect(mockMCPSidebar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ announcementsEnabled: false }),
+    );
+    expect(sonnerToast.custom).not.toHaveBeenCalled();
     expect(
       screen.getByRole("button", { name: "Open Playground" }),
     ).toBeInTheDocument();
@@ -5963,46 +6028,25 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders legacy Suites mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
+  it.each(["/evals", "/evals/runs"])(
+    "redirects %s to Evaluate",
+    async (legacyPath) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", legacyPath);
+      mockHandleOAuthCallback.mockReset();
 
-    render(<App />);
+      render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
+      });
 
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders legacy Runs mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals/runs");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals/runs");
-    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
-  });
+      expect(window.location.pathname).toBe("/evaluate");
+      expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+    },
+  );
 
   it("keeps a conformance share link open", async () => {
     clearHostedOAuthPendingState();

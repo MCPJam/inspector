@@ -67,8 +67,10 @@ describe("credentialRefusalMessage", () => {
   });
 
   it("points at the organization policy for an export refusal", () => {
-    expect(credentialRefusalMessage({ kind: "export_denied" }, "Docs")).toMatch(
-      /organization admin/,
+    const message = credentialRefusalMessage({ kind: "export_denied" }, "Docs");
+    expect(message).toMatch(/organization admin/);
+    expect(message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
     );
   });
 });
@@ -110,7 +112,7 @@ describe("withCredentialRefusal", () => {
         { success: false, error: "Forbidden", exportDenied: true },
         "Docs",
       ) as { error: string };
-      expect(result.error).toMatch(/export policy/);
+      expect(result.error).toMatch(/Allow credential export/);
       expect(listener).not.toHaveBeenCalled();
     } finally {
       unsubscribe();

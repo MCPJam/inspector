@@ -243,6 +243,8 @@ export function SwarmRerunRepairDialog({
               requireOrgKeys={models.requireOrgKeys}
               onManageOrgProviders={models.onManageOrgProviders}
               availableModels={models.availableModels}
+              // The simulated user's model runs outside the client.
+              harnessScope="not-client-run"
               currentModel={
                 findModelForStoredChoice(
                   {

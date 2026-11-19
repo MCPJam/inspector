@@ -10,7 +10,9 @@
  * The plan states what the code does, so it is computed with the calls the
  * engines make: the skill list MCPJam's agent puts in its prompt, under the same
  * budget, and on a harness the box writer's plan (`planBoxSkills`) over the
- * copies the harness turn writes to its box.
+ * copies the harness turn writes to its box. A harness whose descriptor says
+ * `harness-tools` takes captured MCP-server skills through MCPJam's skill tools
+ * instead, so they are delivered and none of them is on its box.
  *
  * A delivery that fails while the turn runs is not part of the plan. It belongs
  * on the turn's result ({@link TurnSkillsResult}), so a preview of the plan
@@ -79,28 +81,28 @@ export interface SkillExclusion {
 }
 
 /**
- * How MCP-server skills reach the engine on this turn. `box-files` is the
- * plain-file copy a harness gets in a pinned run.
+ * How MCP-server skills reach the engine on this turn. `harness-tools` is
+ * MCPJam's skill tools on a harness, in live and frozen turns alike;
+ * `box-files` is the plain-file copy a frozen run gives a harness that takes
+ * them no other way.
  */
 export type ServerSkillsVia =
   "agent-tools" | "harness-tools" | "box-files" | "none";
 
 /**
- * How MCPJam's agent serves the plan, as its skill tools behave today:
+ * How MCPJam's agent serves the plan, as its skill tools behave today. No
+ * kind's skill tools ask for approval, whatever the switch says
+ * (`effective-skill-tools.ts`):
  *  - `frozen`: a run's pinned skills, addressed by ref, whatever the run
- *    pinned. The approval switch does not apply: they are content frozen at
- *    run start, and eval runs and swarm sessions deny every approval. A
- *    captured server skill's load still asks on its own
- *    (`effective-skill-tools.ts`), which they deny.
- *  - `environment`: an environment's skills, by ref. Loads follow the switch,
- *    so a person watching their own turn gets the prompt they configured.
- *  - `live`: the skills a person has right now, by ref, under the switch, plus
- *    the connected servers' own skills. Those join the set when the prompt is
- *    built, once the servers are connected (`withLiveServerSkills` in
- *    `prepareChatV2`), so they are not in this plan's `delivered`. They load
- *    under the switch, by ref or by skill URI. Only a live set adds them: an
- *    environment's server skills were captured with it, and fetching more
- *    would make the set stop describing the turn.
+ *    pinned: content frozen at run start.
+ *  - `environment`: an environment's skills, by ref.
+ *  - `live`: the skills a person has right now, by ref, plus the connected
+ *    servers' own skills. Those join the set when the prompt is built, once
+ *    the servers are connected (`withLiveServerSkills` in `prepareChatV2`),
+ *    so they are not in this plan's `delivered`. They load by ref or by skill
+ *    URI. Only a live set adds them: an environment's server skills were
+ *    captured with it, and fetching more would make the set stop describing
+ *    the turn.
  */
 export type AgentSkillTools =
   | { kind: "frozen" }
@@ -119,8 +121,8 @@ export interface TurnSkills {
   /** What it is not handed, and why. */
   excluded: SkillExclusion[];
   serverSkillsVia: ServerSkillsVia;
-  /** How MCPJam's agent serves the plan; null when it gets no skill tools, as
-   *  on a harness turn, whose box gets the skills. */
+  /** How MCPJam's agent serves the plan; null on a harness turn, whose box
+   *  gets the skills and whose server skills come as `serverSkillsVia` says. */
   agent: AgentSkillTools | null;
 }
 
@@ -337,7 +339,9 @@ function planAgentSet(
   };
 }
 
-/** A harness gets its skills on its box (`boxVerdicts`), never as tools. */
+/** A harness gets its skills on its box (`boxVerdicts`), and captured server
+ *  skills through MCPJam's skill tools when its descriptor says so; never
+ *  MCPJam's agent's tools. */
 function planBox(
   runtime: { kind: "harness"; harnessId: string },
   set: EffectiveCapabilitySet,

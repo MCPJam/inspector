@@ -638,7 +638,8 @@ export class MCPConformanceTest {
 
   async run(): Promise<MCPConformanceResult> {
     this.config.signal?.throwIfAborted();
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "protocol", mode: "single" });
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
     // ONE record for the whole run, opened before the first byte moves. The

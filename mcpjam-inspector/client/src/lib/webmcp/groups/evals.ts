@@ -81,7 +81,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
     {
       name: "ui_run_eval_suite",
       description:
-        "Start a run of an existing eval suite — real model and MCP tool calls that SPEND the organization's eval iteration quota (same gate as the Run button; an exhausted quota is reported as an error, and the run is refused). Each case runs `iterations` times; when omitted, the run uses the count the Setup Run screen would start at, never the per-case saved defaults. The result reports the count used. The run continues in the background; observe progress with ui_snapshot_app.",
+        "Start a run of an existing eval suite — real model and MCP tool calls that SPEND the organization's eval iteration quota (same gate as the Run button; an exhausted quota is reported as an error, and the run is refused). Each case runs `iterations` times; when omitted, the run uses the count the Set up run screen would start at, never the per-case saved defaults. The result reports the count used. The run continues in the background; observe progress with ui_snapshot_app.",
       inputSchema: {
         type: "object",
         properties: {
@@ -91,7 +91,7 @@ export function buildEvalsUiTools(): UiToolDefinition[] {
             minimum: 1,
             maximum: 10,
             description:
-              "Optional runs per case (1-10). Raised to the suite's minimum when lower. Omit to use the Setup Run default.",
+              "Optional runs per case (1-10). Raised to the suite's minimum when lower. Omit to use the Set up run default.",
           },
         },
         required: ["suite"],
