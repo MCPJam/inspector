@@ -329,7 +329,6 @@ function turnServerSkills(
   // the tools.
   const effectiveCapabilities = environment ?? source.effectiveCapabilities;
   return harnessServerSkills(getHarnessAdapter(harnessId), {
-    localUnattended: false,
     mode: selected.mode,
     // `HarnessTurnSkills.live`: the project's pool, or a client's environment.
     live: selected.mode !== "pinned" && source.liveTurn === true,

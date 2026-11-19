@@ -123,6 +123,8 @@ export interface BoxSkillsResult {
   /** Captured MCP-server skills the turn's skill tools served instead of the
    *  box (`harness-server-skills.ts`). Set by the turn, never by the writer. */
   servedByTools?: BoxSkillOutcome[];
+  /** Count-only delivery for server skills discovered after the box plan. */
+  liveDelivery?: { delivered: number; collisions: number; omittedFromCatalog: number };
 }
 
 /** The delivered skills' supporting files. A skill whose whole list `files`
