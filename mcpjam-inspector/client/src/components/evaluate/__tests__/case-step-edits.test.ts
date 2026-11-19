@@ -264,6 +264,17 @@ describe("route rule edits", () => {
       assertion: { type: "toolCalledWith" },
     });
   });
+
+  it("exact order on a case with no steps adds no leading tool assert", () => {
+    const result = addAfterRun(
+      { kind: "route-check", routeKind: "exactOrder" },
+      undefined,
+      0,
+    );
+    const next = result!.edit(draft({ steps: [] }));
+    expect(next.steps).toEqual([]);
+    expect(next.kind).toBe("regression");
+  });
 });
 
 describe("envelope", () => {

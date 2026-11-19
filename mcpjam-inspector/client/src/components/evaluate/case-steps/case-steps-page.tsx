@@ -10,19 +10,16 @@ import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import type { RemoteServer } from "@/hooks/useProjects";
 import { isDraftTestCaseId } from "@/components/evals/draft-test-case";
-import { getEffectiveSuiteServers } from "@/components/evals/helpers";
-import { stripTimestampSuffix } from "@/components/evals/suite-overview-presentation";
-import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import { getStepsBlockReason } from "@/components/evals/test-template-editor";
 import type {
   CaseRunLaunchOptions,
   EvalCase,
   EvalSuite,
 } from "@/components/evals/types";
-import type { Predicate } from "@/shared/eval-matching";
 import { SuiteRunReview, type SuiteRunReviewProps } from "../suite-run-review";
 import { CaseStepsEditor } from "./case-steps-editor";
 import { CaseHeader, DeleteCaseDialog } from "./case-steps-header";
+import { caseStepsSuiteFacts } from "./case-steps-suite";
 import { useCaseStepsDraft } from "./use-case-steps-draft";
 import { useCaseTools } from "./use-case-tools";
 
@@ -215,17 +212,7 @@ export function CaseStepsPage({
             draft={draft}
             onDraftChange={data.setDraft}
             card={card}
-            suite={{
-              name: stripTimestampSuffix(suite.name),
-              judgeConfig: suite.judgeConfig,
-              defaultPredicates: (suite.defaultPredicates ?? []) as Predicate[],
-              servers: getEffectiveSuiteServers(suite),
-              defaultMatchOptions: suite.defaultMatchOptions,
-              checkPolicy: data.capabilities?.scorers?.checkPolicy === true,
-              authorableKinds: authorablePredicateKinds(
-                data.capabilities?.scorers?.predicateKinds,
-              ),
-            }}
+            suite={caseStepsSuiteFacts(suite, data.capabilities)}
             availableTools={tools}
             projectServers={projectServers}
             // Edits wait for a running save, so what it saves is what follows.
