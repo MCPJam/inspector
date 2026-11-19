@@ -33,7 +33,7 @@ function seenKey(projectId: string, serverName: string): string {
   return `${SEEN_KEY_PREFIX}:${projectId}:${serverName.toLowerCase()}`;
 }
 
-type RepeatMatch = { turn: PromptTurn };
+type RepeatMatch = { turn: PromptTurn; chatSessionId: string };
 
 type RepeatPromptTipProps = {
   projectId: string | null;
@@ -63,6 +63,8 @@ export function RepeatPromptTip({
   const { canPromote } = usePromoteCapability({ projectId });
   const findSimilar = useAction(findSimilarPlaygroundPrompt);
   const [match, setMatch] = useState<RepeatMatch | null>(null);
+  // A match belongs to the conversation it was found in; New chat drops it.
+  const current = match?.chatSessionId === chatSessionId ? match : null;
   const [hidden, setHidden] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkedKey = useRef<string | null>(null);
@@ -73,7 +75,7 @@ export function RepeatPromptTip({
     projectId !== null &&
     serverName !== null &&
     localStorage.getItem(seenKey(projectId, serverName)) !== null;
-  const canCheck = canPromote && !alreadySeen && !hidden && !match;
+  const canCheck = canPromote && !alreadySeen && !hidden && !current;
 
   useEffect(() => {
     if (!canCheck || isStreaming || !projectId) return;
@@ -85,7 +87,7 @@ export function RepeatPromptTip({
 
     const local = findRepeatInConversation(messages, turn);
     if (local) {
-      setMatch({ turn });
+      setMatch({ turn, chatSessionId });
       return;
     }
     findSimilar({
@@ -100,7 +102,7 @@ export function RepeatPromptTip({
       .then((result) => {
         // Re-renders don't cancel the lookup; a newer turn does.
         if (result && checkedKey.current === key) {
-          setMatch({ turn });
+          setMatch({ turn, chatSessionId });
         }
       })
       .catch((error: unknown) => {
@@ -117,7 +119,7 @@ export function RepeatPromptTip({
   ]);
 
   const { open, contentRef } = useAnnouncementSlot(
-    match !== null && !hidden && serverName !== null,
+    current !== null && !hidden && serverName !== null,
   );
 
   useEffect(() => {
@@ -126,7 +128,7 @@ export function RepeatPromptTip({
     track("playground_repeat_tip_shown", { location: "playground" });
   }, [open, projectId, serverName]);
 
-  if (!match || !projectId) return null;
+  if (!current || !projectId) return null;
 
   return (
     <>
@@ -175,8 +177,8 @@ export function RepeatPromptTip({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         chatSessionId={chatSessionId}
-        promptIndex={match.turn.promptIndex}
-        promptPreview={match.turn.text}
+        promptIndex={current.turn.promptIndex}
+        promptPreview={current.turn.text}
         projectId={projectId}
         suggestedHostIds={hostIds}
       />

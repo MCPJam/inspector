@@ -63,7 +63,6 @@ type SaveAsTestCaseActionProps = {
   onOpenChange?: (open: boolean) => void;
   /** Clients to attach to a new suite, in place of the project's first client. */
   suggestedHostIds?: string[];
-  /** An earlier prompt this one repeats, shown as context. */
 };
 
 type DestinationMode = "existing" | "new";
@@ -300,7 +299,8 @@ export function SaveAsTestCaseAction({
             <DialogHeader className="space-y-1.5 pr-10">
               <DialogTitle>Save as test case</DialogTitle>
               <DialogDescription className="text-sm text-muted-foreground">
-                Saves this prompt, with its reply as the expected outcome.
+                Saves this prompt, with its reply as the expected outcome. Turns
+                with no tool calls can&apos;t be saved here.
               </DialogDescription>
             </DialogHeader>
           </div>

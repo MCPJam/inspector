@@ -6245,7 +6245,7 @@ export function PlaygroundMain({
   // Compare lanes run the same prompt, so any lane that called tools stands for all.
   const compareTipTurns = isCompareMode ? Object.values(settledCompareTurns) : [];
   const compareTipSource = pickCompareTipSource(compareTipTurns);
-  const repeatPromptTip = (
+  const repeatPromptTip = isCompareMode && !compareTipSource ? null : (
     <RepeatPromptTip
       projectId={convexProjectId}
       chatSessionId={compareTipSource?.chatSessionId ?? chatSessionId}

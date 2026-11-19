@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The per-turn promote surface. Covered here because it is the one promote
@@ -144,6 +144,10 @@ async function promoteToExistingSuite() {
 }
 
 describe("SaveAsTestCaseAction", () => {
+  beforeEach(() => {
+    projectHosts.value = [{ hostId: "host-first" }];
+  });
+
   it("creates and attaches a client when the project has none", async () => {
     projectHosts.value = [];
     const user = userEvent.setup();
@@ -170,7 +174,6 @@ describe("SaveAsTestCaseAction", () => {
       "data-host",
       "host-new",
     );
-    projectHosts.value = [{ hostId: "host-first" }];
   });
 
   it("navigates to the case it just created", async () => {
