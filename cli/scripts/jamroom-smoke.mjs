@@ -110,23 +110,28 @@ const turn = await api("/chat-sessions/messages", {
 assert.equal(turn.engine, "harness:claude-code", "The real Claude Code runtime did not run.");
 assert.equal(turn.projectId, projectId);
 assert(turn.sessionId && turn.turnId);
-const expected = "echo: " + marker;
-const echo = turn.toolCalls?.find(({ toolName, input, output, status }) =>
-  /(?:^|[_-])echo$/.test(toolName) && status === "ok" &&
-  JSON.stringify(input ?? null).includes(marker) && JSON.stringify(output ?? null).includes(expected));
-assert(echo, "The turn did not return the expected echo tool result.");
-
 const target = ["--api-url", apiUrl, "--project", projectId, "--session", turn.sessionId];
 const trace = runCli(["cloud", "sessions", "trace", ...target, "--turn", turn.turnId], true);
 assert.equal(trace.projectId, projectId);
 assert.equal(trace.sessionId, turn.sessionId);
-const span = trace.turns?.find(({ turnId }) => turnId === turn.turnId)
-  ?.spans?.find(({ toolCallId }) => toolCallId === echo.toolCallId);
-assert(span, "The checkout CLI trace did not contain the persisted echo call.");
 const transcript = runCli(["cloud", "sessions", "show", ...target, "--limit", "200"], true);
-assert(transcript.messages?.some(({ role, content }) =>
-  role === "tool" && JSON.stringify(content ?? null).includes(expected)),
-  "The persisted transcript did not contain the echo tool result.");
+assert.equal(transcript.projectId, projectId);
+assert.equal(transcript.sessionId, turn.sessionId);
+
+const parts = (role) => transcript.messages
+  .filter((message) => message.role === role && Array.isArray(message.content))
+  .flatMap((message) => message.content);
+const echo = parts("assistant").find((part) =>
+  part.type === "tool-call" && part.toolName === "echo" &&
+  part.input?.message === marker);
+assert(echo?.toolCallId, "The persisted transcript did not contain the echo call.");
+const span = trace.turns?.find(({ turnId }) => turnId === turn.turnId)
+  ?.spans?.find(({ toolCallId, status }) => toolCallId === echo.toolCallId && status === "ok");
+assert(span, "The checkout CLI trace did not contain the successful echo call.");
+const result = parts("tool").find((part) =>
+  part.type === "tool-result" && part.toolCallId === echo.toolCallId &&
+  part.output?.type === "json" && part.output.value?.structuredContent?.echoed === marker);
+assert(result, "The persisted echo result did not match the input.");
 
 verifySource();
 process.stdout.write(JSON.stringify({
@@ -136,5 +141,5 @@ process.stdout.write(JSON.stringify({
   backendCommit: env.JAMROOM_BACKEND_COMMIT,
   backendSnapshot: env.JAMROOM_BACKEND_SNAPSHOT,
   sessionId: turn.sessionId, turnId: turn.turnId, toolCallId: echo.toolCallId,
-  echo: expected, audience,
+  echoed: result.output.value.structuredContent.echoed, audience,
 }, null, 2) + "\n");
