@@ -126,7 +126,8 @@ export function PromptEditor({
         ))}
         {unknown.length ? (
           <span className="text-destructive">
-            Unknown variable: {unknown.join(", ")}
+            Unknown variable: {unknown.join(", ")}. Type {"{{"} to pick one from
+            the list.
           </span>
         ) : null}
         <span className="ml-auto">
