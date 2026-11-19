@@ -93,7 +93,8 @@ export interface CaseStepsEditorProps {
   caseOverrides?: boolean;
 }
 
-type PendingRemove = DeleteActionPlan & { stepId: string };
+/** `steps` is what the plan was counted on; a reload under the dialog drops it. */
+type PendingRemove = DeleteActionPlan & { stepId: string; steps: TestStep[] };
 
 /** A widget check added after an Interact step checks its view; else pick one. */
 const viewOf = (step: TestStep | undefined) =>
@@ -197,10 +198,12 @@ export function CaseStepsEditor({
     );
   };
 
+  const livePending =
+    pendingRemove?.steps === draft.steps ? pendingRemove : null;
   const requestRemove = (stepId: string) => {
     const plan = deleteActionPlan(draft.steps, stepId);
     if (!plan.needsConfirm) setSteps((steps) => removeStepById(steps, stepId));
-    else setPendingRemove({ ...plan, stepId });
+    else setPendingRemove({ ...plan, stepId, steps: draft.steps });
   };
 
   return (
@@ -387,10 +390,10 @@ export function CaseStepsEditor({
         </div>
       </CheckDraftBoundary>
       <RemoveStepDialog
-        pending={pendingRemove}
+        pending={livePending}
         onClose={() => setPendingRemove(null)}
         onRemove={(withAssertions) => {
-          const stepId = pendingRemove?.stepId;
+          const stepId = livePending?.stepId;
           if (!stepId) return;
           setSteps((steps) =>
             withAssertions
