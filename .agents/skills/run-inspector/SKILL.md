@@ -135,10 +135,17 @@ Otherwise, the backend CLI path:
 
 Notes:
 
-- The profile runs the app in hosted mode, which won't connect to localhost
-  or private addresses. Chat and connection checks need a public MCP server,
-  such as the seeded one, the Excalidraw demo in onboarding or
-  `https://mcp.deepwiki.com/mcp`.
+- The profile runs the app in hosted mode, as on app.mcpjam.com, which won't
+  connect to localhost or private addresses. Chat and connection checks need
+  a public MCP server, such as the seeded one, the Excalidraw demo in
+  onboarding or `https://mcp.deepwiki.com/mcp`.
+- For what only runs on a user's own machine (stdio servers, attaching a dev
+  command; in hosted mode their routes answer 410), add `--local` to
+  `qa:start`. It starts the app the way `npx @mcpjam/inspector` does, opens
+  its access link in the browser, signs in, and closes local mode's
+  first-run onboarding unless the environment started on it (`seed`
+  `empty`). A running instance keeps its mode, so stop a hosted one before
+  starting it with `--local`.
 - The backend can't reach an instance on your machine. The instance runs the
   durable agent-turn and chat-stage work itself on a timer, and the app's own
   connect, tools and OAuth flows go through the instance directly. Connects

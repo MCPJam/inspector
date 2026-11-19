@@ -4,8 +4,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  checkMode,
   isAlive,
   isReady,
+  localProfile,
   parseInstanceLine,
   parseQaArgs,
   profileWithFlags,
@@ -35,10 +37,11 @@ const ENVIRONMENT = {
   },
 };
 
-test("parseQaArgs reads values and the --headed switch", () => {
-  assert.deepEqual(parseQaArgs(["--grant", "g.json", "--headed"]), {
+test("parseQaArgs reads values and the --headed and --local switches", () => {
+  assert.deepEqual(parseQaArgs(["--grant", "g.json", "--headed", "--local"]), {
     grant: "g.json",
     headed: true,
+    local: true,
   });
   assert.throws(() => parseQaArgs(["--grant"]), /--grant needs a value/);
   assert.throws(() => parseQaArgs(["stray"]), /Unexpected argument: stray/);
@@ -60,6 +63,8 @@ test("resolveQaInputs takes the profile, workspace and server from environment.j
       open: "/p/p1/servers",
       expectServer: "stateless",
       headed: false,
+      local: false,
+      seed: null,
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -117,6 +122,28 @@ test("requireProfile only needs a profile to start a new instance", () => {
     /No QA session "fix-refresh" is running. Pass --bundle/,
   );
   assert.doesNotThrow(() => requireProfile(inputs, true));
+  assert.equal(inputs.local, false);
+});
+
+test("localProfile turns hosted mode off and keeps everything else", () => {
+  assert.equal(
+    localProfile("A=1\nVITE_MCPJAM_HOSTED_MODE=true\n\nB=2\n"),
+    "A=1\nB=2\nVITE_MCPJAM_HOSTED_MODE=false\n",
+  );
+});
+
+test("checkMode refuses local mode on a hosted instance, and nothing else", () => {
+  const local = { name: "fix-refresh", local: true };
+  assert.throws(
+    () => checkMode({ pid: 1 }, local),
+    /"fix-refresh" is running in hosted mode. Stop it .*--name fix-refresh/,
+  );
+  assert.doesNotThrow(() => checkMode({ pid: 1, accessToken: "t" }, local));
+  // Signing in another context follows whatever mode is running.
+  assert.doesNotThrow(() =>
+    checkMode({ pid: 1, accessToken: "t" }, { name: "fix-refresh" }),
+  );
+  assert.doesNotThrow(() => checkMode(null, local));
 });
 
 const BUNDLE = {
@@ -126,6 +153,7 @@ const BUNDLE = {
     name: "qa-pr-7846",
     deployment: "happy-otter-123",
     backend: { ref: "main", commit: "a".repeat(40) },
+    seed: "workspace",
     workspace: { serverName: "stateless", path: "/p/p1/servers" },
   },
   profile:
@@ -155,6 +183,8 @@ test("resolveQaInputs takes everything from a bundle", () => {
       open: "/p/p1/servers",
       expectServer: "stateless",
       headed: false,
+      local: false,
+      seed: "workspace",
     });
     const withGrant = resolveQaInputs(
       { bundle: "bundle.json", grant: "g.json" },

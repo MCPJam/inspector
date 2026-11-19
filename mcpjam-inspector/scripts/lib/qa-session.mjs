@@ -24,8 +24,8 @@ export function parseQaArgs(argv) {
       throw new Error(`Unexpected argument: ${token}`);
     }
     const key = token.slice(2);
-    if (key === "headed") {
-      options.headed = true;
+    if (key === "headed" || key === "local") {
+      options[key] = true;
       continue;
     }
     const value = argv[i + 1];
@@ -123,12 +123,14 @@ export function resolveQaInputs(options, cwd = process.cwd()) {
     expectServer:
       options["expect-server"] ?? environment.workspace?.serverName ?? null,
     headed: options.headed === true,
+    local: options.local === true,
+    seed: environment.seed ?? null,
   };
 }
 
 /** A new instance needs a profile; signing in to a running one doesn't. */
 export function requireProfile(inputs, running) {
-  if (running || inputs.profile) return;
+  if (running || inputs.profile || inputs.bundle) return;
   throw new Error(
     `No QA session "${inputs.name}" is running. Pass --bundle <file>, or --environment <environment.json> or --profile <inspector profile>.`,
   );
@@ -145,6 +147,33 @@ export function profileWithFlags(profileText, flagsPath) {
       (line) => line.trim() && !line.startsWith("MCPJAM_FEATURE_FLAGS_FILE="),
     );
   return [...lines, `MCPJAM_FEATURE_FLAGS_FILE=${flagsPath}`].join("\n") + "\n";
+}
+
+/**
+ * The profile for a local-mode instance. Agent environment profiles start the
+ * app in hosted mode, which turns off everything that runs on the user's own
+ * machine (the local MCP routes answer 410). Local mode puts an access token
+ * in front of the app instead, which `qa:start` supplies.
+ */
+export function localProfile(profileText) {
+  const lines = profileText
+    .split("\n")
+    .filter(
+      (line) => line.trim() && !line.startsWith("VITE_MCPJAM_HOSTED_MODE="),
+    );
+  return [...lines, "VITE_MCPJAM_HOSTED_MODE=false"].join("\n") + "\n";
+}
+
+/**
+ * A running instance keeps the mode it started in. Asking for local mode from
+ * a hosted one would sign in to the wrong app, so it's refused.
+ */
+export function checkMode(session, inputs) {
+  if (session && inputs.local && !session.accessToken) {
+    throw new Error(
+      `QA session "${inputs.name}" is running in hosted mode. Stop it (npm run qa:stop -w @mcpjam/inspector -- --name ${inputs.name}), then start it again with --local.`,
+    );
+  }
 }
 
 /** The launcher's "🌲 Instance N  client :X  server :Y" line, or null. */

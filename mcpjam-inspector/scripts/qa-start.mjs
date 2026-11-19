@@ -5,9 +5,9 @@
  * QA run starts from a signed-in screen instead of from setup.
  *
  * Usage:
- *   npm run qa:start -w @mcpjam/inspector -- --bundle <bundle.json> [--headed]
+ *   npm run qa:start -w @mcpjam/inspector -- --bundle <bundle.json> [--local] [--headed]
  *   npm run qa:start -w @mcpjam/inspector -- --environment <environment.json> --grant <grant.json>
- *       [--profile <file>] [--open <app path>] [--expect-server <name>] [--name <slug>] [--headed]
+ *       [--profile <file>] [--open <app path>] [--expect-server <name>] [--name <slug>] [--local] [--headed]
  *
  * The bundle is what the agent-environments MCP server's `get_environment`
  * returns: the profile, flag answers and a sign-in grant in one file. The
@@ -16,6 +16,12 @@
  * grant's user, shows the intended screen: for a seeded workspace, with its
  * saved server listed. A backend that was provisioned correctly doesn't count
  * until then.
+ *
+ * The app starts in hosted mode, as on app.mcpjam.com. `--local` starts it the
+ * way `npx @mcpjam/inspector` runs on a user's machine instead, for what only
+ * local mode has (stdio servers, attaching a dev command): this script picks
+ * the access token the local app requires, opens the access link in the
+ * browser and keeps the token in the session folder, never printing it.
  *
  * Prints one JSON object: the instance URLs, the screen it opened, a storage
  * state for your next browser context, a screenshot, the log and how to stop.
@@ -36,9 +42,12 @@ import {
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAccessLink, createLaunchToken } from "../bin/access-link.mjs";
 import {
+  checkMode,
   isAlive,
   isReady,
+  localProfile,
   parseInstanceLine,
   parseQaArgs,
   profileWithFlags,
@@ -61,6 +70,7 @@ const READY_TIMEOUT_MS = 60_000;
 // storage state doesn't show them again.
 const ANNOUNCEMENT_BUTTONS = ["Got it", "Keep dark"];
 const ANNOUNCEMENT_SETTLE_MS = 4_000;
+const FIRST_RUN_DIALOG = /Welcome to MCPJam|Connect to your MCP server/;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -92,6 +102,9 @@ async function runningSession(files) {
 }
 
 async function startInspector(inputs, files) {
+  // Local mode's launcher takes the token from the environment when it's
+  // set, so this script knows it without reading the access link from the log.
+  const accessToken = inputs.local ? createLaunchToken({}) : undefined;
   const log = openSync(files.log, "w", 0o600);
   const child = spawn(
     process.execPath,
@@ -102,7 +115,14 @@ async function startInspector(inputs, files) {
       "--env-file",
       inputs.profile,
     ],
-    { cwd: inspectorDir, detached: true, stdio: ["ignore", log, log] },
+    {
+      cwd: inspectorDir,
+      detached: true,
+      stdio: ["ignore", log, log],
+      env: accessToken
+        ? { ...process.env, MCPJAM_SESSION_TOKEN: accessToken }
+        : process.env,
+    },
   );
   child.unref();
   closeSync(log);
@@ -129,6 +149,8 @@ async function startInspector(inputs, files) {
         ...ports,
         profile: inputs.profile,
         startedAt: new Date().toISOString(),
+        seed: inputs.seed,
+        ...(accessToken ? { accessToken } : {}),
       };
       writeFileSync(files.session, JSON.stringify(session, null, 2) + "\n", {
         mode: 0o600,
@@ -167,14 +189,56 @@ async function launchBrowser(headed) {
   }
 }
 
+/**
+ * Local mode keeps first-run onboarding per browser, so even a seeded user
+ * gets it in a new context. Closes it the way a user would: past the welcome,
+ * then the close button (Escape is ignored there).
+ */
+async function closeFirstRun(page) {
+  const close = page.getByRole("button", {
+    name: "Close onboarding",
+    exact: true,
+  });
+  if (await close.isVisible()) return close.click();
+  const start = page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Get started", exact: true });
+  if (await start.isVisible()) return start.click();
+}
+
 async function signInAndOpen(session, inputs, grant, files) {
+  // An environment started on onboarding (seed "empty") keeps it on screen.
+  const closeOnboarding =
+    Boolean(session.accessToken) && session.seed !== "empty";
+  const onScreen = async (page) => {
+    const text = await page.locator("body").innerText();
+    if (
+      !isReady(text, { email: grant.email, expectServer: inputs.expectServer })
+    ) {
+      return false;
+    }
+    return !(
+      closeOnboarding &&
+      (await page
+        .getByRole("dialog")
+        .filter({ hasText: FIRST_RUN_DIALOG })
+        .isVisible())
+    );
+  };
   const browser = await launchBrowser(inputs.headed);
   try {
     const context = await browser.newContext({
       viewport: { width: 1400, height: 900 },
     });
     const page = await context.newPage();
-    await page.goto(session.client, { waitUntil: "domcontentloaded" });
+    // The app saves the access link's token in local storage on load, so the
+    // storage state carries it to the next context.
+    await page.goto(
+      session.accessToken
+        ? createAccessLink(session.client, session.accessToken)
+        : session.client,
+      { waitUntil: "domcontentloaded" },
+    );
     const response = await context.request.post(
       `${session.client}/user_management/authenticate`,
       {
@@ -201,20 +265,15 @@ async function signInAndOpen(session, inputs, grant, files) {
     const opened = `${session.client}${inputs.open}`;
     await page.goto(opened, { waitUntil: "domcontentloaded" });
     const deadline = Date.now() + READY_TIMEOUT_MS;
-    let text = "";
+    let ready = false;
     while (Date.now() < deadline) {
-      text = await page.locator("body").innerText();
-      if (
-        isReady(text, { email: grant.email, expectServer: inputs.expectServer })
-      ) {
-        break;
-      }
+      if (closeOnboarding) await closeFirstRun(page);
+      ready = await onScreen(page);
+      if (ready) break;
       await sleep(500);
     }
     await page.screenshot({ path: files.screenshot });
-    if (
-      !isReady(text, { email: grant.email, expectServer: inputs.expectServer })
-    ) {
+    if (!ready) {
       throw new Error(
         `Signed in, but ${opened} didn't show ${inputs.expectServer ? `the "${inputs.expectServer}" server for ` : ""}${grant.email} within ${READY_TIMEOUT_MS / 1000}s. Screenshot: ${files.screenshot}`,
       );
@@ -222,6 +281,7 @@ async function signInAndOpen(session, inputs, grant, files) {
     // Announcements slide in a moment after the page settles.
     const settleUntil = Date.now() + ANNOUNCEMENT_SETTLE_MS;
     while (Date.now() < settleUntil) {
+      if (closeOnboarding) await closeFirstRun(page);
       for (const name of ANNOUNCEMENT_BUTTONS) {
         const button = page.getByRole("button", { name, exact: true }).first();
         if (await button.isVisible()) await button.click();
@@ -245,20 +305,28 @@ async function main() {
   const files = sessionFiles(dir);
 
   const reused = await runningSession(files);
-  if (inputs.bundle && !reused) {
-    writeFileSync(
-      files.flags,
-      JSON.stringify(inputs.bundle.flags, null, 2) + "\n",
-      { mode: 0o600 },
-    );
-    writeFileSync(
-      files.profile,
-      profileWithFlags(inputs.bundle.profile, files.flags),
-      { mode: 0o600 },
-    );
-    inputs.profile = files.profile;
-  }
   requireProfile(inputs, Boolean(reused));
+  checkMode(reused, inputs);
+  if (!reused) {
+    let profileText = null;
+    if (inputs.bundle) {
+      writeFileSync(
+        files.flags,
+        JSON.stringify(inputs.bundle.flags, null, 2) + "\n",
+        { mode: 0o600 },
+      );
+      profileText = profileWithFlags(inputs.bundle.profile, files.flags);
+    }
+    if (inputs.local) {
+      profileText = localProfile(
+        profileText ?? readFileSync(inputs.profile, "utf8"),
+      );
+    }
+    if (profileText) {
+      writeFileSync(files.profile, profileText, { mode: 0o600 });
+      inputs.profile = files.profile;
+    }
+  }
   const session = reused ?? (await startInspector(inputs, files));
   const opened = await signInAndOpen(session, inputs, grant, files);
   process.stdout.write(
@@ -266,6 +334,7 @@ async function main() {
       {
         ready: true,
         reusedInstance: Boolean(reused),
+        mode: session.accessToken ? "local" : "hosted",
         client: session.client,
         server: session.server,
         opened,
