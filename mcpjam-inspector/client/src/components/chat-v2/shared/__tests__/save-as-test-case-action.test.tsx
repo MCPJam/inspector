@@ -193,6 +193,24 @@ describe("SaveAsTestCaseAction", () => {
     expect(screen.getByDisplayValue("Linear")).toBeInTheDocument();
   });
 
+  it("names a Chat tab suite with no server after the tab", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+        location="chat"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByDisplayValue("Chat suite")).toBeInTheDocument();
+  });
+
   it("creates and attaches a client when the project has none", async () => {
     projectHosts.value = [];
     const user = userEvent.setup();
