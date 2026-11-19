@@ -72,12 +72,13 @@ export function ClientMultiSelect({
           data-testid="client-multi-select-trigger"
         >
           <span className="flex min-w-0 items-center gap-2">
-            {selectedHosts.slice(0, 3).map((host) => (
+            {selectedHosts.slice(0, 3).map((host, index) => (
               <HostChipLogo
                 key={host.hostId}
                 logoSrc={resolveHostLogo(host, themeMode)}
                 name={clientDisplayName(host)}
                 size="sm"
+                className={index > 0 ? "max-sm:hidden" : undefined}
               />
             ))}
             <span
