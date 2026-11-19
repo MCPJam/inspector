@@ -31,6 +31,7 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => assistantTurn(...args),
 }));
 
+import type { TurnSkills } from "../../environments/turn-skills";
 import { runEvalSuiteWithAiSdk } from "../../evals-runner";
 import { preparedRunSkills } from "../../../test/support/skill-delivery";
 
@@ -155,16 +156,35 @@ async function runWithSkills(suiteHostConfig: Record<string, unknown>) {
 
 describe("an eval run with frozen skills", () => {
   it("runs a harness iteration with its skills on the box and no skill tools", async () => {
-    const { run, turns } = await runWithSkills({ harness: "claude-code" });
+    const { turns } = await runWithSkills({ harness: "claude-code" });
 
     expect(assistantTurn).toHaveBeenCalledTimes(1);
     const options = assistantTurn.mock.calls[0]![0] as {
       harness?: string;
+      skillPlan?: TurnSkills;
       pinnedHarnessSkills?: unknown;
       tools?: Record<string, unknown>;
     };
     expect(options.harness).toBe("claude-code");
-    expect(options.pinnedHarnessSkills).toBe(run.pinnedHarnessSkills);
+    // The turn carries its plan, which prepares the run's frozen copies for the
+    // box. Claude Code takes the captured server skill through MCPJam's tools,
+    // so only the other two are written to its box.
+    expect(options.pinnedHarnessSkills).toBeUndefined();
+    expect(options.skillPlan?.runtime).toEqual({
+      kind: "harness",
+      harnessId: "claude-code",
+    });
+    expect(options.skillPlan?.harness).toMatchObject({
+      mode: "pinned",
+      live: false,
+    });
+    expect(options.skillPlan?.harness?.skills?.map((skill) => skill.name)).toEqual([
+      "release-notes",
+      "summarize",
+    ]);
+    expect(options.skillPlan?.set.serverSkills.map((skill) => skill.ref)).toEqual([
+      "docs/search",
+    ]);
     expect(Object.keys(options.tools ?? {})).not.toContain("loadSkill");
     expect(
       (turns[0]!.skillsAtTurn as Array<{ name: string }>).map(

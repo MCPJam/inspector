@@ -69,6 +69,9 @@ export function environmentTurnSkills(args: {
   /** Skills this turn's plugin narrowing switched off. */
   pluginDisabled?: readonly ResolvedEnvironmentSkill[];
   liveExtras?: LiveSkillExtras;
+  /** The skills' supporting files could not be read: a harness box keeps each
+   *  skill's other files, and the plan says so. */
+  filesUnread?: boolean;
   runtime: TurnRuntime;
   modelContextTokens?: number;
 }): LiveTurnSkills {
@@ -81,6 +84,7 @@ export function environmentTurnSkills(args: {
         ? { pluginDisabled: args.pluginDisabled }
         : {}),
       ...(args.liveExtras ? { liveExtras: args.liveExtras } : {}),
+      ...(args.filesUnread ? { filesUnread: true } : {}),
     },
     runtime: args.runtime,
     ...(args.modelContextTokens !== undefined
@@ -90,7 +94,10 @@ export function environmentTurnSkills(args: {
   const turnProvenance = turnSkillProvenance(args.spec.environmentRef, skills);
   return {
     skills,
-    box: { skills: runtimeSkills(args.spec), set: skills.set },
+    box: {
+      skills: runtimeSkills(args.spec),
+      ...(args.filesUnread ? {} : { set: skills.set }),
+    },
     live: args.liveExtras !== undefined,
     ...(turnProvenance ? { turnProvenance } : {}),
   };
@@ -151,19 +158,17 @@ export async function studyLibraryTurnSkills(args: {
       files: filesOf(skill.skillId),
     })),
   };
-  const planned = environmentTurnSkills({
+  // Files unknown: the box writes each SKILL.md and keeps its other files.
+  return environmentTurnSkills({
     spec,
     attribution: null,
     liveExtras: {},
+    ...(files.ok ? {} : { filesUnread: true }),
     runtime: args.runtime,
     ...(args.modelContextTokens !== undefined
       ? { modelContextTokens: args.modelContextTokens }
       : {}),
   });
-  // Files unknown: the box writes each SKILL.md and keeps its other files.
-  return files.ok
-    ? planned
-    : { ...planned, box: { skills: runtimeSkills(spec) } };
 }
 
 /**
