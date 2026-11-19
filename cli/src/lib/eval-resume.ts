@@ -20,7 +20,7 @@ import {
 
 /** True when the refusal names a step a PERSON must take (anything but `wait`). */
 export function isCreditBlock(
-  recovery: CreditRecovery | undefined
+  recovery: CreditRecovery | undefined,
 ): recovery is CreditRecovery {
   return recovery !== undefined && recovery.action !== "wait";
 }
@@ -30,7 +30,9 @@ export function isCreditBlock(
  * error's `details` (the refusal envelope the server sent). `undefined` for
  * anything that is not a credit refusal, so an ordinary failure stays ordinary.
  */
-export function creditRecoveryOfCliError(error: unknown): CreditRecovery | undefined {
+export function creditRecoveryOfCliError(
+  error: unknown,
+): CreditRecovery | undefined {
   const details = (error as { details?: unknown } | null)?.details;
   return creditRecoveryOfRefusal(details);
 }
@@ -79,7 +81,7 @@ export interface EvalRunLaunchOptions {
  * command reuse the key that launch would have used.
  */
 export function idempotencyKeyOfErrorDetails(
-  details: unknown
+  details: unknown,
 ): string | undefined {
   if (!details || typeof details !== "object") return undefined;
   const key = (details as { idempotencyKey?: unknown }).idempotencyKey;
@@ -110,7 +112,7 @@ export function shellQuoteArg(arg: string): string {
  */
 export function buildResumeCommand(
   options: EvalRunLaunchOptions,
-  resume: { sourceRunId?: string; idempotencyKey?: string } = {}
+  resume: { sourceRunId?: string; idempotencyKey?: string } = {},
 ): string {
   const argv: string[] = ["mcpjam", "cloud", "eval", "run"];
   const push = (...tokens: string[]) => argv.push(...tokens);
@@ -122,39 +124,51 @@ export function buildResumeCommand(
   else if (options.suite) push("--suite", options.suite);
   if (options.project) push("--project", options.project);
 
-  pushEach("--server", options.server);
-  pushEach("--environment", options.environment);
-  // `--host` is the deprecated alias of `--client`; emit one canonical flag.
-  pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
-  if (options.allTargets) push("--all-targets");
+  // A stopped-run resume (`--resume-from`) runs the source run's own
+  // unfinished cases, so the backend refuses it alongside any case or target
+  // selector (RESUME_SCOPE_CONFLICT). Emit only the run shape, never the
+  // selectors. A refused LAUNCH has no source run, so it re-runs the whole
+  // original command — selectors included — under the same key.
+  const stoppedResume = resume.sourceRunId !== undefined;
+
+  if (!stoppedResume) {
+    pushEach("--server", options.server);
+    pushEach("--environment", options.environment);
+    // `--host` is the deprecated alias of `--client`; emit one canonical flag.
+    pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
+    if (options.allTargets) push("--all-targets");
+    pushEach("--case", options.case);
+  }
 
   const iterations = options.iterations ?? options.repetitions;
   if (iterations !== undefined) push("--iterations", String(iterations));
-  pushEach("--case", options.case);
-  if (options.excludeSkills) push("--exclude-skills");
-  if (options.refreshSnapshot) push("--refresh-snapshot");
   if (options.notes !== undefined) push("--notes", options.notes);
   if (options.minPassRate !== undefined)
     push("--min-pass-rate", String(options.minPassRate));
-  if (options.matchOptions !== undefined)
-    push("--match-options", options.matchOptions);
 
-  const composeClient = options.composeClient ?? options.composeHost;
-  if (composeClient) push("--compose-client", composeClient);
-  if (options.composeComputer)
-    push("--compose-computer", options.composeComputer);
-  pushEach("--compose-model", options.composeModel);
-  pushEach("--compose-model-selection", options.composeModelSelection);
-  if (options.withClientDefault) push("--with-client-default");
-  if (options.saveTargets) push("--save-targets");
-  pushEach("--compose-server", options.composeServer);
-  if (options.composeServerGroup)
-    push("--compose-server-group", options.composeServerGroup);
-  pushEach("--compose-skill", options.composeSkill);
-  pushEach("--compose-secret", options.composeSecret);
-  pushEach("--allow-approximated", options.allowApproximated);
-  if (options.approvalReason !== undefined)
-    push("--approval-reason", options.approvalReason);
+  if (!stoppedResume) {
+    if (options.excludeSkills) push("--exclude-skills");
+    if (options.refreshSnapshot) push("--refresh-snapshot");
+    if (options.matchOptions !== undefined)
+      push("--match-options", options.matchOptions);
+
+    const composeClient = options.composeClient ?? options.composeHost;
+    if (composeClient) push("--compose-client", composeClient);
+    if (options.composeComputer)
+      push("--compose-computer", options.composeComputer);
+    pushEach("--compose-model", options.composeModel);
+    pushEach("--compose-model-selection", options.composeModelSelection);
+    if (options.withClientDefault) push("--with-client-default");
+    if (options.saveTargets) push("--save-targets");
+    pushEach("--compose-server", options.composeServer);
+    if (options.composeServerGroup)
+      push("--compose-server-group", options.composeServerGroup);
+    pushEach("--compose-skill", options.composeSkill);
+    pushEach("--compose-secret", options.composeSecret);
+    pushEach("--allow-approximated", options.allowApproximated);
+    if (options.approvalReason !== undefined)
+      push("--approval-reason", options.approvalReason);
+  }
 
   if (options.wait) push("--wait");
   if (options.waitTimeout !== undefined)
@@ -162,8 +176,8 @@ export function buildResumeCommand(
   if (options.reporter !== undefined) push("--reporter", options.reporter);
   if (options.out !== undefined) push("--out", options.out);
 
-  if (resume.sourceRunId) {
-    push("--resume", "--resume-from", resume.sourceRunId);
+  if (stoppedResume) {
+    push("--resume", "--resume-from", resume.sourceRunId!);
   } else {
     const key = resume.idempotencyKey ?? options.idempotencyKey;
     if (key) push("--idempotency-key", key);
@@ -176,7 +190,7 @@ export function buildResumeCommand(
 /** The JSON fields a credit block adds to a receipt or an error document. */
 export function creditBlockJsonFields(
   resumeCommand: string,
-  resumed: boolean
+  resumed: boolean,
 ): { resumeCommand: string } | { stillBlocked: true } {
   return resumed ? { stillBlocked: true } : { resumeCommand };
 }
@@ -191,7 +205,7 @@ export function creditBlockJsonFields(
 export function writeCreditBlockGuidance(
   format: string,
   args: { recovery: CreditRecovery; resumeCommand: string; resumed: boolean },
-  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout
+  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
 ): void {
   if (format !== "human") return;
   const sentence = formatCreditRecovery(args.recovery);

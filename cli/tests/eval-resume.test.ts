@@ -63,7 +63,7 @@ test("shellQuoteArg: spaces and JSON are single-quoted, quotes escaped", () => {
   assert.equal(shellQuoteArg("my suite"), "'my suite'");
   assert.equal(
     shellQuoteArg('{"toolCallOrder":"exact"}'),
-    `'{"toolCallOrder":"exact"}'`
+    `'{"toolCallOrder":"exact"}'`,
   );
   assert.equal(shellQuoteArg("it's"), "'it'\\''s'");
 });
@@ -80,14 +80,14 @@ test("buildResumeCommand: refused launch reuses the key and adds --resume", () =
   });
   assert.equal(
     command,
-    "mcpjam cloud eval run --suite s1 --project p1 --idempotency-key key-123 --resume"
+    "mcpjam cloud eval run --suite s1 --project p1 --idempotency-key key-123 --resume",
   );
 });
 
 test("buildResumeCommand: a passed idempotency key override wins", () => {
   const command = buildResumeCommand(
     { suite: "s1", project: "p1" },
-    { idempotencyKey: "minted-9" }
+    { idempotencyKey: "minted-9" },
   );
   assert.ok(command.includes("--idempotency-key minted-9"));
   assert.ok(command.endsWith("--resume"));
@@ -96,13 +96,36 @@ test("buildResumeCommand: a passed idempotency key override wins", () => {
 test("buildResumeCommand: stopped run uses --resume-from and drops the key", () => {
   const command = buildResumeCommand(
     { suite: "s1", project: "p1", idempotencyKey: "key-123" },
-    { sourceRunId: "run_9" }
+    { sourceRunId: "run_9" },
   );
   assert.equal(
     command,
-    "mcpjam cloud eval run --suite s1 --project p1 --resume --resume-from run_9"
+    "mcpjam cloud eval run --suite s1 --project p1 --resume --resume-from run_9",
   );
   assert.ok(!command.includes("--idempotency-key"));
+});
+
+test("buildResumeCommand: stopped run drops case and target selectors", () => {
+  // The backend refuses --resume-from alongside a case or target selector, so
+  // a resume of a case-filtered run must not re-emit them.
+  const command = buildResumeCommand(
+    {
+      suite: "s1",
+      project: "p1",
+      case: ["checkout", "refund"],
+      server: ["srv_1"],
+      allTargets: true,
+      iterations: 3,
+    },
+    { sourceRunId: "run_9" },
+  );
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --suite s1 --project p1 --iterations 3 --resume --resume-from run_9",
+  );
+  for (const flag of ["--case", "--server", "--all-targets"]) {
+    assert.ok(!command.includes(flag), `${flag} must be dropped`);
+  }
 });
 
 test("buildResumeCommand: --host folds into --client, repetitions into --iterations", () => {
@@ -145,20 +168,25 @@ test("buildResumeCommand: never emits a credential flag", () => {
 // ---------------------------------------------------------------------------
 
 test("creditRecoveryOfCliError: reads the recovery from error details", () => {
-  const error = { details: { reason: "PLATFORM_FEE_REQUIRED", recovery: recovery() } };
+  const error = {
+    details: { reason: "PLATFORM_FEE_REQUIRED", recovery: recovery() },
+  };
   const parsed = creditRecoveryOfCliError(error);
   assert.equal(parsed?.action, "upgrade_plan");
 });
 
 test("creditRecoveryOfCliError: undefined for an ordinary error", () => {
-  assert.equal(creditRecoveryOfCliError({ details: { reason: "NOT_FOUND" } }), undefined);
+  assert.equal(
+    creditRecoveryOfCliError({ details: { reason: "NOT_FOUND" } }),
+    undefined,
+  );
   assert.equal(creditRecoveryOfCliError(new Error("boom")), undefined);
 });
 
 test("idempotencyKeyOfErrorDetails: extracts a string key, else undefined", () => {
   assert.equal(
     idempotencyKeyOfErrorDetails({ idempotencyKey: "key-1" }),
-    "key-1"
+    "key-1",
   );
   assert.equal(idempotencyKeyOfErrorDetails({ idempotencyKey: 7 }), undefined);
   assert.equal(idempotencyKeyOfErrorDetails(undefined), undefined);
