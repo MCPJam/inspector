@@ -142,7 +142,7 @@ export function RepeatPromptTip({
             to rerun it anytime.
           </p>
           <Button
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => {
               track("playground_repeat_tip_clicked", {
