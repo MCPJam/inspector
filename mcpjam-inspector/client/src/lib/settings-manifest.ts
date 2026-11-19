@@ -210,6 +210,13 @@ export const SETTINGS_DESTINATIONS: readonly SettingsDestination[] = [
       p === "/billing",
   },
   org("audit-log", "Audit log", "/audit-log", ["activity", "CSV export"]),
+  org("security", "Security", "/security", [
+    "credential export policy",
+    "allow credential export",
+    "local runs",
+    "OAuth tokens",
+    "kill switch",
+  ]),
   org("data-management", "Data management", "/data-management", [
     "retention",
     "enterprise",

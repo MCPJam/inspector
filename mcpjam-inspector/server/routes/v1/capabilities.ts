@@ -177,7 +177,11 @@ function deriveCapabilities(row: CapabilitiesRow) {
      * membership-level controls above are not misreported as admin-only.
      */
     manageUserTestingGuestExecution: isAdmin,
-    /** Requesting an LLM insight pass over a wave or window. */
+    /**
+     * Requesting an LLM insight pass over a wave or window. Eval runs are not
+     * covered: the backend also lets a signed-in workspace guest request an
+     * eval run's analysis, so this member flag does not describe them.
+     */
     requestInsights: isMember,
     /**
      * Reading suites, runs, iterations and traces. The eval read floor is

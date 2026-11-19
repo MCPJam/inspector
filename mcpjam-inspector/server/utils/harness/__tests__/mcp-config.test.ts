@@ -63,6 +63,21 @@ describe("buildHarnessProxyMcpJson", () => {
     expect(out.mcpServers.local.headers).toBeUndefined();
   });
 
+  it("asks for a new connection per request when the entry says so", () => {
+    const json = buildHarnessProxyMcpJson([
+      {
+        name: "srv",
+        proxyUrl: "https://inspector.test/api/web/harness-mcp/srv",
+        sealedProxyToken: "envelope",
+        closeConnection: true,
+      },
+    ]);
+    expect(json.mcpServers.srv!.headers).toEqual({
+      Connection: "close",
+      "X-MCPJam-Proxy-Token": "envelope",
+    });
+  });
+
   it("carries the opaque scope-step-up correlation on the local plane", () => {
     const correlationId = "11111111-1111-4111-8111-111111111111";
     const out = buildHarnessProxyMcpJson([

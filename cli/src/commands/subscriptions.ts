@@ -22,6 +22,7 @@ import {
 } from "../lib/server-config.js";
 import { resolveHostFromOptions } from "../lib/host-resolve.js";
 import { cliError, operationalError, usageError } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   SubscriptionListenSession,
   hasAnyInterest,
@@ -232,6 +233,7 @@ export function registerSubscriptionsCommands(program: Command): void {
           },
         );
         const onSignal = () => {
+          recordCommandOutcome("interrupted");
           void session.stop("signal");
         };
         process.on("SIGINT", onSignal);

@@ -32,6 +32,12 @@ vi.mock("../../../utils/checked-address-fetch.js", async (importActual) => ({
   createCheckedAddressFetch: () => gatewayFetch,
 }));
 
+const { reportMock } = vi.hoisted(() => ({ reportMock: vi.fn() }));
+
+vi.mock("../../../utils/route-error-report.js", () => ({
+  reportRouteFailure: reportMock,
+}));
+
 function postTest(body: Record<string, unknown>) {
   const app = new Hono();
   app.use("/api/*", requestLogContextMiddleware);
@@ -46,8 +52,11 @@ function postTest(body: Record<string, unknown>) {
   });
 }
 
+/** A Convex document-id-shaped organization id. */
+const ORG_ID = "js7abc0def1ghj2klm3nop4qrs5tuv6w";
+
 const REQUEST = {
-  organizationId: "org_1",
+  organizationId: ORG_ID,
   baseUrl: "https://litellm.acme.example",
   secret: "sk-test",
   apis: ["chatCompletions"],
@@ -80,7 +89,7 @@ describe("POST /api/web/org-gateway-test", () => {
     expect(getFunctionName(ref)).toBe(
       "organizationModelProviderTest:canTestProviderConnection",
     );
-    expect(args).toEqual({ organizationId: "org_1" });
+    expect(args).toEqual({ organizationId: ORG_ID });
     expect(gatewayFetch).toHaveBeenCalledWith(
       "https://litellm.acme.example/v1/models",
       expect.anything(),
@@ -96,7 +105,7 @@ describe("POST /api/web/org-gateway-test", () => {
     await expect(res.json()).resolves.toMatchObject({
       code: "FORBIDDEN",
       message:
-        "Only organization admins and owners can test a gateway. Ask an admin to add it.",
+        "Only organization admins and owners can test a custom provider. Ask an admin to add it.",
     });
     expect(gatewayFetch).not.toHaveBeenCalled();
   });
@@ -111,5 +120,36 @@ describe("POST /api/web/org-gateway-test", () => {
       message: "Couldn't check your role in this organization. Try again.",
     });
     expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).toHaveBeenCalledOnce();
+  });
+
+  it("answers a redacted backend failure with 502 and a report", async () => {
+    // What production Convex sends for any non-ConvexError, including an
+    // argument it rejected: no way to tell it from an outage.
+    queryMock.mockRejectedValue(
+      new Error(
+        "[CONVEX Q(organizationModelProviderTest:canTestProviderConnection)] [Request ID: 7d1b] Server Error",
+      ),
+    );
+
+    const res = await postTest(REQUEST);
+
+    expect(res.status).toBe(502);
+    expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).toHaveBeenCalledOnce();
+  });
+
+  it("refuses a malformed organization id with 403 before asking the backend", async () => {
+    const res = await postTest({ ...REQUEST, organizationId: "not-an-org" });
+
+    expect(res.status).toBe(403);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "FORBIDDEN",
+      message:
+        "Only organization admins and owners can test a custom provider. Ask an admin to add it.",
+    });
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(gatewayFetch).not.toHaveBeenCalled();
+    expect(reportMock).not.toHaveBeenCalled();
   });
 });

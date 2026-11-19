@@ -82,7 +82,14 @@ export function gradeDirectoryReviewerPath<
     const details = { ...path.identity };
     const { outcome, reason, observed = {}, expected = {} } = path.identity;
     if (outcome === "verified")
-      return build.satisfied(definition, stamp, details);
+      return build.satisfied({
+        ...definition,
+        title: expected.identity && expected.organization
+          ? "The reviewer account and organization match the expected values"
+          : expected.identity
+            ? "The reviewer account matches the expected identity"
+            : "The reviewer organization matches; account identity was not checked",
+      }, stamp, details);
     if (outcome === "unverified") {
       return blocked(definition, `identity unverified: ${reason}`, details);
     }

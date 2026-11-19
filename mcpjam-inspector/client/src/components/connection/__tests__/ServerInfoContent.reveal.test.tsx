@@ -68,6 +68,26 @@ describe("ServerInfoContent's token reveal", () => {
     expect(screen.queryByRole("button", { name: /Reveal/ })).toBeNull();
   });
 
+  it.each([
+    [
+      "the list has not loaded",
+      { connections: [], shared: true, loaded: false },
+    ],
+    [
+      "the list failed to load",
+      {
+        connections: [],
+        shared: true,
+        loaded: false,
+        error: "Could not load accounts",
+      },
+    ],
+  ])("is not offered while %s", (_name, state) => {
+    hook.mockReturnValue(state);
+    mount();
+    expect(screen.queryByRole("button", { name: /Reveal/ })).toBeNull();
+  });
+
   it("is offered for the person's own sign-in", () => {
     hook.mockReturnValue({
       connections: [{ connectionId: "c1", isDefault: true }],

@@ -137,8 +137,7 @@ const RAW_REJECTIONS: Array<{
     jsonRpcCode: -32022,
   },
   {
-    // A missing resource is an ordinary in-band failure: HTTP 200 with -32602.
-    // Asserting only "it errored" would hide a server that answered 400.
+    // Record the fixture's HTTP status without making it a requirement.
     id: "modern-resource-not-found-invalid-params",
     httpStatus: 200,
     jsonRpcCode: -32602,

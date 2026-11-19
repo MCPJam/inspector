@@ -40,6 +40,7 @@ import type {
 } from "@mcpjam/sdk/browser";
 import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./pkce";
+import { buildOAuthFlowSummary, rememberOAuthFlowSummary } from "./flow-summary";
 import {
   hasIssuerKeyedVersionMarker,
   isIssuerKeyedStore,
@@ -3835,6 +3836,16 @@ export async function handleOAuthCallback(
       localStorage.removeItem(`mcp-verifier-${serverName}`);
       localStorage.removeItem(`mcp-oauth-issued-state-${serverName}`);
       localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
+      // Sent with this server's next connect (`takeOAuthFlowSummary`).
+      rememberOAuthFlowSummary(
+        serverName,
+        buildOAuthFlowSummary({
+          state: flowResult.state,
+          protocolVersion: storedSession.protocolVersion,
+          registrationStrategy: storedSession.registrationStrategy,
+          callbackIss: options.callbackIss,
+        })
+      );
       return {
         success: true,
         serverConfig: createServerConfig(

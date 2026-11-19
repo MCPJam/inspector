@@ -39,6 +39,8 @@ export interface ReservationView {
     url: string | null;
     meta?: { durationMs?: number };
   } | null;
+  /** The stage screenshots kept with it, by the id a stage names. */
+  screenshots?: { id: string; url: string | null }[];
 }
 
 const listForRun = makeFunctionReference<
@@ -90,25 +92,14 @@ export function PathRowItem({
       </span>
       <span className="font-medium">{row.label}</span>
       <div className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
-        {row.approximated ? <ApproximatedLabel /> : null}
         {row.detail}
         {onShow ? <FrameButton label={row.label} onShow={onShow} /> : null}
+        {row.pictureNote ? (
+          <span className="block text-xs">{row.pictureNote}</span>
+        ) : null}
       </div>
       <PathChip status={row.status} />
     </li>
-  );
-}
-
-/** A stage read off a sign-in page MCPJam knows only by a general rule. */
-export function ApproximatedLabel() {
-  return (
-    <Badge
-      variant="outline"
-      className="mr-2 border-dashed align-text-bottom"
-      title="AuthKit does not host this sign-in page. MCPJam checked it with general rules."
-    >
-      Approximated
-    </Badge>
   );
 }
 
@@ -186,8 +177,9 @@ export function useRunRecording(
       recording = { kind: stillRunning ? "pending" : "none" };
     }
   }
+  // Read for the screenshots too, which a run without a recording has.
   const reader =
-    runId && recordingId ? (
+    runId ? (
       <ErrorBoundary
         key={runId}
         name="readiness-reviewer-recording"
@@ -198,15 +190,29 @@ export function useRunRecording(
       </ErrorBoundary>
     ) : null;
   const playable = (frame?: Frame) =>
-    recording?.kind === "ready" && frame?.recordingId === recording.id
+    frame &&
+    "recordingId" in frame &&
+    recording?.kind === "ready" &&
+    frame.recordingId === recording.id
       ? frame
+      : undefined;
+  /** A stored screenshot's link, once the run's read names it. */
+  const screenshotUrl = (frame?: Frame) =>
+    frame && "screenshotId" in frame && read && read.runId === runId
+      ? read.views
+          .flatMap((view) => view.screenshots ?? [])
+          .find((shot) => shot.id === frame.screenshotId)?.url ?? undefined
       : undefined;
   return {
     recording,
     reader,
     player: shown,
-    /** Opens the player at a frame, or `undefined` when it cannot. */
+    /** Opens a stage's picture, or `undefined` when it cannot. */
     show: (frame?: Frame) => {
+      const image = screenshotUrl(frame);
+      if (image) {
+        return () => window.open(image, "_blank", "noopener,noreferrer");
+      }
       const at = playable(frame);
       return at
         ? () => setPlayer({ runId, open: true, at: at.seconds })

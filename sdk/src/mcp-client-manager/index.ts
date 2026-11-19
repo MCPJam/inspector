@@ -42,6 +42,15 @@ export type {
   RpcLogger,
   RpcLogEvent,
 } from "./types.js";
+export type {
+  FeatureObserver,
+  FeatureObservationEvent,
+} from "./feature-observer.js";
+export {
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
+} from "./feature-observer.js";
 export type { DeclaredElicitationCapability } from "./elicitation.js";
 export { DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS } from "./constants.js";
 
