@@ -46,7 +46,7 @@ import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
-  /** Resolved adapter identity for the optional dev-only immutable read hint. */
+  /** Resolved adapter identity for cold-start read-ahead. */
   harnessId?: string;
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
