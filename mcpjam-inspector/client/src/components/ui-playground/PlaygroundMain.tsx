@@ -176,6 +176,8 @@ import {
   cloneUiMessages,
   extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
+import { RepeatPromptTip } from "./repeat-prompt-tip";
+import { pickCompareTipSource } from "./repeat-prompt-match";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import {
@@ -2771,6 +2773,20 @@ export function PlaygroundMain({
     previewedHarnessId,
   ]);
 
+  const [settledCompareTurns, setSettledCompareTurns] = useState<
+    Record<string, { chatSessionId: string; messages: UIMessage[] }>
+  >({});
+  const handleCompareTurnSettled = useCallback(
+    (compareId: string, laneSessionId: string, laneMessages: UIMessage[]) =>
+      setSettledCompareTurns((prev) => {
+        const next = { ...prev };
+        if (laneMessages.length === 0) delete next[compareId];
+        else next[compareId] = { chatSessionId: laneSessionId, messages: laneMessages };
+        return next;
+      }),
+    [],
+  );
+
   const handleMultiModelTranscriptSync = useCallback(
     (compareId: string, transcript: UIMessage[]) => {
       compareTranscriptsRef.current[compareId] = cloneUiMessages(transcript);
@@ -2796,6 +2812,7 @@ export function PlaygroundMain({
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
     setCompareSummaries({});
+    setSettledCompareTurns({});
     setCompareHasMessages({});
     setCompareAddColumnSeeds({});
     prevCompareIdsRef.current = new Set();
@@ -6225,6 +6242,20 @@ export function PlaygroundMain({
           onReasoningEffortChange: undefined,
         };
 
+  // Compare lanes run the same prompt, so any lane that called tools stands for all.
+  const compareTipTurns = isCompareMode ? Object.values(settledCompareTurns) : [];
+  const compareTipSource = pickCompareTipSource(compareTipTurns);
+  const repeatPromptTip = isCompareMode && !compareTipSource ? null : (
+    <RepeatPromptTip
+      projectId={convexProjectId}
+      chatSessionId={compareTipSource?.chatSessionId ?? chatSessionId}
+      messages={isCompareMode ? (compareTipSource?.messages ?? []) : messages}
+      isStreaming={isCompareMode ? false : isStreaming}
+      excludeChatSessionIds={compareTipTurns.map((turn) => turn.chatSessionId)}
+      serverNames={selectedServers}
+      hostIds={isMultiHostMode ? selectedHostIds : previewedHostId ? [previewedHostId] : []}
+    />
+  );
   const sharedChatInputProps = {
     hideExecutionControls: isMultiHostMode,
     showContextPopover: !isMultiHostMode,
@@ -6788,6 +6819,7 @@ export function PlaygroundMain({
                                 promptIndex={promptIndex}
                                 promptPreview={extractUserMessageText(message)}
                                 projectId={convexProjectId}
+                                serverNames={selectedServers}
                               />
                             );
                           }
@@ -6838,6 +6870,7 @@ export function PlaygroundMain({
                     />
                   </div>
                 )}
+                {repeatPromptTip}
                 <ChatInput
                   {...sharedChatInputProps}
                   hasMessages={!isThreadEmpty}
@@ -7386,6 +7419,7 @@ export function PlaygroundMain({
                           compareEnterVersion={1}
                           compareEnterMessages={compareTranscriptsRef.current[clientTranscriptKey(column.compareId)] ?? []}
                           onTranscriptSync={handleClientTranscriptSync}
+                          onTurnSettled={handleCompareTurnSettled}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                           outgoingSenderMetadata={outgoingSenderMetadata}
@@ -7539,6 +7573,7 @@ export function PlaygroundMain({
                               compareAddColumnSeeds[compareId] ?? null
                             }
                             onTranscriptSync={handleMultiModelTranscriptSync}
+                            onTurnSettled={handleCompareTurnSettled}
                             // Model-mode does NOT pass `hostSnapshot`. The
                             // card falls back to tab-root provider values
                             // via `useContext`, so the rendered tree is
@@ -7554,6 +7589,7 @@ export function PlaygroundMain({
                   <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm">
                     {!isAuthLoading ? (
                       <div className="w-full p-4">
+                        {repeatPromptTip}
                         <ChatInput
                           {...sharedChatInputProps}
                           hasMessages={effectiveHasMessages}

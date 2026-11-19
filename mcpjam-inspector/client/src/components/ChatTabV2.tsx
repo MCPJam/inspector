@@ -3048,6 +3048,8 @@ export function ChatTabV2({
                                       promptPreview={extractUserMessageText(
                                         message
                                       )}
+                                      serverNames={selectedConnectedServerNames}
+                                      location="chat"
                                       projectId={effectiveHostedProjectId}
                                     />
                                   );
