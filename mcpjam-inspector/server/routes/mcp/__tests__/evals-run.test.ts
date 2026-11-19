@@ -471,6 +471,27 @@ describe("local eval runs", () => {
       expect(mocks.captureException).not.toHaveBeenCalled();
     });
 
+    it("answers a coded refusal with no branch of its own with 400 and its message, and reports nothing", async () => {
+      const message = "That environment is archived.";
+      mocks.prepareEvalRun.mockRejectedValueOnce(
+        new ConvexError({ code: "ENV_ARCHIVED", message }),
+      );
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        code: "VALIDATION_ERROR",
+        error: message,
+        details: { code: "ENV_ARCHIVED" },
+      });
+      expect(mocks.captureException).not.toHaveBeenCalled();
+    });
+
     it("still answers a failure with no backend code with 500 and reports it", async () => {
       mocks.prepareEvalRun.mockRejectedValueOnce(new Error("snapshot failed"));
 

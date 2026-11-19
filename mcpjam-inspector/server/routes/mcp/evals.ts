@@ -180,11 +180,12 @@ evals.post("/replay-run", async (c) => {
       throw err;
     }
   } catch (error) {
-    reportRouteFailure("[Error replaying eval run]", error, {
+    const failure = translateStructuredConvexRefusal(error) ?? error;
+    reportRouteFailure("[Error replaying eval run]", failure, {
       source: "mcp.evals.replay-run",
       hop: "mcpjam_internal",
     });
-    return jsonRouteError(c, error);
+    return jsonRouteError(c, failure);
   }
 });
 
