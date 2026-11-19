@@ -14,7 +14,11 @@ import type { Predicate } from "./predicates/types.js";
 import type { IterationStatus } from "./contract/chain.js";
 import type { EvaluationConfigSnapshot } from "./contract/types.js";
 import type { PromptResult } from "./PromptResult.js";
-import { gradeCallerVerdict } from "./platform-gate-scores.js";
+import { finalizePassedForEval } from "./eval-tool-execution.js";
+import {
+  gradeCallerVerdict,
+  hasPlatformGateRows,
+} from "./platform-gate-scores.js";
 import {
   evaluateToolCalls,
   resolveMatchOptions,
@@ -555,8 +559,10 @@ export interface IterationToEvalResultOptions {
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
   /**
-   * @deprecated No effect. The run that produced the iteration already set
-   * each platform row's role from its own `failOnToolError`; set it there.
+   * Read only for an iteration without platform rows (an older SDK's result,
+   * or one assembled by hand): with it not `false`, a tool or iteration error
+   * fails the upload, as before those rows existed. A current iteration's
+   * rows already carry the role its run set.
    */
   failOnToolError?: boolean;
   /**
@@ -629,8 +635,17 @@ export function iterationToEvalResult(
   const provider = options.provider ?? selectedPrompt?.getProvider();
   const model = options.model ?? selectedPrompt?.getModel();
 
-  // The run graded this iteration from its score rows; send that verdict.
-  const passed = iteration.passed;
+  // A current run graded this iteration from its score rows; send that
+  // verdict. An iteration without platform rows can't show its tool errors to
+  // the backend, so it keeps the check it had before those rows existed.
+  const passed = hasPlatformGateRows(iteration)
+    ? iteration.passed
+    : finalizePassedForEval({
+        matchPassed: iteration.passed,
+        trace,
+        iterationError: iteration.error,
+        failOnToolError: options.failOnToolError,
+      });
 
   return {
     caseTitle: options.caseTitle,
@@ -681,8 +696,10 @@ export interface RunToEvalResultsOptions {
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
   /**
-   * @deprecated No effect. The run that produced the iteration already set
-   * each platform row's role from its own `failOnToolError`; set it there.
+   * Read only for an iteration without platform rows (an older SDK's result,
+   * or one assembled by hand): with it not `false`, a tool or iteration error
+   * fails the upload, as before those rows existed. A current iteration's
+   * rows already carry the role its run set.
    */
   failOnToolError?: boolean;
   /** @see IterationToEvalResultOptions.caseId */
@@ -717,6 +734,7 @@ export function runToEvalResults(
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
+      failOnToolError: options.failOnToolError,
       evaluationConfig: run.evaluationConfig,
       caseId: options.caseId,
       intent: options.intent,
@@ -734,8 +752,10 @@ export interface SuiteRunToEvalResultsOptions {
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
   /**
-   * @deprecated No effect. The run that produced the iteration already set
-   * each platform row's role from its own `failOnToolError`; set it there.
+   * Read only for an iteration without platform rows (an older SDK's result,
+   * or one assembled by hand): with it not `false`, a tool or iteration error
+   * fails the upload, as before those rows existed. A current iteration's
+   * rows already carry the role its run set.
    */
   failOnToolError?: boolean;
   /**
@@ -767,6 +787,7 @@ export function suiteRunToEvalResults(
       model: options.model,
       expectedToolCalls,
       promptSelector: options.promptSelector,
+      failOnToolError: options.failOnToolError,
       caseId: options.caseIdByTest?.[testName],
       intent: options.intentByTest?.[testName],
     });

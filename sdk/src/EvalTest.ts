@@ -489,6 +489,15 @@ export interface EvalTestRunOptions extends EvalIdentityOptions {
 /**
  * Result details for a single iteration
  */
+/**
+ * Whether an iteration counts toward a run's successes. A cancelled iteration
+ * never does: its rows can all pass when the cancel cut short only an
+ * advisory check, but an interrupted run must not report as a success.
+ */
+export function countsAsSuccess(iteration: IterationResult): boolean {
+  return iteration.passed && iteration.status !== "cancelled";
+}
+
 export interface IterationResult {
   billingPaymentId?: string;
   passed: boolean;
@@ -1884,8 +1893,8 @@ export class EvalTest {
     const llmValues = allLatencies.map((l) => l.llmMs);
     const mcpValues = allLatencies.map((l) => l.mcpMs);
 
-    const successes = iterations.filter((r) => r.passed).length;
-    const failures = iterations.filter((r) => !r.passed).length;
+    const successes = iterations.filter(countsAsSuccess).length;
+    const failures = iterations.length - successes;
 
     this.lastRunResult = {
       ...(iterations.some((iteration) => iteration.captureError)
@@ -2107,7 +2116,9 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.iterationDetails.filter((r) => !r.passed);
+    return this.lastRunResult.iterationDetails.filter(
+      (r) => !countsAsSuccess(r)
+    );
   }
 
   /**
@@ -2117,7 +2128,7 @@ export class EvalTest {
     if (!this.lastRunResult) {
       throw new Error("No run results available. Call run() first.");
     }
-    return this.lastRunResult.iterationDetails.filter((r) => r.passed);
+    return this.lastRunResult.iterationDetails.filter(countsAsSuccess);
   }
 
   /**

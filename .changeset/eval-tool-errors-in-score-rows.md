@@ -8,4 +8,6 @@ Local eval results now count tool errors the same way MCPJam does. A failed tool
 - Each case's evaluation config gains these two definitions, so comparing your first run on this version with an older run shows "evaluation config changed" once.
 - `promptsToEvalResult` and `PromptResult.toEvalResult` now upload score rows built from your `passed` value plus the two platform checks. Use the same `failOnToolError` for every call within one case: the backend rejects a case whose iterations report different evaluation configs.
 - Suite-file runs always apply the tool-error check.
-- Deprecated: `finalizePassedForEval` (use `scoresPassed`), and the `failOnToolError` option on `iterationToEvalResult`, `runToEvalResults`, `suiteRunToEvalResults` and the reporter's `addFromRun`/`recordFromRun`/`addFromSuiteRun`/`recordFromSuiteRun`, which no longer has any effect: set it on the run instead.
+- A cancelled iteration never counts as a success in `successes`, `accuracy()` or the suite aggregate, even when its rows pass.
+- `runToEvalResults`, `suiteRunToEvalResults` and the reporter's run-based methods still apply `failOnToolError` to an iteration without platform rows, such as one produced by an older SDK. A current iteration's rows already carry the role its run set.
+- Deprecated: `finalizePassedForEval` (use `scoresPassed`).

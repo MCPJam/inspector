@@ -17,6 +17,11 @@ import {
   USER_VALUE_STAGES,
   type StageResultRow,
 } from "../src/contract/index.js";
+import { resolveScoreDefinition } from "../src/contract/derive";
+import {
+  toolExecutionScoreDefinition,
+  toolExecutionScoreResult,
+} from "../src/contract/platform-gates";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -311,7 +316,38 @@ describe("iterationToEvalResult", () => {
 
   // The run graded the iteration from its score rows, tool errors included;
   // the mapper must not grade it a second time from the trace.
-  it("sends the iteration's own verdict even when the trace has an errored tool span", () => {
+  it("sends the iteration's own verdict when it carries platform rows", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const definition = resolveScoreDefinition(
+      toolExecutionScoreDefinition({ gating: false })
+    );
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [p],
+      scores: [
+        toolExecutionScoreResult(definition, {
+          trace: { messages: [], spans: p.getSpans() },
+        }),
+      ],
+    });
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
+    expect(result.passed).toBe(true);
+  });
+
+  // An older SDK's iteration has no row for the tool error, so the mapper
+  // keeps the check it applied before those rows existed.
+  it("fails an iteration without platform rows on an errored tool span", () => {
     const p = makePrompt({
       spans: [
         {
@@ -326,7 +362,7 @@ describe("iterationToEvalResult", () => {
     });
     const iteration = makeIteration({ passed: true, prompts: [p] });
     const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
   });
 
   it("keeps passed true for tool error span when failOnToolError is false", () => {
