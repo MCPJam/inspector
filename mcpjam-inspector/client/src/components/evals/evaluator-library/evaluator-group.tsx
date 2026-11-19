@@ -67,12 +67,18 @@ export function EvaluatorGroup({
         <EvaluatorKindBadge method={method} />
         <span className="ml-auto flex items-center gap-1">
           {updateAvailable && onAcceptUpdate ? (
-            <Button size="sm" variant="outline" onClick={onAcceptUpdate}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onAcceptUpdate}
+            >
               Update to {updateAvailable}
             </Button>
           ) : null}
           {onRemove ? (
             <Button
+              type="button"
               size="sm"
               variant="ghost"
               aria-label={`Remove ${name}`}

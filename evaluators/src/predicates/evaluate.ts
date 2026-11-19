@@ -29,6 +29,10 @@ import { argMatch } from "./argMatcher.js";
 import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
 import { validateAgainstSchema } from "./schema-validation.js";
+import {
+  checkDeclaredSchemas,
+  DECLARED_OUTPUT_SCHEMA,
+} from "./declared-schema.js";
 import { canonicalJson } from "../contract/canonical.js";
 import type {
   IterationTranscript,
@@ -330,6 +334,20 @@ function evidenceError(predicate: Predicate, reason: string): PredicateResult {
     predicate: sanitizePredicate(predicate),
     passed: false,
     status: "error",
+    reason: truncate(reason, MAX_REASON_CHARS),
+  };
+}
+
+/**
+ * NOTHING TO JUDGE. `passed: true` so a reader that predates `status` does
+ * not fail a case over a check that does not apply; status readers key on
+ * `not_applicable` and write a not-applicable score row.
+ */
+function notApplicable(predicate: Predicate, reason: string): PredicateResult {
+  return {
+    predicate: sanitizePredicate(predicate),
+    passed: true,
+    status: "not_applicable",
     reason: truncate(reason, MAX_REASON_CHARS),
   };
 }
@@ -1460,6 +1478,53 @@ export function evaluatePredicate(
 
     case "toolResultMatchesSchema": {
       const scope = resultScope(transcript, predicate.toolName);
+      if (predicate.schema === DECLARED_OUTPUT_SCHEMA) {
+        if (
+          transcript.capture?.toolDeclarations !== "complete" ||
+          !transcript.toolDeclarations
+        ) {
+          return evidenceError(
+            predicate,
+            "complete raw tool declarations were not captured, so the declared output schemas are unknown"
+          );
+        }
+        const verdict = checkDeclaredSchemas(scope, transcript.toolDeclarations);
+        if (verdict.kind === "error") return evidenceError(predicate, verdict.reason);
+        if (verdict.kind === "not_applicable") {
+          return notApplicable(predicate, verdict.reason);
+        }
+        if (verdict.kind === "fail") return fail(predicate, verdict.reason);
+        // A pass is a claim about every result, so it needs all of them.
+        if (scope.length === 0) {
+          const empty = emptyScopeIsScored(
+            transcript,
+            "toolResults",
+            predicate.toolName
+          );
+          if (!empty.scored) {
+            return evidenceError(
+              predicate,
+              `${empty.reason}; cannot validate against the declared schemas`
+            );
+          }
+          return pass(predicate, verdict.reason);
+        }
+        const gap = incompleteScopeReason(
+          transcript,
+          "toolResults",
+          scope.length,
+          scope.filter((r) => r.truncated === true).length
+        );
+        if (gap) {
+          return evidenceError(
+            predicate,
+            `${scope.length} result(s) from ${scopeLabel(
+              predicate.toolName
+            )} matched their declared schemas, but ${gap}`
+          );
+        }
+        return pass(predicate, verdict.reason);
+      }
       if (scope.length === 0) {
         const empty = emptyScopeIsScored(
           transcript,

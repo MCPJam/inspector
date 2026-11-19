@@ -218,6 +218,26 @@ function indexScores(
   return { byScorerId };
 }
 
+/** A stored predicate verdict; an error or not-applicable row is neither a pass nor a fail. */
+export function resultFromPredicate(predicate: {
+  passed: boolean;
+  status?: "scored" | "error" | "not_applicable";
+  reason: string;
+}): TrialRowResult {
+  const reason = predicate.reason ? { reason: predicate.reason } : {};
+  if (predicate.status === "error") {
+    return { state: "error", source: "scoreRow", reason: predicate.reason };
+  }
+  if (predicate.status === "not_applicable") {
+    return { state: "notApplicable", source: "scoreRow", ...reason };
+  }
+  return {
+    state: predicate.passed ? "passed" : "failed",
+    source: "predicateResult",
+    ...reason,
+  };
+}
+
 function resultFromScore(
   score: ScoreResult,
   definition: ResolvedScoreDefinition | null,
@@ -486,11 +506,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
       if (predicate) {
         return {
           ...row,
-          result: {
-            state: predicate.passed ? "passed" : "failed",
-            source: "predicateResult",
-            ...(predicate.reason ? { reason: predicate.reason } : {}),
-          },
+          result: resultFromPredicate(predicate),
           ...(evidence ? { evidence } : {}),
         };
       }
@@ -514,11 +530,7 @@ function joinRow(row: ScorecardRow, ctx: JoinContext): JoinedScorecardRow {
     if (predicate) {
       return {
         ...row,
-        result: {
-          state: predicate.passed ? "passed" : "failed",
-          source: "predicateResult",
-          ...(predicate.reason ? { reason: predicate.reason } : {}),
-        },
+        result: resultFromPredicate(predicate),
       };
     }
     const scored = ctx.scores.byScorerId.get(`predicate:${join.criterionId}`);

@@ -185,6 +185,9 @@ export type Predicate = (
    * Any JSON root: protocol 2026-07-28 dropped 2025-11-25's object-only
    * restriction on `structuredContent`, so requiring an object here would fail
    * servers that are correct under the current spec.
+   *
+   * `schema: "declared"` validates each result's `structuredContent` against
+   * the output schema its own tool declared instead of one authored schema.
    */
   | { type: "toolResultMatchesSchema"; schema: unknown; toolName?: string }
   /**
@@ -497,9 +500,18 @@ export const argMatcherSchema = z.object({
  * loader accepted the new value — exactly the divergence
  * `scripts/eval-suite-schema-artifacts.ts` refuses to publish.
  */
+/** Library evaluator ids are short slugs such as `no-wasted-calls`. */
+export const MAX_EVALUATOR_ID_CHARS = 64;
+
 const checkPolicyShape = {
   role: z.enum(["gating", "advisory", "required"]).optional(),
   severity: z.literal("warn").optional(),
+  evaluator: z
+    .object({
+      id: z.string().min(1).max(MAX_EVALUATOR_ID_CHARS),
+      version: z.number().int().positive(),
+    })
+    .optional(),
 };
 
 /**
@@ -724,6 +736,12 @@ export const predicateUnion = z.discriminatedUnion("type", [
       .refine(
         (value) => canonicalSize(value) <= MAX_SCHEMA_BYTES,
         `schema must canonicalize to at most ${MAX_SCHEMA_BYTES} bytes`
+      )
+      // The one string a schema may be: "declared", meaning each tool's own
+      // output schema. Any other string is not a JSON Schema document.
+      .refine(
+        (value) => typeof value !== "string" || value === "declared",
+        'a string schema must be "declared"'
       ),
     toolName: z.string().min(1).optional(),
     ...checkPolicyShape,
@@ -850,7 +868,7 @@ export const casePredicatesSchema = z.object({
 export type CasePredicates = z.infer<typeof casePredicatesSchema>;
 export type PredicatePlaceholder =
   (typeof PREDICATE_PLACEHOLDER_STRINGS)[number];
-export type { CheckPolicy } from "./policy.js";
+export type { CheckEvaluatorOrigin, CheckPolicy } from "./policy.js";
 
 /**
  * How a tool failure surfaced. The plan requires `noToolErrors` to distinguish
@@ -1119,13 +1137,21 @@ export const predicateScopeSchema = z.object({
  * failure, because a measurement we could not take must not manufacture
  * attribution.
  *
+ * A `not_applicable` row means the check has nothing to judge on this run
+ * (no tool declares an output schema, say). It carries `passed: true`, so a
+ * reader that predates the status does not fail a case over it, and becomes
+ * a not-applicable score result.
+ *
  * Absent ⇒ `scored`. Legacy rows predate the field and were all real verdicts.
  */
 export type PredicateResult = {
   predicate: Predicate;
   passed: boolean;
-  /** Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict. */
-  status?: "scored" | "error";
+  /**
+   * Absent ⇒ `"scored"`. `"error"` ⇒ no evidence; never a verdict.
+   * `"not_applicable"` ⇒ nothing to judge on this run.
+   */
+  status?: "scored" | "error" | "not_applicable";
   /** Structured, deterministic explanation — names the expected vs actual on failure. */
   reason: string;
   /** Absent ⇒ case-level; `{ kind: "turn", promptIndex }` ⇒ per-turn. */

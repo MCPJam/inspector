@@ -115,6 +115,13 @@ export function predicateScorer(
         result.status === "error"
       )
         throw new Error(result.reason);
+      if (result.status === "not_applicable") {
+        return {
+          kind: "not_applicable",
+          rationale: result.reason,
+          ...(result.scope ? { scope: result.scope } : {}),
+        };
+      }
       return {
         kind: "scored",
         value: result.passed ? 1 : 0,

@@ -1,4 +1,5 @@
 import { PAPER_FIELD_STYLES } from "./paper-field-styles";
+import { DeclaredSchemaFields } from "./declared-schema-fields";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 /**
  * Authoring UI for the deterministic predicate gate ("Checks" in user-facing
@@ -1118,7 +1119,13 @@ function CheckFields({
         />
       );
     case "toolResultMatchesSchema":
-      return (
+      return predicate.schema === "declared" ? (
+        <DeclaredSchemaFields
+          onChange={onChange}
+          predicate={predicate}
+          readOnly={readOnly}
+        />
+      ) : (
         <ToolResultSchemaFields
           predicate={predicate}
           onChange={onChange}

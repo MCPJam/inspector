@@ -52,7 +52,12 @@ export function CodeEvaluatorPanel({
           </span>
         ) : null}
         {onRunTests ? (
-          <Button size="sm" className="ml-auto h-7" onClick={onRunTests}>
+          <Button
+            type="button"
+            size="sm"
+            className="ml-auto h-7"
+            onClick={onRunTests}
+          >
             <Play aria-hidden />
             Run tests
           </Button>

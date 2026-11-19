@@ -25,6 +25,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-test-case-steps-editor",
   "evaluate-observe-first",
   "evaluate-run-result-pages",
+  "evaluator-library",
   "evals-start-recording",
   "guest-credit-wall-copy",
   "hosted-browser-enabled",
