@@ -2811,6 +2811,7 @@ export function PlaygroundMain({
   );
   const compareLanesReady = () =>
     !retainedClientsPaused &&
+    compareLanes.length > 0 &&
     compareLanes.every(
       ({ id }) =>
         compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
@@ -5073,7 +5074,8 @@ export function PlaygroundMain({
       return;
     }
     // Comparison cards set up after the page does; wait for every one.
-    if (isCompareMode && !compareLanesReady()) return;
+    // Wait out model settings loading too: a send now would be refused.
+    if (submitBlocked || (isCompareMode && !compareLanesReady())) return;
     autoRanRef.current = true;
     // The prompt is auto-sent, so clear it out of the composer. The composer is
     // otherwise seeded with the same `initialInput` (so it mirrors the eval
@@ -5096,17 +5098,19 @@ export function PlaygroundMain({
     if (isCompareMode) {
       const prompt = autoRunInput as string;
       void (async () => {
-        const sent =
+        const gated =
           (await ensureSelectedServerReadyForChat()) &&
           (await ensureThreadReadyForSend()) &&
-          (await ensureLocalHarnessReadyForSend()) &&
-          queueBroadcastRef.current({
-            text: prompt,
-            prependMessages: [],
-            widgetModelContext: modelContextQueue,
-          });
+          (await ensureLocalHarnessReadyForSend());
+        if (!gated) return composer.setInput(prompt);
+        const sent = queueBroadcastRef.current({
+          text: prompt,
+          prependMessages: [],
+          widgetModelContext: modelContextQueue,
+        });
         if (sent) autoRunBroadcastIdRef.current = broadcastSequence.current;
-        else composer.setInput(prompt);
+        // A lane dropped back to setting up; retry when it reports ready.
+        else autoRanRef.current = false;
       })();
       return;
     }
@@ -5123,6 +5127,7 @@ export function PlaygroundMain({
     isStreaming,
     isCompareMode,
     compareReadyCount,
+    submitBlocked,
     modelContextQueue,
     ensureSelectedServerReadyForChat,
     ensureThreadReadyForSend,

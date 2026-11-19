@@ -2241,6 +2241,36 @@ describe("PlaygroundMain — multi-host render path", () => {
     }
   });
 
+  it("holds the auto-run while sending is blocked, e.g. model settings loading", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const props = { ...defaultProps, autoRunInput: "What can this server do?" };
+    mockUseChatSession.submitBlocked = true;
+    try {
+      const view = render(<PlaygroundMain {...props} />);
+      await act(async () => {});
+      const queued = () =>
+        mockMultiModelPlaygroundCard.mock.calls.some(
+          ([cardProps]) => cardProps.broadcastRequest,
+        );
+      expect(queued()).toBe(false);
+
+      mockUseChatSession.submitBlocked = false;
+      view.rerender(<PlaygroundMain {...props} />);
+      await waitFor(() => expect(queued()).toBe(true));
+    } finally {
+      mockUseChatSession.submitBlocked = false;
+    }
+  });
+
   it("gives each pane its own servers and its picked model", () => {
     projectServersFixture.byName = new Map([["test-server", "srv-test"]]);
     const previousModels = mockUseChatSession.availableModels;
