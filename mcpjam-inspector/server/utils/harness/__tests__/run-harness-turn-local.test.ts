@@ -1,3 +1,4 @@
+import { buildLiveEffectiveCapabilities } from "../../../services/environments/effective-capabilities";
 import type { UIMessageChunk } from "ai";
 import { generateKeyPair, SignJWT } from "jose";
 import { verifyAuthKitToken } from "../../../services/authkit-jwt.js";
@@ -263,6 +264,20 @@ import type {
   MCPJamHandlerOptions,
 } from "../../mcpjam-stream-handler";
 
+/** A turn's plan, as the runner carries it out: one skill for the box, with no
+ *  supporting files known. */
+function skillPlanOf(mode: "environment" | "pinned", skill: object) {
+  return {
+    runtime: { kind: "harness", harnessId: "claude-code" },
+    set: buildLiveEffectiveCapabilities({}),
+    delivered: [],
+    excluded: [],
+    serverSkillsVia: "none",
+    agent: null,
+    harness: { mode, skills: [skill], files: null, live: false },
+  };
+}
+
 function baseOptions(overrides: Record<string, unknown> = {}) {
   const messages: ModelMessage[] = [
     {
@@ -373,9 +388,7 @@ describe("runHarnessTurn local continuity", () => {
     harnessState.supportsSkills = true;
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
     const onBoxSkillsWritten = vi.fn();
-    await runHarnessTurn(baseOptions(mode === "pinned"
-      ? { pinnedHarnessSkills: [skill], onBoxSkillsWritten }
-      : { runtimeSkillsOverride: [skill], onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf(mode as "environment" | "pinned", skill), onBoxSkillsWritten }) as any, "none");
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
     expect(onBoxSkillsWritten).toHaveBeenCalledWith({
       delivered: [{ skillId: "skill-1", name: "test-skill" }],
@@ -417,7 +430,7 @@ describe("runHarnessTurn local continuity", () => {
       throw new Error("report failed");
     });
     const onEngineError = vi.fn();
-    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf("environment", skill), onEngineError, onBoxSkillsWritten }) as any, "none");
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
     expect(onEngineError).not.toHaveBeenCalled();
     expect(harnessState.streamStarted).toHaveBeenCalled();
@@ -434,7 +447,7 @@ describe("runHarnessTurn local continuity", () => {
     const onEngineError = vi.fn();
     const onBoxSkillsWritten = vi.fn();
     const skill = { skillId: "skill-1", name: "test-skill", description: "test", content: "body", contentHash: "hash", aggregateHash: "hash" };
-    await runHarnessTurn(baseOptions({ runtimeSkillsOverride: [skill], onEngineError, onBoxSkillsWritten }) as any, "none");
+    await runHarnessTurn(baseOptions({ skillPlan: skillPlanOf("environment", skill), onEngineError, onBoxSkillsWritten }) as any, "none");
     expect(onEngineError).toHaveBeenCalledWith(expect.objectContaining({ message: failure.message, phase: "setup" }));
     // The skills event still hears about the turn: every skill failed.
     expect(onBoxSkillsWritten).toHaveBeenCalledOnce();
