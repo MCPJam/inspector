@@ -153,11 +153,73 @@ describe("the dogfood eval suites", () => {
       expect(passes(asserts, { answer }), answer).toBe(false);
     }
   });
+
+  it("make the identity case require the address itself", () => {
+    const asserts = caseAsserts(IDENTITY);
+    const toolCalls = ["get_me"];
+
+    expect(
+      passes(asserts, {
+        toolCalls,
+        answer: "You are signed in as ada@example.com.",
+      }),
+    ).toBe(true);
+    expect(
+      passes(asserts, { toolCalls, answer: "You are signed in to MCPJam." }),
+    ).toBe(false);
+  });
+
+  it("make the count case require one number", () => {
+    // Only the answer check: a synthetic transcript carries no turn count or
+    // token usage, so the case's budget checks cannot pass here.
+    const asserts = caseAsserts(COUNT).filter(
+      (a) => a.type === "responseMatches",
+    );
+    expect(asserts).toHaveLength(1);
+    const toolCalls = ["list_projects"];
+
+    for (const answer of ["3", "You have 3 projects."]) {
+      expect(passes(asserts, { toolCalls, answer }), answer).toBe(true);
+    }
+    for (const answer of ["You have several projects.", "3 of 12 projects"]) {
+      expect(passes(asserts, { toolCalls, answer }), answer).toBe(false);
+    }
+  });
+
+  it("make the missing-project case require saying so, and no create", () => {
+    const asserts = caseAsserts(MISSING);
+
+    for (const answer of [
+      "I couldn't find a project named 'No Such Project 7f3a'.",
+      "That project does not exist. Your projects are A and B.",
+      "I don't see a project called that. Which one did you mean?",
+    ]) {
+      expect(
+        passes(asserts, { toolCalls: ["list_projects"], answer }),
+        answer,
+      ).toBe(true);
+    }
+    expect(
+      passes(asserts, {
+        toolCalls: ["list_projects"],
+        answer: "The suites are Smoke and Nightly.",
+      }),
+    ).toBe(false);
+    expect(
+      passes(asserts, {
+        toolCalls: ["list_projects", "create_project"],
+        answer: "It did not exist, so I created it.",
+      }),
+    ).toBe(false);
+  });
 });
 
 const GLOSSARY =
   "names the six user-value stages in order from its own glossary";
 const ASKS = "asks rather than guessing when the request names nothing";
+const IDENTITY = "answers who the caller is from the platform, not from memory";
+const COUNT = "counts projects in one hop and stays inside a token budget";
+const MISSING = "says a named project does not exist instead of guessing";
 
 // The case's own assertions, loaded from the suite file and scored by the
 // evaluator itself, so its pattern gates (an invalid or nested-quantifier
