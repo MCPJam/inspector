@@ -5059,6 +5059,7 @@ export function PlaygroundMain({
   const autoRanRef = useRef(false);
   // Declared further down; read through a ref so the effect can broadcast.
   const queueBroadcastRef = useRef<typeof queueBroadcastRequest>(() => false);
+  const autoRunBroadcastIdRef = useRef<number | null>(null);
   useEffect(() => {
     if (
       !shouldAutoRunPreview({
@@ -5105,7 +5106,7 @@ export function PlaygroundMain({
             prependMessages: [],
             widgetModelContext: modelContextQueue,
           });
-        if (sent) onAutoRunSent?.();
+        if (sent) autoRunBroadcastIdRef.current = broadcastSequence.current;
         else composer.setInput(prompt);
       })();
       return;
@@ -5507,6 +5508,15 @@ export function PlaygroundMain({
     return true;
   };
   queueBroadcastRef.current = queueBroadcastRequest;
+  // The auto-run counts as sent once a card takes it, not when it is queued.
+  const claimBroadcast = (request: BroadcastChatTurnRequest, recipient: string) => {
+    const claimed = broadcastRequest?.claim(request, recipient) ?? false;
+    if (claimed && request.id === autoRunBroadcastIdRef.current) {
+      autoRunBroadcastIdRef.current = null;
+      onAutoRunSent?.();
+    }
+    return claimed;
+  };
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -7579,10 +7589,7 @@ export function PlaygroundMain({
                           }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
-                            broadcastRequest?.claim(
-                              request,
-                              broadcastRecipient("host", column.compareId),
-                            ) ?? false
+                            claimBroadcast(request, broadcastRecipient("host", column.compareId))
                           }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -7726,10 +7733,7 @@ export function PlaygroundMain({
                             selectedServers={selectedServers}
                             broadcastRequest={broadcastRequest?.request ?? null}
                             claimBroadcastDelivery={(request) =>
-                              broadcastRequest?.claim(
-                                request,
-                                broadcastRecipient("model", compareId),
-                              ) ?? false
+                              claimBroadcast(request, broadcastRecipient("model", compareId))
                             }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest

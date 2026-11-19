@@ -712,6 +712,18 @@ function makeHost(
   };
 }
 
+const claimLatestBroadcast = () => {
+  const props = mockMultiModelPlaygroundCard.mock.calls
+    .map(([cardProps]) => cardProps)
+    .filter((cardProps) => cardProps.broadcastRequest)
+    .slice(-2);
+  act(() => {
+    for (const cardProps of props) {
+      cardProps.claimBroadcastDelivery(cardProps.broadcastRequest);
+    }
+  });
+};
+
 describe("PlaygroundMain — multi-host render path", () => {
   const defaultProps = {
     activeProjectId: "default",
@@ -2169,7 +2181,16 @@ describe("PlaygroundMain — multi-host render path", () => {
       />,
     );
 
-    await waitFor(() => expect(onAutoRunSent).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(
+        mockMultiModelPlaygroundCard.mock.calls.some(
+          ([props]) => props.broadcastRequest,
+        ),
+      ).toBe(true),
+    );
+    expect(onAutoRunSent).not.toHaveBeenCalled();
+    claimLatestBroadcast();
+    expect(onAutoRunSent).toHaveBeenCalledTimes(1);
     expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
     const broadcasts = new Set(
       mockMultiModelPlaygroundCard.mock.calls
@@ -2206,7 +2227,15 @@ describe("PlaygroundMain — multi-host render path", () => {
 
       cardReadiness.ready = true;
       view.rerender(<PlaygroundMain {...props} />);
-      await waitFor(() => expect(onAutoRunSent).toHaveBeenCalledTimes(1));
+      await waitFor(() =>
+        expect(
+          mockMultiModelPlaygroundCard.mock.calls.some(
+            ([cardProps]) => cardProps.broadcastRequest,
+          ),
+        ).toBe(true),
+      );
+      claimLatestBroadcast();
+      expect(onAutoRunSent).toHaveBeenCalledTimes(1);
     } finally {
       cardReadiness.ready = true;
     }
