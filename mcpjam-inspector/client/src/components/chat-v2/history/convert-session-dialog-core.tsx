@@ -40,10 +40,8 @@ import {
   useProjectServers,
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import {
-  ClientAttachmentsEditor,
-  type HostAttachmentDraft,
-} from "@/components/evals/client-attachments-editor";
+import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
+import { ClientMultiSelect } from "@/components/hosts/client-multi-select";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -780,6 +778,18 @@ function ConvertSessionDialogCoreInner({
     );
   };
 
+  const handleClientsChange = (hostIds: string[]) => {
+    setHostAttachments((current) =>
+      hostIds.map(
+        (hostId) =>
+          current.find((attachment) => attachment.namedHostId === hostId) ?? {
+            namedHostId: hostId,
+            enabledOptionalServerIds: [],
+          },
+      ),
+    );
+  };
+
   /**
    * A promote that cannot happen at all. These REPLACE the form rather than
    * sitting above a set of fields nobody can submit: neither a session the
@@ -925,20 +935,19 @@ function ConvertSessionDialogCoreInner({
       {/* Only on this branch: a new suite is the one case where nobody has
           decided what it runs against yet. Both are pre-filled from the
           session, so the common path is to read them rather than answer them.
-          A suite can run on several clients, so this takes a list. */}
+          A suite can run on several clients, so Client is a multi-select. */}
       {attachmentPickersEnabled && effectiveProjectId ? (
-        <div className="space-y-3">
-          <div
-            role="group"
-            aria-labelledby="promote-new-suite-clients"
-            className="min-w-0 space-y-2"
-          >
-            <Label id="promote-new-suite-clients">Clients</Label>
-            <ClientAttachmentsEditor
-              projectId={effectiveProjectId}
-              value={hostAttachments}
-              onChange={setHostAttachments}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="promote-new-suite-client">Client</Label>
+            <ClientMultiSelect
+              hosts={projectHosts}
+              value={hostAttachments.map((draft) => draft.namedHostId)}
+              onChange={handleClientsChange}
+              placeholder="Select clients"
               disabled={isSubmitting}
+              triggerId="promote-new-suite-client"
+              inModal
             />
             {/* A project with no clients is otherwise a dead end: the seeding
                 effect needs `projectHosts.length > 0`, so `hostAttachments`

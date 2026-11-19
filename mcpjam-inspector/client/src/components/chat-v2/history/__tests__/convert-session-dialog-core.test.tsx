@@ -108,22 +108,25 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/evals/client-attachments-editor", () => ({
-  ClientAttachmentsEditor: ({
+vi.mock("@/components/hosts/client-multi-select", () => ({
+  ClientMultiSelect: ({
     value,
     onChange,
+    triggerId,
   }: {
-    value: Array<{ namedHostId: string }>;
-    onChange: (next: Array<{ namedHostId: string }>) => void;
+    value: string[];
+    onChange: (next: string[]) => void;
+    triggerId?: string;
   }) => (
-    <div
+    <button
+      type="button"
+      id={triggerId}
       data-testid="client-picker"
-      data-host={value.map((attachment) => attachment.namedHostId).join(",")}
+      data-host={value.join(",")}
+      onClick={() => onChange([])}
     >
-      <button type="button" onClick={() => onChange([])}>
-        Clear clients
-      </button>
-    </div>
+      Clear clients
+    </button>
   ),
 }));
 
@@ -779,7 +782,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
         screen.getByTestId("client-picker").getAttribute("data-host"),
       ).not.toBe(""),
     );
-    fireEvent.click(screen.getByRole("button", { name: "Clear clients" }));
+    fireEvent.click(screen.getByTestId("client-picker"));
     await waitFor(() =>
       expect(
         screen.getByTestId("client-picker").getAttribute("data-host"),
@@ -794,7 +797,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     renderWithSuites();
     fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
 
-    expect(screen.getByRole("group", { name: "Clients" })).toContainElement(
+    expect(screen.getByLabelText("Client")).toBe(
       screen.getByTestId("client-picker"),
     );
     expect(screen.getByLabelText("Server")).toBe(
