@@ -17,6 +17,8 @@ import {
   getHarnessAdapter,
   harnessSupportsSkills,
 } from "../../utils/harness/registry.js";
+import type { BoxSkillFile } from "../../utils/harness/materialize-skill-files.js";
+import { capabilitySkillFiles } from "../../utils/harness/plugin-delivery.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
 import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/skill-delivery.js";
@@ -30,6 +32,11 @@ import {
   type RuntimeLocalSkill,
   type RuntimeStandaloneSkill,
 } from "./effective-capabilities.js";
+import {
+  unnamedSkills,
+  type HarnessSkillDelivery,
+  type HarnessSkillMode,
+} from "./harness-skill-delivery.js";
 import type { PluginRuntimeAttribution } from "./plugin-attribution.js";
 import {
   runtimeSkills,
@@ -78,6 +85,11 @@ export interface EnvironmentSkillSource {
    * frozen skills take nothing live.
    */
   liveExtras?: LiveSkillExtras;
+  /**
+   * The skills' supporting files could not be read this turn. A harness box
+   * keeps each skill's other files as they are, rather than pruning them.
+   */
+  filesUnread?: boolean;
 }
 
 /** A turn with no environment behind it: a client's, or an older swarm
@@ -109,6 +121,17 @@ export interface BoxInput {
   copyOf: ReadonlyArray<RuntimeSkill | SkillExclusionReason | ServerSkillEntry>;
   /** How captured MCP-server skills travel to a `box-files` harness. */
   serverSkillsVia: ServerSkillsVia;
+  /** What a harness turn executes of this box, once the runtime has taken or
+   *  left each copy (`boxVerdicts`). */
+  delivery: BoxDelivery;
+}
+
+/** The part of a harness turn's delivery that does not depend on its runtime. */
+export interface BoxDelivery {
+  mode: HarnessSkillMode;
+  live: boolean;
+  /** The supporting files of the copies the runtime takes; null when unread. */
+  filesOf(kept: readonly RuntimeSkill[]): BoxSkillFile[] | null;
 }
 
 export interface SourcePlan {
@@ -247,6 +270,18 @@ export function sourcePlan(
       copies: environment ? [...ownCopies, ...serverCopies] : poolCopies,
       copyOf,
       serverSkillsVia: frozen ? "box-files" : "none",
+      delivery: environment
+        ? {
+            mode: "environment",
+            live: environment.liveExtras !== undefined,
+            // The set holds every family's files, a plugin skill's among
+            // them, which the project-wide file query leaves out.
+            filesOf: () =>
+              environment.filesUnread ? null : capabilitySkillFiles(set),
+          }
+        : // A pool is read without bodies for MCPJam's agent, so no box is
+          // written from it; its servers are connected now.
+          { mode: "none", live: true, filesOf: () => null },
     },
     excluded,
   };
@@ -267,12 +302,28 @@ export function pinnedBox(
   harnessSkills: readonly PinnedSkillArtifact[],
 ): BoxInput {
   const copies = pinnedArtifactsToRuntimeSkills([...harnessSkills]);
+  const filesOfCopy = new Map(
+    copies.map((copy, index) => [copy, harnessSkills[index]?.files ?? []]),
+  );
   return {
     copies,
     copyOf: copies.map((copy, index) =>
       harnessSkills[index]?.server ? { serverSkillCopy: copy } : copy,
     ),
     serverSkillsVia: "box-files",
+    delivery: {
+      mode: "pinned",
+      live: false,
+      // A run's files ride its copies as bytes, so a copy the runtime does not
+      // take brings none.
+      filesOf: (kept) =>
+        kept.flatMap((copy) =>
+          (filesOfCopy.get(copy) ?? []).map((file) => ({
+            ...file,
+            skillId: copy.skillId,
+          })),
+        ),
+    },
   };
 }
 
@@ -288,9 +339,15 @@ export function boxVerdicts(
 ): {
   reasonFor: (ref: SkillRef, index: number) => SkillExclusionReason | null;
   serverSkillsVia: ServerSkillsVia;
+  /** What the turn executes on this runtime's box. */
+  delivery: HarnessSkillDelivery;
 } {
   if (!harnessSupportsSkills(harnessId)) {
-    return { reasonFor: () => "unsupported-harness", serverSkillsVia: "none" };
+    return {
+      reasonFor: () => "unsupported-harness",
+      serverSkillsVia: "none",
+      delivery: deliveryOf(box, box.copies),
+    };
   }
   const adapter = getHarnessAdapter(harnessId);
   const viaTools = takesServerSkillsAsTools(adapter);
@@ -301,12 +358,10 @@ export function boxVerdicts(
         : [],
     ),
   );
-  const plan = planBoxSkills(
-    adapter.skills,
-    viaTools
-      ? box.copies.filter((copy) => !serverCopies.has(copy))
-      : box.copies,
-  );
+  const taken = viaTools
+    ? box.copies.filter((copy) => !serverCopies.has(copy))
+    : box.copies;
+  const plan = planBoxSkills(adapter.skills, taken);
   const kept = new Set(plan.deliver);
   const skipped = new Map(
     plan.skipped.map(({ skill, reason }) => [skill, reason]),
@@ -324,7 +379,19 @@ export function boxVerdicts(
       return (copy && skipped.get(copy)) ?? "name-collision";
     },
     serverSkillsVia: viaTools ? "harness-tools" : box.serverSkillsVia,
+    delivery: deliveryOf(box, taken),
   };
+}
+
+/** The delivery for the copies a runtime takes: none when the turn named no
+ *  source, so the box is left as it is. */
+function deliveryOf(
+  box: BoxInput,
+  kept: readonly RuntimeSkill[],
+): HarnessSkillDelivery {
+  const { mode, live, filesOf } = box.delivery;
+  if (mode === "none") return unnamedSkills(live);
+  return { mode, live, skills: [...kept], files: filesOf(kept) };
 }
 
 function isServerSkillEntry(

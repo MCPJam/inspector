@@ -40,6 +40,7 @@ import {
 import type { ChatOrigin, PersistedTurnTrace } from "./chat-ingestion.js";
 import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import { getHarnessAdapter } from "./harness/registry.js";
+import { harnessSkillOptions } from "./harness/harness-skill-options.js";
 import {
   harnessModelPurposeForSourceType,
   harnessModelRefusal,
@@ -272,6 +273,10 @@ export interface RunAssistantTurnOptions
    */
   journeyRunId?: MCPJamHandlerOptions["journeyRunId"];
   hostId?: MCPJamHandlerOptions["hostId"];
+
+  /** The turn's skill plan. Pass-through to `runHarnessTurn`, which carries it
+   *  out in place of the three skill inputs below. */
+  skillPlan?: MCPJamHandlerOptions["skillPlan"];
 
   /** Pinned harness skills (eval runs, swarm targets). Pass-through to
    *  `runHarnessTurn`: when set (even empty) it delivers exactly these. */
@@ -536,11 +541,7 @@ function buildHandlerOptions(
     onBoxSkillsWritten: opts.onBoxSkillsWritten,
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
-    // Pinned harness skills: presence (even an EMPTY array) is semantic — an
-    // empty authoritative set means "run skill-less", never "keep the box's".
-    ...(opts.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: opts.pinnedHarnessSkills }
-      : {}),
+    ...harnessSkillOptions(opts),
     // The attempt's own disposable box. Absent ⇒ the harness reserves the
     // personal computer, exactly as before.
     ...(opts.harnessSandboxBinding
@@ -549,15 +550,6 @@ function buildHandlerOptions(
     // Server-executed built-ins forwarded SEPARATELY so the harness path can
     // hand them to HarnessAgent (mirrors `routes/mcp/chat-v2.ts`).
     ...(opts.builtInTools ? { builtInTools: opts.builtInTools } : {}),
-    // Environment skills: presence is semantic, as for pinned. An empty set
-    // means "this environment delivers no skills", never "use the project's".
-    ...(opts.runtimeSkillsOverride !== undefined
-      ? { runtimeSkillsOverride: opts.runtimeSkillsOverride }
-      : {}),
-    ...(opts.effectiveCapabilities
-      ? { effectiveCapabilities: opts.effectiveCapabilities }
-      : {}),
-    ...(opts.liveTurn ? { liveTurn: true } : {}),
     // The turn's grant boundary for project secrets. Harness-relevant: the
     // external-account credential check asks whether a BROKERED secret is
     // selected into THIS environment, and an absent id means "no grant" rather

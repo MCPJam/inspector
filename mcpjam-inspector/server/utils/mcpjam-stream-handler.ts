@@ -78,6 +78,7 @@ import {
   type InfraFailureEvidence,
 } from "./infra-failure-evidence.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkills } from "../services/environments/turn-skills.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
@@ -1066,6 +1067,13 @@ export interface MCPJamHandlerOptions {
    */
   journeyRunId?: string;
   hostId?: string;
+  /**
+   * The turn's skill plan, which a harness turn carries out: what its box
+   * writer plans from, its supporting files, its captured MCP-server skills
+   * and whether its servers' own skills may be offered. It replaces the three
+   * fields below as each caller moves onto it, and wins over them.
+   */
+  skillPlan?: TurnSkills;
   /**
    * Pinned harness skills (eval runs and swarm targets). When set — even
    * EMPTY — the harness turn delivers exactly these pinned artifacts; its

@@ -252,7 +252,7 @@ import {
   withHarnessPromptImages,
   type HarnessPromptImage,
 } from "./harness-prompt-images.js";
-import { harnessTurnSkills } from "./skill-delivery.js";
+import { harnessTurnSkills, harnessTurnSkillsFromPlan } from "./skill-delivery.js";
 import {
   harnessServerSkills,
   withServedSkills,
@@ -879,6 +879,7 @@ export async function runHarnessTurn(
     harnessExecutionTarget,
     executionScope,
     scenarioParticipant,
+    skillPlan,
     pinnedHarnessSkills,
     runtimeSkillsOverride,
     effectiveCapabilities,
@@ -1886,13 +1887,17 @@ export async function runHarnessTurn(
       // unknown (`null`) and `skillsHash` undefined, so it is OMITTED from
       // claim/commit and the backend reuses the stored hash (no resume churn,
       // no empty-hash commit), and the box is left exactly as it is.
-      const turnSkills = await harnessTurnSkills({
-        pinnedHarnessSkills,
-        serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
-        runtimeSkillsOverride,
-        ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
-        liveTurn,
-      });
+      // A turn that carries its plan runs it; the inputs below are the older
+      // callers', which the plan replaces as each one moves.
+      const turnSkills = skillPlan
+        ? harnessTurnSkillsFromPlan(skillPlan, harnessAdapter.id)
+        : await harnessTurnSkills({
+            pinnedHarnessSkills,
+            serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
+            runtimeSkillsOverride,
+            ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+            liveTurn,
+          });
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;
       const skillsHash = turnSkills.skillsHash;
@@ -2034,6 +2039,7 @@ export async function runHarnessTurn(
         live: turnSkills.live,
         pinnedHarnessSkills,
         effectiveCapabilities,
+        ...(skillPlan ? { plannedServerSkills: skillPlan.set.serverSkills } : {}),
         manager: mcpClientManager,
         serverIds: selectedServers ?? [],
         messages,

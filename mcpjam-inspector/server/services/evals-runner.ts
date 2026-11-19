@@ -6410,7 +6410,6 @@ const runHostedIterationWithBrowser = async (
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -7447,11 +7446,13 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
-    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
-    // not when truthy: `[]` says "this run delivers no skills" (the
-    // `skillsOverride: "exclude"` arm), while absent leaves the box with
-    // whatever skills it already holds, an earlier turn's included.
-    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // The iteration's skill plan, which a harness turn carries out: a frozen
+    // run's skills on its box, `[]` for the without-skills arm, and an
+    // unpinned turn's box left as it is. MCPJam's agent builds its tools from
+    // the same plan.
+    ...(turnSkills.skills.runtime.kind === "harness"
+      ? { skillPlan: turnSkills.skills }
+      : {}),
     // Each harness turn's skills event, from what its box writer wrote.
     ...(turnSkills.skills.runtime.kind === "harness"
       ? {

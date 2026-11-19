@@ -24,6 +24,7 @@
  * supporting files, and the fingerprint that forks a resumable session.
  */
 import type { EffectiveCapabilitySet } from "../../services/environments/effective-capabilities.js";
+import type { TurnSkills } from "../../services/environments/turn-skills.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import type {
   CloudSkillRuntimeItem,
@@ -128,6 +129,44 @@ export async function harnessTurnSkills(args: {
     readFiles: async () =>
       files ? { files, complete: () => true } : NO_FILES_KNOWN,
     live,
+  };
+}
+
+/**
+ * A turn's skills as its plan prepared them for this runtime: the same
+ * `HarnessTurnSkills` the sources above produce, read off the plan instead of
+ * chosen again. The plan was made for one runtime, so a plan for another is a
+ * wiring bug, and it fails here rather than writing the wrong skills to a box.
+ */
+export function harnessTurnSkillsFromPlan(
+  plan: TurnSkills,
+  harnessId: string,
+): HarnessTurnSkills {
+  if (plan.runtime.kind !== "harness" || plan.runtime.harnessId !== harnessId) {
+    throw new Error(
+      `This turn's skill plan was made for ${
+        plan.runtime.kind === "harness" ? plan.runtime.harnessId : "MCPJam's agent"
+      }, but ${harnessId} is running it.`,
+    );
+  }
+  const delivery = plan.harness;
+  if (!delivery || delivery.skills === null) {
+    return {
+      mode: "none",
+      skills: null,
+      skillsHash: undefined,
+      readFiles: async () => NO_FILES_KNOWN,
+      live: delivery?.live ?? false,
+    };
+  }
+  const { files } = delivery;
+  return {
+    mode: delivery.mode,
+    skills: delivery.skills,
+    skillsHash: skillsFingerprint(delivery.skills),
+    readFiles: async () =>
+      files ? { files, complete: () => true } : NO_FILES_KNOWN,
+    live: delivery.live,
   };
 }
 
