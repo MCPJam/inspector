@@ -130,8 +130,14 @@ export function PlaygroundCenter({
             : undefined
         }
         onFirstMessageSent={
-          isFirstRunUnfinished || firstRunPrompt
+          isFirstRunUnfinished || firstRunPrompt || homeAutorun
             ? () => {
+                // A deferred auto-run is sent from the composer instead.
+                if (homeAutorun) {
+                  updateChecklistProgress(homeAutorun.progressKey, {
+                    chat: true,
+                  });
+                }
                 if (isFirstRunUnfinished) {
                   state.onboarding.completeOnboarding();
                 }
