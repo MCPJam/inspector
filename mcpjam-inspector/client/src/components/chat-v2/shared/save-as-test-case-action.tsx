@@ -300,7 +300,7 @@ export function SaveAsTestCaseAction({
             <DialogHeader className="space-y-1.5 pr-10">
               <DialogTitle>Save as test case</DialogTitle>
               <DialogDescription className="text-sm text-muted-foreground">
-                Turn this prompt and its tool calls into a reusable case.
+                Saves this prompt, with its reply as the expected outcome.
               </DialogDescription>
             </DialogHeader>
           </div>
