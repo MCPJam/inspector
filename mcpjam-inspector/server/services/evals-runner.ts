@@ -5205,6 +5205,17 @@ const runLocalIteration = async ({
   // Maps account-routed calls back to the server's tools. Declared out here
   // because the catch below records a failed turn's calls too.
   let accountRouting: AccountRouting | undefined;
+  // A pinned-only case (render check) with no authored predicates defaults to
+  // "the widget rendered" — the model-free equivalent of the legacy probe
+  // verdict. Mirrors the former runIterationWithAiSdk post-loop. Out here so
+  // the failure path declares the same checks.
+  const effectivePredicates = test.successPredicates?.length
+    ? test.successPredicates
+    : isPinnedOnly({ caseType: test.caseType, promptTurns })
+      ? ([{ type: "widgetRendered" }] as NonNullable<
+          typeof test.successPredicates
+        >)
+      : undefined;
   // Failed interact / widget-DOM-assert steps. Out here so a failure after
   // they were recorded still reports them on the `platform:widgetCheck` row.
   let stepScriptedFailures: { toolName: string; reason: string }[] = [];
@@ -5712,16 +5723,6 @@ const runLocalIteration = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (render check) with no authored predicates defaults to
-    // "the widget rendered" — the model-free equivalent of the legacy probe
-    // verdict. Mirrors the former runIterationWithAiSdk post-loop.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
     // Flush the last turn's groups so a trailing turn's unrun checks still fail
     // closed, before the shared verdict reads scripted-check failures. (Flush
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
@@ -6169,6 +6170,16 @@ const runLocalIteration = async ({
           ...stepScriptedFailures,
         ],
       },
+      // The case's checks, unmeasured: a finished iteration declares them, and
+      // one case can't report two evaluation configs in a run.
+      predicateResults: (effectivePredicates ?? []).map(
+        (predicate): PredicateResult => ({
+          predicate,
+          passed: false,
+          status: "error",
+          reason: "the iteration failed before this check ran",
+        }),
+      ),
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.
