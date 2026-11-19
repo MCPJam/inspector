@@ -28,10 +28,9 @@ import {
   type RuntimeServerSkill,
 } from "../../services/environments/effective-capabilities.js";
 import { downloadedFileBytes } from "../../services/evals/run-plugin-snapshot.js";
-import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
+import { getEffectiveSkillToolsAndPrompt, skillCatalogOmissions } from "../computers/effective-skill-tools.js";
 import { listLiveServerSkills } from "../computers/live-server-skills.js";
 import type { BoxSkillOutcome, BoxSkillsResult } from "./box-skills-writer.js";
-import type { HarnessRuntimeAdapter } from "./registry.js";
 import type { HarnessSkillSource } from "./skill-delivery.js";
 import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
@@ -53,6 +52,9 @@ export interface HarnessServerSkills {
   promptSection: string;
   /** The captured skills the tools serve, for the turn's delivery report. */
   served: BoxSkillOutcome[];
+  /** Counts for the connected servers' own skills on a live turn, which
+   *  the turn's plan cannot name. */
+  liveDelivery?: NonNullable<BoxSkillsResult["liveDelivery"]>;
   transcript: ServerSkillTranscript;
   /** The runtime's commands go to MCPJam's gate: the turn offers server
    *  skills, or its conversation already holds one. */
@@ -60,41 +62,14 @@ export interface HarnessServerSkills {
 }
 
 /**
- * Whether a turn serves server skills through MCPJam's skill tools: its
- * runtime takes them that way, and the gate can hold its commands, the
- * runtime's own and MCPJam's host tools. A local eval or swarm runs
- * `allow-all`, where no command asks, so it serves none.
- */
-export function servesServerSkills(
-  adapter: Pick<
-    HarnessRuntimeAdapter,
-    | "supportsSkills"
-    | "skills"
-    | "supportsNativeToolApproval"
-    | "supportsHostExecutedToolApproval"
-    | "hostToolApprovalAtRuntime"
-  >,
-  turn: { localUnattended: boolean },
-): boolean {
-  return (
-    takesServerSkillsAsTools(adapter) &&
-    adapter.supportsNativeToolApproval &&
-    adapter.supportsHostExecutedToolApproval &&
-    !adapter.hostToolApprovalAtRuntime &&
-    !turn.localUnattended
-  );
-}
-
-/**
  * The server skills a harness turn serves, from the source its skills come
  * from (`selectHarnessSkillSource`): a run's captured copies, an
  * environment's captured skills, and on a live turn the connected servers'.
- * Undefined for a turn that serves none (`servesServerSkills`).
+ * Undefined for a turn that serves none (`takesServerSkillsAsTools`).
  */
 export async function harnessServerSkills(
-  adapter: Parameters<typeof servesServerSkills>[0],
+  adapter: Parameters<typeof takesServerSkillsAsTools>[0],
   args: {
-    localUnattended: boolean;
     mode: HarnessSkillSource["mode"];
     /** A live turn (`HarnessTurnSkills.live`): its servers are connected, so
      *  their own skills are listed beside the captured ones. */
@@ -110,7 +85,7 @@ export async function harnessServerSkills(
     signal?: AbortSignal;
   },
 ): Promise<HarnessServerSkills | undefined> {
-  if (!servesServerSkills(adapter, args)) return undefined;
+  if (!takesServerSkillsAsTools(adapter)) return undefined;
   const captured =
     args.mode === "pinned"
       ? (args.pinnedHarnessSkills ?? []).flatMap(capturedServerSkill)
@@ -131,11 +106,16 @@ export async function harnessServerSkills(
     serverSkills: captured,
   };
   const transcript = turnTranscript(args.messages);
+  const effective = live ? withLiveServerSkills(set, live) : set;
   const { tools, systemPromptSection } = getEffectiveSkillToolsAndPrompt(
-    live ? withLiveServerSkills(set, live) : set,
+    effective,
     args.signal ? { signal: args.signal } : {},
   );
   const offered = Object.keys(tools).length > 0;
+  const listed = effective.liveServerSkills?.skills ?? [];
+  const liveRefs = new Set(
+    listed.filter((skill) => !skill.unloadable).map(({ ref }) => ref),
+  );
   return {
     tools: offered ? servedThroughTranscript(tools, transcript) : {},
     promptSection:
@@ -145,6 +125,17 @@ export async function harnessServerSkills(
     served: offered
       ? captured.map(({ skillId, name }) => ({ skillId, name }))
       : [],
+    ...(live && offered
+      ? {
+          liveDelivery: {
+            delivered: liveRefs.size,
+            collisions: live.skills.length - listed.length,
+            omittedFromCatalog: skillCatalogOmissions(effective).filter((ref) =>
+              liveRefs.has(ref),
+            ).length,
+          },
+        }
+      : {}),
     transcript,
     gated: offered || transcript.inUse(),
   };
@@ -155,9 +146,12 @@ export function withServedSkills(
   written: BoxSkillsResult,
   serverSkills: HarnessServerSkills | undefined,
 ): BoxSkillsResult {
-  return serverSkills?.served.length
-    ? { ...written, servedByTools: serverSkills.served }
-    : written;
+  if (!serverSkills?.served.length && !serverSkills?.liveDelivery) return written;
+  return {
+    ...written,
+    ...(serverSkills.served.length ? { servedByTools: serverSkills.served } : {}),
+    ...(serverSkills.liveDelivery ? { liveDelivery: serverSkills.liveDelivery } : {}),
+  };
 }
 
 /**

@@ -118,13 +118,6 @@ interface Surface {
 
 const RUN_SKILLS = ["release-notes", "summarize", "search"];
 
-const noSkillsOn = (refs: string[]): Expected => ({
-  delivered: [],
-  excluded: refs.map((ref) => [ref, "unsupported-harness"]),
-  serverSkillsVia: "none",
-  recorded: [],
-});
-
 /**
  * What each engine receives of the fixture's three skills wherever they were
  * pinned: an eval run, its replay and a swarm target all deliver the same.
@@ -156,20 +149,26 @@ const PINNED: Record<Engine, Expected> = {
   },
   cursor: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   opencode: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   "copilot-cli": {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
 };
@@ -323,15 +322,6 @@ const liveRows = (
     serverSkillsVia: "harness-tools",
     recorded: recorded ? names : [],
   };
-  // These harnesses can read captured server skills from frozen runs, but
-  // live turns do not write captured server skills to their boxes.
-  const liveBoxNames = ["release-notes", "summarize", ...extra];
-  const boxFilesOnly: Expected = {
-    delivered: liveBoxNames,
-    excluded: [["docs/search", "server-skill-unsupported"]],
-    serverSkillsVia: "none",
-    recorded: recorded ? liveBoxNames : [],
-  };
   return {
     "mcpjam-agent": {
       delivered: refs,
@@ -343,9 +333,9 @@ const liveRows = (
     },
     "claude-code": harness,
     codex: harness,
-    cursor: boxFilesOnly,
-    opencode: boxFilesOnly,
-    "copilot-cli": boxFilesOnly,
+    cursor: harness,
+    opencode: harness,
+    "copilot-cli": harness,
   };
 };
 
@@ -508,19 +498,19 @@ const OLDER_STUDY_TURN: Surface = {
     cursor: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
     opencode: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
     "copilot-cli": {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
   },
