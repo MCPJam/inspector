@@ -103,6 +103,7 @@ import {
   evalRunScopedInput,
   resolveLiveServer,
   resolveProjectOrThrow,
+  resolveSavedServer,
   serverScopedInput,
   toSelectedProjectInfo,
   toServerInfo,
@@ -110,6 +111,11 @@ import {
   type ResolvedServerInfo,
   type ServerScopedInput,
 } from "./operation-support.js";
+import {
+  hostedReachRefusalForServer,
+  hostedReachRefusalFromError,
+  refusedDiagnosis,
+} from "./diagnose-server.js";
 import {
   getConformanceCheckOperation,
   getConformanceReportOperation,
@@ -1052,16 +1058,27 @@ export const diagnoseServerOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const server = await resolveLiveServer(
+    // A server hosted MCPJam will not dial is diagnosed, not refused: see
+    // `diagnose-server.ts`.
+    const server = await resolveSavedServer(
       client,
       project,
       input.server,
       signal
     );
-    const report = await client.doctorServer(
-      { projectId: project.id, serverId: server.id },
-      { signal }
-    );
+    const unreachable = hostedReachRefusalForServer(server);
+    if (unreachable) return refusedDiagnosis(project, server, unreachable);
+    let report: PlatformDoctorReport;
+    try {
+      report = await client.doctorServer(
+        { projectId: project.id, serverId: server.id },
+        { signal }
+      );
+    } catch (error) {
+      const refused = hostedReachRefusalFromError(error);
+      if (!refused) throw error;
+      return refusedDiagnosis(project, server, refused);
+    }
     return {
       project: toSelectedProjectInfo(project),
       server: toServerInfo(server),
