@@ -14,6 +14,8 @@ import { TASKS_CHECK_FEATURES } from "../../check-map/tasks.js";
 import type { CheckFeatureTarget } from "../../check-map/types.js";
 import type { FeatureFamilyId } from "../../types.js";
 import { SERVER_FEATURE_CATALOG } from "../index.js";
+import { ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID } from "../extensions/authorization.js";
+import { evaluateServerFeatures } from "../../evaluate.js";
 import { EXTENSION_FEATURES } from "../extensions/index.js";
 import {
   MODERN,
@@ -266,6 +268,29 @@ describe("authorization extensions", () => {
         setup: "enterprise-managed-authorization",
       });
       expect(feature(id).assessment.probed).toBeUndefined();
+    }
+  });
+
+  it("never credits XAA from setup or from an advertised extension", () => {
+    // An enterprise host advertises the XAA extension even on a connect whose
+    // own auth method skips XAA, so neither the extension nor setup is proof.
+    const surface = makeSurface();
+    const result = evaluateServerFeatures(SERVER_FEATURE_CATALOG, {
+      connected: true,
+      context: {
+        transport: "streamable-http",
+        protocolVersion: surface.protocolVersion,
+        clientExtensions: [ENTERPRISE_MANAGED_AUTHORIZATION_EXTENSION_ID],
+      },
+      declared: { surface, capturedAt: 1 },
+      configured: ["enterprise-managed-authorization"],
+    });
+    for (const id of ["auth-ext.xaa.access", "auth-ext.xaa.jwt-bearer"]) {
+      expect(result.assessments[id]).toMatchObject({
+        state: "not-checked",
+        reason: "MCPJam cannot check this yet.",
+      });
+      expect(result.assessments[id].nextAction).toBeUndefined();
     }
   });
 

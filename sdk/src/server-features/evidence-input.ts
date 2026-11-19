@@ -14,6 +14,7 @@ import {
   type CheckResultEvidence,
   type CheckStatus,
   type ConformanceCheckRef,
+  type ConformanceSuiteKey,
   type FeatureObservation,
   type FeatureSetupKind,
   type OAuthFlowSummary,
@@ -275,6 +276,8 @@ export function selectServerEvidence(
     contextHash?: string;
     checks?: readonly CheckResultEvidence[];
     configured?: readonly FeatureSetupKind[];
+    setupOffered?: readonly FeatureSetupKind[];
+    checksOffered?: readonly ConformanceSuiteKey[];
   },
 ): SelectedServerEvidence {
   const contexts = listEvidenceContexts(stored);
@@ -324,19 +327,32 @@ export function selectServerEvidence(
   const latestAttempt =
     inspectionAttempt ?? (surface === undefined ? probeRunAttempt(probeRow) : undefined);
 
+  // Connection history is a capture, a probe that got an answer or an OAuth
+  // sign-in. A row that only records a failed Refresh is not one, so a
+  // server that never connected keeps its Connect step.
+  const oauthFlow = parseOAuthFlow(probeRow?.oauthFlow);
+  const probeAnswered = Object.values(probes).some(
+    (summary) => summary?.status === "ok" || summary?.status === "not-applicable",
+  );
   const input: ServerFeatureEvidenceInput = {
     context:
       context ??
       (surface
         ? { transport: surface.transport, protocolVersion: surface.protocolVersion }
         : undefined),
-    connected: options.connected || surface !== undefined || probeRow !== undefined,
+    connected:
+      options.connected ||
+      surface !== undefined ||
+      probeAnswered ||
+      oauthFlow !== undefined,
     declared: surface && capturedAt !== undefined ? { surface, capturedAt } : undefined,
     probes: probes as ProbeSurface,
-    oauthFlow: parseOAuthFlow(probeRow?.oauthFlow),
+    oauthFlow,
     observations,
     checks: options.checks,
     configured: options.configured,
+    setupOffered: options.setupOffered,
+    checksOffered: options.checksOffered,
   };
   return { input, contextHash, capturedAt, latestAttempt, probeFailures, contexts };
 }
