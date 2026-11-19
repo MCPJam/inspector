@@ -83,8 +83,8 @@ export const chooseTools: DraftEdit = (draft) => {
   if (view.tools.length > 0 || draft.stashedTools.length === 0) {
     return { ...draft, toolsChoice: "tools" };
   }
-  const checks = draft.stashedTools.flatMap(({ step, preceding }) =>
-    step && preceding ? [{ step, preceding }] : [],
+  const checks = draft.stashedTools.flatMap(({ step, preceding, owner }) =>
+    step && preceding ? [{ step, preceding, owner }] : [],
   );
   return {
     ...draft,

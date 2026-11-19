@@ -31,4 +31,20 @@ describe("useTestCaseStepsEditorEnabled", () => {
     const next = renderHook(() => useTestCaseStepsEditorEnabled());
     expect(next.result.current).toBe(false);
   });
+
+  it("keeps its first answer when the flag changes later", () => {
+    const flag = vi.mocked(useFeatureFlagEnabled);
+    flag.mockReturnValue(undefined);
+    // Flags already missed the wait in this page load, so this reads false.
+    const late = renderHook(() => useTestCaseStepsEditorEnabled());
+    expect(late.result.current).toBe(false);
+    flag.mockReturnValue(true);
+    late.rerender();
+    expect(late.result.current).toBe(false);
+    const on = renderHook(() => useTestCaseStepsEditorEnabled());
+    expect(on.result.current).toBe(true);
+    flag.mockReturnValue(false);
+    on.rerender();
+    expect(on.result.current).toBe(true);
+  });
 });

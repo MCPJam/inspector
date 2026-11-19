@@ -12,6 +12,7 @@ import type { RemoteServer } from "@/hooks/useProjects";
 import { isDraftTestCaseId } from "@/components/evals/draft-test-case";
 import { getEffectiveSuiteServers } from "@/components/evals/helpers";
 import { stripTimestampSuffix } from "@/components/evals/suite-overview-presentation";
+import { authorablePredicateKinds } from "@/components/evals/suite-scorer-table-model";
 import { getStepsBlockReason } from "@/components/evals/test-template-editor";
 import type {
   CaseRunLaunchOptions,
@@ -151,6 +152,7 @@ export function CaseStepsPage({
   const unsaved = !locked && data.dirty;
   const runDisabledReason =
     launchReview.disabledReason ??
+    (data.invalidField ? "Complete the highlighted fields first." : null) ??
     getStepsBlockReason(draft.steps) ??
     runOutOfCreditsReason?.(testCase) ??
     null;
@@ -220,10 +222,14 @@ export function CaseStepsPage({
               servers: getEffectiveSuiteServers(suite),
               defaultMatchOptions: suite.defaultMatchOptions,
               checkPolicy: data.capabilities?.scorers?.checkPolicy === true,
+              authorableKinds: authorablePredicateKinds(
+                data.capabilities?.scorers?.predicateKinds,
+              ),
             }}
             availableTools={tools}
             projectServers={projectServers}
-            readOnly={locked}
+            // Edits wait for a running save, so what it saves is what follows.
+            readOnly={locked || data.saving}
             openKey={openKey}
             onOpenKeyChange={setOpenKey}
             onOpenSuiteSettings={() =>

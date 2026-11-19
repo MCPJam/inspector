@@ -193,4 +193,23 @@ describe("useCaseStepsDraft", () => {
     });
     expect(toast.error).toHaveBeenCalled();
   });
+
+  it("takes a newer stored case when the draft has no edits, and keeps edits", async () => {
+    const { result, rerender } = renderDraft();
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    state.cases = [storedCase({ title: "Renamed elsewhere" })];
+    rerender();
+    await waitFor(() =>
+      expect(result.current.draft?.title).toBe("Renamed elsewhere"),
+    );
+    expect(result.current.dirty).toBe(false);
+    act(() =>
+      result.current.setDraft((draft) => ({ ...draft, scenario: "Mine" })),
+    );
+    state.cases = [storedCase({ title: "Renamed again" })];
+    rerender();
+    expect(result.current.draft?.scenario).toBe("Mine");
+    expect(result.current.draft?.title).toBe("Renamed elsewhere");
+    expect(result.current.dirty).toBe(true);
+  });
 });
