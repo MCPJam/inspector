@@ -1,7 +1,7 @@
 import { assertNativeDiscovery } from "../../utils/harness/native-discovery.js";
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch.js";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
-import { readTasksPolicy } from "@mcpjam/sdk";
+import { describeError, originOf, readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
@@ -2198,18 +2198,33 @@ async function runJourneyFanOut(
         return;
       }
       logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
-      logger.error(
-        "[swarm.runner] target worker failed; finalizing its attempts",
-        err,
-        {
-          runId,
-          hostId,
-          targetId,
-          sessionIdx,
-          setupReason:
-            err instanceof SwarmSetupError ? err.partial.reason : undefined,
-        },
-      );
+      const failureContext = {
+        runId,
+        hostId,
+        targetId,
+        sessionIdx,
+        setupReason:
+          err instanceof SwarmSetupError ? err.partial.reason : undefined,
+      };
+      // A setup stopped by the user's own server or its configuration (a
+      // refused connection, an unknown host) is theirs to fix; it fails the
+      // target the same way but is not an MCPJam error to page on.
+      const causeOrigin =
+        err instanceof SwarmSetupError && err.cause !== undefined
+          ? originOf(describeError(err.cause))
+          : undefined;
+      if (causeOrigin === "user_server" || causeOrigin === "user_config") {
+        logger.warn(
+          "[swarm.runner] target worker failed; finalizing its attempts",
+          failureContext,
+        );
+      } else {
+        logger.error(
+          "[swarm.runner] target worker failed; finalizing its attempts",
+          err,
+          failureContext,
+        );
+      }
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
       // claim; an idempotent re-claim with the same chatSessionId) and every
