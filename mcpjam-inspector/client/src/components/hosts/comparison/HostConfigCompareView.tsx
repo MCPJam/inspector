@@ -52,6 +52,7 @@ import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
+import { useOpenCodeHostEnabled } from "@/hooks/useOpenCodeHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
   excludedFlagGatedHostIds,
@@ -256,6 +257,7 @@ export function HostConfigCompareView({
   const codexEnabled = useCodexHostEnabled();
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
+  const openCodeEnabled = useOpenCodeHostEnabled();
   // Claude Code and Codex are always useful as read-only reference data here,
   // like on caniuse.dev. Their creation flags still gate the New Client picker
   // and every mutation path. Other gated hosts keep their existing rollout.
@@ -266,11 +268,12 @@ export function HostConfigCompareView({
       codex: codexEnabled,
       copilotCli: copilotCliEnabled === true,
       cursorCli: cursorCliEnabled,
+      openCode: openCodeEnabled,
     });
     excluded.delete("claude-code");
     excluded.delete("codex");
     return excluded;
-  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, presetOnly]);
+  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, openCodeEnabled, presetOnly]);
   // Public caniuse still displays flag-gated hosts as reference data, but must
   // not offer their verify links because those links auto-create a host, and
   // the app refuses to create one until the rollout flag is on. The flags

@@ -73,6 +73,8 @@ import type {
   PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -2797,9 +2799,9 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
   }
 
   /**
-   * Request (or with `force`, regenerate) the eval run's insights —
-   * serverQuality behind the common envelope. SPENDS the org's model budget;
-   * poll `getEvalRun().insights` rather than re-requesting.
+   * Start (or with `force`, rerun) the run's findings analysis, the one the
+   * app's run page runs. Included with MCPJam; counts against the daily
+   * insight quota. Poll `getEvalRun().insights` rather than re-requesting.
    */
   requestEvalRunInsights(
     params: { projectId: string; runId: string; force?: boolean },
@@ -2810,6 +2812,36 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /** Cancel a running analysis; a 409 when none is running. */
+  cancelEvalRunInsights(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /** Build (or with `force`, rebuild) the findings an analysis explains. */
+  buildEvalRunFindings(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunFindingsBuildRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/findings/build`,
       { body: params.force ? { force: true } : {} },
       options
     );

@@ -207,9 +207,26 @@ describe("gathering the reviewer path", () => {
     expect(evidence.identity).toEqual({
       outcome: "unverified",
       reason: "the submission names no identity tool",
+      notAsked: true,
     });
     expect(evidence.fixtures?.blocked).toMatch(/identity is unverified/);
     expect(server.requests).toEqual([]);
+  });
+
+  it("keeps unusable identity settings apart from no identity tool", async () => {
+    const server = reviewerServer({});
+    const evidence = await gatherDirectoryReviewerPath({
+      account: { id: "acct_reviewer", dial: server.dial },
+      spec: {
+        identity: "the identity tool's arguments are not a JSON object",
+        fixtures: [],
+        cases: [],
+      },
+    });
+    expect(evidence.identity).toEqual({
+      outcome: "unverified",
+      reason: "the identity tool's arguments are not a JSON object",
+    });
   });
 
   it("reports a refused session as unverified", async () => {
@@ -225,6 +242,7 @@ describe("gathering the reviewer path", () => {
     expect(evidence.identity?.reason).toMatch(
       /the reviewer account's session failed/
     );
+    expect(evidence.identity?.notAsked).toBeUndefined();
   });
 
   it("keeps a run without a reviewer account to the reason, dialling nothing", async () => {

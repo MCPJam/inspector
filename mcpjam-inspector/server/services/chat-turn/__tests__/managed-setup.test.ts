@@ -181,6 +181,20 @@ describe("managed setup local runtime policy", () => {
     }
   });
 
+  it.each([
+    ["Playground", "interactive"],
+    ["User Testing", "recorded"],
+  ] as const)("keeps the host's approval switch on a %s turn", async (_label, mode) => {
+    m.hostedSetup.mockResolvedValue(
+      hostedSetup(mode, { requireToolApproval: true }),
+    );
+    const { setup } = await resolveSetup({ requireToolApproval: true });
+    expect(setup.value?.requireToolApproval).toBe(true);
+    expect(m.builtInPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ requestedToolApproval: true }),
+    );
+  });
+
   it("checks auto-approve consent before a local Claude Code turn starts", async () => {
     m.hostedSetup.mockResolvedValue(
       hostedSetup("interactive", { harness: "claude-code" }),
@@ -333,7 +347,7 @@ describe("a Cursor CLI client", () => {
     expect(thrown).toMatchObject({
       status: 422,
       message:
-        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
         "Choose a different client for this study.",
       details: { reason: "HARNESS_UNAVAILABLE", harness: "cursor" },
     });

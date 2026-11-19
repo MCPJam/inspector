@@ -26,6 +26,7 @@ import {
   handleJsonRpc,
   parseAndValidateJsonRpc,
 } from "../../services/mcp-http-bridge";
+import { downstreamProtocolVersionOf } from "../../services/bridge-protocol-version.js";
 import {
   createAuthorizedManager,
   withManager,
@@ -506,6 +507,7 @@ async function handle(c: any) {
         }
         return handleJsonRpc(serverId, body, manager, "adapter", {
           ...(call ? { signal: call.signal } : {}),
+          downstreamProtocolVersion: downstreamProtocolVersionOf(body),
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.

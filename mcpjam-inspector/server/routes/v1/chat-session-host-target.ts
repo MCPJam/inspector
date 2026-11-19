@@ -28,14 +28,15 @@ import { readRuntimeModelChoice } from "../../utils/runtime-model-choice.js";
  *      ran the emulated engine while the caller believes it observed the real
  *      runtime.
  *
- * WHAT IS DIFFERENT HERE, and refused rather than papered over: this surface
- * has no approval channel (it runs `approvalMode: "auto-deny"`), and its
- * `toolMode` / `allowedTools` / `maxToolCalls` policy is applied by NOT
- * ADVERTISING tools to the emulated engine. A harness rebuilds its own MCP
- * tool set inside the sandbox — from `.mcp.json` or from host-executed specs —
- * so neither the exclusion list nor the dispatch counter reaches it. Rather
- * than run a `read_only` harness turn with every tool live, those combinations
- * are refused by name. See {@link resolveChatSessionEngine}.
+ * WHAT IS DIFFERENT HERE: this surface's `toolMode` / `allowedTools` /
+ * `maxToolCalls` policy is applied by NOT ADVERTISING tools to the emulated
+ * engine. A harness rebuilds its own MCP tool set inside the sandbox — from
+ * `.mcp.json` or from host-executed specs — so the exclusion list does not
+ * reach it. `toolMode`'s exclusions are enforced where its calls run instead
+ * ({@link toolModeHarnessPolicy}); `allowedTools` and `maxToolCalls` are
+ * refused by name. See {@link resolveChatSessionEngine}. Approval is not
+ * refused: an API turn follows `turnApprovalPolicy("api")`, which leaves the
+ * host's switch off.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import {
@@ -55,7 +56,16 @@ import {
   selectionReasoningEffort,
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
-import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import {
+  getHarnessAdapter,
+  harnessUsesExternalAccount,
+} from "../../utils/harness/registry.js";
+import { appliedToolApproval } from "@/shared/tool-approval";
+import { harnessToolPolicyLaunchRefusal } from "../../utils/harness/harness-proxy-policy-enforcement.js";
+import {
+  classifyToolSafety,
+  type ToolPolicySnapshot,
+} from "@mcpjam/sdk/contract";
 
 /**
  * A host this turn resolved SERVER-SIDE, and where the pointer came from.
@@ -106,6 +116,17 @@ export function harnessOfRuntimeConfig(
 }
 
 /**
+ * The host's harness picks the model on the customer's own account (Cursor
+ * CLI), so the host's own runtime-chosen model (`cursor/auto`) runs on it.
+ */
+export function hostChoosesModel(
+  hostTarget: ChatSessionHostTarget | undefined,
+): boolean {
+  const harness = harnessOfRuntimeConfig(hostTarget?.runtimeConfig);
+  return harness !== undefined && harnessUsesExternalAccount(harness);
+}
+
+/**
  * Refuse a body that names a host TWICE and disagrees with itself.
  *
  * An environment pins its own host server-side. A `hostId` alongside it is
@@ -145,7 +166,6 @@ export type ChatSessionEngineRefusal = {
     | HarnessUnavailableKind
     | "surface-agent-loop"
     | "surface-tool-policy"
-    | "surface-approval"
     | "surface-unpinnable-host";
   reason: string;
 };
@@ -214,28 +234,18 @@ export function hostRoutingSelectionForModel(
  *      cannot run one, whatever the request says.
  *   2. UNPINNABLE HOST. A property of the SESSION, fixable only by starting a
  *      different one. Nothing in the next request can change it.
- *   3. APPROVAL. Fixable on the HOST (`requireToolApproval`), keeping the
- *      session.
- *   4. TOOL POLICY. Fixable in the very next request — `toolMode: "auto"` with
+ *   3. TOOL POLICY. Fixable in the very next request — `toolMode: "auto"` with
  *      no `allowedTools`/`maxToolCalls`. The cheapest to fix, so it is last.
- *
- * 1, 3 and 4 keep the relative order they have always had; only the newest rule
- * was placed, and it was placed by that measure rather than by arrival.
  *
  * The two `surface-*` rules on top of it are properties of THIS route, not of
  * any harness, and each closes a hole the shared gate cannot see:
  *
- *   - TOOL POLICY. `toolMode`, `allowedTools` and `maxToolCalls` are enforced
- *     by withholding tools from the engine this route builds. A harness builds
- *     its own set in the sandbox, so a `read_only` harness turn would advertise
- *     everything — the policy would evaporate while the response still reported
- *     `toolMode: "read_only"`. Refused, so the caller opts into `auto`
- *     deliberately and knows what it authorized.
- *   - APPROVAL. This surface runs `approvalMode: "auto-deny"` because a
- *     synchronous JSON turn has nobody to ask. A harness that CAN pause (Claude
- *     Code) would pause into a stream nothing is reading. The shared gate only
- *     refuses harnesses that cannot pause at all; the ones that can are refused
- *     here.
+ *   - TOOL POLICY. `allowedTools` and `maxToolCalls` are enforced by
+ *     withholding tools from the engine this route builds. A harness builds its
+ *     own set in the sandbox, so the narrowing would evaporate while the
+ *     response still reported it. Refused, so the caller opts out deliberately
+ *     and knows what it authorized. `toolMode` is refused only where its
+ *     exclusions cannot be sealed into the proxy the harness's MCP client dials.
  *   - AN UNPINNABLE HOST ON A SESSION THAT PINS A TARGET. `hostId` is per-turn
  *     and the backend's resume allowlist cannot carry it, so the route's
  *     continuation guard leans on a session having pinned NO target of its own:
@@ -314,8 +324,12 @@ export function resolveChatSessionEngine(args: {
   const hostConfig = args.hostTarget.runtimeConfig;
   const name = getHarnessAdapter(harness).displayName;
 
-  // The host's own approval gate, read server-side like everything else here.
-  const requireToolApproval = hostConfig.requireToolApproval === true;
+  // The host's switch as an API turn applies it: off, so nothing pauses a
+  // synchronous turn that has nobody to ask.
+  const requireToolApproval = appliedToolApproval(
+    "api",
+    hostConfig.requireToolApproval,
+  );
 
   const hostEffort =
     args.reasoningEffort ??
@@ -374,21 +388,13 @@ export function resolveChatSessionEngine(args: {
     };
   }
 
-  if (requireToolApproval) {
-    return {
-      ok: false,
-      harness,
-      kind: "surface-approval",
-      reason:
-        `this host requires tool approval, and the ${name} harness would pause ` +
-        "for it inside its sandbox — but a synchronous API turn has nobody to " +
-        "ask, so nothing could ever approve. Turn off requireToolApproval on " +
-        "this host, or drive it from the Playground",
-    };
-  }
-
   const unenforceable: string[] = [];
-  if (args.toolPolicy.toolMode !== "auto") unenforceable.push("toolMode");
+  if (
+    args.toolPolicy.toolMode !== "auto" &&
+    harnessToolPolicyLaunchRefusal({ hasToolPolicy: true, harness })
+  ) {
+    unenforceable.push("toolMode");
+  }
   if (args.toolPolicy.allowedTools !== undefined) {
     unenforceable.push("allowedTools");
   }
@@ -446,5 +452,55 @@ export function assertHarnessDispatchable(args: {
       getHarnessAdapter(args.engine.harness).displayName
     } client cannot use a locally hosted model. Choose an MCPJam model or a supported organization connection.`,
     { reason: "HARNESS_UNAVAILABLE", harness: args.engine.harness },
+  );
+}
+
+/**
+ * `toolMode`'s exclusions as the per-server snapshot a harness turn enforces
+ * where each MCP call runs: sealed into the proxy token, checked by the
+ * forwarder, and gated in-process on host-executed tools. Built from the same
+ * listing the emulated engine's exclusions came from, so both engines refuse
+ * the same tools; a tool that appears later is refused too, since the mode
+ * was decided on what the turn listed, and a server with no listing has every
+ * call refused.
+ */
+export function toolModeHarnessPolicy(
+  serverIds: readonly string[],
+  listed:
+    | ReadonlyArray<{
+        serverId: string;
+        tools: ReadonlyArray<{ name?: unknown; annotations?: unknown }>;
+      }>
+    | undefined,
+  excluded: readonly string[],
+): Record<string, ToolPolicySnapshot> {
+  const excludedNames = new Set(excluded);
+  return Object.fromEntries(
+    serverIds.map((serverId) => {
+      const tools =
+        listed?.find((entry) => entry.serverId === serverId)?.tools ?? [];
+      const known: string[] = [];
+      const denied: ToolPolicySnapshot["denied"] = {};
+      for (const tool of tools) {
+        if (typeof tool.name !== "string") continue;
+        known.push(tool.name);
+        if (!excludedNames.has(tool.name)) continue;
+        const annotations =
+          tool.annotations && typeof tool.annotations === "object"
+            ? (tool.annotations as Record<string, unknown>)
+            : undefined;
+        denied[tool.name] = {
+          reason: "readOnlyModeUnclassified",
+          classification: classifyToolSafety(annotations),
+        };
+      }
+      const snapshot: ToolPolicySnapshot = {
+        mode: "readOnly",
+        denied,
+        known,
+        unknownTool: "deny",
+      };
+      return [serverId, snapshot];
+    }),
   );
 }

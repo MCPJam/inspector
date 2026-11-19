@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Label } from "@mcpjam/design-system/label";
 import { Switch } from "@mcpjam/design-system/switch";
@@ -40,26 +40,40 @@ const COPY = {
  */
 export function LocalRunsControl({
   allowed,
+  listVersion,
   onChange,
 }: {
   allowed: boolean;
+  /** Changes each time the account list reloads, so the switch knows its save was reconciled. */
+  listVersion?: number;
   onChange: (allowed: boolean) => Promise<void>;
 }) {
   const switchId = useId();
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
-  // The value just saved, until the refetched `allowed` shows it, so the
-  // switch can't offer the same change twice in between.
-  const [saved, setSaved] = useState<boolean | null>(null);
+  // The value just saved, until the refetched `allowed` shows it or the list
+  // reloads, so the switch can't offer the same change twice in between. A
+  // reload that shows another value (another admin changed it) also ends it.
+  const [saved, setSaved] = useState<{
+    value: boolean;
+    version: number | undefined;
+  } | null>(null);
   useEffect(() => {
-    if (saved === allowed) setSaved(null);
-  }, [allowed, saved]);
+    if (saved && (saved.value === allowed || saved.version !== listVersion))
+      setSaved(null);
+  }, [allowed, listVersion, saved]);
+  // The newest list version, read when the save completes: a reload that
+  // landed while the write was pending isn't the one the save triggered.
+  const listVersionRef = useRef(listVersion);
+  useLayoutEffect(() => {
+    listVersionRef.current = listVersion;
+  }, [listVersion]);
   const copy = allowed ? COPY.stop : COPY.allow;
   const apply = async () => {
     setSaving(true);
     try {
       await onChange(!allowed);
-      setSaved(!allowed);
+      setSaved({ value: !allowed, version: listVersionRef.current });
       toast.success(copy.done);
     } catch (failure) {
       const refusal = describeConvexFailure(failure, copy.failed);

@@ -297,6 +297,8 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
+import { PaneDisplayProvider } from "@/contexts/pane-display-context";
+import { SavedClientProvider } from "@/contexts/saved-client-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
@@ -2924,6 +2926,144 @@ describe("MCPAppsRenderer tool input streaming", () => {
       );
     });
   });
+
+  it.each([
+    { hostStyle: "claude", style: CLAUDE_HOST_STYLE },
+    { hostStyle: "chatgpt", style: CHATGPT_HOST_STYLE },
+  ])("sends live $hostStyle pane theme overrides without reloading the widget", async ({ hostStyle, style }) => {
+    mockPlaygroundStoreState.isPlaygroundActive = true;
+    const savedHostContext = {
+      theme: "dark",
+      locale: "fr-FR",
+      styles: {
+        variables: {
+          // Stale values from the saved client theme: they must lose to the
+          // preset when the pane picks the opposite theme.
+          "--color-background-primary": "rgb(14, 14, 14)",
+          "--color-text-primary": "rgb(237, 237, 237)",
+          "--color-text-secondary":
+            "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+          "--font-sans": "Custom Sans",
+        },
+      },
+    };
+    const snapshot = { hostStyle, hostContext: savedHostContext };
+    const pane = (theme?: "light" | "dark") => (
+      <SavedClientProvider value={snapshot}>
+        <ScenarioHostStyleProvider value={hostStyle}>
+          <PaneDisplayProvider value={{ theme }}>
+            <HostedRenderer {...baseProps} />
+          </PaneDisplayProvider>
+        </ScenarioHostStyleProvider>
+      </SavedClientProvider>
+    );
+    const { rerender } = render(pane("dark"));
+    await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+    expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe("dark");
+    act(() => triggerReady());
+    const bridgeCount = mockAppBridgeCtor.mock.calls.length;
+
+    for (const theme of ["dark", "light", "dark", undefined] as const) {
+      rerender(pane(theme));
+      const effectiveTheme = theme ?? savedHostContext.theme;
+      await vi.waitFor(() => {
+        expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            theme: effectiveTheme,
+            locale: "fr-FR",
+            styles: expect.objectContaining({
+              variables: expect.objectContaining({
+                "--color-background-primary":
+                  effectiveTheme === savedHostContext.theme
+                    ? "rgb(14, 14, 14)"
+                    : style.mcp.resolveStyleVariables(effectiveTheme)[
+                        "--color-background-primary"
+                      ],
+                "--color-text-primary":
+                  effectiveTheme === savedHostContext.theme
+                    ? "rgb(237, 237, 237)"
+                    : style.mcp.resolveStyleVariables(effectiveTheme)[
+                        "--color-text-primary"
+                      ],
+                "--color-text-secondary":
+                  "light-dark(rgba(61, 61, 58, 1), rgba(194, 192, 182, 1))",
+                "--font-sans": "Custom Sans",
+              }),
+            }),
+          }),
+        );
+      });
+    }
+
+    expect(mockAppBridgeCtor).toHaveBeenCalledTimes(bridgeCount);
+    expect(mockBridge.close).not.toHaveBeenCalled();
+    expect(savedHostContext.theme).toBe("dark");
+    expect(savedHostContext.styles.variables["--color-text-primary"]).toBe(
+      "rgb(237, 237, 237)",
+    );
+    expect(mockPreferencesState.themeMode).toBe("light");
+  });
+
+  it.each(["light", "dark"] as const)(
+    "updates the single-client palette after a %s theme toggle",
+    async (initialTheme) => {
+      const { useHostContextStore } = await vi.importActual<
+        typeof import("@/stores/client-context-store")
+      >("@/stores/client-context-store");
+      useHostContextStore.getState().applyHostTemplate({
+        theme: initialTheme,
+        styles: {
+          variables: {
+            ...CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(initialTheme),
+            "--font-sans": "Custom Sans",
+          },
+        },
+      });
+      mockPlaygroundStoreState.isPlaygroundActive = true;
+      mockPreferencesState.hostStyle = "chatgpt";
+      mockHostContextStoreState.draftHostContext =
+        useHostContextStore.getState().draftHostContext;
+      const { rerender } = render(<HostedRenderer {...baseProps} />);
+      await vi.waitFor(() => expect(mockBridge.connect).toHaveBeenCalled());
+      expect(appBridgeArgsRef.current?.options?.hostContext?.theme).toBe(
+        initialTheme,
+      );
+      act(() => triggerReady());
+      const bridgeCount = mockAppBridgeCtor.mock.calls.length;
+
+      for (const theme of [
+        initialTheme === "light" ? "dark" : "light",
+        initialTheme,
+      ] as const) {
+        useHostContextStore.getState().patchHostContext({ theme });
+        mockHostContextStoreState.draftHostContext =
+          useHostContextStore.getState().draftHostContext;
+        rerender(<HostedRenderer {...baseProps} />);
+        await vi.waitFor(() =>
+          expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              theme,
+              styles: expect.objectContaining({
+                variables: expect.objectContaining({
+                  "--color-background-primary":
+                    CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(theme)[
+                      "--color-background-primary"
+                    ],
+                  "--color-text-primary":
+                    CHATGPT_HOST_STYLE.mcp.resolveStyleVariables(theme)[
+                      "--color-text-primary"
+                    ],
+                  "--font-sans": "Custom Sans",
+                }),
+              }),
+            }),
+          ),
+        );
+      }
+      expect(mockAppBridgeCtor).toHaveBeenCalledTimes(bridgeCount);
+      expect(mockBridge.close).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps explicit host context theme inside the playground", async () => {
     Object.assign(mockPlaygroundStoreState, {

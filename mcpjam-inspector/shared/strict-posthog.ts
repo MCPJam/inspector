@@ -1,5 +1,9 @@
 import { version } from "../package.json";
 import { POSTHOG_PROJECT_KEY } from "./posthog-project";
+import {
+  EXTENSION_OPERATION_ERROR_CODES,
+  EXTENSION_OPERATION_PROPERTIES,
+} from "./extension-operation-event";
 
 export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
@@ -14,6 +18,10 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     failure_stage: ["none", "execution", "rendering", "timeout", "unknown"],
     deployment: ["hosted", "self_hosted"],
     source: ["client"],
+  },
+  extension_operation_completed: {
+    ...EXTENSION_OPERATION_PROPERTIES,
+    error_code: EXTENSION_OPERATION_ERROR_CODES,
   },
   // Sent at startup, often before the content grant arrives, so most launches
   // reach the relay as strict. Without this entry every one of them is dropped.
@@ -56,6 +64,12 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   $pageleave: {},
 };
 
+/** Feature-health outcomes: every listed property must be present and valid. */
+const OUTCOME_EVENTS: ReadonlySet<string> = new Set([
+  "extension_launch_completed",
+  "extension_operation_completed",
+]);
+
 export function telemetryRouteTemplate(value: unknown): string {
   if (typeof value !== "string") return "/:path";
   const path = value.replace(/^https?:\/\/[^/]+/, "").split(/[?#]/, 1)[0];
@@ -81,8 +95,8 @@ export function rebuildStrictPostHogEvent(
       ? (event.properties as Record<string, unknown>)
       : {};
   // An incomplete outcome would count as a successful attempt in the monitor.
-  if (event.event === "extension_launch_completed" &&
-      Object.entries(CATALOG.extension_launch_completed).some(([key, rule]) => {
+  if (OUTCOME_EVENTS.has(event.event) &&
+      Object.entries(CATALOG[event.event]).some(([key, rule]) => {
         const candidate = source[key];
         return typeof rule !== "string" &&
           (typeof candidate !== "string" || !rule.includes(candidate));
