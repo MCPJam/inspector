@@ -1,0 +1,27 @@
+[
+ {
+  "name": "nested",
+  "canonical": "{\"a\":[3,{\"c\":\"x\",\"d\":null}],\"b\":1,\"z\":true}",
+  "sha256": "bfbc4842c7b302cfe6eb1c58482d3b0eba8c51e5a5ab1954cb8e85c384bd998c"
+ },
+ {
+  "name": "tool",
+  "canonical": "{\"annotations\":{\"readOnlyHint\":true},\"description\":\"Show servers — “quoted” ünïcode\",\"inputSchema\":{\"properties\":{\"project\":{\"description\":\"Project name or ID.\",\"type\":\"string\"}},\"required\":[],\"type\":\"object\"},\"name\":\"show_servers\"}",
+  "sha256": "5b45aeea7080a852cbc8bb486b02ae36d65a2fe2cf9e5aa65ddc4dd22beeee5f"
+ },
+ {
+  "name": "edits",
+  "canonical": "[{\"feature\":\"tools.description\",\"op\":\"set\",\"target\":\"show_servers\",\"value\":\"Lists the servers saved in one project.\"}]",
+  "sha256": "842f7579e440037bf68f24de8feb6c7d18a24e80d68ad3ec7e1dcd32ed71bf54"
+ },
+ {
+  "name": "surface",
+  "canonical": "{\"tools\":[{\"annotations\":{\"readOnlyHint\":true},\"description\":\"Show servers — “quoted” ünïcode\",\"inputSchema\":{\"properties\":{\"project\":{\"description\":\"Project name or ID.\",\"type\":\"string\"}},\"required\":[],\"type\":\"object\"},\"name\":\"show_servers\"},{\"inputSchema\":{\"type\":\"object\"},\"name\":\"list_project_servers\"}]}",
+  "sha256": "dcf31fbe7c72c83aa7b2cc746e51aed85560ac5ca30c3285646c53289a87f87b"
+ },
+ {
+  "name": "contentHash",
+  "canonical": "{\"baseServerId\":\"qx82k5gs2tmhfw1saa8910gydh8jhqee\",\"baseSurfaceHash\":\"dcf31fbe7c72c83aa7b2cc746e51aed85560ac5ca30c3285646c53289a87f87b\",\"editsHash\":\"842f7579e440037bf68f24de8feb6c7d18a24e80d68ad3ec7e1dcd32ed71bf54\"}",
+  "sha256": "741434672e893183216d8c9d49e94970a6d33aba9b093e0dff9862225db76390"
+ }
+]

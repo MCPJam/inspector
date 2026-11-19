@@ -44,6 +44,9 @@ export default defineConfig({
     "src/host-compat/index.ts",
     // Pure OpenAI plugin bundle parser shared with the backend importer.
     "src/plugin-bundle/index.ts",
+    // Server variants (beta): surface pinning, edit validation and the
+    // pass-through fetch the inspector server serves a variant with.
+    "src/variants/index.ts",
     // First-party (@experimental) plugin extension host: capability registry
     // and instance session reducer. Published as `./internal/plugin-host`.
     "src/internal/plugin-host.ts",
