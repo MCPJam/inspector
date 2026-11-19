@@ -27,7 +27,7 @@ import type {
   MCPJamReportingConfig,
   SelectedEvalClient,
 } from "./eval-reporting-types.js";
-import { EvalTest } from "./EvalTest.js";
+import { EvalTest, countsAsSuccess } from "./EvalTest.js";
 import type {
   EvalTestRunOptions,
   EvalRunResult,
@@ -1009,7 +1009,7 @@ export class EvalSuite {
       (r) => r.iterationDetails
     );
     const totalIterations = allIterations.length;
-    const totalSuccesses = allIterations.filter((r) => r.passed).length;
+    const totalSuccesses = allIterations.filter(countsAsSuccess).length;
     const totalFailures = totalIterations - totalSuccesses;
 
     // Aggregate latencies

@@ -23,6 +23,11 @@ import {
 } from "../src/eval-result-mapping";
 import { buildEvaluationConfigSnapshot } from "../src/contract/derive";
 import { scoresPassed } from "../src/scorers/run";
+import { resolveScoreDefinition } from "../src/contract/derive";
+import {
+  toolExecutionScoreDefinition,
+  toolExecutionScoreResult,
+} from "../src/contract/platform-gates";
 import type {
   EvaluationConfigSnapshot,
   ScoreResult,
@@ -434,18 +439,22 @@ describe("a cancel that lands after test() returned", () => {
       mcpjam: { enabled: false },
     });
     return {
+      run,
       iteration: run.iterationDetails[0],
       definitions: run.evaluationConfig?.definitions ?? [],
     };
   }
 
   it("keeps the rows' verdict when only an advisory check was cut short", async () => {
-    const { iteration, definitions } = await runCancelled("advisory");
+    const { iteration, definitions, run } = await runCancelled("advisory");
     expect(iteration.status).toBe("cancelled");
     expect(iteration.passed).toBe(true);
     expect(iteration.passed).toBe(
       scoresPassed(iteration.scores ?? [], definitions)
     );
+    // The run was interrupted, so it doesn't report as a success.
+    expect(run.successes).toBe(0);
+    expect(run.failures).toBe(1);
   });
 
   it("fails through the gating row a cut-short check writes", async () => {
@@ -455,5 +464,75 @@ describe("a cancel that lands after test() returned", () => {
     expect(
       iteration.scores?.find((score) => score.scorerId === "cancel:gating")
     ).toMatchObject({ status: "error" });
+  });
+});
+
+describe("an iteration without platform rows", () => {
+  it("keeps the tool-error check it had before those rows existed", async () => {
+    const run = await customerCase().run(scriptedAgent(), {
+      iterations: 1,
+      concurrency: 1,
+      mcpjam: { enabled: false },
+    });
+    // What an older SDK produced: test() passed and nothing records the
+    // recovered tool error.
+    const older = {
+      ...run,
+      evaluationConfig: undefined,
+      iterationDetails: run.iterationDetails.map((iteration) => ({
+        ...iteration,
+        passed: true,
+        scores: undefined,
+      })),
+    };
+    expect(runToEvalResults(older, { casePrefix: "r" })[0].passed).toBe(false);
+    expect(
+      runToEvalResults(older, { casePrefix: "r", failOnToolError: false })[0]
+        .passed
+    ).toBe(true);
+  });
+});
+
+describe("platform:toolExecution rationale", () => {
+  it("counts a call once when its span and its result both report it", () => {
+    const definition = resolveScoreDefinition(
+      toolExecutionScoreDefinition({ gating: true })
+    );
+    const row = toolExecutionScoreResult(definition, {
+      trace: {
+        messages: [
+          {
+            role: "tool",
+            content: [
+              {
+                type: "tool-result",
+                toolName: "search_tasks",
+                toolCallId: "call-1",
+                result: { isError: true, content: [] },
+              },
+              {
+                type: "tool-result",
+                toolName: "search_tasks",
+                toolCallId: "call-2",
+                result: { isError: true, content: [] },
+              },
+            ],
+          },
+        ],
+        spans: [
+          {
+            category: "tool",
+            status: "error",
+            name: "search_tasks",
+            toolCallId: "call-1",
+            startMs: 0,
+            endMs: 1,
+          },
+        ],
+      },
+    });
+    expect(row.rationale).toBe(
+      "2 tool calls failed: search_tasks, search_tasks"
+    );
   });
 });

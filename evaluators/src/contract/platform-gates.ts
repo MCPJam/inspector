@@ -92,6 +92,23 @@ function describeFailures(
 }
 
 /**
+ * One record per failed call. A trace can report the same call as both an
+ * errored span and a failing tool result; records without an id are distinct
+ * attempts and all kept.
+ */
+function oncePerCall(
+  records: ReadonlyArray<ToolErrorRecord>,
+): ToolErrorRecord[] {
+  const seen = new Set<string>();
+  return records.filter((record) => {
+    if (record.toolCallId === undefined) return true;
+    if (seen.has(record.toolCallId)) return false;
+    seen.add(record.toolCallId);
+    return true;
+  });
+}
+
+/**
  * Fails when the trace or the pinned calls hold a failed tool call. Uses the
  * same detection as the `failOnToolError` gate (`extractToolErrors`), so the
  * row and the gate cannot disagree about what a tool error is.
@@ -104,11 +121,11 @@ export function toolExecutionScoreResult(
   },
 ): ScoreResult {
   const failures = [
-    ...extractToolErrors(input.trace).map((record) => ({
+    ...oncePerCall(extractToolErrors(input.trace)).map((record) => ({
       toolName: record.toolName,
       pinned: false,
     })),
-    ...(input.pinnedToolErrors ?? []).map((record) => ({
+    ...oncePerCall(input.pinnedToolErrors ?? []).map((record) => ({
       toolName: record.toolName,
       pinned: true,
     })),

@@ -35,6 +35,17 @@ export const PLATFORM_GATE_SCORER_IDS = [
   ITERATION_ERROR_SCORER_ID,
 ] as const;
 
+/** Whether a run graded this iteration with the platform rows. */
+export function hasPlatformGateRows(iteration: {
+  scores?: ReadonlyArray<{ scorerId: string }>;
+}): boolean {
+  return (
+    iteration.scores?.some(
+      (row) => row.scorerId === TOOL_EXECUTION_SCORER_ID
+    ) ?? false
+  );
+}
+
 /**
  * The SDK's platform definitions. Tool errors and iteration errors are gating
  * unless the run sets `failOnToolError: false`, which is what the upload
