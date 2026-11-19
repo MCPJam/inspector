@@ -1,3 +1,5 @@
+import { readSignupCampaign, clearSignupCampaign } from "@/lib/signup-campaign";
+import { getRuntimeDoNotTrack } from "@/lib/runtime-config";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
@@ -31,6 +33,7 @@ const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 const ENSURE_USER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000];
 
 type EnsureUserArgs = {
+  signupCampaign?: string;
   guestProofJwt?: string;
   /**
    * The browser's pre-signup anonymous PostHog id ($device_id — stable even
@@ -388,7 +391,11 @@ export function useEnsureDbUser() {
         return;
       }
 
+      const signupCampaign = isWorkOsAuth && !getRuntimeDoNotTrack() && posthog?.is_capturing?.()
+        ? readSignupCampaign()
+        : undefined;
       const ensureArgs: EnsureUserArgs = {
+        ...(signupCampaign ? { signupCampaign } : {}),
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
       };
@@ -415,6 +422,7 @@ export function useEnsureDbUser() {
 
       try {
         await ensurePromise;
+        if (isWorkOsAuth && !cancelled && location.hostname === "app.mcpjam.com") clearSignupCampaign();
       } catch (err) {
         finishTransition?.(false);
         if (!cancelled) {

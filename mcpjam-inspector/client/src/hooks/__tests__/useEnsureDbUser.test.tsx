@@ -34,6 +34,7 @@ const mockState = vi.hoisted(() => ({
   sentrySetUser: vi.fn(),
   sentrySetTag: vi.fn(),
   posthog: null as {
+    is_capturing?: () => boolean;
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
   } | null,
@@ -702,6 +703,21 @@ describe("useEnsureDbUser", () => {
     });
     expect(mockState.isGuestActivated).toHaveBeenCalledWith("guest-activated");
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
+  });
+
+  it("forwards Maya's shared campaign cookie on sign-in when capture is enabled", async () => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true, get_property: vi.fn(), get_distinct_id: vi.fn() };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const cookie = vi.spyOn(document, "cookie", "get").mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
+    try {
+      renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" }));
+    } finally {
+      cookie.mockRestore();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {
