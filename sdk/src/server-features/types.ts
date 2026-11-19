@@ -9,9 +9,10 @@
  *   observed  — feature ids seen in normal traffic (never payloads)
  *   checked   — results of conformance runs the user started
  *
- * plus two narrower sources: `oauth-flow` (a non-secret summary written when
- * the connect OAuth flow completes) and `configured` (the user set the feature
- * up in MCPJam, e.g. an XAA connection).
+ * plus `oauth-flow`, a non-secret summary written when the connect OAuth flow
+ * completes. A feature whose primary source is `configured` needs setup in
+ * MCPJam first (a pre-registered OAuth client, say); the setup is a
+ * precondition, never evidence that the server supports the feature.
  *
  * Browser-safe and pure: no I/O and no Node imports anywhere in this folder.
  */
@@ -562,12 +563,22 @@ export interface ServerFeatureEvaluation {
 /** Everything the evaluator reads, already filtered to one context. */
 export interface ServerFeatureEvidenceInput {
   context?: CaptureContext;
-  /** Never connected: every feature is "Not checked yet" with "connect". */
+  /**
+   * Never connected: features read "Not checked yet". Most offer Connect; one
+   * that needs setup offers Set up first, or no step when this surface cannot
+   * offer that setup.
+   */
   connected: boolean;
   declared?: { surface: DeclaredSurface; capturedAt: number };
   probes?: ProbeSurface;
   oauthFlow?: OAuthFlowSummary;
   observations?: readonly FeatureObservation[];
   checks?: readonly CheckResultEvidence[];
+  /** Setup the user has done in MCPJam for this server. */
   configured?: readonly FeatureSetupKind[];
+  /**
+   * Setup this MCPJam surface can offer. A feature needing any other kind
+   * says MCPJam cannot check it yet, instead of offering a Set up step.
+   */
+  setupOffered?: readonly FeatureSetupKind[];
 }

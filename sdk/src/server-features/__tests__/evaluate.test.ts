@@ -239,19 +239,95 @@ describe("evaluateServerFeatures", () => {
     const setup = feature("test.setup", {
       assessment: { primary: "configured", setup: "client-credentials" },
     });
-    const result = evaluateServerFeatures([observed, checked, setup], connected());
+    const result = evaluateServerFeatures(
+      [observed, checked, setup],
+      connected({ setupOffered: ["client-credentials"] }),
+    );
     expect(result.assessments["test.observed"].nextAction).toBe("use-in-playground");
     expect(result.assessments["test.checked"].nextAction).toBe("run-checks");
     expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
 
-    const configured = evaluateServerFeatures(
-      [setup],
-      connected({ configured: ["client-credentials"] }),
-    );
-    expect(configured.assessments["test.setup"]).toMatchObject({
-      state: "supported",
-      sources: ["configured"],
+  it("never counts setup in MCPJam as the server supporting a feature", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
     });
+    const offered = {
+      configured: ["client-credentials"] as const,
+      setupOffered: ["client-credentials"] as const,
+    };
+    const configured = evaluateServerFeatures([setup], connected(offered));
+    expect(configured.assessments["test.setup"]).toMatchObject({
+      state: "not-checked",
+      reason:
+        "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+      evidence: [],
+    });
+    // Reconnecting with saved tokens records nothing, so no Reconnect step.
+    expect(configured.assessments["test.setup"].nextAction).toBeUndefined();
+    const notConnected = evaluateServerFeatures([setup], {
+      connected: false,
+      ...offered,
+    });
+    expect(notConnected.assessments["test.setup"].nextAction).toBe("connect");
+  });
+
+  it("keeps Connect for a set-up server whose only evidence is an inconclusive probe", () => {
+    const setup = feature("test.setup", {
+      assessment: {
+        primary: "configured",
+        setup: "client-credentials",
+        probed: () => ({
+          kind: "unknown",
+          reason: "The probe could not finish.",
+        }),
+      },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"]).toMatchObject({
+      reason: "The probe could not finish.",
+      nextAction: "connect",
+    });
+    const connectedSetUp = evaluateServerFeatures([setup], {
+      connected: true,
+      probes: { authorization: makeProbe("authorization", {}) },
+      configured: ["client-credentials"],
+      setupOffered: ["client-credentials"],
+    });
+    expect(connectedSetUp.assessments["test.setup"].reason).toBe(
+      "The probe could not finish. Set up in MCPJam. Reconnect the account from the Auth tab to record the result.",
+    );
+  });
+
+  it("asks for setup before connecting a server that never connected", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures([setup], {
+      connected: false,
+      setupOffered: ["client-credentials"],
+    });
+    expect(result.assessments["test.setup"].nextAction).toBe("set-up");
+  });
+
+  it("offers no Set up step for setup this MCPJam surface cannot do", () => {
+    const setup = feature("test.setup", {
+      assessment: { primary: "configured", setup: "client-credentials" },
+    });
+    const result = evaluateServerFeatures(
+      [setup],
+      connected({ setupOffered: ["enterprise-managed-authorization"] }),
+    );
+    expect(result.assessments["test.setup"]).toMatchObject({
+      state: "not-checked",
+      reason: "MCPJam cannot check this yet.",
+    });
+    expect(result.assessments["test.setup"].nextAction).toBeUndefined();
   });
 
   it("asks to connect a server that was never connected", () => {

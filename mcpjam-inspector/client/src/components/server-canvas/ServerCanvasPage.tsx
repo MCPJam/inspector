@@ -42,6 +42,7 @@ import { overviewCapabilities } from "./overview-capabilities";
 import { useServerCanvasRefresh } from "./server-canvas-refresh";
 import { useServerCanvasUrlState } from "./server-canvas-url";
 import { useServerFeatureEvidence } from "./use-server-feature-evidence";
+import { CANVAS_SETUP_OFFERED, configuredSetup } from "./setup-state";
 
 export interface ServerCanvasPageProps
   extends Omit<
@@ -105,9 +106,17 @@ export function ServerCanvasPage({
   useOAuthResumeMarker(server.name);
 
   const [contextHash, setContextHash] = useState<string | undefined>();
+  const { registrationMode, oauthFlowProfile, useXaa, authMethod } = server;
+  const configured = useMemo(
+    () =>
+      configuredSetup({ registrationMode, oauthFlowProfile, useXaa, authMethod }),
+    [registrationMode, oauthFlowProfile, useXaa, authMethod],
+  );
   const evidence = useServerFeatureEvidence(projectId, hostedServerId, {
     connected: connection.isConnected,
     contextHash,
+    configured,
+    setupOffered: CANVAS_SETUP_OFFERED,
   });
   const { selected, evaluation } = evidence;
   const refresh = useServerCanvasRefresh({

@@ -57,7 +57,6 @@ const SOURCE_STRENGTH: readonly EvidenceSource[] = [
   "oauth-flow",
   "declared",
   "detected",
-  "configured",
 ];
 
 function emptyCounts(): Record<FeatureUserState, number> {
@@ -271,18 +270,6 @@ function collectEvidence(
       ref: { runId: check.runId, check: check.ref },
     });
   }
-
-  if (rules.setup && input.configured?.includes(rules.setup)) {
-    evidence.push({
-      featureId: feature.id,
-      source: "configured",
-      outcome: "present",
-      provenance: "manual",
-      intrusiveness: "passive",
-      coverage: "complete",
-      contextHash,
-    });
-  }
   return evidence;
 }
 
@@ -434,6 +421,9 @@ function assess(
     });
   }
   const unknown = evidence.find((e) => e.outcome === "unknown");
+  // Setup comes before connecting: connecting without it shows nothing.
+  if (feature.assessment.primary === "configured")
+    return needsSetup(feature, input, unknown, result);
   if (!input.connected && evidence.length === 0) {
     return result("not-checked", {
       reason: "Connect this server to check it.",
@@ -444,6 +434,50 @@ function assess(
   return result("not-checked", {
     reason: unknown?.detail ?? REASON_FOR_PRIMARY[primary],
     nextAction: NEXT_ACTION_FOR_PRIMARY[primary],
+  });
+}
+
+/**
+ * A feature MCPJam can only check after setup. Setup alone proves nothing
+ * about the server, so it never makes a feature Supported; the evidence comes
+ * from the sign-in that uses it. Setup this MCPJam surface cannot offer, or
+ * whose result it cannot record, gets no step.
+ */
+function needsSetup(
+  feature: FeatureDefinition,
+  input: ServerFeatureEvidenceInput,
+  unknown: FeatureEvidence | undefined,
+  result: (
+    state: FeatureUserState,
+    extra?: Partial<FeatureAssessment>,
+  ) => FeatureAssessment,
+): FeatureAssessment {
+  const setup = feature.assessment.setup;
+  if (!setup || !input.setupOffered?.includes(setup)) {
+    return result("not-checked", {
+      reason: unknown?.detail ?? "MCPJam cannot check this yet.",
+    });
+  }
+  if (!input.configured?.includes(setup)) {
+    return result("not-checked", {
+      reason: unknown?.detail ?? REASON_FOR_PRIMARY.configured,
+      nextAction: "set-up",
+    });
+  }
+  // An inconclusive probe is not a connection, so it keeps Connect.
+  if (!input.connected) {
+    return result("not-checked", {
+      reason:
+        unknown?.detail ?? "Set up in MCPJam. Connect this server to check it.",
+      nextAction: "connect",
+    });
+  }
+  // Reconnecting with saved tokens records nothing; only a new sign-in does,
+  // so the way to record it stays even beside an inconclusive probe.
+  const signIn =
+    "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.";
+  return result("not-checked", {
+    reason: unknown?.detail ? `${unknown.detail} ${signIn}` : signIn,
   });
 }
 
