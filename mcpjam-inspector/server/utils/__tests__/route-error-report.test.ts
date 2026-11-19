@@ -244,6 +244,34 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("never promotes an aborted request to an MCPJam failure", () => {
+    // A request aborted by its caller (a closed tab, a cancelled run) reaches
+    // the catch as an `AbortError`, which classifies `internal/unknown`; the
+    // internal boundary paged it as ours (INSPECTOR-ELECTRON-107).
+    const controller = new AbortController();
+    controller.abort();
+    const { origin } = reportRouteFailure(
+      "Error in /chat-v2",
+      controller.signal.reason,
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("STILL promotes a timeout on an internal hop", () => {
+    // `AbortSignal.timeout` fires a `TimeoutError`, which can be our own
+    // deadline running out; only an abort is the caller leaving.
+    reportRouteFailure(
+      "Error in /chat-v2",
+      new DOMException("The operation timed out.", "TimeoutError"),
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(captureException).toHaveBeenCalledTimes(1);
+  });
+
   it("STILL promotes a 5xx on an internal hop", () => {
     // Only 4xx says "the request was wrong". A 5xx really can be ours.
     reportRouteFailure(
