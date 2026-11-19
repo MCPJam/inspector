@@ -226,8 +226,8 @@ function CodeEditor({
           Export <span className="font-mono">evaluate(run)</span> returning{" "}
           <span className="font-mono">{"{ pass, score?, reason }"}</span>.{" "}
           <span className="font-mono">run</span> holds the trial's tool calls,
-          tool results and final answer. Types are stripped before running, so
-          avoid <span className="font-mono">enum</span> and{" "}
+          tool results and final answer. Avoid{" "}
+          <span className="font-mono">enum</span> and{" "}
           <span className="font-mono">namespace</span>.
         </p>
       </div>

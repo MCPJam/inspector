@@ -34,7 +34,7 @@ const listTrialsRef = makeFunctionReference<
 >("customJudgePreviewAuth:listCustomJudgePreviewTrials");
 
 /**
- * "Test on a past run" for code: runs the draft on one stored trial in the
+ * "Test on a past trial" for code: runs the draft on one stored trial in the
  * sandbox runner and shows the outcome and logs. Saves nothing.
  */
 export function CodeEvaluatorPreview({
@@ -112,7 +112,7 @@ export function CodeEvaluatorPreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : "Test on a past run"}
+          {running ? "Testing…" : "Test on a past trial"}
         </Button>
         <span className="text-xs text-muted-foreground">Saves nothing.</span>
       </div>

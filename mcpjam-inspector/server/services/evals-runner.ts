@@ -2265,7 +2265,7 @@ type RunIterationBaseParams = {
    * Suite-level raw tool set, kept for `toolSignals` telemetry only.
    * Iteration runners route the actual tool prep through `prepareChatV2`
    * (per PR 1 of the engine consolidation) so eval gets skill tools,
-   * progressive-discovery meta-tools, Anthropic name validation, and the
+   * progressive-discovery meta-tools, the harness tool-name check, and the
    * system-prompt assembly chat already applies. Removed in a later PR.
    */
   tools: ToolSet;
@@ -2427,7 +2427,7 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
-  /** Resolved model definition — fed to `prepareChatV2` for Anthropic name validation. */
+  /** Resolved model definition, fed to `prepareChatV2`. */
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
@@ -5244,7 +5244,6 @@ const runLocalIteration = async ({
               },
             }
           : {}),
-        customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
       // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
@@ -6300,7 +6299,6 @@ const runHostedIterationWithBrowser = async (
     convexAuthToken,
     modelId,
     modelDefinition,
-    orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
     modelSelection,
@@ -6518,19 +6516,12 @@ const runHostedIterationWithBrowser = async (
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
-  // tools, Anthropic name validation, and the assembled system prompt. The
+  // tools, the harness tool-name check, and the assembled system prompt. The
   // backend path serializes `prepared.allTools` to `toolDefs` below and
   // executes them locally on tool-call events. Run AFTER iteration creation
   // and inside a try/catch so prep failures persist as a failed iteration row
   // rather than rejecting the test case with no iteration record.
   //
-  // `customProviders` is derived from `orgModelConfig` so Anthropic name
-  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
-  // custom providers (matches the local-AI-SDK runner, which threads the same
-  // shape via `resolveEvalModelRuntime`).
-  const backendCustomProviders = orgModelConfig
-    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
-    : undefined;
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
   // inside the try are both in scope. Stays `undefined` if prepareChatV2
@@ -6990,9 +6981,6 @@ const runHostedIterationWithBrowser = async (
               enabled: resolvedExecution.progressiveToolDiscovery,
             },
           }
-        : {}),
-      ...(backendCustomProviders?.length
-        ? { customProviders: backendCustomProviders }
         : {}),
       skills: turnSkills.skills,
       priorMessages: [],
