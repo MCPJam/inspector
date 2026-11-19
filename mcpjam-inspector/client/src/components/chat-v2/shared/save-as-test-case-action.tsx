@@ -2,6 +2,7 @@ import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useState } from "react";
 import { FlaskConical, Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { track } from "@/lib/analytics";
 import {
   Dialog,
   DialogContent,
@@ -64,6 +65,8 @@ type SaveAsTestCaseActionProps = {
   onOpenChange?: (open: boolean) => void;
   /** Clients to attach to a new suite, in place of the project's first client. */
   suggestedHostIds?: string[];
+  /** Where the save started, for analytics. */
+  source?: "message_menu" | "repeat_tip";
 };
 
 type DestinationMode = "existing" | "new";
@@ -81,6 +84,7 @@ export function SaveAsTestCaseAction({
   open: controlledOpen,
   onOpenChange,
   suggestedHostIds,
+  source = "message_menu",
 }: SaveAsTestCaseActionProps) {
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -241,6 +245,12 @@ export function SaveAsTestCaseAction({
             updatedSuiteEnvironment?: boolean;
           }
         | undefined;
+      track("playground_test_case_saved", {
+        location: "playground",
+        source,
+        new_suite: destinationMode === "new",
+        assert_tool_calls: assertToolCalls,
+      });
       setOpen(false);
       // Navigating is the primary follow-through (see
       // `navigateToPromotedTestCase`); the toast stays for the environment

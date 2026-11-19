@@ -174,6 +174,7 @@ export function RepeatPromptTip({
         </div>
       )}
       <SaveAsTestCaseAction
+        source="repeat_tip"
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         chatSessionId={chatSessionId}

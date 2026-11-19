@@ -455,6 +455,7 @@ export const ANALYTICS_EVENTS = {
   playground_repeat_tip_shown: { source: "client" },
   playground_repeat_tip_clicked: { source: "client" },
   playground_repeat_tip_dismissed: { source: "client" },
+  playground_test_case_saved: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },

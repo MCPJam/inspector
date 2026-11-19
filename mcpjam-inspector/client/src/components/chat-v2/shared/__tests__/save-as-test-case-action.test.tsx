@@ -36,6 +36,9 @@ vi.mock("@/hooks/useViews", () => ({
   }),
 }));
 
+const mockTrack = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
+
 const projectHosts = vi.hoisted(() => ({
   value: [{ hostId: "host-first" }] as Array<{ hostId: string }>,
 }));
@@ -197,6 +200,12 @@ describe("SaveAsTestCaseAction", () => {
         }),
       ),
     );
+    expect(mockTrack).toHaveBeenCalledWith("playground_test_case_saved", {
+      location: "playground",
+      source: "message_menu",
+      new_suite: false,
+      assert_tool_calls: false,
+    });
     await waitFor(() =>
       expect(mockNavigateApp).toHaveBeenCalledWith("/evaluate/test-edit/suite-1/case-1"),
     );
