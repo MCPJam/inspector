@@ -327,7 +327,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
         return (
           <AgentStep
             done={signals.done.onboard_agent}
-            onCopied={() => trackStep("onboard_agent", "copied")}
+            onCopied={(agent) => trackStep("onboard_agent", "copied", { agent })}
             onConfirm={() => {
               update({ agent: true });
               trackStep("onboard_agent", "completed");
