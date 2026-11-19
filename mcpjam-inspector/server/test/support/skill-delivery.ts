@@ -8,7 +8,6 @@
  * `resolveTurnSkills` itself.
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
-import type { RuntimeStandaloneSkill } from "../../services/environments/effective-capabilities.js";
 import type { PluginRuntimeAttribution } from "../../services/environments/plugin-attribution.js";
 import type { ResolvedEnvironmentRuntime } from "../../services/environments/runtime.js";
 import { buildPinnedSkillSource } from "../../services/evals/pinned-skill-source.js";
@@ -17,7 +16,14 @@ import {
   type RunPinnedPluginVersion,
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
-import type { TurnSkills } from "../../services/environments/turn-skills.js";
+import {
+  resolveTurnSkills,
+  type TurnSkills,
+} from "../../services/environments/turn-skills.js";
+import {
+  buildLiveEffectiveCapabilities,
+  type RuntimeStandaloneSkill,
+} from "../../services/environments/effective-capabilities.js";
 import {
   buildTargetSkillSource,
   type FetchedTargetSkill,
@@ -32,11 +38,7 @@ import {
   withServedSkills,
 } from "../../utils/harness/harness-server-skills.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
-import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
-import {
-  harnessTurnSkills,
-  harnessTurnSkillsFromPlan,
-} from "../../utils/harness/skill-delivery.js";
+import { harnessTurnSkillsFromPlan } from "../../utils/harness/skill-delivery.js";
 import { BOX_HOME, fakeSkillBox, type FakeSkillBox } from "./fake-skill-box.js";
 
 /** A supporting file as a run snapshot serves it, readable without a network. */
@@ -268,23 +270,30 @@ export async function agentLoads(
 }
 
 /**
- * What a harness turn is handed to run, as `runHarnessTurn` reads it: its
- * skill plan, or the frozen copies a swarm runner still sends in place of one.
+ * A frozen run's skills as the plan a harness runs, from copies written by
+ * hand: for a test of what a box receives that needs no run preparation.
  */
-export type TurnSource =
-  | { skillPlan: TurnSkills }
-  | { pinnedHarnessSkills: PinnedSkillArtifact[] };
-
-/** The turn's skills, selected as `runHarnessTurn` selects them. */
-function selectedSkills(harnessId: string, source: TurnSource) {
-  return "skillPlan" in source
-    ? harnessTurnSkillsFromPlan(source.skillPlan, harnessId)
-    : harnessTurnSkills({
-        pinnedHarnessSkills: source.pinnedHarnessSkills,
-        serverSkillsAsTools: takesServerSkillsAsTools(
-          getHarnessAdapter(harnessId),
-        ),
-      });
+export function frozenPlan(
+  harnessId: string,
+  artifacts: PinnedSkillArtifact[],
+): TurnSkills {
+  return resolveTurnSkills({
+    source: {
+      kind: "pins",
+      pins: artifacts.map(
+        ({ skillId, name, description, content, contentHash }) => ({
+          ...(skillId ? { skillId } : {}),
+          name,
+          description,
+          content,
+          contentHash,
+        }),
+      ),
+      set: buildLiveEffectiveCapabilities({}),
+      harnessSkills: artifacts,
+    },
+    runtime: { kind: "harness", harnessId },
+  });
 }
 
 /**
@@ -295,12 +304,12 @@ function selectedSkills(harnessId: string, source: TurnSource) {
  */
 export async function writeTurnToBox(
   harnessId: string,
-  source: TurnSource,
+  plan: TurnSkills,
   box: FakeSkillBox,
 ) {
   const adapter = getHarnessAdapter(harnessId);
-  const turn = await selectedSkills(harnessId, source);
-  const plan = planBoxSkills(
+  const turn = harnessTurnSkillsFromPlan(plan, harnessId);
+  const boxPlan = planBoxSkills(
     adapter.skills,
     adapter.supportsSkills ? (turn.skills ?? []) : [],
   );
@@ -308,12 +317,12 @@ export async function writeTurnToBox(
     session: box.session,
     descriptor: adapter.skills,
     home: BOX_HOME,
-    plan,
+    plan: boxPlan,
     readFiles: turn.readFiles,
   });
   return withServedSkills(
     written,
-    await turnServerSkills(harnessId, source, turn),
+    await turnServerSkills(harnessId, plan, turn.live),
   );
 }
 
@@ -329,20 +338,13 @@ const NO_SERVERS = {
 
 /**
  * A hosted harness turn's server skills, built as `runHarnessTurn` builds them
- * from its skill source, with no server connected; none on a runtime that
- * takes them no other way.
+ * from its plan, with no server connected; none on a runtime that takes them
+ * no other way.
  */
-function turnServerSkills(
-  harnessId: string,
-  source: TurnSource,
-  turn: Awaited<ReturnType<typeof selectedSkills>>,
-) {
+function turnServerSkills(harnessId: string, plan: TurnSkills, live: boolean) {
   return harnessServerSkills(getHarnessAdapter(harnessId), {
-    mode: turn.mode,
-    live: turn.live,
-    ...("skillPlan" in source
-      ? { plannedServerSkills: source.skillPlan.set.serverSkills }
-      : { pinnedHarnessSkills: source.pinnedHarnessSkills }),
+    live,
+    capturedServerSkills: plan.set.serverSkills,
     manager: NO_SERVERS,
     serverIds: [],
     messages: [],
@@ -352,12 +354,12 @@ function turnServerSkills(
 /** The refs a harness turn's prompt lists for its MCPJam skill tools. */
 export async function harnessToolsServe(
   harnessId: string,
-  source: TurnSource,
+  plan: TurnSkills,
 ): Promise<string[]> {
   const served = await turnServerSkills(
     harnessId,
-    source,
-    await selectedSkills(harnessId, source),
+    plan,
+    harnessTurnSkillsFromPlan(plan, harnessId).live,
   );
   return [...(served?.promptSection ?? "").matchAll(/^- \*\*(.+?)\*\*/gm)].map(
     (match) => match[1]!,
@@ -370,7 +372,7 @@ export async function harnessToolsServe(
  * and Codex turns with a skill of their own, so a folder another runtime left
  * behind shows up here unless the writer cleared it.
  */
-export async function boxReceives(harnessId: string, source: TurnSource) {
+export async function boxReceives(harnessId: string, plan: TurnSkills) {
   const box = fakeSkillBox();
   const leftBehind: PinnedSkillArtifact = {
     skillId: "sk_left_behind",
@@ -380,9 +382,9 @@ export async function boxReceives(harnessId: string, source: TurnSource) {
     contentHash: "hash-left-behind",
   };
   for (const runtime of ["claude-code", "codex"]) {
-    await writeTurnToBox(runtime, { pinnedHarnessSkills: [leftBehind] }, box);
+    await writeTurnToBox(runtime, frozenPlan(runtime, [leftBehind]), box);
   }
-  const written = await writeTurnToBox(harnessId, source, box);
+  const written = await writeTurnToBox(harnessId, plan, box);
   const { readFolders } = getHarnessAdapter(harnessId).skills;
   return {
     written,

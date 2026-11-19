@@ -265,7 +265,6 @@ describe("harness execution options reach the engine", () => {
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
     expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
-    expect(options.pinnedHarnessSkills).toBeUndefined();
     expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 

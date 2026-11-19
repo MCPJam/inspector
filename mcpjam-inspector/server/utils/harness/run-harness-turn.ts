@@ -252,7 +252,7 @@ import {
   withHarnessPromptImages,
   type HarnessPromptImage,
 } from "./harness-prompt-images.js";
-import { harnessTurnSkills, harnessTurnSkillsFromPlan } from "./skill-delivery.js";
+import { harnessTurnSkillsFromPlan } from "./skill-delivery.js";
 import {
   harnessServerSkills,
   withServedSkills,
@@ -264,7 +264,6 @@ import {
   hostToolApproval,
   withServerSkillCommandGate,
 } from "./server-skill-command-gate.js";
-import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
   boxSkillsFolder,
   failedBoxSkills,
@@ -880,7 +879,6 @@ export async function runHarnessTurn(
     executionScope,
     scenarioParticipant,
     skillPlan,
-    pinnedHarnessSkills,
     effectiveCapabilities,
     environmentId,
     environmentUnresolvedReason,
@@ -1885,14 +1883,7 @@ export async function runHarnessTurn(
       // unknown (`null`) and `skillsHash` undefined, so it is OMITTED from
       // claim/commit and the backend reuses the stored hash (no resume churn,
       // no empty-hash commit), and the box is left exactly as it is.
-      // A turn that carries its plan runs it; the inputs below are the older
-      // callers', which the plan replaces as each one moves.
-      const turnSkills = skillPlan
-        ? harnessTurnSkillsFromPlan(skillPlan, harnessAdapter.id)
-        : await harnessTurnSkills({
-            pinnedHarnessSkills,
-            serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
-          });
+      const turnSkills = harnessTurnSkillsFromPlan(skillPlan, harnessAdapter.id);
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;
       const skillsHash = turnSkills.skillsHash;
@@ -2030,11 +2021,8 @@ export async function runHarnessTurn(
       // MCP-server skills through MCPJam's skill tools, and the gate that holds
       // the runtime's commands while one is in use.
       const serverSkills = await harnessServerSkills(harnessAdapter, {
-        mode: turnSkills.mode,
         live: turnSkills.live,
-        pinnedHarnessSkills,
-        effectiveCapabilities,
-        ...(skillPlan ? { plannedServerSkills: skillPlan.set.serverSkills } : {}),
+        capturedServerSkills: skillPlan?.set.serverSkills ?? [],
         manager: mcpClientManager,
         serverIds: selectedServers ?? [],
         messages,

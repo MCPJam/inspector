@@ -8,6 +8,11 @@
  * plan by hand, and a caller that forwarded one without the other left a box
  * running skills the plan did not describe.
  */
+import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
+import type {
+  CloudSkillRuntimeItem,
+  SkillExtraFrontmatterInput,
+} from "../../utils/computers/convex-skills-client.js";
 import type { BoxSkillFile } from "../../utils/harness/materialize-skill-files.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 
@@ -44,4 +49,60 @@ export interface HarnessSkillDelivery {
 /** A turn that named no source: the box stays as it is. */
 export function unnamedSkills(live = false): HarnessSkillDelivery {
   return { mode: "none", skills: null, files: null, live };
+}
+
+/** Defensive projection of the artifact's preserved frontmatter onto the known
+ * Agent-Skills envelope. Unknown keys are dropped (the backend re-validates on
+ * pin; this only guards against a drifted wire shape). */
+function toExtraFrontmatter(
+  frontmatter: Record<string, unknown> | undefined
+): SkillExtraFrontmatterInput | undefined {
+  if (!frontmatter) return undefined;
+  const out: SkillExtraFrontmatterInput = {};
+  if (typeof frontmatter.license === "string")
+    out.license = frontmatter.license;
+  if (typeof frontmatter.compatibility === "string") {
+    out.compatibility = frontmatter.compatibility;
+  }
+  const allowedTools =
+    frontmatter["allowedTools"] ?? frontmatter["allowed-tools"];
+  if (
+    Array.isArray(allowedTools) &&
+    allowedTools.every((t) => typeof t === "string")
+  ) {
+    out.allowedTools = allowedTools as string[];
+  }
+  const metadata = frontmatter.metadata;
+  if (
+    metadata &&
+    typeof metadata === "object" &&
+    !Array.isArray(metadata) &&
+    Object.values(metadata).every((v) => typeof v === "string")
+  ) {
+    out.metadata = metadata as Record<string, string>;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Map pinned artifacts onto the runtime-skill shape the harness machinery
+ * consumes. `aggregateHash` is the artifact's `contentHash` (the complete
+ * pinned-envelope fingerprint), so `skillsFingerprint` over this list IS the
+ * pinned-artifact fingerprint hash. `skillId` falls back to a content-derived
+ * synthetic id when the pin lost its source skill pointer — it only needs to
+ * be stable within the run for reconcile/fingerprint bookkeeping.
+ */
+export function pinnedArtifactsToRuntimeSkills(
+  artifacts: PinnedSkillArtifact[]
+): CloudSkillRuntimeItem[] {
+  return artifacts.map((a) => ({
+    skillId: a.skillId ?? `pinned:${a.contentHash}`,
+    name: a.name,
+    description: a.description,
+    content: a.content,
+    aggregateHash: a.contentHash,
+    ...(toExtraFrontmatter(a.frontmatter)
+      ? { extraFrontmatter: toExtraFrontmatter(a.frontmatter) }
+      : {}),
+  }));
 }
