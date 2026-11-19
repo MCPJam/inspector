@@ -118,17 +118,12 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   // Completing the last step holds on "5 of 5" long enough to see the bar
   // fill. Skipping the rest, or arriving with everything done, goes straight
   // to today's Home.
-  // Steps 1, 2, 4 and 5 finish elsewhere, so `completed` is sent the first
-  // time Home sees them done. `already_done` marks steps done before the
-  // checklist ever loaded for this user.
+  // Sent the first time Home sees a step done; `already_done` predates the checklist.
   useEffect(() => {
     if (!loaded || handedBack) return;
     const reported = progress.reported ?? [];
     const fresh = STEP_ORDER.filter(
-      (step) =>
-        step !== "onboard_agent" &&
-        signals.done[step] &&
-        !reported.includes(step),
+      (s) => s !== "onboard_agent" && signals.done[s] && !reported.includes(s),
     );
     if (fresh.length === 0 && progress.reported) return;
     for (const step of fresh) {
