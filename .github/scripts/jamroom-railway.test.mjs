@@ -159,3 +159,19 @@ test('refuses a production-shaped name before reading Railway', async () => {
     fetcher: () => assert.fail('no provider call expected'),
   }), /Invalid Jamroom Railway job/);
 });
+
+test('identifies the failed operation without forwarding provider response text', async () => {
+  const { deps } = fixture();
+  const steps = [];
+  const fetcher = (url, options) => {
+    if (options.body?.includes('environmentCreate')) {
+      return Response.json({ errors: [{ message: 'sensitive upstream detail' }] });
+    }
+    return deps.fetcher(url, options);
+  };
+  await assert.rejects(
+    railwayJob(job, { ...deps, fetcher, onStep: (label) => steps.push(label) }),
+    { message: 'Railway rejected the operation.' },
+  );
+  assert.equal(steps.at(-1), 'Create preview environment');
+});

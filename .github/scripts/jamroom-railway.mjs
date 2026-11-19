@@ -58,13 +58,16 @@ export function previewVariables(input) {
   return { ...input };
 }
 
+// Only these locally constructed errors may be printed in a public Actions log.
+export class PreviewProviderError extends Error {}
+
 async function readJson(fetcher, url, init = {}) {
   const response = await fetcher(url, {
     ...init,
     redirect: 'error',
     signal: AbortSignal.timeout(25_000),
   });
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}.`);
+  if (!response.ok) throw new PreviewProviderError(`Provider returned HTTP ${response.status}.`);
   return response.json();
 }
 
@@ -135,7 +138,7 @@ async function getOrigin(call, environmentId) {
   return `https://${hostname}`;
 }
 
-export async function railwayJob(job, { railwayToken, githubToken, fetcher = fetch, waitDeployment, removeEnvironment }) {
+export async function railwayJob(job, { railwayToken, githubToken, fetcher = fetch, waitDeployment, removeEnvironment, onStep }) {
   if (!NAME.test(job.name ?? '') || !['provision', 'delete'].includes(job.operation)) {
     throw new Error('Invalid Jamroom Railway job.');
   }
@@ -146,9 +149,13 @@ export async function railwayJob(job, { railwayToken, githubToken, fetcher = fet
       body: JSON.stringify({ query, variables }),
     });
     // Provider errors can echo secret variable values.
-    if (payload.errors?.length || !payload.data) throw new Error('Railway refused the preview operation.');
+    if (payload.errors?.length || !payload.data) {
+      const denied = payload.errors?.some(({ message }) => /^(not authorized|unauthorized|forbidden)[.!]?$/i.test(message));
+      throw new PreviewProviderError(denied ? 'Railway denied access.' : 'Railway rejected the operation.');
+    }
     return payload.data;
   };
+  onStep?.('Read test project');
   const environments = await listEnvironments(call);
   const existing = environments.filter(({ name }) => name === job.name);
   if (existing.length > 1) throw new Error('Duplicate Railway preview environments.');
@@ -157,36 +164,47 @@ export async function railwayJob(job, { railwayToken, githubToken, fetcher = fet
 
   if (job.operation === 'delete') {
     if (environment) {
+      onStep?.('Validate environment for cleanup');
       inspectorInstance(environment, true);
+      onStep?.('Remove preview environment');
       await removeEnvironment(environment.id, PROJECT);
     }
     return {};
   }
 
+  onStep?.('Validate test profile');
   const variables = previewVariables(job.variables);
+  onStep?.('Verify Inspector revision');
   await verifyCommit(job, githubToken, fetcher);
+  onStep?.('Check clean template');
   const template = environments.find(({ id }) => id === TEMPLATE);
   if (!template || inspectorInstance(template).latestDeployment) throw new Error('The clean Railway preview template is unavailable.');
   await requireEmptySharedVariables(call, TEMPLATE);
   if (!environment) {
+    onStep?.('Create preview environment');
     const { environmentCreate } = await call(`mutation ($input:EnvironmentCreateInput!) {
       environmentCreate(input:$input) { id }
     }`, { input: { projectId: PROJECT, name: job.name, sourceEnvironmentId: TEMPLATE, skipInitialDeploys: true } });
+    onStep?.('Read created environment');
     environment = (await listEnvironments(call)).find(({ id }) => id === environmentCreate.id);
     if (environment?.name !== job.name) throw new Error('Railway did not create the requested preview.');
   }
+  onStep?.('Check preview services and variables');
   const instance = inspectorInstance(environment);
   await requireEmptySharedVariables(call, environment.id);
+  onStep?.('Get preview hostname');
   const origin = await getOrigin(call, environment.id);
   const previous = instance.latestDeployment;
   if (previous && previous.meta?.commitHash === job.inspectorCommit &&
       !['FAILED', 'CRASHED', 'REMOVED', 'SKIPPED', 'CANCELLED'].includes(previous.status)) {
+    onStep?.('Wait for matching build');
     await waitDeployment(previous.id, SERVICE, environment.id);
     return { origin };
   }
   if (previous && previous.meta?.commitHash && previous.meta.commitHash !== job.inspectorCommit) {
     throw new Error('The existing Railway deployment belongs to another revision.');
   }
+  onStep?.('Set preview variables');
   const configured = await call(`mutation ($input:VariableCollectionUpsertInput!) {
     variableCollectionUpsert(input:$input)
   }`, { input: {
@@ -197,10 +215,12 @@ export async function railwayJob(job, { railwayToken, githubToken, fetcher = fet
     },
   } });
   if (!configured.variableCollectionUpsert) throw new Error('Railway did not save preview variables.');
+  onStep?.('Deploy Inspector revision');
   const deployed = await call(`mutation ($environmentId:String!,$serviceId:String!,$commitSha:String!) {
     serviceInstanceDeployV2(environmentId:$environmentId,serviceId:$serviceId,commitSha:$commitSha)
   }`, { environmentId: environment.id, serviceId: SERVICE, commitSha: job.inspectorCommit });
   if (!deployed.serviceInstanceDeployV2) throw new Error('Railway did not start the pinned build.');
+  onStep?.('Wait for Inspector build');
   await waitDeployment(deployed.serviceInstanceDeployV2, SERVICE, environment.id);
   return { origin };
 }

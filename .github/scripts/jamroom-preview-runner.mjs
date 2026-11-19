@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { railwayJob } from './jamroom-railway.mjs';
+import { PreviewProviderError, railwayJob } from './jamroom-railway.mjs';
 
 const BROKER = 'https://jamroom.mcpjam.com/internal/preview-runner';
 const AUDIENCE = 'mcpjam:jamroom-preview-runner';
@@ -37,8 +37,10 @@ async function main() {
   if (!claim.ok) throw new Error(`Jamroom refused the request (HTTP ${claim.status}).`);
   const job = await claim.json();
   let outcome = { ok: false };
+  let step = 'Validate preview job';
   try {
     const fields = await railwayJob(job, {
+      onStep: (label) => { step = label; },
       railwayToken: RAILWAY_API_TOKEN,
       githubToken: GH_TOKEN,
       waitDeployment: (deployment, service, environment) =>
@@ -47,11 +49,12 @@ async function main() {
         runScript('railway-env.sh', ['delete', environment], { RAILWAY_PROJECT_ID: project }),
     });
     outcome = { ok: true, ...fields };
-  } catch {
+  } catch (error) {
     // An exception can contain an upstream response or inherited credentials.
     // Report only a fixed message and an authenticated queue failure.
     process.exitCode = 1;
-    console.error('The Jamroom Railway job failed. Its lease will be retried.');
+    const reason = error instanceof PreviewProviderError ? error.message : 'Step failed.';
+    console.error(`Jamroom preview step “${step}” failed. ${reason}`);
   }
   const result = await request('result', { name: job.name, lease: job.lease, outcome });
   if (!result.ok) throw new Error(`Jamroom rejected the job result (HTTP ${result.status}).`);
