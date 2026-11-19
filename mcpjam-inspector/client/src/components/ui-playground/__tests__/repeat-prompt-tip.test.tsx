@@ -116,6 +116,28 @@ describe("RepeatPromptTip", () => {
     expect(findSimilar).not.toHaveBeenCalled();
   });
 
+  it("drops the match when the conversation changes", async () => {
+    const { rerender } = renderTip([
+      user("u1", "list open linear issues"),
+      toolReply("a1"),
+      user("u2", "List my open Linear issues"),
+      toolReply("a2"),
+    ]);
+    expect(await screen.findByText("Tip")).toBeInTheDocument();
+
+    rerender(
+      <RepeatPromptTip
+        projectId="proj-1"
+        chatSessionId="chat-2"
+        messages={[]}
+        isStreaming={false}
+        serverNames={["Linear"]}
+        hostIds={["host-a", "host-b"]}
+      />,
+    );
+    expect(screen.queryByText("Tip")).not.toBeInTheDocument();
+  });
+
   it("stays hidden when the turn called no tools", async () => {
     renderTip([
       user("u1", "List my open Linear issues"),
