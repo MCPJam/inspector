@@ -43,6 +43,7 @@ import {
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { readAheadRuntime } from "./runtime-read-ahead.js";
+import { traceSandboxSession, traceSpan } from "./harness-trace.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
@@ -328,11 +329,16 @@ export function createE2BHarnessSandboxProvider(
     const attach = opts.connectionPreparedByBroker?.()
       ? attachBrokerPreparedSandbox
       : attachRunningSandbox;
-    const sandbox = await attach(opts.sandboxId, {
-      apiKey: opts.apiKey,
-      requestTimeoutMs: opts.connectTimeoutMs,
-      ...(connectSignal ? { signal: connectSignal } : {}),
-    }).catch((error: unknown) => {
+    const sandbox = await traceSpan(
+      "box.attach",
+      `${resuming ? "resume" : "fresh"} broker=${Boolean(opts.connectionPreparedByBroker?.())}`,
+      () =>
+        attach(opts.sandboxId, {
+          apiKey: opts.apiKey,
+          requestTimeoutMs: opts.connectTimeoutMs,
+          ...(connectSignal ? { signal: connectSignal } : {}),
+        }),
+    ).catch((error: unknown) => {
       // TYPED by the vendor SDK: the box is gone (killed on its timeout, or
       // reaped). Our sandbox layer failed — never the model, never the server
       // under test — so the eval infra classifier can exclude the trial.
@@ -366,21 +372,29 @@ export function createE2BHarnessSandboxProvider(
       // Preparation must finish before exposing the session. The read-only
       // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
-        readAheadRuntime(
-          (command, options) => sandbox.commands.run(command, options),
-          { harnessId: opts.harnessId, resuming },
-          connectSignal,
+        traceSpan("box.prepare", "read-ahead", () =>
+          readAheadRuntime(
+            (command, options) => sandbox.commands.run(command, options),
+            { harnessId: opts.harnessId, resuming },
+            connectSignal,
+          ),
         ),
         ...(opts.skipPnpmGuard
           ? []
           : [
-              sandbox.commands.run(harnessPnpmGuardCommand(), {
-                timeoutMs: commandTimeoutMs,
-                ...(connectSignal ? { signal: connectSignal } : {}),
-              }),
+              traceSpan("box.prepare", "pnpm-guard", () =>
+                sandbox.commands.run(harnessPnpmGuardCommand(), {
+                  timeoutMs: commandTimeoutMs,
+                  ...(connectSignal ? { signal: connectSignal } : {}),
+                }),
+              ),
             ]),
         ...(resuming
-          ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
+          ? [
+              traceSpan("box.prepare", "close-proxy-connections", () =>
+                closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal),
+              ),
+            ]
           : []),
       ]);
       // Do not release the turn while a failed sibling still has socket
@@ -706,7 +720,7 @@ export function createE2BHarnessSandboxProvider(
       restricted: () => session, // same resource, narrower static type
     };
 
-    return session;
+    return traceSandboxSession(session);
   };
 
   return {

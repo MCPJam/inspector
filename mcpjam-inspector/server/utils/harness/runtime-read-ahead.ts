@@ -2,6 +2,7 @@ import { z } from "zod";
 import { logger } from "../logger.js";
 import { HARNESS_BAKE_HOME, HARNESS_STATE_DIRECTORY_NAME } from "./harness-bake.js";
 import { shellQuote } from "./shell-quote.js";
+import { traceEvent, traceLabel } from "./harness-trace.js";
 
 const READ_AHEAD_TIMEOUT_MS = 5_000;
 const observation = z.object({
@@ -120,6 +121,13 @@ export async function readAheadRuntime(
     });
   } catch (error) {
     signal?.throwIfAborted();
+    const failure = error as { exitCode?: unknown; stderr?: unknown; stdout?: unknown };
+    traceEvent("read-ahead.fallback", {
+      error: error instanceof Error ? error.name : "unknown",
+      exitCode: typeof failure.exitCode === "number" ? failure.exitCode : undefined,
+      detail: traceLabel(String(failure.stderr || failure.stdout || (error instanceof Error ? error.message : ""))),
+      callerMs: Math.round(performance.now() - start),
+    });
     // A failed read-only hint falls back to the existing install/start checks.
     // Never copy command output or file paths into diagnostics.
     logger.warn("[harness][read-ahead] using normal startup", {

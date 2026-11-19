@@ -18,6 +18,10 @@
  * `application/json`; the optional GET returns a minimal server-stream the
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
+import {
+  startTraceRecord,
+  type TraceRecord,
+} from "../../utils/harness/harness-trace.js";
 import { Hono } from "hono";
 import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
@@ -227,6 +231,22 @@ function armToolCallEvidence(
 }
 
 async function handle(c: any) {
+  const trace = startTraceRecord();
+  if (!trace) return handleRequest(c, undefined);
+  let status: number | string = "thrown";
+  try {
+    const response: Response = await handleRequest(c, trace);
+    status = response.status;
+    return response;
+  } finally {
+    trace.end("mcp.request", { status, http: c.req.method });
+  }
+}
+
+async function handleRequest(
+  c: Parameters<typeof handle>[0],
+  trace: TraceRecord | undefined,
+) {
   if (c.req.query("native") === "1") return handleNativeForwarding(c);
   const serverId = c.req.param("serverId");
 
@@ -251,6 +271,7 @@ async function handle(c: any) {
   const claims =
     session?.claims ??
     verifyHarnessProxyToken(sealed?.token ?? presentedToken, serverId);
+  trace?.mark("auth");
   if (!claims || !claims.externalId || !claims.orgId) {
     return c.json({ error: "Unauthorized" }, 401);
   }
@@ -264,6 +285,7 @@ async function handle(c: any) {
           sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
       : undefined;
   const denied = turn ? await checkTurn?.() : undefined;
+  trace?.mark("turn");
   if (denied) return denied;
 
   if (rateLimited(`${claims.userId}:${serverId}`)) {
@@ -332,6 +354,7 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  trace?.set("method", typeof body.method === "string" ? body.method : "response");
   // A session client cancels with a separate request; it stops the call only
   // where that call runs.
   const cancelled = session ? cancelledRequestId(body) : undefined;
@@ -444,8 +467,10 @@ async function handle(c: any) {
         },
       ),
       async (manager) => {
+        trace?.mark("connect");
         // Connecting to a slow server can outlive the message that requested it.
         const refused = await checkTurn?.();
+        trace?.mark("turn2");
         if (refused) return refused;
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
         // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
@@ -564,9 +589,11 @@ async function handle(c: any) {
         });
       },
     );
+    trace?.mark("exec");
     if (response instanceof Response) return response;
     // A tool already running at Stop may finish. Never return its data to a later turn.
     const finished = await checkTurn?.();
+    trace?.mark("finish");
     if (finished) return finished;
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);

@@ -1,4 +1,5 @@
 import type { HarnessTurnEventSink } from "./harness/harness-turn-event.js";
+import { traceEvent } from "./harness/harness-trace.js";
 
 /**
  * Where one chat turn's time goes before the model's first text reaches the
@@ -42,6 +43,7 @@ export class TurnTiming {
     this.now = options.now ?? (() => performance.now());
     this.startedAt = this.now();
     this.previous = this.startedAt;
+    traceEvent("route.start");
   }
 
   /** Close `stage`: it ran from the previous mark (or the start) until now. */
@@ -49,10 +51,12 @@ export class TurnTiming {
     const at = this.now();
     this.stages.push([stage, at - this.previous]);
     this.previous = at;
+    traceEvent(`route.${stage}`, { durMs: Math.round(this.stages[this.stages.length - 1][1]) });
   }
 
   /** The first model text handed to the client stream; later calls keep it. */
   markFirstText(): void {
+    if (this.firstTextAfter === undefined) traceEvent("route.firstText");
     this.firstTextAfter ??= this.now() - this.startedAt;
   }
 

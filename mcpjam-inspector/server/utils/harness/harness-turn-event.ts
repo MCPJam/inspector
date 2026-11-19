@@ -27,6 +27,7 @@ import type {
 import { captureServerEvent } from "../analytics.js";
 import { logger } from "../logger.js";
 import type { TurnTiming } from "../turn-timing.js";
+import { traceEvent } from "./harness-trace.js";
 import type { HarnessBootstrapOutcome } from "./harness-bake-observer.js";
 import type { HarnessId } from "./registry.js";
 import type { WarmAttachOutcome } from "./warm-bridge-runtime.js";
@@ -126,6 +127,7 @@ export class HarnessTurnRecord {
   mark(stage: HarnessTurnStage): number {
     const at = Date.now();
     this.marks.set(stage, at);
+    traceEvent(`mark.${stage}`, { harness: this.harnessId });
     return at;
   }
 
@@ -198,6 +200,7 @@ export class HarnessTurnRecord {
     for (const [field, ms] of this.durations()) {
       if (ms !== undefined) event[field] = ms;
     }
+    traceEvent("turn.event", event as Record<string, string | number | boolean | undefined>);
     try {
       sink.capture(event);
     } catch (error) {
