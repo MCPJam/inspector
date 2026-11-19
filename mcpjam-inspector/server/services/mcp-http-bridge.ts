@@ -5,6 +5,7 @@ import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js"
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 import { bridgeInitializeResult } from "./bridge-initialize.js";
+import { logger } from "../utils/logger.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -14,6 +15,15 @@ export type BridgeMode = "adapter" | "manager";
 export type JsonRpcBridgeOptions = {
   signal?: AbortSignal;
   downstreamProtocolVersion?: string;
+  /**
+   * The manager was built for this request, so its connect may still be
+   * running. `initialize` and the passthrough read the live connection
+   * directly; with this set they wait for the connect first. Otherwise a
+   * fresh manager answers `server/discover` with method-not-found and
+   * `initialize` with a stand-in, and a 2026-07-28 client drops to the 2025
+   * handshake. The hosted harness proxy sets it.
+   */
+  awaitConnect?: boolean;
   /**
    * Observation-only hook for a failed `tools/call`. Failures in the hook are
    * isolated so they can never change the JSON-RPC response.
@@ -318,6 +328,25 @@ export async function handleJsonRpc(
 
   const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
 
+  // See `awaitConnect`. A connect that fails answers as before (the stand-in
+  // `initialize`, or method-not-found), and the next call that needs the
+  // server reports why.
+  const settleConnect = async () => {
+    if (!options.awaitConnect) return;
+    try {
+      await clientManager.ensureManagedClient(
+        serverId,
+        options.signal ? { signal: options.signal } : undefined,
+      );
+    } catch (error) {
+      logger.debug("[mcp-bridge] connect did not finish before the answer", {
+        serverId,
+        method,
+        error: error instanceof Error ? error.name : "unknown",
+      });
+    }
+  };
+
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
    *
@@ -407,6 +436,7 @@ export async function handleJsonRpc(
       case "ping":
         return respond({ result: {} });
       case "initialize":
+        await settleConnect();
         return respond({
           result: bridgeInitializeResult({
             serverId,
@@ -712,6 +742,7 @@ export async function handleJsonRpc(
         // shaping above is forwarded verbatim to the connected server
         // (resources/templates/list, resources/subscribe,
         // completion/complete, tasks/*, future spec methods, ...).
+        await settleConnect();
         const managed = clientManager.getManagedClient(serverId);
         if (managed) {
           try {

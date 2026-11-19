@@ -94,6 +94,7 @@ function fakeManager(
       },
     ),
     getManagedClient: () => ({ listen }),
+    ensureManagedClient: vi.fn(async () => ({ listen })),
   };
   return {
     manager: manager as never,
@@ -344,6 +345,38 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
       await read.cancel();
       await vi.waitFor(() => expect(onEnd).toHaveBeenCalledTimes(1));
       await vi.waitFor(() => expect(served.handler.bus.listenerCount).toBe(0));
+    } finally {
+      await manager.disconnectAllServers();
+      await served.close();
+    }
+  });
+
+  it("waits for a connect still running when the listen arrives", async () => {
+    const served = await listenFixture();
+    // Built the way the proxy builds one: the connect is queued, not awaited.
+    const manager = new MCPClientManager({
+      fixture: { url: served.url, timeout: 5_000 },
+    });
+    try {
+      const read = frames(
+        relayListenStream({
+          id: 9,
+          params: { notifications: { toolsListChanged: true } },
+          serverId: "fixture",
+          manager,
+          cancelKey: "fixture|9",
+          maxMs: 60_000,
+        }),
+      );
+      expect(await read.next()).toMatchObject({
+        method: "notifications/subscriptions/acknowledged",
+        params: { notifications: { toolsListChanged: true } },
+      });
+      served.handler.notify.toolsChanged();
+      expect(await read.next()).toMatchObject({
+        method: "notifications/tools/list_changed",
+      });
+      await read.cancel();
     } finally {
       await manager.disconnectAllServers();
       await served.close();

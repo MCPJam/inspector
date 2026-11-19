@@ -628,6 +628,11 @@ async function handleRequest(
       return handleJsonRpc(serverId, body, manager, "adapter", {
         ...(call ? { signal: call.signal } : {}),
         downstreamProtocolVersion: downstreamProtocolVersionOf(body),
+        // This request's manager is still connecting: answer the handshake
+        // from the server's real connection, not a stand-in. Only with the
+        // listen relay. Without it a 2026-07-28 handshake leads to the
+        // listen stall, which the stand-in has been hiding.
+        awaitConnect: relayListen,
         // Inert unless this token carries an authorized eval scope AND the
         // harness named a turn — so playground traffic and capture-off runs
         // pay nothing and behave identically.

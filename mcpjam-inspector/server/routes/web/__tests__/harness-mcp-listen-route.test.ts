@@ -1,10 +1,15 @@
 /**
  * `subscriptions/listen` through the hosted harness MCP proxy, with the relay
  * switched on: the harness gets the upstream's acknowledgment as an event
- * stream, and its `notifications/cancelled` closes the upstream listen.
+ * stream, and its `notifications/cancelled` closes the upstream listen. The
+ * same switch has the handshake answered from the server's real connection.
  */
+import http from "node:http";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import { MCPClientManager } from "@mcpjam/sdk";
 
 const { upstream } = vi.hoisted(() => {
   let settle: (cause: "local" | "graceful" | "remote") => void = () => {};
@@ -17,6 +22,7 @@ const { upstream } = vi.hoisted(() => {
   };
   const manager = {
     getManagedClient: () => ({ listen: vi.fn(async () => handle) }),
+    ensureManagedClient: async () => ({ listen: vi.fn(async () => handle) }),
     addNotificationHandler: vi.fn(),
     removeNotificationHandler: vi.fn(),
     disconnectAllServers: vi.fn(async () => undefined),
@@ -35,6 +41,7 @@ vi.mock("../auth", () => ({
 }));
 
 import { harnessMcp } from "../harness-mcp.js";
+import { createAuthorizedManager } from "../auth";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
 
 beforeAll(() => {
@@ -100,5 +107,71 @@ describe("subscriptions/listen with the relay on", () => {
     await vi.waitFor(() =>
       expect(upstream.manager.disconnectAllServers).toHaveBeenCalled(),
     );
+  });
+});
+
+describe("server/discover through the proxy", () => {
+  async function modernServer() {
+    const handler = createMcpHandler(
+      () =>
+        new McpServer(
+          { name: "route-fixture", version: "1" },
+          { capabilities: { tools: { listChanged: true } } },
+        ),
+    );
+    const server = http.createServer(toNodeHandler(handler));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("Missing fixture port");
+    return {
+      url: `http://127.0.0.1:${address.port}/mcp`,
+      close: async () => {
+        await handler.close();
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      },
+    };
+  }
+
+  /**
+   * The proxy's manager for one request, built when the proxy asks for it,
+   * as in production: its connect queued, not awaited.
+   */
+  async function discoverThroughProxy() {
+    const served = await modernServer();
+    try {
+      vi.mocked(createAuthorizedManager).mockImplementationOnce(
+        async () =>
+          ({
+            manager: new MCPClientManager({
+              "srv-a": { url: served.url, timeout: 5_000 },
+            }),
+          }) as never,
+      );
+      const res = await post({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "server/discover",
+        params: {},
+      });
+      return await res.json();
+    } finally {
+      await served.close();
+    }
+  }
+
+  it("answers from the server's real connection with the relay on", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_LISTEN_RELAY", "1");
+    const reply = await discoverThroughProxy();
+    expect(reply.error).toBeUndefined();
+    expect(reply.result.supportedVersions).toContain("2026-07-28");
+  });
+
+  it("keeps the old answer with the relay off", async () => {
+    const reply = await discoverThroughProxy();
+    expect(reply.error).toMatchObject({ code: -32601 });
   });
 });

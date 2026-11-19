@@ -20,10 +20,17 @@
  * An upstream on a 2025-era connection has no listen: its acknowledgment
  * honors nothing, as the proxy did before.
  *
- * On only with `MCPJAM_HARNESS_LISTEN_RELAY=1`, read per call.
+ * On only with `MCPJAM_HARNESS_LISTEN_RELAY=1`, read per call. The same
+ * switch has the proxy answer the handshake from the server's real
+ * connection (the bridge's `awaitConnect`). Until then a fresh turn's
+ * manager was still connecting, so the harness got method-not-found for
+ * `server/discover`, fell back to the 2025 handshake and never listened.
+ * The two go together: with the real handshake and no relay, every turn
+ * would reach the stall.
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
+import { traceEvent } from "../../utils/harness/harness-trace.js";
 
 export function harnessListenRelayEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -141,6 +148,8 @@ export function relayListenStream(args: {
   onEnd?: () => void;
 }): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
+  const startedAt = Date.now();
+  let forwarded = 0;
   const subscription = { [SUBSCRIPTION_ID]: args.id };
   const filter = relayableFilter(args.params);
   const methods = requestedMethods(filter);
@@ -161,10 +170,15 @@ export function relayListenStream(args: {
     }
   };
 
-  const end = (closing?: unknown) => {
+  const end = (cause: string, closing?: unknown) => {
     if (ended) return;
     if (closing !== undefined) write(sse(closing));
     ended = true;
+    traceEvent("relay.listen.end", {
+      cause,
+      ms: Date.now() - startedAt,
+      forwarded,
+    });
     relays.delete(args.cancelKey);
     if (keepalive) clearInterval(keepalive);
     if (cap) clearTimeout(cap);
@@ -192,7 +206,7 @@ export function relayListenStream(args: {
   };
 
   const start = async () => {
-    relays.set(args.cancelKey, () => end());
+    relays.set(args.cancelKey, () => end("harness-cancelled"));
     for (const method of methods) {
       const handler: NotificationHandler = (notification) => {
         const params = notification.params ?? {};
@@ -200,6 +214,7 @@ export function relayListenStream(args: {
         // Only what arrives on a listen: a 2026-07-28 upstream stamps every
         // change it sends there with that listen's id.
         if (meta[SUBSCRIPTION_ID] === undefined) return;
+        forwarded += 1;
         write(
           sse({
             jsonrpc: "2.0",
@@ -213,8 +228,15 @@ export function relayListenStream(args: {
     }
     let honored: ListenFilter = {};
     try {
-      const client = args.manager.getManagedClient(args.serverId);
-      if (client?.listen && methods.length > 0) {
+      // The manager is new, so its connect may still be running.
+      const client =
+        methods.length > 0
+          ? await args.manager.ensureManagedClient(args.serverId, {
+              signal: opening.signal,
+            })
+          : undefined;
+      if (ended) return;
+      if (client?.listen) {
         handle = await client.listen(filter, { signal: opening.signal });
         if (ended) {
           void handle
@@ -224,15 +246,15 @@ export function relayListenStream(args: {
         }
         honored = relayableFilter({ notifications: handle.honoredFilter });
         void handle.closed.then((cause) => {
-          if (cause === "graceful") end(graceful);
+          if (cause === "graceful") end("upstream-ended", graceful);
           // A loss without a result: the harness re-listens if it wants to.
-          else if (cause === "remote") end();
+          else if (cause === "remote") end("upstream-lost");
         });
       }
     } catch (error) {
       if (ended) return;
       if (!isLegacyConnection(error)) {
-        end({
+        end("open-failed", {
           jsonrpc: "2.0",
           id: args.id,
           error: {
@@ -250,17 +272,23 @@ export function relayListenStream(args: {
         params: { _meta: subscription, notifications: honored },
       }),
     );
+    traceEvent("relay.listen.ack", {
+      asked: Object.keys(filter).join("+") || "-",
+      honored: Object.keys(honored).join("+") || "-",
+      upstream: handle ? "listening" : "none",
+      ms: Date.now() - startedAt,
+    });
     keepalive = setInterval(() => {
       write(": keepalive\n\n");
       if (!args.stillAuthorized) return;
       void args.stillAuthorized().then(
         (authorized) => {
-          if (!authorized) end(graceful);
+          if (!authorized) end("turn-refused", graceful);
         },
-        () => end(graceful),
+        () => end("turn-check-failed", graceful),
       );
     }, args.keepaliveMs ?? 15_000);
-    cap = setTimeout(() => end(graceful), args.maxMs);
+    cap = setTimeout(() => end("cap", graceful), args.maxMs);
   };
 
   return new ReadableStream<Uint8Array>({
@@ -269,7 +297,7 @@ export function relayListenStream(args: {
       void start();
     },
     cancel() {
-      end();
+      end("harness-closed");
     },
   });
 }
