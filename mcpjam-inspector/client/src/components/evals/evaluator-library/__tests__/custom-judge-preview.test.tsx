@@ -57,6 +57,18 @@ describe("CustomJudgePreview", () => {
     ).toBeDisabled();
   });
 
+  it("asks for another trial when the selected trial cannot be graded", async () => {
+    convex.preview.mockResolvedValue({
+      ok: false,
+      reason: "iteration_not_gradable",
+    });
+    renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
+    fireEvent.click(screen.getByRole("button", { name: "Test on a past run" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "This trial cannot be graded. Choose another trial.",
+    );
+  });
+
   it("asks for a run first on a suite with no finished trials", () => {
     convex.trials = [];
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
