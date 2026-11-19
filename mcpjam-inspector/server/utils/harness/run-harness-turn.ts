@@ -164,7 +164,11 @@ import {
   pluginOriginByServerId,
   type RuntimePluginVersion,
 } from "../../services/environments/effective-capabilities.js";
-import { projectSelectedMcpServersAsHostTools } from "./host-executed-mcp-tools.js";
+import {
+  projectSelectedMcpServersAsHostTools,
+  type HostExecutedMcpProjection,
+} from "./host-executed-mcp-tools.js";
+import { identifyHarnessTool } from "./harness-tool-names.js";
 import {
   logPluginSkillDelivery,
   pluginVersionsFingerprint,
@@ -1815,7 +1819,7 @@ export async function runHarnessTurn(
         }),
         laneId: () => continuity?.laneId, sources: retainedResourceSources, turnId,
       });
-      const hostExecutedMcp =
+      const hostExecutedMcp: HostExecutedMcpProjection =
         !nativeMcpDelivery && (selectedServers?.length ?? 0) > 0
           ? await projectSelectedMcpServersAsHostTools({
               manager: mcpClientManager,
@@ -1864,12 +1868,14 @@ export async function runHarnessTurn(
                 tasks,
               },
             })
-          : { tools: {}, keyToServerId: {} };
+          : { tools: {}, keyToServerId: {}, toolRegistry: new Map() };
       // The attribution map is whichever mode produced one; they are the same
       // shape and the same sanitize+dedup, so `parseToolName` is identical.
       let harnessKeyToServerId = nativeMcpDelivery
         ? keyToServerId
         : hostExecutedMcp.keyToServerId;
+      const serverToolNames = (serverId: string): string[] =>
+        Object.keys(mcpClientManager.getAllToolAnnotations(serverId));
 
       // 2b. Claim the harness session lane (multi-turn continuity). Done BEFORE
       // waking the box so a "turn already running" (409) doesn't provision it.
@@ -3820,13 +3826,22 @@ export async function runHarnessTurn(
             // The adapter decides; this call site only has to hand over both.
             // (Which is why `input` is now resolved FIRST — it is an argument to
             // the attribution, not just something recorded after it.)
-            const { serverId, toolName } = harnessAdapter.attributeToolCall
-              ? harnessAdapter.attributeToolCall({
-                  rawToolName,
-                  input,
-                  keyToServerId: harnessKeyToServerId,
-                })
-              : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId);
+            // Then the server's real tool name: a renamed `cad_tray` is `cad.tray`.
+            const { serverId, toolName } = identifyHarnessTool({
+              rawToolName,
+              // Only a runtime whose adapter reads identity from the input
+              // (Cursor) wraps the registered name there.
+              ...(harnessAdapter.attributeToolCall ? { input } : {}),
+              attributed: harnessAdapter.attributeToolCall
+                ? harnessAdapter.attributeToolCall({
+                    rawToolName,
+                    input,
+                    keyToServerId: harnessKeyToServerId,
+                  })
+                : harnessAdapter.parseToolName(rawToolName, harnessKeyToServerId),
+              hostToolRegistry: hostExecutedMcp.toolRegistry,
+              serverToolNames,
+            });
             const account = toolConnectionAttribution(
               hostExecutedMcp.tools[rawToolName],
               input,
@@ -3953,18 +3968,23 @@ export async function runHarnessTurn(
               (isCallToolResult(output) && output.isError === true);
             // Result-only resumes retain the saved MCP identity even when the
             // runtime echoes an unqualified tool name.
-            const parsedMeta = harnessAdapter.parseToolName(
-              String(
-                (part as { toolName?: unknown }).toolName ??
-                  historicalCall?.toolName ??
-                  "tool",
-              ),
-              harnessKeyToServerId,
+            const resultToolName = String(
+              (part as { toolName?: unknown }).toolName ??
+                historicalCall?.toolName ??
+                "tool",
             );
+            const parsedMeta = identifyHarnessTool({
+              rawToolName: resultToolName,
+              attributed: harnessAdapter.parseToolName(resultToolName, harnessKeyToServerId),
+              hostToolRegistry: hostExecutedMcp.toolRegistry,
+              serverToolNames,
+            });
             const meta = toolMeta.get(toolCallId) ?? {
               ...parsedMeta,
+              // The saved call names the real tool; this turn's registry may
+              // have given its wire name to another tool since.
               ...(historicalCall?.serverId
-                ? { serverId: historicalCall.serverId }
+                ? { serverId: historicalCall.serverId, toolName: historicalCall.toolName }
                 : {}),
             };
             // A tool call the MCP proxy blocked on policy, recognised only when

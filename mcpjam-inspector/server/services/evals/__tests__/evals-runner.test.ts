@@ -162,6 +162,7 @@ vi.mock("../needs-ephemeral-sandbox", async (importOriginal) => {
 
 import { withPluginExecutionServers } from "../plugin-execution-servers";
 import { PERSONAL, accountToolSet } from "./helpers/account-tools";
+import { HarnessToolNameCollisionError } from "../../../utils/harness/harness-tool-names";
 import {
   createConcurrencyLimiter,
   defaultEvalExecutionBudgets,
@@ -3000,16 +3001,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("records prepareChatV2 setup failures as a failed iteration", async () => {
-    // Force prepareChatV2 to throw — simulates Anthropic name validation,
+    // Force prepareChatV2 to throw — simulates a harness tool-name collision,
     // meta-tool name collision, or skill-tool prep failure. The runner must
     // catch this and persist a failed iteration row, NOT propagate the throw.
     const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(
-        new Error(
-          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
-        ),
+        new HarnessToolNameCollisionError([
+          { serverId: "shop", toolNames: ["a.b", "a_b"] },
+        ]),
       );
 
     // The iteration row is created via `action`
@@ -3062,7 +3063,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(payload.status).toBe("failed");
       expect(payload.result).toBe("failed");
       expect(payload.error).toEqual(
-        expect.stringContaining("Invalid tool name"),
+        expect.stringContaining("Claude Code can't run `a.b` and `a_b`"),
       );
       expect(payload.iterationId).toBe("iter-failed-setup");
 
