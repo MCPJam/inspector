@@ -1,4 +1,5 @@
 import { resolveLocalMachinePolicy } from "./local-machine-policy.js";
+import { traceSpan } from "../../utils/harness/harness-trace.js";
 import type { BrowserPageToolsSnapshot } from "../../utils/built-in-tools/browser.js";
 import {
   peekPageToolsForChatTurn,
@@ -162,13 +163,13 @@ export async function prepareManagedTools(args: {
   // `null`: "leave existing state alone", never "there are no secrets".
   const secretsFetch = c.get("guestId")
     ? { ok: true as const, secrets: [] }
-    : await fetchRuntimeSecrets(bearerToken, {
+    : await traceSpan("tools.secrets", "fetch", () => fetchRuntimeSecrets(bearerToken, {
         projectId: hostedBody.projectId,
         ...(environmentServers
           ? { environmentId: environmentServers.environmentRef.environmentId }
           : {}),
         ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
-      });
+      }));
   // A FAILED FETCH IS NOT "NO SECRETS" — IT FORKS THE SESSION.
   //
   // The tri-state exists precisely so a transient Convex failure cannot read
@@ -570,7 +571,7 @@ export async function prepareManagedTools(args: {
               : {}),
         }
       : undefined;
-  const pageToolsPeek = await peekPageToolsForChatTurn({
+  const pageToolsPeek = await traceSpan("tools.pageTools", "peek", () => peekPageToolsForChatTurn({
     ...(browserSessionScope
       ? { conversationId: browserSessionScope.sessionId }
       : {}),
@@ -597,7 +598,7 @@ export async function prepareManagedTools(args: {
     ...(sandboxBinding?.sandboxRowId
       ? { sandboxRowId: sandboxBinding.sandboxRowId }
       : {}),
-  });
+  }));
   const pageToolsSnapshot = pageToolsSnapshotFrom(pageToolsPeek);
 
   let advertisedPageTools: MintedDeclaredTool[] = [];
