@@ -14,9 +14,10 @@ and install dependencies with `npm install --legacy-peer-deps`.
   (use this in place of `dev:app` in the run-inspector skill).
   Omit `--no-worker` when testing platform MCP tools. Open the printed access
   link and keep its token private. See CONTRIBUTING.md for environment setup.
-- To QA a PR or check signed-in behavior, follow the run-inspector skill's
-  QA section: an agent environment from `mcpjam-backend` (`npm run agent-env`)
-  and `npm run qa:start`, then `qa:stop` and the environment's `down`.
+- To QA a PR or check signed-in behavior, follow the QA section of
+  `.agents/skills/run-inspector/SKILL.md`: an agent environment from
+  Jamroom's `prepare_qa` tool (or `mcpjam-backend`'s `npm run agent-env`),
+  then `npm run qa:start`, `qa:stop`, and delete the environment.
 - Format only changed lines in existing files; the repo is not Prettier-clean.
 - Search for existing code before adding helpers: `sdk/` for shared runtime
   code, `mcpjam-inspector/shared/` for client/server utilities,

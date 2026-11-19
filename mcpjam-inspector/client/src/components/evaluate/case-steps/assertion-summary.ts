@@ -138,7 +138,7 @@ function predicateSummary(
     predicate.type === "onlyToolsCalled" &&
     Array.isArray(predicate.toolNames) &&
     predicate.toolNames.length === 0;
-  if (noTool || (!inline && NAMED_IN_LABEL.has(predicate.type))) {
+  if (noTool || NAMED_IN_LABEL.has(predicate.type)) {
     return { label: formatCriterion({ predicate }), Icon };
   }
   const label =

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { PredicateKind } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalJudgeConfig } from "@/components/evals/types";
@@ -65,10 +66,12 @@ function Harness({
   initial,
   onChange,
   judgeConfig = judge,
+  authorableKinds,
 }: {
   initial: CaseStepsDraft;
   onChange?: (draft: CaseStepsDraft) => void;
   judgeConfig?: EvalJudgeConfig;
+  authorableKinds?: PredicateKind[];
 }) {
   const [draft, setDraft] = useState(initial);
   const [openKey, setOpenKey] = useState<string | null>(null);
@@ -104,6 +107,7 @@ function Harness({
         judgeConfig,
         defaultPredicates: suiteDefaults,
         servers: ["excalidraw"],
+        authorableKinds,
       }}
       availableTools={[]}
       readOnly={false}
@@ -393,5 +397,80 @@ describe("After-run assertions", () => {
     expect(onChange.mock.lastCall![0].judgeConfigOverride).toEqual({
       goalCompletion: { enabled: false },
     });
+  });
+});
+
+describe("CaseStepsEditor review fixes", () => {
+  const call: TestStep = {
+    id: "t1",
+    kind: "toolCall",
+    serverName: "excalidraw",
+    toolName: "create_view",
+    arguments: {},
+  };
+
+  it("offers Remove on a lone step that can be removed", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={base({ steps: [call] })} onChange={onChange} />);
+    await user.click(screen.getByLabelText("Options for step 1"));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    expect(onChange.mock.lastCall![0].steps).toEqual([]);
+  });
+
+  it("keeps the menu off a lone prompt, which can't be removed", () => {
+    render(<Harness initial={base({ steps: [sketch[0]!] })} />);
+    expect(screen.queryByLabelText("Options for step 1")).toBeNull();
+  });
+
+  it("offers only the assertion kinds the deployment accepts", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initial={base({ steps: [sketch[0]!] })}
+        authorableKinds={["noToolErrors"]}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add assertion after step 1" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: /^No tool errors/ }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /^Response contains/ }),
+    ).toBeDisabled();
+  });
+
+  it("a blocking tool check sets the case's argument matching", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const withArgs: TestStep = {
+      id: "a1",
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "read_me",
+        args: { args: { mode: "quick" } },
+      },
+    };
+    render(
+      <Harness
+        initial={base({ steps: [sketch[0]!, withArgs] })}
+        onChange={onChange}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /read_me/, expanded: false }),
+    );
+    expect(
+      screen.getByText(
+        "Argument matching applies to every blocking tool check in this case.",
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Exact" }));
+    const next = onChange.mock.lastCall![0];
+    expect(next.matchOptions).toEqual({ argumentMatching: "exact" });
+    expect(next.steps[1].assertion.args.argumentMatching).toBeUndefined();
   });
 });
