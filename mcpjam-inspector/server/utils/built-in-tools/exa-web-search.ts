@@ -23,6 +23,10 @@ import {
 } from "@/shared/ai-execution-refusal";
 import { z } from "zod";
 import {
+  creditRecoveryOfRefusal,
+  formatCreditRecovery,
+} from "@mcpjam/sdk/contract";
+import {
   EXA_SEARCH_PATH,
   PLATFORM_EXA_SEARCH_PATH,
 } from "@/shared/mcpjam-agent-model";
@@ -152,6 +156,27 @@ async function readPolicyRefusal(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * What the model reads when a search is refused for credits (HTTP 402).
+ *
+ * The refusal's structured `recovery` gives the one action for THIS account —
+ * upgrade on Free, buy credits on paid — with its exact link; rendering it keeps
+ * the message right for both. Without one (an older backend), a plan-neutral
+ * line, because a Free account cannot buy credits and must never be told to.
+ */
+async function readCreditRefusalMessage(res: Response): Promise<string> {
+  try {
+    const recovery = creditRecoveryOfRefusal(await res.clone().json());
+    if (recovery) {
+      return `Out of MCPJam credits. ${formatCreditRecovery(recovery)}`;
+    }
+  } catch {
+    // Body was not JSON (a proxy error page, say); fall through to the
+    // plan-neutral line, which is safe for any plan.
+  }
+  return "Out of MCPJam credits for web search. Add credits or upgrade your plan in MCPJam to keep using it.";
 }
 
 /** The refusal fields a non-OK Convex search response names, if any. */
@@ -351,9 +376,7 @@ export function buildExaWebSearchTool(
             );
           }
           if (res.status === 402) {
-            return {
-              error: "Out of MCPJam credits. Top up to use web search.",
-            };
+            return { error: await readCreditRefusalMessage(res) };
           }
           if (!res.ok) {
             const refusal = await readPolicyRefusal(res);

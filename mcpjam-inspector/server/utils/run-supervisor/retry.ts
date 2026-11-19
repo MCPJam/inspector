@@ -35,6 +35,7 @@ import {
   retryWithPolicy,
   type RetryPolicy,
 } from "@mcpjam/sdk";
+import { creditRecoveryOfRefusal } from "@mcpjam/sdk/contract";
 
 import { isAbortError } from "../../../shared/abort-errors.js";
 import { isAccountLimit } from "../../../shared/swarm-attempt-error.js";
@@ -145,6 +146,26 @@ function withStatusCodeForSdk(error: unknown, status: number): unknown {
   return error;
 }
 
+/**
+ * MCPJam's structured credit recovery off a refusal, when it carried one.
+ *
+ * The refusal body is the envelope `creditRecoveryOfRefusal` reads: the error
+ * object itself, or — on a `SwarmAgentError` — its `bodyText`, the raw JSON the
+ * backend answered with. A non-`wait` recovery (upgrade, buy credits, raise a
+ * budget) is the signal a timer can never clear this: the just-merged backend
+ * sends `retryAfter: 0` on it, but a daily-reset free limit still carries its
+ * real reset, so the ACTION, not the wait, is what must decide.
+ */
+function creditRecoveryOf(error: unknown) {
+  const record = errorRecord(error);
+  const bodyText =
+    record && typeof record.bodyText === "string" ? record.bodyText : undefined;
+  return (
+    creditRecoveryOfRefusal(error) ??
+    (bodyText ? creditRecoveryOfRefusal(bodyText) : undefined)
+  );
+}
+
 function codeOf(error: unknown): string | undefined {
   const record = errorRecord(error);
   const code = record?.code;
@@ -252,7 +273,20 @@ export function classifyRetry(error: unknown): RetryClassification {
 
   const retryAfterMs = retryAfterMsOf(error);
   const withWait = (cls: RetryClass): RetryClassification =>
-    retryAfterMs === undefined ? { class: cls } : { class: cls, retryAfterMs };
+    // A wait of 0 is no server-directed wait at all: attaching it would let
+    // `nextDelayMs` turn a `retryAfter: 0` refusal into a backoff-spaced retry
+    // (and, for a rate limit, would mean "retry now" forever). Drop it so a 0
+    // behaves like an absent header.
+    retryAfterMs === undefined || retryAfterMs <= 0
+      ? { class: cls }
+      : { class: cls, retryAfterMs };
+
+  // A credit refusal whose recovery is not a transient hold is terminal: the
+  // fix is an upgrade or a purchase, which no timer brings about. A `wait`
+  // recovery (in-flight requests hold the last credits) falls through to the
+  // rate-limit and transient rules, which keep its retry.
+  const recovery = creditRecoveryOf(error);
+  if (recovery && recovery.action !== "wait") return { class: "terminal" };
 
   const code = codeOf(error);
   const message = messageOf(error);
