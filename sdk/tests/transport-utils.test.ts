@@ -1,27 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { buildRequestInit } from "../src/mcp-client-manager/transport-utils.js";
 
 describe("buildRequestInit (#3453)", () => {
-  it("normalizes MCP-Protocol-Version to lowercase so it overrides SDK transport defaults", async () => {
+  it("lets the shipped client transport set the negotiated protocol version without comma-joining", async () => {
     const requestInit = buildRequestInit(undefined, {
       headers: { "MCP-Protocol-Version": "2026-07-28" },
     });
 
+    // The protocol-version key keeps its caller spelling; the dedupe only
+    // handles collisions introduced by the requestInit itself.
     expect(requestInit?.headers).toEqual({
-      "mcp-protocol-version": "2026-07-28",
+      "MCP-Protocol-Version": "2026-07-28",
     });
 
-    // In @modelcontextprotocol/sdk, StreamableHTTPClientTransport._commonHeaders spreads:
-    // new Headers({ ...headers, ...extraHeaders }) where headers has lowercase 'mcp-protocol-version'.
-    // If requestInit.headers has canonical casing 'MCP-Protocol-Version', new Headers receives both keys
-    // and comma-joins them into '2025-11-25, 2026-07-28' (breaking connect with 502/400).
-    // Lowercase 'mcp-protocol-version' cleanly replaces the default without duplicates.
     const transport = new StreamableHTTPClientTransport(
       new URL("https://example.com/mcp"),
       { requestInit },
     );
-    // Simulate negotiated protocol version set on transport by client
     (transport as unknown as { _protocolVersion: string })._protocolVersion =
       "2025-11-25";
 
@@ -29,10 +25,12 @@ describe("buildRequestInit (#3453)", () => {
       transport as unknown as { _commonHeaders: () => Promise<Headers> }
     )._commonHeaders();
 
-    expect(commonHeaders.get("mcp-protocol-version")).toBe("2026-07-28");
+    // @modelcontextprotocol/client uses Headers.set, which replaces the value
+    // regardless of casing; no "2025-11-25, 2026-07-28" comma join can form.
+    expect(commonHeaders.get("mcp-protocol-version")).toBe("2025-11-25");
   });
 
-  it("deduplicates colliding header names case-insensitively with later values winning", () => {
+  it("deduplicates colliding header names case-insensitively with later values winning", async () => {
     const requestInit = buildRequestInit(undefined, {
       headers: {
         "x-custom": "first",
@@ -45,7 +43,16 @@ describe("buildRequestInit (#3453)", () => {
       "X-Custom": "second",
       "X-Other": "kept",
     });
-    expect(new Headers(requestInit?.headers).get("x-custom")).toBe("second");
+
+    // Verify against the transport we actually ship, not the v1 SDK.
+    const transport = new StreamableHTTPClientTransport(
+      new URL("https://example.com/mcp"),
+      { requestInit },
+    );
+    const commonHeaders = await (
+      transport as unknown as { _commonHeaders: () => Promise<Headers> }
+    )._commonHeaders();
+    expect(commonHeaders.get("x-custom")).toBe("second");
   });
 
   it("merges accessToken into Authorization header and deduplicates lowercase authorization", () => {
@@ -61,6 +68,19 @@ describe("buildRequestInit (#3453)", () => {
       Authorization: "Bearer old-token",
       "X-Test": "value",
     });
+  });
+
+  it("preserves a caller's auth regardless of casing when an accessToken is also supplied", () => {
+    for (const casing of ["AUTHORIZATION", "Authorization", "authorization"]) {
+      const requestInit = buildRequestInit("my-access-token", {
+        headers: { [casing]: "Bearer caller-token", "X-Test": "value" },
+      });
+
+      expect(requestInit?.headers).toEqual({
+        Authorization: "Bearer caller-token",
+        "X-Test": "value",
+      });
+    }
   });
 
   it("injects Bearer accessToken when no Authorization header was provided", () => {

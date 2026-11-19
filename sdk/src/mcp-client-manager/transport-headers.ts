@@ -1,7 +1,8 @@
 /**
- * Deduplicates request headers case-insensitively, normalizing `mcp-protocol-version`
- * to lowercase so it cleanly overrides SDK transport defaults without comma-separated
- * duplicates, and merges the Bearer accessToken into Authorization if provided.
+ * Deduplicates request headers case-insensitively and merges the Bearer
+ * accessToken into Authorization if provided. Key spelling is preserved:
+ * the client SDK's transport sets protocol-version headers with `Headers.set`,
+ * which already replaces any casing.
  */
 export function deduplicateRequestHeaders(
   headers: Record<string, string>,
@@ -20,10 +21,8 @@ export function deduplicateRequestHeaders(
     if (existing !== undefined) {
       delete deduplicated[existing];
     }
-    const targetKey =
-      lower === "mcp-protocol-version" ? "mcp-protocol-version" : key;
-    deduplicated[targetKey] = value;
-    lowerKeyMap.set(lower, targetKey);
+    deduplicated[key] = value;
+    lowerKeyMap.set(lower, key);
   }
 
   if (accessToken) {

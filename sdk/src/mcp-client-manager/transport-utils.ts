@@ -58,18 +58,20 @@ export function normalizeHeaders(
 export function getExistingAuthorization(
   headers: Record<string, string>
 ): string | undefined {
-  return headers["Authorization"] ?? headers["authorization"];
+  const key = Object.keys(headers).find(
+    (candidate) => candidate.toLowerCase() === "authorization"
+  )
+  return key === undefined ? undefined : headers[key]
 }
 
 /**
- * Builds the requestInit object, deduplicating headers case-insensitively,
- * normalizing `mcp-protocol-version` to lowercase so it cleanly overrides
- * transport defaults without comma-separated duplicates, and merging
- * accessToken into Authorization header if provided.
+ * Builds the requestInit object, deduplicating headers case-insensitively and
+ * merging accessToken into Authorization if provided. Protocol-version headers
+ * are left to the client transport, which sets them with Headers.set.
  *
  * @param accessToken - Optional access token for Bearer auth
  * @param requestInit - Optional existing requestInit config
- * @returns Merged requestInit with normalized headers and Authorization header if accessToken provided
+ * @returns Merged requestInit with deduplicated headers and Authorization header if accessToken provided
  */
 export function buildRequestInit(
   accessToken: string | undefined,
