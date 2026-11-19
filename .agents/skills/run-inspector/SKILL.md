@@ -54,8 +54,8 @@ deterministic `https://stateless.mcpjam.com/mcp` (`echo` returns
 `mcpjam-backend`'s `scripts/agentEnv.ts` documents every command; the usual
 run:
 
-**If you have the `prepare_qa` tool** (MCPJam's agent environments MCP
-server), use it instead of the backend checkout and steps 2 and 3:
+**If you have the `prepare_qa` tool** (Jamroom, MCPJam's MCP server for
+agent environments), use it instead of the backend checkout and steps 2 and 3:
 
 - Call `prepare_qa` with the pull request number and the full commit you
   checked out, **before** installing or running the PR's code. It refuses
