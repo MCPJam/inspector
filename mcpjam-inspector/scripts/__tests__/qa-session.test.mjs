@@ -64,6 +64,7 @@ test("resolveQaInputs takes the profile, workspace and server from environment.j
       expectServer: "stateless",
       headed: false,
       local: false,
+      seed: null,
     });
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -152,6 +153,7 @@ const BUNDLE = {
     name: "qa-pr-7846",
     deployment: "happy-otter-123",
     backend: { ref: "main", commit: "a".repeat(40) },
+    seed: "workspace",
     workspace: { serverName: "stateless", path: "/p/p1/servers" },
   },
   profile:
@@ -182,6 +184,7 @@ test("resolveQaInputs takes everything from a bundle", () => {
       expectServer: "stateless",
       headed: false,
       local: false,
+      seed: "workspace",
     });
     const withGrant = resolveQaInputs(
       { bundle: "bundle.json", grant: "g.json" },

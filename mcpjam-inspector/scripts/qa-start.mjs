@@ -70,6 +70,7 @@ const READY_TIMEOUT_MS = 60_000;
 // storage state doesn't show them again.
 const ANNOUNCEMENT_BUTTONS = ["Got it", "Keep dark"];
 const ANNOUNCEMENT_SETTLE_MS = 4_000;
+const FIRST_RUN_DIALOG = /Welcome to MCPJam|Connect to your MCP server/;
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
@@ -148,6 +149,7 @@ async function startInspector(inputs, files) {
         ...ports,
         profile: inputs.profile,
         startedAt: new Date().toISOString(),
+        seed: inputs.seed,
         ...(accessToken ? { accessToken } : {}),
       };
       writeFileSync(files.session, JSON.stringify(session, null, 2) + "\n", {
@@ -187,7 +189,42 @@ async function launchBrowser(headed) {
   }
 }
 
+/**
+ * Local mode keeps first-run onboarding per browser, so even a seeded user
+ * gets it in a new context. Closes it the way a user would: past the welcome,
+ * then the close button (Escape is ignored there).
+ */
+async function closeFirstRun(page) {
+  const close = page.getByRole("button", {
+    name: "Close onboarding",
+    exact: true,
+  });
+  if (await close.isVisible()) return close.click();
+  const start = page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Get started", exact: true });
+  if (await start.isVisible()) return start.click();
+}
+
 async function signInAndOpen(session, inputs, grant, files) {
+  // An environment started on onboarding (seed "empty") keeps it on screen.
+  const closeOnboarding =
+    Boolean(session.accessToken) && session.seed !== "empty";
+  const onScreen = async (page) => {
+    const text = await page.locator("body").innerText();
+    if (
+      !isReady(text, { email: grant.email, expectServer: inputs.expectServer })
+    ) {
+      return false;
+    }
+    return !(
+      closeOnboarding &&
+      (await page
+        .getByRole("dialog")
+        .filter({ hasText: FIRST_RUN_DIALOG })
+        .isVisible())
+    );
+  };
   const browser = await launchBrowser(inputs.headed);
   try {
     const context = await browser.newContext({
@@ -228,20 +265,15 @@ async function signInAndOpen(session, inputs, grant, files) {
     const opened = `${session.client}${inputs.open}`;
     await page.goto(opened, { waitUntil: "domcontentloaded" });
     const deadline = Date.now() + READY_TIMEOUT_MS;
-    let text = "";
+    let ready = false;
     while (Date.now() < deadline) {
-      text = await page.locator("body").innerText();
-      if (
-        isReady(text, { email: grant.email, expectServer: inputs.expectServer })
-      ) {
-        break;
-      }
+      if (closeOnboarding) await closeFirstRun(page);
+      ready = await onScreen(page);
+      if (ready) break;
       await sleep(500);
     }
     await page.screenshot({ path: files.screenshot });
-    if (
-      !isReady(text, { email: grant.email, expectServer: inputs.expectServer })
-    ) {
+    if (!ready) {
       throw new Error(
         `Signed in, but ${opened} didn't show ${inputs.expectServer ? `the "${inputs.expectServer}" server for ` : ""}${grant.email} within ${READY_TIMEOUT_MS / 1000}s. Screenshot: ${files.screenshot}`,
       );
@@ -249,6 +281,7 @@ async function signInAndOpen(session, inputs, grant, files) {
     // Announcements slide in a moment after the page settles.
     const settleUntil = Date.now() + ANNOUNCEMENT_SETTLE_MS;
     while (Date.now() < settleUntil) {
+      if (closeOnboarding) await closeFirstRun(page);
       for (const name of ANNOUNCEMENT_BUTTONS) {
         const button = page.getByRole("button", { name, exact: true }).first();
         if (await button.isVisible()) await button.click();

@@ -124,6 +124,7 @@ export function resolveQaInputs(options, cwd = process.cwd()) {
       options["expect-server"] ?? environment.workspace?.serverName ?? null,
     headed: options.headed === true,
     local: options.local === true,
+    seed: environment.seed ?? null,
   };
 }
 
