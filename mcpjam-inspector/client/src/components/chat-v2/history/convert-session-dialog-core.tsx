@@ -585,8 +585,8 @@ function ConvertSessionDialogCoreInner({
   // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
   // standalone serverAttachment; hosts prefer `defaultHostId` when it names
   // a live project host. Either can be swapped from its own picker, but only
-  // `ServerPicker` can CREATE from there — `HostPicker` has none, which
-  // is what the empty-state button on the Client column below stands in for.
+  // `ServerPicker` can CREATE from there — `ClientMultiSelect` has none,
+  // which is what the empty-state button on the Client column below stands in for.
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
     if (serverAttachmentId === null && projectServerAttachments.length > 0) {
@@ -771,6 +771,7 @@ function ConvertSessionDialogCoreInner({
 
   /** A client created inline joins the suite's clients. */
   const handleClientCreated = (hostId: string) => {
+    hostsSeeded.current = true;
     setHostAttachments((current) =>
       current.some((attachment) => attachment.namedHostId === hostId)
         ? current
@@ -779,6 +780,7 @@ function ConvertSessionDialogCoreInner({
   };
 
   const handleClientsChange = (hostIds: string[]) => {
+    hostsSeeded.current = true;
     setHostAttachments((current) =>
       hostIds.map(
         (hostId) =>
@@ -1001,7 +1003,7 @@ function ConvertSessionDialogCoreInner({
                 needs a `serverAttachmentId`, so a project with no groups shows
                 a normal-looking field above a Promote that never enables, and
                 explains itself only once the popover is open. No button —
-                unlike `HostPicker` this picker creates inline — but that
+                unlike `ClientMultiSelect` this picker creates inline — but that
                 create needs a server to put in the group, so which of the two
                 sentences below is true depends on the SERVER list, not the
                 group list.
