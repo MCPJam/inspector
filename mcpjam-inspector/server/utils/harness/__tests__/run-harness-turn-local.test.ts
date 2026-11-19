@@ -4,7 +4,7 @@ import { verifyAuthKitToken } from "../../../services/authkit-jwt.js";
 import { TurnAuthorizationRegistry } from "../../../services/turn-authorization.js";
 import { RevokedSessionCache, setRevokedSessionCacheForTests } from "../../../services/revoked-session-cache.js";
 import { completedTurnPersistence } from "../../../services/completed-turn-persistence.js";
-const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {} })));
+const localProjection = vi.hoisted(() => vi.fn(async () => ({ tools: {}, keyToServerId: {}, toolRegistry: new Map() })));
 vi.mock("../host-executed-mcp-tools.js", () => ({ projectSelectedMcpServersAsHostTools: localProjection }));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../local/pack-bootstrap.js", () => ({ withLocalRuntimeBootstrap: async (adapter: unknown) => adapter }));

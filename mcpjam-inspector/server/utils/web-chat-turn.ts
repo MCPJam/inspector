@@ -130,6 +130,7 @@ import {
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { HarnessToolNameCollisionError } from "./harness/harness-tool-names.js";
 import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
@@ -897,7 +898,6 @@ export async function streamChatTurn(
       ...(prepare.toolCallCancellation !== undefined
         ? { toolCallCancellation: prepare.toolCallCancellation }
         : {}),
-      customProviders: prepare.customProviders,
       // Nothing has been streamed yet, so a hung MCP server would otherwise
       // hold the request past the edge's first-byte limit (a Cloudflare 524).
       toolListingTimeoutMs: WEB_CHAT_TOOL_LISTING_TIMEOUT_MS,
@@ -937,9 +937,8 @@ export async function streamChatTurn(
           }),
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("Invalid tool name(s) for Anthropic")) {
-      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, msg);
+    if (error instanceof HarnessToolNameCollisionError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
     }
     throw error;
   }

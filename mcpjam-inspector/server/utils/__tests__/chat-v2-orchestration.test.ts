@@ -28,6 +28,7 @@ import {
   type AppToolEntry,
   type UiToolEntry,
 } from "../chat-v2-orchestration";
+import { HarnessToolNameCollisionError } from "../harness/harness-tool-names";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import { listCloudSkills } from "../computers/cloud-skills";
 import {
@@ -612,33 +613,51 @@ describe("prepareChatV2", () => {
     expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
-  describe("MCP tool names Anthropic rejects", () => {
+  describe("MCP tool names with dots on harness turns", () => {
     const anthropicModel = {
       id: "anthropic/claude-sonnet-4.5",
       provider: "anthropic",
     } as any;
-
-    it("prepares a direct or hosted turn, which aliases them on the wire", async () => {
-      const result = await prepareChatV2({
-        mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
+    const prepare = (tools: Record<string, unknown>, harness?: any) =>
+      prepareChatV2({
+        mcpClientManager: mockManager(tools),
         selectedServers: ["shop"],
         modelDefinition: anthropicModel,
         systemPrompt: "Base prompt.",
+        harness,
       });
 
+    it("prepares a Claude Code turn with a dotted tool name", async () => {
+      const result = await prepare(
+        { "cart.add": { _serverId: "shop" } },
+        "claude-code",
+      );
       expect(Object.keys(result.allTools)).toContain("cart.add");
     });
 
-    it("refuses a harness turn, which builds its own tool names", async () => {
-      await expect(
-        prepareChatV2({
-          mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
-          selectedServers: ["shop"],
-          modelDefinition: anthropicModel,
-          systemPrompt: "Base prompt.",
-          harness: "claude-code",
-        }),
-      ).rejects.toThrow("Invalid tool name(s) for Anthropic: 'cart.add'");
+    it("refuses a Claude Code turn when two tools on one server rename to the same name", async () => {
+      const turn = prepare(
+        {
+          "cart.add": { _serverId: "shop" },
+          cart_add: { _serverId: "shop" },
+        },
+        "claude-code",
+      );
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+      await expect(turn).rejects.toThrow("`cart.add` and `cart_add`");
+    });
+
+    it("prepares the same pair on OpenCode, which MCPJam names itself", async () => {
+      const result = await prepare(
+        {
+          "cart.add": { _serverId: "shop" },
+          cart_add: { _serverId: "shop" },
+        },
+        "opencode",
+      );
+      expect(Object.keys(result.allTools)).toEqual(
+        expect.arrayContaining(["cart.add", "cart_add"]),
+      );
     });
   });
 
