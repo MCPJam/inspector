@@ -87,6 +87,48 @@ const FILLER =
 const VAGUE_ERROR =
   /^(?:oops|whoops|uh[- ]oh|something went wrong|an? (?:unexpected |unknown )?error (?:has )?occurred|unknown error|error occurred)\b/i;
 
+/**
+ * Comments blanked out, line breaks kept. Comments cite issues (`#5104`) and
+ * describe colors without rendering them. A `//` after a `:` or a quote is
+ * left alone so URLs in strings survive.
+ */
+function stripComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:"'`])\/\/[^\n]*/gm, "$1");
+}
+
+/**
+ * A hex color where a value starts: after a quote, a bracket (`bg-[#fff]`),
+ * or a colon or comma. Not after a bare space, so prose such as
+ * "order #4521" does not count.
+ */
+const HEX_COLOR =
+  /(?<=["'`([]|[:,]\s*)#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b/g;
+
+/**
+ * A color function with a literal first channel; `hsl(var(--x))` is a token.
+ * `_` may precede it, as inside `shadow-[0_1px_2px_rgba(0,0,0,0.3)]`.
+ */
+const COLOR_FUNCTION =
+  /(?<![A-Za-z0-9-])(?:rgba?|hsla?|oklch|oklab|lch|lab|hwb)\(\s*[\d.]/g;
+
+/** A Tailwind color utility on the default palette, with any variant prefix. */
+const PALETTE_CLASS =
+  /(?<![\w-])(?:bg|text|border(?:-[trblxyse])?|ring(?:-offset)?|outline|divide|from|via|to|fill|stroke|decoration|placeholder|caret|accent|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|[1-9]00|950)\b/g;
+
+/**
+ * Other hosts' design tokens, host styles and brand tints (ChatGPT, Claude,
+ * ...), copied verbatim so a widget and its host chrome look as they do
+ * there. They define someone else's palette, so MCPJam's roles cannot
+ * replace them, and adding a host template must not trip the ratchet.
+ */
+const HOST_PALETTE_PATH =
+  /^mcpjam-inspector\/client\/src\/(?:config\/[\w-]+-client-context\.ts$|lib\/client-styles\/|lib\/host-ui-metadata\.ts$)/;
+
+const isClientColorCode = (path) =>
+  CLIENT_PATH.test(path) && !HOST_PALETTE_PATH.test(path);
+
 export const RULES = [
   {
     id: "as-any",
@@ -152,6 +194,25 @@ export const RULES = [
         text,
         /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\s*\(/g
       ),
+  },
+  {
+    id: "client-color-literal",
+    label:
+      "literal hex / `rgb()` / `hsl()` / `oklch()` colors in the inspector client",
+    appliesTo: isClientColorCode,
+    fix: "Use a role token from DESIGN.md: a Tailwind utility such as `bg-card`, `text-muted-foreground` or `border-border`, or `var(--success)` where a style object or SVG attribute needs a value. A color with no role goes into `design-system/src/tokens.css` first (then `npm run design:sync`).",
+    count: (text) => {
+      const code = stripComments(text);
+      return countMatches(code, HEX_COLOR) + countMatches(code, COLOR_FUNCTION);
+    },
+  },
+  {
+    id: "client-palette-class",
+    label:
+      "raw Tailwind palette classes (`bg-red-500`) in the inspector client",
+    appliesTo: isClientColorCode,
+    fix: "Use the role class instead: `bg-destructive/10 text-destructive` for errors, `text-success`, `text-warning`, `text-info`, `bg-muted text-muted-foreground` for neutral grays. Roles carry their dark-mode value, so no `dark:` twin is needed.",
+    count: (text) => countMatches(stripComments(text), PALETTE_CLASS),
   },
   {
     id: "eslint-disable",
