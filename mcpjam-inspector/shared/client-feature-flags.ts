@@ -22,6 +22,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "eval-run-stage-analytics",
   "eval-suite-results-page",
   "eval-suite-settings-tabs",
+  "eval-test-case-steps-editor",
   "evaluate-observe-first",
   "evaluate-run-result-pages",
   "evals-start-recording",

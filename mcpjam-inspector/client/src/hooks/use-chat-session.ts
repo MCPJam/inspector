@@ -776,6 +776,12 @@ export interface UseChatSessionReturn {
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     pluginMessage?: PluginMessageIntent;
     isCurrent?: () => boolean;
+    /**
+     * Prompt and skill turns for this send. Written into the thread only
+     * after the dispatch-time admission check, so a refused send does not
+     * leave them behind for the next try to append again.
+     */
+    prependMessages?: UIMessage[];
 
     pluginMentions?: PluginMentionSelection[];
     /** Items an App's editable draft left in the composer, sent as-is. */
@@ -5529,6 +5535,7 @@ export function useChatSession(
       metadata?: Record<string, unknown>;
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
+      prependMessages?: UIMessage[];
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
@@ -5541,6 +5548,7 @@ export function useChatSession(
         widgetModelContext,
         pluginMessage,
         isCurrent,
+        prependMessages,
         pluginMentions,
         extraParts,
       } = options;
@@ -5696,6 +5704,12 @@ export function useChatSession(
             resolvedHostedServersRef.current = null;
             return false;
           }
+          // History for this request, written only once the send is admitted.
+          // The session, target, and preparation checks above already ran.
+          // Appending grows the thread, so this does not fork the session.
+          if (prependMessages?.length) {
+            setMessages((prev) => [...prev, ...prependMessages]);
+          }
           savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
@@ -5798,6 +5812,7 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      setMessages,
       savedClientSendGuard,
       sendPreparationGuard,
       hostedEnsureServerIds,
