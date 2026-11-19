@@ -52,7 +52,7 @@ describe("harness proxy refusal vocabulary", () => {
       join(here, "..", "harness-proxy-refusal-reasons.json"),
     );
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(
-      "117ad281f2c3e22b082f605e2981f4542589a7541f8997ea51fb65009b439406",
+      "56069bcb90ff7a4f87f7e475819ab78fb44d8a583ddcc117de4fd29441c329c6",
     );
   });
 });

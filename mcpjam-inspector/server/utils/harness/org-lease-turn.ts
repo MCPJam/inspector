@@ -60,6 +60,7 @@ import {
 import { startHarnessModelBroker } from "./harness-model-broker.js";
 import {
   failedTurnEvidence,
+  type FailedHarnessTurn,
   type HarnessOrgLeaseUpstream,
 } from "./harness-org-lease.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
@@ -369,18 +370,19 @@ export class OrgLeaseTurn {
 
   /**
    * The evidence a failed turn reports. The proxy's own refusal (the org's
-   * key rejected or replaced, its policy, a lease cap) reaches the runtime as
-   * a bare refusal status or as nothing typed; the proxy recorded its reason
-   * on the lease, so it is read back.
+   * key rejected or replaced, its policy, a lease or spend cap) reaches the
+   * runtime as a bare refusal status or as nothing typed; the proxy recorded
+   * its reason, and a spend refusal's recovery, on the lease, so they are
+   * read back.
    */
   async failedTurnEvidence(
     evidence: InfraFailureEvidence | undefined,
     modelInvoked: boolean,
-  ): Promise<InfraFailureEvidence | undefined> {
+  ): Promise<FailedHarnessTurn> {
     let bearer = this.bearer;
     if (this.authorization) {
       try { bearer = await this.authorization.getCleanupAuthorization(); }
-      catch { return evidence; } // A refused identity cannot read additional failure evidence.
+      catch { return { evidence }; } // A refused identity cannot read additional failure evidence.
     }
     return failedTurnEvidence({
       evidence,
