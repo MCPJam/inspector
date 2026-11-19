@@ -176,6 +176,7 @@ import {
   cloneUiMessages,
   extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
+import { RepeatPromptTip } from "./repeat-prompt-tip";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import {
@@ -6225,6 +6226,16 @@ export function PlaygroundMain({
           onReasoningEffortChange: undefined,
         };
 
+  const repeatPromptTip = (
+    <RepeatPromptTip
+      projectId={convexProjectId}
+      chatSessionId={chatSessionId}
+      messages={messages}
+      isStreaming={isStreaming}
+      serverNames={selectedServers}
+      hostIds={isMultiHostMode ? selectedHostIds : previewedHostId ? [previewedHostId] : []}
+    />
+  );
   const sharedChatInputProps = {
     hideExecutionControls: isMultiHostMode,
     showContextPopover: !isMultiHostMode,
@@ -6838,6 +6849,7 @@ export function PlaygroundMain({
                     />
                   </div>
                 )}
+                {repeatPromptTip}
                 <ChatInput
                   {...sharedChatInputProps}
                   hasMessages={!isThreadEmpty}
@@ -7554,6 +7566,7 @@ export function PlaygroundMain({
                   <div className="shrink-0 border-t border-border bg-background/80 backdrop-blur-sm">
                     {!isAuthLoading ? (
                       <div className="w-full p-4">
+                        {repeatPromptTip}
                         <ChatInput
                           {...sharedChatInputProps}
                           hasMessages={effectiveHasMessages}

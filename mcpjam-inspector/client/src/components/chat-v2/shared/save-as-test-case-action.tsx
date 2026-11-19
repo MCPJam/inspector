@@ -57,6 +57,13 @@ type SaveAsTestCaseActionProps = {
   promptPreview?: string;
   /** Required to fetch suites and create a new suite when needed. */
   projectId: string | null;
+  /** Controlled open state. When set, the icon trigger is not rendered. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Clients to attach to a new suite, in place of the project's first client. */
+  suggestedHostIds?: string[];
+  /** An earlier prompt this one repeats, shown as context. */
+  similarPromptText?: string;
 };
 
 type DestinationMode = "existing" | "new";
@@ -71,10 +78,20 @@ export function SaveAsTestCaseAction({
   promptIndex,
   promptPreview,
   projectId,
+  open: controlledOpen,
+  onOpenChange,
+  suggestedHostIds,
+  similarPromptText,
 }: SaveAsTestCaseActionProps) {
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const isUserReady = useDbUserReady();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : uncontrolledOpen;
+  const setOpen = (next: boolean) => {
+    if (!isControlled) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
     seedTitleFromPrompt(promptPreview),
@@ -139,14 +156,25 @@ export function SaveAsTestCaseAction({
   useEffect(() => {
     if (!open || !attachmentPickersEnabled) return;
     if (hostAttachments.length === 0 && projectHosts.length > 0) {
-      setHostAttachments([
-        {
-          namedHostId: projectHosts[0].hostId,
+      const suggested = (suggestedHostIds ?? []).filter((hostId) =>
+        projectHosts.some((host) => host.hostId === hostId),
+      );
+      const hostIds =
+        suggested.length > 0 ? suggested : [projectHosts[0].hostId];
+      setHostAttachments(
+        hostIds.map((namedHostId) => ({
+          namedHostId,
           enabledOptionalServerIds: [],
-        },
-      ]);
+        })),
+      );
     }
-  }, [open, attachmentPickersEnabled, hostAttachments.length, projectHosts]);
+  }, [
+    open,
+    attachmentPickersEnabled,
+    hostAttachments.length,
+    projectHosts,
+    suggestedHostIds,
+  ]);
 
   const availableSuites = useMemo(
     () =>
@@ -249,21 +277,23 @@ export function SaveAsTestCaseAction({
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex shrink-0">
-            <button
-              type="button"
-              aria-label="Save this prompt as a test case"
-              className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
-              onClick={() => setOpen(true)}
-            >
-              <FlaskConical className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>Save as test case</TooltipContent>
-      </Tooltip>
+      {!isControlled && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex shrink-0">
+              <button
+                type="button"
+                aria-label="Save this prompt as a test case"
+                className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
+                onClick={() => setOpen(true)}
+              >
+                <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>Save as test case</TooltipContent>
+        </Tooltip>
+      )}
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -275,6 +305,11 @@ export function SaveAsTestCaseAction({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {similarPromptText && (
+              <p className="line-clamp-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                Similar to: {similarPromptText}
+              </p>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="save-as-test-case-title">Test case name</Label>
               <Input
