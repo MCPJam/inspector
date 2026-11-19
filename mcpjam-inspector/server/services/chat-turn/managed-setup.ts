@@ -1,4 +1,5 @@
 import { resolveAgentLoop } from "../../utils/harness/agent-loop-dispatch";
+import { traceSpan } from "../../utils/harness/harness-trace.js";
 import { authorizeManagedProject } from "./turn-authorization.js";
 import { resolveHostedChatSetup } from "./resolve-hosted-chat-setup.js";
 import { buildHostConnectionPins } from "../host-connection-pins.js";
@@ -164,12 +165,12 @@ export async function resolveManagedTurnSetup(args: {
   }
   const authorized = isScenarioRequest
     ? undefined
-    : await authorizeManagedProject(c, bearerToken, {
+    : await traceSpan("setup.authorize", "project", () => authorizeManagedProject(c, bearerToken, {
         projectId: hostedBody.projectId,
         chatSessionId: hostedBody.chatSessionId,
         target: executionTarget,
         serverIds: selectedServerIds,
-      });
+      }));
   const {
     mode: turnMode,
     hostRuntimeConfig,
@@ -185,7 +186,7 @@ export async function resolveManagedTurnSetup(args: {
     toolConfiguration,
     toolConfigurationUnavailable,
     workspaceToolsBarred,
-  } = await resolveHostedChatSetup({
+  } = await traceSpan("setup.chat", "hosted", () => resolveHostedChatSetup({
     prepareChatTurn: authorized?.chatPreparation,
     preparedChatTurn: authorized?.preparedChatTurn,
     target: executionTarget,
@@ -209,12 +210,12 @@ export async function resolveManagedTurnSetup(args: {
     getClient: async () =>
       createConvexClient(await getConvexBearerForRequest(c), c.req.raw.signal),
     hiddenEnvironment: rawBody.includeProjectSkills === true,
-  });
+  }));
   let requiredNativeDiscoveryPin = false;
   if (turnMode === "interactive" && !c.get("guestId") && hostedBody.projectId && hostedBody.chatSessionId) {
     const service = new BrowserSessionService();
     if (service.enabled) {
-      const state = authorized?.conversationState ?? await readWebConversationState(
+      const state = authorized?.conversationState ?? await traceSpan("setup.conversation", "state", () => readWebConversationState(
         (signal) =>
           service.agentRequest<{
             writable: boolean;
@@ -226,7 +227,7 @@ export async function resolveManagedTurnSetup(args: {
             signal,
           }),
         c.req.raw.signal,
-      );
+      ));
       requiredNativeDiscoveryPin = state.requireNativeToolDiscovery === true;
       if (!state.writable) {
         return {
@@ -356,7 +357,7 @@ export async function resolveManagedTurnSetup(args: {
       );
     }
   }
-  const builtInToolPolicy = await resolveTurnBuiltInToolIds({
+  const builtInToolPolicy = await traceSpan("setup.tools", "built-in", () => resolveTurnBuiltInToolIds({
     requested: resolvedExecution.builtInToolIds,
     configuration: toolConfiguration,
     configurationUnavailable: toolConfigurationUnavailable,
@@ -370,7 +371,7 @@ export async function resolveManagedTurnSetup(args: {
       )) as {
         projectRole?: string | null;
       } | null),
-  });
+  }));
   if (builtInToolPolicy.dropped.length > 0) {
     getRequestLogger(c, "routes.web.chat-v2").event(
       "chat.builtin_tools.withheld",
