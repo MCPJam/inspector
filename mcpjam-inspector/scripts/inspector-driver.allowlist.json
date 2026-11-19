@@ -1,0 +1,4 @@
+{
+  "about": "Known noise the inspector driver does not fail on. Each rule: kind (console-error, console-warning, page-error, request-failed, http-404, http-4xx, *), match (a regex over the one-line text), reason (why it is not a bug). Add a rule only for noise that is present on clean main.",
+  "rules": []
+}
