@@ -211,7 +211,7 @@ export function ConnectStep({
           error={
             server?.lastNormalizedError ??
             server?.lastError ??
-            `Couldn't connect to ${attempt.formData.url}.`
+            `Couldn't connect to ${attempt.formData.url}. Check the URL and try again.`
           }
           onRetry={() => {
             onTrack("retried");
