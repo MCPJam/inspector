@@ -5,7 +5,6 @@ import {
   identifyHarnessTool,
   registerHostToolNames,
   runtimeToolNameSegment,
-  toolNamesByServerId,
 } from "../harness-tool-names";
 
 const BITS = [
@@ -60,25 +59,6 @@ describe("findHarnessToolNameCollisions", () => {
     const names = new Map([["shop", ["a_b", "a.b"]]]);
     expect(findHarnessToolNameCollisions("opencode", names)).toEqual([]);
     expect(findHarnessToolNameCollisions("codex", names)).toEqual([]);
-  });
-});
-
-describe("toolNamesByServerId", () => {
-  it("groups tagged tools by server and skips untagged ones", () => {
-    expect(
-      toolNamesByServerId({
-        "cad.tray": { _serverId: "bits" },
-        ping: { _serverId: "bits" },
-        echo: { _serverId: "echo" },
-        builtin: {},
-        stray: { _serverId: "" },
-      }),
-    ).toEqual(
-      new Map([
-        ["bits", ["cad.tray", "ping"]],
-        ["echo", ["echo"]],
-      ]),
-    );
   });
 });
 

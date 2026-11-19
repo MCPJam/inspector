@@ -95,7 +95,6 @@ import { createProgressiveMetaTools } from "@mcpjam/sdk";
 import {
   findHarnessToolNameCollisions,
   HarnessToolNameCollisionError,
-  toolNamesByServerId,
 } from "./harness/harness-tool-names.js";
 
 // `filterAppOnlyTools` now lives in `@mcpjam/sdk/host-config/internal` so the
@@ -1743,10 +1742,17 @@ export async function prepareChatV2(
   // the turn before the runtime starts. Every other name is made valid by the
   // runtime or by MCPJam's host-executed naming (`harness/harness-tool-names.ts`);
   // direct and hosted turns alias names on the wire.
+  // Each server's own list: the merged tool map keeps one tool per name, so a
+  // name two servers share would hide which server a collision is on.
   if (harness) {
     const collisions = findHarnessToolNameCollisions(
       harness,
-      toolNamesByServerId(realTools),
+      new Map(
+        (knownSelectedServers ?? mcpClientManager.listServers()).map((id) => [
+          id,
+          Object.keys(mcpClientManager.getAllToolAnnotations(id)),
+        ]),
+      ),
     );
     if (collisions.length > 0) {
       throw new HarnessToolNameCollisionError(collisions);

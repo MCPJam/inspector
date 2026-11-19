@@ -82,24 +82,6 @@ export function findHarnessToolNameCollisions(
   return collisions;
 }
 
-/** Tool names per server, from AI SDK tools tagged with `_serverId`. */
-export function toolNamesByServerId(
-  tools: Readonly<Record<string, unknown>>,
-): Map<string, string[]> {
-  const byServer = new Map<string, string[]>();
-  for (const [name, tool] of Object.entries(tools)) {
-    const serverId =
-      tool && typeof tool === "object" && "_serverId" in tool
-        ? (tool as { _serverId?: unknown })._serverId
-        : undefined;
-    if (typeof serverId !== "string" || serverId.length === 0) continue;
-    const names = byServer.get(serverId) ?? [];
-    names.push(name);
-    byServer.set(serverId, names);
-  }
-  return byServer;
-}
-
 /** Server and tool behind a name MCPJam registered with a runtime. */
 export interface HarnessToolIdentity {
   serverId: string;

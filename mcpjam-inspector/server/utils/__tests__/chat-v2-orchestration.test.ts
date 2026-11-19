@@ -49,9 +49,17 @@ import {
   resolveActiveToolNames,
 } from "@mcpjam/sdk";
 
-function mockManager(tools: Record<string, unknown>) {
+function mockManager(
+  tools: Record<string, unknown>,
+  toolNamesByServer: Record<string, string[]> = {},
+) {
   return {
     getToolsForAiSdk: vi.fn().mockResolvedValue(tools),
+    getAllToolAnnotations: vi.fn((serverId: string) =>
+      Object.fromEntries(
+        (toolNamesByServer[serverId] ?? []).map((name) => [name, {}]),
+      ),
+    ),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
@@ -618,43 +626,46 @@ describe("prepareChatV2", () => {
       id: "anthropic/claude-sonnet-4.5",
       provider: "anthropic",
     } as any;
-    const prepare = (tools: Record<string, unknown>, harness?: any) =>
-      prepareChatV2({
-        mcpClientManager: mockManager(tools),
-        selectedServers: ["shop"],
+    const prepare = (
+      toolNamesByServer: Record<string, string[]>,
+      harness?: any,
+    ) => {
+      // The merged map keeps one tool per name, as the real manager does.
+      const tools: Record<string, unknown> = {};
+      for (const [serverId, names] of Object.entries(toolNamesByServer)) {
+        for (const name of names) tools[name] = { _serverId: serverId };
+      }
+      return prepareChatV2({
+        mcpClientManager: mockManager(tools, toolNamesByServer),
+        selectedServers: Object.keys(toolNamesByServer),
         modelDefinition: anthropicModel,
         systemPrompt: "Base prompt.",
         harness,
       });
+    };
 
     it("prepares a Claude Code turn with a dotted tool name", async () => {
-      const result = await prepare(
-        { "cart.add": { _serverId: "shop" } },
-        "claude-code",
-      );
+      const result = await prepare({ shop: ["cart.add"] }, "claude-code");
       expect(Object.keys(result.allTools)).toContain("cart.add");
     });
 
     it("refuses a Claude Code turn when two tools on one server rename to the same name", async () => {
-      const turn = prepare(
-        {
-          "cart.add": { _serverId: "shop" },
-          cart_add: { _serverId: "shop" },
-        },
-        "claude-code",
-      );
+      const turn = prepare({ shop: ["cart.add", "cart_add"] }, "claude-code");
       await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
       await expect(turn).rejects.toThrow("`cart.add` and `cart_add`");
     });
 
-    it("prepares the same pair on OpenCode, which MCPJam names itself", async () => {
-      const result = await prepare(
-        {
-          "cart.add": { _serverId: "shop" },
-          cart_add: { _serverId: "shop" },
-        },
-        "opencode",
+    it("finds the collision when another server has a tool of the same name", async () => {
+      // `other` is listed last, so the merged map credits `cart.add` to it.
+      const turn = prepare(
+        { shop: ["cart.add", "cart_add"], other: ["cart.add"] },
+        "claude-code",
       );
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+    });
+
+    it("prepares the same pair on OpenCode, which MCPJam names itself", async () => {
+      const result = await prepare({ shop: ["cart.add", "cart_add"] }, "opencode");
       expect(Object.keys(result.allTools)).toEqual(
         expect.arrayContaining(["cart.add", "cart_add"]),
       );
