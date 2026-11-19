@@ -126,7 +126,10 @@ vi.mock("@mcpjam/design-system/select", async () => {
 
 import { SaveAsTestCaseAction } from "../save-as-test-case-action";
 
-async function promoteToExistingSuite({ toolCalls = false } = {}) {
+async function promoteToExistingSuite({
+  toolCalls = false,
+  location,
+}: { toolCalls?: boolean; location?: "playground" | "chat" } = {}) {
   const user = userEvent.setup();
   render(
     <SaveAsTestCaseAction
@@ -134,6 +137,7 @@ async function promoteToExistingSuite({ toolCalls = false } = {}) {
       promptIndex={2}
       promptPreview="draw a dog"
       projectId="proj-1"
+      location={location}
     />,
   );
 
@@ -148,6 +152,16 @@ async function promoteToExistingSuite({ toolCalls = false } = {}) {
 }
 
 describe("SaveAsTestCaseAction", () => {
+  it("counts saves from the Chat tab under its own location", async () => {
+    await promoteToExistingSuite({ location: "chat" });
+    await waitFor(() =>
+      expect(mockTrack).toHaveBeenCalledWith(
+        "playground_test_case_saved",
+        expect.objectContaining({ location: "chat" }),
+      ),
+    );
+  });
+
   it("asks the backend to keep tool calls only when the switch is on", async () => {
     await promoteToExistingSuite({ toolCalls: true });
     await waitFor(() =>

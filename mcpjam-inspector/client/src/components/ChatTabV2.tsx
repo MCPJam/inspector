@@ -3049,6 +3049,7 @@ export function ChatTabV2({
                                         message
                                       )}
                                       serverNames={selectedConnectedServerNames}
+                                      location="chat"
                                       projectId={effectiveHostedProjectId}
                                     />
                                   );

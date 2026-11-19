@@ -68,6 +68,8 @@ type SaveAsTestCaseActionProps = {
   suggestedHostIds?: string[];
   /** Where the save started, for analytics. */
   source?: "message_menu" | "repeat_tip";
+  /** Which tab rendered the action, for analytics and suite naming. */
+  location?: "playground" | "chat";
   /** Servers the prompt ran against, to name a new suite. */
   serverNames?: string[];
 };
@@ -88,11 +90,12 @@ export function SaveAsTestCaseAction({
   onOpenChange,
   suggestedHostIds,
   source = "message_menu",
+  location = "playground",
   serverNames,
 }: SaveAsTestCaseActionProps) {
   const defaultSuiteName = buildServerBasedSuiteName(
     serverNames,
-    "Playground suite",
+    location === "chat" ? "Chat suite" : "Playground suite",
   );
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -255,7 +258,7 @@ export function SaveAsTestCaseAction({
           }
         | undefined;
       track("playground_test_case_saved", {
-        location: "playground",
+        location,
         source,
         new_suite: destinationMode === "new",
         assert_tool_calls: assertToolCalls,
