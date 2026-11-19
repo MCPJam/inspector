@@ -259,6 +259,7 @@ describe("SaveAsTestCaseAction", () => {
         }),
       ),
     );
+    expect(saveAction.mock.calls[0][0]).not.toHaveProperty("assertToolCalls");
     expect(mockTrack).toHaveBeenCalledWith("playground_test_case_saved", {
       location: "playground",
       source: "message_menu",
