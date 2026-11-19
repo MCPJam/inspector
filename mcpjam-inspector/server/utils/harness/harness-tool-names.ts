@@ -142,7 +142,10 @@ function identityKey(serverId: string, toolName: string): string {
  */
 export function identifyHarnessTool(args: {
   rawToolName: string;
-  /** The call's input, where Cursor wraps the registered name. */
+  /**
+   * The call's input, only for a runtime that wraps the registered name in
+   * it (Cursor). Any other runtime's input is the tool's own arguments.
+   */
   input?: unknown;
   attributed: { serverId?: string; toolName: string };
   hostToolRegistry: ReadonlyMap<string, HarnessToolIdentity>;

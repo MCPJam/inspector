@@ -3839,7 +3839,9 @@ export async function runHarnessTurn(
             // Then the server's real tool name: a renamed `cad_tray` is `cad.tray`.
             const { serverId, toolName } = identifyHarnessTool({
               rawToolName,
-              input,
+              // Only a runtime whose adapter reads identity from the input
+              // (Cursor) wraps the registered name there.
+              ...(harnessAdapter.attributeToolCall ? { input } : {}),
               attributed: harnessAdapter.attributeToolCall
                 ? harnessAdapter.attributeToolCall({
                     rawToolName,

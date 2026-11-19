@@ -795,3 +795,24 @@ it("records a host-executed call under the identity MCPJam registered for its na
     harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
   }
 });
+
+it("ignores a host-channel envelope in the input of a runtime that doesn't wrap names", async () => {
+  projectSpy.mockResolvedValueOnce({
+    tools: { mcp__srv__a_b_2: {} },
+    keyToServerId: { srv: "srv-a" },
+    toolRegistry: new Map([["mcp__srv__a_b_2", { serverId: "srv-a", toolName: "a.b" }]]),
+  } as never);
+  const input = { providerIdentifier: "ai-sdk-harness-tools", toolName: "mcp__srv__a_b_2" };
+  harnessState.streamParts = [
+    { type: "tool-call", toolCallId: "call-1", toolName: "Bash", input },
+    { type: "tool-result", toolCallId: "call-1", toolName: "Bash", output: "ok" },
+    { type: "finish", finishReason: "stop" },
+  ];
+  const onToolCall = vi.fn(async () => {});
+  try {
+    await runHarnessTurn(baseOptions({ onToolCall }) as never, "none");
+    expect(onToolCall).toHaveBeenCalledWith(expect.objectContaining({ toolName: "Bash", serverId: undefined }));
+  } finally {
+    harnessState.streamParts = [{ type: "finish", finishReason: "stop" }];
+  }
+});
