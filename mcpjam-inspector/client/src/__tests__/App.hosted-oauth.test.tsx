@@ -461,9 +461,6 @@ vi.mock("../components/LearningTab", () => ({
 vi.mock("../components/TasksTab", () => ({
   TasksTab: () => <div />,
 }));
-vi.mock("../components/ChatTabV2", () => ({
-  ChatTabV2: () => <div />,
-}));
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));
@@ -6028,46 +6025,25 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
-  it("renders legacy Suites mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
+  it.each(["/evals", "/evals/runs"])(
+    "redirects %s to Evaluate",
+    async (legacyPath) => {
+      clearHostedOAuthPendingState();
+      clearScenarioSession();
+      window.history.replaceState({}, "", legacyPath);
+      mockHandleOAuthCallback.mockReset();
 
-    render(<App />);
+      render(<App />);
 
-    await waitFor(() => {
-      expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByTestId("evaluate-tab")).toBeInTheDocument();
+      });
 
-    expect(window.location.pathname).toBe("/evals");
-    expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
-  });
-
-  it("renders legacy Runs mode when enabled", async () => {
-    clearHostedOAuthPendingState();
-    clearScenarioSession();
-    window.history.replaceState({}, "", "/evals/runs");
-    mockHandleOAuthCallback.mockReset();
-    mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "playground-enabled" || flag === "evaluate-enabled",
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.pathname).toBe("/evals/runs");
-    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
-  });
+      expect(window.location.pathname).toBe("/evaluate");
+      expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
+    },
+  );
 
   it("keeps a conformance share link open", async () => {
     clearHostedOAuthPendingState();

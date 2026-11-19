@@ -409,34 +409,17 @@ export const APP_SURFACES = [
       "evals/runs/suite/:suiteId/test/:testId/edit",
     ],
     navSegments: ["evals"],
-    title: "Evaluate",
+    title: "Legacy eval links",
     purpose:
-      "Build and run eval suites against a host: test cases with expected tool calls, scored over repeated runs. Two lenses over the same suites — Suites (`/evals`) authors and runs them; Runs (`/evals/runs`) reviews the results CI already produced, keyed by commit.",
-    userActivities: [
-      "Create or edit an eval suite and its test cases",
-      "Run a suite and watch its runs",
-      "Generate suggested test cases for a suite",
-      "Open a run to inspect each step, tool call, and score",
-      "Compare runs",
-      "Review eval results for a commit under Runs",
-      "Open a CI run's details under Runs",
-    ],
+      "Compatibility routes for saved eval links that redirect to Evaluate.",
+    userActivities: ["Open a saved suite or run link in Evaluate"],
     hasSnapshotProvider: true,
-    // Authoring tools register from Suites mode only. Runs mode is read-only
-    // review of results CI already produced (runs start from CI, not this
-    // screen), so it contributes its snapshot but no tools.
+    // EvaluateTab still registers its snapshot and tools under this surface ID.
     agentTools: { kind: "group" },
-    showInAtlas: true,
+    showInAtlas: false,
   },
   {
-    // Evaluate (New): the redesigned Evaluate tab, behind
-    // `evaluate-enabled`. A SEPARATE surface rather than a variant of
-    // `evals` so the shipped tab keeps its routes, its agent tools, and its
-    // behaviour untouched while this one is dogfooded. It is deleted (and its
-    // routes folded into `evals`) once the redesign replaces the original.
     id: "evaluate",
-    // Same suites and same project-owned data as Evaluate — the redesign
-    // changes the screens, not who owns them.
     scope: "project",
     canonicalPath: "/evaluate",
     routePatterns: [
@@ -454,9 +437,9 @@ export const APP_SURFACES = [
       "evaluate/suite/:suiteId/test/:testId/edit",
     ],
     navSegments: ["evaluate"],
-    title: "Evaluate (New)",
+    title: "Evaluate",
     purpose:
-      "Preview of the redesigned Evaluate tab: a suites landing with a Runs view, a full-page create-suite flow, and a suite overview built around run history. Same suites and same data as Evaluate — only the screens differ.",
+      "Create and run eval suites, configure grading in Suite Settings, and review run history, case results, and comparisons.",
     userActivities: [
       "Browse eval suites from the landing table",
       "Start a first-run preview from a connected server",
@@ -464,21 +447,14 @@ export const APP_SURFACES = [
       "Open a suite's overview to see its run history and cases",
       "Open a run to inspect each step, tool call, and score",
     ],
-    // No snapshot provider and no tool group of its own: the component
-    // bridges as `surfaceId: "evals"`, reusing that surface's group and
-    // snapshot. The two tabs are never mounted at once, and duplicating the
-    // agent contract for a preview shell would give the model two names for
-    // one set of suites.
+    // Reuse the persisted evals tool/snapshot identity rather than duplicating it.
     hasSnapshotProvider: false,
     agentTools: {
       kind: "none",
       reason:
-        'Flag-gated preview of the Evaluate tab. It bridges as surfaceId "evals" and reuses that surface\'s tool group, so declaring a second group would advertise duplicate tools for the same suites.',
+        'Uses the snapshot and tool group registered under surfaceId "evals".',
     },
-    // Flag-gated: the atlas is static and cannot read `evaluate-enabled`,
-    // so advertising this path would send the agent to a screen that is
-    // unreachable for almost every project. Same rationale as `sessions`.
-    showInAtlas: false,
+    showInAtlas: true,
   },
   {
     id: "tools",
@@ -794,6 +770,7 @@ export const APP_SURFACES = [
       "organizations/:orgId/sharing",
       "organizations/:orgId/audit-log",
       "organizations/:orgId/data-management",
+      "organizations/:orgId/security",
       "organizations/:orgId/api-keys",
       "organizations/:orgId/plans",
       "organizations/:orgId/billing",
@@ -823,6 +800,7 @@ export const APP_SURFACES = [
       "Manage organization members",
       "Review or change billing",
       "Configure allowed models and provider keys",
+      "Turn credential export on or off",
     ],
     agentTools: {
       kind: "none",

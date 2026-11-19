@@ -137,7 +137,6 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "home-page-enabled",
   "project-environments-enabled",
   "unified-sessions-enabled",
-  "evaluate-enabled",
   WEBMCP_INSPECTOR_FEATURE_FLAG,
   EVENTS_FEATURE_FLAG,
 ] as const;
@@ -272,13 +271,6 @@ export const navigationSections: NavSection[] = [
     id: "measure",
     label: "Measure",
     items: [
-      {
-        title: "Evaluate (Legacy)",
-        url: "/evals",
-        featureFlag: "evaluate-enabled",
-        icon: FlaskConical,
-        billingFeature: "evals",
-      },
       {
         title: "Evaluate",
         url: "/evaluate",
@@ -546,7 +538,6 @@ export function MCPSidebar({
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
     "unified-sessions-enabled",
   );
-  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
   const eventsEnabled = useEventsEnabledState();
   const webmcpInspectorEnabled = useWebmcpInspectorEnabledState();
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
@@ -659,9 +650,6 @@ export function MCPSidebar({
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
-      // Project-scoped like the rows above: every screen behind it needs a
-      // project to resolve suites against.
-      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
       // Hosted: the backend's availability answer, flag and readiness both.
       // Local: the local Browser rollout, which local guests may be in too.
       [WEBMCP_INSPECTOR_FEATURE_FLAG]: webmcpInspectorEnabled === true,
@@ -674,7 +662,6 @@ export function MCPSidebar({
       readinessEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
-      evaluateEnabled,
       webmcpInspectorEnabled,
       eventsEnabled,
       isAuthenticated,

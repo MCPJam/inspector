@@ -96,16 +96,27 @@ export function useCaseStepsDraft({
   const [saving, setSaving] = useState(false);
   const inFlight = useRef(false);
   const seededFor = useRef<string | null>(null);
-  // Re-seed only when the case changes, never on a live update mid-edit.
+  const baseline = useRef<EvalCase | null>(null);
+  // Seed when the case changes; a New case seeds a blank draft once. A live
+  // update reseeds only a draft with no edits of its own, so edits are kept.
   const seedKey = testCaseId ?? (testCases ? "new" : null);
   useEffect(() => {
-    if (!seedKey || seededFor.current === seedKey) return;
-    if (testCaseId !== null && !testCase) return;
-    seededFor.current = seedKey;
-    if (testCase) setDraftState(seedCaseStepsDraft(testCase));
-    else {
-      const blank = buildDraftTestCase("draft:prompt", testCases);
-      setDraftState(blankCaseStepsDraft(blank.title, blank.runs));
+    if (!seedKey || (testCaseId !== null && !testCase)) return;
+    const before = baseline.current;
+    baseline.current = testCase;
+    if (seededFor.current !== seedKey) {
+      seededFor.current = seedKey;
+      if (testCase) setDraftState(seedCaseStepsDraft(testCase));
+      else {
+        const blank = buildDraftTestCase("draft:prompt", testCases);
+        setDraftState(blankCaseStepsDraft(blank.title, blank.runs));
+      }
+    } else if (testCase && before && before !== testCase) {
+      setDraftState((current) =>
+        current && !isCaseStepsDirty(current, before)
+          ? seedCaseStepsDraft(testCase)
+          : current,
+      );
     }
   }, [seedKey, testCaseId, testCase, testCases]);
 
@@ -237,6 +248,7 @@ export function useCaseStepsDraft({
     capabilities,
     save,
     saving,
+    invalidField,
     setInvalidField,
   };
 }

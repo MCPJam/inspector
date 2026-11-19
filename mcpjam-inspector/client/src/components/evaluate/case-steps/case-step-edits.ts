@@ -23,6 +23,7 @@ import {
 } from "@/shared/steps";
 import { safeResolveMatchOptions } from "../case-scorecard/case-scorecard-model";
 import {
+  deriveCaseKind,
   matchOptionsForKind,
   readSimpleCase,
   restoreToolChecks,
@@ -82,8 +83,8 @@ export const chooseTools: DraftEdit = (draft) => {
   if (view.tools.length > 0 || draft.stashedTools.length === 0) {
     return { ...draft, toolsChoice: "tools" };
   }
-  const checks = draft.stashedTools.flatMap(({ step, preceding }) =>
-    step && preceding ? [{ step, preceding }] : [],
+  const checks = draft.stashedTools.flatMap(({ step, preceding, owner }) =>
+    step && preceding ? [{ step, preceding, owner }] : [],
   );
   return {
     ...draft,
@@ -99,6 +100,7 @@ export const chooseTools: DraftEdit = (draft) => {
   };
 };
 
+/** A kind the suite's options already give leaves no override, so suite changes reach the case. */
 export function setCaseKind(
   draft: CaseStepsDraft,
   kind: CaseKind,
@@ -108,7 +110,34 @@ export function setCaseKind(
     suiteDefaultMatchOptions,
     draft.matchOptions,
   );
-  return { ...draft, kind, matchOptions: matchOptionsForKind(kind, resolved) };
+  const matchOptions = matchOptionsForKind(kind, resolved);
+  const suite = safeResolveMatchOptions(suiteDefaultMatchOptions, undefined);
+  const inherited =
+    deriveCaseKind(suite) === kind &&
+    suite.argumentMatching === matchOptions.argumentMatching &&
+    suite.toolCallOrder === matchOptions.toolCallOrder &&
+    suite.maxExtraToolCalls === matchOptions.maxExtraToolCalls;
+  return inherited
+    ? { ...draft, kind: undefined, matchOptions: undefined }
+    : { ...draft, kind, matchOptions };
+}
+
+/** Exact order off; a "Tool was called with" it added and nobody filled goes too. */
+export function removeExactOrder(
+  draft: CaseStepsDraft,
+  suiteDefaultMatchOptions: CaseSaveForm["matchOptions"],
+): CaseStepsDraft {
+  const next = setCaseKind(draft, "capability", suiteDefaultMatchOptions);
+  const tools = readSimpleCase(next.steps).tools;
+  const blank = new Set(
+    tools.filter((tool) => !tool.toolName.trim()).map((tool) => tool.id),
+  );
+  if (blank.size === 0) return next;
+  return {
+    ...next,
+    steps: next.steps.filter((step) => !blank.has(step.id)),
+    toolsChoice: blank.size === tools.length ? "unset" : next.toolsChoice,
+  };
 }
 
 export function updateStep(
@@ -218,8 +247,10 @@ export function addAfterRun(
         next = setCaseKind(next, "regression", suiteDefaultMatchOptions);
         if (readSimpleCase(next.steps).tools.length > 0) return next;
         const first = actionRows(next.steps).actions[0];
+        // With no step to follow, a leading check would lock the route.
+        if (!first) return { ...next, toolsChoice: "tools" };
         return insertAssertion(
-          first?.step.id ?? null,
+          first.step.id,
           blankPredicate("toolCalledWith"),
         ).edit({ ...next, toolsChoice: "tools" });
       },

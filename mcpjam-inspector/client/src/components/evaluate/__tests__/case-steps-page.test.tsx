@@ -445,4 +445,58 @@ describe("opensInStepsEditor", () => {
   ])("%j opens in the steps editor: %s", (route, opens) => {
     expect(opensInStepsEditor(route)).toBe(opens);
   });
+
+  it("disables Run while a field holds text that isn't valid", async () => {
+    state.cases = [
+      {
+        ...storedCase,
+        steps: [
+          ...steps,
+          {
+            id: "t1",
+            kind: "toolCall",
+            serverName: "asana",
+            toolName: "list_projects",
+            arguments: {},
+          },
+        ],
+      },
+    ];
+    renderPage();
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("button", {
+        name: /list_projects/,
+        expanded: false,
+      }),
+    );
+    const args = screen.getByRole("textbox", { name: "Arguments" });
+    await user.clear(args);
+    await user.type(args, "{{");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run" })).toBeDisabled(),
+    );
+  });
+
+  it("locks the editor while a save runs, so a later edit isn't lost", async () => {
+    let finish = () => {};
+    state.update = vi.fn(
+      () =>
+        new Promise<null>((resolve) => {
+          finish = () => resolve(null);
+        }),
+    );
+    renderPage();
+    const prompt = await screen.findByRole("textbox", {
+      name: "What does the user ask?",
+    });
+    const user = userEvent.setup();
+    await user.type(prompt, "!");
+    await user.click(
+      screen.getByRole("button", { name: "Test Case Evaluators" }),
+    );
+    await waitFor(() => expect(prompt).toHaveAttribute("readonly"));
+    finish();
+    await waitFor(() => expect(prompt).not.toHaveAttribute("readonly"));
+  });
 });

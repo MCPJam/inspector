@@ -12,6 +12,7 @@ export function EvalTabGate({
   projectId,
   isDirectGuest = false,
   header,
+  overlay,
   children,
 }: {
   variant: EvalTabGateVariant;
@@ -32,17 +33,23 @@ export function EvalTabGate({
    * on the Suites wall must still be able to get there.
    */
   header?: ReactNode;
+  /**
+   * Covers header and body once the gate is open (the Evaluate tour). Its
+   * box is the tab, so it can draw over the header too.
+   */
+  overlay?: ReactNode;
   children: ReactNode;
 }) {
   const Icon = variant === "playground" ? FlaskConical : GitBranch;
 
-  const withHeader = (body: ReactNode) =>
-    header ? (
-      <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+  const withHeader = (body: ReactNode, cover?: ReactNode) =>
+    header || cover ? (
+      <div className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
         {header}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {body}
         </div>
+        {cover}
       </div>
     ) : (
       <>{body}</>
@@ -65,7 +72,7 @@ export function EvalTabGate({
 
   if (variant === "playground") {
     if (isDirectGuest) {
-      return withHeader(children);
+      return withHeader(children, overlay);
     }
 
     if (!isAuthenticated || (!user && !projectId)) {
@@ -95,5 +102,5 @@ export function EvalTabGate({
     }
   }
 
-  return withHeader(children);
+  return withHeader(children, overlay);
 }

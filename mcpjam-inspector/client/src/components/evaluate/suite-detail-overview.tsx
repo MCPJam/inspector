@@ -852,7 +852,7 @@ export function SuiteDetailOverview({
                 className="h-8"
                 onClick={onSetupSdk}
               >
-                <Code2 className="size-3.5" aria-hidden /> Setup SDK
+                <Code2 className="size-3.5" aria-hidden /> Set up SDK
               </Button>
             )}
             {configLocked ? (

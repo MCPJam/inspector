@@ -21,9 +21,11 @@
  * MCPJam sees only the conversation and its own tools' results.
  */
 import type { HarnessV1, HarnessV1PermissionMode } from "@ai-sdk/harness";
+import { approvalAnswerOf } from "@/shared/tool-approval";
 import { logger } from "../logger.js";
 import { ACTING_SERVER_SKILL_GATED_TOOLS } from "../server-skill-acting-gate.js";
 import {
+  DENY_UNANSWERED,
   withNativeRequestDecisions,
   type NativeRequestCall,
   type NativeRequestDecision,
@@ -52,9 +54,10 @@ export function commandGateAnswerer(turn: {
   resumable: boolean;
 }): CommandGateAnswerer {
   if (turn.scenarioParticipant) return "guest";
-  return turn.approvalMode === "auto-deny" ||
+  return approvalAnswerOf(turn.approvalMode) === "deny" ||
     turn.sourceType === "eval" ||
     turn.sourceType === "swarm" ||
+    turn.sourceType === "event" ||
     !turn.resumable
     ? "nobody"
     : "member";
@@ -134,10 +137,6 @@ export const COMMAND_REFUSED_IN_USE = {
     "session. Continue without running commands.",
 } as const;
 
-const REFUSED_UNANSWERED =
-  "MCPJam did not run this call: it needs approval, and nobody can " +
-  "approve it on this run.";
-
 /** MCPJam's answer to one request from a runtime the gate holds. */
 export function commandGateDecision(
   call: NativeRequestCall | undefined,
@@ -149,11 +148,9 @@ export function commandGateDecision(
       : { kind: "deny", reason: COMMAND_REFUSED_IN_USE[state.answerer] };
   }
   if (!state.switchOn) return APPROVE;
-  // The turn's approval refusal keeps an unattended turn from getting here
-  // with the switch on; a request nobody can answer must not wait for one.
-  return state.answerer === "nobody"
-    ? { kind: "deny", reason: REFUSED_UNANSWERED }
-    : ASK;
+  // A request nobody can answer must not wait for one: it gets the denial
+  // MCPJam's engine gives an unattended turn.
+  return state.answerer === "nobody" ? DENY_UNANSWERED : ASK;
 }
 
 /**

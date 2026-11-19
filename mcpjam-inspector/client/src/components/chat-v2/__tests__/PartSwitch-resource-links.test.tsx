@@ -5,10 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { PartSwitch } from "../thread/part-switch";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import { createThreadAppApi } from "@/components/host-workspace/thread-app-api";
-import {
-  injectHostedServerMapping,
-  setApiContext,
-} from "@/lib/apis/web/context";
+import { setApiContext } from "@/lib/apis/web/context";
 
 const { observeToolPart } = vi.hoisted(() => ({ observeToolPart: vi.fn() }));
 vi.mock("../thread/parts/tool-part", async (importOriginal) => {
@@ -96,11 +93,16 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+const localAliasContext = {
+  projectId: "project-1",
+  serverIdsByName: { "local-alias": "saved-id" },
+};
+
 describe("PartSwitch resource provenance", () => {
   it.each([false, true])(
     "opens the saved server's resource when a local alias exists: %s",
     async (local) => {
-      if (local) injectHostedServerMapping("local-alias", "saved-id");
+      if (local) setApiContext(localAliasContext);
       const owner = workspace(["saved-id"]);
       render(
         <WorkspaceFileActionsProvider value={owner.value}>
@@ -126,7 +128,7 @@ describe("PartSwitch resource provenance", () => {
   );
 
   it("does not borrow another saved server's file authority", () => {
-    injectHostedServerMapping("local-alias", "saved-id");
+    setApiContext(localAliasContext);
     const owner = workspace(["another-saved-id"]);
     render(
       <WorkspaceFileActionsProvider value={owner.value}>

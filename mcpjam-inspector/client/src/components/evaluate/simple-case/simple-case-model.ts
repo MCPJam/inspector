@@ -14,6 +14,7 @@
  */
 
 import {
+  actionRows,
   insertStepAfter,
   isAssertStep,
   isInteractStep,
@@ -185,32 +186,63 @@ function isAnyToolCalledWith(step: TestStep): step is ToolCalledWithStep {
 export type StashedToolCheck = {
   step: ToolCalledWithStep;
   preceding: string[];
+  /** The action it was graded after; null when it led the case. */
+  owner?: string | null;
 };
+
+/** Each step's action: itself for an action, the one it follows for an assert. */
+function ownerOf(steps: TestStep[]): Map<string, string | null> {
+  const { leading, actions } = actionRows(steps);
+  const owners = new Map<string, string | null>();
+  for (const child of leading) owners.set(child.step.id, null);
+  for (const action of actions) {
+    owners.set(action.step.id, action.step.id);
+    for (const child of action.checks)
+      owners.set(child.step.id, action.step.id);
+  }
+  return owners;
+}
 
 export function stashToolChecks(steps: TestStep[]): StashedToolCheck[] {
   const ids = steps.map((step) => step.id);
+  const owners = ownerOf(steps);
   return steps.flatMap((step, index) =>
     isAnyToolCalledWith(step)
-      ? [{ step, preceding: ids.slice(0, index).reverse() }]
+      ? [
+          {
+            step,
+            preceding: ids.slice(0, index).reverse(),
+            owner: owners.get(step.id) ?? null,
+          },
+        ]
       : [],
   );
 }
 
 /**
  * Each stashed assert back, unchanged, after the nearest earlier step still
- * there (else after the first prompt). One already in the case stays put.
+ * under its own action (any earlier step, once that action is gone), else
+ * after the first prompt; one that led the case goes back first. One still in
+ * the case stays put.
  */
 export function restoreToolChecks(
   steps: TestStep[],
   stash: StashedToolCheck[],
 ): TestStep[] {
   const next = [...steps];
-  for (const { step, preceding } of stash) {
+  for (const { step, preceding, owner } of stash) {
     if (next.some((item) => item.id === step.id)) continue;
-    const anchor = preceding.find((id) => next.some((item) => item.id === id));
+    const owners = ownerOf(next);
+    const anyAction =
+      owner === undefined || (owner !== null && !owners.has(owner));
+    const anchor = preceding.find(
+      (id) => owners.has(id) && (anyAction || owners.get(id) === owner),
+    );
     const index = anchor
       ? next.findIndex((item) => item.id === anchor)
-      : next.findIndex((item) => item.kind === "prompt");
+      : owner === null || preceding.length === 0
+        ? -1
+        : next.findIndex((item) => item.kind === "prompt");
     next.splice(index + 1, 0, step);
   }
   return next;

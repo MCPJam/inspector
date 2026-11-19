@@ -232,6 +232,13 @@ export function BehaviorTab({
       ),
     [catalogModels, selectedHarness, requireOrgKeys],
   );
+  const modelHarnessScope = useMemo(
+    () => ({
+      targets: [selectedHarness ? { harnessId: selectedHarness } : null],
+      purpose: "chat" as const,
+    }),
+    [selectedHarness],
+  );
   // Under the policy a pick must save an organization selection, which a
   // deployment without stored selections cannot keep.
   const modelPickBlocked = requireOrgKeys && !modelSelectionsSupported;
@@ -392,6 +399,7 @@ export function BehaviorTab({
               <ModelSelector
                 currentModel={currentModel}
                 availableModels={availableModels}
+                harnessScope={modelHarnessScope}
                 requireOrgKeys={requireOrgKeys}
                 onManageOrgProviders={onManageOrgProviders}
                 onAddProvider={onAddProvider}

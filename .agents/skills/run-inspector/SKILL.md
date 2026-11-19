@@ -39,13 +39,17 @@ Keep this link private: it signs a browser in.
 Open that exact link in the browser; the bare client URL does not
 carry the session token. Never paste the link into a PR, comment or log.
 
-Signed-in flows (WorkOS) need a real account. With access to the
-`mcpjam-backend` checkout, run `npm run agent-env -- up --name <change>`
-there: it creates a disposable backend running your backend code, a test
-account and an instance profile. Start this instance with that profile
-(`--env-file`), then run `npm run agent-env -- sign-in` to get a Playwright
-storage state, once per browser context. Without that checkout, say in the
-PR which signed-in checks you could not run instead of faking them.
+Signed-in flows (WorkOS) need a real account: see the next section.
+
+## QA a PR, signed in
+
+Signed-in checks need a real account on a backend of your own. MCPJam staff
+get one from Jamroom, MCPJam's MCP server for agent environments, and follow
+the `jamroom` skill in the `mcpjam-backend` repository
+(`.agents/skills/jamroom/SKILL.md`). It covers the whole run: building the
+environment, starting this app signed in against it, recording evidence and
+cleaning up. Without it, say in the PR which signed-in checks you couldn't
+run instead of faking them.
 
 ## Guest mode
 
@@ -76,7 +80,8 @@ QA profile or member sign-in is unavailable, report which checks are blocked.
 3. Take a screenshot in light mode, then switch to dark mode and take another.
    Both themes must read correctly.
 4. Check the browser console for new errors.
-5. Attach the screenshots to the PR description.
+5. Attach the screenshots to the PR description. An agent that can't attach
+   images to a PR uploads them to the Kestral task and links them instead.
 
 ## Something to connect to
 

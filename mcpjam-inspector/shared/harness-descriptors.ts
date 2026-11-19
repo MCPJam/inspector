@@ -150,9 +150,7 @@ export const HARNESS_DESCRIPTORS = {
     displayName: "Cursor CLI", runtimeName: "Cursor CLI", runtimeVersion: "2026.11.05-86047df", mcpClient: "harness",
     modelAccess: "external-account", orgKeys: false, protocol: null,
     unavailableOn: {
-      api: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
-      events: "Cursor CLI runs only in the Playground, evals and swarms. Use it there, or choose a different client.",
-      "user-testing": "Cursor CLI runs only in the Playground, evals and swarms. Choose a different client for this study.",
+      "user-testing": "Cursor CLI runs only in the Playground, evals, swarms and the API. Choose a different client for this study.",
       guests: "Cursor CLI runs on the organization's own Cursor account, so guests can't use it.",
     },
     credential: { env: "CURSOR_API_KEY", label: "Cursor API key",
@@ -163,10 +161,7 @@ export const HARNESS_DESCRIPTORS = {
     displayName: "OpenCode", runtimeName: "OpenCode", runtimeVersion: "1.18.34", mcpClient: "mcpjam",
     modelAccess: "broker", orgKeys: true,
     protocol: "anthropic-messages", credential: null,
-    unavailableOn: {
-      local: "OpenCode can't run on your computer yet. Run it in the cloud instead.",
-      guests: "OpenCode isn't available to guests until it's tested with them.",
-    },
+    unavailableOn: {},
     controls: LOOP_CONTROLS.opencode, reasoningEfforts: HARNESS_REASONING_EFFORTS.opencode,
   },
 } as const satisfies Record<
