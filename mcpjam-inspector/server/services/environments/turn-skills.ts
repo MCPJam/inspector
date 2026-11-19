@@ -266,8 +266,26 @@ export function planWithLiveServerSkills(
   modelContextTokens?: number,
 ): TurnSkills {
   const set = withLiveServerSkills(plan.set, live);
+  return {
+    ...plan,
+    set,
+    delivered: [...plan.delivered, ...liveServerSkillRefs(set, modelContextTokens)],
+  };
+}
+
+/**
+ * The connected servers' own skills a set holds once they have joined it, as
+ * the refs a plan names: the skills MCPJam will load, with the ones the
+ * prompt's skill list leaves out marked. Both engines count a live turn's
+ * server skills from this, so the agent's plan and a harness's report cannot
+ * disagree about them.
+ */
+export function liveServerSkillRefs(
+  set: EffectiveCapabilitySet,
+  modelContextTokens?: number,
+): SkillRef[] {
   const omitted = new Set(skillCatalogOmissions(set, modelContextTokens));
-  const served = (set.liveServerSkills?.skills ?? []).flatMap(
+  return (set.liveServerSkills?.skills ?? []).flatMap(
     ({ skillUri, ref, name, unloadable }): SkillRef[] =>
       unloadable
         ? []
@@ -277,7 +295,6 @@ export function planWithLiveServerSkills(
               : { skillId: skillUri, ref, name },
           ],
   );
-  return { ...plan, set, delivered: [...plan.delivered, ...served] };
 }
 
 /**

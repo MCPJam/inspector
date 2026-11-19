@@ -302,12 +302,9 @@ export interface RunAssistantTurnOptions
    */
   builtInTools?: MCPJamHandlerOptions["builtInTools"];
 
-  /** The skills this turn's environment resolved to, the set carrying their
-   *  supporting files, and whether the turn is live. Pass-through to
-   *  `runHarnessTurn`; see `harness/skill-delivery.ts`. */
-  runtimeSkillsOverride?: MCPJamHandlerOptions["runtimeSkillsOverride"];
+  /** The turn's capability set, for its plugins' origins and versions.
+   *  Pass-through to `runHarnessTurn`. */
   effectiveCapabilities?: MCPJamHandlerOptions["effectiveCapabilities"];
-  liveTurn?: MCPJamHandlerOptions["liveTurn"];
 
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project

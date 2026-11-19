@@ -246,7 +246,8 @@ describe("managed setup local runtime policy", () => {
     expect(setup.value?.turnSkills.skills.agent).toEqual({
       kind: "environment",
     });
-    expect(setup.value?.turnSkills.live).toBe(false);
+    // A named environment captured its own server skills.
+    expect(setup.value?.turnSkills.skills.agent?.kind).not.toBe("live");
   });
 
   it("never gives a recorded scenario turn this machine's skills", async () => {
@@ -295,11 +296,9 @@ describe("managed setup local runtime policy", () => {
     expect(
       setup.value?.turnSkills.skills.delivered.map((ref) => ref.ref),
     ).toEqual(["onboarding"]);
-    expect(setup.value?.turnSkills.box?.skills.map((s) => s.name)).toEqual([
-      "onboarding",
-    ]);
-    // Its servers are connected now, on a harness too.
-    expect(setup.value?.turnSkills.live).toBe(true);
+    expect(setup.value?.turnSkills.environmentSkillCount).toBe(1);
+    // Its servers are connected now, so their own skills join.
+    expect(setup.value?.turnSkills.skills.agent).toEqual({ kind: "live" });
   });
 });
 

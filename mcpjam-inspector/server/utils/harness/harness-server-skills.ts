@@ -28,7 +28,8 @@ import {
   type RuntimeServerSkill,
 } from "../../services/environments/effective-capabilities.js";
 import { downloadedFileBytes } from "../../services/evals/run-plugin-snapshot.js";
-import { getEffectiveSkillToolsAndPrompt, skillCatalogOmissions } from "../computers/effective-skill-tools.js";
+import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
+import { liveServerSkillRefs } from "../../services/environments/turn-skills.js";
 import { listLiveServerSkills } from "../computers/live-server-skills.js";
 import type { BoxSkillOutcome, BoxSkillsResult } from "./box-skills-writer.js";
 import type { HarnessSkillSource } from "./skill-delivery.js";
@@ -119,10 +120,7 @@ export async function harnessServerSkills(
     args.signal ? { signal: args.signal } : {},
   );
   const offered = Object.keys(tools).length > 0;
-  const listed = effective.liveServerSkills?.skills ?? [];
-  const liveRefs = new Set(
-    listed.filter((skill) => !skill.unloadable).map(({ ref }) => ref),
-  );
+  const liveRefs = liveServerSkillRefs(effective);
   return {
     tools: offered ? servedThroughTranscript(tools, transcript) : {},
     promptSection:
@@ -135,11 +133,11 @@ export async function harnessServerSkills(
     ...(live && offered
       ? {
           liveDelivery: {
-            delivered: liveRefs.size,
-            collisions: live.skills.length - listed.length,
-            omittedFromCatalog: skillCatalogOmissions(effective).filter((ref) =>
-              liveRefs.has(ref),
-            ).length,
+            delivered: liveRefs.length,
+            collisions:
+              live.skills.length - (effective.liveServerSkills?.skills.length ?? 0),
+            omittedFromCatalog: liveRefs.filter((ref) => ref.omittedFromCatalog)
+              .length,
           },
         }
       : {}),
