@@ -120,6 +120,43 @@ describe("ConnectionAccountsSection", () => {
     expect(screen.queryByText("Side")).toBeNull();
   });
 
+  it("captions a shared or uploaded account with its token's expiry, or says it is unknown", () => {
+    const now = Date.now();
+    mocks.hook.mockReturnValue({
+      connections: [
+        {
+          connectionId: "jwt",
+          isDefault: true,
+          label: "test-automation-1",
+          hostedOnly: true,
+          expiresAt: now + 3_600_000,
+        },
+        {
+          connectionId: "opaque",
+          isDefault: false,
+          label: "test-automation-2",
+          hostedOnly: true,
+        },
+        {
+          connectionId: "old",
+          isDefault: false,
+          label: "test-automation-3",
+          hostedOnly: true,
+          expiresAt: now - 60_000,
+        },
+        // A person's own sign-in renews itself, so no expiry is shown.
+        { connectionId: "mine", isDefault: false, label: "Mine" },
+      ],
+      shared: true,
+      loaded: true,
+    });
+    mount();
+    expect(screen.getByText(/^Default · Expires /)).toBeTruthy();
+    expect(screen.getByText("Expiry unknown")).toBeTruthy();
+    expect(screen.getByText(/^Expired /)).toBeTruthy();
+    expect(screen.getAllByText(/Expir/)).toHaveLength(3);
+  });
+
   it("renames from the menu rather than a permanently open field", async () => {
     const user = userEvent.setup();
     mocks.update.mockResolvedValue(undefined);

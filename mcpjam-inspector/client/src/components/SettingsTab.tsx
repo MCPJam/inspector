@@ -16,6 +16,7 @@ import { Info, KeyRound, Sun, Moon, Monitor } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
+import { LocalModelRates } from "./model-rates/local-model-rates";
 
 interface SettingsTabProps {
   activeOrganizationId?: string;
@@ -185,6 +186,8 @@ export function SettingsTab({
               </div>
             </SettingsSection>
           )}
+
+          {!HOSTED_MODE && <LocalModelRates />}
         </>
       )}
     </SettingsPageShell>

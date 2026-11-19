@@ -208,18 +208,56 @@ export async function evaluateLocalHarnessRollout(
   trustedEmail?: string,
   flagKey: LocalHarnessRolloutFlag = "local-harness-enabled",
 ): Promise<boolean> {
+  return evaluateServerRollout(
+    flagKey,
+    distinctId,
+    { deployment: "self_hosted" },
+    trustedEmail,
+  );
+}
+
+/**
+ * A boolean rollout the server enforces, from the same flag source and person
+ * properties `GET /api/web/flags` uses. No exposure events; any failure is off.
+ */
+export async function evaluateServerRollout(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean> {
+  return (
+    (await serverRolloutAnswer(
+      flagKey,
+      distinctId,
+      personProperties,
+      trustedEmail,
+    )) === true
+  );
+}
+
+/**
+ * {@link evaluateServerRollout}'s decision, or `undefined` when there was
+ * none to read: the PostHog request failed or did not evaluate the flag. A
+ * caller that keeps answers keeps only a definite one.
+ */
+export async function serverRolloutAnswer(
+  flagKey: string,
+  distinctId: string,
+  personProperties: Record<string, string>,
+  trustedEmail?: string,
+): Promise<boolean | undefined> {
   if (!rolloutActorId(distinctId)) return false;
   const answer = rolloutAnswerWithoutPostHog(flagKey);
   if (answer !== undefined) return answer;
   try {
-    return (
-      (await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
-        sendFeatureFlagEvents: false,
-        personProperties: rolloutPersonProperties({ deployment: "self_hosted" }, trustedEmail),
-      })) === true
-    );
+    return await getClient(true)?.isFeatureEnabled(flagKey, distinctId, {
+      sendFeatureFlagEvents: false,
+      personProperties: rolloutPersonProperties(personProperties, trustedEmail),
+    });
   } catch {
-    return false;
+    // A request that failed is no answer; callers read it as off.
+    return undefined;
   }
 }
 

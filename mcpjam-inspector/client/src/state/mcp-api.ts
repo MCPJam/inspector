@@ -7,8 +7,10 @@ import type {
   NormalizedError,
 } from "@mcpjam/sdk/browser";
 import type { LoggingLevel } from "@modelcontextprotocol/client";
+import posthog from "posthog-js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { takeOAuthFlowSummary } from "@/lib/oauth/flow-summary";
 import { WebApiError } from "@/lib/apis/web/base";
 import {
   validateHostedServer,
@@ -132,7 +134,23 @@ function buildHostedValidationContext(
     ...(options.connectionDefaults?.toolCallCancellation
       ? { toolCallCancellation: options.connectionDefaults.toolCallCancellation }
       : {}),
+    ...oauthFlowSummaryField(options.serverName),
   };
+}
+
+/**
+ * A just-finished OAuth flow's summary rides on the server's next connect
+ * while `server-canvas` is on; the server drops it otherwise. With the flag
+ * off the summary stays queued, because right after an OAuth redirect the
+ * flag can still hold the evaluation from before the sign-in refresh.
+ */
+function oauthFlowSummaryField(serverName: string | undefined) {
+  // The provider's own client, so this is what `useFeatureFlagEnabled` reads.
+  const canvasOn =
+    posthog.isFeatureEnabled("server-canvas", { send_event: false }) === true;
+  if (!canvasOn) return {};
+  const oauthFlowSummary = takeOAuthFlowSummary(serverName);
+  return oauthFlowSummary ? { oauthFlowSummary } : {};
 }
 
 async function safeValidateHostedServer(
@@ -231,6 +249,7 @@ function buildResolverBody(
     ...(options.connectionDefaults
       ? { connectionDefaults: options.connectionDefaults }
       : {}),
+    ...oauthFlowSummaryField(options.serverName),
   };
 }
 

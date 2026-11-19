@@ -758,7 +758,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           onClick={onSetupCi}
         >
           <GitBranch className="h-3.5 w-3.5 shrink-0" aria-hidden />
-          Setup CI
+          Set up CI
         </Button>
       ) : null}
     </>
@@ -873,7 +873,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       onClick={onOpenExportSuite}
     >
       <Code2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-      Setup SDK
+      Set up SDK
     </Button>
   ) : null;
 

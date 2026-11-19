@@ -1,9 +1,24 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { ClientsPill } from "../clients-pill";
 
 const navigateMock = vi.hoisted(() => vi.fn());
+const hostsMock = vi.hoisted(() => ({
+  hosts: [
+    {
+      hostId: "host-a",
+      name: "Claude",
+      hostStyle: undefined as string | undefined,
+      hostConfigId: "cfg-a",
+      modelId: "gpt-4",
+      serverCount: 0,
+      createdAt: 0,
+      updatedAt: 0,
+    },
+  ],
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -15,20 +30,7 @@ vi.mock("@/lib/app-navigation", () => ({
 }));
 
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({
-    hosts: [
-      {
-        hostId: "host-a",
-        name: "Claude",
-        hostConfigId: "cfg-a",
-        modelId: "gpt-4",
-        serverCount: 0,
-        createdAt: 0,
-        updatedAt: 0,
-      },
-    ],
-    isLoading: false,
-  }),
+  useHostList: () => ({ hosts: hostsMock.hosts, isLoading: false }),
 }));
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
@@ -89,5 +91,38 @@ describe("ClientsPill create", () => {
     await user.click(screen.getByTestId("clients-pill-add"));
     await user.click(screen.getByTestId("create-host-dialog"));
     expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("ClientsPill logos", () => {
+  it("draws a renamed client's logo from its saved style", async () => {
+    const user = userEvent.setup();
+    const original = hostsMock.hosts;
+    hostsMock.hosts = [
+      { ...original[0], name: "Codex QA", hostStyle: "codex" },
+    ];
+    try {
+      render(
+        <ClientsPill
+          projectId="proj-1"
+          value={["host-a"]}
+          onChange={() => {}}
+          max={4}
+          testId="clients"
+        />,
+      );
+
+      const codex = getHostLogoSrc("codex");
+      expect(
+        screen.getByTestId("clients").querySelector("img"),
+      ).toHaveAttribute("src", codex);
+      await user.click(screen.getByTestId("clients"));
+      const option = screen.getByRole("checkbox", { name: /Codex QA/ });
+      expect(
+        option.closest("label, div")?.querySelector("img"),
+      ).toHaveAttribute("src", codex);
+    } finally {
+      hostsMock.hosts = original;
+    }
   });
 });

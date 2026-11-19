@@ -11,6 +11,8 @@ const buttonVariants = cva(
       variant: {
         default:
           "bg-primary text-primary-foreground shadow-xs hover:bg-primary/90",
+        contrast:
+          "border border-card-foreground bg-card-foreground text-card shadow-none hover:bg-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-card-foreground",
         destructive:
           "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60",
         outline:
@@ -23,6 +25,10 @@ const buttonVariants = cva(
         // vanish into the fill.
         secondary:
           "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-control-hover",
+        // Header buttons on the linen ground: a paper fill with the chrome
+        // hairline, so the server selector keeps the only beige fill.
+        chrome:
+          "bg-chrome-button text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-button-hover",
         // No fill at rest, chrome fill on hover. One token for both themes,
         // so this no longer needs a dark-mode override.
         //

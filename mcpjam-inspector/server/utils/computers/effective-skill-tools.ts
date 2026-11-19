@@ -34,8 +34,9 @@
  * load, and their files are read only under the manifest they were loaded
  * with (`server-skill-held-entry.ts`).
  *
- * Approval policy is the CALLER's: `prepareChatV2` wraps these with the host's
- * ordinary `requireToolApproval`. Plugin origin never bypasses approval.
+ * No tool here asks for approval, whatever the switch says or wherever the
+ * skill came from: reading a skill acts on nothing. What a server's skill then
+ * leads the model to do is gated where it acts (`server-skill-acting-gate.ts`).
  */
 import { skillTool as tool } from "../skill-tool.js";
 import { z } from "zod";
@@ -43,6 +44,7 @@ import { sha256HexOfText } from "@mcpjam/sdk";
 import { getMimeType, isTextMimeType } from "../skill-parser.js";
 import { logger } from "../logger.js";
 import { buildServerSkillBanner } from "../../../shared/server-skill-banner.js";
+import { needsApprovalFor } from "../../../shared/tool-approval.js";
 import {
   MAX_SKILL_FILE_TEXT_BYTES,
   SKILL_FILE_MAX_READ_BYTES,
@@ -308,7 +310,7 @@ function catalogOf(
     capabilities.liveServerSkills,
     modelContextTokens
   );
-  return { skills, pluginRefs, serverRefs, listing };
+  return { skills, pluginRefs, listing };
 }
 
 /**
@@ -327,10 +329,8 @@ export function createEffectiveSkillTools(args: {
   skills: EffectiveSkill[];
   /** Refs that came through the PLUGIN channel — see {@link originLabel}. */
   pluginRefs: Set<string>;
-  /** Refs captured from MCP servers, which always require approval to load. */
-  serverRefs: Set<string>;
   signal?: AbortSignal;
-  /** A live turn's server skills. Their loads follow the host's switch. */
+  /** A live turn's server skills. Loading one never asks, like any skill. */
   live?: LiveServerSkills;
 }) {
   const lookup = buildLookup(args.skills);
@@ -371,15 +371,9 @@ export function createEffectiveSkillTools(args: {
             }),
             execute: ({ name }) => loadFromSet(name),
           })),
-      // floor: always for a SERVER-origin ref (a third party's instructions
-      // entering the turn), never for the rest. A function rather than a
-      // constant because the answer depends on which skill the model named.
-      // A live server skill is not in `serverRefs`: it follows the switch.
-      needsApproval: ({ name }: { name?: string }) => {
-        if (name === undefined) return false;
-        const resolved = resolveRef(lookup, name);
-        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
-      },
+      // Floor: never, for every origin, live server skills included. See the
+      // header.
+      needsApproval: needsApprovalFor("never", false),
     },
 
     listSkillFiles: tool({
@@ -388,6 +382,7 @@ export function createEffectiveSkillTools(args: {
       inputSchema: z.object({
         name: z.string().describe("The skill reference."),
       }),
+      needsApproval: needsApprovalFor("never", false),
       execute: async ({ name }, options) => {
         const fromServer = await serverFiles?.list(name, options);
         if (fromServer !== undefined) return fromServer;
@@ -496,13 +491,7 @@ export function createEffectiveSkillTools(args: {
           }
         },
       }),
-      // floor: always for a SERVER-origin ref (a third party's instructions
-      // entering the turn), never for the rest. A function rather than a
-      // constant because the answer depends on which skill the model named.
-      needsApproval: ({ name }: { name: string }) => {
-        const resolved = resolveRef(lookup, name);
-        return resolved.ok && args.serverRefs.has(resolved.skill.ref);
-      },
+      needsApproval: needsApprovalFor("never", false),
     },
   };
 }
@@ -538,7 +527,7 @@ export function getEffectiveSkillToolsAndPrompt(
   tools: Partial<ReturnType<typeof createEffectiveSkillTools>>;
   systemPromptSection: string;
 } {
-  const { skills, pluginRefs, serverRefs, listing } = catalogOf(
+  const { skills, pluginRefs, listing } = catalogOf(
     capabilities,
     options?.modelContextTokens
   );
@@ -559,7 +548,6 @@ export function getEffectiveSkillToolsAndPrompt(
   const tools = createEffectiveSkillTools({
     skills,
     pluginRefs,
-    serverRefs,
     ...(options?.signal ? { signal: options.signal } : {}),
     ...(live ? { live } : {}),
   });

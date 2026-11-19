@@ -130,6 +130,63 @@ describe("resolveLocalModelSelection", () => {
     });
   });
 
+  describe("Azure OpenAI runs only on a named deployment", () => {
+    const azure = (
+      modelId: string,
+      nativeModelId?: string,
+    ): ModelSelection => ({
+      modelId,
+      source: "org",
+      connectionRef: { kind: "orgProvider", id: "orgprov_azure" },
+      ...(nativeModelId !== undefined ? { nativeModelId } : {}),
+      fallback: none,
+    });
+    const resolveAzure = (selection: ModelSelection) =>
+      resolveLocalModelSelection({
+        selection,
+        purpose: "evalTarget",
+        orgProviderKey: "azure",
+        hasOrgTarget: true,
+        orgProviders: [{ providerKey: "azure", modelIds: [] }],
+        hasLocalKey: noKeys,
+      });
+
+    it.each([
+      ["a catalog row with no deployment", azure("azure/gpt-5.1-codex-mini")],
+      ["a blank deployment", azure("azure/gpt-5.1", "  ")],
+    ])("refuses %s as invalid_model, naming the fix", (_label, selection) => {
+      const result = resolveAzure(selection);
+      expect(!result.ok && result.refusals[0]).toMatchObject({
+        code: "invalid_model",
+        reason: `${selection.modelId} has no Azure deployment. Pick a deployment for it, or add one in Organization → AI providers.`,
+        evidence: { connectionId: "orgprov_azure", providerKey: "azure" },
+      });
+    });
+
+    it.each([
+      ["an explicit deployment", azure("azure/prod-gpt51", "prod-gpt51"), "prod-gpt51"],
+      ["a bare deployment id", azure("prod-gpt51"), "prod-gpt51"],
+    ])("runs %s on the org rail as is", (_label, selection, wire) => {
+      const result = resolveAzure(selection);
+      expect(result.ok && result.plan).toMatchObject({
+        rail: "org",
+        providerKey: "azure",
+        wireModelId: wire,
+      });
+    });
+
+    it("refuses without the org config too: the rule needs no model list", () => {
+      const result = resolveLocalModelSelection({
+        selection: azure("azure/gpt-5.1"),
+        purpose: "evalTarget",
+        orgProviderKey: "azure",
+        hasOrgTarget: true,
+        hasLocalKey: noKeys,
+      });
+      expect(!result.ok && result.refusals[0]?.code).toBe("invalid_model");
+    });
+  });
+
   it("local Ollama needs no key", () => {
     const result = resolveLocalModelSelection({
       selection: {

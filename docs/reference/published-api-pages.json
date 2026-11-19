@@ -130,6 +130,8 @@
   "/api-reference/eval-runs/write-a-finished-authoring-jobs-cases-into-the-suite",
   "/api-reference/eval-suites/attach-one-environment-to-a-suite-atomic-append",
   "/api-reference/eval-suites/list-a-suites-settings-history",
+  "/api-reference/evals/build-findings-for-an-eval-run",
+  "/api-reference/evals/cancel-a-pending-eval-run-analysis",
   "/api-reference/evals/grade-an-eval-run-with-llm-as-judge",
   "/api-reference/evals/list-github-checks-repositories",
   "/api-reference/evals/request-insights-for-an-eval-run",

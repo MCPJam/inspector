@@ -17,6 +17,8 @@ type ModelStatus = {
   selection?: ModelSelection;
   readiness: { ready: boolean; code?: string };
   canEdit: boolean;
+  /** The study client's runtime; absent on older backends. */
+  runtime?: string | null;
 };
 const statusQuery = makeFunctionReference<
   "query",
@@ -96,6 +98,12 @@ export function ScenarioModelEditor({
               }
             }
             availableModels={orgModels}
+            harnessScope={{
+              targets: [
+                status.runtime ? { harnessId: status.runtime } : null,
+              ],
+              purpose: "chat",
+            }}
             requireOrgKeys
             onManageOrgProviders={onManageOrgProviders}
             onAddProvider={onAddProvider}

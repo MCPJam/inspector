@@ -324,7 +324,12 @@ jobs:
     if: ${{ !cancelled() }}
     env:
       SCOPE: ${{ needs.scope.result == 'success' && needs.scope.outputs.inspector || 'full' }}
-    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    # 8 vCPU / 32 GB, not 4 / 16. Vitest's import phase dominates a shard and
+    # spreads across workers, and mcpjam-inspector/vitest.config.ts sizes the
+    # pool by memory as well as cores: on 16 GB only two 3 GB workers fit next
+    # to the 6 GB main process, on 32 GB six or seven do. A bigger runner keeps
+    # the six required check names below; more shards would rename them.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-8vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
@@ -401,15 +406,24 @@ jobs:
         # SCOPE (see the `scope` job): `changed` runs the test files that
         # import a file this PR changed; `docs` runs the test files that
         # mention `docs/`, since some read docs files at runtime.
+        #
+        # retry-worker-crash.mjs reruns the shard ONCE when a Vitest worker
+        # exited unexpectedly and nothing else went wrong: every file and test
+        # passed and the crash is the only unhandled error. A failed test, a
+        # file that failed to load or any other error is never retried. It
+        # also prints the container's oom_kill count and peak memory.
         if: env.SCOPE != 'skip'
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}/6
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          run_shard() {
+            node .github/scripts/retry-worker-crash.mjs npm run test -w @mcpjam/inspector -- --shard="$SHARD" "$@"
+          }
           case "$SCOPE" in
             changed)
-              npm run test -w @mcpjam/inspector -- --shard="$SHARD" --changed HEAD^1 --passWithNoTests
+              run_shard --changed HEAD^1 --passWithNoTests
               ;;
             docs)
               mapfile -t files < <(git grep -l -F 'docs/' -- 'mcpjam-inspector/**/*.test.*' | sed 's#^mcpjam-inspector/##')
@@ -417,10 +431,10 @@ jobs:
                 echo "No Inspector test mentions docs/."
                 exit 0
               fi
-              npm run test -w @mcpjam/inspector -- --shard="$SHARD" --passWithNoTests "${files[@]}"
+              run_shard --passWithNoTests "${files[@]}"
               ;;
             *)
-              npm run test -w @mcpjam/inspector -- --shard="$SHARD"
+              run_shard
               ;;
           esac
 
@@ -507,12 +521,6 @@ jobs:
       - name: Run OAuth Debugger e2e
         run: npm run test:e2e:oauth-debugger -w @mcpjam/inspector
 
-      - name: Run mobile layout regressions
-        working-directory: mcpjam-inspector
-        env:
-          MOBILE_LAYOUT_RESULTS_DIR: test-results/mobile-layout
-        run: npx playwright test --config playwright.mobile-layout.config.ts
-
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v7
@@ -521,6 +529,71 @@ jobs:
           path: |
             mcpjam-inspector/playwright-report/
             mcpjam-inspector/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Split out of `e2e`, where it ran last and made that job the suite's long
+  # pole (~3 of its ~7.5 min). It serves the client from a Vite dev server of
+  # its own and needs no backend or guest secret, so it does not inherit the
+  # fork and Dependabot skip that `e2e` has for its secret.
+  mobile-layout:
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    name: Mobile layout (Playwright)
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.app == 'true')
+    env:
+      VITE_DISABLE_SENTRY: "true"
+      DO_NOT_TRACK: "1"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as `e2e` — bare runner, not the container.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v6
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-bare-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json', 'mcpjam-inspector/scripts/patch-harness-approvals.mjs') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Install pinned Chromium and system dependencies
+        run: npx playwright install --with-deps chromium
+
+      - name: Build inspector
+        # The same build `e2e` runs before these specs ran there: the SDK and
+        # the bundles the client imports.
+        run: npm run build -w @mcpjam/inspector
+
+      - name: Run mobile layout regressions
+        working-directory: mcpjam-inspector
+        env:
+          MOBILE_LAYOUT_RESULTS_DIR: test-results/mobile-layout
+        run: npx playwright test --config playwright.mobile-layout.config.ts
+
+      - name: Upload mobile layout report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-mobile-layout
+          path: mcpjam-inspector/test-results/mobile-layout/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -534,10 +607,18 @@ jobs:
       !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.app == 'true')
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 30
-    name: Telemetry egress (Playwright, telemetry on)
+    name: Telemetry egress (Playwright, telemetry on) ${{ matrix.shard }}/3
     # Same pinned Playwright image as `e2e` — Chromium + system deps are
     # preinstalled, and its Chromium is the one this Playwright version expects.
     container: mcr.microsoft.com/playwright:v1.63.0-noble
+    # Its 18 tests run one at a time (playwright.telemetry.config.ts) and
+    # mostly wait out real SDK flush timers: ~7 min in one job, the suite's
+    # long pole. Three machines each run a third, still one session at a time.
+    # The count is here and in --shard below; not a required check.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     # A hosted build with Sentry and PostHog ON, because they are what it
     # tests: every request to the PostHog relay and to Sentry ingest
     # intercepted with `page.route`, recorded, decoded and searched for
@@ -596,14 +677,14 @@ jobs:
         # normal client, never instead of it.
         run: npm run build:client:telemetry-e2e -w @mcpjam/inspector
 
-      - name: Run telemetry egress e2e
-        run: npm run test:e2e:telemetry -w @mcpjam/inspector
+      - name: Run telemetry egress e2e (shard ${{ matrix.shard }}/3)
+        run: npm run test:e2e:telemetry -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/3
 
       - name: Upload telemetry egress report
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report-telemetry
+          name: playwright-report-telemetry-${{ matrix.shard }}
           path: |
             mcpjam-inspector/playwright-report/telemetry/
             mcpjam-inspector/test-results/telemetry/
