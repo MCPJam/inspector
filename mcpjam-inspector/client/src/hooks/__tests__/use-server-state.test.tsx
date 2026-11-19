@@ -478,6 +478,48 @@ describe("useServerState CLI config import", () => {
     } as Response);
   });
 
+  it("deletes the row from the eager mapping when the snapshot doesn't list it yet", async () => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReset();
+    mockUseDbUserReady.mockReturnValue(true);
+    mockConvexQuery.mockResolvedValue([]);
+    vi.mocked(authFetch).mockReset();
+    vi.mocked(authFetch).mockResolvedValue({
+      json: async () => ({}),
+    } as Response);
+    mockDeleteServer.mockReset();
+    mockDeleteServer.mockResolvedValue(undefined);
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "proj_cloud",
+      serverId: "srv_just_saved",
+    });
+    const appState = createCloudCliAppState();
+    const { result } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger: createTestLogger(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleRemoveServer("acme");
+    });
+
+    expect(mockDeleteServer).toHaveBeenCalledWith({
+      serverId: "srv_just_saved",
+    });
+  });
+
   it("does not ask for sign-in when there is no CLI server payload", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce({
       json: async () => ({ config: { servers: [] } }),
@@ -6769,38 +6811,3 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
   });
 });
 
-describe("useServerState removing a server that just saved", () => {
-  it("deletes the row from the eager mapping when the snapshot doesn't list it yet", async () => {
-    mockDeleteServer.mockReset();
-    mockDeleteServer.mockResolvedValue(undefined);
-    tryResolveProjectServerMock.mockReturnValue({
-      projectId: "proj_cloud",
-      serverId: "srv_just_saved",
-    });
-    const appState = createCloudCliAppState();
-    const { result } = renderHook(() =>
-      useServerState({
-        appState,
-        dispatch: vi.fn(),
-        isLoading: false,
-        isAuthenticated: true,
-        hasSignedInUser: true,
-        isAuthLoading: false,
-        isLoadingProjects: false,
-        useLocalFallback: false,
-        effectiveProjects: appState.projects,
-        effectiveActiveProjectId: "proj_cloud",
-        activeProjectServersFlat: [],
-        logger: createTestLogger(),
-      }),
-    );
-
-    await act(async () => {
-      await result.current.handleRemoveServer("acme");
-    });
-
-    expect(mockDeleteServer).toHaveBeenCalledWith({
-      serverId: "srv_just_saved",
-    });
-  });
-});
