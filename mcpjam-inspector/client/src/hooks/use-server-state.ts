@@ -5551,10 +5551,12 @@ export function useServerState({
   const handleRemoveServer = useCallback(
     async (serverName: string, options?: { removeFromCloud?: boolean }) => {
       logger.info("Removing server", { serverName });
-      removedAtOpTokenRef.current.set(
-        serverName,
-        opTokenRef.current.get(serverName) ?? 0,
-      );
+      if (options?.removeFromCloud !== false) {
+        removedAtOpTokenRef.current.set(
+          serverName,
+          opTokenRef.current.get(serverName) ?? 0,
+        );
+      }
       await handleDisconnect(serverName);
       if (options?.removeFromCloud === false) {
         cleanupServerLocalArtifacts(serverName);
