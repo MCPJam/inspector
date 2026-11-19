@@ -131,42 +131,44 @@ export function RepeatPromptTip({
   return (
     <>
       {open && (
-        <div
-          ref={contentRef}
-          role="status"
-          className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-card py-2 pl-3 pr-2 text-sm shadow-sm duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
-        >
-          <Badge>Tip</Badge>
-          <p className="min-w-0 flex-1 text-foreground">
-            You&apos;ve asked {serverName} this before. Save it as a test case
-            for your evals to rerun it anytime.
-          </p>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              track("playground_repeat_tip_clicked", {
-                location: "playground",
-              });
-              setHidden(true);
-              setDialogOpen(true);
-            }}
+        <div className="relative h-0">
+          <div
+            ref={contentRef}
+            role="status"
+            className="absolute inset-x-0 bottom-full z-10 mb-2 flex items-center gap-3 rounded-lg border border-border bg-card py-2 pl-3 pr-2 text-sm shadow-sm duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
           >
-            Save as test case
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Dismiss tip"
-            onClick={() => {
-              track("playground_repeat_tip_dismissed", {
-                location: "playground",
-              });
-              setHidden(true);
-            }}
-          >
-            <X aria-hidden />
-          </Button>
+            <Badge>Tip</Badge>
+            <p className="min-w-0 flex-1 text-foreground">
+              You&apos;ve asked {serverName} this before. Save it as a test case
+              for your evals to rerun it anytime.
+            </p>
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => {
+                track("playground_repeat_tip_clicked", {
+                  location: "playground",
+                });
+                setHidden(true);
+                setDialogOpen(true);
+              }}
+            >
+              Save as test case
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label="Dismiss tip"
+              onClick={() => {
+                track("playground_repeat_tip_dismissed", {
+                  location: "playground",
+                });
+                setHidden(true);
+              }}
+            >
+              <X aria-hidden />
+            </Button>
+          </div>
         </div>
       )}
       <SaveAsTestCaseAction
