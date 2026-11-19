@@ -215,7 +215,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
         disabled={!serverName || checking !== null}
         onClick={() => void withServer(step, go)}
       >
-        {checking === step ? "Checking connection…" : label}
+        {checking === step ? "Checking your server…" : label}
       </Button>
     </>
   );
