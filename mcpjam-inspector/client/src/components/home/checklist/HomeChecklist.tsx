@@ -6,6 +6,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { track } from "@/lib/analytics";
 import {
   buildConformanceRunPath,
+  buildConformanceSetupPath,
   buildEvaluatePath,
   buildEvaluateSuiteRunPath,
   routePaths,
@@ -108,7 +109,10 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const allDone = doneCount === STEP_ORDER.length;
   const handedBack = Boolean(progress.finished || progress.skippedAll);
   const doneOnArrival = useRef<boolean | null>(null);
-  if (loaded && doneOnArrival.current === null) doneOnArrival.current = allDone;
+  // Done before ever seeing the checklist (nothing reported yet), not a last
+  // step finished elsewhere, which still gets the "5 of 5" hold.
+  if (loaded && doneOnArrival.current === null)
+    doneOnArrival.current = allDone && !progress.reported;
   // The last step holds on "5 of 5"; skipping or arriving done goes straight back.
   useEffect(() => {
     if (!loaded || handedBack) return;
@@ -212,7 +216,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const openConformance = (name: string) => {
     ctx.setSelectedServer(name);
     trackStep("check_server", "opened");
-    navigate(routePaths.conformance);
+    navigate(buildConformanceSetupPath());
   };
   const openEvals = () => {
     const suiteId = signals.eval.suiteId;

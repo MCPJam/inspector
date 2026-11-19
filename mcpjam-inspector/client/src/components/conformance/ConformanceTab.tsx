@@ -19,6 +19,7 @@ import type {
 import { runnableSelection } from "@/hooks/conformance-suite-state";
 import {
   CONFORMANCE_RUN_PARAM,
+  CONFORMANCE_SETUP_PARAM,
   useAppNavigate,
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
@@ -156,7 +157,10 @@ export function ConformanceTab({
   // Run opens the setup steps; Continue hands back the server and revision to
   // run, and the run view mounts fresh for them and starts. `id` keys that
   // mount, so a Continue on the server already shown still starts anew.
-  const [setupOpen, setSetupOpen] = useState(false);
+  // Home's checklist lands with `?setup=1` to start at the setup steps.
+  const [setupOpen, setSetupOpen] = useState(() =>
+    new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM),
+  );
   const [start, setStart] = useState<{
     id: number;
     serverName: string;

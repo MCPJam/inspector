@@ -169,6 +169,20 @@ it("hands Home back without the hold when everything was already done", () => {
   expect(stored().finished).toBe(true);
 });
 
+it("still holds on 5 of 5 when the last step finished away from Home", () => {
+  vi.useFakeTimers();
+  window.localStorage.setItem(
+    key,
+    JSON.stringify({ chat: true, agent: true, reported: ["connect", "chat"] }),
+  );
+  const onFinished = vi.fn();
+  render(<HomeChecklist onFinished={onFinished} />);
+  expect(screen.getByText("5 of 5 set up")).toBeVisible();
+  expect(onFinished).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(1600));
+  expect(onFinished).toHaveBeenCalled();
+});
+
 it("waits for conformance and eval answers before showing steps", () => {
   window.localStorage.setItem(key, JSON.stringify({ chat: true, agent: true }));
   query.loaded = false;

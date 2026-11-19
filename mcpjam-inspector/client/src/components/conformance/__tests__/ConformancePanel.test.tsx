@@ -694,6 +694,21 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
+  it("opens the setup steps on arrival with ?setup=1", () => {
+    window.history.replaceState(null, "", "/conformance?setup=1");
+    render(
+      <ConformanceTab
+        server={createHttpServer({ name: "removed" })}
+        servers={[]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText("Add a server to run conformance checks."),
+    ).toBeInTheDocument();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
   it("asks for a server instead of running when none is selected", async () => {
     const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);
