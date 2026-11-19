@@ -90,7 +90,7 @@ export function CustomJudgePreview({
       setFailure(
         caught instanceof Error && caught.message
           ? caught.message
-          : "The test could not run.",
+          : "Could not test the judge. Try again.",
       );
     } finally {
       setRunning(false);
@@ -135,7 +135,9 @@ export function CustomJudgePreview({
       ) : null}
       {outcome && !outcome.ok ? (
         <p role="status" className="text-xs text-muted-foreground">
-          The test could not run: {outcome.reason}
+          {outcome.reason === "iteration_not_gradable"
+            ? "This trial cannot be graded. Choose another trial."
+            : "Could not test the judge. Check the suite's judge model and try again."}
         </p>
       ) : null}
       {outcome?.ok ? (

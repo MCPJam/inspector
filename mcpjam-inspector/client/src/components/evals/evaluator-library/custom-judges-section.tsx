@@ -75,8 +75,7 @@ export function CustomJudgesSection({
             Judges you write
           </h4>
           <p className="text-xs text-muted-foreground">
-            Each judge is its own model call on every trial the goal-completion
-            judge grades. Advisory.
+            Each judge adds one model call per graded trial. Results are advisory.
             {goalJudgeOff ? " Paused while the goal-completion judge is off." : ""}
           </p>
         </div>

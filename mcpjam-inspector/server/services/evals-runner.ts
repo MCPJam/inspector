@@ -210,7 +210,6 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -522,62 +521,6 @@ export type EvalTestCase = {
 };
 
 /**
- * How a run's FROZEN skills reach one case — both channels, together.
- *
- * There are two, and they are not interchangeable:
- *   - `pinnedSkillSource` is what each iteration plans its skills from
- *     (`iterationTurnSkills`): MCPJam's agent's tools, and what a turn records.
- *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
- *     as SKILL.md files on the box.
- *
- * They are bundled here because forwarding one without the other is a silent
- * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
- * does not error, it leaves the harness's box with whatever skills it already
- * holds — so a frozen run quietly stops being frozen, and the
- * `skillsOverride: "exclude"` arm quietly runs with an earlier turn's skills.
- * That is exactly the bug this helper exists to make structurally impossible:
- * one place decides, and both channels leave together or not at all.
- *
- * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
- * the "this run delivers no skills" answer and must survive.
- */
-export function runFrozenSkillOptions(run: {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-}): {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-} {
-  // Presence selects the pinned source at every hop below, so a non-array that
-  // is not `undefined` would sail through all of them and only fail inside
-  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
-  // a sandbox has been provisioned and paid for. The type forbids it, but the
-  // value crosses a route boundary and a persisted-data conversion on the way
-  // here, so it is worth one loud check at the seam rather than a confusing
-  // crash later. `undefined` stays legal: it means "this run pinned nothing".
-  if (
-    run.pinnedHarnessSkills !== undefined &&
-    !Array.isArray(run.pinnedHarnessSkills)
-  ) {
-    throw new Error(
-      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
-        run.pinnedHarnessSkills === null
-          ? "null"
-          : typeof run.pinnedHarnessSkills
-      })`,
-    );
-  }
-  return {
-    ...(run.pinnedSkillSource
-      ? { pinnedSkillSource: run.pinnedSkillSource }
-      : {}),
-    ...(run.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
-      : {}),
-  };
-}
-
-/**
  * The match options the `toolCalls:match` score definition hashes over.
  *
  * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
@@ -725,27 +668,13 @@ export type RunEvalSuiteOptions = {
   /**
    * The run's frozen skills, prepared once at the boundary (`prepareEvalRun`)
    * and forwarded verbatim; every iteration plans its turn's skills from them
-   * (`iterationTurnSkills`). Absent ⇒ no skills (eval runs never use local-FS
-   * skills — decision 10); a quick run without an environment stays absent
-   * (no run row = no pinning carrier).
+   * (`iterationTurnSkills`), and a harness iteration carries that plan out on
+   * its box, an empty frozen set clearing it. Absent ⇒ no skills (eval runs
+   * never use local-FS skills — decision 10), and a harness box stays as it is;
+   * a quick run without an environment stays absent (no run row = no pinning
+   * carrier).
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /**
-   * The run's frozen skills in HARNESS shape, materialized ON BOX.
-   *
-   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
-   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
-   * become in-memory tool definitions; a harness turn writes SKILL.md files
-   * into the runtime's skills root instead, so it needs complete artifacts
-   * (identity, complete-envelope hash, preserved frontmatter, inline file
-   * bodies) rather than the body-only projection that path takes.
-   *
-   * Presence, not length, is what selects the pinned source in the harness. An
-   * empty list says "this run delivers no skills"; ABSENT leaves the box with
-   * whatever skills it already holds, which would unfreeze the run. So the
-   * boundary sets this for every runId-bearing run, empty included.
-   */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
   /**
    * Extra headers stamped on every per-step Convex request of this run.
@@ -2460,9 +2389,6 @@ type RunIterationBaseParams = {
    * Eval runs NEVER use local-FS skills (decision 10): absent means none.
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
    * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
    * `"eval"`), or absent for tasks-off.
@@ -3269,9 +3195,6 @@ const executeTestCase = async (params: {
   projectEnvironmentUnresolvedReason?: string;
   /** The run's frozen skills (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
   tasks?: ToolTaskSeamOptions;
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -3318,7 +3241,6 @@ const executeTestCase = async (params: {
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -3531,7 +3453,6 @@ const executeTestCase = async (params: {
         harnessRuntimeVenue,
         environment,
         pinnedSkillSource,
-        pinnedHarnessSkills,
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
@@ -3898,7 +3819,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -3975,7 +3895,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -4041,7 +3960,6 @@ const executeTestCase = async (params: {
       environment,
       convexAuthToken,
       pinnedSkillSource,
-      pinnedHarnessSkills,
       ...(toolPolicy
         ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
         : {}),
@@ -4146,7 +4064,6 @@ export const runEvalSuiteWithAiSdk = async ({
   projectEnvironmentId,
   projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
-  pinnedHarnessSkills,
   toolPolicy,
   benchmarkWriteGuard,
   extraHeaders,
@@ -4489,10 +4406,7 @@ export const runEvalSuiteWithAiSdk = async ({
             }
           : {}),
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-        // BOTH frozen-skill channels, from one place — see
-        // `runFrozenSkillOptions`: forwarding only the emulated one would
-        // leave the harness's box with whatever skills it already holds.
-        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
         // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
         // built the emulated tool set with, so the harness (which rebuilds its
         // own MCP tools) cannot end up on a different row of the policy matrix.
@@ -6417,7 +6331,6 @@ const runHostedIterationWithBrowser = async (
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -6803,25 +6716,6 @@ const runHostedIterationWithBrowser = async (
           annotations: toolAnnotations ?? new Map(),
         })
       : undefined;
-  // The run's PINNED skills, in the shape the harness materializes on box.
-  //
-  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
-  // where the full pin rows and their signed file URLs are in hand, so the
-  // supporting-file download happens before any model call rather than N times
-  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
-  // preserved frontmatter and file bodies all come off the pin.
-  //
-  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
-  // `runtimeSkillsOverride`, which is the live-environment channel one rank
-  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
-  // an eval run must deliver exactly what it pinned, and must not consult
-  // anything live.
-  //
-  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
-  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
-  // dropping it would leave the without-skills arm with whatever skills its box
-  // already holds.
-
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -7454,11 +7348,13 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
-    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
-    // not when truthy: `[]` says "this run delivers no skills" (the
-    // `skillsOverride: "exclude"` arm), while absent leaves the box with
-    // whatever skills it already holds, an earlier turn's included.
-    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // The iteration's skill plan, which a harness turn carries out: a frozen
+    // run's skills on its box, `[]` for the without-skills arm, and an
+    // unpinned turn's box left as it is. MCPJam's agent builds its tools from
+    // the same plan.
+    ...(turnSkills.skills.runtime.kind === "harness"
+      ? { skillPlan: turnSkills.skills }
+      : {}),
     // Each harness turn's skills event, from what its box writer wrote.
     ...(turnSkills.skills.runtime.kind === "harness"
       ? {
