@@ -362,11 +362,12 @@ export function HomeTab({
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+      <div className={`mx-auto flex ${showChecklist ? "max-w-5xl" : "max-w-3xl"} flex-col gap-4 px-6 py-8 sm:px-8`}>
         <header className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
             {greeting}, {firstName}
           </h1>
+          {showChecklist ? null : (
           <OrgStatsStrip
             memberCount={isLoading ? null : data!.memberCount}
             projectCount={isLoading ? null : data!.projects.length}
@@ -377,6 +378,7 @@ export function HomeTab({
             messagesSentCount={messagesSentCount?.value ?? null}
             messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
           />
+          )}
         </header>
 
         {showChecklist ? (

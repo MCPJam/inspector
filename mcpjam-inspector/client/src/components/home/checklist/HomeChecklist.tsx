@@ -103,9 +103,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   }, [finished, onFinished]);
 
   const firstOpen = STEP_ORDER.find((step) => !signals.done[step]) ?? null;
-  // null follows the first unfinished step; "none" is the user closing it.
-  const [openStep, setOpenStep] = useState<StepId | "none" | null>(null);
-  const shownStep = openStep === "none" ? null : (openStep ?? firstOpen);
+  // null follows the first unfinished step until the user picks one.
+  const [openStep, setOpenStep] = useState<StepId | null>(null);
+  const shownStep: StepId = openStep ?? firstOpen ?? "connect";
   const viewedRef = useRef<StepId | null>(null);
   useEffect(() => {
     if (!firstOpen || viewedRef.current === firstOpen) return;
@@ -214,14 +214,17 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
       ({
         connect: {
           title: "Connect your server",
+          surface: "Connect",
           summary: serverName ? `Connected: ${serverName}` : null,
         },
         chat: {
           title: `Try ${serverLabel} in Playground`,
+          surface: "Playground",
           summary: signals.done.chat ? "First Playground run complete" : null,
         },
         onboard_agent: {
           title: "Add MCPJam to your coding agent",
+          surface: "Claude Code",
           summary: progress.agent
             ? "Added to your agent"
             : progress.skippedAgent
@@ -230,18 +233,23 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
         },
         check_server: {
           title: "Check your server",
+          surface: "Conformance",
           summary: signals.conformance.run
             ? `${signals.conformance.run.passed} of ${signals.conformance.run.applicable} checks passed`
             : null,
         },
         create_eval: {
           title: "Run your first eval",
+          surface: "Evaluate",
           summary:
             signals.eval.passRate !== null
               ? `Latest run: ${Math.round(signals.eval.passRate * 100)}% passed`
               : null,
         },
-      }) satisfies Record<StepId, { title: string; summary: string | null }>,
+      }) satisfies Record<
+        StepId,
+        { title: string; surface: string; summary: string | null }
+      >,
     [serverName, serverLabel, signals, progress],
   );
 
@@ -343,54 +351,77 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
 
   if (finished) return null;
 
+  const shownIndex = STEP_ORDER.indexOf(shownStep);
+  const projectName: string = ctx.activeProject?.name ?? "your project";
+
   return (
     <section aria-labelledby="home-checklist-title" className="space-y-4">
-      <div className="space-y-2">
-        <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-muted-foreground">
+          Five steps from a server URL to your first eval.
+        </p>
+        <div className="flex items-center gap-2.5">
+          <span
+            className="text-xs font-medium text-muted-foreground"
+            aria-live="polite"
+          >
+            {doneCount} of {STEP_ORDER.length} set up
+          </span>
+          <Progress
+            value={(doneCount / STEP_ORDER.length) * 100}
+            aria-label="Setup progress"
+            className="h-1.5 w-32 [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out motion-reduce:[&_[data-slot=progress-indicator]]:transition-none"
+          />
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-xl border border-border bg-card text-card-foreground">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <h2
             id="home-checklist-title"
-            className="text-base font-semibold text-foreground"
+            className="text-sm font-semibold text-card-foreground"
           >
-            Set up MCPJam
+            Finish setting up {projectName}
           </h2>
-          <span className="text-xs text-muted-foreground" aria-live="polite">
-            {doneCount} of {STEP_ORDER.length} done
-          </span>
+          {doneCount >= SKIP_REST_AFTER ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                update({ skippedAll: true });
+                trackStep(firstOpen ?? "create_eval", "skipped", { rest: true });
+              }}
+            >
+              Skip the rest
+            </Button>
+          ) : null}
         </div>
-        <Progress
-          value={(doneCount / STEP_ORDER.length) * 100}
-          aria-label="Setup progress"
-          className="h-1.5 [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out motion-reduce:[&_[data-slot=progress-indicator]]:transition-none"
-        />
+        <div className="grid md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <ol className="space-y-0.5 border-b border-border p-1.5 md:border-r md:border-b-0">
+            {STEP_ORDER.map((step, i) => (
+              <ChecklistStepRow
+                key={step}
+                index={i + 1}
+                title={steps[step].title}
+                surface={steps[step].surface}
+                summary={steps[step].summary}
+                done={signals.done[step]}
+                selected={shownStep === step}
+                onSelect={() => setOpenStep(step)}
+              />
+            ))}
+          </ol>
+          <div className="min-h-80 space-y-3 p-6">
+            <p className="text-xs text-muted-foreground">
+              Step {shownIndex + 1} of {STEP_ORDER.length}
+            </p>
+            <h3 className="text-lg font-semibold text-foreground">
+              {steps[shownStep].title}
+            </h3>
+            {body(shownStep)}
+          </div>
+        </div>
       </div>
-      <ol className="space-y-2">
-        {STEP_ORDER.map((step, i) => (
-          <ChecklistStepRow
-            key={step}
-            index={i + 1}
-            title={steps[step].title}
-            summary={steps[step].summary}
-            done={signals.done[step]}
-            open={shownStep === step}
-            onToggle={() => setOpenStep(shownStep === step ? "none" : step)}
-          >
-            {body(step)}
-          </ChecklistStepRow>
-        ))}
-      </ol>
-      {doneCount >= SKIP_REST_AFTER ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            update({ skippedAll: true });
-            trackStep(firstOpen ?? "create_eval", "skipped", { rest: true });
-          }}
-        >
-          Skip the rest
-        </Button>
-      ) : null}
     </section>
   );
 }
