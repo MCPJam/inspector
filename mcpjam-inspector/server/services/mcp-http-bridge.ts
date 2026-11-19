@@ -5,7 +5,8 @@ import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js"
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 import { bridgeInitializeResult } from "./bridge-initialize.js";
-import { logger } from "../utils/logger.js";
+import { awaitBridgeConnect } from "./bridge-await-connect.js";
+import { encodeModernResult, isModernRequest } from "./bridge-modern-result.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -326,26 +327,20 @@ export async function handleJsonRpc(
     return null;
   }
 
-  const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
+  const modernClient = isModernRequest(params, options.downstreamProtocolVersion);
+  const respond = (payload: any) => ({
+    jsonrpc: "2.0",
+    id,
+    ...payload,
+    ...(modernClient && "result" in payload
+      ? { result: encodeModernResult(method, payload.result) }
+      : {}),
+  });
 
-  // See `awaitConnect`. A connect that fails answers as before (the stand-in
-  // `initialize`, or method-not-found), and the next call that needs the
-  // server reports why.
-  const settleConnect = async () => {
-    if (!options.awaitConnect) return;
-    try {
-      await clientManager.ensureManagedClient(
-        serverId,
-        options.signal ? { signal: options.signal } : undefined,
-      );
-    } catch (error) {
-      logger.debug("[mcp-bridge] connect did not finish before the answer", {
-        serverId,
-        method,
-        error: error instanceof Error ? error.name : "unknown",
-      });
-    }
-  };
+  const settleConnect = () =>
+    options.awaitConnect
+      ? awaitBridgeConnect(clientManager, serverId, method, options.signal)
+      : Promise.resolve();
 
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.

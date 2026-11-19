@@ -199,10 +199,11 @@ export function relayListenStream(args: {
     }
   };
 
+  // The spec's graceful end. A 2026-07-28 result names its `resultType`.
   const graceful = {
     jsonrpc: "2.0",
     id: args.id,
-    result: { _meta: subscription },
+    result: { _meta: subscription, resultType: "complete" },
   };
 
   const start = async () => {

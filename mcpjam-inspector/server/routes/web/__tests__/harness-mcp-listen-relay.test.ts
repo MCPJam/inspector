@@ -218,7 +218,7 @@ describe("relayListenStream", () => {
     expect(await read.next()).toEqual({
       jsonrpc: "2.0",
       id: 7,
-      result: { _meta: { [SUBSCRIPTION_ID]: 7 } },
+      result: { _meta: { [SUBSCRIPTION_ID]: 7 }, resultType: "complete" },
     });
     expect(await read.next()).toBeUndefined();
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledTimes(1));
