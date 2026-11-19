@@ -26,6 +26,7 @@
  * no Send ever runs on it (`box_retired`).
  */
 import { markBoxPreparationSettled } from "./box-preparation-signal.js";
+import { traceEvent } from "./harness-trace.js";
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { preparePlaygroundTerminalSandbox } from "../computers/control-plane-client.js";
@@ -165,6 +166,7 @@ export async function prepareConversationBox(args: {
     );
   }
   const { sandboxId, sandboxRowId } = provisioned.value;
+  traceEvent("prep.provisioned");
   const box: HarnessBrokerBox = { kind: "sandbox", sandboxRowId };
   const claim = {
     box,
@@ -314,6 +316,7 @@ export async function prepareConversationBox(args: {
       });
     }
     await release(outcome);
+    traceEvent("prep.released", { outcome });
     markBoxPreparationSettled(sandboxRowId);
   }
 }

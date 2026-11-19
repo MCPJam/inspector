@@ -212,10 +212,20 @@ async function setToolApproval(page, wanted) {
   return state;
 }
 
+/** A client just picked reconnects its servers: give it a moment before calling it unconnected. */
+async function serversConnected(page, waitMs = 20_000) {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if ((await composerState(page)).servers === "connected") return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(500);
+  }
+}
+
 async function runTurn(instance, workload, meta, args) {
   const { page } = instance;
   const spec = PROMPTS[workload]();
-  if (args.requireServers && (await composerState(page)).servers !== "connected") {
+  if (args.requireServers && !(await serversConnected(page))) {
     // Auto-connect lives in each browser origin's storage, and a fresh sign-in
     // drops it: a turn without its server would measure a different workload.
     throw new Error("the client has no connected server (run setup-project.mjs)");

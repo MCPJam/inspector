@@ -4,7 +4,11 @@
  *
  *   node scripts/harness-bench/report.mjs <results.jsonl> [--run <id>] [--metric sendToPainted]
  *   node scripts/harness-bench/report.mjs <results.jsonl> --timeline <row number>
+ *   node scripts/harness-bench/report.mjs <results.jsonl> --stages
  *
+ * `--stages` adds, under each label, the median of each stage: the browser's
+ * Enter-to-request and finish-to-close, the route's stages, and the turn's
+ * own (claim, broker, session connect, dispatch to first text).
  * The summary gives, per label × client × workload, the measured turns, the
  * failures, the median and range of the metric, and for two labels the
  * median of the paired differences (second label minus first, by pair).
@@ -60,6 +64,7 @@ console.log(`run(s): ${[...new Set(selected.map((r) => r.run))].join(", ")}  met
 for (const [key, byLabel] of groups) {
   console.log(`\n${key}`);
   const labels = [...byLabel.keys()];
+  const stageLines = [];
   for (const label of labels) {
     const list = byLabel.get(label);
     const ok = list.filter((r) => r.ok && r.browser?.[metric] != null);
@@ -71,9 +76,27 @@ for (const [key, byLabel] of groups) {
       starts[k] = (starts[k] ?? 0) + 1;
     }
     const failures = list.filter((r) => !r.ok).map((r) => r.failure);
+    if (rest.includes("--stages")) stageLines.push([label, ok]);
     console.log(
       `  ${label.padEnd(16)} n=${String(list.length).padStart(2)} ok=${String(ok.length).padStart(2)} median=${s(median(values))}s range=${s(Math.min(...values))}–${s(Math.max(...values))}s  starts=${JSON.stringify(starts)}${failures.length ? `  failures=${JSON.stringify(failures)}` : ""}`,
     );
+  }
+  for (const [label, ok] of stageLines) {
+    const pick = (read) => median(ok.map(read).filter((v) => typeof v === "number" && Number.isFinite(v)));
+    const t = (r) => r.server?.timing ?? {};
+    const stages = {
+      enter: pick((r) => r.browser?.sendToRequest),
+      setup: pick((r) => t(r).setupMs),
+      conn: pick((r) => t(r).connectionsMs),
+      tools: pick((r) => t(r).toolsMs),
+      prep: pick((r) => t(r).streamPreparationMs),
+      claim: pick((r) => Number(t(r).claim)),
+      broker: pick((r) => Number(t(r).brokerStart)),
+      connect: pick((r) => Number(t(r).sessionConnect)),
+      firstText: pick((r) => t(r).firstTextMs),
+      finClose: pick((r) => r.browser?.finishToClose),
+    };
+    console.log(`    ${label.padEnd(14)} ${Object.entries(stages).map(([k, v]) => `${k}=${v ?? "-"}`).join(" ")}`);
   }
   if (labels.length === 2) {
     const [a, b] = labels;

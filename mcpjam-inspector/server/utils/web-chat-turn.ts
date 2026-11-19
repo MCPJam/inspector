@@ -1,5 +1,6 @@
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import type { TurnTiming } from "./turn-timing.js";
+import { traceSpan } from "./harness/harness-trace.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
 import { HOSTED_MODE } from "../config.js";
 import { assertNativeDiscovery } from "./harness/native-discovery.js";
@@ -1216,10 +1217,11 @@ export async function streamChatTurn(
     .join("\n\n");
 
   const hostedChatSessionId = persist.chatSessionId;
-  if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
-  else await assertConversationExecution(conversationExecutionArgs({
+  const earlyBinding = runtime.executionBinding;
+  if (earlyBinding) await traceSpan("stream.binding", "early", () => takeEarly(earlyBinding));
+  else await traceSpan("stream.binding", "assert", () => assertConversationExecution(conversationExecutionArgs({
     manager, scope: persist, authHeader: runtime.authHeader, signal: runtime.abortSignal,
-  }));
+  })));
 
   // MATERIALIZED PROJECT SECRETS for this turn, fetched ONCE here because two
   // very different things need the same list and must not disagree about it:
@@ -1254,7 +1256,7 @@ export async function streamChatTurn(
   // So an established failure short-circuits: no retry, no delivery, and the
   // fingerprint that says "unavailable" is only ever persisted by a turn that
   // genuinely delivered nothing.
-  const secretsFetch = await resolveTurnRuntimeSecrets({
+  const secretsFetch = await traceSpan("stream.secrets", "resolve", () => resolveTurnRuntimeSecrets({
     ...(source === "standalone" ? { callerSecrets: [] } : {}),
     ...(persist.runtimeSecrets !== undefined
       ? { callerSecrets: persist.runtimeSecrets }
@@ -1268,7 +1270,7 @@ export async function streamChatTurn(
           : {}),
         ...(hostedChatSessionId ? { chatSessionId: hostedChatSessionId } : {}),
       }),
-  });
+  }));
   const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
   // A failed fetch here forks the session for the same reason it does in
   // `chat-v2`: we cannot enumerate what the box may already hold. Now exactly

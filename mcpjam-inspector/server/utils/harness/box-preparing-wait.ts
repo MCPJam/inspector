@@ -12,6 +12,7 @@
  * `uncertain` release does, and a turn on it is refused `BOX_RETIRED_CODE`.
  */
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
+import { traceEvent } from "./harness-trace.js";
 import {
   CLAIM_CALL_TIMEOUT_MS,
   CLAIM_RENEWAL_MS,
@@ -61,6 +62,7 @@ export async function waitOutBoxPreparation<
     if (now + pause >= giveUpAt || now - movedAt > STALLED_CLAIM_MS) {
       throw stillPreparing();
     }
+    traceEvent("box.preparing", { tries, pauseMs: pause });
     await pauseFor(pause, signal);
   }
 }
