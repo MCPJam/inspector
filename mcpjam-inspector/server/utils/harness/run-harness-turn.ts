@@ -3977,8 +3977,10 @@ export async function runHarnessTurn(
             });
             const meta = toolMeta.get(toolCallId) ?? {
               ...parsedMeta,
+              // The saved call names the real tool; this turn's registry may
+              // have given its wire name to another tool since.
               ...(historicalCall?.serverId
-                ? { serverId: historicalCall.serverId }
+                ? { serverId: historicalCall.serverId, toolName: historicalCall.toolName }
                 : {}),
             };
             // A tool call the MCP proxy blocked on policy, recognised only when

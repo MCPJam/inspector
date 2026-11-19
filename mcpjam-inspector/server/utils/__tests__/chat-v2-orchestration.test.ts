@@ -2265,6 +2265,22 @@ describe("prepareChatV2 isolated plugin servers", () => {
     await expect(turn(["chosen"], ["plugin"])).rejects.toThrow("fetch failed");
   });
 
+  it("ignores a stale tool-name collision on a plugin server the turn runs without", async () => {
+    const manager = managerWith(["plugin"]);
+    // The cache still holds the plugin's last list, with a pair Claude Code would merge.
+    manager.getAllToolAnnotations = vi.fn((key: string) =>
+      key === "plugin" ? { "a.b": {}, a_b: {} } : { chosen_tool: {} },
+    );
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["chosen", "plugin"],
+      isolatedServers: ["plugin"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      harness: "claude-code",
+    });
+    expect(Object.keys(result.allTools)).toContain("chosen_tool");
+  });
+
   it("reports nothing when every isolated server listed", async () => {
     const result = await turn([], ["plugin"]);
     expect(Object.keys(result.allTools)).toEqual(

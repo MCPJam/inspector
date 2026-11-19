@@ -1743,15 +1743,23 @@ export async function prepareChatV2(
   // runtime or by MCPJam's host-executed naming (`harness/harness-tool-names.ts`);
   // direct and hosted turns alias names on the wire.
   // Each server's own list: the merged tool map keeps one tool per name, so a
-  // name two servers share would hide which server a collision is on.
+  // name two servers share would hide which server a collision is on. A server
+  // the turn runs without keeps its last list in the cache, so it is skipped.
   if (harness) {
+    const skippedKeys = new Set(
+      [...lister.unavailable().keys()].flatMap(
+        (id) => selectedGroups?.[id]?.map((c) => c.key) ?? [id],
+      ),
+    );
     const collisions = findHarnessToolNameCollisions(
       harness,
       new Map(
-        (knownSelectedServers ?? mcpClientManager.listServers()).map((id) => [
-          id,
-          Object.keys(mcpClientManager.getAllToolAnnotations(id)),
-        ]),
+        (knownSelectedServers ?? mcpClientManager.listServers())
+          .filter((id) => !skippedKeys.has(id))
+          .map((id) => [
+            id,
+            Object.keys(mcpClientManager.getAllToolAnnotations(id)),
+          ]),
       ),
     );
     if (collisions.length > 0) {
