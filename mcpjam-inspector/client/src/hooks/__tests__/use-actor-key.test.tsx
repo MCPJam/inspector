@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useActorKey } from "../use-actor-key";
 
@@ -59,6 +59,59 @@ describe("useActorKey", () => {
     await waitFor(() => {
       expect(result.current).toBe("guest_new");
     });
+  });
+
+  // Convex keeps the token it already holds when the cache is cleared, so
+  // dropping the guest here left the app authenticated with no actor
+  // (`app_load/actor_pending`) whenever the re-lookup failed.
+  it("keeps the guest when the guest cache is cleared under it", async () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+    expect(result.current).toBe("guest_1");
+
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    act(() => notify());
+
+    expect(result.current).toBe("guest_1");
+    expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
+  });
+
+  it("follows a new guest session once it is cached", async () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_2",
+      token: "token_2",
+      expiresAt: Date.now() + 60_000,
+    });
+    act(() => notify());
+
+    expect(result.current).toBe("guest_2");
   });
 });
 

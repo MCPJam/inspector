@@ -26,7 +26,13 @@ export function useActorKey(): string | null {
 
   useEffect(() => {
     return subscribeGuestSessionChanges(() => {
-      setGuestId(getCachedGuestSession()?.guestId ?? null);
+      // A cleared cache is not a different guest: the cookie still resolves
+      // the same one, and Convex keeps the token it already holds. Resetting
+      // here would leave Convex authenticated with no actor whenever the
+      // re-lookup below fails. Only a newly cached session changes the guest;
+      // sign-out is handled by the effect after this one.
+      const nextGuestId = getCachedGuestSession()?.guestId;
+      if (nextGuestId) setGuestId(nextGuestId);
     });
   }, []);
 
