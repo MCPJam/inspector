@@ -11,6 +11,7 @@ import {
   type RetryClass,
   type WithRetryPolicy,
 } from "../retry.js";
+import { SwarmAgentError } from "../../../services/swarm-agent.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -225,6 +226,108 @@ describe("classifyRetry — one fixture per class", () => {
         httpError(503, { code: "at_capacity", retryAfterMs: 45_000 }),
       ),
     ).toEqual({ class: "capacity", retryAfterMs: 45_000 });
+  });
+
+  it("drops a Retry-After of 0, so a hot retry loop never forms", () => {
+    // A 503 with `retryAfter: 0` is still capacity, but with no server wait to
+    // honor — not a "retry now" instruction.
+    expect(
+      classifyRetry(httpError(503, { code: "at_capacity", retryAfterMs: 0 })),
+    ).toEqual({ class: "capacity" });
+  });
+});
+
+describe("classifyRetry — MCPJam credit recovery", () => {
+  /** A refusal body the way a SwarmAgentError carries it. */
+  const swarmRefusal = (recovery: Record<string, unknown>, retryAfter: number) =>
+    Object.assign(new Error("swarm-agent https://x.convex.site/turn failed"), {
+      status: 429,
+      // The reset also rides the normalized top-level field, as a real
+      // SwarmAgentError carries it, so `retryAfterMsOf` can read it.
+      retryAfter,
+      bodyText: JSON.stringify({
+        ok: false,
+        code: "user_rate_limit",
+        error: "Out of MCPJam credits.",
+        retryAfter,
+        recovery,
+      }),
+    });
+
+  const UPGRADE = {
+    version: 1,
+    reason: "out_of_credits",
+    action: "upgrade_plan",
+    actor: "caller",
+    plan: "pro",
+    url: "https://app.mcpjam.com/billing",
+  };
+
+  it("is terminal for a non-wait recovery even with a real reset wait", () => {
+    // The free daily limit resets in 17h but the action is to upgrade; a timer
+    // must never retry it.
+    expect(classifyRetry(swarmRefusal(UPGRADE, 61_200_000)).class).toBe(
+      "terminal",
+    );
+  });
+
+  it("is terminal for a buy-credits recovery that sends retryAfter: 0", () => {
+    const buy = { ...UPGRADE, action: "buy_credits", plan: undefined };
+    const error = classifyRetry(swarmRefusal(buy, 0));
+    expect(error.class).toBe("terminal");
+    expect(error).not.toHaveProperty("retryAfterMs");
+  });
+
+  it("keeps the retry for a transient hold (action: 'wait')", () => {
+    const wait = {
+      version: 1,
+      reason: "holds_committed",
+      action: "wait",
+      actor: "caller",
+      resetAt: Date.now() + 5_000,
+    };
+    expect(classifyRetry(swarmRefusal(wait, 3_000))).toEqual({
+      class: "rate_limited",
+      retryAfterMs: 3_000,
+    });
+  });
+
+  // The shape `postJson` in swarm-agent.ts throws: the body, and with it the
+  // `user_rate_limit` code, is embedded in the message too.
+  const realSwarmRefusal = (recovery: Record<string, unknown>) => {
+    const body = JSON.stringify({
+      ok: false,
+      code: "user_rate_limit",
+      refusalReason: "holds_committed",
+      error:
+        "MCPJam model limit reached for the moment: 2 in-flight request(s) hold the remaining credits and release them as they finish.",
+      retryAfter: 3,
+      recovery,
+    });
+    const url = "https://x.convex.site/swarm-agent/turn";
+    return new SwarmAgentError(
+      429,
+      body,
+      `swarm-agent ${url} failed (429): ${body}`,
+      "3",
+    );
+  };
+
+  it("retries a hold whose message carries the user_rate_limit code", () => {
+    const wait = {
+      version: 1,
+      reason: "holds_committed",
+      action: "wait",
+      actor: "caller",
+    };
+    expect(classifyRetry(realSwarmRefusal(wait))).toEqual({
+      class: "rate_limited",
+      retryAfterMs: 3_000,
+    });
+  });
+
+  it("stays terminal for the same shape with a purchase recovery", () => {
+    expect(classifyRetry(realSwarmRefusal(UPGRADE)).class).toBe("terminal");
   });
 });
 

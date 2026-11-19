@@ -3,9 +3,9 @@
  * body the backend writes (`sdk/tests/fixtures/credit-refusal-fixtures.json`);
  * every surface's first actionable sentence must be `formatCreditRecovery` of
  * its `recovery`, link included, and none may send the reader to the server
- * connection. A refusal from a backend without `recovery` keeps today's text,
- * and so does a refusal that is not credit exhaustion (a spend cap): only
- * MCPJam's own credit refusal may put its step in front of the reader.
+ * connection. A refusal from a backend without `recovery` names no step, and
+ * only MCPJam's own stop refusal (credit exhaustion or a spend cap) may put
+ * its step in front of the reader.
  *
  * The runner's own end-to-end stop is pinned in `evals-runner.test.ts`, and
  * the CLI's `Recovery:` line in `cli/tests/eval-credit-recovery.test.ts` (the
@@ -19,13 +19,12 @@ import { describe, expect, it } from "vitest";
 import {
   assembleEvalRunDecisionSummary,
   deriveStageResults,
-  creditRecoveryOfRefusal,
   formatCreditRecovery,
   NEXT_ACTION_BY_INFRA_CLASS,
   parseCreditRecovery,
 } from "@mcpjam/sdk/contract";
 import { describeError } from "@mcpjam/sdk";
-import { isCreditExhaustion } from "../../../../shared/credit-exhaustion.js";
+import { runStopRefusal } from "../../../../shared/credit-exhaustion.js";
 import { humanizeSwarmAttemptError } from "../../../../shared/swarm-attempt-error.js";
 import { toInfraErrorProjection } from "../../../routes/v1/eval-infra-error-projection.js";
 import { creditStopNote } from "../credit-stop.js";
@@ -50,8 +49,8 @@ const corpus = JSON.parse(
   ),
 ) as { cases: CreditRefusalFixture[] };
 
-const OLD_STOP_NOTE =
-  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Upgrade the plan to keep going: https://app.mcpjam.com/billing";
+const STEPLESS_STOP_NOTE =
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped.";
 
 /** How the hosted runner holds a refusal: the sentence and the raw body. */
 const refusalOf = (fixture: CreditRefusalFixture) => ({
@@ -75,10 +74,8 @@ const derivation = deriveStageResults({
 describe.each(
   corpus.cases.map((fixture) => [fixture.__name, fixture] as const),
 )("credit refusal %s", (_name, fixture) => {
-  // The runner's gate: only an exhaustion refusal's recovery is read.
-  const recovery = isCreditExhaustion(refusalOf(fixture))
-    ? creditRecoveryOfRefusal(refusalOf(fixture))
-    : undefined;
+  // The runner's gate: only a stop refusal's recovery is read.
+  const recovery = runStopRefusal(refusalOf(fixture))?.recovery;
   const expected = fixture.stopsRun ? fixture.expectedRecovery : null;
 
   /** Every surface's sentence must lead with the expected one. */
@@ -91,7 +88,9 @@ describe.each(
   };
 
   it("is read off the refusal the runner holds", () => {
-    expect(isCreditExhaustion(refusalOf(fixture))).toBe(fixture.stopsRun);
+    expect(runStopRefusal(refusalOf(fixture)) !== undefined).toBe(
+      fixture.stopsRun,
+    );
     if (expected === null) {
       expect(recovery).toBeUndefined();
       return;
@@ -103,7 +102,7 @@ describe.each(
   it("words the run notes and every skipped trial", () => {
     const note = creditStopNote(recovery);
     if (expected === null) {
-      expect(note).toBe(OLD_STOP_NOTE);
+      expect(note).toBe(STEPLESS_STOP_NOTE);
       return;
     }
     expectLeads(note);

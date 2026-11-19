@@ -86,7 +86,7 @@
     },
     {
       "__name": "spend-cap-member",
-      "stopsRun": false,
+      "stopsRun": true,
       "body": {
         "ok": false,
         "code": "spend_budget_reached",
