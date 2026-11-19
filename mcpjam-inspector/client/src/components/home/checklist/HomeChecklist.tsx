@@ -32,6 +32,7 @@ const STEP_ORDER: StepId[] = [
 ];
 /** "Skip the rest" appears once this many steps are done. */
 const SKIP_REST_AFTER = 3;
+const FINISH_HOLD_MS = 1500;
 
 type GuardFailure = { step: StepId; message: string; reauth: boolean };
 
@@ -98,9 +99,18 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   });
   const doneCount = STEP_ORDER.filter((step) => signals.done[step]).length;
   const finished = doneCount === STEP_ORDER.length || progress.skippedAll;
+  // Completing the last step holds on "5 of 5" long enough to see the bar
+  // fill; skipping the rest goes straight to today's Home.
+  const allDone = doneCount === STEP_ORDER.length;
   useEffect(() => {
-    if (finished) onFinished();
-  }, [finished, onFinished]);
+    if (!finished) return;
+    if (!allDone || progress.skippedAll) {
+      onFinished();
+      return;
+    }
+    const timer = window.setTimeout(onFinished, FINISH_HOLD_MS);
+    return () => window.clearTimeout(timer);
+  }, [finished, allDone, progress.skippedAll, onFinished]);
 
   const firstOpen = STEP_ORDER.find((step) => !signals.done[step]) ?? null;
   // null follows the first unfinished step until the user picks one.
@@ -349,7 +359,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     }
   };
 
-  if (finished) return null;
+  if (progress.skippedAll) return null;
 
   const shownIndex = STEP_ORDER.indexOf(shownStep);
   const projectName: string = ctx.activeProject?.name ?? "your project";
@@ -370,7 +380,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
           <Progress
             value={(doneCount / STEP_ORDER.length) * 100}
             aria-label="Setup progress"
-            className="h-1.5 w-32 [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out motion-reduce:[&_[data-slot=progress-indicator]]:transition-none"
+            className="h-1.5 w-32 bg-muted [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-indicator]]:duration-700 [&_[data-slot=progress-indicator]]:ease-out motion-reduce:[&_[data-slot=progress-indicator]]:transition-none"
           />
         </div>
       </div>
@@ -396,7 +406,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
             </Button>
           ) : null}
         </div>
-        <div className="grid md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+        <div className="grid min-h-96 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
           <ol className="space-y-0.5 border-b border-border p-1.5 md:border-r md:border-b-0">
             {STEP_ORDER.map((step, i) => (
               <ChecklistStepRow
@@ -411,7 +421,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
               />
             ))}
           </ol>
-          <div className="min-h-80 space-y-3 p-6">
+          <div className="space-y-3 bg-background p-6">
             <p className="text-xs text-muted-foreground">
               Step {shownIndex + 1} of {STEP_ORDER.length}
             </p>
