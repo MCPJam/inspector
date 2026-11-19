@@ -16,7 +16,7 @@
  *     --project <projectId> --client "Claude Code" --pairs 5 \
  *     --workloads first,followup,echo3 --primers 1 --out <results.jsonl>
  *     [--send-delay <ms typed before Send>] [--settle <ms idle that ends a turn>]
- *     [--gap <ms before each new chat>]
+ *     [--gap <ms before each new chat>] [--approvals]
  *
  * Every measured turn is kept, failures included. Summaries: report.mjs.
  */
@@ -29,7 +29,7 @@ const require = createRequire(new URL("../../package.json", import.meta.url));
 const { chromium } = require("playwright");
 
 function parseArgs(argv) {
-  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0, settleMs: 1_500, gapMs: 0 };
+  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0, settleMs: 1_500, gapMs: 0, approvals: false };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
@@ -53,6 +53,8 @@ function parseArgs(argv) {
       // How long a closed, idle turn must stay idle before the next Send; 0 sends a follow-up as soon as the composer is free.
       case "--settle": args.settleMs = Number(value); i += 1; break;
       case "--gap": args.gapMs = Number(value); i += 1; break;
+      // Keep Tool Approval on for the echo workload and approve each call it asks for.
+      case "--approvals": args.approvals = true; break;
       case "--headed": args.headed = true; break;
       case "--require-servers": args.requireServers = true; break;
       default: throw new Error(`Unknown argument ${flag}`);
@@ -195,7 +197,8 @@ function between(a, b) {
 
 
 // The echo workload measures the system, not a person deciding: tool approval
-// is switched off in the composer's options before it (and the row says so).
+// is switched off in the composer's options before it (and the row says so),
+// unless --approvals keeps it on, and then each call is approved at once.
 async function setToolApproval(page, wanted) {
   await page.getByRole("button", { name: "Options", exact: true }).first().click();
   const toggle = page
@@ -235,7 +238,7 @@ async function runTurn(instance, workload, meta, args) {
   }
   const composer = page.locator('textarea[placeholder^="Try a prompt"]').first();
   await composer.waitFor({ timeout: 30_000 });
-  const toolApproval = spec.markers ? await setToolApproval(page, false) : null;
+  const toolApproval = spec.markers ? await setToolApproval(page, args.approvals) : null;
   const before = readLogSince(instance.log, instance.logOffset);
   instance.logOffset = before.offset;
   const wallStart = Date.now();

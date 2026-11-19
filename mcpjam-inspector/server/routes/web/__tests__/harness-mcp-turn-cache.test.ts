@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
-  checkTurnWithReuse,
   harnessMcpTurnCacheEnabled,
   resetHarnessMcpTurnCache,
   withTurnManager,
@@ -16,38 +15,6 @@ function fakeManager() {
 afterEach(() => {
   resetHarnessMcpTurnCache();
   vi.useRealTimers();
-});
-
-describe("checkTurnWithReuse", () => {
-  it("reuses a pass for the same turn within 2 s, then checks again", async () => {
-    let now = 1_000;
-    const check = vi.fn(async () => undefined);
-    await checkTurnWithReuse("turn-a", check, () => now);
-    now += 1_999;
-    await checkTurnWithReuse("turn-a", check, () => now);
-    expect(check).toHaveBeenCalledTimes(1);
-    now += 1;
-    await checkTurnWithReuse("turn-a", check, () => now);
-    expect(check).toHaveBeenCalledTimes(2);
-  });
-
-  it("never reuses a refusal, and a refusal forgets an earlier pass", async () => {
-    const refusal = new Response(null, { status: 401 });
-    const now = () => 5_000;
-    await checkTurnWithReuse("turn-b", async () => undefined, now);
-    resetHarnessMcpTurnCache();
-    const refuse = vi.fn(async () => refusal);
-    expect(await checkTurnWithReuse("turn-b", refuse, now)).toBe(refusal);
-    expect(await checkTurnWithReuse("turn-b", refuse, now)).toBe(refusal);
-    expect(refuse).toHaveBeenCalledTimes(2);
-  });
-
-  it("keeps turns apart", async () => {
-    const check = vi.fn(async () => undefined);
-    await checkTurnWithReuse("turn-c", check);
-    await checkTurnWithReuse("turn-d", check);
-    expect(check).toHaveBeenCalledTimes(2);
-  });
 });
 
 describe("withTurnManager", () => {

@@ -30,7 +30,6 @@ import {
   relayListenStream,
 } from "./harness-mcp-listen-relay.js";
 import {
-  checkTurnWithReuse,
   harnessMcpTurnCacheEnabled,
   withTurnManager,
 } from "./harness-mcp-turn-cache.js";
@@ -308,18 +307,13 @@ async function handleRequest(
       ? () =>
           sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
       : undefined;
-  // With per-turn reuse on, a POST's first turn check waits for its method, so
-  // a discovery request can reuse a pass from the same turn's last 2 s.
+  // With per-turn reuse on, a turn's requests share one authorized connection.
+  // Every request is still checked against its live turn, here and below.
   const turnKey =
     harnessMcpTurnCacheEnabled() && (turn || session)
       ? [claims.userId, claims.projectId, serverId, session?.turnId ?? JSON.stringify(turn)].join("|")
       : undefined;
-  const checkFirst = (discovery: boolean) =>
-    turnKey && discovery && checkTurn ? checkTurnWithReuse(turnKey, checkTurn) : checkTurn?.();
-  const denied =
-    turn && !(turnKey && c.req.method === "POST")
-      ? await checkFirst(c.req.method !== "POST")
-      : undefined;
+  const denied = turn ? await checkTurn?.() : undefined;
   trace?.mark("turn");
   if (denied) return denied;
 
@@ -395,15 +389,6 @@ async function handleRequest(
     const meta = (params._meta ?? {}) as Record<string, unknown>;
     trace.set("params", Object.keys(params).filter((key) => key !== "_meta").join("+") || "-");
     trace.set("pv", String(meta["io.modelcontextprotocol/protocolVersion"] ?? c.req.header("mcp-protocol-version") ?? "-"));
-  }
-  if (turn && turnKey) {
-    const deniedAfterParse = await checkFirst(
-      isDiscoveryMethod(body.method) ||
-        body.method === INITIALIZED_NOTIFICATION ||
-        body.method === DISCOVER_METHOD,
-    );
-    trace?.mark("turn");
-    if (deniedAfterParse) return deniedAfterParse;
   }
   const leanDiscovery = harnessLeanDiscoveryEnabled();
   if (leanDiscovery && body.method === INITIALIZED_NOTIFICATION && body.id === undefined) {

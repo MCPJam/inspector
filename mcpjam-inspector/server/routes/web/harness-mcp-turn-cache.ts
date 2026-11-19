@@ -3,13 +3,10 @@
  * `MCPJAM_HARNESS_MCP_TURN_CACHE=1` (read per call).
  *
  * A harness client opens its MCP connection with a burst of discovery requests
- * (handshake, lists), each of which would otherwise re-check its turn with the
- * backend and rebuild an authorized upstream connection. Within one turn:
- *
- * - a passed turn check is reused for 2 s, by discovery requests only; a tool
- *   call always checks its turn before, during and after, as before;
- * - the authorized connection is reused by the turn's later requests and
- *   disconnected once the turn has been idle for 20 s.
+ * (handshake, lists), each of which would otherwise rebuild an authorized
+ * upstream connection. Within one turn the authorized connection is reused by
+ * the turn's later requests and disconnected once the turn has been idle for
+ * 20 s. Every request still checks its live turn, as without reuse.
  *
  * Keys name the user, project, server and turn, so nothing crosses a turn.
  */
@@ -19,32 +16,8 @@ export function harnessMcpTurnCacheEnabled(env: NodeJS.ProcessEnv = process.env)
   return env.MCPJAM_HARNESS_MCP_TURN_CACHE === "1";
 }
 
-const CHECK_REUSE_MS = 2_000;
 const MANAGER_IDLE_MS = 20_000;
 const MAX_ENTRIES = 200;
-
-const passedChecks = new Map<string, number>();
-
-/** Run `check`, or reuse a pass for the same turn from the last 2 s. */
-export async function checkTurnWithReuse(
-  key: string,
-  check: () => Promise<Response | undefined>,
-  now: () => number = Date.now,
-): Promise<Response | undefined> {
-  const passedAt = passedChecks.get(key);
-  if (passedAt !== undefined && now() - passedAt < CHECK_REUSE_MS) return undefined;
-  const denied = await check();
-  if (denied) {
-    passedChecks.delete(key);
-    return denied;
-  }
-  passedChecks.set(key, now());
-  if (passedChecks.size > MAX_ENTRIES) {
-    const oldest = passedChecks.keys().next().value;
-    if (oldest !== undefined) passedChecks.delete(oldest);
-  }
-  return undefined;
-}
 
 type Entry = {
   manager: Promise<MCPClientManager>;
@@ -102,9 +75,8 @@ export async function withTurnManager<T>(
   }
 }
 
-/** Test seam: forget every reused check and connection. */
+/** Test seam: forget every reused connection. */
 export function resetHarnessMcpTurnCache(): void {
-  passedChecks.clear();
   for (const [key, entry] of managers) {
     if (entry.idle) clearTimeout(entry.idle);
     retire(key, entry);
