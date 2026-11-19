@@ -906,6 +906,8 @@ export type EvalRunFileKnobs = {
   minPassRate?: number;
   matchOptions?: RunEvalSuiteInput["matchOptions"];
   idempotencyKey?: string;
+  /** Resume a credit-stopped run: run only its unfinished cases. */
+  resumeFromRunId?: string;
   compose?: RunEvalSuiteInput["compose"];
   /**
    * Per-run approval of `approximated` imported cases, by AUTHORED case id.
@@ -1252,6 +1254,9 @@ export async function executeEvalRunFromFile(
           ? { minPassRate: knobs.minPassRate }
           : {}),
         ...(knobs.matchOptions ? { matchOptions: knobs.matchOptions } : {}),
+        ...(knobs.resumeFromRunId
+          ? { resumeFromRunId: knobs.resumeFromRunId }
+          : {}),
         ...(knobs.compose ? { compose: knobs.compose } : {}),
         ...(importApprovals ? { importApprovals } : {}),
       },

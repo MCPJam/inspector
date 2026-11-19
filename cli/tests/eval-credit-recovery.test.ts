@@ -137,23 +137,31 @@ for (const fixture of corpus.cases) {
   test(`eval status names the recovery for ${fixture.__name}`, async () => {
     const server = await startRunFixture(fixture);
     try {
+      // A person-must-act recovery (anything but `wait`) blocks the run: status
+      // exits 6 and prints a resume command. A `wait` recovery, or none, exits 0.
+      const parsed = fixture.body.recovery
+        ? parseCreditRecovery(fixture.body.recovery)
+        : undefined;
+      const blocked = parsed !== undefined && parsed.action !== "wait";
+      const expectedExit = blocked ? 6 : 0;
       const human = await captureProcessOutput(() =>
         main(statusArgv(server.baseUrl, "human"), {
           telemetry: telemetryDisabled,
         })
       );
-      assert.equal(human.result.exitCode, 0, human.stderr);
+      assert.equal(human.result.exitCode, expectedExit, human.stderr);
       const json = await captureProcessOutput(() =>
         main(statusArgv(server.baseUrl, "json"), {
           telemetry: telemetryDisabled,
         })
       );
-      assert.equal(json.result.exitCode, 0);
+      assert.equal(json.result.exitCode, expectedExit);
       const document = JSON.parse(json.stdout.trim());
 
       if (fixture.expectedRecovery === null) {
         assert.doesNotMatch(human.stdout, /Recovery:/);
         assert.equal(document.creditRecovery, undefined);
+        assert.equal(document.resumeCommand, undefined);
         return;
       }
       assert.ok(
@@ -171,6 +179,22 @@ for (const fixture of corpus.cases) {
         formatCreditRecovery(document.creditRecovery),
         fixture.expectedRecovery
       );
+      if (blocked) {
+        // One resume command, reconstructed from the run record (suite +
+        // project + this run as the source), in both surfaces.
+        assert.match(
+          human.stdout,
+          /Resume: mcpjam cloud eval run .*--resume --resume-from run-credit/
+        );
+        assert.ok(
+          typeof document.resumeCommand === "string" &&
+            document.resumeCommand.includes("--resume-from run-credit"),
+          document.resumeCommand
+        );
+      } else {
+        assert.doesNotMatch(human.stdout, /Resume:/);
+        assert.equal(document.resumeCommand, undefined);
+      }
     } finally {
       await server.close();
     }

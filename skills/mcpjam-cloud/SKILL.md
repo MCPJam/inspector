@@ -85,10 +85,11 @@ Exit codes for `eval run --wait` (without `--wait`, `eval run` exits `0` once th
 | `1` | A run completed with `result: "failed"`. Nothing else produces `1`. |
 | `2` | Usage error or invalid suite file, including an organization AI-key policy refusal. |
 | `3` | Auth failed: no credential, or it was rejected at launch or during the wait. |
-| `4` | Setup or launch failed before evaluation, including a billing or credit refusal at launch. |
-| `5` | No valid verdict: an `inconclusive` result, a run whose status is `failed`, `cancelled`, or `timed_out` (a run stopped by credit exhaustion lands here), or a wait that hit its deadline with the run still going. |
+| `4` | Setup or launch failed before evaluation (network, timeout, an unrecognized launch error). A credit refusal whose only step is to `wait` for an allowance reset lands here. |
+| `5` | No valid verdict: an `inconclusive` result, a run whose status is `failed`, `cancelled`, or `timed_out`, or a wait that hit its deadline with the run still going. A credit stop whose only step is `wait` lands here. |
+| `6` | Blocked: MCPJam credits refused the launch, or stopped the run partway, and the step a person must take is not `wait` (upgrade, buy credits, raise the budget, ask an admin, contact support). The command prints the one step and a `Resume:` command and starts nothing more. `eval status` on such a run also exits `6`. |
 
-Several targets merge worst-of in the order `1 > 3 > 4 > 5 > 0`. `eval gate` uses a different four-code contract, where `3` means incomplete.
+Several targets merge worst-of in the order `1 > 6 > 3 > 4 > 5 > 0`. A measured regression (`1`) still wins; a credit stop finalizes a run `failed`, so `6` and `1` never describe the same run. `eval gate` uses a different four-code contract, where `3` means incomplete.
 
 A run's decision summary can carry a `nextAction` that says to check the server connection when the real cause was a model or credit failure, even with the connection and discovery stages `passed`. Trust the stage states and the iteration's error over that line.
 
@@ -96,13 +97,13 @@ A run's decision summary can carry a `nextAction` that says to check the server 
 
 ### When a run stops for credits
 
-A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, a spend budget, or a required platform fee means the organization is out of allowance.
+A launch refusal, or a run that stops partway, with `user_rate_limit`, a daily or monthly MCPJam model limit, a spend budget, or a required platform fee means the organization is out of allowance. When the step is not `wait`, the command **exits `6`** (blocked) and `eval status` on the run exits `6` too.
 
 Read the refusal's `recovery` first: `creditRecovery` in `eval status` or `eval run --wait` JSON (the `Recovery:` line in human output), `infraError.recovery` on the refused iteration, or `details.recovery` on a launch refusal. Give the user the step its `action` names and its `url`, copied exactly, and nothing else. When `actor` is `owner_or_admin`, say the user has to send that link to an organization owner or admin. The run's `notes` and the decision summary's `nextAction` give the same sentence. `resetAt` is for your records: don't suggest waiting for it, and don't offer BYOK instead, because BYOK does not remove platform fees.
 
-Without a `recovery` (an older deployment), tell the user that upgrading the plan is the fix and send them to `https://app.mcpjam.com/billing`. Free plans cannot buy credits.
+Without a `recovery` (an older deployment), send the user to `https://app.mcpjam.com/billing` to upgrade the plan or add credits, and let them pick. Free plans cannot buy credits.
 
-Results the run completed before it stopped are saved. Do not relaunch on your own. If the user upgrades and asks to relaunch, pass a NEW `--idempotency-key`: reusing the old key returns the stopped run instead of starting one. Never pay, upgrade, or buy credits yourself.
+The CLI also prints the exact command to resume once the user tops up: the `Resume:` line in human output, `resumeCommand` in JSON. It is the same launch with `--resume` (a refused launch, reusing the idempotency key) or `--resume --resume-from <runId>` (a stopped run, which reruns only that run's unfinished cases). **Do not relaunch on your own, and do not run it yet.** When the user says they have upgraded or added credits, run the resume command **once**. If it is refused again, the CLI prints `Still blocked:` and exits `6`: stop, tell the user it is still blocked, and do not retry. Never pay, upgrade, or buy credits yourself. Results the run completed before it stopped are saved.
 
 ### Swarms goals
 

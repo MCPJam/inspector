@@ -191,8 +191,17 @@ import {
   classifyWaitErrorExitCode,
   evalRunWaitExitCode,
   worstOf,
+  EVAL_RUN_BLOCKED_EXIT_CODE,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
+import {
+  buildResumeCommand,
+  creditBlockJsonFields,
+  creditRecoveryOfCliError,
+  idempotencyKeyOfErrorDetails,
+  isCreditBlock,
+  writeCreditBlockGuidance,
+} from "../lib/eval-resume.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   decisionSummaryFromIterations,
@@ -200,6 +209,7 @@ import {
 } from "../lib/eval-decision-summary.js";
 import {
   creditRecoveryOfIterations,
+  parseCreditRecovery,
   readEvalRunCreditRecovery,
   type EvalRunDecisionSummary,
 } from "@mcpjam/sdk";
@@ -3602,6 +3612,14 @@ export function registerEvalCommands(program: Command): void {
       "--idempotency-key <key>",
       "Retry key for a lost launch response; for --file, one is minted and printed when omitted"
     )
+    .option(
+      "--resume",
+      "Run this as the resume of a credit-blocked launch. If it is refused again, print `Still blocked` and exit 6 — never retried automatically."
+    )
+    .option(
+      "--resume-from <runId>",
+      "Resume a run MCPJam credits stopped partway: run only that run's unfinished cases. Implies --resume."
+    )
     .option("--wait", "Wait for every started run to reach a terminal status")
     .option(
       "--wait-timeout <ms>",
@@ -3705,6 +3723,8 @@ export function registerEvalCommands(program: Command): void {
           minPassRate?: number;
           matchOptions?: string;
           idempotencyKey?: string;
+          resume?: boolean;
+          resumeFrom?: string;
           wait?: boolean;
           waitTimeout?: string;
           reporter?: string;
@@ -3741,6 +3761,10 @@ export function registerEvalCommands(program: Command): void {
         }
         const approvals = parseApprovalFlags(options);
         const globalOptions = evalGlobalOptions(command);
+        // --resume-from implies --resume: both mean "this launch is itself a
+        // retry after a credit block". A second refusal under it is reported as
+        // `Still blocked` and never retried, so the CLI cannot spin.
+        const resumed = options.resume === true || options.resumeFrom !== undefined;
         const reporter = parseReporterFormat(options.reporter);
         const waitTimeoutMs =
           options.waitTimeout !== undefined
@@ -3863,6 +3887,9 @@ export function registerEvalCommands(program: Command): void {
                       ...(options.idempotencyKey
                         ? { idempotencyKey: options.idempotencyKey }
                         : {}),
+                      ...(options.resumeFrom
+                        ? { resumeFromRunId: options.resumeFrom }
+                        : {}),
                       ...(approvals ? { approvals } : {}),
                       ...composeField(options),
                     },
@@ -3915,6 +3942,9 @@ export function registerEvalCommands(program: Command): void {
                     ...(options.idempotencyKey
                       ? { idempotencyKey: options.idempotencyKey }
                       : {}),
+                    ...(options.resumeFrom
+                      ? { resumeFromRunId: options.resumeFrom }
+                      : {}),
                     ...composeField(options),
                   },
                   {
@@ -3929,6 +3959,40 @@ export function registerEvalCommands(program: Command): void {
             { projectScope: resolved.projectScope }
           );
         } catch (error) {
+          // A credit refusal that names a person-must-act step (anything but
+          // `wait`) is a block, not a fault: no run was created, and the only
+          // honest output is the one step plus the command to resume once the
+          // user tops up. Handled here regardless of --wait, so `eval run`
+          // exits 6 the same way with or without it.
+          const launchRecovery =
+            error instanceof CliError
+              ? creditRecoveryOfCliError(error)
+              : undefined;
+          if (error instanceof CliError && isCreditBlock(launchRecovery)) {
+            const detailKey = idempotencyKeyOfErrorDetails(error.details);
+            const resumeCommand = buildResumeCommand(options, {
+              idempotencyKey: detailKey,
+            });
+            if (globalOptions.format === "human") {
+              process.stderr.write(`${error.message}\n`);
+              writeCreditBlockGuidance(
+                "human",
+                { recovery: launchRecovery, resumeCommand, resumed },
+                process.stderr
+              );
+            } else {
+              writeResult(
+                {
+                  error: { code: error.code, message: error.message },
+                  creditRecovery: launchRecovery,
+                  ...creditBlockJsonFields(resumeCommand, resumed),
+                },
+                globalOptions.format
+              );
+            }
+            setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+            return;
+          }
           // Launch-phase remap, --wait only: a thrown CliError whose exitCode
           // is not already 2 (usage error / invalid suite file — untouched)
           // gets reclassified by wire code. `toCliError` drops the HTTP
@@ -4087,12 +4151,15 @@ export function registerEvalCommands(program: Command): void {
                   : undefined;
               const soloRecovery =
                 result.targets.length === 1 && runs.length === 1
-                  ? await readEvalRunCreditRecovery(
-                      client,
-                      signal,
-                      result.project.id,
-                      runs[0]!
-                    )
+                  ? // Prefer the recovery the run record now carries; fall back
+                    // to the per-iteration read on a backend that predates it.
+                    (parseCreditRecovery(runs[0]!.creditRecovery) ??
+                      (await readEvalRunCreditRecovery(
+                        client,
+                        signal,
+                        result.project.id,
+                        runs[0]!
+                      )))
                   : undefined;
               // Deliberately does NOT throw on `waitErrors` here. Throwing from
               // inside the platform command skips the receipt below, and the
@@ -4166,9 +4233,11 @@ export function registerEvalCommands(program: Command): void {
                     },
                   })
                 : undefined;
-            // From the walk above, like the summary: no extra read.
+            // Prefer the recovery the run record carries; otherwise read it off
+            // the walk above, like the summary, with no extra read.
             const creditRecovery = solo
-              ? creditRecoveryOfIterations(solo.iterations)
+              ? (parseCreditRecovery(solo.run.creditRecovery) ??
+                creditRecoveryOfIterations(solo.iterations))
               : undefined;
             return {
               runs,
@@ -4231,11 +4300,29 @@ export function registerEvalCommands(program: Command): void {
             ),
           })
         );
-        const code = evalRunWaitExitCode({
-          launchOutcome: result.outcome,
-          runs: runOutcomes,
-          waitErrors: completion.waitErrors,
-        });
+        // A credit stop whose step a person must take (anything but `wait`) is
+        // a block: the run finalized `failed` (base code 5), but the actionable
+        // outcome is "a person must add credits, then resume", so it merges to
+        // 6. A `wait` recovery keeps the base code. Only the solo path carries a
+        // recovery, so the resume command targets that one run's id.
+        const creditBlock = isCreditBlock(completion.creditRecovery)
+          ? completion.creditRecovery
+          : undefined;
+        const blockedRunId = creditBlock
+          ? completion.runs[0]?.id
+          : undefined;
+        const resumeCommand =
+          creditBlock && blockedRunId
+            ? buildResumeCommand(options, { sourceRunId: blockedRunId })
+            : undefined;
+        const code = worstOf([
+          evalRunWaitExitCode({
+            launchOutcome: result.outcome,
+            runs: runOutcomes,
+            waitErrors: completion.waitErrors,
+          }),
+          ...(creditBlock ? [EVAL_RUN_BLOCKED_EXIT_CODE] : []),
+        ]);
 
         // Captured, NOT thrown here: the receipt below (or the reporter
         // stdout) carries the only copy of the launched run ids, and a local
@@ -4277,6 +4364,9 @@ export function registerEvalCommands(program: Command): void {
               ...(globalOptions.format === "json" && completion.creditRecovery
                 ? { creditRecovery: completion.creditRecovery }
                 : {}),
+              ...(globalOptions.format === "json" && creditBlock && resumeCommand
+                ? creditBlockJsonFields(resumeCommand, resumed)
+                : {}),
             },
             globalOptions.format
           );
@@ -4293,7 +4383,22 @@ export function registerEvalCommands(program: Command): void {
             completion.decisionSummary,
             process.stdout
           );
-          writeCreditRecovery(globalOptions.format, completion.creditRecovery);
+          // A person-must-act credit stop prints the one step and the command
+          // to resume once the user tops up; `Still blocked` instead when this
+          // run was already a resume. Any other recovery (a `wait`) keeps the
+          // plain `Recovery:` line.
+          if (creditBlock && resumeCommand) {
+            writeCreditBlockGuidance(globalOptions.format, {
+              recovery: creditBlock,
+              resumeCommand,
+              resumed,
+            });
+          } else {
+            writeCreditRecovery(
+              globalOptions.format,
+              completion.creditRecovery
+            );
+          }
         }
 
         // Everything above has already been written — report file, reporter
@@ -4438,6 +4543,20 @@ export function registerEvalCommands(program: Command): void {
             quiet: globalOptions.quiet,
           }
         );
+        // A run MCPJam credits stopped and whose step a person must take is a
+        // block: the reader must resume it once the user tops up. The resume
+        // command reconstructs from the run record (suite + project + this run
+        // as the source); `status` carries no launch knobs, so it is the exact
+        // minimum that runs the unfinished cases.
+        const statusBlock = isCreditBlock(result.creditRecovery)
+          ? result.creditRecovery
+          : undefined;
+        const statusResumeCommand = statusBlock
+          ? buildResumeCommand(
+              { suite: result.run.suiteId, project: result.project.id },
+              { sourceRunId: result.run.id }
+            )
+          : undefined;
         // The wire-shaped result is useful in JSON, but human output must not
         // leak raw decision enums (for example `argumentMismatch`) before the
         // label-aware summary below. The operation still returns the canonical
@@ -4453,7 +4572,9 @@ export function registerEvalCommands(program: Command): void {
                 } = result;
                 return humanResult;
               })()
-            : result;
+            : statusResumeCommand
+              ? { ...result, resumeCommand: statusResumeCommand }
+              : result;
         writeResult(resultForOutput, globalOptions.format);
         writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
         writeJudgeSummary(globalOptions.format, result.run.judges);
@@ -4466,12 +4587,23 @@ export function registerEvalCommands(program: Command): void {
           process.stdout,
           { stages: options.stages === true }
         );
-        writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        if (statusBlock && statusResumeCommand) {
+          writeCreditBlockGuidance(globalOptions.format, {
+            recovery: statusBlock,
+            resumeCommand: statusResumeCommand,
+            resumed: false,
+          });
+        } else {
+          writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        }
         writeRunLink(globalOptions.format, webOrigin, {
           projectId: result.project.id,
           suiteId: result.run.suiteId,
           runId: result.run.id,
         });
+        if (statusBlock) {
+          setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+        }
       }
     );
 

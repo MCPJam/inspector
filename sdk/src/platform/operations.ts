@@ -58,7 +58,10 @@ import {
 } from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import { readEvalRunCreditRecovery } from "../eval-credit-recovery.js";
-import type { CreditRecovery } from "../contract/credit-recovery.js";
+import {
+  parseCreditRecovery,
+  type CreditRecovery,
+} from "../contract/credit-recovery.js";
 import {
   MODEL_REASONING_EFFORTS,
   MODEL_SELECTION_FALLBACK_PROVIDERS,
@@ -2907,6 +2910,7 @@ function runKnobBody(
     idempotencyKey?: string;
     sourceHash?: string;
     importApprovals?: Array<{ testCaseId: string; reason: string }>;
+    resumeFromRunId?: string;
   },
   caseIds: string[] | undefined
 ): Record<string, unknown> {
@@ -2923,6 +2927,11 @@ function runKnobBody(
       : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
     ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+    // Resume a credit-stopped run: the backend narrows the new run to the
+    // source run's unfinished cases, or refuses with a `RESUME_*` code.
+    ...(input.resumeFromRunId
+      ? { resumeFromRunId: input.resumeFromRunId }
+      : {}),
     // Forwarded UNCHANGED to every target of a grouped launch. A case's
     // approximation is approximated the same way on each of them, so an
     // approval that covered only the first target would refuse the rest of a
@@ -4141,6 +4150,14 @@ const runEvalSuiteInput = z
         "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant."
       ),
     compose: composeRunTargetInput.optional(),
+    resumeFromRunId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Resume a run MCPJam credits stopped partway: the new run executes only the source run's cases that did not finish. The source must be a terminal run of the same suite with unfinished cases, or the launch is refused."
+      ),
     ...RUN_KNOB_FIELDS,
   })
   .superRefine((input, ctx) => {
@@ -7118,6 +7135,10 @@ export const getEvalRunOperation: PlatformOperation<
     if (!isEvalRunTerminalStatus(run.status)) {
       return { project: toSelectedProjectInfo(project), run };
     }
+    // The run record carries the recovery once the backend records it on the
+    // run itself; prefer it and spare the iteration read. Fall back to the
+    // per-iteration walk for a run finalized before the field existed.
+    const recordRecovery = parseCreditRecovery(run.creditRecovery);
     // Endpoint first, then the same shared assembler over the older iteration
     // resource. MCP and CLI must not disagree merely because a deployment has
     // not rolled out the additive endpoint yet.
@@ -7126,7 +7147,9 @@ export const getEvalRunOperation: PlatformOperation<
         cursor: input.diagnosticsCursor,
         limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
       }),
-      readEvalRunCreditRecovery(client, signal, project.id, run),
+      recordRecovery
+        ? Promise.resolve(recordRecovery)
+        : readEvalRunCreditRecovery(client, signal, project.id, run),
     ]);
     return {
       project: toSelectedProjectInfo(project),

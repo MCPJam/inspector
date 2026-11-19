@@ -1149,6 +1149,15 @@ export interface PlatformEvalRun {
   accounts?: PlatformEvalRunAccount[];
   notes: string | null;
   /**
+   * The next step when MCPJam credits stopped this run: what to do, who does
+   * it, and the link. Recorded on the run by the backend when a credit stop
+   * finalizes it. ABSENT on every other run and on deployments that do not
+   * record it, so a reader prefers it and falls back to the per-iteration
+   * `infraError.recovery`. The wire value is unvalidated; parse it with
+   * `parseCreditRecovery` before trusting its fields.
+   */
+  creditRecovery?: CreditRecovery;
+  /**
    * The project environment this run executed against, read from the run's
    * immutable config snapshot — NOT the suite's current attachments, which may
    * have changed since. `null` for a legacy (saved-server-selection) run, and

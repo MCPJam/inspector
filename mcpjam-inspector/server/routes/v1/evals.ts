@@ -8,6 +8,7 @@ import {
   mintCaseId,
   evalAuthoringDraftSchema,
   authoringDraftCheckReason,
+  parseCreditRecovery,
 } from "@mcpjam/sdk/contract";
 import {
   suiteJudgeSettingsSchema,
@@ -1806,6 +1807,12 @@ function toRunJudgesDto(run: RunDoc) {
  * a detail read, or a run-level rollup stamped by the backend — either is a
  * real decision, not a spare argument.
  */
+/** The validated `creditRecovery` field for a run DTO, or nothing. */
+function creditRecoveryProjection(value: unknown) {
+  const recovery = parseCreditRecovery(value);
+  return recovery ? { creditRecovery: recovery } : {};
+}
+
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -1880,6 +1887,10 @@ function toRunDto(run: RunDoc) {
     ...(run.rerunScope === "failed_cases"
       ? { rerunScope: run.rerunScope as "failed_cases" }
       : {}),
+    // The recovery a credit stop recorded on the run, so a reader gets the step
+    // without walking iterations. Re-parsed, not forwarded raw: a stored value
+    // that is malformed or carries an off-origin URL is dropped, never emitted.
+    ...creditRecoveryProjection(run.creditRecovery),
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
