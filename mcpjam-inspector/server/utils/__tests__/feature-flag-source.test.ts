@@ -215,3 +215,31 @@ describe("loadFeatureFlagFileAtBoot", () => {
     expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
   });
 });
+
+describe("inline feature flag answers", () => {
+  it("uses hosted answers, including when telemetry is disabled", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", undefined);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", '{"rollout":true,"experiment":"variant"}');
+    vi.stubEnv("DO_NOT_TRACK", "1");
+    expect(resolveFeatureFlagSource()).toEqual({
+      kind: "file",
+      answers: { rollout: true, experiment: "variant" },
+    });
+    expect(rolloutAnswerWithoutPostHog("missing")).toBe(false);
+  });
+
+  it("fails closed when the inline value is present but empty", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", undefined);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", "");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    loadFeatureFlagFileAtBoot();
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining("MCPJAM_FEATURE_FLAGS"));
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "file", answers: {} });
+  });
+
+  it("keeps the configured file first", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", flagFile('{"rollout":false}'));
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", '{"rollout":true}');
+    expect(rolloutAnswerWithoutPostHog("rollout")).toBe(false);
+  });
+});

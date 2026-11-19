@@ -3,9 +3,8 @@
  * consumer: the browser and local-harness rollouts in `analytics.ts`, and the
  * client flags `GET /api/web/flags` serves to the browser.
  *
- *   1. `MCPJAM_FEATURE_FLAGS_FILE` names a JSON file: its answers, for every
- *      actor, and PostHog is never asked. A self-hosted install that cannot
- *      reach PostHog decides its flags here.
+ *   1. `MCPJAM_FEATURE_FLAGS_FILE` or `MCPJAM_FEATURE_FLAGS` supplies JSON
+ *      answers for every actor. The file takes precedence when both are set.
  *   2. Otherwise, under `DO_NOT_TRACK`: every flag off, and PostHog is never
  *      asked. Evaluating a flag sends PostHog the actor's id, so the opt-out
  *      covers it.
@@ -37,6 +36,7 @@ export type FeatureFlagSource =
   | { kind: "posthog" };
 
 let loadedFile: { path: string; answers: FeatureFlagAnswers } | undefined;
+let loadedInline: { value: string; answers: FeatureFlagAnswers } | undefined;
 
 type Report = (problem: string) => void;
 
@@ -51,6 +51,20 @@ function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
     );
     return {};
   }
+  return parseFlagAnswers(
+    text,
+    "MCPJAM_FEATURE_FLAGS_FILE",
+    "Fix the file and restart.",
+    report,
+  );
+}
+
+function parseFlagAnswers(
+  text: string,
+  source: string,
+  action: string,
+  report: Report,
+): FeatureFlagAnswers {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -58,13 +72,13 @@ function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
     // Not the parser's message: it quotes the start of the file, which may be
     // something other than flags.
     report(
-      "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.",
+      `[flags] ${source} is not valid JSON, so every feature flag is off. ${action}`,
     );
     return {};
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     report(
-      "[flags] MCPJAM_FEATURE_FLAGS_FILE must hold one JSON object of flag keys to answers, so every feature flag is off. Fix the file and restart.",
+      `[flags] ${source} must hold one JSON object of flag keys to answers, so every feature flag is off. ${action}`,
     );
     return {};
   }
@@ -80,7 +94,7 @@ function readFlagFile(path: string, report: Report): FeatureFlagAnswers {
     .map(([key]) => `"${key}"`);
   if (invalid.length > 0) {
     report(
-      `[flags] MCPJAM_FEATURE_FLAGS_FILE answers ${invalid.join(", ")} with something other than true, false or a variant name, so those flags are off. Fix the file and restart.`,
+      `[flags] ${source} answers ${invalid.join(", ")} with something other than true, false or a variant name, so those flags are off. ${action}`,
     );
   }
   // `fromEntries` defines each key as its own property, so a `__proto__` key
@@ -99,25 +113,37 @@ function loadFlagFile(path: string, report: Report): FeatureFlagAnswers {
   return loadedFile.answers;
 }
 
+function loadConfiguredAnswers(report: Report): FeatureFlagAnswers | undefined {
+  const path = flagFilePath();
+  if (path) return loadFlagFile(path, report);
+  const value = process.env.MCPJAM_FEATURE_FLAGS;
+  if (value === undefined) return undefined;
+  if (loadedInline?.value !== value) {
+    loadedInline = {
+      value,
+      answers: parseFlagAnswers(
+        value,
+        "MCPJAM_FEATURE_FLAGS",
+        "Fix the environment variable and restart.",
+        report,
+      ),
+    };
+  }
+  return loadedInline.answers;
+}
+
 /**
- * Reads `MCPJAM_FEATURE_FLAGS_FILE` at boot, when it is set, so a missing or
- * malformed file is reported before the first flag is evaluated. On stderr,
+ * Loads configured flags at boot so invalid JSON is reported before the first evaluation. On stderr,
  * because the logger prints in production only with `VERBOSE_LOGS=true`, and
  * under DO_NOT_TRACK, where a flag file is used, it reports nowhere else.
  */
 export function loadFeatureFlagFileAtBoot(): void {
-  const path = flagFilePath();
-  if (path) {
-    loadFlagFile(path, (problem) => process.stderr.write(`${problem}\n`));
-  }
+  loadConfiguredAnswers((problem) => process.stderr.write(`${problem}\n`));
 }
 
 export function resolveFeatureFlagSource(): FeatureFlagSource {
-  const path = flagFilePath();
-  if (path) {
-    const answers = loadFlagFile(path, (problem) => logger.error(problem));
-    return { kind: "file", answers };
-  }
+  const answers = loadConfiguredAnswers((problem) => logger.error(problem));
+  if (answers) return { kind: "file", answers };
   return telemetryOptedOut(process.env.DO_NOT_TRACK)
     ? { kind: "off" }
     : { kind: "posthog" };
