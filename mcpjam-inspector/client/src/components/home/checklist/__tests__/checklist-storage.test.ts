@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
   checklistProgressKey,
@@ -6,7 +6,8 @@ import {
   useChecklistProgress,
 } from "../checklist-progress";
 import {
-  consumeHomeChecklistAutorun,
+  clearHomeChecklistAutorun,
+  readHomeChecklistAutorun,
   writeHomeChecklistAutorun,
 } from "../playground-autorun";
 
@@ -31,12 +32,25 @@ describe("checklist progress", () => {
 });
 
 describe("Playground autorun handoff", () => {
-  it("is read once", () => {
+  it("stays until cleared, so a remount still sees it", () => {
     writeHomeChecklistAutorun({ prompt: "What can this server do?", progressKey: "k" });
-    expect(consumeHomeChecklistAutorun()).toEqual({
+    expect(readHomeChecklistAutorun()).toEqual({
       prompt: "What can this server do?",
       progressKey: "k",
     });
-    expect(consumeHomeChecklistAutorun()).toBeNull();
+    expect(readHomeChecklistAutorun()).not.toBeNull();
+    clearHomeChecklistAutorun();
+    expect(readHomeChecklistAutorun()).toBeNull();
+  });
+
+  it("ignores a prompt left unsent for too long", () => {
+    vi.useFakeTimers();
+    try {
+      writeHomeChecklistAutorun({ prompt: "What can this server do?", progressKey: "k" });
+      vi.advanceTimersByTime(6 * 60_000);
+      expect(readHomeChecklistAutorun()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,9 +1,11 @@
 /**
  * Hands the Home checklist's first Playground prompt to Playground, which
  * sends it on open. sessionStorage so a stale prompt can't follow the user
- * into another browser session; read once, then cleared.
+ * into another browser session. Kept until sent, since Playground can mount
+ * more than once while it loads, and ignored after a few minutes.
  */
 const KEY = "mcpjam.home-checklist.playground-autorun";
+const MAX_AGE_MS = 5 * 60_000;
 
 interface PendingAutorun {
   prompt: string;
@@ -13,23 +15,39 @@ interface PendingAutorun {
 
 export function writeHomeChecklistAutorun(pending: PendingAutorun): void {
   try {
-    window.sessionStorage.setItem(KEY, JSON.stringify(pending));
+    window.sessionStorage.setItem(
+      KEY,
+      JSON.stringify({ ...pending, writtenAt: Date.now() }),
+    );
   } catch {
     // Storage blocked: Playground opens with the usual empty composer.
   }
 }
 
-export function consumeHomeChecklistAutorun(): PendingAutorun | null {
+export function readHomeChecklistAutorun(): PendingAutorun | null {
   try {
     const raw = window.sessionStorage.getItem(KEY);
     if (!raw) return null;
-    window.sessionStorage.removeItem(KEY);
-    const parsed = JSON.parse(raw) as Partial<PendingAutorun>;
-    return typeof parsed.prompt === "string" &&
+    const parsed = JSON.parse(raw) as Partial<PendingAutorun> & {
+      writtenAt?: number;
+    };
+    const fresh =
+      typeof parsed.writtenAt === "number" &&
+      Date.now() - parsed.writtenAt < MAX_AGE_MS;
+    return fresh &&
+      typeof parsed.prompt === "string" &&
       typeof parsed.progressKey === "string"
       ? { prompt: parsed.prompt, progressKey: parsed.progressKey }
       : null;
   } catch {
     return null;
+  }
+}
+
+export function clearHomeChecklistAutorun(): void {
+  try {
+    window.sessionStorage.removeItem(KEY);
+  } catch {
+    // Storage blocked: nothing was stored.
   }
 }

@@ -20,7 +20,10 @@ import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSel
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import { consumeHomeChecklistAutorun } from "@/components/home/checklist/playground-autorun";
+import {
+  clearHomeChecklistAutorun,
+  readHomeChecklistAutorun,
+} from "@/components/home/checklist/playground-autorun";
 import { updateChecklistProgress } from "@/components/home/checklist/checklist-progress";
 
 interface PlaygroundCenterProps {
@@ -55,7 +58,7 @@ export function PlaygroundCenter({
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
   // The Home checklist's "Open Playground": its prompt is sent on open.
-  const [homeAutorun] = useState(consumeHomeChecklistAutorun);
+  const [homeAutorun] = useState(readHomeChecklistAutorun);
   const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
   const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
   const initialComposerPrompt =
@@ -120,10 +123,12 @@ export function PlaygroundCenter({
         autoRunInput={homeAutorun?.prompt}
         onAutoRunSent={
           homeAutorun
-            ? () =>
+            ? () => {
+                clearHomeChecklistAutorun();
                 updateChecklistProgress(homeAutorun.progressKey, {
                   chat: true,
-                })
+                });
+              }
             : undefined
         }
         // The copy needs the server up; retiring the run does not. A message
