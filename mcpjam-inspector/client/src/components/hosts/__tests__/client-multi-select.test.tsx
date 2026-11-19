@@ -54,4 +54,20 @@ describe("ClientMultiSelect", () => {
     expect(onChange).toHaveBeenLastCalledWith([]);
     expect(screen.getByTestId("client-multi-select-option-h2")).toBeVisible();
   });
+
+  it("exposes which clients are checked to assistive tech", async () => {
+    render(
+      <ClientMultiSelect hosts={hosts} value={["h2"]} onChange={vi.fn()} />,
+    );
+
+    await userEvent.click(screen.getByTestId("client-multi-select-trigger"));
+    expect(screen.getByTestId("client-multi-select-option-h2")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("client-multi-select-option-h1")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
 });

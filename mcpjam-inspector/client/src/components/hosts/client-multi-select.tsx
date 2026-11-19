@@ -114,7 +114,7 @@ export function ClientMultiSelect({
                   key={host.hostId}
                   value={`${clientDisplayName(host)} ${host.hostId}`}
                   onSelect={() => toggle(host.hostId)}
-                  aria-selected={isSelected}
+                  aria-checked={isSelected}
                   className="cursor-pointer gap-2 rounded-sm px-2 py-1"
                   data-testid={`client-multi-select-option-${host.hostId}`}
                 >

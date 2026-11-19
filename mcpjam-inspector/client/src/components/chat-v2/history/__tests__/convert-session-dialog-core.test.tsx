@@ -464,6 +464,31 @@ describe("ConvertSessionDialogCore", () => {
     );
   });
 
+  it("keeps the list empty when a client created inline is then cleared", async () => {
+    mocks.hosts = [];
+    const { rerender } = renderCore();
+    fireEvent.click(screen.getByTestId("promote-create-client"));
+    fireEvent.click(screen.getByTestId("create-host-dialog"));
+    mocks.hosts = [{ hostId: "host-created" }];
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("client-picker"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
+    );
+  });
+
   it("does not offer to create a client while the host list is still loading", () => {
     // An empty array mid-flight is not a project without clients, and
     // offering Create there invites a duplicate on first render.
