@@ -184,10 +184,10 @@ export function setEnvelopeMode(
   draft: CaseStepsDraft,
   mode: "extend" | "replace",
 ): CaseStepsDraft {
-  return {
-    ...draft,
-    predicates: { mode, list: draft.predicates?.list ?? [] },
-  };
+  // An inherit envelope's list is inactive, so switching starts empty.
+  const own =
+    draft.predicates?.mode === "inherit" ? undefined : draft.predicates;
+  return { ...draft, predicates: { mode, list: own?.list ?? [] } };
 }
 
 /** Insert an assertion after a step's last assertion and open it. */

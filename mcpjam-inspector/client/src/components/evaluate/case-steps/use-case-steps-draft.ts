@@ -99,7 +99,7 @@ export function useCaseStepsDraft({
   const baseline = useRef<EvalCase | null>(null);
   // Seed when the case changes; a New case seeds a blank draft once. A live
   // update reseeds only a draft with no edits of its own, so edits are kept.
-  const seedKey = testCaseId ?? (testCases ? "new" : null);
+  const seedKey = testCaseId ?? (testCases ? `new:${suiteId}` : null);
   useEffect(() => {
     if (!seedKey || (testCaseId !== null && !testCase)) return;
     const before = baseline.current;

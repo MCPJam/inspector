@@ -1405,13 +1405,11 @@ describe("SuiteIterationsView behind eval-test-case-steps-editor", () => {
     expect(page).toHaveAttribute("data-run", "true");
   });
 
-  it("withholds Run from a direct guest", () => {
+  it("keeps a direct guest on today's editor, which has their runner", () => {
     stepsEditor.enabled = true;
     renderCase({}, { isDirectGuest: true });
-    expect(screen.getByTestId("case-steps-page")).toHaveAttribute(
-      "data-run",
-      "false",
-    );
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    expect(screen.queryByTestId("case-steps-page")).toBeNull();
   });
 
   it("opens a New case from Add manually in the steps editor with the flag on", () => {
