@@ -108,19 +108,15 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({
+vi.mock("@/components/evals/client-attachments-editor", () => ({
+  ClientAttachmentsEditor: ({
     value,
-    triggerId,
   }: {
-    value: string | null;
-    triggerId?: string;
+    value: Array<{ namedHostId: string }>;
   }) => (
-    <button
-      type="button"
-      id={triggerId}
+    <div
       data-testid="client-picker"
-      data-host={value ?? ""}
+      data-host={value.map((attachment) => attachment.namedHostId).join(",")}
     />
   ),
 }));
@@ -769,14 +765,14 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
   });
 
-  it("names Client and Server through their labels, not just their values", () => {
+  it("names Clients and Server through their labels, not just their values", () => {
     // Without a trigger id the accessible name is only the selected value —
     // "Claude", never "Client". `getByLabelText` fails unless the label is
     // really bound to the control.
     renderWithSuites();
     fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
 
-    expect(screen.getByLabelText("Client")).toBe(
+    expect(screen.getByRole("group", { name: "Clients" })).toContainElement(
       screen.getByTestId("client-picker"),
     );
     expect(screen.getByLabelText("Server")).toBe(

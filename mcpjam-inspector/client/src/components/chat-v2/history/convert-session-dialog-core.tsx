@@ -40,9 +40,11 @@ import {
   useProjectServers,
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
+import {
+  ClientAttachmentsEditor,
+  type HostAttachmentDraft,
+} from "@/components/evals/client-attachments-editor";
 import { ServerPicker } from "@/components/hosts/server-picker";
-import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { deriveSessionServerDisplay } from "./session-server-display";
@@ -467,8 +469,6 @@ function ConvertSessionDialogCoreInner({
     ? destinationMode
     : "new";
 
-  /** The one client the new-suite branch attaches; see `handleClientChange`. */
-  const selectedHostId = hostAttachments[0]?.namedHostId ?? null;
 
   /**
    * Per-SESSION reset, keyed on `sessionId` rather than on the `summary`
@@ -763,14 +763,12 @@ function ConvertSessionDialogCoreInner({
 
   const sessionTitle = summary?.title ?? "Imported chat";
 
-  /**
-   * One client, chosen in one field. The wire shape stays the backend's
-   * attachment array so the created suite can grow more clients later in
-   * suite settings — but promoting does not make you assemble a fan-out.
-   */
-  const handleClientChange = (hostId: string | null) => {
-    setHostAttachments(
-      hostId ? [{ namedHostId: hostId, enabledOptionalServerIds: [] }] : [],
+  /** A client created inline joins the suite's clients. */
+  const handleClientCreated = (hostId: string) => {
+    setHostAttachments((current) =>
+      current.some((attachment) => attachment.namedHostId === hostId)
+        ? current
+        : [...current, { namedHostId: hostId, enabledOptionalServerIds: [] }],
     );
   };
 
@@ -916,27 +914,23 @@ function ConvertSessionDialogCoreInner({
         />
       </div>
 
-      {/* Side by side, and only on this branch: a new suite is the one case
-          where nobody has decided what it runs against yet. Both are
-          pre-filled from the session, so the common path is to read them
-          rather than answer them. */}
+      {/* Only on this branch: a new suite is the one case where nobody has
+          decided what it runs against yet. Both are pre-filled from the
+          session, so the common path is to read them rather than answer them.
+          A suite can run on several clients, so this takes a list. */}
       {attachmentPickersEnabled && effectiveProjectId ? (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="min-w-0 space-y-2">
-            <Label htmlFor="promote-new-suite-client">Client</Label>
-            <HostPicker
+        <div className="space-y-3">
+          <div
+            role="group"
+            aria-labelledby="promote-new-suite-clients"
+            className="min-w-0 space-y-2"
+          >
+            <Label id="promote-new-suite-clients">Clients</Label>
+            <ClientAttachmentsEditor
               projectId={effectiveProjectId}
-              value={selectedHostId}
-              onChange={handleClientChange}
-              location="eval_runner"
-              placeholder="Select a client"
-              includeNone={false}
+              value={hostAttachments}
+              onChange={setHostAttachments}
               disabled={isSubmitting}
-              priorityHostId={defaultHostId ?? undefined}
-              triggerId="promote-new-suite-client"
-              // `SelectTrigger` is `w-fit`; without this the Client control
-              // shrinks to its content while Server fills its grid cell.
-              triggerClassName="w-full"
             />
             {/* A project with no clients is otherwise a dead end: the seeding
                 effect needs `projectHosts.length > 0`, so `hostAttachments`
@@ -1024,7 +1018,7 @@ function ConvertSessionDialogCoreInner({
           isOpen={createHostOpen}
           onClose={() => setCreateHostOpen(false)}
           projectId={effectiveProjectId}
-          onCreated={handleClientChange}
+          onCreated={handleClientCreated}
         />
       ) : null}
     </>
