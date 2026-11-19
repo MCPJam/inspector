@@ -27,7 +27,7 @@ const require = createRequire(new URL("../../package.json", import.meta.url));
 const { chromium } = require("playwright");
 
 function parseArgs(argv) {
-  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0 };
+  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0, settleMs: 1_500 };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
@@ -48,6 +48,8 @@ function parseArgs(argv) {
       case "--run": args.run = value; i += 1; break;
       case "--turn-timeout": args.turnTimeoutMs = Number(value) * 1000; i += 1; break;
       case "--send-delay": args.sendDelayMs = Number(value); i += 1; break;
+      // How long a closed, idle turn must stay idle before the next Send; 0 sends a follow-up as soon as the composer is free.
+      case "--settle": args.settleMs = Number(value); i += 1; break;
       case "--headed": args.headed = true; break;
       case "--require-servers": args.requireServers = true; break;
       default: throw new Error(`Unknown argument ${flag}`);
@@ -253,7 +255,7 @@ async function runTurn(instance, workload, meta, args) {
     const settled = request && request.end !== null && !stopVisible;
     if (settled) {
       settledSince ??= Date.now();
-      if (Date.now() - settledSince > 1_500) break;
+      if (Date.now() - settledSince >= args.settleMs) break;
     } else {
       settledSince = null;
     }

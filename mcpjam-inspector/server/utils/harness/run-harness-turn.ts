@@ -1,4 +1,5 @@
 import { traceEvent } from "./harness-trace.js";
+import { overlapMcpConfigWithBroker } from "./startup-overlap.js";
 import { createHostToolCancellation } from "./host-tool-cancellation";
 import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
 import { cursorRuntimeLogin } from "./runtime-login.js";
@@ -2322,7 +2323,33 @@ export async function runHarnessTurn(
         !harnessAdapter.fingerprintsMcpConfig)
         sessionGrantOrigin = new URL(publicBaseUrl).origin;
       traceEvent("pre.sessionConfig.start");
-      if (deferSessionConfig) {
+      // With the switch on, a brokered hosted turn mints its MCP configuration
+      // while its broker starts: nothing reads it before the broker returns,
+      // where it is awaited (`settleMcpConfig`). A session grant is asked for
+      // whenever servers are selected, the one input the broker needs from it.
+      let pendingMcpConfig: Promise<{ failed: false } | { failed: true; error: unknown }> | undefined;
+      const settleMcpConfig = async () => {
+        if (!pendingMcpConfig) return;
+        const settled = await pendingMcpConfig;
+        pendingMcpConfig = undefined;
+        traceEvent("pre.sessionConfig.settled");
+        if (settled.failed) throw settled.error;
+      };
+      if (deferSessionConfig && overlapMcpConfigWithBroker() && !externalAccountAuth) {
+        const sessionEnvelopes = Boolean(continuity?.laneId && publicBaseUrl);
+        if (sessionEnvelopes && (selectedServers?.length ?? 0) > 0) sessionGrantOrigin = new URL(publicBaseUrl!).origin;
+        const minting = sessionEnvelopes
+          ? buildNativeProxyConfig(undefined, { owner: continuity!.owner, leaseId: continuity!.leaseId, turnId })
+          : perTurnProxyConfig();
+        pendingMcpConfig = minting.then(
+          (config) => {
+            ({ mcpJson, keyToServerId } = config);
+            harnessKeyToServerId = keyToServerId;
+            return { failed: false as const };
+          },
+          (error: unknown) => ({ failed: true as const, error }),
+        );
+      } else if (deferSessionConfig) {
         if (continuity?.laneId && publicBaseUrl) {
           ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, { owner: continuity.owner, leaseId: continuity.leaseId, turnId }));
           if (Object.keys(mcpJson.mcpServers).length > 0) sessionGrantOrigin = new URL(publicBaseUrl).origin;
@@ -2697,6 +2724,10 @@ export async function runHarnessTurn(
               harnessId: harnessAdapter.id,
               sandboxId: sandboxId!,
               connectionPreparedByBroker: () => connectionPreparedByBroker,
+              // The same test as the stale-bake watch below: a lane's first
+              // turn runs on the box just provisioned for its conversation.
+              firstTurnOnNewBox: () =>
+                Boolean(harnessSandboxBinding) && continuity !== undefined && continuity.stateVersion === 0,
               defaultWorkingDirectory,
               proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -2850,6 +2881,7 @@ export async function runHarnessTurn(
           bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
+        await settleMcpConfig();
         if (!broker.ok) {
           // Throws propagate to the turn's outer catch; onFinishEngine frees the
           // claimed lane (sessionEstablished still false) and revokes the broker
@@ -2889,6 +2921,7 @@ export async function runHarnessTurn(
         auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl, warmAgentPilot);
         modelEndpoint = org.brokeredEndpoint;
       }
+      await settleMcpConfig();
       tBroker = turnEvent.mark("broker");
 
       continuity = org.continuityOnLeasedKey(continuity);

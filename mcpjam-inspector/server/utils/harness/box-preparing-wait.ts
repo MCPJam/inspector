@@ -39,7 +39,12 @@ type Attempt<T> = (signal: AbortSignal) => Promise<T>;
  */
 export async function waitOutBoxPreparation<
   T extends { ok: boolean; code?: string; reservationExpiresAt?: number },
->(attempt: Attempt<T>, signal?: AbortSignal): Promise<T> {
+>(
+  attempt: Attempt<T>,
+  signal?: AbortSignal,
+  /** Waits out a pause, or less once the preparation settles here (`box-preparation-signal.ts`). */
+  pauseFor: (ms: number, signal?: AbortSignal) => Promise<void> = sleep,
+): Promise<T> {
   const giveUpAt = performance.now() + BOX_PREPARING_WAIT_MS;
   let expiry: number | undefined;
   let movedAt = performance.now();
@@ -56,7 +61,7 @@ export async function waitOutBoxPreparation<
     if (now + pause >= giveUpAt || now - movedAt > STALLED_CLAIM_MS) {
       throw stillPreparing();
     }
-    await sleep(pause, signal);
+    await pauseFor(pause, signal);
   }
 }
 

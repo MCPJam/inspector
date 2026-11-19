@@ -26,6 +26,7 @@ import {
   clearAdapterSkills,
   handOffLegacySkillDirs,
   preseedAdapterSkills,
+  seedSkillsManifestEnabled,
   type PreseedSession,
 } from "./preseed-adapter-skills.js";
 import {
@@ -124,7 +125,11 @@ export interface BoxSkillsResult {
    *  box (`harness-server-skills.ts`). Set by the turn, never by the writer. */
   servedByTools?: BoxSkillOutcome[];
   /** Count-only delivery for server skills discovered after the box plan. */
-  liveDelivery?: { delivered: number; collisions: number; omittedFromCatalog: number };
+  liveDelivery?: {
+    delivered: number;
+    collisions: number;
+    omittedFromCatalog: number;
+  };
 }
 
 /** The delivered skills' supporting files. A skill whose whole list `files`
@@ -204,7 +209,12 @@ export async function writeBoxSkills(args: {
   }
   const skillsBase = boxSkillsFolder(descriptor, args.home);
   if (plan.deliver.length === 0) {
-    await clearSkillsFolder(session, skillsBase, signal);
+    await clearSkillsFolder(
+      session,
+      skillsBase,
+      signal,
+      seedSkillsManifestEnabled(),
+    );
     return result;
   }
   if (signal?.aborted) return result;
@@ -265,11 +275,13 @@ async function clearSkillsFolder(
   session: BoxSkillsSession,
   skillsBase: string,
   signal: AbortSignal | undefined,
+  seedIfMissing = false,
 ): Promise<void> {
   await reconcileSkillDirs({ session, skills: [], skillsHash: "", skillsBase });
   await clearAdapterSkills({
     session,
     skillsBase,
+    seedIfMissing,
     ...(signal ? { signal } : {}),
   });
 }

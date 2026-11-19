@@ -25,6 +25,7 @@
  * The backend retires an uncertain box, as it does one whose claim lapsed, so
  * no Send ever runs on it (`box_retired`).
  */
+import { markBoxPreparationSettled } from "./box-preparation-signal.js";
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { preparePlaygroundTerminalSandbox } from "../computers/control-plane-client.js";
@@ -313,6 +314,7 @@ export async function prepareConversationBox(args: {
       });
     }
     await release(outcome);
+    markBoxPreparationSettled(sandboxRowId);
   }
 }
 

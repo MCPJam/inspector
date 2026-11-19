@@ -22,11 +22,7 @@ import {
  *   id / defaultWorkingDirectory / ports    → native E2B
  *   stop / destroy                          → no-op (control plane owns teardown)
  */
-import {
-  FileNotFoundError,
-  CommandExitError,
-  SandboxNotFoundError,
-} from "e2b";
+import { FileNotFoundError, CommandExitError, SandboxNotFoundError } from "e2b";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -45,11 +41,10 @@ import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { traceSandboxSession, traceSpan } from "./harness-trace.js";
 import {
-  EARLY_REAP_STATE_DIR,
   SANDBOX_HOME_COMMAND,
+  bridgeReapSchedule,
   memoizeSandboxHome,
   readAheadInBackground,
-  reapBridgesEarly,
   rememberSandboxHome,
   rememberedSandboxHome,
 } from "./startup-overlap.js";
@@ -119,6 +114,11 @@ export interface E2BHarnessSandboxProviderOptions {
    * every process in the box through `/proc` and lands in shell history.
    */
   sessionEnv?: Record<string, string>;
+  /**
+   * True for a conversation's first turn on the box provisioned for it: no
+   * bridge can be running there, so its first bridge spawn skips the reap.
+   */
+  firstTurnOnNewBox?: () => boolean;
   /**
    * The model proxy base URL this turn's lease is installed for. Read on
    * RESUME, after the turn minted its lease, to close connections that still
@@ -413,7 +413,11 @@ export function createE2BHarnessSandboxProvider(
         ...(resuming
           ? [
               traceSpan("box.prepare", "close-proxy-connections", () =>
-                closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal),
+                closeModelProxyConnections(
+                  sandbox,
+                  opts.proxyUrl?.(),
+                  connectSignal,
+                ),
               ),
             ]
           : []),
@@ -465,16 +469,14 @@ export function createE2BHarnessSandboxProvider(
       }
     };
 
-    // A fresh session has no bridge of its own yet, so its first spawn's reap
-    // can run now, while the framework's setup commands run, and the spawn
-    // waits for it. Never on a resume: its own bridge may be the one it
-    // reattaches to. Later spawns of the session reap as before.
-    let earlyReap: Promise<void> | undefined =
-      !resuming && reapBridgesEarly()
-        ? traceSpan("box.prepare", "early-reap", () =>
-            reapBridges(EARLY_REAP_STATE_DIR, connectSignal),
-          )
-        : undefined;
+    const bridgeReaps = bridgeReapSchedule({
+      resuming,
+      reap: reapBridges,
+      ...(opts.firstTurnOnNewBox
+        ? { firstTurnOnNewBox: opts.firstTurnOnNewBox }
+        : {}),
+      ...(connectSignal ? { signal: connectSignal } : {}),
+    });
 
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
@@ -544,8 +546,11 @@ export function createE2BHarnessSandboxProvider(
           command === SANDBOX_HOME_COMMAND &&
           env?.HOME === undefined &&
           sessionEnv?.HOME === undefined;
-        const knownHome = homeQuery ? rememberedSandboxHome(opts.sandboxId) : undefined;
-        if (knownHome !== undefined) return { exitCode: 0, stdout: knownHome, stderr: "" };
+        const knownHome = homeQuery
+          ? rememberedSandboxHome(opts.sandboxId)
+          : undefined;
+        if (knownHome !== undefined)
+          return { exitCode: 0, stdout: knownHome, stderr: "" };
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
@@ -553,7 +558,8 @@ export function createE2BHarnessSandboxProvider(
             timeoutMs: commandTimeoutMs,
             ...signalOpt(abortSignal),
           });
-          if (homeQuery && res.exitCode === 0) rememberSandboxHome(opts.sandboxId, res.stdout);
+          if (homeQuery && res.exitCode === 0)
+            rememberSandboxHome(opts.sandboxId, res.stdout);
           // E2B accepted and completed the command, so the session env was
           // actually handed to the box. A transport rejection before
           // acceptance must not mark delivery.
@@ -588,11 +594,7 @@ export function createE2BHarnessSandboxProvider(
         const stateDir = isBridgeSpawn(env)
           ? bridgeStateDirOf(command)
           : undefined;
-        if (stateDir) {
-          const reaped = earlyReap;
-          earlyReap = undefined;
-          await (reaped ?? reapBridges(stateDir, abortSignal));
-        }
+        if (stateDir) await bridgeReaps.beforeSpawn(stateDir, abortSignal);
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;

@@ -1,3 +1,4 @@
+import { preparationWakeEnabled, waitForBoxPreparation } from "./box-preparation-signal.js";
 import type { ModelReasoningEffort, ModelSelection } from "@mcpjam/sdk";
 /**
  * A harness turn's lease wiring for the key it runs on, built once at the top
@@ -220,6 +221,7 @@ export class OrgLeaseTurn {
       (signal) =>
         reserveHarnessBox({ ...args, ...this.selectionField, signal }),
       args.signal,
+      preparationPause(args.box),
     ).catch((error: unknown) => {
       handBack();
       throw error;
@@ -266,6 +268,7 @@ export class OrgLeaseTurn {
             : {}),
         }),
       args.signal,
+      preparationPause(args.box),
     );
     refuseRetiredBox(broker);
     if (broker.ok) {
@@ -399,4 +402,11 @@ export class OrgLeaseTurn {
       }
     );
   }
+}
+
+/** With the wake switch on, a pause that ends when this box's preparation settles here. */
+function preparationPause(box: { kind: string; sandboxRowId?: string }) {
+  if (!preparationWakeEnabled() || box.kind !== "sandbox" || !box.sandboxRowId) return undefined;
+  const boxId = box.sandboxRowId;
+  return (ms: number, signal?: AbortSignal) => waitForBoxPreparation(boxId, ms, signal);
 }
