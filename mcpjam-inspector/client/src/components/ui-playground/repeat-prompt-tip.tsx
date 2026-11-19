@@ -139,7 +139,7 @@ export function RepeatPromptTip({
           <Badge>Tip</Badge>
           <p className="min-w-0 flex-1 text-foreground">
             You&apos;ve asked {serverName} this before. Save it as a test case
-            to rerun it anytime.
+            for your evals to rerun it anytime.
           </p>
           <Button
             variant="secondary"
