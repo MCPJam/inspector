@@ -72,6 +72,7 @@ vi.mock("../registry.js", async () => {
         baseUrl: "https://broker.example",
       },
     })),
+    harnessSupportsSkills: () => true,
     getHarnessAdapter: vi.fn(() => ({
       id: "codex",
       pinnedRuntimeVersion: "0.163.0",
@@ -137,7 +138,11 @@ import { renderUserContextText } from "@/shared/user-context-message";
 import { buildServerSkillToolOutput } from "@/shared/server-skill-banner";
 import { runHarnessTurn } from "../run-harness-turn";
 import { COMMAND_REFUSED_IN_USE } from "../server-skill-command-gate";
-import { preparedRunSkills } from "../../../test/support/skill-delivery";
+import {
+  frozenPlan,
+  preparedRunSkills,
+} from "../../../test/support/skill-delivery";
+import { resolveTurnSkills } from "../../../services/environments/turn-skills";
 
 const ASK = {
   role: "user",
@@ -196,7 +201,10 @@ async function evalTurn(overrides: Record<string, unknown> = {}) {
       sourceType: "eval",
       approvalMode: "auto-deny",
       harness: "codex",
-      pinnedHarnessSkills: run.pinnedHarnessSkills,
+      skillPlan: resolveTurnSkills({
+        source: run.pinnedSkillSource,
+        runtime: { kind: "harness", harnessId: "codex" },
+      }),
       ...overrides,
     } as never,
     "none",
@@ -291,7 +299,7 @@ describe("a harness turn with a server skill", () => {
 
 describe("a harness turn without one", () => {
   it("keeps the runtime's own mode and offers no skill tools", async () => {
-    const agent = await evalTurn({ pinnedHarnessSkills: [] });
+    const agent = await evalTurn({ skillPlan: frozenPlan("codex", []) });
     expect(agent.permissionMode).toBe("allow-all");
     expect(agent.tools ?? {}).not.toHaveProperty("loadSkill");
     expect(agent.instructions).toBe("You are Codex.");
@@ -364,7 +372,7 @@ describe("a harness turn under the approval policy", () => {
     journeyRunId: "run-1",
     hostId: "host-1",
     chatSessionId: "chat-1",
-    pinnedHarnessSkills: [],
+    skillPlan: frozenPlan("codex", []),
   };
   const writes = () => ({
     description: "Change a record",
@@ -415,7 +423,7 @@ describe("a harness turn under the approval policy", () => {
     const read = reads();
     const agent = await evalTurn({
       requireToolApproval: false,
-      pinnedHarnessSkills: [],
+      skillPlan: frozenPlan("codex", []),
       builtInTools: { workspace_write: always, read_record: read },
     });
     expect(agent.permissionMode).toBe("allow-all");
@@ -435,7 +443,7 @@ describe("a harness turn under the approval policy", () => {
     const agent = await evalTurn({
       ...MEMBER,
       requireToolApproval: true,
-      pinnedHarnessSkills: [],
+      skillPlan: frozenPlan("codex", []),
       builtInTools: { write_record: write },
     });
     expect(agent.toolApproval).toEqual({ write_record: "user-approval" });

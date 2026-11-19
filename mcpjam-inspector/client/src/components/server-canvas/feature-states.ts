@@ -184,6 +184,7 @@ export const NEXT_ACTION_LABELS: Record<FeatureNextAction, string> = {
   "run-checks": "Run checks",
   "use-in-playground": "Open Playground",
   "set-up": "Set up",
+  refresh: "Refresh",
   "upgrade-version": "Change protocol version",
 };
 

@@ -373,7 +373,7 @@ export const THIRD_PARTY_FEATURES: readonly FeatureDefinition[] = [
     summary:
       'A plugin manifest names a skill to run when a user installs the app (extensions["com.openai"].onboardingSkill).',
     howTo:
-      "Set onboardingSkill in the plugin manifest, then set up OpenAI onboarding in MCPJam to try it.",
+      "Set onboardingSkill in the plugin manifest. Adding the plugin in MCPJam offers to run it.",
     spec: specAt("openai", "plugin-onboarding"),
     assessment: { primary: "configured", setup: "openai-onboarding" },
   }),

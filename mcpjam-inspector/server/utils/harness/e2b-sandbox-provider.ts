@@ -42,9 +42,12 @@ import {
 } from "./bridge-reaper.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
+import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /** Resolved adapter identity for cold-start read-ahead. */
+  harnessId?: string;
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
   /**
@@ -360,9 +363,14 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      // Both checks must finish before exposing the session. Socket cleanup
-      // targets only the model proxy and is independent of the package guard.
+      // Preparation must finish before exposing the session. The read-only
+      // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
+        readAheadRuntime(
+          (command, options) => sandbox.commands.run(command, options),
+          { harnessId: opts.harnessId, resuming },
+          connectSignal,
+        ),
         ...(opts.skipPnpmGuard
           ? []
           : [
