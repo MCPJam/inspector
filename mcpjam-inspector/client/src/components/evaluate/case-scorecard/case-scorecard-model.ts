@@ -712,7 +712,7 @@ function resolveRoute(input: CaseScorecardInput): RouteState {
  * fail that assertion. Falling back keeps the page readable — one wrong field
  * beats a blank page — exactly as the suite model does.
  */
-function safeResolveMatchOptions(
+export function safeResolveMatchOptions(
   suiteDefaults: EvalMatchOptions | undefined,
   caseOverride: EvalMatchOptions | undefined,
 ): EvalMatchOptions {

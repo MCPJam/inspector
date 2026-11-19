@@ -25,6 +25,7 @@ import {
 } from "@/lib/plugins/plugin-notice-display";
 import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
 import { useChatAppDisplayBehavior } from "@/contexts/chat-app-display-behavior-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -520,6 +521,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     // keeps the single-pane Thread mounted across a compare-mode flip.
     // Mirrors ChatTabV2.trace-views.test.tsx's `mockChatInput` pattern.
     mockChatInputProps(props);
+    const theme = useScenarioHostTheme();
     const {
       value,
       onChange,
@@ -537,6 +539,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     return (
       <form
         data-testid="chat-input"
+        data-theme={theme}
         data-loading={isLoading ? "true" : "false"}
         data-skill-count={skillResults?.length ?? 0}
         data-client-selector={clientSelector ? "true" : "false"}
@@ -2683,6 +2686,62 @@ describe("PlaygroundMain", () => {
   });
 
   describe("thread theme from host context", () => {
+    it.each([
+      { appTheme: "light", clientTheme: "dark" },
+      { appTheme: "dark", clientTheme: "light" },
+    ] as const)(
+      "keeps the compare shell and composer $appTheme while client panes stay $clientTheme",
+      ({ appTheme, clientTheme }) => {
+        mockPreferencesState.themeMode = appTheme;
+        useHostContextStore.getState().patchHostContext({ theme: clientTheme });
+        mockUseChatSession.availableModels = [
+          { id: "gpt-4", name: "GPT-4", provider: "openai" },
+          { id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", provider: "anthropic" },
+        ];
+        mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+        mockUseChatSession.multiModelEnabled = true;
+
+        render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+        const shell = screen.getByTestId("playground-compare-shell");
+        expect(shell).toHaveAttribute("data-thread-theme", appTheme);
+        expect(shell).toHaveClass("bg-background", "text-foreground");
+        expect(shell.classList.contains("dark")).toBe(appTheme === "dark");
+        expect(shell.style.colorScheme).toBe(appTheme);
+        expect(shell.style.backgroundColor).toBe("");
+        expect(shell.style.getPropertyValue("--background")).toBe("");
+        for (const composer of within(shell).getAllByTestId("chat-input")) {
+          expect(composer).toHaveAttribute("data-theme", appTheme);
+        }
+        expect(mockMultiModelPlaygroundCard).toHaveBeenCalled();
+        for (const [props] of mockMultiModelPlaygroundCard.mock.calls) {
+          expect(props.effectiveThreadTheme).toBe(clientTheme);
+        }
+        expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      { appTheme: "light", clientTheme: "dark" },
+      { appTheme: "dark", clientTheme: "light" },
+    ] as const)(
+      "keeps the single-client shell and composer $clientTheme in the $appTheme app",
+      ({ appTheme, clientTheme }) => {
+        mockPreferencesState.themeMode = appTheme;
+        useHostContextStore.getState().patchHostContext({ theme: clientTheme });
+
+        render(<PlaygroundMain {...defaultProps} />);
+
+        const shell = screen.getByTestId("playground-thread-shell");
+        expect(shell).toHaveAttribute("data-thread-theme", clientTheme);
+        expect(shell.classList.contains("dark")).toBe(clientTheme === "dark");
+        for (const composer of within(shell).getAllByTestId("chat-input")) {
+          expect(composer).toHaveAttribute("data-theme", clientTheme);
+        }
+        expect(screen.queryByTestId("playground-compare-shell")).toBeNull();
+      },
+    );
+
     it("scopes hostContext theme changes to the thread shell and composer surface", () => {
       render(<PlaygroundMain {...defaultProps} />);
 

@@ -80,6 +80,31 @@ describe("pickConformanceServer", () => {
 });
 
 describe("ConformanceSpotlight", () => {
+  it("defers without marking dismissed while announcements are disabled", async () => {
+    const spotlight = (enabled: boolean) => (
+      <ConformanceSpotlight
+        enabled={enabled}
+        onConformancePage={false}
+        onNavigate={onNavigate}
+      >
+        <button type="button">Conformance</button>
+      </ConformanceSpotlight>
+    );
+    const { rerender } = render(spotlight(false));
+    await waitForOpen();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(CONFORMANCE_SPOTLIGHT_STORAGE_KEY)).toBeNull();
+    expect(track).not.toHaveBeenCalled();
+
+    rerender(spotlight(true));
+    await waitForOpen();
+    expect(screen.getByRole("dialog", { name: TITLE })).toBeVisible();
+
+    rerender(spotlight(false));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(localStorage.getItem(CONFORMANCE_SPOTLIGHT_STORAGE_KEY)).toBeNull();
+  });
+
   it("opens after a delay without taking focus and lists the suites", async () => {
     renderSpotlight();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

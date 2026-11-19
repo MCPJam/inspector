@@ -61,6 +61,7 @@ import {
   deserializeServersFromConvex,
   serializeServersForSharing,
 } from "@/lib/project-serialization";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   pickProjectConnectionConfig,
@@ -482,7 +483,12 @@ export function useProjectState({
           // the flat list arrives. Consumers gate on isLoadingRemoteProjects.
           if (activeProjectServersFlat !== undefined) {
             deserializedServers = deserializeServersFromConvex(
-              activeProjectServersFlat,
+              Array.from(
+                indexProjectServersByName(
+                  activeProjectServersFlat,
+                  rw._id,
+                ).values(),
+              ),
             );
           }
         } else {
@@ -492,7 +498,9 @@ export function useProjectState({
           // the picker would briefly flash "0 server(s)" on every fresh load.
           const bulk = bulkServersByProject[rw._id];
           if (bulk !== undefined) {
-            deserializedServers = deserializeServersFromConvex(bulk);
+            deserializedServers = deserializeServersFromConvex(
+              Array.from(indexProjectServersByName(bulk, rw._id).values()),
+            );
           } else if (rw.servers) {
             deserializedServers = deserializeServersFromConvex(rw.servers);
           }

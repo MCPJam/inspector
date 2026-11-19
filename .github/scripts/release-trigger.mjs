@@ -1,14 +1,13 @@
 /**
  * Whether a commit on `main` should start Release now (release-trigger.yml).
  *
- * The trigger waits for one thing: Deploy Staging passing on the commit.
- * Release itself then runs the full test suite and build before it publishes
- * anything. Every later commit on `main` carries the versions the version PR
- * committed, so when one commit cannot be released (its staging run was
- * cancelled by the next push, or failed) the next green one is.
- *
- * Unless the version PR ticked skip_verify: then staging is not waited for,
- * and the version commit itself is released as soon as it lands.
+ * Start release dispatches Release itself; this is the fallback for a run that
+ * stood down because `main` moved. The trigger waits for one thing: Deploy
+ * Staging passing on the commit. Release itself then runs the full test suite
+ * and build before it publishes anything. Every later commit on `main` carries
+ * the versions Start release committed, so when one commit cannot be released
+ * (its staging run was cancelled by the next push, or failed) the next green
+ * one is.
  */
 
 /** `unpublished` is unpublished-versions.mjs output: `{ name, newVersion }`. */
@@ -32,7 +31,7 @@ export function releaseRunName(label) {
  * @param {{name: string, newVersion: string}[]} state.unpublished
  * @param {{status: string, conclusion: string | null, displayTitle: string}[]} state.releaseRuns
  *   recent release.yml runs, newest first
- * @param {boolean} [state.skipVerify] the merged version PR ticked skip_verify
+ * @param {boolean} [state.skipVerify] the version commit asked for skip_verify
  */
 export function decideRelease({
   headSha,
@@ -67,7 +66,7 @@ export function decideRelease({
   const last = releaseRuns.find((r) => r.displayTitle === releaseRunName(label));
   if (last && last.conclusion !== "success")
     return skip(
-      `The automatic release of ${label} ended "${last.conclusion}". Re-run its failed jobs or start Release from Soundcheck.`
+      `The automatic release of ${label} ended "${last.conclusion}". Retry it with Retry release in Soundcheck.`
     );
 
   return {

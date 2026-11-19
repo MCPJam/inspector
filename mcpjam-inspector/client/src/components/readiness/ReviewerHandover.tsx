@@ -9,7 +9,7 @@ import { createReviewerHandoff, type ReviewerAttempt } from "@/lib/apis/reviewer
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "@/lib/toast";
 import type { Handover } from "./reviewer-stages";
-import { ApproximatedLabel, FrameButton } from "./ReviewerStages";
+import { FrameButton } from "./ReviewerStages";
 
 export function ReviewerHandover({
   attempt,
@@ -68,7 +68,6 @@ export function ReviewerHandover({
             <div className="space-y-1">
               <dt className={term}>What the page asked for</dt>
               <dd className="[overflow-wrap:anywhere]">
-                {handover.approximated ? <ApproximatedLabel /> : null}
                 {handover.asked}
                 {onShow ? (
                   <FrameButton

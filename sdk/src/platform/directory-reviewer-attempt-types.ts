@@ -32,6 +32,9 @@ export interface PlatformReviewerStage {
   detail?: string;
   evidence?: {
     screenshotArtifactId?: string;
+    /** Whether the stage's own picture was taken, and if not, why. */
+    screenshotStatus?: "captured" | "suppressed" | "unavailable";
+    screenshotNote?: string;
     recordingArtifactId?: string;
     observedIdentity?: string;
     observedOrganization?: string;

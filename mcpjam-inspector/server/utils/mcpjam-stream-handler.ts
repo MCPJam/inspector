@@ -113,6 +113,7 @@ import {
   type MrtrEngineResume,
 } from "./mrtr-hosted-chat.js";
 import { isClientFulfilledToolName } from "@/shared/client-fulfilled-tools";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { PLATFORM_STREAM_PATH } from "@/shared/mcpjam-agent-model";
 import {
   DEFAULT_TURN_MAX_STEPS,
@@ -332,6 +333,7 @@ import {
   isMcpjamOwnedEmptyStep,
   type EmptyStepFacts,
 } from "./empty-step-failure.js";
+import { omitCallCost, readCallCostFromFinishChunk } from "./backend-call-cost.js";
 import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
@@ -1957,7 +1959,7 @@ function createClientFinishChunk(
     (finishChunk
       ? readUsageFromFinishChunk(finishChunk)
       : { inputTokens: 0, outputTokens: 0, totalTokens: 0 });
-  const metadata = source?.messageMetadata;
+  const metadata = omitCallCost(source?.messageMetadata);
   const messageMetadata =
     metadata &&
     typeof metadata === "object" &&
@@ -4497,6 +4499,7 @@ async function processOneStep(ctx: StepContext): Promise<{
   const harnessSpanMeta = {
     provider,
     finishReason: readFinishReasonFromChunk(finishChunk),
+    cost: readCallCostFromFinishChunk(finishChunk),
     ttfcMs:
       typeof firstChunkAt === "number"
         ? Math.max(0, firstChunkAt - llmStartAbs)
@@ -4620,7 +4623,7 @@ async function processOneStep(ctx: StepContext): Promise<{
             toolName: part.toolName,
             output: {
               type: "error-text",
-              value: "approval-denied (synthetic session)",
+              value: SYNTHETIC_SESSION_APPROVAL_DENIAL,
             },
           };
           const bucket = deniedByAssistantIdx.get(i) ?? [];
@@ -4923,6 +4926,32 @@ async function processOneStep(ctx: StepContext): Promise<{
         isMrtrSuspendSignalShape(error) ||
         isScopeStepUpSuspendSignal(error)
       ) {
+        // The provider call finished before the tool paused, so it keeps its
+        // llm span and cost: the finish chunk below carries no cost, and the
+        // span is the only place the call is counted.
+        pushBackendStepSuccessSpans(
+          traceTurn.turnSpans,
+          traceTurn.turnStartedAt,
+          traceTurn.promptIndex,
+          stepIndex,
+          stepStartAbs,
+          { startAbs: llmStartAbs, endAbs: llmEndAbs },
+          {
+            startAbs: toolsStartAbs,
+            endAbs: Date.now(),
+            pushAggregateSpan: false,
+          },
+          {
+            modelId,
+            inputTokens: stepUsage?.inputTokens,
+            outputTokens: stepUsage?.outputTokens,
+            totalTokens: stepUsage?.totalTokens,
+            messageStartIndex: stepMessageStartIndex,
+            messageEndIndex: stepMessageEndIndex,
+            status: "ok",
+            ...harnessSpanMeta,
+          },
+        );
         emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
         if (finishChunk) {
           writer.write(createClientFinishChunk(finishChunk, traceTurn, "stop"));
@@ -4930,6 +4959,19 @@ async function processOneStep(ctx: StepContext): Promise<{
         return { shouldContinue: false, didEmitFinish: !!finishChunk };
       }
       const failAbs = Date.now();
+      // A failure after this step's spans were recorded replaces them, so the
+      // provider call keeps one llm span and is counted once.
+      // In place: the traced tools hold this array.
+      for (let i = traceTurn.turnSpans.length - 1; i >= 0; i--) {
+        const span = traceTurn.turnSpans[i]!;
+        if (
+          (span.category === "step" || span.category === "llm") &&
+          span.promptIndex === traceTurn.promptIndex &&
+          span.stepIndex === stepIndex
+        ) {
+          traceTurn.turnSpans.splice(i, 1);
+        }
+      }
       pushBackendStepToolFailureSpans(
         traceTurn.turnSpans,
         traceTurn.turnStartedAt,
@@ -4947,6 +4989,7 @@ async function processOneStep(ctx: StepContext): Promise<{
           messageStartIndex: stepMessageStartIndex,
           messageEndIndex: stepMessageEndIndex,
           pushAggregateSpan: false,
+          cost: harnessSpanMeta.cost,
         },
       );
       setStepSpanMessageRanges(

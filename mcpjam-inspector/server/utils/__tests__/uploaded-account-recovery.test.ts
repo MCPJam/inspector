@@ -163,7 +163,7 @@ describe("uploaded account recovery", () => {
 
     await expect(
       handler({ serverId: "srv", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toMatchObject({ accessToken: "new-token" });
     expect(refreshFails).toHaveBeenCalledTimes(1);
     expect(reResolve).toHaveBeenCalledTimes(1);
     expect(reResolve).toHaveBeenCalledWith("srv", "acct_upload");
@@ -206,7 +206,7 @@ describe("uploaded account recovery", () => {
     );
     await expect(
       same.handler({ serverId: "srv", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toMatchObject({ accessToken: "new-token" });
   });
 
   it("asks for a fresh upload when the token is unchanged, without offering a sign-in", async () => {
@@ -267,7 +267,7 @@ describe("uploaded account recovery", () => {
 
     await expect(
       handler({ serverId: "srv", error: rejected() }),
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       accessToken: "refreshed",
     });
     expect(reResolve).not.toHaveBeenCalled();
@@ -411,7 +411,7 @@ describe("uploaded account recovery", () => {
       ).rejects.toBe(failure);
       await expect(
         handler({ serverId: "srv", error: rejected() }),
-      ).resolves.toEqual({ accessToken: "renewed" });
+      ).resolves.toMatchObject({ accessToken: "renewed" });
       expect(reResolve).not.toHaveBeenCalled();
     },
   );
@@ -427,7 +427,7 @@ describe("uploaded account recovery", () => {
     await vi.waitFor(() => expect(reResolve).toHaveBeenCalledTimes(1));
     read.resolve(answer({ oauthAccessToken: "new-token" }));
 
-    await expect(both).resolves.toEqual([
+    await expect(both).resolves.toMatchObject([
       { accessToken: "new-token" },
       { accessToken: "new-token" },
     ]);
@@ -458,10 +458,10 @@ describe("uploaded account recovery", () => {
     const late = handler({ serverId: "srv", error: rejected() });
     await expect(
       handler({ serverId: "srv", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toMatchObject({ accessToken: "new-token" });
     slowRefresh.resolve();
 
-    await expect(late).resolves.toEqual({ accessToken: "new-token" });
+    await expect(late).resolves.toMatchObject({ accessToken: "new-token" });
     expect(reResolve).toHaveBeenCalledTimes(1);
   });
 
@@ -483,10 +483,10 @@ describe("uploaded account recovery", () => {
     const reading = handler({ serverId: "srv", error: rejected() });
     await expect(
       handler({ serverId: "srv", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "refreshed" });
+    ).resolves.toMatchObject({ accessToken: "refreshed" });
     read.resolve(answer({ oauthAccessToken: "refreshed" }));
 
-    await expect(reading).resolves.toEqual({ accessToken: "refreshed" });
+    await expect(reading).resolves.toMatchObject({ accessToken: "refreshed" });
   });
 });
 
@@ -539,7 +539,7 @@ describe("buildHostedOAuthUnauthorizedHandler with an uploaded account", () => {
 
       await expect(
         handler({ serverId: "srv", error: rejected() }),
-      ).resolves.toEqual({
+      ).resolves.toMatchObject({
         accessToken: "new-token",
       });
       // One refresh, one re-resolve.
@@ -583,4 +583,11 @@ describe("buildHostedOAuthUnauthorizedHandler with an uploaded account", () => {
       expect(reResolve).not.toHaveBeenCalled();
     },
   );
+});
+
+it("reports a rejected replacement without reading another credential", async () => {
+  const { handler, reResolve } = setup(vi.fn().mockResolvedValue(answer({ oauthAccessToken: "new-token" })));
+  const result = await handler({ serverId: "srv", error: rejected() });
+  expect(() => result.onRetryRejected?.(rejected())).toThrow('Upload a fresh token');
+  expect(reResolve).toHaveBeenCalledTimes(1);
 });

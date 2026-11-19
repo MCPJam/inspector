@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { GatewayApi, GatewayModel } from "@/shared/gateway-connection";
-import { gatewayApiUsedBy, gatewayWorksWith } from "../gateway-works-with";
+import {
+  blockedLabel,
+  gatewayApiUsedBy,
+  gatewayWorksWith,
+  providerAttention,
+} from "../gateway-works-with";
 
 const MAPPED: GatewayModel[] = [
   { nativeModelId: "claude-sonnet-4.5", modelId: "anthropic/claude-sonnet-4.5" },
@@ -50,14 +55,14 @@ describe("gatewayWorksWith", () => {
   it("needs the one model OpenCode is verified on mapped", () => {
     const sonnetOnly = rows(ALL, { models: [MAPPED[0]!] });
     expect(sonnetOnly["claude-code"]).toMatchObject({ ready: true });
-    expect(sonnetOnly.opencode).toMatchObject({ ready: false, reason: expect.stringContaining("Map a gateway model") });
+    expect(sonnetOnly.opencode).toMatchObject({ ready: false, reason: expect.stringContaining("Map one under Models") });
   });
 
   it("marks Codex and Copilot CLI unavailable without Responses", () => {
     const partial = rows(["chatCompletions", "anthropicMessages"]);
     for (const id of ["codex", "copilot-cli"]) {
       expect(partial[id]).toEqual(
-        expect.objectContaining({ ready: false, reason: "Needs Responses, which this gateway doesn't serve." }),
+        expect.objectContaining({ ready: false, reason: "Needs Responses, which this provider doesn't serve." }),
       );
     }
     expect(partial["claude-code"]).toMatchObject({ ready: true });
@@ -66,14 +71,14 @@ describe("gatewayWorksWith", () => {
   it("marks Claude Code and OpenCode unavailable without Anthropic Messages", () => {
     const partial = rows(["chatCompletions", "responses"]);
     for (const id of ["claude-code", "opencode"]) {
-      expect(partial[id]).toMatchObject({ ready: false, reason: "Needs Anthropic Messages, which this gateway doesn't serve." });
+      expect(partial[id]).toMatchObject({ ready: false, reason: "Needs Anthropic Messages, which this provider doesn't serve." });
     }
     expect(partial.codex).toMatchObject({ ready: true });
   });
 
   it("needs a mapped model the harness is verified on", () => {
     const unmapped = rows(ALL, { models: [{ nativeModelId: "claude-sonnet-4.5" }] });
-    expect(unmapped["claude-code"]).toMatchObject({ ready: false, reason: expect.stringContaining("Map a gateway model") });
+    expect(unmapped["claude-code"]).toMatchObject({ ready: false, reason: expect.stringContaining("Map one under Models") });
     // Copilot CLI is verified only on openai/gpt-5.5.
     const otherModel = rows(ALL, { models: [{ nativeModelId: "gpt-5", modelId: "openai/gpt-5" }] });
     expect(otherModel.codex).toMatchObject({ ready: true });
@@ -105,5 +110,25 @@ describe("gatewayApiUsedBy", () => {
     expect(gatewayApiUsedBy("anthropicMessages")).toMatch(/^Used by Claude Code and OpenCode, /);
     expect(gatewayApiUsedBy("chatCompletions")).toMatch(/Playground chat/);
     expect(gatewayApiUsedBy("embeddings")).toBe("Used by session map embeddings.");
+  });
+});
+
+describe("providerAttention", () => {
+  const attention = (apis: GatewayApi[], models = MAPPED, runtimeLocation: "cloud" | "local" = "cloud") =>
+    providerAttention({ apis, runtimeLocation, models, requireOrgKeys: false });
+
+  it("flags only what a setting here can fix, never Cursor", () => {
+    expect(attention(ALL).blocked).toEqual([]);
+    const noResponses = attention(["chatCompletions", "anthropicMessages"]);
+    expect(noResponses.blocked.map((row) => row.id)).toEqual(["codex", "copilot-cli"]);
+    expect(blockedLabel(noResponses.blocked)).toBe("Codex and GitHub Copilot CLI unavailable");
+    expect(noResponses.rows.find((row) => row.id === "cursor")?.ready).toBe(false);
+  });
+
+  it("counts unmapped models and names three or more features by number", () => {
+    const unmapped = attention(["chatCompletions"], [...MAPPED, { nativeModelId: "house-model" }]);
+    expect(unmapped.unmapped).toBe(1);
+    expect(blockedLabel(unmapped.blocked)).toBe("4 features unavailable");
+    expect(blockedLabel([])).toBeNull();
   });
 });

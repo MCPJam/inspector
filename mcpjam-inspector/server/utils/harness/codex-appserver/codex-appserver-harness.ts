@@ -104,6 +104,8 @@ export type CodexAppServerSettings = {
   sandboxHomeDir?: string;
   warmAgent?: boolean;
   nativeMcpServers?: HarnessMcpJson["mcpServers"];
+  /** The servers are forwarded: stamp the forwarder's correlation id. */
+  correlateNativeMcp?: boolean;
   /** Native model id. Omitted ⇒ Codex's own default. */
   model?: string;
   /** Placeholder credential env (`CODEX_API_KEY`, `OPENAI_BASE_URL`). The real
@@ -913,6 +915,7 @@ function createRetainedBridgeSession(input: {
         : {}),
       ...(input.settings.webSearch ? { webSearch: true } : {}),
       ...(input.settings.nativeMcpServers ? { nativeMcpServers: input.settings.nativeMcpServers } : {}),
+      ...(input.settings.correlateNativeMcp ? { correlateNativeMcp: true } : {}),
       ...(input.settings.codexConfig
         ? { codexConfig: input.settings.codexConfig }
         : {}),
