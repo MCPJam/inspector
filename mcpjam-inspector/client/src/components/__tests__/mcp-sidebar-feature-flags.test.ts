@@ -254,15 +254,13 @@ describe("declared nav flags are actually resolved", () => {
     expect(on).toContain("Sessions");
   });
 
-  it("shows Evaluate publicly and gates only Evaluate (Legacy)", () => {
+  it("shows only the public Evaluate tab regardless of the retired flag", () => {
     const items = navigationSections.flatMap((section) => section.items);
     expect(items.find((item) => item.url === "/evaluate")).toMatchObject({
       title: "Evaluate", billingFeature: "evals",
     });
     expect(items.find((item) => item.url === "/evaluate")?.featureFlag).toBeUndefined();
-    expect(items.find((item) => item.url === "/evals")).toMatchObject({
-      title: "Evaluate (Legacy)", featureFlag: "evaluate-enabled",
-    });
+    expect(items.find((item) => item.url === "/evals")).toBeUndefined();
     for (const enabled of [undefined, false, true]) {
       const titles = filterByFeatureFlags(
         navigationSections,
@@ -270,7 +268,7 @@ describe("declared nav flags are actually resolved", () => {
       )
         .flatMap((section) => section.items).map((item) => item.title);
       expect(titles).toContain("Evaluate");
-      expect(titles.includes("Evaluate (Legacy)")).toBe(enabled === true);
+      expect(titles).not.toContain("Evaluate (Legacy)");
       expect(titles).not.toContain("Ding Dong");
     }
   });

@@ -67,6 +67,7 @@ import {
 } from "./trace-raw-view";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import type { TraceDetailPlacement } from "./use-trace-detail-direction";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import type {
   HostConfigDtoV2,
@@ -185,6 +186,8 @@ interface TraceViewerProps {
   fillContent?: boolean;
   /** Where the trace timeline puts its span detail; see `TraceTimeline`. */
   traceDetailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's cost context for the timeline's cost summary. */
+  iterationCost?: IterationCostContext;
   /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
   hideTranscriptRevealControls?: boolean;
   /**
@@ -441,6 +444,7 @@ export function TraceViewer({
   hostSnapshot,
   mcpToolResultImageRendering,
   traceDetailPlacement = "below",
+  iterationCost,
 }: TraceViewerProps) {
   const persistedRequestPayloads = useMemo(
     () => readTraceRequestPayloads(trace),
@@ -1091,6 +1095,7 @@ export function TraceViewer({
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
                 fillContent={fillContent}
                 detailPlacement={traceDetailPlacement}
+                iterationCost={iterationCost}
               />
             </div>
           </Suspense>

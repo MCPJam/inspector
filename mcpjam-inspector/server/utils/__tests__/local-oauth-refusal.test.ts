@@ -28,6 +28,25 @@ describe("oauthRefusalFromAuthorize", () => {
     });
   });
 
+  it.each([
+    ["not_acknowledged", /Allow local runs/],
+    ["client_upgrade_required", /Update MCPJam/],
+    [undefined, /Run it from MCPJam instead/],
+  ])(
+    "words a %s refusal itself when the backend sent no sentence",
+    (cause, expected) => {
+      const refusal = oauthRefusalFromAuthorize(
+        {
+          oauthUnavailableReason: "credential_export_denied",
+          oauthUnavailablePolicy: "hostedOnlyAccount",
+          oauthUnavailableCause: cause,
+        },
+        SERVER,
+      );
+      expect(refusal?.message).toMatch(expected);
+    },
+  );
+
   it("names the organization's policy when that is what refused", () => {
     const refusal = oauthRefusalFromAuthorize(
       {
@@ -37,6 +56,10 @@ describe("oauthRefusalFromAuthorize", () => {
       SERVER,
     );
     expect(refusal?.message).toMatch(/organization admin/);
+    // An admin reading it can find the switch.
+    expect(refusal?.message).toContain(
+      "turn on Allow credential export in Organization settings under Security",
+    );
     expect(refusal?.details).toMatchObject({
       policy: "credentialExportPolicy",
     });

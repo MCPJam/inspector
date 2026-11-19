@@ -337,7 +337,7 @@ describe("the pipeline's paper trail", () => {
     expect(body).toContain("0123456789ab");
     expect(body).toContain("https://github.com/MCPJam/inspector/actions/runs/1");
     expect(body).toContain(resumeCommand("codex"));
-    expect(resumeCommand("codex")).toBe("gh workflow run prepare-release.yml --ref main");
+    expect(resumeCommand("codex")).toBe("gh workflow run local-harness-pack-prebuild.yml --ref main");
     expect(failureIssueTitle("codex")).not.toBe(failureIssueTitle("claude-code"));
   });
 
@@ -415,7 +415,7 @@ describe("a re-run after a failure at each stage adopts the same version", () =>
     expect(decidePublication({ fingerprint, pinned, equivalences: [], releases })).toMatchObject({ action, version: "1.0.2" });
   });
 
-  it("once the version PR pinning it merges, the re-run has nothing to do", () => {
+  it("once the pin PR pinning it merges, the re-run has nothing to do", () => {
     const merged = { version: "1.0.2", digests: digests(2), fingerprint };
     expect(decidePublication({ fingerprint, pinned: merged, equivalences: [], releases: [release("1.0.2", fingerprint)] }).action).toBe("up-to-date");
   });

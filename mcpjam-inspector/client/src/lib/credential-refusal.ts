@@ -9,7 +9,8 @@
  *   them for the new address, so the server's configuration opens.
  * - `exportDenied`: the organization's credential export policy keeps saved
  *   credentials inside MCPJam-hosted connections, and this connect would have
- *   delivered them to this machine. Only an organization admin can change it.
+ *   delivered them to this machine. Only an organization admin can change it,
+ *   with Allow credential export under Organization settings > Security.
  *   With `policy: "hostedOnlyAccount"` the refusal is the account's own rule
  *   (an API-uploaded or project account), and the backend's sentence is kept.
  *   Its `cause` says which part refused: `not_acknowledged` is the one a
@@ -24,6 +25,7 @@ import {
   isNormalizedError,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "@/shared/credential-export-setting";
 
 export type CredentialRefusal =
   | {
@@ -94,8 +96,8 @@ export function credentialRefusalMessage(
   if (refusal.kind === "export_denied") {
     return (
       `${server} uses saved credentials that your organization keeps inside ` +
-      "MCPJam-hosted connections. Connect it from MCPJam in the browser, or " +
-      "ask an organization admin to change the credential export policy."
+      "MCPJam-hosted connections. Connect it from MCPJam in the browser. " +
+      CREDENTIAL_EXPORT_SETTING_HINT
     );
   }
   if (refusal.kind === "hosted_only") {
@@ -209,4 +211,13 @@ export function withCredentialRefusal<T>(result: T, serverName?: string): T {
     ),
     credentialRefusal: refusal,
   } as T;
+}
+
+/** Only messages tagged by credential handling may replace a run setup error. */
+export function credentialFailureMessage(source: unknown): string | undefined {
+  const record = asRecord(source);
+  if (!record || typeof record.error !== "string") return undefined;
+  return readCredentialRefusal(record) || record.uploadedAccount === true ||
+    record.credentialRefusal === "insecure_transport"
+    ? record.error : undefined;
 }

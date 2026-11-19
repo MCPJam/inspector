@@ -7,6 +7,7 @@ import { buildLocalScopeStepUpResume, buildLocalScopeStepUpCancellation, readPro
 import { createLocalScopeStepUpContinuation } from "./scope-step-up-continuation.js";
 import { prepareDirectProvider, type DirectProviderInput } from "../services/chat-turn/direct-provider.js";
 import { streamDirectChatWithLiveTrace } from "../services/chat-turn/direct-stream.js";
+import { createDirectCallPricer } from "./call-cost/direct-call-pricer.js";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import { DEFAULT_TURN_MAX_STEPS } from "../../shared/turn-step-budget.js";
 import { capturePreparedWebSetup } from "../services/chat-turn/setup-manifest.js";
@@ -1641,6 +1642,10 @@ export async function streamChatTurn(
       turnAuthorization: runtime.turnAuthorization,
       llmModel: provider.model,
       provider: prepare.modelDefinition.provider,
+      priceStepCall: createDirectCallPricer({
+        providerKey: String(prepare.modelDefinition.provider),
+        modelId: String(prepare.modelDefinition.id),
+      }),
       maxSteps: runtime.maxSteps ?? DEFAULT_TURN_MAX_STEPS,
       reportError: (error, phase) => failureReporter({
         message: `[chat-v2/direct] ${phase} error`, error,

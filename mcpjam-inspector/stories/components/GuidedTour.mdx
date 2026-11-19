@@ -1,0 +1,96 @@
+import { Canvas, Meta } from "@storybook/addon-docs/blocks";
+import * as Stories from "./guided-tour.stories";
+
+<Meta of={Stories} name="Overview" />
+
+# Guided Tour
+
+A few stops on example data that walk someone through a workflow, then hand
+off to the real control where they do it themselves. The Evaluate tour
+(`components/evaluate/tour`) is built this way.
+
+**Use it** to show how a workflow with several pages or concepts fits
+together, when each step only makes sense next to the others. A tour costs the
+user a minute, so save it for that.
+
+**Don't use it** to point at one new feature the user can try now (use
+[Spotlight](?path=/docs/components-spotlight--overview)), to
+explain a page that has no data yet (use an empty state), or for errors (use an
+alert or ErrorCard).
+
+<Canvas of={Stories.TwoStopTour} />
+
+In light and dark:
+
+<Canvas of={Stories.LightAndDark} />
+
+## The parts
+
+Everything lives in `client/src/components/guided-tour`. The card is the
+Spotlight card from `@mcpjam/design-system/feature-spotlight`, so a
+tour and a one-time spotlight always look the same. Change the card there,
+not in a tour.
+
+| Part                                | What it does                                                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `TourCoachmark`                     | A spotlight card pinned beside an anchor rect, placed `bottom`, `right` or `top` and kept inside the stage. |
+| `TourStepContent`                   | The step trail, title, body, step count, Skip tour and Next (Finish on the last stop).                      |
+| `TourSpotlight`                     | Dims the stage except one or more rects.                                                                    |
+| `useAnchorRects`                    | Measures `data-tour-anchor` elements inside the stage, and keeps measuring as they resize.                  |
+| `TourGhostCursor` + `useTourPlayer` | Plays a transition script: the cursor moves, clicks and types, and the tour swaps screens. Skip cancels it. |
+| `useGuidedTour`                     | The lifecycle (`intro`, `stage`, `handoff`, `closed`), auto-open once per browser, and the funnel events.   |
+
+<Canvas of={Stories.Coachmark} />
+
+<Canvas of={Stories.MultipleAnchors} />
+
+## Building a tour
+
+1. **Pick the stops.** One idea each, in the order the user will do them.
+2. **Draw each stop on example data.** Put `data-tour-anchor` on what the stop
+   lights.
+3. **Script the moves between stops** with `useTourPlayer`.
+4. **End on the real page** with a "Your turn" card on the control to press next.
+5. **Decide when it shows,** then wire up the funnel (see below).
+
+<Canvas of={Stories.Handoff} />
+
+## Behavior
+
+- Escape, the corner X and Skip tour all close the tour, at any point,
+  including mid-transition.
+- Next takes focus on each stop, so Enter advances.
+- The stage covers the page, so the real UI never shows between screens.
+
+## Do's and Don'ts
+
+**Do**
+
+- Keep it to 3 to 5 stops. Write each title as what the user gets, and keep the
+  body to two short sentences.
+- Copy the real pages for mock screens, mark them `inert`, and give each one an
+  "Example data" badge.
+- Have the cursor press the control that really leads to the next page.
+- End on the real page, with the "Your turn" card pinned to the control the user
+  should press next.
+- Auto-open once, and only where the user hasn't used the feature yet. Offer a
+  replay button until they have, then hide it.
+- Give `useGuidedTour` a `location` and five event names (opened, step viewed,
+  skipped, completed, handoff ended) from `shared/analytics-events.ts`, and tag
+  the feature's activation events (a suite created, a first run) with
+  `after_tour`.
+- Check every stop in light, dark and reduced motion, and on a short screen.
+
+**Don't**
+
+- Don't build a card of your own. Change the Spotlight card in the design
+  system, so tours and spotlights stay the same.
+- Don't tour live data or let the stage take input. Users click through a tour,
+  and a click must never change their project.
+- Don't put a coachmark over the thing its stop is about. Move it to `top` or
+  `right`, or over a dimmed header.
+- Don't hide Skip tour, and don't trap focus. Escape and the corner X must work
+  on every stop.
+- Don't auto-open again after a skip, or once the user has used the feature.
+- Don't end on a "Done" card. The tour succeeds when the user makes something, so
+  hand off to the real control.

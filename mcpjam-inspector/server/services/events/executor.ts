@@ -48,6 +48,7 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import { logger } from "../../utils/logger.js";
 import { resolveProcessRole } from "../lifecycle/process-role.js";
 import {
@@ -240,7 +241,10 @@ export async function executeClaimedEventRun(
       selectedServers: servers.serverIds,
       modelDefinition,
       systemPrompt: built.systemPrompt,
-      requireToolApproval: false,
+      requireToolApproval: appliedToolApproval(
+        "event",
+        servers.hostConfig?.requireToolApproval,
+      ),
       // The host's tool-visibility policy, as a chat with it would apply.
       // Approval stays the trigger's (unattended runs auto-deny), and Tasks
       // stay off: no event run opts into them.
@@ -367,7 +371,7 @@ export async function executeClaimedEventRun(
             ...common,
             runtime,
             persistMode: "caller",
-            approvalMode: "auto-deny",
+            approvalMode: engineApprovalMode("event"),
             sourceType: "event",
             origin: "event",
             modelDefinition,

@@ -130,6 +130,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     scope: "global",
   },
   {
+    path: "organizations/:orgId/security",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
     path: "organizations/:orgId/audit-log",
     kind: "screen",
     surfaceId: "organizations",

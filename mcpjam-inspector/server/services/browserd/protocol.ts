@@ -120,7 +120,17 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * not rely on one: an old daemon ignores `stopAt` and lets the page load.
    */
   "navigation-stop",
+  /** A callback stop can remain armed between commands on the same tab. */
+  "navigation-stop-persistent",
 ] as const;
+
+/**
+ * Announced by a daemon booted with `MCPJAM_BROWSERD_NETWORK=public`: its
+ * browser reaches public internet addresses only (`daemon/public-network.ts`).
+ * Per boot, not per build, so it is not in the list above, and a caller that
+ * needs it refuses a daemon that does not announce it.
+ */
+export const BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
@@ -612,6 +622,8 @@ export interface BrowserCommand {
    * loads, and the URL it asked for comes back as `stoppedAt`.
    */
   stopAt?: string;
+  /** Keep stopAt armed until it fires or the tab closes. */
+  stopAtPersistent?: boolean;
 }
 
 /** @see BrowserCommand.actor */

@@ -460,6 +460,12 @@ export function useComparePaneControls({
       );
       const modelControl = !hostConfig ? undefined : (
         <ModelSelector
+          // The pane's rows were locked for this client already
+          // (`resolvePlaygroundClientColumn`); the same target here.
+          harnessScope={{
+            targets: [harnessId ? { harnessId } : null],
+            purpose: "chat",
+          }}
           currentModel={
             model ?? {
               id: hostConfig.modelId,

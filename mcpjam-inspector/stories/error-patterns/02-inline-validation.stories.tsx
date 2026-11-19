@@ -19,7 +19,7 @@ import { useToastSpecimen } from "./_support/specimens";
  * measured.
  */
 const meta = {
-  title: "Error Patterns/2. Inline validation",
+  title: "Components/Error Patterns/2. Inline validation",
   parameters: {
     layout: "padded",
     docs: {

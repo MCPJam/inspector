@@ -105,10 +105,22 @@ export async function removeServerConnections(
   connections.set(manager, remaining);
 }
 
+/** `accountKey`: the credential id the connect authorized; never a token. */
+type LocalConnectionScope = {
+  serverId: string;
+  projectId: string;
+  accountKey?: string;
+};
 const localScopes = new WeakMap<
   MCPClientManager,
-  Map<string, { serverId: string; projectId: string }>
+  Map<string, LocalConnectionScope>
 >();
+export function getLocalConnectionScope(
+  manager: MCPClientManager,
+  key: string,
+): LocalConnectionScope | undefined {
+  return localScopes.get(manager)?.get(key);
+}
 export function localConnectionKeysForServer(
   manager: MCPClientManager,
   serverId: string,
@@ -133,7 +145,7 @@ export function localConnectionKeysForServer(
 export function registerLocalConnectionScope(
   manager: MCPClientManager,
   key: string,
-  scope: { serverId: string; projectId: string },
+  scope: LocalConnectionScope,
 ) {
   const scopes = localScopes.get(manager) ?? new Map();
   scopes.set(key, scope);

@@ -3,8 +3,11 @@ import { HARNESS_MCP_DELIVERY } from "@/shared/harness-mcp-delivery";
 import { resolveAgentLoop } from "../../agent-loop-dispatch";
 import { qualifiedForwardingRuntime } from "../../forwarding/runtime-contract";
 import {
+  HARNESS_MCP_PLAN_REASONS,
   resolveHarnessMcpPlan,
   toDiscoveryDeliveryLabel,
+  type HarnessForwardingAdmission,
+  type HarnessMcpPlanFacts,
 } from "../../harness-mcp-plan";
 import { CASES, assertFullMatrix, bumpedPin, hostedChatFacts } from "./support";
 
@@ -84,7 +87,7 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
     expect(plan.reasons).toContain("runtime contract unqualified");
   });
 
-  it("takes the profiled bridge only when its contract lets MCPJam's client stand in", () => {
+  it("takes the profiled bridge whenever admission bridges a turn its contract qualifies", () => {
     const contract = qualifiedForwardingRuntime(adapter);
     const plan = resolveHarnessMcpPlan(
       hostedChatFacts({
@@ -93,15 +96,8 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
         admit: () => ({ delivery: "bridge", gaps: ["app-host-capabilities"] }),
       }),
     );
-    expect(plan.forwardingKind).toBe(
-      contract && !contract.passThroughOnly ? "profiled" : undefined,
-    );
-    if (contract?.passThroughOnly) {
-      expect(plan.gaps).toEqual(["app-host-capabilities"]);
-      expect(plan.reasons).toEqual([
-        "forwarding not admitted; configured route retained",
-      ]);
-    }
+    expect(plan.forwardingKind).toBe(contract ? "profiled" : undefined);
+    expect(plan.reasons).toEqual(contract ? [] : ["runtime contract unqualified"]);
   });
 
   it("reaches a forwarded label only when it declares a forwarding contract", () => {
@@ -117,5 +113,66 @@ describe.each(CASES)("$id routing", ({ id, adapter, descriptor }) => {
     } else {
       expect(label).not.toMatch(/^forwarded-/);
     }
+  });
+});
+
+/** Each product area as the planner sees a turn there. */
+const PRODUCT_AREAS: Array<[string, Partial<HarnessMcpPlanFacts>]> = [
+  ["the Playground, forwarding open", {}],
+  ["the Playground, forwarding off", { forwardingEnabled: false }],
+  ["the Playground, organization not enrolled", { forwardingOrganization: false }],
+  ["evals", { evalIterationId: "iteration-1" }],
+  ["swarms", { journeyRunId: "journey-run-1" }],
+  ["User Testing", { scenarioId: "scenario-1" }],
+  ["the v1 API", { hostId: undefined }],
+  ["a member's computer", { localExecution: true, plane: "local-loopback" }],
+];
+const ADMISSIONS: Array<[string, () => HarnessForwardingAdmission]> = [
+  ["admits pass-through", () => ({ delivery: "native", gaps: [] })],
+  ["admits the bridge", () => ({ delivery: "bridge", gaps: ["unqualified-protocol"] })],
+  ["admits neither", () => ({ gaps: ["client-tools"] })],
+];
+
+describe.each(CASES)("$id in every product area", ({ id, adapter, descriptor }) => {
+  const dispatch = resolveAgentLoop({
+    harness: id,
+    defaultMcpClient: adapter.mcpDelivery === "harness" ? "harness" : "mcpjam",
+  });
+  const configuredDelivery =
+    descriptor.mcpClient === "harness" ? "mcp-endpoint" : "host-tools";
+
+  it.each(PRODUCT_AREAS)("routes its servers in %s, whatever admission says", (area, overrides) => {
+    const contract = qualifiedForwardingRuntime(adapter);
+    const opens = area === "the Playground, forwarding open" && contract !== undefined;
+    for (const [said, admit] of ADMISSIONS) {
+      const plan = resolveHarnessMcpPlan(
+        hostedChatFacts({ dispatch, forwardingRuntime: contract, admit, ...overrides }),
+      );
+      const label = `${area}: ${said}`;
+      // No runtime refuses its servers for the route: every turn gets one.
+      expect(plan, label).not.toHaveProperty("refused");
+      expect(["mcp-endpoint", "host-tools"], label).toContain(plan.delivery);
+      for (const reason of plan.reasons)
+        expect(HARNESS_MCP_PLAN_REASONS, label).toContain(reason);
+      // Forwarding follows admission alone, with no runtime-specific route.
+      const kind = !opens
+        ? undefined
+        : said === "admits pass-through"
+          ? "pass-through"
+          : said === "admits the bridge"
+            ? "profiled"
+            : undefined;
+      expect(plan.forwardingKind, label).toBe(kind);
+      if (kind === undefined)
+        expect(plan.delivery, label).toBe(configuredDelivery);
+    }
+  });
+
+  it("asks admission once, before anything is dispatched", () => {
+    const admit = vi.fn(() => ({ delivery: "bridge" as const, gaps: [] }));
+    resolveHarnessMcpPlan(
+      hostedChatFacts({ dispatch, forwardingRuntime: qualifiedForwardingRuntime(adapter), admit }),
+    );
+    expect(admit).toHaveBeenCalledTimes(qualifiedForwardingRuntime(adapter) ? 1 : 0);
   });
 });

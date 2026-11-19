@@ -47,6 +47,22 @@ describe("settings destinations", () => {
       "/settings/appearance",
     );
   });
+  it("finds the credential export switch under Security from the refusal's words", () => {
+    expect(
+      resolveSettingsDestination("/organizations/org-a/security")?.id,
+    ).toBe("org-security");
+    expect(settingsPath("org-security", context)).toBe(
+      "/organizations/org-a/security",
+    );
+    for (const query of [
+      "credential export policy",
+      "Allow credential export",
+    ]) {
+      expect(searchSettings(query, context)[0].destination.id).toBe(
+        "org-security",
+      );
+    }
+  });
   it("consolidates organization members and sharing into one destination", () => {
     expect(resolveSettingsDestination("/organizations/org-a/sharing")?.id).toBe(
       "org-members",

@@ -109,4 +109,60 @@ describe("compactInsightsForModel", () => {
     expect(out.project).toEqual({ id: "p" });
     expect(out.run.insights.truncation.omittedFindings).toBe(1);
   });
+
+  it("sends an eval run's findings once when currentFindings repeats them", () => {
+    const findings = [finding(0), finding(1)];
+    const out = compactInsightsForModel({
+      insights: envelope({ findings, currentFindings: findings }),
+    }) as { insights: Record<string, unknown> };
+    expect(out.insights.findings).toEqual(findings);
+    expect(out.insights.currentFindings).toBeUndefined();
+    expect(out.insights.currentFindingsSameAsFindings).toBe(true);
+  });
+
+  it("keeps currentFindings when findings is capped, so no finding is lost", () => {
+    const findings = Array.from({ length: MODEL_MAX_FINDINGS + 2 }, (_, i) =>
+      finding(i)
+    );
+    const out = compactInsightsForModel({
+      insights: envelope({ findings, currentFindings: findings }),
+    }) as {
+      insights: { findings: unknown[]; currentFindings?: unknown[] } & Record<
+        string,
+        unknown
+      >;
+    };
+    expect(out.insights.findings).toHaveLength(MODEL_MAX_FINDINGS);
+    expect(out.insights.currentFindings).toHaveLength(MODEL_MAX_FINDINGS + 2);
+    expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
+  });
+
+  it("keeps currentFindings when a row shares its id but not its content", () => {
+    const out = compactInsightsForModel({
+      insights: envelope({
+        findings: [finding(0)],
+        currentFindings: [finding(0, { actionability: "investigate" })],
+      }),
+    }) as { insights: Record<string, unknown> };
+    expect(out.insights.currentFindings).toEqual([
+      finding(0, { actionability: "investigate" }),
+    ]);
+    expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
+  });
+
+  it("keeps currentFindings when it differs from findings", () => {
+    const out = compactInsightsForModel({
+      insights: envelope({
+        findings: [finding(0)],
+        currentFindings: [finding(1)],
+      }),
+    }) as { insights: Record<string, unknown> };
+    expect(out.insights.currentFindings).toEqual([finding(1)]);
+    expect(out.insights.currentFindingsSameAsFindings).toBeUndefined();
+  });
+
+  it("keeps an empty currentFindings beside an empty legacy list", () => {
+    const input = { insights: envelope({ findings: [], currentFindings: [] }) };
+    expect(compactInsightsForModel(input)).toBe(input);
+  });
 });

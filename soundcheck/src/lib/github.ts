@@ -350,31 +350,6 @@ export async function getLatestWorkflowRun(
 }
 
 /**
- * Look for a completed, successful run of `workflowFile` on `branch` that
- * matches `headSha`. Mirrors the query in release.yml's staging-gate step so
- * the readiness tile and the release workflow agree on what "green staging
- * for this SHA" means.
- */
-export async function findSuccessfulRunForSha(
-  owner: string,
-  repo: string,
-  workflowFile: string,
-  branch: string,
-  headSha: string
-): Promise<WorkflowRun | null> {
-  const runs = await listWorkflowRuns(owner, repo, workflowFile, {
-    branch,
-    status: "completed",
-    perPage: 50
-  });
-  return (
-    runs.find(
-      (r) => r.headSha === headSha && r.conclusion === "success"
-    ) ?? null
-  );
-}
-
-/**
  * Latest successful run of `workflowFile` on `branch`. Walks back through
  * the most recent completed runs and returns the first `success`.
  *
@@ -395,26 +370,6 @@ export async function findLatestSuccessfulRun(
     perPage: 30
   });
   return runs.find((r) => r.conclusion === "success") ?? null;
-}
-
-export async function getMostRecentFailedRun(
-  owner: string,
-  repo: string,
-  workflowFile: string,
-  sinceIso: string
-): Promise<WorkflowRun | null> {
-  const runs = await listWorkflowRuns(owner, repo, workflowFile, {
-    status: "completed",
-    perPage: 30
-  });
-  const cutoff = new Date(sinceIso).getTime();
-  for (const r of runs) {
-    if (new Date(r.updatedAt).getTime() < cutoff) break;
-    if (r.conclusion && r.conclusion !== "success" && r.conclusion !== "skipped" && r.conclusion !== "cancelled") {
-      return r;
-    }
-  }
-  return null;
 }
 
 export interface WorkflowJobStep {
@@ -487,96 +442,36 @@ export async function getWorkflowRunJobs(
   }));
 }
 
-export interface CheckRunAnnotation {
-  path: string | null;
-  startLine: number | null;
-  endLine: number | null;
-  annotationLevel: string | null;
-  title: string | null;
-  message: string | null;
-  rawDetails: string | null;
-}
-
-/**
- * Fetches annotations from the check-run attached to a workflow job. Returns
- * structured error lines (path, line, message) — much lighter than parsing
- * the log zip.
- *
- * `checkRunUrl` is the full API URL the jobs endpoint returns for each job
- * (e.g. `https://api.github.com/repos/.../check-runs/12345`). We derive the
- * check-run ID from its tail to avoid hardcoding the base.
- */
-export async function getJobAnnotations(
-  owner: string,
-  repo: string,
-  checkRunUrl: string
-): Promise<CheckRunAnnotation[]> {
-  const match = checkRunUrl.match(/\/check-runs\/(\d+)/);
-  if (!match) return [];
-  const checkRunId = match[1];
-  const data = (await githubFetch(
-    `/repos/${owner}/${repo}/check-runs/${checkRunId}/annotations?per_page=50`
-  )) as Array<{
-    path: string | null;
-    start_line: number | null;
-    end_line: number | null;
-    annotation_level: string | null;
-    title: string | null;
-    message: string | null;
-    raw_details: string | null;
-  }>;
-  return data.map((a) => ({
-    path: a.path,
-    startLine: a.start_line,
-    endLine: a.end_line,
-    annotationLevel: a.annotation_level,
-    title: a.title,
-    message: a.message,
-    rawDetails: a.raw_details
-  }));
-}
-
 /* ──────────────────────────────────────────────────────────────────────────
-   Pull requests (the release's version PR)
+   Releases (the last shipped release on the release card)
    ────────────────────────────────────────────────────────────────────────── */
 
-export interface PullRequestInfo {
-  number: number;
-  title: string;
-  url: string;
-  updatedAt: string;
+export interface LatestRelease {
+  tag: string;
+  htmlUrl: string;
+  publishedAt: string | null;
+  /** Asset file names, for telling whether desktop builds were attached. */
+  assetNames: string[];
 }
 
-/** The open PR whose head is `branch` in the same repo, if there is one. */
-export async function findOpenPullRequest(
+export async function getLatestRelease(
   owner: string,
-  repo: string,
-  branch: string,
-  opts: FetchOptions = {}
-): Promise<PullRequestInfo | null> {
-  const qs = new URLSearchParams({
-    state: "open",
-    head: `${owner}:${branch}`,
-    per_page: "1"
-  });
-  const data = (await githubFetch(
-    `/repos/${owner}/${repo}/pulls?${qs.toString()}`,
-    opts
-  )) as {
-    number: number;
-    title: string;
+  repo: string
+): Promise<LatestRelease> {
+  const raw = (await githubFetch(`/repos/${owner}/${repo}/releases/latest`, {
+    revalidate: 60
+  })) as {
+    tag_name: string;
     html_url: string;
-    updated_at: string;
-  }[];
-  const pr = data[0];
-  return pr
-    ? {
-        number: pr.number,
-        title: pr.title,
-        url: pr.html_url,
-        updatedAt: pr.updated_at
-      }
-    : null;
+    published_at: string | null;
+    assets?: { name: string }[];
+  };
+  return {
+    tag: raw.tag_name,
+    htmlUrl: raw.html_url,
+    publishedAt: raw.published_at,
+    assetNames: (raw.assets ?? []).map((a) => a.name)
+  };
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
