@@ -1,10 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 
-/**
- * What the checklist can't read from the backend: the user's own Playground
- * run from the checklist, their "I've added it" for the agent step, and the
- * steps they skipped. Kept per user and project in localStorage.
- */
+/** Per user/project checklist state the backend doesn't have, in localStorage. */
 export interface ChecklistProgress {
   chat?: boolean;
   agent?: boolean;

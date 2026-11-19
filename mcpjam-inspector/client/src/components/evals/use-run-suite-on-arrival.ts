@@ -5,11 +5,7 @@ import {
   useCurrentLocationParts,
 } from "@/lib/app-navigation";
 
-/**
- * Calls `run` once with the suite id when the page is opened with
- * `?run=<suiteId>` (Home's Run eval).
- * The key is dropped first, so a refresh or Back does not run it again.
- */
+/** Calls `run` once for `?run=<suiteId>`, dropping the key so Back won't rerun. */
 export function useRunSuiteOnArrival(
   ready: boolean,
   run: (suiteId: string) => void,

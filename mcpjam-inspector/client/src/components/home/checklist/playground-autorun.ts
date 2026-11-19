@@ -1,8 +1,6 @@
 /**
- * Hands the Home checklist's first Playground prompt to Playground, which
- * sends it on open. sessionStorage so a stale prompt can't follow the user
- * into another browser session. Kept until sent, since Playground can mount
- * more than once while it loads, and ignored after a few minutes.
+ * Home's first Playground prompt, sent on open. Kept until sent (Playground can
+ * mount twice while loading) and ignored after a few minutes.
  */
 const KEY = "mcpjam.home-checklist.playground-autorun";
 const MAX_AGE_MS = 5 * 60_000;

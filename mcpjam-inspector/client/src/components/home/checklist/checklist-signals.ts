@@ -16,11 +16,7 @@ export interface ChecklistSignals {
   eval: { suiteId: string | null; passRate: number | null };
 }
 
-/**
- * Which steps the current user has already done in this project. A
- * conformance run counts once it finishes, failing checks included; an eval
- * counts once one of the user's suites has a finished run.
- */
+/** Steps the user has done in this project; finished runs count, failures included. */
 export function computeChecklistSignals({
   hasServer,
   progress,
@@ -34,8 +30,7 @@ export function computeChecklistSignals({
   conformanceRuns: ConformanceRunListItem[];
   suites: EvalSuiteOverviewEntry[];
 }): ChecklistSignals {
-  // Run rows name their author only once the backend projects `createdBy`;
-  // until then a project's finished run counts for each member.
+  // Until runs carry `createdBy`, a project's finished run counts for each member.
   const run =
     conformanceRuns
       .filter((candidate) => {
@@ -49,8 +44,7 @@ export function computeChecklistSignals({
   const ownSuites = userId
     ? suites.filter((entry) => entry.suite.createdBy === userId)
     : [];
-  // Any finished run of theirs counts, not just the latest: a later run that
-  // is still going, failed, or was a teammate's doesn't undo the step.
+  // Any finished run counts; a newer running or failed one doesn't undo the step.
   let ran: { suiteId: string; passRate: number | null } | null = null;
   for (const entry of ownSuites) {
     const finished = [entry.latestRun, ...(entry.recentRuns ?? [])].find(

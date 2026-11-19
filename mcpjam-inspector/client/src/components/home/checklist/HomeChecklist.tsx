@@ -51,11 +51,7 @@ function trackStep(step: StepId, action: string, extra: object = {}) {
   });
 }
 
-/**
- * The treatment Home: five setup steps, each opening the real screen.
- * Renders nothing once every step is done or the user skipped the rest, so
- * Home falls back to today's page (`onFinished`).
- */
+/** The treatment Home; renders nothing once done or skipped (`onFinished`). */
 export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const navigate = useAppNavigate();
   const ctx = useAppRouteContext();
@@ -63,8 +59,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     string,
     ServerWithName
   >;
-  // Saved servers that aren't connected yet appear only in `projectServers`;
-  // runtime entries carry the live connection status.
+  // Unconnected saved servers are only in `projectServers`; runtime has live status.
   const runtimeServers = (ctx.appState?.servers ?? {}) as Record<
     string,
     ServerWithName
@@ -112,13 +107,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const doneCount = STEP_ORDER.filter((step) => signals.done[step]).length;
   const allDone = doneCount === STEP_ORDER.length;
   const handedBack = Boolean(progress.finished || progress.skippedAll);
-  // Whether everything was already done when the checklist first had answers.
   const doneOnArrival = useRef<boolean | null>(null);
   if (loaded && doneOnArrival.current === null) doneOnArrival.current = allDone;
-  // Completing the last step holds on "5 of 5" long enough to see the bar
-  // fill. Skipping the rest, or arriving with everything done, goes straight
-  // to today's Home.
-  // Sent the first time Home sees a step done; `already_done` predates the checklist.
+  // The last step holds on "5 of 5"; skipping or arriving done goes straight back.
   useEffect(() => {
     if (!loaded || handedBack) return;
     const reported = progress.reported ?? [];
@@ -158,7 +149,6 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const firstOpen = loaded
     ? (STEP_ORDER.find((step) => !signals.done[step]) ?? null)
     : null;
-  // null follows the first unfinished step until the user picks one.
   const [openStep, setOpenStep] = useState<StepId | null>(null);
   const shownStep: StepId =
     openStep ?? firstOpen ?? STEP_ORDER[STEP_ORDER.length - 1];
@@ -171,8 +161,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
 
   const [checking, setChecking] = useState<StepId | null>(null);
   const [guardFailure, setGuardFailure] = useState<GuardFailure | null>(null);
-  // The server's state right before the CTA runs; a stale "connected" from
-  // when Home rendered would send the user to a screen that can't use it.
+  // Read right before the CTA runs, not the possibly stale render-time status.
   const withServer = useCallback(
     async (step: StepId, go: (name: string) => void) => {
       if (!serverName) return;

@@ -5,10 +5,7 @@ export const HOME_CHECKLIST_FLAG = "home-setup-checklist";
 
 export type HomeChecklistVariant = "control" | "treatment";
 
-/**
- * `treatment` for a multivariate rollout's treatment arm, and for a plain
- * boolean rollout (100%) that is on. Anything else is today's Home.
- */
+/** `treatment` for the treatment arm or a boolean flag that is on; else control. */
 export function normalizeHomeChecklistVariant(
   raw: string | boolean | undefined,
 ): HomeChecklistVariant {

@@ -61,9 +61,6 @@ const normalizeGuestVariant = (
 function GuestCreditWall() {
   const { signIn, signUp } = useInspectorAuth();
   const dismiss = useMCPJamLimitDialogStore((s) => s.dismiss);
-  // Committed once per opening. While flags are unresolved the control layout
-  // renders below as a visual fallback, and the impression waits for a real
-  // variant so a treatment guest is never recorded as control.
   // Reading the variant fires the PostHog exposure ($feature_flag_called).
   const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
   const committedVariant = useLockedFlagVariant(
