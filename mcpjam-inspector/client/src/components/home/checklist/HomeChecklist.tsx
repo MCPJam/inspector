@@ -407,7 +407,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
             </Button>
           ) : null}
         </div>
-        <div className="grid min-h-[28rem] md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+        <div className="grid min-h-[28rem] md:grid-cols-2">
           <ol className="space-y-1 border-b border-border p-2 md:border-r md:border-b-0">
             {STEP_ORDER.map((step, i) => (
               <ChecklistStepRow
