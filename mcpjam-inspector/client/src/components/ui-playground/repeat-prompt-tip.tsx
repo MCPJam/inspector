@@ -22,6 +22,7 @@ const findSimilarPlaygroundPrompt = makeFunctionReference<
     chatSessionId: string;
     prompt: string;
     serverNames: string[];
+    excludeChatSessionIds?: string[];
   },
   { promptText: string } | null
 >("chatSessionPromote:findSimilarPlaygroundPrompt");
@@ -42,6 +43,8 @@ type RepeatPromptTipProps = {
   serverNames: string[];
   /** Clients the prompt ran on; pre-attached to a new suite. */
   hostIds: string[];
+  /** Sibling compare-mode sessions that got the same prompt. */
+  excludeChatSessionIds?: string[];
 };
 
 /**
@@ -55,6 +58,7 @@ export function RepeatPromptTip({
   isStreaming,
   serverNames,
   hostIds,
+  excludeChatSessionIds,
 }: RepeatPromptTipProps) {
   const { canPromote } = usePromoteCapability({ projectId });
   const findSimilar = useAction(findSimilarPlaygroundPrompt);
@@ -62,6 +66,8 @@ export function RepeatPromptTip({
   const [hidden, setHidden] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const checkedKey = useRef<string | null>(null);
+  const excludeRef = useRef<string[]>([]);
+  excludeRef.current = excludeChatSessionIds ?? [];
   const serverName = serverNames[0] ?? null;
   const alreadySeen =
     projectId !== null &&
@@ -82,24 +88,24 @@ export function RepeatPromptTip({
       setMatch({ turn, similarText: local });
       return;
     }
-    let cancelled = false;
     findSimilar({
       projectId,
       chatSessionId,
       prompt: turn.text,
       serverNames,
+      excludeChatSessionIds: excludeRef.current.filter(
+        (id) => id !== chatSessionId,
+      ),
     })
       .then((result) => {
-        if (!cancelled && result) {
+        // Re-renders don't cancel the lookup; a newer turn does.
+        if (result && checkedKey.current === key) {
           setMatch({ turn, similarText: result.promptText });
         }
       })
       .catch((error: unknown) => {
         console.warn("Repeat prompt lookup failed", error);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [
     canCheck,
     isStreaming,

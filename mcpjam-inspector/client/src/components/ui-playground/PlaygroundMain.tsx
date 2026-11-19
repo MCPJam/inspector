@@ -2772,6 +2772,18 @@ export function PlaygroundMain({
     previewedHarnessId,
   ]);
 
+  const [settledCompareTurns, setSettledCompareTurns] = useState<
+    Record<string, { chatSessionId: string; messages: UIMessage[] }>
+  >({});
+  const handleCompareTurnSettled = useCallback(
+    (compareId: string, laneSessionId: string, laneMessages: UIMessage[]) =>
+      setSettledCompareTurns((prev) => ({
+        ...prev,
+        [compareId]: { chatSessionId: laneSessionId, messages: laneMessages },
+      })),
+    [],
+  );
+
   const handleMultiModelTranscriptSync = useCallback(
     (compareId: string, transcript: UIMessage[]) => {
       compareTranscriptsRef.current[compareId] = cloneUiMessages(transcript);
@@ -2797,6 +2809,7 @@ export function PlaygroundMain({
     setDeterministicExecutionRequest(null);
     setStopBroadcastRequestId(0);
     setCompareSummaries({});
+    setSettledCompareTurns({});
     setCompareHasMessages({});
     setCompareAddColumnSeeds({});
     prevCompareIdsRef.current = new Set();
@@ -6226,12 +6239,15 @@ export function PlaygroundMain({
           onReasoningEffortChange: undefined,
         };
 
+  // Compare lanes run the same prompt, so any settled lane stands for all.
+  const compareTipTurns = isCompareMode ? Object.values(settledCompareTurns) : [];
   const repeatPromptTip = (
     <RepeatPromptTip
       projectId={convexProjectId}
-      chatSessionId={chatSessionId}
-      messages={messages}
-      isStreaming={isStreaming}
+      chatSessionId={compareTipTurns[0]?.chatSessionId ?? chatSessionId}
+      messages={isCompareMode ? (compareTipTurns[0]?.messages ?? []) : messages}
+      isStreaming={isCompareMode ? false : isStreaming}
+      excludeChatSessionIds={compareTipTurns.map((turn) => turn.chatSessionId)}
       serverNames={selectedServers}
       hostIds={isMultiHostMode ? selectedHostIds : previewedHostId ? [previewedHostId] : []}
     />
@@ -7398,6 +7414,7 @@ export function PlaygroundMain({
                           compareEnterVersion={1}
                           compareEnterMessages={compareTranscriptsRef.current[clientTranscriptKey(column.compareId)] ?? []}
                           onTranscriptSync={handleClientTranscriptSync}
+                          onTurnSettled={handleCompareTurnSettled}
                           showSenderAvatars={showSenderAvatars}
                           resolveSenderAvatar={resolveSenderAvatar}
                           outgoingSenderMetadata={outgoingSenderMetadata}
@@ -7551,6 +7568,7 @@ export function PlaygroundMain({
                               compareAddColumnSeeds[compareId] ?? null
                             }
                             onTranscriptSync={handleMultiModelTranscriptSync}
+                            onTurnSettled={handleCompareTurnSettled}
                             // Model-mode does NOT pass `hostSnapshot`. The
                             // card falls back to tab-root provider values
                             // via `useContext`, so the rendered tree is

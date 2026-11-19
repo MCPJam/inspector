@@ -94,6 +94,7 @@ describe("RepeatPromptTip", () => {
       chatSessionId: "chat-1",
       prompt: "List my open Linear issues",
       serverNames: ["Linear"],
+      excludeChatSessionIds: [],
     });
 
     await userEvent.click(
