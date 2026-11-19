@@ -31,7 +31,7 @@ describe("oauthRefusalFromAuthorize", () => {
   it.each([
     [
       "not_acknowledged",
-      /local runs are off for it\. Ask a project admin to turn on Allow local runs on its Auth tab\.$/,
+      /local runs are off for it\. Ask a project admin to turn on Allow local runs on the server's Auth tab\.$/,
     ],
     ["client_upgrade_required", /Update MCPJam/],
     [undefined, /Run it from MCPJam instead/],

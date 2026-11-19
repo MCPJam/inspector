@@ -214,7 +214,7 @@ describe("a shared or uploaded account's refusal", () => {
     );
     // Also shown after an admin turns local runs off, so no "yet".
     expect(message).toBe(
-      '"Docs" uses the project\'s shared sign-in, and local runs are off for it. Ask a project admin to turn on Allow local runs on its Auth tab.',
+      '"Docs" uses the project\'s shared sign-in, and local runs are off for it. Ask a project admin to turn on Allow local runs on the server\'s Auth tab.',
     );
     expect(message).not.toMatch(/organization admin/);
     expect(

@@ -2135,8 +2135,8 @@ export async function createAuthorizedManager(
         !(auth.oauthAccessToken ?? callerToken) &&
         (effectiveAuth === "oauth" || effectiveAuth === "discover")
       ) {
-        // A hosted-only account is refused by its own rule, which no admin
-        // can change, so the copy names that rule instead of the policy.
+        // A hosted-only account is refused by its own rule, not the
+        // organization policy, so the copy names that rule.
         const hostedOnly = auth.oauthUnavailablePolicy === "hostedOnlyAccount";
         throw new WebRouteError(
           403,

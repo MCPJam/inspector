@@ -104,8 +104,8 @@ export function credentialRefusalMessage(
     if (refusal.cause === "not_acknowledged") {
       return (
         `${server} uses the project's shared sign-in, and local runs are ` +
-        "off for it. Ask a project admin to turn on Allow local runs on its " +
-        "Auth tab."
+        "off for it. Ask a project admin to turn on Allow local runs on the " +
+        "server's Auth tab."
       );
     }
     if (refusal.cause === "client_upgrade_required") {
