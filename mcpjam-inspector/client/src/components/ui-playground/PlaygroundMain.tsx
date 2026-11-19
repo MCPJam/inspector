@@ -2799,21 +2799,29 @@ export function PlaygroundMain({
   const compareReadiness = useRef(
     new Map<string, { ready: boolean; error?: string }>(),
   );
+  // Bumped when a lane becomes ready, so a pending auto-run can try again.
+  const [compareReadyCount, setCompareReadyCount] = useState(0);
   const reportCompareReadiness = useCallback(
     (id: string, ready: boolean, error?: string) => {
-      compareReadiness.current.set(`${multiModelSessionGeneration}:${id}`, {
-        ready,
-        error,
-      });
+      const key = `${multiModelSessionGeneration}:${id}`;
+      const wasReady = compareReadiness.current.get(key)?.ready === true;
+      compareReadiness.current.set(key, { ready, error });
+      if (ready && !wasReady) setCompareReadyCount((count) => count + 1);
     },
     [multiModelSessionGeneration],
   );
+  const compareLanesReady = () =>
+    !retainedClientsPaused &&
+    compareLanes.every(
+      ({ id }) =>
+        compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
+          ?.ready === true,
+    );
   const ensureCompareReady = () => {
-    if (retainedClientsPaused) return false;
+    if (compareLanesReady()) return true;
     const states = compareLanes.map(({ id }) =>
       compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`),
     );
-    if (states.every((state) => state?.ready)) return true;
     toast.error(
       states.find((state) => state?.error)?.error ??
         "Wait for all comparison clients to finish setup.",
@@ -5064,6 +5072,8 @@ export function PlaygroundMain({
     ) {
       return;
     }
+    // Comparison cards set up after the page does; wait for every one.
+    if (isCompareMode && !compareLanesReady()) return;
     autoRanRef.current = true;
     // The prompt is auto-sent, so clear it out of the composer. The composer is
     // otherwise seeded with the same `initialInput` (so it mirrors the eval
@@ -5084,13 +5094,20 @@ export function PlaygroundMain({
     composer.setInput("");
     // Comparison lanes take a broadcast, the way a starter chip sends there.
     if (isCompareMode) {
-      const sent = queueBroadcastRef.current({
-        text: autoRunInput as string,
-        prependMessages: [],
-        widgetModelContext: modelContextQueue,
-      });
-      if (sent) onAutoRunSent?.();
-      else composer.setInput(autoRunInput as string);
+      const prompt = autoRunInput as string;
+      void (async () => {
+        const sent =
+          (await ensureSelectedServerReadyForChat()) &&
+          (await ensureThreadReadyForSend()) &&
+          (await ensureLocalHarnessReadyForSend()) &&
+          queueBroadcastRef.current({
+            text: prompt,
+            prependMessages: [],
+            widgetModelContext: modelContextQueue,
+          });
+        if (sent) onAutoRunSent?.();
+        else composer.setInput(prompt);
+      })();
       return;
     }
     void handleSendFollowUp(autoRunInput as string).then((sent) => {
@@ -5105,7 +5122,11 @@ export function PlaygroundMain({
     isThreadEmpty,
     isStreaming,
     isCompareMode,
+    compareReadyCount,
     modelContextQueue,
+    ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
     onAutoRunSent,
   ]);

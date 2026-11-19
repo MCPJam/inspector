@@ -27,6 +27,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 
 const mockMultiModelPlaygroundCard = vi.fn();
 const mockLaneDispose = vi.fn();
+const cardReadiness = vi.hoisted(() => ({ ready: true }));
 const extensionFormFixture = vi.hoisted(() => ({ enabled: false, ownerAvailable: true, actor: "actor" }));
 
 vi.mock("lucide-react", async (importOriginal) => ({
@@ -404,9 +405,14 @@ vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
     useEffect(() => {
       props.onSendReadinessChange?.(
         `${props.compareKind}:${props.compareId}`,
-        true,
+        cardReadiness.ready,
       );
-    }, [props.onSendReadinessChange, props.compareKind, props.compareId]);
+    }, [
+      props.onSendReadinessChange,
+      props.compareKind,
+      props.compareId,
+      cardReadiness.ready,
+    ]);
     mockMultiModelPlaygroundCard(props);
     return (
       <div
@@ -2173,6 +2179,37 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect([...broadcasts].map((request) => request.text)).toEqual([
       "What can this server do?",
     ]);
+  });
+
+  it("holds the auto-run until every compare card finishes setup", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const onAutoRunSent = vi.fn();
+    const props = {
+      ...defaultProps,
+      autoRunInput: "What can this server do?",
+      onAutoRunSent,
+    };
+    cardReadiness.ready = false;
+    try {
+      const view = render(<PlaygroundMain {...props} />);
+      await act(async () => {});
+      expect(onAutoRunSent).not.toHaveBeenCalled();
+
+      cardReadiness.ready = true;
+      view.rerender(<PlaygroundMain {...props} />);
+      await waitFor(() => expect(onAutoRunSent).toHaveBeenCalledTimes(1));
+    } finally {
+      cardReadiness.ready = true;
+    }
   });
 
   it("gives each pane its own servers and its picked model", () => {
