@@ -128,12 +128,16 @@ export function deleteActionPlan(
   const action = actions[position]!;
   const previous = actions[position - 1];
   const turns = stepTurnIndices(steps);
-  const movedFollowers = steps.filter(
-    (step, index) =>
-      index > action.lastIndex &&
-      turns[index] === action.turnIndex &&
-      isAssertStep(step),
-  ).length;
+  // An interact runs inside a turn, so removing one moves no later assert.
+  const movedFollowers =
+    action.step.kind === "interact"
+      ? 0
+      : steps.filter(
+          (step, index) =>
+            index > action.lastIndex &&
+            turns[index] === action.turnIndex &&
+            isAssertStep(step),
+        ).length;
   const movedChecks = action.checks.length;
   if (movedChecks === 0 && movedFollowers === 0) return empty;
   return {

@@ -144,11 +144,15 @@ describe("harness registry", () => {
       if (adapter.supportsPluginBundles) {
         expect(adapter.deliverPluginBundles).toBeTypeOf("function");
       }
-      // A runtime takes skills only where its headless mode loads them on
-      // its own; turning one on with its bridge still off would deliver
-      // folders nobody reads.
-      if (adapter.supportsSkills) {
-        expect(adapter.skills.headlessLoading).toBe("native");
+      // A runtime takes skills only where its headless mode loads them: on
+      // its own, or once MCPJam's bridge switches them on, as Copilot CLI's
+      // does (`copilot-cli-skills.test.ts`). Turning another runtime on with
+      // its bridge still off would deliver folders nobody reads.
+      if (
+        adapter.supportsSkills &&
+        adapter.skills.headlessLoading !== "native"
+      ) {
+        expect(adapter.id).toBe("copilot-cli");
       }
       // The writer cleans what a runtime reads and writes where its adapter
       // does, so both must be relative to the box's home.
@@ -1748,35 +1752,49 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
   }
   expect(getHarnessAdapter("codex").forwardingRuntime).toMatchObject({runtimeVersion: PINNED_CODEX_VERSION, correlationKey: "callId"});
   expect(getHarnessAdapter("claude-code").forwardingRuntime).toBeDefined();
-  // Cursor forwards on pass-through only: approval bindings correlate its
-  // calls, it declines elicitation itself, and its config never changes.
+  // Approval bindings correlate Cursor's calls, it declines elicitation
+  // itself, and its config never changes.
   const cursor = getHarnessAdapter("cursor").forwardingRuntime;
   expect(cursor).toMatchObject({
     runtimeVersion: getHarnessAdapter("cursor").pinnedRuntimeVersion,
     configurationVersion: "acp-forward-v1",
     ownedInput: false,
-    passThroughOnly: true,
   });
+  // No contract keeps MCPJam's client from standing in for its runtime's:
+  // the capability check alone decides whether a turn takes the bridge.
+  for (const id of registeredHarnessIds())
+    expect(getHarnessAdapter(id).forwardingRuntime ?? {}).not.toHaveProperty(
+      "passThroughOnly",
+    );
   expect(cursor).not.toHaveProperty("correlationKey");
+  // Every other contract names where its runtime stamps a call's id, which a
+  // session envelope carries to the forwarder.
+  expect(getHarnessAdapter("claude-code").forwardingRuntime?.correlationKey).toBe(
+    "claudecode/toolUseId",
+  );
+  expect(getHarnessAdapter("codex").forwardingRuntime?.correlationKey).toBe("callId");
   const runtime = { harnessId: "cursor" } as never;
   expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();
 });
 
-it("forwards the dedicated Copilot CLI client on pass-through only", async () => {
+it("gives the dedicated Copilot CLI client its own MCP client: proxied, or forwarded on pass-through", async () => {
   const copilot = getHarnessAdapter("copilot-cli");
+  // The CLI's own client dials MCPJam's per-server proxy from its session
+  // configuration, and forwards natively where pass-through is admitted.
+  expect(copilot).toMatchObject({
+    mcpDelivery: "harness",
+    mcpNativeDelivery: "session-config",
+    supportsMcpToolApproval: true,
+  });
   expect(copilot.forwardingRuntime).toMatchObject({
     runtimeVersion: copilot.pinnedRuntimeVersion,
     configurationVersion: "copilot-native-mcp-v1",
     correlationKey: "mcpjam/toolCallId",
-    passThroughOnly: true,
   });
-  expect(copilot.requiredForwarding).toBe("pass-through");
-  // Forwarded calls wait at MCPJam's forwarder gate, so approval holds.
-  expect(copilot.supportsMcpToolApproval).toBe(true);
+  // No runtime is refused for its route any more.
   for (const id of registeredHarnessIds())
-    if (id !== "copilot-cli")
-      expect(getHarnessAdapter(id).requiredForwarding).toBeUndefined();
+    expect(getHarnessAdapter(id)).not.toHaveProperty("requiredForwarding");
 
   const doStart = vi.fn(async () => "session");
   const refreshed = copilot.forwardingRuntime!.refresh(
@@ -1789,4 +1807,16 @@ it("forwards the dedicated Copilot CLI client on pass-through only", async () =>
   );
   expect(doStart).not.toHaveBeenCalled();
   await expect(refreshed.doStart({} as never)).resolves.toBe("session");
+
+  // A chat lane's session configuration is the one the paused turn started
+  // with, so the continuation goes through.
+  const sessionStable = copilot.forwardingRuntime!.refresh(
+    { doStart } as never,
+    {},
+    "digest",
+    { sessionStable: true },
+  );
+  await expect(
+    sessionStable.doStart({ continueFrom: {} } as never),
+  ).resolves.toBe("session");
 });

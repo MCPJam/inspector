@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { harnessTargetOfHost } from "@/lib/harness-model-locks";
 import { useConvexAuth } from "convex/react";
 import { useHost } from "@/hooks/useClients";
 import { authFetch } from "@/lib/session-token";
@@ -103,7 +104,7 @@ export function useHarnessBuiltinTools(hostId: string | null): {
 } {
   const { isAuthenticated } = useConvexAuth();
   const { host } = useHost({ isAuthenticated, hostId });
-  const harnessId = host?.config?.agentLoop ?? host?.config?.harness ?? null;
+  const harnessId = host ? (harnessTargetOfHost(host)?.harnessId ?? null) : null;
   const { tools, loading } = useHarnessBuiltinToolCatalog(harnessId);
   return { harnessId, tools, loading };
 }

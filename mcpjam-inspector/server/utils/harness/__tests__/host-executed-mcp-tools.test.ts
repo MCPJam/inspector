@@ -290,6 +290,42 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     });
   });
 
+  it("holds the v1 API's read_only exclusions on host-executed tools", async () => {
+    const { toolModeHarnessPolicy } = await import(
+      "../../../routes/v1/chat-session-host-target.js"
+    );
+    const remove = tool();
+    const search = tool("found");
+    const manager = fakeManager({ srv: { delete_item: remove, search } });
+    const projected = await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolPolicy: toolModeHarnessPolicy(
+        ["srv"],
+        [
+          {
+            serverId: "srv",
+            tools: [
+              { name: "delete_item" },
+              { name: "search", annotations: { readOnlyHint: true } },
+            ],
+          },
+        ],
+        ["delete_item"],
+      ),
+    });
+    const blocked = (await (
+      projected.tools["mcp__srv__delete_item"] as FakeTool
+    ).execute({}, {})) as { content: Array<{ text: string }> };
+    expect(remove.execute).not.toHaveBeenCalled();
+    expect(blocked.content[0]!.text).toBe(
+      "Call blocked by tool policy: readOnlyModeUnclassified",
+    );
+    await expect(
+      (projected.tools["mcp__srv__search"] as FakeTool).execute({}, {}),
+    ).resolves.toBe("found");
+  });
+
   describe("the plugin executor wraps each call like the emulated engine's", () => {
     const snapshot = buildToolPolicySnapshot({
       policy: { mode: "default", deny: ["delete_all"] },

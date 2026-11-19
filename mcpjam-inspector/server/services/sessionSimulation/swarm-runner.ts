@@ -5,6 +5,7 @@ import { readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
 import {
@@ -1014,10 +1015,9 @@ async function runJourneyFanOut(
         //     policy out of it for the MCP manager — this feeds the same value to
         //     the harness gate.
         //   - APPROVAL vs MCP TOOLS. Whether a harness can pause on the surface
-        //     its MCP tools actually run on. Claude Code now can, on all three
-        //     (`supportsMcpToolApproval: true`, via the bridge's `canUseTool`
-        //     under "allow-reads"); Codex cannot pause at all, so
-        //     `requireToolApproval` still refuses a Codex target outright.
+        //     its MCP tools actually run on. A swarm keeps the target's switch
+        //     and MCPJam denies each request the runtime pauses on, so a
+        //     runtime that cannot pause there is refused.
         //
         // Deliberately NOT re-derived as a local subset: a rule added to the chat
         // preflight later must apply here too, and the only way to guarantee that
@@ -1028,9 +1028,11 @@ async function runJourneyFanOut(
             : checkHarnessRuntimeAvailable({
                 harnessId: dispatch.harnessId!,
                 surface: "swarms",
-                agentLoop: target.agentLoop !== undefined,
                 localExecution: localHarness,
-                requireToolApproval: target.requireToolApproval,
+                requireToolApproval: appliedToolApproval(
+                  "synthetic",
+                  target.requireToolApproval,
+                ),
                 // PLUGIN servers count. A target whose MCP servers come solely
                 // from a plugin has an empty `serverIds` and would otherwise slip
                 // the approval gate this exists to close. The snapshot's pinned
@@ -1084,7 +1086,6 @@ async function runJourneyFanOut(
                 // A swarm's results are compared, so an unverified harness ×
                 // model pair is refused, not run with a warning.
                 purpose: "swarm",
-                unattended: true,
                 // The target's saved selection: an org connection on the
                 // harness's own vendor runs on the organization's key.
                 ...(modelSelection ? { selection: modelSelection } : {}),

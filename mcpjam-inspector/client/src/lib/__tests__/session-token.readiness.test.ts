@@ -53,6 +53,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/readiness-runs/run_1/cancel",
     "/api/v1/projects/proj_1/readiness-runs/run_1/report",
     "/api/v1/projects/proj_1/readiness-runs/run_1/resume",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/8/diff",
     // The Readiness page: without these, every call there 401s unseen.
     "/api/v1/directory-flows",
     "/api/v1/directory-flows/claude-connector",
@@ -99,6 +101,8 @@ describe("authFetch bearer on directory-readiness routes", () => {
     "/api/v1/projects/proj_1/servers/srv_1/tools",
     "/api/v1/projects/proj_1/evals",
     "/api/v1/projects/proj_1",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/export",
+    "/api/v1/projects/proj_1/servers/srv_1/revisions/8/diff/raw",
     // A path that merely starts the same way.
     "/api/v1/projects/proj_1/readiness-runs-export",
     // One segment too many under a run.

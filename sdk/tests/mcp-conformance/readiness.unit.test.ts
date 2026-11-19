@@ -156,8 +156,21 @@ describe("client readiness advice", () => {
     );
 
     expect(deprecated?.specStrength).toBe("Deprecation Notice");
-    expect(deprecated?.message).toMatch(/logging\/setLevel/);
+    expect(deprecated?.message).toContain(
+      "Server advertises superseded functionality: logging is deprecated as of protocol version 2026-07-28; resources.subscribe"
+    );
+    expect(deprecated?.message).not.toContain("logging/setLevel");
     expect(deprecated?.message).toMatch(/subscriptions\/listen/);
+  });
+
+  it("does not warn about logging on a legacy revision", async () => {
+    const ctx = clientContext({ protocolVersion: "2025-11-25" });
+    ctx.config.readinessIds = ["readiness-deprecated-feature-use"];
+    const warnings = await collectClientReadiness(
+      ctx,
+      surface({ serverCapabilities: { logging: {} } })
+    );
+    expect(warnings).toEqual([]);
   });
 
   it("labels a superseded legacy revision as a deprecation notice", async () => {

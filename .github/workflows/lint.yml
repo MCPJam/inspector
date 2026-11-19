@@ -73,7 +73,8 @@ jobs:
       - name: Verify the node_modules cache warmer matches its consumers
         run: node --test .github/scripts/warm-node-modules.test.mjs
 
-      # The scripts behind prepare-release.yml, release-trigger.yml and
+      # The scripts behind prepare-release.yml, main-push-guard.yml,
+      # release-trigger.yml and
       # release.yml's plan. Release itself runs rarely, so this is where a
       # break shows up first.
       - name: Release script tests
@@ -81,13 +82,14 @@ jobs:
           node --test \
             .github/scripts/unpublished-versions.test.mjs \
             .github/scripts/release-plan.test.mjs \
-            .github/scripts/release-pr.test.mjs \
+            .github/scripts/release-commit.test.mjs \
             .github/scripts/release-trigger.test.mjs \
             .github/scripts/ci-scope.test.mjs \
             .github/scripts/release-evidence.test.mjs \
             .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
-            .github/scripts/check-workos-loopback.test.mjs
+            .github/scripts/check-workos-loopback.test.mjs \
+            .github/scripts/retry-worker-crash.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare
@@ -119,10 +121,11 @@ jobs:
       - name: Lint DESIGN.md against the pinned spec
         run: npm run design:lint
 
-      # Advisory: a moved fingerprint on a PR is what the next release will
-      # publish, not a defect. Starting that release (`prepare-release.yml`)
-      # builds the pack and pins it in the version PR, so this only says which
-      # harness moves (in the job summary). The release gate is still strict.
+      # Advisory: a moved fingerprint on a PR is what the pack prebuild will
+      # publish once it lands, not a defect. The prebuild
+      # (`local-harness-pack-prebuild.yml`) builds the pack and pins it in a
+      # reviewed pin PR, so this only says which harness moves (in the job
+      # summary). The release gate is still strict.
       - name: Report local runtime input fingerprints
         run: node mcpjam-inspector/scripts/check-local-harness-inputs.mjs --advisory
 
@@ -130,8 +133,9 @@ jobs:
       # PUBLISHED packs with this checkout, and packs publish only from main,
       # so a PR that changes a pack input could never pass it and had to merge
       # red. It also downloaded every pinned pack (~1.1 GB) on every PR. The
-      # published-asset check runs where it can be satisfied: before a release
-      # is versioned (prepare-release.yml) and before it publishes (release.yml).
+      # published-asset check runs where it can be satisfied: before a pin PR
+      # opens (local-harness-pack-prebuild.yml) and before a release publishes
+      # (release.yml).
 
       - name: Typecheck releasable packages
         run: npm run typecheck
