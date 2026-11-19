@@ -1652,6 +1652,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateSettingsDelete
           onGeneratingChange={setGeneratingCases}
           onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
@@ -1891,6 +1892,7 @@ function EvaluateTabContent({
 
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}
+          suiteToDeleteHasUnsavedEdits={handlers.suiteToDeleteHasUnsavedEdits}
           setSuiteToDelete={handlers.setSuiteToDelete}
           deletingSuiteId={handlers.deletingSuiteId}
           onConfirmDeleteSuite={handlers.confirmDelete}
