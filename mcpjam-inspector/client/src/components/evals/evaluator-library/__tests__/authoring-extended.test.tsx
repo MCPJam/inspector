@@ -94,7 +94,9 @@ describe("PromptEditor", () => {
       "aria-invalid",
       "true",
     );
-    expect(screen.getByText("Unknown variable: cart")).toBeInTheDocument();
+    expect(
+      screen.getByText("Replace cart with variables from the list."),
+    ).toBeInTheDocument();
   });
 
   it("opens the variable list on {{ and inserts the pick", () => {
