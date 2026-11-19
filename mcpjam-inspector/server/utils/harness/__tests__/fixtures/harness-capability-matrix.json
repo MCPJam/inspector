@@ -247,7 +247,7 @@
         "readFolders": [
           ".copilot/skills"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".copilot/skills"
       },
@@ -339,7 +339,7 @@
           ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.grok/skills",
           ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.cursor/skills-cursor"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".ai-sdk-harness/.harness-bootstrap/cursor/implementation/home/.agents/skills"
       },
@@ -417,7 +417,7 @@
           ".config/opencode/skills",
           ".config/opencode/skill"
         ],
-        "serverSkills": "box-files",
+        "serverSkills": "harness-tools",
         "trailingNewline": false,
         "writeFolder": ".agents/skills"
       },

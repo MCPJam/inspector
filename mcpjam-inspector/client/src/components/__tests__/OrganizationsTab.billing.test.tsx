@@ -635,6 +635,119 @@ describe("OrganizationsTab billing", () => {
     expect(navigateToSupportMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["v2", createV2PlanCatalog, ["Free", "Pro", "Enterprise"]],
+    // The v1 catalog names no bundle on its entries and has no Pro column.
+    ["v1", createPlanCatalog, ["Free", "Enterprise"]],
+  ] as const)(
+    "shows a plan set by MCPJam staff as current and sends every other plan to support (%s catalog)",
+    (_world, buildCatalog, otherColumns) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "free",
+            effectivePlan: "team",
+            source: "subscription",
+            catalogPlanId: "team",
+            priceModel: "flat",
+            // A cadence left over from an old subscription must not turn the
+            // other toggle into an offer.
+            billingInterval: "monthly",
+            hasCustomer: false,
+            staffPlan: { expiresAt: Date.UTC(2027, 0, 1) },
+          }),
+          planCatalog: buildCatalog(),
+        }),
+      );
+
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+      const panel = within(screen.getByTestId("current-plan-panel"));
+      expect(panel.getByText("Team")).toBeInTheDocument();
+      expect(panel.getByText("Through Dec 31, 2026")).toBeInTheDocument();
+      expect(panel.queryByText(/flat monthly rate|per seat\/month/)).toBeNull();
+      expect(panel.queryByText(/existing subscription terms/)).toBeNull();
+      expect(panel.queryByText("Limited functionality")).toBeNull();
+      expect(screen.queryByTestId("free-plan-team-upsell")).toBeNull();
+
+      const card = within(screen.getByTestId("compare-plans-card"));
+      const toggle = within(
+        card.getByRole("group", { name: "Billing interval" }),
+      );
+      const expectOnlyTeamIsCurrent = () => {
+        expect(
+          within(getPlanColumn("Team")).getByRole("button", {
+            name: "Current plan",
+          }),
+        ).toBeDisabled();
+        for (const column of otherColumns) {
+          expect(
+            within(getPlanColumn(column)).getByRole("button", {
+              name: "Contact us",
+            }),
+          ).toBeEnabled();
+        }
+        for (const label of ["Upgrade", "Downgrade", "Change plan"]) {
+          expect(card.queryByRole("button", { name: label })).toBeNull();
+        }
+      };
+
+      // The toggle opens on the stored cadence.
+      expect(toggle.getByRole("radio", { name: "Monthly" })).toBeChecked();
+      expectOnlyTeamIsCurrent();
+
+      fireEvent.click(toggle.getByRole("radio", { name: /^Annual/ }));
+      expect(toggle.getByRole("radio", { name: /^Annual/ })).toBeChecked();
+      expectOnlyTeamIsCurrent();
+    },
+  );
+
+  it("withdraws an open plan confirmation when a staff plan arrives", async () => {
+    const startPlanChange = vi.fn();
+    const freeOrg = {
+      catalogPlanId: "free",
+      priceModel: "free" as const,
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(freeOrg),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    const { rerender } = render(
+      <OrganizationsTab organizationId="org-1" section="plans" />,
+    );
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+    await screen.findByRole("dialog", { name: "Confirm your plan" });
+
+    // A CSM sets Team from Backstage while the owner is still deciding.
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          ...freeOrg,
+          effectivePlan: "team",
+          source: "subscription",
+          catalogPlanId: "team",
+          priceModel: "flat",
+          staffPlan: { expiresAt: null },
+        }),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    rerender(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm your plan" }),
+      ).toBeNull(),
+    );
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
   it("still offers self-serve upgrades to a free org whose price model is free", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({

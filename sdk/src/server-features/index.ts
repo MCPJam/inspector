@@ -28,6 +28,14 @@ export {
   featuresForCheck,
   type CheckFeatureTarget,
 } from "./check-map/index.js";
+export {
+  CANNOT_CHECK_YET,
+  EVENTS_PROBE_CHECKS,
+  hasRunnableCheck,
+  isProbeGradedCheck,
+  nextStepFor,
+  type NextStep,
+} from "./next-step.js";
 export { toDeclaredSurface, type DeclaredSurfaceSource } from "./declared-surface.js";
 export {
   FEATURE_PROTOCOL_VERSIONS,

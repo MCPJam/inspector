@@ -1432,7 +1432,7 @@ export async function prepareChatV2(
   // approval (`effective-skill-tools.ts`).
   // The two skill-delivery channels are deliberately DISJOINT, and this is the
   // single point both funnel through. A harness turn materializes SKILL.md on
-  // the box from `pinnedHarnessSkills` (see `utils/harness/skill-delivery.ts`);
+  // the box from its plan (`TurnSkills.harness`, read by `skill-delivery.ts`);
   // MCPJam's agent gets in-memory `loadSkill` tools. A plan for one engine on
   // the other would hand the model the same skill twice, by two mechanisms, or
   // claim skills the model never gets. Callers guard this themselves and a
