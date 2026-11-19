@@ -39,7 +39,18 @@ describe("findHarnessToolNameCollisions", () => {
       { serverId: "shop", toolNames: ["a.b", "a_b"] },
     ]);
     expect(new HarnessToolNameCollisionError(collisions).message).toBe(
-      "Claude Code can't tell these MCP tools apart, because it shows each group under one name: `a.b` and `a_b`. Rename one tool in each group on its server, or run this client on MCPJam Harness.",
+      "Claude Code can't run `a.b` and `a_b` in one turn because it gives them the same name. Rename one of them on its server, or run this client on MCPJam Harness.",
+    );
+  });
+
+  it("names every group in one message", () => {
+    expect(
+      new HarnessToolNameCollisionError([
+        { serverId: "shop", toolNames: ["a.b", "a:b", "a_b"] },
+        { serverId: "docs", toolNames: ["x.y", "x_y"] },
+      ]).message,
+    ).toBe(
+      "Claude Code can't run `a.b`, `a:b` and `a_b`, or `x.y` and `x_y` in one turn because it gives them the same name. Rename one of them on its server, or run this client on MCPJam Harness.",
     );
   });
 

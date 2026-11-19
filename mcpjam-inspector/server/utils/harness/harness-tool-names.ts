@@ -43,17 +43,22 @@ export class HarnessToolNameCollisionError extends Error {
   readonly collisions: HarnessToolNameCollision[];
 
   constructor(collisions: HarnessToolNameCollision[]) {
-    const pairs = collisions
-      .map(({ toolNames }) =>
-        toolNames.map((name) => `\`${name}\``).join(" and "),
-      )
-      .join("; ");
+    const groups = collisions
+      .map(({ toolNames }) => listNames(toolNames.map((name) => `\`${name}\``)))
+      .join(", or ");
     super(
-      `Claude Code can't tell these MCP tools apart, because it shows each group under one name: ${pairs}. Rename one tool in each group on its server, or run this client on MCPJam Harness.`,
+      `Claude Code can't run ${groups} in one turn because it gives them the same name. Rename one of them on its server, or run this client on MCPJam Harness.`,
     );
     this.name = "HarnessToolNameCollisionError";
     this.collisions = collisions;
   }
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listNames(names: string[]): string {
+  return names.length < 2
+    ? names.join("")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
 /**
