@@ -196,6 +196,7 @@ import {
 } from "../lib/eval-run-exit-code.js";
 import {
   buildResumeCommand,
+  resumeSourceOfRun,
   creditBlockJsonFields,
   creditRecoveryOfCliError,
   idempotencyKeyOfErrorDetails,
@@ -4319,11 +4320,13 @@ export function registerEvalCommands(program: Command): void {
         const creditBlock = isCreditBlock(completion.creditRecovery)
           ? completion.creditRecovery
           : undefined;
-        const blockedRunId = creditBlock ? completion.runs[0]?.id : undefined;
-        const resumeCommand =
-          creditBlock && blockedRunId
-            ? buildResumeCommand(options, { sourceRunId: blockedRunId })
-            : undefined;
+        const blockedRun = creditBlock ? completion.runs[0] : undefined;
+        const resumeCommand = blockedRun
+          ? buildResumeCommand(options, {
+              sourceRunId: blockedRun.id,
+              source: resumeSourceOfRun(blockedRun),
+            })
+          : undefined;
         const code = worstOf([
           evalRunWaitExitCode({
             launchOutcome: result.outcome,
@@ -4564,8 +4567,11 @@ export function registerEvalCommands(program: Command): void {
           : undefined;
         const statusResumeCommand = statusBlock
           ? buildResumeCommand(
-              { suite: result.run.suiteId, project: result.project.id },
-              { sourceRunId: result.run.id },
+              { project: result.project.id },
+              {
+                sourceRunId: result.run.id,
+                source: resumeSourceOfRun(result.run),
+              },
             )
           : undefined;
         // The wire-shaped result is useful in JSON, but human output must not

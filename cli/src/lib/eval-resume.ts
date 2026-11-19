@@ -37,6 +37,33 @@ export function creditRecoveryOfCliError(
   return creditRecoveryOfRefusal(details);
 }
 
+/** What a stopped run's own record says about where it ran. */
+export interface ResumeSource {
+  suiteId?: string;
+  environmentId?: string;
+  hostId?: string;
+}
+
+/**
+ * The suite and target a stopped run executed on, read from the run record
+ * (its immutable config snapshot), so a resume lands on the same target.
+ */
+export function resumeSourceOfRun(run: {
+  suiteId?: string;
+  environment?: { id: string } | null;
+  client?: { id: string | null; source: string };
+}): ResumeSource {
+  const hostId =
+    run.client?.source === "attached_host" && run.client.id
+      ? run.client.id
+      : undefined;
+  return {
+    ...(run.suiteId ? { suiteId: run.suiteId } : {}),
+    ...(run.environment?.id ? { environmentId: run.environment.id } : {}),
+    ...(hostId ? { hostId } : {}),
+  };
+}
+
 /** The launch options this module reconstructs a resume command from. */
 export interface EvalRunLaunchOptions {
   suite?: string;
@@ -112,7 +139,11 @@ export function shellQuoteArg(arg: string): string {
  */
 export function buildResumeCommand(
   options: EvalRunLaunchOptions,
-  resume: { sourceRunId?: string; idempotencyKey?: string } = {},
+  resume: {
+    sourceRunId?: string;
+    idempotencyKey?: string;
+    source?: ResumeSource;
+  } = {},
 ): string {
   const argv: string[] = ["mcpjam", "cloud", "eval", "run"];
   const push = (...tokens: string[]) => argv.push(...tokens);
@@ -120,16 +151,16 @@ export function buildResumeCommand(
     for (const value of values ?? []) push(flag, value);
   };
 
-  if (options.file) push("--file", options.file);
+  const stoppedResume = resume.sourceRunId !== undefined;
+  const source = stoppedResume ? resume.source : undefined;
+
+  // A stopped run already belongs to a suite, so its resume names that suite
+  // by id: re-sending `--file` would re-upsert the cases first, and `--file -`
+  // would wait on stdin that was consumed by the first launch.
+  if (source?.suiteId) push("--suite", source.suiteId);
+  else if (options.file) push("--file", options.file);
   else if (options.suite) push("--suite", options.suite);
   if (options.project) push("--project", options.project);
-
-  // A stopped-run resume (`--resume-from`) runs the source run's own
-  // unfinished cases, so the backend refuses it alongside any case or target
-  // selector (RESUME_SCOPE_CONFLICT). Emit only the run shape, never the
-  // selectors. A refused LAUNCH has no source run, so it re-runs the whole
-  // original command — selectors included — under the same key.
-  const stoppedResume = resume.sourceRunId !== undefined;
 
   if (!stoppedResume) {
     pushEach("--server", options.server);
@@ -138,6 +169,18 @@ export function buildResumeCommand(
     pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
     if (options.allTargets) push("--all-targets");
     pushEach("--case", options.case);
+  } else if (source?.environmentId) {
+    // The server picks a resume's cases and refuses `--case` beside it, but it
+    // still needs the target: a suite with several environments or hosts
+    // refuses a launch that names none. The source run's own target is the
+    // one to resume on, even if the suite's attachments changed since.
+    push("--environment", source.environmentId);
+  } else if (source?.hostId) {
+    push("--client", source.hostId);
+  } else {
+    pushEach("--server", options.server);
+    pushEach("--environment", options.environment);
+    pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
   }
 
   const iterations = options.iterations ?? options.repetitions;

@@ -12,6 +12,7 @@ import {
   creditRecoveryOfCliError,
   idempotencyKeyOfErrorDetails,
   isCreditBlock,
+  resumeSourceOfRun,
   shellQuoteArg,
 } from "../src/lib/eval-resume.js";
 
@@ -105,15 +106,15 @@ test("buildResumeCommand: stopped run uses --resume-from and drops the key", () 
   assert.ok(!command.includes("--idempotency-key"));
 });
 
-test("buildResumeCommand: stopped run drops case and target selectors", () => {
-  // The backend refuses --resume-from alongside a case or target selector, so
-  // a resume of a case-filtered run must not re-emit them.
+test("buildResumeCommand: stopped run drops --case and --all-targets", () => {
+  // The server picks a resume's cases (it refuses caseIds beside a resume),
+  // and a resume reruns one run, so neither selector may be re-emitted.
   const command = buildResumeCommand(
     {
       suite: "s1",
       project: "p1",
       case: ["checkout", "refund"],
-      server: ["srv_1"],
+      environment: ["env_1"],
       allTargets: true,
       iterations: 3,
     },
@@ -121,11 +122,68 @@ test("buildResumeCommand: stopped run drops case and target selectors", () => {
   );
   assert.equal(
     command,
-    "mcpjam cloud eval run --suite s1 --project p1 --iterations 3 --resume --resume-from run_9",
+    "mcpjam cloud eval run --suite s1 --project p1 --environment env_1 --iterations 3 --resume --resume-from run_9",
   );
-  for (const flag of ["--case", "--server", "--all-targets"]) {
+  for (const flag of ["--case", "--all-targets"]) {
     assert.ok(!command.includes(flag), `${flag} must be dropped`);
   }
+});
+
+test("buildResumeCommand: stopped run resumes on the source run's suite and environment", () => {
+  // A suite with several environments refuses a launch that names none, so
+  // the resume names the one the stopped run actually ran on.
+  const command = buildResumeCommand(
+    {
+      file: "-",
+      project: "p1",
+      environment: ["staging"],
+      composeModel: ["gpt-5"],
+    },
+    {
+      sourceRunId: "run_9",
+      source: { suiteId: "suite_7", environmentId: "env_42" },
+    },
+  );
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --suite suite_7 --project p1 --environment env_42 --resume --resume-from run_9",
+  );
+});
+
+test("buildResumeCommand: stopped run on an attached host resumes on that host", () => {
+  const command = buildResumeCommand(
+    { suite: "s1", project: "p1" },
+    { sourceRunId: "run_9", source: { suiteId: "s1", hostId: "host_3" } },
+  );
+  assert.ok(command.includes("--client host_3"));
+  assert.ok(!command.includes("--environment"));
+});
+
+test("resumeSourceOfRun: reads the suite and the run's own target", () => {
+  assert.deepEqual(
+    resumeSourceOfRun({
+      suiteId: "s1",
+      environment: { id: "env_1" },
+      client: { id: "host_1", source: "environment" },
+    }),
+    { suiteId: "s1", environmentId: "env_1" },
+  );
+  assert.deepEqual(
+    resumeSourceOfRun({
+      suiteId: "s1",
+      environment: null,
+      client: { id: "host_1", source: "attached_host" },
+    }),
+    { suiteId: "s1", hostId: "host_1" },
+  );
+  // A suite-default client is not a selectable target; omit it.
+  assert.deepEqual(
+    resumeSourceOfRun({
+      suiteId: "s1",
+      client: { id: "host_1", source: "suite_default" },
+    }),
+    { suiteId: "s1" },
+  );
 });
 
 test("buildResumeCommand: --host folds into --client, repetitions into --iterations", () => {
