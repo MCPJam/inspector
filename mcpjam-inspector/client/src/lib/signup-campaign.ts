@@ -12,8 +12,9 @@ export function readSignupCampaign(): string | undefined {
   } catch { /* Unavailable storage must never interrupt sign-in. */ }
 }
 
-export function clearSignupCampaign() {
+export function clearSignupCampaign(acknowledged: string) {
   try {
+    if (readSignupCampaign() !== acknowledged) return;
     document.cookie = NAME + "=; Domain=mcpjam.com; Path=/; Max-Age=0; Secure; SameSite=Lax";
   } catch { /* The short expiry also bounds cookie lifetime. */ }
 }

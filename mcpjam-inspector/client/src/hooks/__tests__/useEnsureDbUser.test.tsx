@@ -720,6 +720,30 @@ describe("useEnsureDbUser", () => {
     }
   });
 
+  it.each([
+    ["linkedin%2Ffall_launch", true],
+    ["linkedin%2Fwinter_launch", false],
+  ] as const)("clears only the campaign sent by the successful request (%s)", async (current, shouldClear) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const cookie = vi.spyOn(document, "cookie", "get")
+      .mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
+    const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+    mockState.ensureUser.mockImplementationOnce(async () => {
+      cookie.mockReturnValue("mcpjam_signup_campaign=" + current);
+    });
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
+      expect(write.mock.calls.some(([value]) => value.includes("Max-Age=0"))).toBe(shouldClear);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";

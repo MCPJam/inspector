@@ -133,6 +133,9 @@ async function ensureUserWithRetry(
 
     try {
       await ensureUser(args);
+      if (args.signupCampaign && shouldContinue()) {
+        clearSignupCampaign(args.signupCampaign);
+      }
       return;
     } catch (err) {
       if (
@@ -422,7 +425,6 @@ export function useEnsureDbUser() {
 
       try {
         await ensurePromise;
-        if (isWorkOsAuth && !cancelled && location.hostname === "app.mcpjam.com") clearSignupCampaign();
       } catch (err) {
         finishTransition?.(false);
         if (!cancelled) {
