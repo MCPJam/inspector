@@ -1,5 +1,5 @@
 /**
- * DO_NOT_TRACK and MCPJAM_FEATURE_FLAGS_FILE, proven on the real server.
+ * DO_NOT_TRACK and configured feature flags, proven on the real server.
  *
  * Each case boots `server/index.ts` in a child process under a deny-mode
  * network guard (`test/support/deny-network.mjs`) that records and refuses
@@ -156,6 +156,25 @@ describe("a hosted server under DO_NOT_TRACK", () => {
       },
     });
   });
+
+  it("serves a hosted preview's inline flags through the browser endpoint", async () => {
+    const preview = await startGuardedServer({
+      env: {
+        DO_NOT_TRACK: "1",
+        MCPJAM_FEATURE_FLAGS: FLAG_FILE,
+      },
+    });
+    try {
+      const response = await fetch(
+        `${preview.baseUrl}/api/web/flags?distinct_id=${VISITOR}&platform=web`,
+      );
+      expect(response.ok).toBe(true);
+      expect(await response.json()).toEqual(optedOutUse.flags);
+    } finally {
+      await preview.stop();
+      removeScratch(preview);
+    }
+  }, 90_000);
 
   it("prints a broken flag file's problem at boot, without verbose logging", () => {
     expect(brokenFlagsBootOutput).toContain(
