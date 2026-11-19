@@ -134,7 +134,7 @@ export function RepeatPromptTip({
         <div
           ref={contentRef}
           role="status"
-          className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs duration-300 animate-in fade-in slide-in-from-bottom-2 motion-reduce:animate-none"
+          className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-card py-2 pl-3 pr-2 text-sm shadow-sm duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
         >
           <Badge>Tip</Badge>
           <p className="min-w-0 flex-1 text-foreground/80">
@@ -142,9 +142,8 @@ export function RepeatPromptTip({
             to rerun it anytime.
           </p>
           <Button
-            variant="link"
+            variant="outline"
             size="sm"
-            className="h-auto px-0 font-medium text-foreground underline"
             onClick={() => {
               track("playground_repeat_tip_clicked", {
                 location: "playground",
@@ -157,8 +156,7 @@ export function RepeatPromptTip({
           </Button>
           <Button
             variant="ghost"
-            size="icon"
-            className="size-6"
+            size="sm"
             aria-label="Dismiss tip"
             onClick={() => {
               track("playground_repeat_tip_dismissed", {
@@ -167,7 +165,7 @@ export function RepeatPromptTip({
               setHidden(true);
             }}
           >
-            <X className="size-3.5" aria-hidden />
+            <X aria-hidden />
           </Button>
         </div>
       )}
