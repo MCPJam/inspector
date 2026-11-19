@@ -57,6 +57,8 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     string,
     ServerWithName
   >;
+  // Saved servers that aren't connected yet appear only in `projectServers`;
+  // runtime entries carry the live connection status.
   const runtimeServers = (ctx.appState?.servers ?? {}) as Record<
     string,
     ServerWithName
@@ -248,7 +250,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
       case "connect":
         return (
           <ConnectStep
-            servers={runtimeServers}
+            servers={{ ...projectServers, ...runtimeServers }}
             onConnect={ctx.handleConnect}
             onRemove={ctx.handleRemoveServer}
             onReconnect={(name) =>
