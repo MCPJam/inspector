@@ -2681,6 +2681,7 @@ export async function runHarnessTurn(
         localPrepared !== null
           ? localPrepared.sandbox
           : createHarnessSandboxProvider({
+              harnessId: harnessAdapter.id,
               sandboxId: sandboxId!,
               connectionPreparedByBroker: () => connectionPreparedByBroker,
               defaultWorkingDirectory,
