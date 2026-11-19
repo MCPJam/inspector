@@ -30,6 +30,7 @@ export function isMeasuredFile(path) {
 }
 
 const SERVER_PATH = /^mcpjam-inspector\/server\//;
+const CLIENT_PATH = /^mcpjam-inspector\/client\//;
 
 /** A comment line: `//`, or a line inside a block comment that starts with `*`. */
 const COMMENT_LINE = /^\s*(?:\/\/|\/?\*)/;
@@ -122,6 +123,35 @@ export const RULES = [
     label: "empty `catch {}` with no reason comment",
     count: (text) =>
       countMatches(text, /\bcatch\s*(?:\(\s*[\w{}\s,:]*\))?\s*\{\s*\}/g),
+  },
+  {
+    id: "comment-only-catch",
+    label: "`catch` blocks that hold only a comment",
+    fix: "Handle the error, or log it at debug level next to the reason. A comment alone hides the failure from whoever debugs it next.",
+    count: (text) =>
+      countMatches(
+        text,
+        /\bcatch\s*(?:\(\s*[\w{}\s,:]*\))?\s*\{(?:\s*(?:\/\/[^\n]*|\/\*[\s\S]*?\*\/))+\s*\}/g
+      ),
+  },
+  {
+    id: "client-effect",
+    label: "`useEffect` / `useLayoutEffect` calls in the inspector client",
+    appliesTo: (path) => CLIENT_PATH.test(path),
+    fix: "Derive the value during render, do the work in the event handler that causes it, reset state with a `key`, or subscribe with `useSyncExternalStore`. If an effect is the only option, replace an existing one in the same change.",
+    count: (text) => countMatches(text, /\buse(?:Layout)?Effect\s*\(/g),
+  },
+  {
+    id: "client-timer",
+    label:
+      "`setTimeout` / `setInterval` / `requestAnimationFrame` / `requestIdleCallback` calls in the inspector client",
+    appliesTo: (path) => CLIENT_PATH.test(path),
+    fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
+    count: (text) =>
+      countMatches(
+        text,
+        /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\s*\(/g
+      ),
   },
   {
     id: "eslint-disable",

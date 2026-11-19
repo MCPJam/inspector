@@ -89,6 +89,47 @@ describe("rules", () => {
     assert.equal(counts["empty-catch-block"], 2);
   });
 
+  it("counts catch blocks that hold only a comment, not ones that act", () => {
+    const counts = count(
+      [
+        "try { a(); } catch {",
+        "  // best effort: the file may be gone",
+        "}",
+        "try { a(); } catch (error) {",
+        "  /* ignored */",
+        "  // on purpose",
+        "}",
+        "try { a(); } catch (error) {",
+        "  // the file may be gone",
+        "  logger.debug(error);",
+        "}",
+        "try { a(); } catch {}",
+      ].join("\n"),
+    );
+    assert.equal(counts["comment-only-catch"], 2);
+    assert.equal(counts["empty-catch-block"], 1);
+  });
+
+  it("counts effects and timers only in the inspector client", () => {
+    const text = [
+      'import { useEffect, useLayoutEffect } from "react";',
+      "useEffect(() => {}, []);",
+      "React.useLayoutEffect(() => {});",
+      "const id = setTimeout(run, 0);",
+      "window.requestAnimationFrame(run);",
+      "setInterval(run, 1000);",
+      "requestIdleCallback(run);",
+      "clearTimeout(id);",
+    ].join("\n");
+    const client = count(text, "mcpjam-inspector/client/src/a.tsx");
+    assert.equal(client["client-effect"], 2);
+    assert.equal(client["client-timer"], 4);
+
+    const server = count(text, "mcpjam-inspector/server/a.ts");
+    assert.equal(server["client-effect"], 0);
+    assert.equal(server["client-timer"], 0);
+  });
+
   it("counts raw console only in the inspector server", () => {
     const text = "console.log('x');\nconsole.error('y');\n";
     assert.equal(
@@ -478,6 +519,17 @@ describe("ratchet", () => {
     assert.equal(result.code, 0);
     assert.match(result.stdout, /Waived/);
   });
+
+  it("names the fix for a rule that has one", () => {
+    write(
+      "mcpjam-inspector/client/src/a.tsx",
+      "useEffect(() => setA(b), [b]);\n",
+    );
+    const result = run();
+    assert.equal(result.code, 1);
+    assert.match(result.stdout, /client-effect \+1/);
+    assert.match(result.stdout, /Derive the value during render/);
+  });
 });
 
 describe("deletion bot check", async () => {
@@ -625,6 +677,16 @@ describe("agent hooks", async () => {
       fileAfter: "x as any\nconst a = b as any;\n",
     });
     assert.match(problem, /`as any` casts: \+1/);
+
+    const effect = checkEdit("mcpjam-inspector/client/src/a.tsx", {
+      ...editFragments("Edit", {
+        old_string: "const a = b;",
+        new_string: "useEffect(() => setA(b), [b]);",
+      }),
+      fileBefore: "const a = b;\n",
+      fileAfter: "useEffect(() => setA(b), [b]);\n",
+    });
+    assert.match(effect, /calls in the inspector client: \+1\. Derive the value/);
 
     const clean = checkEdit("sdk/src/a.ts", {
       ...editFragments("Edit", { old_string: "a", new_string: "b" }),
