@@ -8,6 +8,7 @@ import { GuestCreditWallView } from "@/components/billing/GuestCreditWallView";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagVariantKey } from "posthog-js/react";
 import { useLockedFlagVariant } from "@/hooks/use-locked-flag-variant";
 import { useEffect, useRef } from "react";
 import {
@@ -63,8 +64,10 @@ function GuestCreditWall() {
   // Committed once per opening. While flags are unresolved the control layout
   // renders below as a visual fallback, and the impression waits for a real
   // variant so a treatment guest is never recorded as control.
+  // Reading the variant fires the PostHog exposure ($feature_flag_called).
+  const rawVariant = useFeatureFlagVariantKey(GUEST_WALL_FLAG);
   const committedVariant = useLockedFlagVariant(
-    GUEST_WALL_FLAG,
+    rawVariant,
     normalizeGuestVariant,
   );
 

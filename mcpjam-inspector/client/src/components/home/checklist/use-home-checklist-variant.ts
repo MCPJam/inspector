@@ -1,3 +1,4 @@
+import { useFeatureFlagVariantKey } from "posthog-js/react";
 import { useLockedFlagVariant } from "@/hooks/use-locked-flag-variant";
 
 export const HOME_CHECKLIST_FLAG = "home-setup-checklist";
@@ -19,8 +20,6 @@ export function normalizeHomeChecklistVariant(
  * flags load, and when they never do, Home renders control.
  */
 export function useHomeChecklistVariant(): HomeChecklistVariant {
-  return (
-    useLockedFlagVariant(HOME_CHECKLIST_FLAG, normalizeHomeChecklistVariant) ??
-    "control"
-  );
+  const raw = useFeatureFlagVariantKey(HOME_CHECKLIST_FLAG);
+  return useLockedFlagVariant(raw, normalizeHomeChecklistVariant) ?? "control";
 }
