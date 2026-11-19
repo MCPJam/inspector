@@ -360,7 +360,7 @@ async function runSequence(instance, args, meta) {
         break;
       }
     } catch (error) {
-      const row = { run: args.run, ...meta, instance: instance.name, label: instance.label, workload, ok: false, failure: `driver:${error.message.split("\n")[0].slice(0, 120)}`, at: new Date().toISOString() };
+      const row = { run: args.run, ...meta, instance: instance.name, label: instance.label, client: args.client, workload, ok: false, failure: `driver:${error.message.split("\n")[0].slice(0, 120)}`, at: new Date().toISOString() };
       appendFileSync(args.out, JSON.stringify(row) + "\n");
       console.log(`${meta.pair ?? "-"} ${instance.name} ${workload} DRIVER ERROR ${error.message.split("\n")[0]}`);
       await instance.page.reload({ waitUntil: "domcontentloaded" }).catch(bestEffort("reload after a driver error"));
