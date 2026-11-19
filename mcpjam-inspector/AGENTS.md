@@ -1,5 +1,7 @@
 # Inspector-specific instructions
 
+- `client/`, `server/` and `shared/` each have an `AGENTS.md` with that layer's
+  import rules and the check behind each rule. Read it before editing there.
 - In server code, use `logger` from `@/utils/logger`, never `console.*`.
   In route catch blocks, use `reportRouteFailure` from `server/utils/route-error-report.ts`.
   `logger.error` sends errors to Sentry; warn/info/debug do not. See
