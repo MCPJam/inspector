@@ -2,6 +2,35 @@
 import tsParser from "@typescript-eslint/parser";
 import reactHooks from "eslint-plugin-react-hooks";
 
+// One layer per directory. `shared` is loaded by the browser and by Node, so
+// it can depend on neither side. The SDK is a package: a relative path into
+// its source skips the entry points its consumers are held to.
+const SDK_BY_PATH = {
+  regex: "^(\.\./)+sdk/src/",
+  message:
+    "Import the SDK by package name (`@mcpjam/sdk` or `@mcpjam/sdk/<subpath>`), not by a relative path into sdk/src.",
+};
+const SERVER_BY_PATH = {
+  regex: "^(\.\./)+server/",
+  message:
+    "Client and shared code cannot import the server. Move what both sides need into shared/.",
+};
+const CLIENT_BY_PATH = {
+  regex: "^(\.\./)+client/",
+  message:
+    "Server and shared code cannot import the client. Move what both sides need into shared/.",
+};
+const NODE_BUILTIN = {
+  regex: "^node:",
+  message:
+    "shared/ also runs in the browser, so it cannot import Node built-ins. Put this in server/.",
+};
+// Tests are left out: a parity test has to load both sides it compares.
+const TESTS = ["**/__tests__/**", "**/*.test.{ts,tsx}"];
+const restrictImports = (...patterns) => ({
+  "no-restricted-imports": ["error", { patterns }],
+});
+
 // Violations that predate a rule are recorded in eslint-suppressions.json, so
 // `npm run lint` fails only on new ones. After fixing some, run
 // `npm run lint:prune` to drop their entries.
@@ -33,6 +62,42 @@ export default [
     rules: {
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
+    },
+  },
+  {
+    files: ["client/src/**/*.{ts,tsx}"],
+    ignores: TESTS,
+    rules: restrictImports(SERVER_BY_PATH, SDK_BY_PATH),
+  },
+  {
+    files: ["server/**/*.ts"],
+    ignores: TESTS,
+    rules: restrictImports(CLIENT_BY_PATH, SDK_BY_PATH),
+  },
+  {
+    files: ["shared/**/*.ts"],
+    ignores: TESTS,
+    rules: restrictImports(
+      SERVER_BY_PATH,
+      CLIENT_BY_PATH,
+      SDK_BY_PATH,
+      NODE_BUILTIN
+    ),
+  },
+  {
+    files: ["server/routes/**/*.ts"],
+    ignores: ["server/routes/web/**", ...TESTS],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "CatchClause CallExpression[callee.type='MemberExpression'][callee.property.name='error'][callee.object.name='logger'], CatchClause CallExpression[callee.type='MemberExpression'][callee.property.name='error'][callee.object.property.name='logger']",
+          message:
+            "Report a route failure with reportRouteFailure(message, error, { source, hop }) from server/utils/route-error-report.ts. " +
+            "It decides whose fault the failure is before Sentry hears of it and still writes the Axiom row; logger.error pages for every failure.",
+        },
+      ],
     },
   },
   {
