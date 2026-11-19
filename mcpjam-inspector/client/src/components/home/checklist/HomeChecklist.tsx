@@ -422,7 +422,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
               />
             ))}
           </ol>
-          <div className="space-y-3 bg-background p-6">
+          <div className="space-y-3 bg-card p-6 dark:bg-muted">
             <p className="text-xs text-muted-foreground">
               Step {shownIndex + 1} of {STEP_ORDER.length}
             </p>
