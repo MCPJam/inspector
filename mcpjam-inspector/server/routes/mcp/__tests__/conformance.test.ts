@@ -109,6 +109,18 @@ describe("POST /api/mcp/conformance/protocol", () => {
     const body = await res.json();
     expect(body.success).toBe(false);
   });
+  it.each(["apps", "tasks"])("rejects an invalid %s version", async (suite) => {
+    const app = createTestApp(createMockManager());
+    expect(
+      (
+        await postJson(app, `/api/mcp/conformance/${suite}`, {
+          serverId: "target",
+          protocolVersion: "not-a-version",
+        })
+      ).status,
+    ).toBe(400);
+  });
+
 });
 
 describe("POST /api/mcp/conformance/apps", () => {

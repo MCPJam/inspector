@@ -3,7 +3,7 @@ import type { ModelSelection } from "@mcpjam/sdk/browser";
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@mcpjam/design-system/cn";
-import { Input } from "@mcpjam/design-system/input";
+import { OrganizationModelPicker } from "./OrganizationModelPicker";
 import { Label } from "@mcpjam/design-system/label";
 import {
   Select,
@@ -141,6 +141,7 @@ export function ModelEditor({
         invalid={Boolean(provider && model.trim() && !candidate)}
         candidate={candidate}
         outcome={candidateOutcome}
+        reason={candidateOutcome ? candidateCheck?.result.reason : undefined}
       />
 
       <EditorButtons
@@ -176,11 +177,16 @@ function NoEligibleProvider({
       {kind === "search" ? (
         <p>
           No organization provider can run web search. Add an Anthropic or
-          OpenAI provider below to choose a {noun}.
+          OpenAI provider in Providers to choose a {noun}.
+        </p>
+      ) : kind === "decision" ? (
+        <p>
+          No organization provider can answer decisions. Add an OpenAI provider
+          in Providers to choose a {noun}.
         </p>
       ) : (
         <p>
-          No eligible organization provider. Add a direct cloud provider below
+          No eligible organization provider. Add a direct cloud provider in Providers
           to run the {noun}; OpenRouter and local providers aren&apos;t
           eligible.
         </p>
@@ -250,20 +256,14 @@ function ModelField({
       <Label htmlFor={`${fieldId}-model`}>
         {isAzure ? "Deployment name" : "Model"}
       </Label>
-      <Input
+      <OrganizationModelPicker
         id={`${fieldId}-model`}
-        aria-label={`${label} id`}
-        list={`${fieldId}-models`}
+        label={`${label} id`}
         value={value}
-        placeholder={isAzure ? "my-deployment" : "Provider model id"}
-        autoComplete="off"
-        onChange={(event) => onChange(event.target.value)}
+        suggestions={suggestions}
+        isAzure={isAzure}
+        onChange={onChange}
       />
-      <datalist id={`${fieldId}-models`}>
-        {suggestions.map((id) => (
-          <option key={id} value={id} />
-        ))}
-      </datalist>
     </div>
   );
 }
@@ -274,12 +274,15 @@ function CandidateNotes({
   invalid,
   candidate,
   outcome,
+  reason,
 }: {
   kind: OrgAiModelKind;
   /** A model was typed but can't form a selection. */
   invalid: boolean;
   candidate: ModelSelection | null;
   outcome: ReturnType<typeof orgAiModelCheckPresentation> | null;
+  /** Why the candidate's Test failed, in the backend's words. */
+  reason: string | undefined;
 }) {
   return (
     <>
@@ -304,6 +307,9 @@ function CandidateNotes({
             {outcome.label}
           </Badge>
         </div>
+      ) : null}
+      {reason ? (
+        <p className="text-xs text-muted-foreground">{reason}</p>
       ) : null}
     </>
   );

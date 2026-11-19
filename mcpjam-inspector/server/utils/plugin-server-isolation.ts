@@ -152,6 +152,7 @@ export function pluginServerUnavailableReason(
   if (isInsufficientScopeError(error)) return "needs_auth";
   for (let cause = error, depth = 0; cause && depth < 5; depth += 1) {
     if (cause instanceof WebRouteError) {
+      if (cause.code === "STDIO_COMMAND_APPROVAL_REQUIRED") return "needs_approval";
       return cause.status === 401 ? "needs_auth" : "unreachable";
     }
     cause = (cause as { cause?: unknown }).cause;

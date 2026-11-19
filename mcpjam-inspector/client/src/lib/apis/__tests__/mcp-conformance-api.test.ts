@@ -35,6 +35,7 @@ global.fetch = fetchMock;
 import {
   runProtocolConformance,
   runAppsConformance,
+  runTasksConformance,
   startOAuthConformance,
   submitOAuthConformanceCode,
   completeOAuthConformance,
@@ -204,4 +205,36 @@ describe("completeOAuthConformance (local)", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+});
+
+for (const [suite, run] of [
+  ["apps", runAppsConformance],
+  ["tasks", runTasksConformance],
+] as const) {
+  it(`sends ${suite}'s resolved protocol to the local route`, async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ success: true, result: {} }),
+    });
+    await run("target", { protocolVersion: "2025-06-18" });
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/mcp/conformance/${suite}`,
+      expect.objectContaining({
+        body: JSON.stringify({
+          serverId: "target",
+          protocolVersion: "2025-06-18",
+        }),
+      }),
+    );
+  });
+}
+
+it("defaults the selected limit while preserving remaining budget and cancellation in local mode", async () => {
+  fetchMock.mockResolvedValue({ ok: true, json: async () => ({ success: true }) });
+  const controller = new AbortController();
+  await runProtocolConformance("my-server", { remainingRunTimeoutMs: 1200, signal: controller.signal });
+  expect(fetchMock).toHaveBeenCalledWith("/api/mcp/conformance/protocol", expect.objectContaining({
+    signal: controller.signal,
+    body: JSON.stringify({ serverId: "my-server", runTimeoutSeconds: 300, remainingRunTimeoutMs: 1200 }),
+  }));
 });

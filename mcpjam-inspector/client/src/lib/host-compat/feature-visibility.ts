@@ -1,7 +1,9 @@
 export type HostFeatureVisibility = {
   claudeCode: boolean;
   codex: boolean;
+  copilotCli?: boolean;
   cursorCli: boolean;
+  openCode?: boolean;
 };
 
 /** Same flags before PostHog answers, where `undefined` means "not resolved". */
@@ -20,10 +22,15 @@ const FLAG_GATED_HOSTS: Partial<
 > = {
   "claude-code": "claudeCode",
   codex: "codex",
+  // Runs on the same Codex harness, behind the same rollout flag.
+  "codex-cli": "codex",
   // The Cursor CLI host ONLY. The emulated `cursor` template (the IDE chat
   // panel) is deliberately absent: it is a different, ungated host that has
   // shipped for months, and gating it here would hide it from everyone.
+  "copilot-cli": "copilotCli",
   "cursor-cli": "cursorCli",
+  // Shown only where a caller passes its flag; elsewhere it stays hidden.
+  opencode: "openCode",
 };
 
 export const FLAG_GATED_HOST_IDS: ReadonlySet<string> = new Set(

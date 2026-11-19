@@ -24,6 +24,7 @@ import type {
   PlatformEvalRunSummary,
   PlatformEvalSuite,
 } from "@mcpjam/sdk/platform";
+import type { EvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 import { Fragment, type ReactNode, useState } from "react";
 import { MessageBox } from "../shared/app-shell.js";
 import {
@@ -40,12 +41,18 @@ import {
   ViewHeader,
 } from "./atoms.js";
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "canceled",
-]);
+/**
+ * The run statuses whose verdict can no longer change, held to the SDK's list
+ * by the type: a terminal status the SDK adds fails this file's typecheck
+ * until it is listed here. A value of its own because the widget bundle takes
+ * only types from the SDK; its runtime barrel is heavy and built separately.
+ */
+const TERMINAL_RUN_STATUSES: Record<EvalRunTerminalStatus, true> = {
+  completed: true,
+  failed: true,
+  cancelled: true,
+  timed_out: true,
+};
 
 export function EvalSuitesView({
   isDark,
@@ -224,7 +231,7 @@ export function EvalRunView({
   payload: GetEvalRunResult;
 }) {
   const run = payload.run;
-  const isTerminal = TERMINAL_RUN_STATUSES.has(run.status);
+  const isTerminal = Object.hasOwn(TERMINAL_RUN_STATUSES, run.status);
 
   return (
     <>

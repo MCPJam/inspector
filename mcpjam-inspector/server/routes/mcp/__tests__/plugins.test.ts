@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { parsePluginBundle } from "@mcpjam/sdk/plugin-bundle";
 import pluginsRoute from "../plugins.js";
 import {
   PluginBundleCache,
@@ -9,6 +10,8 @@ import {
   fixtureBundleHash,
   fixtureBundleZip,
   makeCacheRoot,
+  fixtureBundleSource,
+  legacyFixtureBundleFiles,
 } from "../../../services/plugins/__tests__/fixture-bundle.js";
 
 const PROJECT_ID = "project-1";
@@ -63,6 +66,22 @@ describe("POST /api/mcp/plugins/materialize", () => {
       bundleHash,
       componentCount: 1,
     });
+  });
+
+  it("seeds legacy Codex archives through the import endpoint", async () => {
+    const files = legacyFixtureBundleFiles();
+    const parsed = await parsePluginBundle(await fixtureBundleSource(files), { profile: "openai-compatible" });
+    const response = await app.request("/api/mcp/plugins/materialize", {
+      method: "POST",
+      body: await materializeForm({ bundleHash: parsed.bundleHash, zip: await fixtureBundleZip(files) }),
+    });
+    expect(response.status).toBe(200);
+    const cached = await new PluginBundleCache({ rootDir: cacheRoot }).materialize(
+      { projectId: PROJECT_ID, pluginVersionId: PLUGIN_VERSION_ID, bundleHash: parsed.bundleHash },
+      { profile: "openai-compatible" },
+    );
+    expect(cached.parsed.skills).toHaveLength(1);
+    expect(cached.parsed.executionDigest).toBe(parsed.executionDigest);
   });
 
   it("rejects an archive that does not match the pinned hash", async () => {

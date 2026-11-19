@@ -179,11 +179,9 @@ describe("interactive authorization session", () => {
       expect(command).toBe("open");
       expect(args).toEqual(["https://auth.example.com/authorize"]);
     } else if (process.platform === "win32") {
-      expect(command).toBe("cmd");
+      expect(command).toBe("rundll32");
       expect(args).toEqual([
-        "/c",
-        "start",
-        "",
+        "url.dll,FileProtocolHandler",
         "https://auth.example.com/authorize",
       ]);
     } else {
@@ -195,5 +193,84 @@ describe("interactive authorization session", () => {
       detached: true,
       stdio: "ignore",
     });
+  });
+
+  it("never hands a server-chosen URL to cmd.exe on Windows", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const child = new EventEmitter() as EventEmitter & {
+      unref: jest.Mock;
+    };
+    child.unref = vi.fn();
+    childProcessMocks.spawn.mockImplementation(() => {
+      process.nextTick(() => {
+        child.emit("spawn");
+      });
+      return child;
+    });
+
+    try {
+      // `&` is a command separator to cmd.exe; here it must stay in one arg.
+      const url = "https://auth.example.com/authorize?a=1#&calc.exe";
+      await openUrlInBrowser(url);
+
+      const [command, args] = childProcessMocks.spawn.mock.calls.at(-1)!;
+      expect(command).toBe("rundll32");
+      expect(args).toEqual(["url.dll,FileProtocolHandler", url]);
+    } finally {
+      Object.defineProperty(process, "platform", platform!);
+    }
+  });
+
+  it("refuses to open a URL that is not a web page", async () => {
+    childProcessMocks.spawn.mockClear();
+
+    await expect(
+      openUrlInBrowser("file:///C:/Windows/System32/calc.exe")
+    ).rejects.toThrow(/non-HTTP URL/);
+    expect(childProcessMocks.spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe("interactive authorization cancellation", () => {
+  it("rejects promptly with the abort reason even when opening the browser hangs", async () => {
+    const session = await createInteractiveAuthorizationSession();
+    const controller = new AbortController();
+    const reason = new Error("Run timed out after 1 seconds");
+    const remove = vi.spyOn(controller.signal, "removeEventListener");
+    try {
+      const pending = session.authorize({
+        authorizationUrl: "https://auth.example.com/authorize",
+        timeoutMs: 300_000,
+        signal: controller.signal,
+        openUrl: () => new Promise<void>(() => {}),
+      });
+      const rejected = expect(pending).rejects.toBe(reason);
+      controller.abort(reason);
+      await rejected;
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+    } finally {
+      await session.stop();
+    }
+    await expect(fetch(session.redirectUrl)).rejects.toThrow();
+  });
+
+  it("does not open a browser for an already aborted signal", async () => {
+    const session = await createInteractiveAuthorizationSession();
+    const reason = new Error("cancelled");
+    const openUrl = vi.fn();
+    try {
+      await expect(
+        session.authorize({
+          authorizationUrl: "https://auth.example.com/authorize",
+          timeoutMs: 300_000,
+          signal: AbortSignal.abort(reason),
+          openUrl,
+        })
+      ).rejects.toBe(reason);
+      expect(openUrl).not.toHaveBeenCalled();
+    } finally {
+      await session.stop();
+    }
   });
 });

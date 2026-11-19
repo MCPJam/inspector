@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { scrubDeliveredSecretsDeep } from "../../../shared/delivered-secret-registry.js";
+import { readAuthChallenge } from "../../utils/connection-effective-auth.js";
 import {
   describeError,
   isAuthError,
@@ -16,6 +18,7 @@ import {
 } from "../../utils/error-origin-capture.js";
 import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
+import { GUEST_ACCESS_DISABLED_CODE } from "../../../shared/guest-session-failure.js";
 import { internalErrorResponseView } from "./hosted-internal-error.js";
 import {
   onlyFallbackAnswered,
@@ -42,6 +45,8 @@ export const ErrorCode = {
   CONFLICT: "CONFLICT",
   VALIDATION_ERROR: "VALIDATION_ERROR",
   RATE_LIMITED: "RATE_LIMITED",
+  // The deployment issues no guest sessions; sign-in is the only way in.
+  GUEST_ACCESS_DISABLED: GUEST_ACCESS_DISABLED_CODE,
   FEATURE_NOT_SUPPORTED: "FEATURE_NOT_SUPPORTED",
   SERVER_UNREACHABLE: "SERVER_UNREACHABLE",
   TIMEOUT: "TIMEOUT",
@@ -79,6 +84,20 @@ export const ErrorCode = {
   // method that does not exist on that wire (`tasks/result` on the extension),
   // or an undeclared capability. A caller/feature error (400), never a 500.
   TASKS_UNSUPPORTED: "TASKS_UNSUPPORTED",
+  // MCP Events (`routes/web/events.ts`, `EventsRouteErrorCode` in
+  // shared/events-api.ts). UNDECLARED: the server did not declare
+  // `capabilities.events` and nothing was sent (400). INVALID_PAYLOAD: the
+  // server answered with a malformed events result (502). RPC_ERROR: a
+  // JSON-RPC error the events profile defines, with its classified `kind` in
+  // details (400, or 502 when a retry could succeed). NOT_FOUND: a
+  // subscription/inbox the caller named does not exist in the project (404).
+  // UNAVAILABLE: the events plane is not configured on this deployment (503)
+  // or the operation is not offered here.
+  EVENTS_UNDECLARED: "EVENTS_UNDECLARED",
+  EVENTS_INVALID_PAYLOAD: "EVENTS_INVALID_PAYLOAD",
+  EVENTS_RPC_ERROR: "EVENTS_RPC_ERROR",
+  EVENTS_NOT_FOUND: "EVENTS_NOT_FOUND",
+  EVENTS_UNAVAILABLE: "EVENTS_UNAVAILABLE",
   // A scenario-scoped turn was refused by the backend when the route
   // re-resolved the authoritative runtime config (403). Deliberately
   // collapses "no such scenario" and "no grant for this caller" into one
@@ -305,14 +324,16 @@ export function webError(
     normalized,
   });
   return c.json(
-    {
+    // A credential the backend delivered to this process can be quoted back in
+    // an upstream error; it is replaced by exact value before the browser.
+    scrubDeliveredSecretsDeep({
       ...restExtras,
       code,
       message: view.message,
       ...(view.details ? { details: view.details } : {}),
       ...(view.normalized ? { normalized: view.normalized } : {}),
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
-    },
+    }),
     status,
     // Also a HEADER, because the body does not always survive to the reader
     // that needs it. The chat client's reporter runs after the AI SDK has
@@ -826,6 +847,25 @@ function classifyRuntimeError(error: unknown): WebRouteError {
     );
   }
 
+  // A sign-in challenge from the target on a protected operation mid-session
+  // (lazy authentication): the server allowed the connection and refused one
+  // call. Served at 403 UPSTREAM_AUTH_FAILED like every other upstream auth
+  // refusal, for the `authFetch` reason documented on that code, and WITHOUT
+  // `oauthRequired` (surfaces that escalate on that flag would prompt a
+  // second time). The parsed challenge rides along, stamped with the
+  // connection's effective auth method when the route stamped it, so the
+  // client can offer a consented sign-in for this call.
+  const authChallenge = readAuthChallenge(error);
+  if (authChallenge?.source === "http_401") {
+    return new WebRouteError(
+      403,
+      ErrorCode.UPSTREAM_AUTH_FAILED,
+      message,
+      { upstreamAuthRequired: true, authChallenge },
+      normalized
+    );
+  }
+
   // A raw 401 from the target MCP server is an authorization failure, not an
   // internal error — return the honest status. No `oauthRequired` here: this
   // mapper has no per-server auth context (multi-server managers), so the
@@ -989,4 +1029,18 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
     );
   }
   return parsed.data;
+}
+
+/** Only promote errors whose message was constructed by credential handling. */
+export function credentialFailureMessage(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  while (error instanceof Error && !seen.has(error)) {
+    seen.add(error);
+    if (error instanceof WebRouteError &&
+      (error.details?.uploadedAccount === true || error.details?.credentialRefusal)) {
+      return scrubDeliveredSecretsDeep(error.message);
+    }
+    error = error.cause;
+  }
+  return undefined;
 }

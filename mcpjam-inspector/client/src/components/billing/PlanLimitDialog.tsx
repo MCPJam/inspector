@@ -55,6 +55,13 @@ function formatResetDistance(resetsAt: number): string | null {
   return `about ${days} day${days === 1 ? "" : "s"}`;
 }
 
+/** What the confirmation adds once a return settles, by the wall it began at. */
+const UPGRADE_RETURN_NEXT_STEP: Record<UpgradeOrigin, string> = {
+  credits: "Your credits are available now.",
+  evals: "Run your suite again to pick up where you left off.",
+  native_harness: "Native harnesses now run without a turn limit.",
+};
+
 interface UpgradeReturn {
   organizationId: string;
   origin: UpgradeOrigin;
@@ -163,9 +170,7 @@ function UpgradeReturnFlow({
         planCatalog?.plans[billingStatus.plan]?.displayName ??
         billingStatus.plan;
       toast.success(
-        upgradeReturn.origin === "credits"
-          ? `You're on the ${teamName} plan. Your credits are available now.`
-          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`,
+        `You're on the ${teamName} plan. ${UPGRADE_RETURN_NEXT_STEP[upgradeReturn.origin]}`,
       );
     }
 

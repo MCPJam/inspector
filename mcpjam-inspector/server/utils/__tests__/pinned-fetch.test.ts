@@ -526,3 +526,24 @@ describe("the private-network allowance follows the deployment", () => {
     expect(outcome).not.toBeInstanceOf(BlockedEgressTargetError);
   });
 });
+
+describe("operator admission on buffered MCP requests", () => {
+  it("reaches socket setup for an admitted HTTPS loopback destination", async () => {
+    const result = await createPinnedFetch({
+      allowPrivateNetwork: false,
+      admitPrivateDestination: ({ hostname }) => hostname === "127.0.0.1",
+      timeoutMs: 300,
+    })("https://127.0.0.1:9/mcp").catch((error: unknown) => error);
+    expect(result).not.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it.each(["127.0.0.1", "169.254.169.254"])(
+    "refuses an unadmitted or metadata destination %s", async (hostname) => {
+      await expect(createPinnedFetch({
+        allowPrivateNetwork: false,
+        admitPrivateDestination: () => hostname === "169.254.169.254",
+        timeoutMs: 300,
+      })(`https://${hostname}:9/mcp`)).rejects.toBeInstanceOf(BlockedEgressTargetError);
+    }
+  );
+});

@@ -13,6 +13,7 @@ vi.mock("../../../utils/mrtr-continuation-state.js", async (original) => ({
   cancelContinuation: seams.cancel,
 }));
 import { createOwnedPluginMrtr } from "../owned-mrtr";
+import { pluginFormFileGrants } from "../form-file-grants";
 import { pluginFormSources } from "../form-sources";
 import { PluginInvocationError } from "../invocation";
 afterEach(() => vi.restoreAllMocks());
@@ -55,6 +56,7 @@ describe("owned MRTR form source failure after a resuspension", () => {
       throw new PluginInvocationError("FORM_SOURCE_LIMIT");
     });
     const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -131,7 +133,7 @@ it.each(["decline", "cancel", "accept"] as const)(
       },
       requestedSchema: schema,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
     const commit = vi.fn();
     seams.resume.mockImplementationOnce(async (options) => {
       const prepared = await options.prepareLeg(
@@ -158,11 +160,12 @@ it.each(["decline", "cancel", "accept"] as const)(
           },
         },
       );
-      prepared.commit();
+      await prepared.commit();
       commit();
       return { outcome: "completed", result: { content: [] } };
     });
     const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable",
       projectId: "project",
@@ -237,6 +240,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
   };
   function service(forms: { on: boolean }) {
     return createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -260,8 +264,9 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       { continuationId: "parent", round: 1, responsesBlobId: "answer" },
       new AbortController().signal,
     );
-  const leg = (onPrepared?: (responses: unknown) => void) =>
+  const leg = (onPrepared?: (responses: unknown) => void, beforeCommit?: () => void) =>
     seams.resume.mockImplementationOnce(async (options) => {
+      let preparedInput = false;
       try {
         const prepared = await options.prepareLeg(
           {
@@ -276,13 +281,15 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
           },
           { input: { action: "accept", content: { name: "bolt" } } },
         );
-        prepared.commit();
+        preparedInput = true;
+        beforeCommit?.();
+        await prepared.commit();
         // The prepared answer is what the next leg sends to the server.
         onPrepared?.(prepared.responses);
         return { outcome: "completed", result: { content: [] } };
       } catch {
         // The leg helper releases its lease and reports a pre-wire failure.
-        return { outcome: "failed", reason: "admission refused" };
+        return { outcome: "failed", reason: "admission refused", ...(preparedInput ? { terminal: true as const } : {}) };
       }
     });
   let source: ReturnType<typeof pluginFormSources.bind>;
@@ -300,9 +307,18 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       parent,
       requestedSchema: schema,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
   });
   afterEach(() => source.release());
+
+  it("closes a finalized pre-wire refusal instead of retaining a retryable form", async () => {
+    const closeGrants = vi.spyOn(pluginFormFileGrants, "closeOperation");
+    seams.resume.mockResolvedValueOnce({ outcome: "failed", reason: "admission refused", terminal: true });
+    await expect(resume(service({ on: true }))).rejects.toMatchObject({ code: "CONTINUATION_FAILED", outcomeUnknown: false });
+    expect(closeGrants).toHaveBeenCalledWith(owner, "operation");
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
+    expect(seams.cancel).not.toHaveBeenCalled();
+  });
 
   it("never delivers the answer when Forms is off at submit, ending the form once", async () => {
     await expect(resume(service({ on: false }))).rejects.toMatchObject({
@@ -319,7 +335,7 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
       continuationId: "parent",
       reason: "plugin_forms_disabled",
     });
-    expect(() => pluginFormSources.get(source.token, owner, parent)).toThrow(
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow(
       "FORM_SOURCE_UNAVAILABLE",
     );
   });
@@ -350,6 +366,17 @@ describe("a pending MRTR form and the client's current Forms toggle", () => {
     });
     expect(drive).not.toHaveBeenCalled();
     expect(seams.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("ends the form when Forms is revoked between preparation and final admission", async () => {
+    const forms = { on: true };
+    const live = service(forms);
+    const delivered = vi.fn();
+    leg(delivered, () => { forms.on = false; });
+    await expect(resume(live)).rejects.toMatchObject({ code: "PLUGIN_FORMS_DISABLED", outcomeUnknown: false });
+    expect(delivered).not.toHaveBeenCalled();
+    expect(seams.cancel).toHaveBeenCalledOnce();
+    expect(() => pluginFormSources.get(source.token, { ...owner, subject: "subject" }, parent)).toThrow("FORM_SOURCE_UNAVAILABLE");
   });
 
   it("delivers the answer when Forms is turned off and on again before submit", async () => {
@@ -415,6 +442,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
   };
   const live = (forms = { on: true }) =>
     createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as any,
       bearer: "disposable-bearer",
       projectId: "project",
@@ -459,7 +487,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
       parent,
       requestedSchema: extended,
       expiresAt: Date.now() + 10000,
-    });
+    }, "subject");
   });
   afterEach(() => source.release());
 
@@ -469,7 +497,7 @@ describe('an owned MRTR form whose schema rides in _meta["openai/elicitation"]',
       const prepared = await options.prepareLeg(pending, {
         input: { action: "accept", content: { name: "bolt" } },
       });
-      prepared.commit();
+      await prepared.commit();
       delivered(prepared.responses);
       return { outcome: "completed", result: { content: [] } };
     });

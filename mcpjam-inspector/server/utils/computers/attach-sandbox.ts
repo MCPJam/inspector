@@ -58,31 +58,35 @@ async function requireReadyPolicy(
 }
 
 /** Pick only connection fields. The GET response can also contain secret-bearing network rules. */
-export async function runningSandboxConnection(
+async function readRunningSandboxConnection(
   sandboxId: string,
-  options: SandboxApiOpts = {},
-): Promise<ConstructorParameters<typeof Sandbox>[0]> {
+  options: SandboxApiOpts,
+  preparedByBroker: boolean,
+) {
   const deadline = Date.now() + 60_000;
   const timeout = AbortSignal.timeout(60_000);
   const signal = options.signal
     ? AbortSignal.any([options.signal, timeout])
     : timeout;
-  await requireReadyPolicy(sandboxId, signal, deadline);
-  const prepared = await prepareSandboxConnection({
-    providerComputerId: sandboxId,
-    signal,
-  });
-  if (
-    !prepared.ok &&
-    prepared.status === 404 &&
-    prepared.code === "sandbox_not_found"
-  )
-    throw new SandboxNotFoundError("This sandbox no longer exists.");
-  if (!prepared.ok || prepared.value.ok !== true)
-    throw new SandboxAttachmentError(
-      "sandbox_policy_unavailable",
-      "Could not prepare this sandbox. Try again.",
-    );
+  signal.throwIfAborted();
+  if (!preparedByBroker) {
+    await requireReadyPolicy(sandboxId, signal, deadline);
+    const prepared = await prepareSandboxConnection({
+      providerComputerId: sandboxId,
+      signal,
+    });
+    if (
+      !prepared.ok &&
+      prepared.status === 404 &&
+      prepared.code === "sandbox_not_found"
+    )
+      throw new SandboxNotFoundError("This sandbox no longer exists.");
+    if (!prepared.ok || prepared.value.ok !== true)
+      throw new SandboxAttachmentError(
+        "sandbox_policy_unavailable",
+        "Could not prepare this sandbox. Try again.",
+      );
+  }
   const config = new ConnectionConfig(options);
   const response = await new ApiClient(config).api.GET(
     "/sandboxes/{sandboxID}",
@@ -121,12 +125,56 @@ export async function runningSandboxConnection(
     sandboxDomain: data.domain ?? undefined,
     envdVersion: data.envdVersion,
     envdAccessToken: data.envdAccessToken,
+    privateAppPorts: data.network?.allowPublicTraffic === false,
   };
 }
 
-export async function attachRunningSandbox(
+export function attachRunningSandbox(
   sandboxId: string,
   options?: SandboxApiOpts,
-): Promise<Sandbox> {
-  return new Sandbox(await runningSandboxConnection(sandboxId, options));
+) {
+  return attach(sandboxId, options ?? {}, false);
+}
+
+/** Desktop streaming uses stored origins that cannot authenticate private ports. */
+export async function runningSandboxConnection(
+  sandboxId: string,
+  options: SandboxApiOpts = {},
+): Promise<ConstructorParameters<typeof Sandbox>[0]> {
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    false,
+  );
+  if (privateAppPorts)
+    throw new SandboxAttachmentError(
+      "sandbox_attach_failed",
+      "Hosted Browser cannot connect to this private desktop.",
+    );
+  return connection;
+}
+
+/**
+ * Only after the broker acknowledged its wake and network-policy install for
+ * this box. GET still verifies lifecycle state, and the final live readiness
+ * barrier refuses quarantine or waits for a concurrent policy writer.
+ */
+export function attachBrokerPreparedSandbox(
+  sandboxId: string,
+  options: SandboxApiOpts = {},
+) {
+  return attach(sandboxId, options, true);
+}
+
+async function attach(
+  sandboxId: string,
+  options: SandboxApiOpts,
+  brokerPrepared: boolean,
+) {
+  const { privateAppPorts, ...connection } = await readRunningSandboxConnection(
+    sandboxId,
+    options,
+    brokerPrepared,
+  );
+  return Object.assign(new Sandbox(connection), { privateAppPorts });
 }

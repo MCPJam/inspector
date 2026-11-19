@@ -6,6 +6,7 @@ import {
   parseAuthChallengeSignal,
   type AuthChallengeSignal,
 } from "./auth-challenge.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 
 /**
  * Base error class for all MCP SDK errors
@@ -183,6 +184,19 @@ export function readUnsupportedVersionFailure(
     ) {
       return { supported: [] };
     }
+    // The server's own refusal of a legacy `initialize`: a 2026-07-28-only
+    // server answers it with HTTP 400 and JSON-RPC `-32022`, naming what it
+    // does support. The transport carries only the body text ("Error POSTing
+    // to endpoint: {…}"), so the code is read from the parsed body, never from
+    // loose prose a server could echo. Read before the prose match below: the
+    // body's own message may say "protocol version is not supported: <the
+    // requested version>", which that match would report as the offer.
+    if (typeof named.message === "string") {
+      const refusal = readJsonRpcVersionRefusal(named.message);
+      if (refusal) {
+        return refusal;
+      }
+    }
     // The LEGACY-pin refusal, thrown by the upstream `Client` when the
     // server's `initialize` reply names a version outside the accept-list a
     // stateful pin narrowed to. It is a plain `Error` — no `supported` array,
@@ -211,6 +225,35 @@ export function readUnsupportedVersionFailure(
     }
   }
   return undefined;
+}
+
+/** A JSON-RPC `-32022` error body inside a transport error's message. */
+function readJsonRpcVersionRefusal(
+  message: string
+): { supported: string[] } | undefined {
+  const start = message.indexOf("{");
+  const end = message.lastIndexOf("}");
+  if (start === -1 || end <= start) return undefined;
+  let body: unknown;
+  try {
+    body = JSON.parse(message.slice(start, end + 1));
+  } catch {
+    return undefined;
+  }
+  const error = (body as { error?: { code?: unknown; data?: unknown } } | null)
+    ?.error;
+  if (error?.code !== MCP_ERROR_CODES.UnsupportedProtocolVersion) {
+    return undefined;
+  }
+  const supported = (error.data as { supported?: unknown } | undefined)
+    ?.supported;
+  return {
+    supported: Array.isArray(supported)
+      ? supported.filter(
+          (version): version is string => typeof version === "string"
+        )
+      : [],
+  };
 }
 
 /** The error and its `cause` links, bounded so a cycle cannot hang a connect. */

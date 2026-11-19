@@ -67,6 +67,12 @@ export interface HarnessProxyServerInput {
    * is what makes a fully-off run byte-identical to a pre-evidence one.
    */
   evidenceTurnId?: string;
+  /**
+   * Open a new connection for every request. Box egress pins the credential it
+   * injects to the outbound connection, so an agent that outlives a turn must
+   * not carry the previous turn's session grant on a reused connection.
+   */
+  closeConnection?: true;
 }
 
 /** A single Claude Code `.mcp.json` server entry (http transport). */
@@ -139,9 +145,11 @@ export function buildHarnessProxyMcpJson(
       ...(server.sealedProxyToken ||
       server.proxyToken ||
       server.scopeStepUpCorrelationId ||
-      server.evidenceTurnId
+      server.evidenceTurnId ||
+      server.closeConnection
         ? {
             headers: {
+              ...(server.closeConnection ? { Connection: "close" } : {}),
               ...(server.sealedProxyToken
                 ? { "X-MCPJam-Proxy-Token": server.sealedProxyToken }
                 : server.proxyToken
@@ -317,12 +325,19 @@ export function attributeCursorToolCall(args: {
   keyToServerId: Record<string, string>;
 }): { serverId?: string; toolName: string } {
   const { rawToolName, input, keyToServerId } = args;
+  const hostCall = parseHarnessToolName(rawToolName, keyToServerId);
+  if (hostCall.serverId) return hostCall;
   const record =
     input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const provider = record.providerIdentifier;
   const inner = record.toolName;
   if (typeof provider !== "string" || typeof inner !== "string" || !inner) {
-    return { toolName: rawToolName };
+    return parseHarnessToolName(rawToolName, keyToServerId);
+  }
+  // The reserved host-tool channel wraps an already namespaced MCP name.
+  if (provider === "ai-sdk-harness-tools") {
+    const hosted = parseHarnessToolName(inner, keyToServerId);
+    if (hosted.serverId) return hosted;
   }
   // Exact key first, THEN the `user-`-stripped form. Never the other way round.
   const serverId =

@@ -7,8 +7,7 @@ import { registerEvalSuite } from "@/lib/mcpjam-agent/eval-workspace";
 import { EvalAgentWorkspace } from "./evaluate/eval-agent-workspace";
 import type { GenerationOptions } from "@/lib/apis/evals-api";
 /**
- * Public Evaluate experience. Reuses the shared eval data and mutation layer;
- * legacy Evaluate remains available separately behind evaluate-enabled.
+ * Public Evaluate experience. Reuses the shared eval data and mutation layer.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -63,6 +62,7 @@ import {
 } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { EvalsHeader, type EvalLandingView } from "./evaluate/evals-header";
+import type { RunResultCrumbs } from "./evaluate/run-result-pages/run-result-page";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
@@ -92,6 +92,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { createInspectorCommandClientError } from "@/lib/inspector-command-handlers";
+import { cancelEvalRunForAgent } from "./evals/agent-cancel-eval-run";
 import type {
   CancelEvalRunInspectorCommand,
   DeleteEvalSuiteInspectorCommand,
@@ -105,6 +106,12 @@ import {
   isCiOwnedSuite,
 } from "@/lib/evals/is-ci-owned-suite";
 import { agentRunIterations } from "./evaluate/suite-run-iterations";
+import { EvaluateTour } from "./evaluate/tour/evaluate-tour";
+import { useEvaluateTour } from "./evaluate/tour/use-evaluate-tour";
+import {
+  markSuiteCreatedFromTour,
+  projectHasNoRuns,
+} from "./evaluate/tour/tour-attribution";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -488,11 +495,18 @@ function EvaluateTabContent({
     [projectServers],
   );
 
+  // Set when the tour's handoff opened the create form, for `after_tour`.
+  const createFromTourRef = useRef(false);
   const handleOpenCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
+  const handleTourComplete = useCallback(() => {
+    handleOpenCreateSuite();
+    createFromTourRef.current = true;
+  }, [handleOpenCreateSuite]);
 
   const handleEvalServer = useCallback(
     (server: { id: string; name: string }) => {
@@ -559,6 +573,7 @@ function EvaluateTabContent({
   const showQuickstart = Boolean(handleConnect);
 
   const handleCancelCreateSuite = useCallback(() => {
+    createFromTourRef.current = false;
     setCreateSuitePrefillName(null);
     setCreateSuitePrefillServerId(null);
     navigatePlaygroundEvalsRoute({ type: "list" }, { replace: true });
@@ -580,6 +595,13 @@ function EvaluateTabContent({
             environmentCapabilities?.createSuiteWithEnvironments === true,
         });
 
+        track("eval_suite_created", {
+          location: "evaluate_tab",
+          after_tour: createFromTourRef.current,
+        });
+        if (createFromTourRef.current)
+          markSuiteCreatedFromTour(createdSuite._id);
+        createFromTourRef.current = false;
         toast.success("Suite created");
         navigatePlaygroundEvalsRoute({
           type: "suite-overview",
@@ -600,10 +622,24 @@ function EvaluateTabContent({
 
   const [suiteAction, setSuiteAction] = useState<"run" | "case" | null>(null);
   // A case and a run both start from a suite. With none there is nothing to
-  // pick, so Add case and Setup Run go straight to creating one instead of
+  // pick, so Add case and Set up run go straight to creating one instead of
   // opening the picker on an empty list. A tap while suites load waits.
   const hasNoSuites =
     !overviewQueries.isOverviewLoading && visibleSuites.length === 0;
+  const hasNoRuns = projectHasNoRuns(
+    overviewQueries.isOverviewLoading,
+    visibleSuites,
+  );
+  // Auto-opens once on an empty landing, and only past the sign-in and
+  // project gates, where the overlay can actually render.
+  const evaluateTour = useEvaluateTour({
+    autoOpenEligible:
+      !isLoading &&
+      (isDirectGuest || (isAuthenticated && Boolean(projectId))) &&
+      route.type === "list" &&
+      hasNoSuites,
+    onComplete: handleTourComplete,
+  });
   useEffect(() => {
     // The picker lives on the list. Leaving it (Back while suites load)
     // drops the pending action, or Create suite would open over another
@@ -1049,22 +1085,10 @@ function EvaluateTabContent({
       cancelEvalRun: async (command) => {
         requireAgentOperable();
         const { payload } = command as CancelEvalRunInspectorCommand;
-        const run = resolveRun(payload.runId);
-        if (run.status !== "pending" && run.status !== "running") {
-          return {
-            status: "already_finished",
-            runId: run._id,
-            runStatus: run.status,
-          };
-        }
-        if (latestHandlersRef.current.cancellingRunId) {
-          throw createInspectorCommandClientError(
-            "execution_failed",
-            "Another run cancellation is already in progress.",
-          );
-        }
-        await latestHandlersRef.current.handleCancelRun(run._id);
-        return { status: "cancel_requested", runId: run._id };
+        return cancelEvalRunForAgent(
+          resolveRun(payload.runId),
+          latestHandlersRef.current,
+        );
       },
       generateEvalTests: async (command) => {
         requireAgentOperable();
@@ -1325,7 +1349,7 @@ function EvaluateTabContent({
           ? (suiteDetails?.testCases.find(
               (testCase) => testCase._id === route.fromCaseChecks,
             )?.title ?? "Test case")
-          : "Test Suite Evaluators"
+          : "Suite settings"
         : route.type === "run-detail"
           ? runBreadcrumbLabel
           : null;
@@ -1341,6 +1365,11 @@ function EvaluateTabContent({
      * "Generate test cases". */
     label?: string;
   } | null>(null);
+
+  // Reported by an open run result page; cleared when it unmounts.
+  const [resultCrumbs, setResultCrumbs] = useState<RunResultCrumbs | null>(
+    null,
+  );
 
   const renderPlaygroundBreadcrumb = () => {
     if (generatingCases) return generatingCases.label ?? "Generate test cases";
@@ -1624,6 +1653,7 @@ function EvaluateTabContent({
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
           onGeneratingChange={setGeneratingCases}
+          onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
@@ -1671,6 +1701,7 @@ function EvaluateTabContent({
       user={user}
       projectId={projectId}
       isDirectGuest={isDirectGuest}
+      overlay={<EvaluateTour tour={evaluateTour} />}
       header={
         route.type === "create" ? undefined : (
           <EvalsHeader
@@ -1691,11 +1722,11 @@ function EvaluateTabContent({
                           { checks: true },
                         ),
                     },
-                    { label: "Test Suite Evaluators" },
+                    { label: "Suite settings" },
                   ]
                 : route.type === "test-edit" && route.checks
                   ? { label: "Test Case Evaluators" }
-                  : undefined
+                  : resultCrumbs?.crumbs
             }
             onCurrentCrumbClick={
               route.type === "suite-edit" && route.fromCaseChecks
@@ -1710,11 +1741,16 @@ function EvaluateTabContent({
                         route.suiteId,
                         route.testId,
                       )
-                  : undefined
+                  : resultCrumbs?.onOpenRun
             }
             landingView={landingView}
             onLandingViewChange={setLandingView}
             onEvaluateClick={handleNavigateToEvalList}
+            onStartTour={
+              route.type === "list" && hasNoRuns
+                ? () => evaluateTour.open("replay")
+                : undefined
+            }
             isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
               route.type === "test-edit" && route.fromEvalServer
@@ -1787,7 +1823,7 @@ function EvaluateTabContent({
           >
             <SheetHeader>
               <SheetTitle>
-                {suiteAction === "run" ? "Setup Run" : "Add case"}
+                {suiteAction === "run" ? "Set up run" : "Add case"}
               </SheetTitle>
               <SheetDescription>
                 {suiteAction === "run"

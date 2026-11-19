@@ -1,5 +1,10 @@
 import { Hono } from "hono";
-import { sanitizeGuestSessionFailureDetails } from "@/shared/guest-session-failure";
+import {
+  GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
+  sanitizeGuestSessionFailureDetails,
+} from "@/shared/guest-session-failure";
 import type { Context } from "hono";
 import {
   fetchGuestPromotionProof,
@@ -42,6 +47,8 @@ const MAX_LEGACY_TOKEN_LENGTH = 4096;
 export const GUEST_SESSION_REFUSED_MESSAGE =
   "Too many guest sessions from your network today. Sign in to continue.";
 const GUEST_SESSION_REFUSED_RETRY_AFTER_S = 600;
+export const GUEST_ACCESS_DISABLED_MESSAGE =
+  "Guest access is off on this deployment. Sign in to continue.";
 
 function parseRequestBody(raw: unknown): GuestSessionRequestBody {
   if (!raw || typeof raw !== "object") return {};
@@ -164,10 +171,33 @@ guestSession.post("/", async (c) => {
   }
 
   if (result.kind === "miss") {
-    return c.body(null, 204);
+    // The browser drops a guest's promotion marker on a 204, so an upstream
+    // 404 (possibly a misrouted or redeploying upstream) answers as a failure.
+    if (result.upstreamStatus === undefined) return c.body(null, 204);
+    result = {
+      kind: "error",
+      status: 503,
+      setCookies: result.setCookies,
+      reason: "upstream_status",
+      upstreamStatus: result.upstreamStatus,
+    };
   }
 
-  if (result.status === 403) {
+  if (result.status === 403 && result.guestAccessDisabled) {
+    c.header(GUEST_SESSION_REFUSAL_HEADER, GUEST_ACCESS_DISABLED_CODE);
+    return c.json(
+      {
+        code: ErrorCode.GUEST_ACCESS_DISABLED,
+        message: GUEST_ACCESS_DISABLED_MESSAGE,
+      },
+      403
+    );
+  }
+
+  // The browser drops a guest's promotion marker on this answer, so any other
+  // 403 (a mismatched shared secret, an edge refusal) falls through to the 503.
+  if (result.status === 403 && result.guestRevoked) {
+    c.header(GUEST_SESSION_REFUSAL_HEADER, GUEST_SESSION_REVOKED_CODE);
     return c.json(
       {
         code: ErrorCode.FORBIDDEN,

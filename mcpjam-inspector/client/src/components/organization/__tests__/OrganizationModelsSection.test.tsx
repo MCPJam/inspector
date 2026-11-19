@@ -1,7 +1,14 @@
 import { getFunctionName } from "convex/server";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render as renderComponent, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OrganizationModelsSection } from "../OrganizationModelsSection";
+
+function render(...args: Parameters<typeof renderComponent>) {
+  const result = renderComponent(...args);
+  const add = screen.queryByRole("button", { name: "Add provider", exact: true });
+  if (add) fireEvent.click(add);
+  return result;
+}
 
 const mocks = vi.hoisted(() => ({
   pathname: "/organizations/org_1/models/usage",
@@ -164,6 +171,16 @@ describe("OrganizationModelsSection", () => {
     });
   });
 
+  it("reveals unconfigured providers only when adding one", () => {
+    mocks.pathname = "/organizations/org_1/models";
+    renderComponent(<OrganizationModelsSection organizationId="org_1" isAdmin />);
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add provider", exact: true }));
+    expect(screen.getByText("OpenAI")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Hide providers" }));
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+  });
+
   it("links to usage beside provider actions without loading usage inline", () => {
     mocks.pathname = "/organizations/org_1/models";
     render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
@@ -294,7 +311,7 @@ describe("OrganizationModelsSection", () => {
       mocks.pathname = "/organizations/org_1/models";
     });
 
-    it("mounts the AI keys card between the header and the provider list", () => {
+    it("keeps provider setup before the AI keys card", () => {
       render(<OrganizationModelsSection organizationId="org_1" isAdmin />);
 
       const header = screen.getByRole("heading", { name: "AI providers" });
@@ -306,8 +323,8 @@ describe("OrganizationModelsSection", () => {
         Boolean(
           a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
         );
-      expect(follows(header, policy)).toBe(true);
-      expect(follows(policy, providers)).toBe(true);
+      expect(follows(header, providers)).toBe(true);
+      expect(follows(firstProvider, policy)).toBe(true);
       expect(follows(providers, firstProvider)).toBe(true);
       expect(
         screen.getByRole("switch", {
@@ -341,7 +358,7 @@ describe("OrganizationModelsSection", () => {
           a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING,
         );
       expect(follows(policy, defaultModel)).toBe(true);
-      expect(follows(defaultModel, providers)).toBe(true);
+      expect(follows(providers, policy)).toBe(true);
       expect(
         within(defaultModel).getByTestId("org-ai-model-default"),
       ).toBeInTheDocument();

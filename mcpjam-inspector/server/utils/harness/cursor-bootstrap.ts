@@ -18,15 +18,18 @@
  *
  * To move the pin: install the new build from `cursor.com/install` on a scratch
  * box, take the `<build>` string and the two `agent-cli-package.tar.gz`
- * checksums (linux x64 and arm64), update {@link CURSOR_CLI_CHECKSUMS} and
- * `HARNESS_PINNED_VERSIONS.cursor` together, regenerate the bake lock, and
+ * checksums (linux x64 and arm64), update {@link CURSOR_CLI_CHECKSUMS},
+ * `CURSOR_CLI_BUILD` (`cursor-cli-build.ts`) and
+ * `HARNESS_PINNED_VERSIONS.cursor` together (the local pack's recipe
+ * checksums too; `cursor-runtime.test.ts` fails if they differ), regenerate
+ * the bake lock, and
  * rebuild the computer template from that commit.
  */
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
-import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
+import { CURSOR_CLI_BUILD } from "./cursor-cli-build.js";
 
 /** The pinned Cursor CLI build (what `agent --version` prints). */
-export const CURSOR_CLI_VERSION: string = HARNESS_PINNED_VERSIONS.cursor;
+export const CURSOR_CLI_VERSION: string = CURSOR_CLI_BUILD;
 
 /**
  * SHA-256 of `https://downloads.cursor.com/lab/<build>/linux/<arch>/
@@ -34,8 +37,8 @@ export const CURSOR_CLI_VERSION: string = HARNESS_PINNED_VERSIONS.cursor;
  * are recorded: an arm64 CI image verifies as strictly as the amd64 template.
  */
 export const CURSOR_CLI_CHECKSUMS = {
-  x64: "a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8",
-  arm64: "785c5f6bf2a60eb1121e27ed8c14f5ee07ed1b5b6692324f2d9a997238245eb5",
+  x64: "170b77786cbf4c93064d64fff12b71a178b968730561c64afc2e8e752535442e",
+  arm64: "131554bfdbf683d8ebfef83a2bb46ac4e5d060f198711040b07ed063c2471871",
 } as const satisfies Record<string, string>;
 
 /** The vendor installer's path inside the recipe, relative to `bootstrapDir`. */

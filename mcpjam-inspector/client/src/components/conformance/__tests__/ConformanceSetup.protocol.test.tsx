@@ -1,0 +1,254 @@
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createConnectedServer,
+  createHttpServerConfig,
+} from "@/test/factories";
+import { ConformanceSetup } from "../ConformanceSetup";
+import { RUN_LABEL } from "../ConformancePageChrome";
+import type { ConformanceConnectionResult } from "@/shared/conformance-connection";
+import { toast } from "@/lib/toast";
+
+const { check } = vi.hoisted(() => ({ check: vi.fn() }));
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: check,
+}));
+vi.mock("@/lib/apis/mcp-tools-api", () => ({
+  listTools: vi.fn(async () => ({ tools: [] })),
+}));
+
+const server = createConnectedServer({
+  name: "bart",
+  config: createHttpServerConfig("https://bart.test/mcp"),
+});
+function setup(initialVersionPin: "auto" | "2026-07-28" = "2026-07-28") {
+  const onRun = vi.fn();
+  const onConnectServer = vi.fn(async () => "ready" as const);
+  const props = {
+    servers: [server],
+    initialServerName: "bart",
+    initialVersionPin,
+    initialSelection: {
+      protocol: ["tools-list" as const],
+      apps: [],
+      tasks: [],
+      oauth: false,
+    },
+    onRun,
+    onCancel: vi.fn(),
+    onConnectServer,
+  };
+  return {
+    ...render(<ConformanceSetup {...props} />),
+    props,
+    onRun,
+    onConnectServer,
+  };
+}
+beforeEach(() => {
+  check.mockReset();
+});
+
+describe("setup protocol connection gate", () => {
+  it("keeps Auto as the choice while passing the negotiated version to the run", async () => {
+    check.mockResolvedValue({ status: "ready", protocolVersion: "2025-06-18" });
+    const { onRun } = setup("auto");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(
+      screen.queryByText("Modern server discovery"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    expect(onRun).toHaveBeenCalledWith(
+      "bart",
+      "auto",
+      expect.anything(),
+      expect.anything(),
+      "2025-06-18",
+    );
+  });
+
+  it("blocks both steps until the chosen version connects, then runs normally", async () => {
+    let resolve: (value: ConformanceConnectionResult) => void = () => {
+      throw new Error("Promise not initialized");
+    };
+    check.mockImplementation(
+      () =>
+        new Promise<ConformanceConnectionResult>((done) => {
+          resolve = done;
+        }),
+    );
+    const { onRun, rerender, props } = setup();
+    expect(screen.getByText("Connecting with 2026-07-28…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+    expect(onRun).not.toHaveBeenCalled();
+    await act(async () =>
+      resolve({ status: "ready", protocolVersion: "2026-07-28" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    rerender(
+      <ConformanceSetup
+        {...props}
+        servers={[
+          { ...server, config: createHttpServerConfig("https://new.test/mcp") },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+    expect(onRun).not.toHaveBeenCalled();
+    await act(async () =>
+      resolve({ status: "ready", protocolVersion: "2026-07-28" }),
+    );
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    expect(onRun).toHaveBeenCalledWith(
+      "bart",
+      "2026-07-28",
+      expect.anything(),
+      expect.anything(),
+      "2026-07-28",
+    );
+  });
+
+  it("shows a confirmed refusal as a toast and keeps Run blocked", async () => {
+    const toastError = vi.spyOn(toast, "error");
+    check.mockResolvedValueOnce({
+      status: "ready",
+      protocolVersion: "2026-07-28",
+    });
+    const { onRun, onConnectServer, rerender, props } = setup();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    check.mockResolvedValueOnce({
+      status: "unsupported",
+      protocolVersion: "2026-07-28",
+      supportedVersions: ["2025-06-18"],
+    });
+    rerender(
+      <ConformanceSetup
+        {...props}
+        servers={[
+          { ...server, config: createHttpServerConfig("https://new.test/mcp") },
+        ]}
+      />,
+    );
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "bart doesn’t support 2026-07-28.",
+        expect.objectContaining({ description: "Server offers: 2025-06-18." }),
+      ),
+    );
+    // The toast replaces the inline box and its Change version button.
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Change version" })).toBeNull();
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+    expect(onRun).not.toHaveBeenCalled();
+    expect(onConnectServer).not.toHaveBeenCalled();
+  });
+
+  it("requests sign-in only after an explicit click and checks again", async () => {
+    check
+      .mockResolvedValueOnce({
+        status: "auth-required",
+        message: "Unauthorized",
+      })
+      .mockResolvedValueOnce({
+        status: "ready",
+        protocolVersion: "2026-07-28",
+      });
+    const { onConnectServer } = setup();
+    await screen.findByRole("button", { name: "Sign in" });
+    expect(onConnectServer).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() =>
+      expect(onConnectServer).toHaveBeenCalledWith("bart", { signIn: true }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+  });
+
+  describe("connect toast", () => {
+    // Opens on bart while it is offline, so the steps connect it, then the
+    // session reports it connected and the protocol check starts.
+    async function connectAndLand() {
+      const loading = vi.spyOn(toast, "loading");
+      const success = vi.spyOn(toast, "success");
+      const error = vi.spyOn(toast, "error");
+      let resolve: (value: ConformanceConnectionResult) => void = () => {
+        throw new Error("Promise not initialized");
+      };
+      check.mockImplementation(
+        () =>
+          new Promise<ConformanceConnectionResult>((done) => {
+            resolve = done;
+          }),
+      );
+      const offline = { ...server, connectionStatus: "disconnected" as const };
+      const onConnectServer = vi.fn(async () => "ready" as const);
+      const props = {
+        initialServerName: "bart",
+        initialVersionPin: "2026-07-28" as const,
+        onRun: vi.fn(),
+        onCancel: vi.fn(),
+        onConnectServer,
+      };
+      const { rerender } = render(
+        <ConformanceSetup {...props} servers={[offline]} />,
+      );
+      await waitFor(() => expect(onConnectServer).toHaveBeenCalled());
+      await act(async () => {});
+      rerender(<ConformanceSetup {...props} servers={[server]} />);
+      await waitFor(() => expect(check).toHaveBeenCalled());
+      return {
+        id: loading.mock.results[0]!.value,
+        success,
+        error,
+        resolve: (result: ConformanceConnectionResult) =>
+          act(async () => resolve(result)),
+      };
+    }
+
+    it("says connected only once the protocol check passes", async () => {
+      const { id, success, resolve } = await connectAndLand();
+      expect(success).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+      await resolve({ status: "ready", protocolVersion: "2026-07-28" });
+      expect(success).toHaveBeenCalledWith("bart connected", { id });
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    });
+
+    it("turns the same toast into the check's failure", async () => {
+      const { id, success, error, resolve } = await connectAndLand();
+      await resolve({ status: "failed", message: "Handshake timed out." });
+      expect(error).toHaveBeenCalledWith("Handshake timed out.", { id });
+      expect(success).not.toHaveBeenCalled();
+    });
+  });
+
+  it("blocks Run if the main server disconnects after validation", async () => {
+    check.mockResolvedValue({ status: "ready", protocolVersion: "2026-07-28" });
+    const { rerender, props } = setup();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    rerender(
+      <ConformanceSetup
+        {...props}
+        servers={[{ ...server, connectionStatus: "disconnected" }]}
+      />,
+    );
+    expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+  });
+});

@@ -14,6 +14,7 @@ import {
 } from "./vite-telemetry-catalog";
 import { lexerSafeMinify } from "./vite-lexer-safe-minify";
 import { warnOnPosthogFailure } from "./vite-posthog-warn-only";
+import { devDoNotTrack } from "./vite-dev-do-not-track";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
@@ -172,6 +173,8 @@ export default defineConfig(({ mode }) => {
       telemetryCatalogPlugin(),
       react(),
       tailwindcss(),
+      // `loadEnv` with no prefix reads the shell's variables as well as `.env*`.
+      devDoNotTrack(env.DO_NOT_TRACK),
       lexerSafeMinify(),
       // PostHog has no other way to get maps: Sentry deletes them from
       // `dist/client` before deploy, so PostHog followed `sourceMappingURL` and

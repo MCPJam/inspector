@@ -699,6 +699,31 @@ describe("filterAndRemapReplayConfigs", () => {
       },
     ]);
   });
+
+  it("never stores a connection whose credential the backend delivered", () => {
+    const configs = {
+      srv_asana: {
+        url: "https://asana.example/mcp",
+        credentialSource: "mcpjam-backend" as const,
+      },
+      srv_github: { url: "https://github.example/mcp" },
+    };
+    expect(
+      filterAndRemapReplayConfigs(
+        [
+          {
+            serverId: "srv_asana",
+            url: "https://asana.example/mcp",
+            accessToken: "tok_EFTW41_SECRET_replay",
+          },
+          { serverId: "srv_github", url: "https://github.example/mcp" },
+        ],
+        ["srv_asana", "srv_github"],
+        ["asana", "github"],
+        (serverId) => configs[serverId as keyof typeof configs],
+      ),
+    ).toEqual([{ serverId: "github", url: "https://github.example/mcp" }]);
+  });
 });
 
 describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
@@ -1016,7 +1041,7 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
 });
 
 describe("shouldSkipExecution", () => {
-  it("skips ONLY a replay of a run that already finished", () => {
+  it("skips a replay of a run that already finished", () => {
     // The one case with a single right answer: the run is done, its results
     // are recorded, and executing again would repeat every case and bill for
     // it — the double-spend the caller sent a key to prevent.
@@ -1025,16 +1050,10 @@ describe("shouldSkipExecution", () => {
     }
   });
 
-  it("executes a replay of a run still in flight", () => {
-    // In-flight and abandoned-mid-flight are indistinguishable here and want
-    // opposite treatments, so this keeps the behaviour that predates the
-    // check: a crashed run can still be driven to completion by a retry.
-    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
-      false
-    );
-    expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
-      false
-    );
+  it("does not start another executor for an in-flight replay", () => {
+    for (const status of ["pending", "running", "grading", undefined]) {
+      expect(shouldSkipExecution({ deduped: true, status })).toBe(true);
+    }
   });
 
   it("skips a replay in flight when its server failed the preflight", () => {

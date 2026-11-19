@@ -10,10 +10,15 @@
  * host-tier distinction `isBlockedEgressHost` already draws:
  *
  *   - Always blocked: cloud-metadata addresses and their DNS aliases,
- *     link-local, and the unspecified address. Never a legitimate target
- *     anywhere, in any mode.
+ *     link-local, multicast and reserved space, and the unspecified address.
+ *     Never a legitimate target anywhere, in any mode, and no configuration
+ *     can open one.
  *   - Blocked only when hosted: loopback, `.localhost`, RFC-1918, CGNAT, and
- *     IPv6 ULA.
+ *     IPv6 ULA — unless the operator lists the destination in
+ *     `MCPJAM_PRIVATE_EGRESS_ALLOWLIST`. A self-hosted install runs hosted
+ *     mode on the operator's own network, where its MCP servers and model
+ *     endpoints ARE private addresses; the allowlist names which ones, and
+ *     `admitsPrivateEgress` below is the only place it is read.
  *
  * Validating the URL a caller NAMED is not enough on its own, because a caller
  * does not have to name the address they want reached — they can name a host
@@ -29,36 +34,97 @@
  *     own defenses); treating those as egress would break the suite it is
  *     meant to protect.
  *   - It does not close the check-vs-connect (TOCTOU) rebinding window: the
- *     DNS answer is validated, then the HTTP client resolves again. Narrowing
- *     that requires pinning the connection to the vetted IP, which belongs to
- *     infra-level egress policy — the same punt documented on the harness
- *     guard.
+ *     DNS answer is validated, then the HTTP client resolves again. A caller
+ *     that must close it dials only the addresses
+ *     `assertAllowedHostedTargetUrl` returns (`createCheckedAddressFetch`).
  */
 
 import { promises as dns } from "node:dns";
 import { HOSTED_MODE } from "../config.js";
+import { logger } from "./logger.js";
+import { egressTier } from "./egress-tier.js";
+import {
+  parsePrivateEgressAllowlist,
+  type PrivateEgressAllowlist,
+  type PrivateEgressDestination,
+} from "./private-egress-allowlist.js";
 
-/** Parse a dotted-quad IPv4 literal into octets, or null if not well-formed. */
-function parseIpv4Octets(
-  host: string
-): [number, number, number, number] | null {
-  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (!m) return null;
-  const o = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
-  if (o.some((n) => n > 255)) return null;
-  return [o[0], o[1], o[2], o[3]];
+/** Read once per distinct value, so a bad value is reported once rather than per request. */
+let loadedAllowlist:
+  | { raw: string | undefined; allowlist: PrivateEgressAllowlist }
+  | undefined;
+
+/**
+ * The operator's `MCPJAM_PRIVATE_EGRESS_ALLOWLIST`, parsed.
+ *
+ * Read when first needed rather than at import: `server/index.ts` loads `.env`
+ * files after its imports have run. A value with any invalid entry admits
+ * nothing (see `private-egress-allowlist.ts`), and says so through the logger
+ * so the refusals that follow have a visible cause.
+ */
+export function loadPrivateEgressAllowlist(): PrivateEgressAllowlist {
+  const raw = process.env.MCPJAM_PRIVATE_EGRESS_ALLOWLIST;
+  if (!loadedAllowlist || loadedAllowlist.raw !== raw) {
+    const { allowlist, invalid } = parsePrivateEgressAllowlist(raw);
+    if (invalid.length > 0) {
+      // Entries by position, never quoted: a mistyped entry can be a pasted
+      // URL with credentials, and this goes to Sentry and Axiom.
+      logger.error(
+        `[egress] MCPJAM_PRIVATE_EGRESS_ALLOWLIST is ignored, so hosted mode will dial no private address: ${invalid
+          .map(({ position, reason }) => `entry ${position} ${reason}`)
+          .join("; ")}. Fix the entries and restart.`,
+      );
+    }
+    loadedAllowlist = { raw, allowlist };
+  }
+  return loadedAllowlist.allowlist;
+}
+
+/**
+ * Whether hosted mode may dial a PRIVATE destination: the one decision the
+ * allowlist feeds, asked by every hosted egress check in this process — the
+ * literal and resolved-address checks below, and the pinned transports
+ * through {@link hostedPrivateEgressAdmission}.
+ *
+ * A name is admitted when it matches a listed suffix; an address (a literal
+ * host, or what a name resolved to) when a listed range covers it. A
+ * `never`-tier name or address is refused first, so no entry — not even
+ * `0.0.0.0/0` — reaches cloud metadata or link-local.
+ */
+export function admitsPrivateEgress(
+  destination: PrivateEgressDestination,
+): boolean {
+  if (egressTier(destination.hostname) === "never") return false;
+  if (
+    destination.address !== undefined &&
+    egressTier(destination.address) === "never"
+  ) {
+    return false;
+  }
+  return loadPrivateEgressAllowlist().admits(destination);
+}
+
+/**
+ * The admission to hand a pinned transport (`createStreamingPinnedFetch`),
+ * which asks it on every hop about the name and about each private address
+ * the name resolved to. Undefined when nothing is listed, so a deployment
+ * without an allowlist keeps the transport's own refusals exactly as they are.
+ */
+export function hostedPrivateEgressAdmission():
+  | ((destination: PrivateEgressDestination) => boolean)
+  | undefined {
+  return loadPrivateEgressAllowlist().isEmpty ? undefined : admitsPrivateEgress;
 }
 
 /**
  * Is this hostname one the hosted inspector must refuse?
  *
- *   - ALWAYS blocked: an empty host, cloud-metadata names, IPv4/IPv6
- *     link-local (169.254/16, fe80::/10), and the unspecified address
- *     (0.0.0.0/8, ::) — never a legitimate target in any deployment.
- *   - Blocked only when `blockPrivate` (hosted mode): loopback, RFC-1918
- *     private, CGNAT (100.64/10), and IPv6 ULA (fc00::/7). Left reachable for
- *     local dev, where the inspector legitimately talks to a localhost MCP
- *     server and a widget legitimately renders against one.
+ *   - ALWAYS blocked: the `never` tier of `egressTier` — never a legitimate
+ *     target in any deployment.
+ *   - Blocked only when `blockPrivate` (hosted mode): the `private` tier,
+ *     unless `admitsPrivateEgress` admits it. Left reachable for local dev,
+ *     where the inspector legitimately talks to a localhost MCP server and a
+ *     widget legitimately renders against one.
  *
  * Matches on a literal hostname only; `assertAllowedHostedTargetUrl` is what
  * adds the DNS-resolution pass on top.
@@ -70,67 +136,25 @@ function parseIpv4Octets(
  */
 export function isBlockedEgressHost(
   hostname: string,
-  blockPrivate: boolean
+  blockPrivate: boolean,
 ): boolean {
-  let host = hostname.trim().toLowerCase();
-  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
-  // A terminal dot is the same NAME to a resolver ("localhost." resolves to
-  // loopback), but it is a different STRING to every comparison below — so
-  // strip it before judging, or `http://metadata.google.internal./` walks past
-  // the alias check.
-  host = host.replace(/\.+$/, "");
-  // Nothing left to judge: fail closed.
-  if (!host) return true;
+  const tier = egressTier(hostname);
+  if (tier !== "private") return tier === "never";
+  return blockPrivate && !admitsPrivateEgress({ hostname });
+}
 
-  // Cloud metadata DNS aliases (they resolve to link-local, but block the
-  // names too in case resolution is bypassed).
-  if (host === "metadata.google.internal" || host === "metadata.goog") {
-    return true;
-  }
-  if (host === "localhost" || host.endsWith(".localhost")) return blockPrivate;
-
-  const v4 = parseIpv4Octets(host);
-  if (v4) {
-    const [a, b] = v4;
-    if (a === 169 && b === 254) return true; // link-local incl. cloud metadata
-    if (a === 0) return true; // "this network" / unspecified
-    if (!blockPrivate) return false;
-    if (a === 127) return true; // loopback 127.0.0.0/8
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64.0.0/10
-    return false;
-  }
-
-  if (host.includes(":")) {
-    // IPv4-mapped IPv6 (e.g. ::ffff:169.254.169.254) — judge the embedded v4.
-    const mapped = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
-    if (mapped) return isBlockedEgressHost(mapped[1], blockPrivate);
-    // The SAME address in hex. `new URL()` rewrites the dotted spelling into
-    // this one (`[::ffff:169.254.169.254]` → `[::ffff:a9fe:a9fe]`), so a check
-    // that only knew the dotted form let the metadata endpoint through the
-    // moment the host came from a parsed URL rather than a raw string.
-    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
-    if (mappedHex) {
-      const high = parseInt(mappedHex[1], 16);
-      const low = parseInt(mappedHex[2], 16);
-      return isBlockedEgressHost(
-        `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
-          low & 0xff
-        }`,
-        blockPrivate
-      );
-    }
-    if (host === "::") return true; // unspecified
-    if (/^fe[89ab]/.test(host)) return true; // link-local fe80::/10
-    if (!blockPrivate) return false;
-    if (host === "::1") return true; // loopback
-    if (/^f[cd]/.test(host)) return true; // ULA fc00::/7
-    return false;
-  }
-
-  return false;
+/**
+ * The hosted verdict on one address `hostname` resolved to. A private answer
+ * is dialable only if the name matches a listed suffix or a listed range
+ * covers the address; a `never` answer is refused whatever is listed.
+ */
+export function isBlockedEgressAddress(
+  hostname: string,
+  address: string,
+): boolean {
+  const tier = egressTier(address);
+  if (tier !== "private") return tier === "never";
+  return !admitsPrivateEgress({ hostname, address });
 }
 
 /**
@@ -183,7 +207,7 @@ function isNoRecordError(reason: unknown): boolean {
 }
 
 export const defaultEgressHostResolver: EgressHostResolver = async (
-  hostname
+  hostname,
 ) => {
   const resolved: string[] = [];
   // Both families are asked independently: a host with an A record and no
@@ -202,10 +226,11 @@ export const defaultEgressHostResolver: EgressHostResolver = async (
   // make the EgressResolutionError path unreachable and turn every SERVFAIL
   // into a permanent 400 telling the user their server is forbidden.
   const failures = [v4, v6].filter(
-    (settled): settled is PromiseRejectedResult => settled.status === "rejected"
+    (settled): settled is PromiseRejectedResult =>
+      settled.status === "rejected",
   );
   const transient = failures.filter(
-    (settled) => !isNoRecordError(settled.reason)
+    (settled) => !isNoRecordError(settled.reason),
   );
   // ANY transient failure, not only an all-transient one. A mixed result —
   // v4 says ENODATA, v6 says SERVFAIL — means we never learned whether an
@@ -240,7 +265,7 @@ function isIpLiteral(host: string): boolean {
 let activeResolver: EgressHostResolver = defaultEgressHostResolver;
 
 export function setEgressHostResolverForTests(
-  resolver: EgressHostResolver | null
+  resolver: EgressHostResolver | null,
 ): void {
   activeResolver = resolver ?? defaultEgressHostResolver;
 }
@@ -251,14 +276,18 @@ export function setEgressHostResolverForTests(
  * No-op outside hosted mode. `label` names the field in the error so a user
  * who pasted a bad URL learns WHICH url was refused — a run failure that says
  * only "blocked" is indistinguishable from a bug in our runner.
+ *
+ * Returns the addresses it checked, so a caller can dial only those: none
+ * outside hosted mode, the literal for an IP host, otherwise every address
+ * the name resolved to.
  */
 export async function assertAllowedHostedTargetUrl(
   rawUrl: string,
   label: string,
-  options: { resolver?: EgressHostResolver; hosted?: boolean } = {}
-): Promise<void> {
+  options: { resolver?: EgressHostResolver; hosted?: boolean } = {},
+): Promise<string[]> {
   const hosted = options.hosted ?? HOSTED_MODE;
-  if (!hosted) return;
+  if (!hosted) return [];
 
   let parsed: URL;
   try {
@@ -268,19 +297,19 @@ export async function assertAllowedHostedTargetUrl(
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new BlockedEgressTargetError(
-      `${label} must be an http(s) URL (got "${parsed.protocol}")`
+      `${label} must be an http(s) URL (got "${parsed.protocol}")`,
     );
   }
 
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (isBlockedEgressHost(host, true)) {
     throw new BlockedEgressTargetError(
-      `${label} points at a private or internal address ("${host}") that the hosted inspector will not dial. Run this server locally in the inspector instead.`
+      `${label} points at a private or internal address ("${host}") that the hosted inspector will not dial. Run this server locally in the inspector instead.`,
     );
   }
   // An IP literal has already been judged on its own terms; resolving it would
   // only ask DNS to repeat the number back.
-  if (isIpLiteral(host)) return;
+  if (isIpLiteral(host)) return [host];
 
   const resolver = options.resolver ?? activeResolver;
   let resolvedIps: string[];
@@ -293,7 +322,7 @@ export async function assertAllowedHostedTargetUrl(
     throw new EgressResolutionError(
       `Could not check "${host}" for a safe address: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
     );
   }
   if (resolvedIps.length === 0) {
@@ -301,11 +330,11 @@ export async function assertAllowedHostedTargetUrl(
     // and "we couldn't look it up" is a more useful thing to tell a user than
     // a connection error thirty seconds later.
     throw new BlockedEgressTargetError(
-      `${label} hostname "${host}" could not be resolved, so it cannot be checked for a safe address.`
+      `${label} hostname "${host}" could not be resolved, so it cannot be checked for a safe address.`,
     );
   }
   for (const ip of resolvedIps) {
-    if (isBlockedEgressHost(ip, true)) {
+    if (isBlockedEgressAddress(host, ip)) {
       // The ADDRESS goes on `cause`, not in the message. The message is
       // reported back to whoever supplied the hostname, and naming what it
       // resolved to turns a refusal into a resolution oracle: submit a name,
@@ -313,10 +342,11 @@ export async function assertAllowedHostedTargetUrl(
       // mapped. The host they typed is theirs already; the answer is not.
       throw new BlockedEgressTargetError(
         `${label} hostname "${host}" resolves to a private or internal address that the hosted inspector will not dial.`,
-        { cause: new Error(`resolved address: ${ip}`) }
+        { cause: new Error(`resolved address: ${ip}`) },
       );
     }
   }
+  return resolvedIps;
 }
 
 /**
@@ -347,7 +377,13 @@ const MAX_GUARDED_REDIRECTS = 20;
  * developer's laptop is not an egress decision.
  */
 export function createGuardedFetch(
-  options: { resolver?: EgressHostResolver; hosted?: boolean; baseFetch?: typeof fetch } = {}
+  options: {
+    resolver?: EgressHostResolver;
+    hosted?: boolean;
+    baseFetch?: typeof fetch;
+    /** Names the refused URL in the error; defaults to "Request URL". */
+    label?: string;
+  } = {},
 ): typeof fetch {
   const hosted = options.hosted ?? HOSTED_MODE;
   const baseFetch = options.baseFetch ?? fetch;
@@ -367,7 +403,7 @@ export function createGuardedFetch(
       // as a real one. Refusing is the honest option; callers that need a body
       // can pass it through `init`, which is replayable.
       throw new BlockedEgressTargetError(
-        "A Request with a body cannot be dialed through the egress guard; pass the body via the init argument so it can be replayed across a redirect."
+        "A Request with a body cannot be dialed through the egress guard; pass the body via the init argument so it can be replayed across a redirect.",
       );
     }
     let currentUrl = fromRequest
@@ -393,10 +429,14 @@ export function createGuardedFetch(
     const rejectsRedirect = currentInit.redirect === "error";
 
     for (let hop = 0; hop <= MAX_GUARDED_REDIRECTS; hop++) {
-      await assertAllowedHostedTargetUrl(currentUrl, "Request URL", {
-        resolver: options.resolver,
-        hosted: true,
-      });
+      await assertAllowedHostedTargetUrl(
+        currentUrl,
+        options.label ?? "Request URL",
+        {
+          resolver: options.resolver,
+          hosted: true,
+        },
+      );
 
       const response = await baseFetch(currentUrl, {
         ...currentInit,
@@ -415,7 +455,7 @@ export function createGuardedFetch(
       }
       if (rejectsRedirect) {
         throw new BlockedEgressTargetError(
-          `The request refused redirects (redirect: "error") but "${currentUrl}" answered ${response.status}.`
+          `The request refused redirects (redirect: "error") but "${currentUrl}" answered ${response.status}.`,
         );
       }
 
@@ -435,7 +475,7 @@ export function createGuardedFetch(
       // redirects by hand means inheriting that duty rather than the default.
       if (new URL(nextUrl).origin !== new URL(currentUrl).origin) {
         const headers = new Headers(
-          (currentInit.headers as HeadersInit | undefined) ?? {}
+          (currentInit.headers as HeadersInit | undefined) ?? {},
         );
         for (const name of [
           "authorization",
@@ -476,7 +516,7 @@ export function createGuardedFetch(
         // say so than to silently send an empty body and report whatever the
         // server makes of it as the target's behavior.
         throw new BlockedEgressTargetError(
-          `Redirect to "${nextUrl}" would need the request body replayed, which is not possible for a streamed body.`
+          `Redirect to "${nextUrl}" would need the request body replayed, which is not possible for a streamed body.`,
         );
       }
 
@@ -484,7 +524,7 @@ export function createGuardedFetch(
     }
 
     throw new BlockedEgressTargetError(
-      `Too many redirects (more than ${MAX_GUARDED_REDIRECTS}) starting from the request URL.`
+      `Too many redirects (more than ${MAX_GUARDED_REDIRECTS}) starting from the request URL.`,
     );
   };
 

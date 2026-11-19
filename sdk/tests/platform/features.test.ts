@@ -127,6 +127,9 @@ describe("isOperationAvailable", () => {
         "unified-share-evals": true,
       })
     ).toBe(true);
+    expect(
+      isOperationAvailable("rotate_share_link", { conformance: true })
+    ).toBe(true);
   });
 
   it("never hides a way to stop what outlives a feature being turned off", () => {
@@ -220,6 +223,54 @@ describe("disabledOperations", () => {
     expect(disabled.sort()).toEqual(
       ["drive_chat_session_browser", "observe_chat_session_browser"].sort()
     );
+  });
+
+  it("gates only a submission's writes and runs on directory readiness", () => {
+    // The readiness starts keep `conformance`; reads and the delete stay open
+    // so an organization that lost the beta can still find and remove its own.
+    expect(
+      disabledOperations({ ...allOn, "directory-readiness": false }).sort()
+    ).toEqual(
+      [
+        "create_directory_submission",
+        "save_directory_submission_test_plan",
+        "set_directory_submission_evals",
+        "import_directory_submission_test_cases",
+        "start_directory_submission_run",
+        "update_directory_submission",
+        // A reviewer sign-in starts a run too.
+        "create_reviewer_attempt",
+        "create_reviewer_handoff",
+        "resume_reviewer_attempt",
+        "record_directory_submission_status",
+        "record_directory_submission_snapshot",
+        "import_directory_finding",
+      ].sort()
+    );
+    expect(operationFeature("start_claude_readiness_run")).toBe("conformance");
+    for (const name of [
+      "list_directory_flows",
+      "get_directory_flow",
+      "list_directory_submissions",
+      "get_directory_submission",
+      "get_directory_submission_results",
+      "get_directory_submission_test_plan",
+      "draft_directory_submission_test_plan",
+      "get_directory_submission_tool_tests",
+      "get_directory_submission_evals",
+      "export_directory_submission_test_cases",
+      "delete_directory_submission",
+      "list_reviewer_attempts",
+      "get_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      "get_directory_submission_handoff",
+      "list_directory_submission_findings",
+      "get_directory_submission_finding",
+      "export_directory_submission",
+      "list_directory_submission_events",
+    ]) {
+      expect(isOperationAvailable(name, {}), name).toBe(true);
+    }
   });
 
   it("keeps sandbox images apart from the computer itself", () => {

@@ -4,7 +4,10 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ElicitationDialog } from "../../ElicitationDialog";
 import { PluginFormFields, type PluginFormPorts } from "../PluginFormFields";
@@ -62,6 +65,51 @@ const request = {
   serverId: "fixture",
 };
 describe("shared plugin form editor", () => {
+  it("keeps labels, errors, and values scoped to simultaneous form instances", async () => {
+    const plan = compilePluginForm({
+      type: "object",
+      properties: { reference: { type: "string", title: "Part reference" } },
+      required: ["reference"],
+    }, profile);
+    function Form({ name }: { name: string }) {
+      const [values, setValues] = useState<Record<string, unknown>>({});
+      return (
+        <section aria-label={name}>
+          <PluginFormFields requestId="same-request" plan={plan} values={values}
+            errors={{ reference: `${name} error` }}
+            onChange={(field, value) => setValues((current) => ({ ...current, [field]: value }))} />
+        </section>
+      );
+    }
+    function Forms() {
+      return <><Form name="First form" /><Form name="Second form" /></>;
+    }
+    const user = userEvent.setup();
+    const view = render(<Forms />);
+    const first = within(screen.getByRole("region", { name: "First form" }));
+    const second = within(screen.getByRole("region", { name: "Second form" }));
+    const firstInput = first.getByRole("textbox", { name: /^Part reference\s*\*$/ });
+    const secondInput = second.getByRole("textbox", { name: /^Part reference\s*\*$/ });
+    const firstId = firstInput.id;
+    const secondId = secondInput.id;
+    expect(firstId).not.toBe(secondId);
+    expect(firstInput).toHaveAccessibleDescription("First form error");
+    expect(secondInput).toHaveAccessibleDescription("Second form error");
+    await user.click(second.getByText("Part reference", { selector: "label" }));
+    expect(secondInput).toHaveFocus();
+    await user.type(secondInput, "washer");
+    expect(firstInput).toHaveValue("");
+    await user.click(first.getByText("Part reference", { selector: "label" }));
+    expect(firstInput).toHaveFocus();
+    await user.type(firstInput, "bolt");
+    expect(secondInput).toHaveValue("washer");
+    view.rerender(<Forms />);
+    expect(firstInput).toHaveAttribute("id", firstId);
+    expect(secondInput).toHaveAttribute("id", secondId);
+    expect(firstInput).toHaveValue("bolt");
+    expect(secondInput).toHaveValue("washer");
+  });
+
   it("preserves an offered single resource when the native upload picker is cancelled", async () => {
     const chooseResources = vi.fn(async () => []);
     const raw = {

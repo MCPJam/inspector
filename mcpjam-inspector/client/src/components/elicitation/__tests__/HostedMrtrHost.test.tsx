@@ -10,6 +10,8 @@ import {
   type HostedMrtrRound,
 } from "@/stores/hosted-mrtr-store";
 
+import { registerComposerSlot, __resetComposerFormStore } from "../composer-form-store";
+
 function round(overrides: Partial<HostedMrtrRound> = {}): HostedMrtrRound {
   return {
     key: "cont-1:0",
@@ -54,11 +56,49 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  __resetComposerFormStore();
   __resetHostedMrtrHostElection();
   useHostedMrtrStore.getState().__reset();
 });
 
 describe("HostedMrtrHost", () => {
+  it("moves a submitting plugin form without recreating its card", async () => {
+    const background = document.createElement("div");
+    const takeover = document.createElement("div");
+    document.body.append(background, takeover);
+    let releaseBackground = registerComposerSlot("workspace", background);
+    let finish!: () => void;
+    const submit = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const view = render(<HostedMrtrHost />);
+    enqueue(round({
+      pluginFormServiceScope: { projectId: "project", workspaceId: "workspace" },
+      pluginFormProfile: { origin: "server", fileResources: false, userResources: false, previews: false },
+    }), submit);
+    const field = await screen.findByRole("textbox");
+    await userEvent.type(field, "kept value");
+    await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    let releaseTakeover!: () => void;
+    act(() => { releaseTakeover = registerComposerSlot("workspace", takeover); });
+    expect(takeover.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    act(releaseTakeover);
+    expect(background.querySelector("input")).toBe(field);
+    act(releaseBackground);
+    expect(field.isConnected).toBe(true);
+    expect(screen.getByRole("dialog")).toContainElement(field);
+    act(() => { releaseBackground = registerComposerSlot("workspace", background); });
+    expect(background.querySelector("input")).toBe(field);
+    expect(screen.getByRole("button", { name: /Continue/ })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /Continue/ }));
+    expect(submit).toHaveBeenCalledTimes(1);
+    await act(async () => finish());
+    view.unmount();
+    releaseBackground();
+    background.remove();
+    takeover.remove();
+  });
+
   it("renders the reused elicitation dialog for a suspended round", () => {
     render(<HostedMrtrHost />);
     expect(document.body.querySelectorAll('[role="dialog"]')).toHaveLength(0);

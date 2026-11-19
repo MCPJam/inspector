@@ -73,6 +73,14 @@ test("buildConfig rejects unknown categories and check ids", () => {
   );
 });
 
+test("buildConfig accepts a retired check id, which the SDK runs as advice", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    checkId: ["modern-log-level-filtering"],
+  });
+  assert.deepEqual(config.checkIds, ["modern-log-level-filtering"]);
+});
+
 test("buildConfig preserves validated conformance filters", () => {
   const config = buildConfig({
     url: "https://example.com/mcp",
@@ -82,6 +90,58 @@ test("buildConfig preserves validated conformance filters", () => {
 
   assert.deepEqual(config.categories, ["core"]);
   assert.deepEqual(config.checkIds, ["ping"]);
+});
+
+test("buildConfig runs all advice when no advice id is given", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("readinessIds" in config, false);
+});
+
+test("buildConfig rejects unknown advice ids, and another suite's", () => {
+  for (const adviceId of [
+    ["bogus"],
+    ["tasks-readiness-failed-status-message"],
+    [""],
+  ]) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", adviceId }),
+      (error) =>
+        error instanceof CliError && error.message.includes("advice id"),
+    );
+  }
+  // The error names the valid ids, so a typo needs no trip to the docs.
+  assert.throws(
+    () => buildConfig({ url: "https://example.com/mcp", adviceId: ["bogus"] }),
+    (error) =>
+      error instanceof CliError &&
+      error.message.includes("Valid advice ids: readiness-"),
+  );
+});
+
+test("protocol conformance threads repeated --advice-id into readinessIds", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--advice-id",
+      "readiness-tool-order-deterministic",
+      "--advice-id",
+      "readiness-log-level-filtering",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.readinessIds, [
+    "readiness-tool-order-deterministic",
+    "readiness-log-level-filtering",
+  ]);
 });
 
 test("buildConfig loads access-token auth from a credentials file", async () => {
@@ -365,4 +425,158 @@ test("fixtures: a malformed file is a usage error, never a silent empty set", as
     (error: unknown) =>
       error instanceof CliError && /Could not read fixtures file/.test(error.message),
   );
+});
+
+test("log probe: no flags means the SDK sees no logProbe key", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("logProbe" in config, false);
+});
+
+test("log probe: the three flags thread into logProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--log-probe-tool",
+      "emit-log",
+      "--log-probe-args",
+      '{"count":2}',
+      "--log-probe-level",
+      "error",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.logProbe, {
+    toolName: "emit-log",
+    arguments: { count: 2 },
+    level: "error",
+  });
+});
+
+test("log probe: a tool alone sends no arguments or level", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    logProbeTool: "emit-log",
+  });
+  assert.deepEqual(config.logProbe, { toolName: "emit-log" });
+});
+
+test("log probe: bad flags are usage errors", () => {
+  for (const [options, pattern] of [
+    [{ logProbeLevel: "error" }, /need --log-probe-tool/],
+    [{ logProbeArgs: "{}" }, /need --log-probe-tool/],
+    [{ logProbeTool: "   " }, /needs a tool name/],
+    [{ logProbeTool: "emit-log", logProbeLevel: "loud" }, /Unknown log level/],
+    [{ logProbeTool: "emit-log", logProbeArgs: "[]" }, /JSON object/],
+  ] as const) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", ...options }),
+      (error: unknown) =>
+        error instanceof CliError && pattern.test(error.message),
+    );
+  }
+});
+
+test("log filter and input required: no flags means the SDK sees neither key", () => {
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("logLevelFilteringProbe" in config, false);
+  assert.equal("inputRequiredProbe" in config, false);
+});
+
+test("log filter: the three flags thread into logLevelFilteringProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--log-probe-tool",
+      "emit-log",
+      "--log-filter-tool",
+      "emit-warning",
+      "--log-filter-args",
+      '{"count":1}',
+      "--log-filter-level",
+      "error",
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.logProbe, { toolName: "emit-log" });
+  assert.deepEqual(captured?.logLevelFilteringProbe, {
+    toolName: "emit-warning",
+    arguments: { count: 1 },
+    level: "error",
+  });
+});
+
+test("log filter: a tool alone works without --log-probe-tool", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    logFilterTool: "emit-warning",
+  });
+  assert.deepEqual(config.logLevelFilteringProbe, { toolName: "emit-warning" });
+  assert.equal("logProbe" in config, false);
+});
+
+test("input required: the two flags thread into inputRequiredProbe", async () => {
+  let captured: ReturnType<typeof buildConfig> | undefined;
+  const program = buildConformanceCommand((options) => {
+    captured = buildConfig(options as Parameters<typeof buildConfig>[0]);
+  });
+
+  await program.parseAsync(
+    [
+      "protocol",
+      "conformance",
+      "--url",
+      "https://example.com/mcp",
+      "--input-required-tool",
+      "ask-name",
+      "--input-required-args",
+      '{"greeting":"hi"}',
+    ],
+    { from: "user" },
+  );
+
+  assert.deepEqual(captured?.inputRequiredProbe, {
+    toolName: "ask-name",
+    arguments: { greeting: "hi" },
+  });
+});
+
+test("log filter and input required: bad flags are usage errors", () => {
+  for (const [options, pattern] of [
+    [{ logFilterLevel: "error" }, /need --log-filter-tool/],
+    [{ logFilterArgs: "{}" }, /need --log-filter-tool/],
+    [{ logFilterTool: "   " }, /--log-filter-tool needs a tool name/],
+    [{ logFilterTool: "emit-warning", logFilterLevel: "loud" }, /Unknown log level/],
+    [{ logFilterTool: "emit-warning", logFilterArgs: "[]" }, /JSON object/],
+    [
+      { logProbeTool: "emit-log", logProbeLevel: "error", logFilterTool: "emit-warning" },
+      /--log-probe-level is not used when --log-filter-tool is set/,
+    ],
+    [{ inputRequiredArgs: "{}" }, /--input-required-args needs --input-required-tool/],
+    [{ inputRequiredTool: "  " }, /--input-required-tool needs a tool name/],
+    [{ inputRequiredTool: "ask-name", inputRequiredArgs: "[]" }, /JSON object/],
+  ] as const) {
+    assert.throws(
+      () => buildConfig({ url: "https://example.com/mcp", ...options }),
+      (error: unknown) =>
+        error instanceof CliError && pattern.test(error.message),
+    );
+  }
 });

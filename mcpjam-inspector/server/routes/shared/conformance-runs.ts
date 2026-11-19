@@ -13,6 +13,8 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
+import type { McpProtocolVersion } from "@mcpjam/sdk";
+import type { RunLauncher } from "../../utils/launch-context.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { toHttpConfig } from "../web/auth.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
@@ -23,7 +25,20 @@ import {
 } from "../../utils/hosted-egress-guard.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import { executePersistedConformanceRun } from "../../services/conformance-run-executor.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import {
+  releaseConformanceStartSlot,
+  takeConformanceStartSlot,
+} from "../../middleware/conformance-run-rate-limit.js";
+import {
+  readConformanceRunSettings,
+  suiteConfigsForRun,
+  suitesKeptBySettings,
+  type ConformanceSettingsMode,
+  type ConformanceSettingsSource,
+} from "../../services/conformance-run-settings.js";
 import { createConformanceFetch } from "./conformance.js";
+import { pageFailingChecks } from "./conformance-check.js";
 
 export const HOSTED_CONFORMANCE_SUITES = ["protocol", "apps", "tasks"] as const;
 export type HostedConformanceSuite = (typeof HOSTED_CONFORMANCE_SUITES)[number];
@@ -68,8 +83,14 @@ export interface StartHostedConformanceRunInput {
   authorized: AuthorizedConformanceServer;
   suites?: HostedConformanceSuite[];
   idempotencyKey?: string;
-  protocolVersion?: string;
+  protocolVersion?: McpProtocolVersion;
   engineVersion?: string;
+  /** The server's saved settings (the default), or none. */
+  settings?: ConformanceSettingsMode;
+  /** The client's declared launcher, from the launch headers. */
+  launcher?: RunLauncher;
+  /** Whose start budget a start spends. Absent: no per-caller limit. */
+  startLimitKey?: string;
   translateError: (error: unknown) => Error;
 }
 
@@ -80,7 +101,17 @@ export interface HostedConformanceReceipt {
   status: string;
   deduped: boolean;
   requestedSuites: HostedConformanceSuite[];
+  /** Absent for a retry of a run started before runs recorded it. */
+  settingsSource?: ConformanceSettingsSource;
 }
+
+/** The fields of a stored run a retry's receipt is built from. */
+type StoredRunForReceipt = {
+  _id: string;
+  status: string;
+  requestedSuites: HostedConformanceSuite[];
+  settingsSource?: ConformanceSettingsSource | null;
+};
 
 export type ConformanceReportCheck = {
   suiteKind: string;
@@ -110,7 +141,10 @@ export type ConformanceReportProjection = {
   totalCases: number;
   /** Failed + could-not-run count, the denominator behind `truncated`. */
   totalFailingCases: number;
+  /** More failing checks follow this page. */
   truncated: boolean;
+  /** The next page's cursor; a running run has none. */
+  nextCursor?: string;
   profiles: ConformanceReportProfile[];
 };
 
@@ -146,6 +180,36 @@ export async function startHostedConformanceRun(
       "Conformance grades HTTP connectors; this server uses a different transport.",
     );
   }
+  const convex = createConvexClient(input.convexToken);
+  const externalRunId = input.idempotencyKey
+    ? `api:${input.projectId}:${input.serverId}:${input.idempotencyKey}`
+    : undefined;
+  // A retry answers with the run its key already started, as that run was
+  // decided: its suites and settings, not what the saved settings say now.
+  if (externalRunId) {
+    let existing: StoredRunForReceipt | null;
+    try {
+      existing = (await convex.query(
+        "conformanceRuns:getRunByExternalRunId" as never,
+        { projectId: input.projectId, externalRunId } as never,
+      )) as StoredRunForReceipt | null;
+    } catch (error) {
+      throw input.translateError(error);
+    }
+    if (existing) {
+      return {
+        runId: String(existing._id),
+        projectId: input.projectId,
+        serverId: input.serverId,
+        status: existing.status,
+        deduped: true,
+        requestedSuites: existing.requestedSuites,
+        ...(existing.settingsSource
+          ? { settingsSource: existing.settingsSource }
+          : {}),
+      };
+    }
+  }
   await assertConformanceTarget(config.url, "Server URL");
 
   const httpConfig = toHttpConfig(
@@ -158,8 +222,48 @@ export async function startHostedConformanceRun(
     fetchFn: createConformanceFetch("MCP server"),
     baseFetch: createConformanceFetch("MCP server"),
   };
-  const requestedSuites =
-    input.suites && input.suites.length > 0 ? input.suites : DEFAULT_SUITES;
+  const settings = await readConformanceRunSettings(convex, {
+    projectId: input.projectId,
+    serverId: input.serverId,
+    mode: input.settings ?? "saved",
+  }).catch((error: unknown) => {
+    throw input.translateError(error);
+  });
+  // Resolved before the run exists, as the app does before Run: which suites
+  // have checks to run, and which tools they call, depend on the version.
+  const suiteConfigs = await suiteConfigsForRun(
+    settings,
+    server,
+    input.protocolVersion,
+  );
+  const requestedSuites = suitesKeptBySettings(
+    input.suites && input.suites.length > 0 ? input.suites : DEFAULT_SUITES,
+    settings,
+    suiteConfigs.protocolVersion,
+  );
+  if (requestedSuites.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      'This server\'s saved conformance settings leave out every suite you asked for. Ask for a suite they select, or start the run with settings set to "none".',
+    );
+  }
+
+  // Spent only by a start that goes on to dial the server: a refused request
+  // or a retry answered above costs nothing.
+  const limitKey = input.startLimitKey;
+  const limited =
+    limitKey === undefined ? null : takeConformanceStartSlot(limitKey);
+  if (limited) {
+    throw new WebRouteError(
+      429,
+      ErrorCode.RATE_LIMITED,
+      `You started 30 conformance runs in the last 10 minutes. Try again in ${limited.retryAfterSeconds} seconds.`,
+    ).withHeaders({ "Retry-After": String(limited.retryAfterSeconds) });
+  }
+  const giveBackSlot = () => {
+    if (limitKey !== undefined) releaseConformanceStartSlot(limitKey);
+  };
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -172,12 +276,17 @@ export async function startHostedConformanceRun(
       target: { kind: "server", serverId: input.serverId },
       protocolVersion: input.protocolVersion,
       engineVersion: input.engineVersion,
-      externalRunId: input.idempotencyKey
-        ? `api:${input.projectId}:${input.serverId}:${input.idempotencyKey}`
-        : undefined,
+      actorLabel: "MCPJam API",
+      settings,
+      suiteConfigs,
+      ...(input.launcher ? { launcher: input.launcher } : {}),
+      runTimeoutSeconds: settings.runTimeoutSeconds,
+      externalRunId,
       onRunStarted: async (runId, meta) => {
         if (settled) return;
         settled = true;
+        // A start that raced a retry to the same key dials nothing.
+        if (meta?.reused) giveBackSlot();
         resolve({
           runId,
           projectId: input.projectId,
@@ -185,11 +294,14 @@ export async function startHostedConformanceRun(
           status: meta?.status ?? "queued",
           deduped: meta?.reused === true,
           requestedSuites,
+          settingsSource: settings.source,
         });
       },
     }).catch((error) => {
       if (!settled) {
         settled = true;
+        // Refused before its run existed, so it dialled nothing.
+        giveBackSlot();
         reject(input.translateError(error));
         return;
       }
@@ -244,6 +356,10 @@ export function toConformanceRunDto(
     pending: run.pending ?? 0,
     advisoryCount: run.advisoryCount ?? 0,
     requestedSuites: run.requestedSuites ?? [],
+    /** Recorded by backends that store it; null for runs started before. */
+    settingsSource: run.settingsSource ?? null,
+    launcher: run.launcher ?? null,
+    attribution: run.attribution ?? null,
     protocolVersion: run.protocolVersion ?? null,
     engineVersion: run.engineVersion ?? null,
     createdAt: run.createdAt,
@@ -345,6 +461,7 @@ function profileFromReport(
 export function projectConformanceReports(
   run: Record<string, any>,
   suiteReports: { suiteKind: string; report: unknown }[],
+  cursor?: string,
 ): ConformanceReportProjection {
   const all: ConformanceReportCheck[] = [];
   const profiles: ConformanceReportProfile[] = [];
@@ -355,17 +472,25 @@ export function projectConformanceReports(
   const failing = all
     .filter(isFailingCheck)
     .sort((a, b) => caseRank(a) - caseRank(b));
-  const checks = failing.slice(0, CONFORMANCE_REPORT_CASE_CAP);
+  const runId = String(run.id ?? run._id ?? "");
+  const status = String(run.status ?? "");
+  const page = pageFailingChecks(
+    { id: runId, status },
+    failing,
+    CONFORMANCE_REPORT_CASE_CAP,
+    cursor,
+  );
   return {
-    runId: String(run.id ?? run._id ?? ""),
-    status: String(run.status ?? ""),
+    runId,
+    status,
     outcome: run.outcome ?? null,
     score: run.score ?? null,
     pending: run.pending ?? 0,
-    checks,
+    checks: page.checks,
     totalCases: all.length,
     totalFailingCases: failing.length,
-    truncated: failing.length > checks.length,
+    truncated: page.more,
+    ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     profiles,
   };
 }

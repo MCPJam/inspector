@@ -2389,6 +2389,19 @@ describe("operation catalog consistency", () => {
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
+    list_server_revisions: { server: "s" },
+    get_server_revision: { server: "s", revisionNumber: 2 },
+    diff_server_revisions: { server: "s", revisionNumber: 2 },
+    list_server_accounts: { server: "s" },
+    get_server_account: { server: "s", account: "test-automation-1" },
+    upload_server_account_tokens: {
+      server: "s",
+      account: "test-automation-1",
+      tokens: { access_token: "at_example" },
+      clientInformation: { clientId: "client_example" },
+    },
+    update_server_account: { server: "s", account: "a", isDefault: true },
+    delete_server_account: { server: "s", account: "test-automation-1" },
     list_server_tools: { server: "s" },
     list_server_prompts: { server: "s" },
     list_server_resources: { server: "s" },
@@ -2405,11 +2418,68 @@ describe("operation catalog consistency", () => {
     get_readiness_run: { run: "r" },
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
+    resume_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
+    list_directory_flows: {},
+    get_directory_flow: { flow: "claude-connector" },
+    create_directory_submission: { server: "s", flow: "claude-connector" },
+    list_directory_submissions: {},
+    get_directory_submission: { submission: "sub" },
+    update_directory_submission: {
+      submission: "sub",
+      answers: { "listing.name": "Acme" },
+    },
+    delete_directory_submission: { submission: "sub" },
+    start_directory_submission_run: { submission: "sub" },
+    get_directory_submission_results: { submission: "sub" },
+    create_reviewer_attempt: {
+      submission: "sub",
+      passwordSecretName: "MCPJAM_REVIEWER_SUB_PASSWORD",
+    },
+    list_reviewer_attempts: { submission: "sub" },
+    get_reviewer_attempt: { submission: "sub", attempt: "att" },
+    resume_reviewer_attempt: { submission: "sub", attempt: "att" },
+    create_reviewer_handoff: { submission: "sub", attempt: "att" },
+    cancel_reviewer_attempt: { submission: "sub", attempt: "att" },
+    get_directory_submission_handoff: { submission: "sub" },
+    list_directory_submission_findings: { submission: "sub" },
+    get_directory_submission_finding: {
+      submission: "sub",
+      check: "claude.endpoint.https",
+    },
+    export_directory_submission: { submission: "sub" },
+    list_directory_submission_events: { submission: "sub" },
+    record_directory_submission_status: { submission: "sub", state: "submitted" },
+    record_directory_submission_snapshot: { submission: "sub", label: "directory" },
+    import_directory_finding: {
+      submission: "sub",
+      text: "Remove MCP from the name.",
+      via: "email",
+    },
+    get_directory_submission_test_plan: { submission: "sub" },
+    draft_directory_submission_test_plan: { submission: "sub" },
+    save_directory_submission_test_plan: {
+      submission: "sub",
+      expectedRevision: 0,
+      plan: {
+        schemaVersion: 1,
+        fixtures: [],
+        tools: [],
+        cases: [],
+        budget: { maxCalls: 1, concurrency: 1, callTimeoutMs: 30000 },
+        cleanup: [],
+      },
+    },
+    get_directory_submission_tool_tests: { submission: "sub" },
+    get_directory_submission_evals: { submission: "sub" },
+    set_directory_submission_evals: { submission: "sub", suite: "suite", expectedRevision: 1 },
+    import_directory_submission_test_cases: { submission: "sub" },
+    export_directory_submission_test_cases: { submission: "sub" },
     start_conformance_run: { server: "s" },
     get_conformance_run: { run: "r" },
     list_conformance_runs: {},
     get_conformance_report: { run: "r" },
+    get_conformance_check: { run: "r", check: "c" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     list_eval_suite_revisions: { suite: "s" },
@@ -2480,6 +2550,9 @@ describe("operation catalog consistency", () => {
       draft: { assertions: { mode: "replace", list: [] } },
     },
     request_eval_run_judge: { project: "p", runId: "r" },
+    request_eval_run_insights: { project: "p", runId: "r" },
+    cancel_eval_run_insights: { project: "p", runId: "r" },
+    build_eval_run_findings: { project: "p", runId: "r" },
     list_eval_github_repos: {},
     connect_eval_github_repo: {
       suite: "s",
@@ -2754,6 +2827,30 @@ describe("operation catalog consistency", () => {
       "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
+      // Runs a re-queued one again with its requester's credentials.
+      "resume_readiness_run",
+      // Directory submissions: the answers are a saved record, and a run
+      // started from one dials the submission's server.
+      "create_directory_submission",
+      "update_directory_submission",
+      "delete_directory_submission",
+      "start_directory_submission_run",
+      // A reviewer sign-in starts a run that signs in to the submission's
+      // server; a cancel stops one.
+      "create_reviewer_attempt",
+      "create_reviewer_handoff",
+      "resume_reviewer_attempt",
+      "cancel_reviewer_attempt",
+      // Records of what happened in the directory: append-only events.
+      "record_directory_submission_status",
+      "record_directory_submission_snapshot",
+      "import_directory_finding",
+      // A new revision of the plan whose calls a run may make. It calls nothing.
+      "save_directory_submission_test_plan",
+      // The eval suite holding a submission's test cases, and the cases a
+      // plugin package declares, written into it. Neither calls a tool.
+      "set_directory_submission_evals",
+      "import_directory_submission_test_cases",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
@@ -2762,6 +2859,11 @@ describe("operation catalog consistency", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "request_eval_run_judge",
+      // The run page's Analyze button: build findings, request the analysis,
+      // cancel it. Each changes the run's analysis state.
+      "request_eval_run_insights",
+      "cancel_eval_run_insights",
+      "build_eval_run_findings",
       // Description-rewrite experiment. Propose spends a small model budget
       // to draft the rewrite; start launches two replay arms and spends
       // eval-iteration credits. `get_eval_description_experiment` stays a
@@ -2830,6 +2932,12 @@ describe("operation catalog consistency", () => {
       "create_secret",
       "update_secret",
       "delete_secret",
+      // Server account writes. The upload carries a token in its INPUT and the
+      // update moves the default runs act as (both risk: exposure); the delete
+      // removes an account and asks its issuer to revoke the token.
+      "upload_server_account_tokens",
+      "update_server_account",
+      "delete_server_account",
       // Trace-destination writes. `create` and `update` carry vendor
       // credentials in their INPUT and decide whether customer content leaves
       // the platform (risk: exposure); `resume` is exposure too, because it

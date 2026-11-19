@@ -74,6 +74,32 @@ export type {
   TaskSurface,
 } from "./tasks-policy.js";
 
+// A host's MCP Events support (`com.mcpjam/events`, MCPJam policy, never
+// advertised) and the modes a subscription may use. Browser-safe.
+export {
+  MCPJAM_EVENTS_EXTENSION_ID,
+  EVENT_DELIVERY_MODES,
+  HOST_STYLE_EVENT_DELIVERY_MODES,
+  RUNTIME_EVENT_DELIVERY_MODES,
+  isEventDeliveryMode,
+  readEventsHostSetting,
+  hostStyleEventDeliveryModes,
+  resolveHostEventDeliveryModes,
+  setEventsHostSetting,
+  clearEventsHostSetting,
+  subscribableModes,
+  describeModeRefusal,
+  describeNoSubscribableMode,
+} from "./events-support.js";
+export type {
+  EventDeliveryMode,
+  EventsRuntime,
+  EventsSupportHost,
+  EventsHostSetting,
+  EventModeRefusal,
+  SubscribableModes,
+} from "./events-support.js";
+
 // Saved model selection: model + credential source + connection reference +
 // settings + fallback, beside the bare `modelId`. Pure and browser-safe.
 export {

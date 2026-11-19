@@ -128,11 +128,12 @@ export function isReadOnlyHostComputer(
 export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
- * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
- * the real CLI runtime (the `@ai-sdk/harness-claude-code` adapter, MCPJam's
- * Codex app-server adapter, or the `@ai-sdk/harness-cursor` adapter) inside the
- * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
- * emulated. The backend enforces `harness ⇒ computer`.
+ * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` /
+ * `"opencode"` run the real CLI runtime (the `@ai-sdk/harness-claude-code`
+ * adapter, MCPJam's Codex app-server adapter, the `@ai-sdk/harness-cursor`
+ * adapter, or the `@ai-sdk/harness-opencode` adapter) inside the attached
+ * personal computer instead of MCPJam's emulated engine. Absent ⇒ emulated.
+ * The backend enforces `harness ⇒ computer`.
  *
  * ALIASED, not re-listed. This was a hand-copied union that had to be edited
  * in lockstep with `HARNESS_IDS`, and the dangerous direction is narrow drift:
@@ -729,6 +730,12 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     profile.toolParamHeaderMirroring === undefined &&
     profile.paginationTraversal === undefined &&
     profile.mrtrSupport === undefined &&
+    // Mid-session sign-in knobs. Each is a single enum, so presence is
+    // content: a profile carrying only one of them must survive the save.
+    profile.unauthorizedChallenge === undefined &&
+    profile.unauthorizedChallengeTrigger === undefined &&
+    profile.toolResultAuthChallenge === undefined &&
+    profile.toolResultAuthChallengeTrigger === undefined &&
     // A record, so emptiness is per-leaf: `{}` carries nothing (the
     // canonicalizer drops it), but any boolean leaf is a real setting.
     (profile.toolListChanged === undefined ||

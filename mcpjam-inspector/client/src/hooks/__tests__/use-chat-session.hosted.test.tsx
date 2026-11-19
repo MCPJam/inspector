@@ -201,6 +201,7 @@ vi.mock("@/lib/guest-session", () => ({
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
+  renewSessionBearer: vi.fn(async () => {}),
   buildServerRequest: mockState.buildServerRequest,
   buildResolvedServerBatchRequest: vi.fn(
     ({
@@ -412,6 +413,48 @@ describe("useChatSession hosted mode", () => {
     await act(async () => { await result.current.addToolApprovalResponse({ id: 'mjfg1:{}', approved: true }); });
     expect(mockState.addToolApprovalResponse).not.toHaveBeenCalled();
     unmount();
+  });
+
+  it("shows the environment's exact connection without sending a pick, then edits that same choice", () => {
+    const base = selectionOptions();
+    const { result, rerender } = renderHook(({ environmentId }) => useChatSession({
+      ...base, pickedModelSelection: undefined, executionConfig: undefined,
+      selectionIntent: "inherit", inheritedEnvironmentModel: {
+        modelId: savedOrgChoice.modelId, modelSelection: savedOrgChoice,
+      },
+      hostedContext: { ...base.hostedContext, executionTarget: { kind: "environment", environmentId } },
+    }), { initialProps: { environmentId: "env-a" } });
+    expect(result.current.selectedModel.id).toBe("gpt-4o-mini");
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    act(() => result.current.setTemperature(0.9, true));
+    expect(lastTransportOptions.body().modelSelection).toMatchObject({
+      source: "org", connectionRef: savedOrgChoice.connectionRef, settings: { temperature: 0.9 },
+    });
+    rerender({ environmentId: "env-b" });
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+  });
+
+  it("keeps a remembered pick after a remount, for that target only", () => {
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
+    const options = { ...selectionOptions(), selectionIntent: "inherit" as const, rememberPickedTarget: true };
+    const first = renderHook(() => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId: "host-1" },
+    }));
+    expect(first.result.current.hasPickedModel).toBe(false);
+    act(() => first.result.current.setTemperature(0.9, true));
+    expect(first.result.current.hasPickedModel).toBe(true);
+    first.unmount();
+
+    const again = renderHook(({ hostId }) => useChatSession({
+      ...options, hostedContext: { ...options.hostedContext, hostId },
+    }), { initialProps: { hostId: "host-1" } });
+    expect(again.result.current.hasPickedModel).toBe(true);
+    expect(lastTransportOptions.body()).toHaveProperty("modelSelection");
+    again.rerender({ hostId: "host-other" });
+    expect(again.result.current.hasPickedModel).toBe(false);
+    expect(lastTransportOptions.body()).not.toHaveProperty("modelSelection");
+    again.unmount();
+    localStorage.removeItem("mcp-inspector-playground-picked-target");
   });
 
   it("sends a deliberate temperature edit with its selection and scopes it to the host", () => {
@@ -929,12 +972,57 @@ describe("useChatSession hosted mode", () => {
     await waitFor(() => {
       expect(result.current.availableModels.length).toBeGreaterThan(0);
     });
-    const offered = result.current.availableModels.map((model) => String(model.id));
+    const offered = result.current.availableModels
+      .filter((model) => !model.disabled)
+      .map((model) => String(model.id));
     expect(offered.every((id) => id.startsWith("openai/gpt-5"))).toBe(true);
     expect(offered).not.toContain("anthropic/claude-haiku-4.5");
+    // Listed, but not pickable, with the reason Codex refuses it.
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      ),
+    ).toMatchObject({ disabled: true, disabledReason: expect.stringMatching(/Codex/) });
     expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
     // Unresolved: the shown fallback is never mirrored over the saved lead.
     expect(result.current.isSelectedModelResolved).toBe(false);
+    unmount();
+  });
+
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"])(
+    "asks to prepare a new %s chat's computer",
+    (harnessId) => {
+      const { result, unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            hostId: "host-1",
+            selectedServerIds: ["server-id-1"],
+          },
+          harnessModelTarget: { harnessId },
+        }),
+      );
+      expect(result.current.harnessBoxPreparation).toMatchObject({
+        chatSessionId: expect.any(String),
+        body: { projectId: "project-1", hostId: "host-1" },
+      });
+      unmount();
+    },
+  );
+
+  it("asks nothing for a chat on MCPJam's own agent", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+    expect(result.current.harnessBoxPreparation).toBeNull();
     unmount();
   });
 
@@ -1415,6 +1503,76 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
     });
+  });
+
+  it("writes prompt turns only after a send is admitted", async () => {
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+    const skillTurn = {
+      id: "skill-context-1",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "skill body" }],
+    };
+    let admitted = true;
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+
+    mockState.setMessages.mockClear();
+    mockState.authFetch.mockClear();
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    expect(ensureServerIds).toHaveBeenCalledTimes(1);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+
+    admitted = false;
+    resolvePreflight([{ serverId: "id-a" }]);
+    const refused = await act(async () => await sendPromise);
+    expect(refused).toBe(false);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+
+    admitted = true;
+    let resolveAgain!: (value: Array<{ serverId: string }>) => void;
+    ensureServerIds.mockImplementationOnce(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolveAgain = resolve;
+        }),
+    );
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    resolveAgain([{ serverId: "id-a" }]);
+    const sent = await act(async () => await sendPromise);
+    expect(sent).toBe(true);
+    const written = mockState.setMessages.mock.calls.map(([update]) =>
+      typeof update === "function" ? update([]) : update,
+    );
+    expect(written).toContainEqual([skillTurn]);
   });
 
   it("fails closed when the server selection changes mid-preflight", async () => {
@@ -2235,6 +2393,29 @@ describe("useChatSession — environment execution target", () => {
     unmount();
   });
 
+  it("says a restored session kept the conversation but not the files", () => {
+    const info = vi.spyOn(toast, "info").mockImplementation(() => "toast-id");
+    const { unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: environmentContext,
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-harness-reset",
+        data: { reason: "sandbox-restored" },
+      });
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
+    );
+    info.mockRestore();
+    unmount();
+  });
+
   it("aborts a send whose target changed while the name→id preflight was in flight", async () => {
     // The preflight is async and the transport body is built from the LATEST
     // props when the request finally goes out. A message composed against a
@@ -2382,6 +2563,44 @@ describe("useChatSession — environment execution target", () => {
       expect(refreshAccessSession).toHaveBeenCalledTimes(1);
       unmount();
     });
+
+    it.each([false, true])(
+      "keeps an OAuth challenge out of study-access recovery (after recovery: %s)",
+      async (afterRecovery) => {
+        const refreshAccessSession = vi
+          .fn()
+          .mockResolvedValue({ ok: true, accessVersion: 2 });
+        const onAccessRevoked = vi.fn();
+        const { unmount } = renderScenario({
+          refreshAccessSession,
+          onAccessRevoked,
+        });
+        const challenge = {
+          code: "UNAUTHORIZED",
+          message: 'Server "Asana" requires authorization.',
+          details: { oauthRequired: true, serverId: "server-id-1" },
+        };
+        const response = new Response(JSON.stringify(challenge), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+        if (afterRecovery) {
+          mockState.authFetch.mockResolvedValueOnce(
+            accessErrorResponse("SCENARIO_ACCESS_STALE", 409),
+          );
+        }
+        mockState.authFetch.mockResolvedValue(response);
+
+        const result = await chatFetch()(TURN_URL, turnInit(1));
+
+        expect(result).toBe(response);
+        await expect(result.json()).resolves.toEqual(challenge);
+        expect(refreshAccessSession).toHaveBeenCalledTimes(afterRecovery ? 1 : 0);
+        expect(mockState.authFetch).toHaveBeenCalledTimes(afterRecovery ? 2 : 1);
+        expect(onAccessRevoked).not.toHaveBeenCalled();
+        unmount();
+      },
+    );
 
     it("never recovers twice — a replay that also fails is final", async () => {
       const refreshAccessSession = vi
@@ -2581,7 +2800,11 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
     );
     expect(again.result.current.hiddenEnvironmentActive).toBe(false);
     const body = lastTransportOptions.body();
-    expect(body).toEqual(plain);
+    expect(body).toEqual({
+      ...plain,
+      harnessStartupRequestId: expect.any(String),
+    });
+    expect(body.harnessStartupRequestId).not.toBe(plain.harnessStartupRequestId);
     expect(body.hostId).toBe("host_1");
     expect(body).not.toHaveProperty("executionTarget");
     expect(body).not.toHaveProperty("environmentOverrides");
@@ -2847,6 +3070,7 @@ describe("useChatSession — hidden environment (a Playground chat's plugins)", 
         selectedServerIds: ["server-id-1"],
         executionTarget: { kind: "environment", environmentId: "env_new" },
         environmentOverrides: { serverIds: ["server-id-1", "srv_new"] },
+        autoContributedPluginServerIds: ["srv_new"],
         includeProjectSkills: true,
         messages: [{ role: "user", content: "hi" }],
       });

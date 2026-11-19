@@ -104,6 +104,17 @@ describe("describeBackendStreamFailure", () => {
     },
   );
 
+  it("reads a 413 guest_input_too_large as the guest cap, not an MCPJam fault", () => {
+    const normalized = describeBackendStreamFailure(
+      413,
+      "Guest input is estimated at 57002 tokens, above the 32000 token limit. Disconnect servers, shorten the conversation, or sign in.",
+      "guest_input_too_large",
+    );
+
+    expect(normalized.slug).toBe("account/guest_input_too_large");
+    expect(originOf(normalized)).toBe("user_config");
+  });
+
   // The regression this change exists for. `categorizeError` in the backend
   // mirrors the UPSTREAM provider's status onto our own response, so MCPJam's
   // revoked managed key arrives as a 401 and MCPJam's own quota as a 429 —

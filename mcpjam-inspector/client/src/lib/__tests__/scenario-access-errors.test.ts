@@ -90,6 +90,32 @@ describe("classifyScenarioAccessError", () => {
     expect(classifyScenarioAccessError(403, "denied")).toBeNull();
     expect(classifyScenarioAccessError(403, undefined)).toBeNull();
   });
+
+  it("leaves server OAuth challenges to the OAuth handler", () => {
+    expect(
+      classifyScenarioAccessError(401, {
+        code: "UNAUTHORIZED",
+        message: 'Server "Asana" requires authorization.',
+        details: { oauthRequired: true, serverId: "srv_asana" },
+      }),
+    ).toBeNull();
+  });
+
+  it("still recovers a refused MCPJam session bearer", () => {
+    expect(
+      classifyScenarioAccessError(401, {
+        code: "UNAUTHORIZED",
+        message: "Bearer token required",
+      }),
+    ).toMatchObject({ kind: "denied", code: "UNAUTHORIZED" });
+    expect(
+      classifyScenarioAccessError(401, {
+        code: "UNAUTHORIZED",
+        details: { code: "SCENARIO_SIGN_IN_REQUIRED" },
+        message: "Sign in to preview this study",
+      }),
+    ).toMatchObject({ kind: "denied", code: "SCENARIO_SIGN_IN_REQUIRED" });
+  });
 });
 
 describe("classifyScenarioAccessResponse", () => {
@@ -113,6 +139,16 @@ describe("classifyScenarioAccessResponse", () => {
       status: 504,
     });
     await expect(classifyScenarioAccessResponse(response)).resolves.toBeNull();
+  });
+
+  it("honors the upstream OAuth response header without consuming its body", async () => {
+    const response = new Response(
+      JSON.stringify({ code: "UNAUTHORIZED", message: "Authorize the server" }),
+      { status: 401, headers: { "X-MCP-Auth-Required": "oauth" } },
+    );
+
+    await expect(classifyScenarioAccessResponse(response)).resolves.toBeNull();
+    expect(response.bodyUsed).toBe(false);
   });
 });
 

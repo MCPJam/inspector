@@ -6,8 +6,9 @@ import { authFetch } from "@/lib/session-token";
  * by the local-only API wrappers (conformance, widget-render, …) so the
  * fetch/error contract stays in one place.
  */
-export async function localPost<T>(path: string, body: unknown): Promise<T> {
+export async function localPost<T>(path: string, body: unknown, options?: { signal?: AbortSignal }): Promise<T> {
   const response = await authFetch(path, {
+    signal: options?.signal,
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

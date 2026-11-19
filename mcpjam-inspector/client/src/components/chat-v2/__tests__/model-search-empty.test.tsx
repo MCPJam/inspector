@@ -35,6 +35,7 @@ async function searchFor(
       availableModels={models}
       onModelChange={() => {}}
       onAddProvider={null}
+      harnessScope="not-client-run"
       {...props}
     />,
   );

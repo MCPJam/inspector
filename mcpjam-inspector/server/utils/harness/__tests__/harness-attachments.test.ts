@@ -18,6 +18,8 @@ import {
   HOSTED_HARNESS_ATTACHMENTS_DIR,
   buildHarnessAttachmentNote,
   computerQuotaReserver,
+  decodeHarnessAttachments,
+  releaseHarnessAttachmentDecodes,
   safeHarnessAttachmentName,
   saveHarnessAttachments,
   takeHarnessPromptAttachments,
@@ -111,6 +113,20 @@ describe("takeHarnessPromptAttachments", () => {
       { type: "text", text: "what is this" },
     ]);
     expect(taken.attachments.map((a) => a.name)).toEqual(["attachment-1.png"]);
+    expect(taken.attachments[0]).toMatchObject({
+      sourceType: "image",
+      mediaType: "image/png",
+    });
+  });
+
+  it("defaults a missing image mediaType to image/png and still marks it an image", () => {
+    const taken = takeHarnessPromptAttachments([
+      userMessage([{ type: "image", image: "aGk=" }]),
+    ]);
+    expect(taken.attachments[0]).toMatchObject({
+      sourceType: "image",
+      mediaType: "image/png",
+    });
   });
 
   it("returns the same array when there is nothing to take", () => {
@@ -325,6 +341,58 @@ describe("saveHarnessAttachments", () => {
     decodeSpy.mockRestore();
   });
 
+  it("still applies the total at write after a shared decode", async () => {
+    const session = fakeSession();
+    const MB = 1024 * 1024;
+    const attachments = [
+      attachment("first.bin", new Uint8Array(20 * MB)),
+      attachment("second.bin", new Uint8Array(11 * MB)),
+    ];
+    decodeHarnessAttachments(attachments);
+    expect(attachments.map((a) => a.decoded && "bytes" in a.decoded)).toEqual([
+      true,
+      true,
+    ]);
+    const outcomes = await saveHarnessAttachments({
+      session,
+      dir: "/d",
+      attachments,
+    });
+    expect(outcomes.map((o) => ("error" in o ? o.error : "saved"))).toEqual([
+      "saved",
+      "over the 30 MB total limit",
+    ]);
+    expect(session.writeBinaryFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not charge a failed write against the total, even after a shared decode", async () => {
+    const MB = 1024 * 1024;
+    const session = {
+      writeBinaryFile: vi.fn(
+        async (args: { path: string; content: Uint8Array }) => {
+          if (args.content.byteLength === 20 * MB) {
+            throw new Error("ENOSPC");
+          }
+        },
+      ),
+    };
+    const attachments = [
+      attachment("first.bin", new Uint8Array(20 * MB)),
+      attachment("second.bin", new Uint8Array(11 * MB)),
+    ];
+    decodeHarnessAttachments(attachments);
+    const outcomes = await saveHarnessAttachments({
+      session,
+      dir: "/d",
+      attachments,
+    });
+    expect(outcomes.map((o) => ("error" in o ? o.error : "saved"))).toEqual([
+      "the write failed",
+      "saved",
+    ]);
+    expect(session.writeBinaryFile).toHaveBeenCalledTimes(2);
+  });
+
   it("reports a failed write instead of throwing, and logs no contents", async () => {
     const secret = "TOP-SECRET-CONTENTS";
     const session = {
@@ -426,6 +494,44 @@ describe("the note", () => {
     expect(buildHarnessAttachmentNote([])).toBe("");
   });
 
+  it("marks attached images even when the save failed, and does not tell file tools to open them", () => {
+    const note = buildHarnessAttachmentNote(
+      [
+        { name: "shot.png", path: "/home/user/attachments/u-shot.png" },
+        { name: "oops.png", error: "the write failed" },
+      ],
+      [{ status: "attached" }, { status: "attached" }],
+    );
+    expect(note).toBe(
+      [
+        "[Attachments uploaded to the computer. Images marked (attached) are already in this message; use your file tools for the rest]",
+        "- shot.png: /home/user/attachments/u-shot.png (attached)",
+        "- oops.png: couldn't be saved (the write failed) (attached)",
+      ].join("\n"),
+    );
+    expect(note).not.toMatch(/use your file tools to read them/);
+  });
+
+  it("names a skipped image and keeps today's line when there is no image slot", () => {
+    const mixed = buildHarnessAttachmentNote(
+      [
+        { name: "shot.png", path: "/home/user/attachments/u-shot.png" },
+        { name: "notes.pdf", path: "/home/user/attachments/u-notes.pdf" },
+      ],
+      [
+        { status: "skipped", reason: "too large to attach after resizing" },
+        { status: "not-image" },
+      ],
+    );
+    expect(mixed).toContain(
+      "- shot.png: /home/user/attachments/u-shot.png (not attached: too large to attach after resizing)",
+    );
+    expect(mixed).toContain(
+      "- notes.pdf: /home/user/attachments/u-notes.pdf",
+    );
+    expect(mixed).toContain("use your file tools to read them");
+  });
+
   it("rides as one more text part on the last user message, without mutating", () => {
     const prompt = userMessage([{ type: "text", text: "summarize" }]);
     const messages = [prompt];
@@ -445,5 +551,15 @@ describe("the note", () => {
       { type: "text", text: "hi" },
       { type: "text", text: "NOTE" },
     ]);
+  });
+});
+
+describe("releaseHarnessAttachmentDecodes", () => {
+  it("drops decoded bytes after save and native-image prepare have finished", () => {
+    const attachments = [attachment("shot.png", dataUrl("png", "image/png"))];
+    decodeHarnessAttachments(attachments);
+    expect(attachments[0]?.decoded).toMatchObject({ bytes: expect.any(Uint8Array) });
+    releaseHarnessAttachmentDecodes(attachments);
+    expect(attachments[0]?.decoded).toBeUndefined();
   });
 });

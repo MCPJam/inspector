@@ -97,7 +97,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 
 ### Invalid bearer token rejection
 
-- **Command**: `oauth conformance --conformance-checks` or a direct authenticated MCP request with an obviously invalid bearer token
+- **Command**: `oauth conformance` or a direct authenticated MCP request with an obviously invalid bearer token
 - **Where to look**: MCP server response status and body
 - **Checklist hit**: The MCP server responds with anything other than `401` to an obviously invalid bearer token
 - **Default compliance impact**: `medium`
@@ -105,7 +105,7 @@ Use this file when performing a security-focused review of an MCP server. Each c
 - **Interpretation**: This is a targeted token-validation probe, not proof of token passthrough by itself. It is strongest when the request reaches the real MCP endpoint rather than only an OAuth metadata path.
 - **Escalates when**: You can show the server accepts foreign, expired, or otherwise invalid tokens for real MCP operations
 - **Do not escalate when**: The server cleanly rejects the token with `401`, or when a proxy layer rejects the request before the MCP server is meaningfully exercised
-- **Best proving command**: `oauth conformance --conformance-checks`, then a narrower follow-up request if the result is surprising
+- **Best proving command**: `oauth conformance`, then a narrower follow-up request if the result is surprising
 - **Phase**: 2, with any abuse proof in 3
 
 ## PKCE Weakness

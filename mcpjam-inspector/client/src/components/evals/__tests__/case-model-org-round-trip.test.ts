@@ -233,3 +233,28 @@ describe("an organization model picked for a case under the policy", () => {
     ).toBe("anthropic/anthropic/claude-haiku-4.5");
   });
 });
+
+describe("a case entry saved before its canonical spelling changed", () => {
+  it("still reads back as its org row", () => {
+    const row: ModelDefinition = {
+      id: "grok-4.5",
+      name: "Grok 4.5",
+      provider: "xai",
+      hosted: false,
+      orgProvider: { providerKey: "xai", id: "orgprov_xai" },
+    };
+    // Saved as x-ai/grok-4.5; the catalog now spells it spacexai/grok-4.5.
+    const entry = {
+      provider: "xai",
+      model: "x-ai/grok-4.5",
+      selection: {
+        modelId: "x-ai/grok-4.5",
+        source: "org" as const,
+        connectionRef: { kind: "orgProvider" as const, id: "orgprov_xai" },
+        nativeModelId: "grok-4.5",
+        fallback: { provider: "none" as const, model: "none" as const },
+      },
+    };
+    expect(caseModelEntryValue(entry, [row])).toBe("xai/grok-4.5");
+  });
+});

@@ -24,7 +24,13 @@ export type InspectorCommandErrorCode =
   | "timeout"
   | "unsupported_in_mode"
   | "invalid_request"
-  | "execution_failed";
+  | "execution_failed"
+  /**
+   * The server asked the user to sign in before this call could run. A
+   * command never signs in or shows a Connect card; the user does that from
+   * the app.
+   */
+  | "authorization_required";
 
 export type InspectorCommandType =
   | "navigate"
@@ -365,7 +371,7 @@ export interface OpenEvalSuiteFormInspectorCommand {
 export interface RunEvalSuiteInspectorCommand {
   id: string;
   type: "runEvalSuite";
-  /** `iterations` per case; omitted means the count Setup Run would start at. */
+  /** `iterations` per case; omitted means the count the Set up run sheet would start at. */
   payload: { suite: string; iterations?: number };
   timeoutMs?: number;
 }

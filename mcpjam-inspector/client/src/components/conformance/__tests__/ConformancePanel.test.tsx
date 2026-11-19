@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
   render,
+  renderHook,
   screen,
   fireEvent,
   waitFor,
@@ -25,6 +26,14 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) => enabledFlags.has(key),
 }));
 
+// Home cards subscribe to each run for suite scores. These tests render
+// the home without a Convex client, so the suite rows stay empty.
+vi.mock("convex/react", () => ({
+  useQuery: () => undefined,
+}));
+
+vi.mock("../PersistConformanceRun", () => ({ PersistConformanceRun: () => null }));
+
 const mockRunProtocol = vi.fn();
 const mockRunApps = vi.fn();
 const mockRunTasks = vi.fn();
@@ -32,13 +41,34 @@ const mockStartOAuth = vi.fn();
 const mockSubmitCode = vi.fn();
 const mockCompleteOAuth = vi.fn();
 
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(
+    async (_server: string, version: string) => ({
+      status: "ready",
+      protocolVersion: version === "auto" ? "2025-11-25" : version,
+    }),
+  ),
+}));
+
 vi.mock("@/lib/apis/mcp-conformance-api", () => ({
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: (...args: unknown[]) => mockRunProtocol(...args),
   runAppsConformance: (...args: unknown[]) => mockRunApps(...args),
   runTasksConformance: (...args: unknown[]) => mockRunTasks(...args),
   startOAuthConformance: (...args: unknown[]) => mockStartOAuth(...args),
   submitOAuthConformanceCode: (...args: unknown[]) => mockSubmitCode(...args),
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
+}));
+
+// Group scheduling and aggregation are covered by run-task-conformance-groups.test.ts.
+// These panel tests supply the completed suite report.
+vi.mock("@/hooks/run-task-conformance-groups", () => ({
+  runTaskConformanceGroups: async (
+    server: string,
+    options: Record<string, unknown>,
+    _isActive: () => boolean,
+    remainingBudget: () => Record<string, unknown>,
+  ) => (await mockRunTasks(server, { ...options, ...remainingBudget() })).result,
 }));
 
 // Step 2 lists a server's tools for the checks that must call one.
@@ -59,15 +89,24 @@ vi.mock("@/components/oauth/utils", () => ({
   }),
 }));
 
+import { cancelOAuthConformance } from "@/lib/apis/mcp-conformance-api";
+import { useConformanceRun } from "@/hooks/use-conformance-run";
+import { checkConformanceConnection } from "@/lib/apis/conformance-connection-api";
 import { toast } from "@/lib/toast";
+import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
+import { useConformanceRunRequest } from "../conformance-run-request";
 import {
   ConformanceServerPicker,
   ProtocolVersionSelect,
   RUN_LABEL,
 } from "../ConformancePageChrome";
-import { SUITE_COPY } from "../conformance-ui";
+import { notApplicableSubtitle, SUITE_COPY } from "../conformance-ui";
+
+/** A tool option: its name, then its safety badge. */
+const toolOption = (name: string, tag: string) =>
+  new RegExp(`^${name}\\s*·\\s*${tag}$`);
 
 function createProtocolResult(
   overrides: Partial<MCPConformanceResult> = {},
@@ -184,18 +223,27 @@ function clickRow(title: string) {
  * it. With a server list, Run opens the setup steps first: continue through
  * both, unless step 1 cannot continue.
  */
-function clickRun() {
+async function clickRun() {
   // After a run the run header offers "Run again" instead.
   fireEvent.click(screen.getAllByRole("button", { name: RUN_OR_AGAIN })[0]);
   const next = screen.queryByRole("button", { name: "Continue" });
-  if (!next || (next as HTMLButtonElement).disabled) return;
+  if (!next) return;
+  if (screen.queryByText(/Finding a protocol version|Connecting with/))
+    await waitFor(() => expect(next).toBeEnabled());
+  if ((next as HTMLButtonElement).disabled) return;
   fireEvent.click(next);
   fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 }
 
+async function continueSetup() {
+  const next = screen.getByRole("button", { name: "Continue" });
+  await waitFor(() => expect(next).toBeEnabled());
+  fireEvent.click(next);
+}
+
 /** Starts a run and waits until no suite is still running. */
 async function runToCompletion() {
-  clickRun();
+  await clickRun();
   // A run from the setup steps starts a tick later, on the run's own page.
   await screen.findByRole("button", {
     name: /^(Run again|Running\.\.\.|Connecting\.\.\.)$/,
@@ -221,11 +269,19 @@ function serverRow(name: string) {
     .find((button) => !button.getAttribute("aria-label")?.startsWith("Connect"))!;
 }
 
+/** A suite's input badge: "optional" is set in its own element. */
+function inputBadge(text: string) {
+  return (_: string, element: Element | null) =>
+    element?.tagName === "SPAN" && element.textContent === text;
+}
+
 /** A suite's header row, found by its description (unique, unlike titles). */
 function suiteHeader(suite: keyof typeof SUITE_COPY) {
-  const button = screen
-    .getByText(SUITE_COPY[suite].description)
-    .closest("button");
+  // A suite that applied to nothing says so in place of its description.
+  const button = (
+    screen.queryByText(SUITE_COPY[suite].description) ??
+    screen.getByText(notApplicableSubtitle(SUITE_COPY[suite].title))
+  ).closest("button");
   expect(button).not.toBeNull();
   return button!;
 }
@@ -265,6 +321,32 @@ function createHttpServer(
   };
 }
 
+const createRunListItem = (id: string) => ({
+  _id: id,
+  projectId: "proj_1",
+  targetKind: "server",
+  targetKey: `server:${id}`,
+  serverId: id,
+  source: "ui",
+  verification: "mcpjam_verified" as const,
+  status: "completed",
+  outcome: "passed" as const,
+  incompleteReason: null,
+  score: 100,
+  applicable: 3,
+  passed: 3,
+  failed: 0,
+  couldNotRun: 0,
+  requestedSuites: ["protocol"],
+  protocolVersion: "2025-11-25",
+  actorLabel: null,
+  ciMetadata: null,
+  createdAt: Date.UTC(2026, 9, 28, 12),
+  completedAt: null,
+  durationMs: null,
+  sharingEnabled: false,
+});
+
 function createStdioServer(
   overrides: Partial<ServerWithName> = {},
 ): ServerWithName {
@@ -285,16 +367,34 @@ function createStdioServer(
 beforeEach(() => {
   vi.clearAllMocks();
   enabledFlags.clear();
+  // These tests cover the update check and its answers; one below turns it off.
+  enabledFlags.add("conformance-tasks-update-check");
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 describe("ConformanceTab", () => {
+  it("explains an unsupported version above the live score without changing results", async () => {
+    setupSuccessfulRunMocks({ protocol: createProtocolResult({
+      passed: false,
+      protocolVersion: "2026-07-28",
+      checks: [{ id: "completion-complete", category: "protocol", title: "Completion", description: "Completion", status: "failed", durationMs: 1,
+        error: { message: 'MCP server "http-server" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to. It offers 2025-06-18.' } }],
+    }) });
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("http-server doesn’t support 2026-07-28. Checks requiring that version could not run.");
+    expect(alert).toHaveTextContent("Server offers: 2025-06-18.");
+    expect(screen.getAllByText("Completion").length).toBeGreaterThan(0);
+  });
+
   // The page writes the active tab to `?view=`; start each test without it.
   afterEach(() => {
     window.history.replaceState(null, "", "/");
   });
 
-  it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
+  it("shows a pooled score headline with denominator, and readiness advice worth 0 points", async () => {
     setupSuccessfulRunMocks({
       protocol: createProtocolResult({
         checks: [
@@ -319,10 +419,10 @@ describe("ConformanceTab", () => {
         protocolVersion: "2025-11-25",
         readiness: [
           {
-            id: "readiness-cache-ttl-useful",
-            title: "Useful Cache TTLs",
+            id: "readiness-deprecated-feature-use",
+            title: "Deprecated Feature Use",
             severity: "warning",
-            specStrength: "SHOULD",
+            specStrength: "Deprecation Notice",
             message: "Cacheable results advertise ttlMs: 0",
           },
         ],
@@ -372,17 +472,25 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // Pooled: 4/4 applicable across the suites, one SHOULD advisory (-2)
-    // from protocol readiness = 98. The number shows on the headline and on
-    // the Protocol row, which carries the same advisory.
-    expect(screen.getAllByText("98").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Conformant, with advice.")).toBeInTheDocument();
+    // Pooled: 4/4 applicable across the suites = 100. The deprecation advisory
+    // from protocol readiness is listed but worth 0 points.
+    expect(screen.getAllByText("100").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Conformant, with guidance.")).toBeInTheDocument();
     // The denominator travels with the number.
     expect(screen.getByText("4/4")).toBeInTheDocument();
 
-    // The advisory that deducted is visible, tier and all.
-    expect(screen.getByText("Useful Cache TTLs")).toBeInTheDocument();
-    expect(screen.getByText("(SHOULD)")).toBeInTheDocument();
+    // The advisory sits in the one container above the
+    // suites, closed with a count until opened.
+    const advice = screen.getByRole("button", {
+      name: /^Additional enhancements/,
+    });
+    expect(advice).toHaveAttribute("aria-expanded", "false");
+    expect(within(advice).getByText("1")).toBeInTheDocument();
+    fireEvent.click(advice);
+    const row = screen.getByText("Deprecated Feature Use").closest("li")!;
+    expect(row).toHaveTextContent(
+      "Suggested Protocol Deprecated Feature Use",
+    );
   });
 
   it("shows no number when nothing was applicable", async () => {
@@ -422,6 +530,16 @@ describe("ConformanceTab", () => {
       screen.getByText("Nothing applicable to score on this server."),
     ).toBeInTheDocument();
     expect(screen.queryByText("%")).toBeNull();
+    const protocolHeader = screen.getByText(SUITE_COPY.protocol.title).closest("button")!;
+    expect(within(protocolHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    const appsHeader = screen.getByText(SUITE_COPY.apps.title).closest("button")!;
+    expect(within(appsHeader).getByText("NOT APPLICABLE")).toBeInTheDocument();
+    expect(
+      within(appsHeader).getByText("Apps doesn't apply to this server."),
+    ).toBeInTheDocument();
+    expect(appsHeader).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(appsHeader);
+    expect(appsHeader).toHaveAttribute("aria-expanded", "true");
   });
 
   it("reads suites that ran no checks as incomplete, not as nothing applicable", async () => {
@@ -500,17 +618,18 @@ describe("ConformanceTab", () => {
     expect(screen.getByRole("tabpanel")).toHaveTextContent("History table");
 
     // On History only the header offers Run.
-    clickRun();
+    await clickRun();
 
-    // The run's own header, which leads back to History.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    // The run's own header, whose Back leads to History.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance History",
+    );
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.queryByText("History table")).toBeNull();
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
 
-  it("keeps the URL on the tab, so a refresh after Run lands on the run", () => {
+  it("keeps the URL on the tab, so a refresh after Run lands on the run", async () => {
     setupSuccessfulRunMocks();
     // Arrived from a run's page, which links back with `?view=history`.
     window.history.replaceState(null, "", "/conformance?view=history");
@@ -525,13 +644,11 @@ describe("ConformanceTab", () => {
       "true",
     );
 
-    clickRun();
+    await runToCompletion();
     expect(window.location.search).toBe("");
 
-    // The run header's breadcrumb goes back to History.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Conformance History" }),
-    );
+    // The run started from History, so Back goes there.
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
     expect(window.location.search).toBe("?view=history");
     expect(screen.getByRole("tab", { name: "History" })).toHaveAttribute(
       "aria-selected",
@@ -543,12 +660,13 @@ describe("ConformanceTab", () => {
       window.history.pushState({}, "", "/conformance");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
-  it("stays on History when Run has no server to run", () => {
+  it("stays on History when Run has no server to run", async () => {
     const info = vi.spyOn(toast, "info");
     // A selection the page does not offer: Run asks for a server instead.
     render(
@@ -561,7 +679,7 @@ describe("ConformanceTab", () => {
     );
     fireEvent.click(screen.getByRole("tab", { name: "History" }));
 
-    clickRun();
+    await clickRun();
     expect(
       screen.getByText("Add a server to run conformance checks."),
     ).toBeInTheDocument();
@@ -576,14 +694,14 @@ describe("ConformanceTab", () => {
     info.mockRestore();
   });
 
-  it("asks for a server instead of running when none is selected", () => {
+  it("asks for a server instead of running when none is selected", async () => {
     const info = vi.spyOn(toast, "info");
     render(<ConformanceTab server={null} />);
 
     expect(
       screen.getByText("Run your first conformance check"),
     ).toBeInTheDocument();
-    clickRun();
+    await clickRun();
 
     expect(info).toHaveBeenCalledWith(
       "Add a server to run conformance checks.",
@@ -625,7 +743,7 @@ describe("ConformanceTab", () => {
     expect(onSelectServer).toHaveBeenCalledWith("beta");
   });
 
-  it("treats a selection the page no longer offers as no server", () => {
+  it("treats a selection the page no longer offers as no server", async () => {
     const info = vi.spyOn(toast, "info");
     // The selected server was removed and the project has no other.
     render(
@@ -636,7 +754,7 @@ describe("ConformanceTab", () => {
       />,
     );
 
-    clickRun();
+    await clickRun();
 
     // Run opens the setup steps, which say what is missing.
     expect(
@@ -664,7 +782,7 @@ describe("ConformanceTab", () => {
         onSelectServer={onSelectServer}
       />,
     );
-    clickRun();
+    await clickRun();
     await screen.findByText(/Running \d+ checks/);
 
     // The server is removed mid-run and the project has no other.
@@ -683,7 +801,7 @@ describe("ConformanceTab", () => {
     const info = vi.spyOn(toast, "info");
     mockRunProtocol.mockClear();
     // Run again runs this server directly, which the page no longer offers.
-    clickRun();
+    await clickRun();
     expect(info).toHaveBeenCalledWith(
       "Add a server to run conformance checks.",
     );
@@ -794,7 +912,7 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(
       screen.getByRole("heading", { name: "Set what you'd like to test" }),
@@ -802,14 +920,14 @@ describe("ConformanceTab", () => {
     const oauth = screen.getByRole("button", {
       name: /^OAuth.*checks selected$/,
     });
-    expect(oauth).toHaveTextContent(/\d+ checks selected/);
+    expect(oauth).toHaveTextContent(/\d+\/\d+ checks selected/);
     expect(oauth).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(oauth);
     expect(oauth).toHaveAttribute("aria-expanded", "true");
     // The open suite lists its checks under the same count. OAuth runs as
     // one flow, so a check's box says whether it COUNTS: unchecked, it still
     // runs, unscored.
-    const count = oauth.textContent?.match(/(\d+) checks selected/)?.[1];
+    const count = oauth.textContent?.match(/(\d+)\/\d+ checks selected/)?.[1];
     const oauthRow = oauth.parentElement!.parentElement!;
     expect(
       within(oauthRow).getByText(
@@ -819,9 +937,13 @@ describe("ConformanceTab", () => {
     const oauthBox = within(oauthRow).getByRole("checkbox", {
       name: "Run OAuth",
     });
+    // The OAuth advice has its own box, covered by the suite's.
+    const issAdvice = within(oauthRow).getByRole("checkbox", {
+      name: "Run Authorization Response iss",
+    });
     const oauthChecks = within(oauthRow)
       .getAllByRole("checkbox")
-      .filter((box) => box !== oauthBox);
+      .filter((box) => box !== oauthBox && box !== issAdvice);
     expect(oauthChecks).toHaveLength(Number(count));
     for (const box of oauthChecks) {
       expect(box).toBeEnabled();
@@ -829,8 +951,11 @@ describe("ConformanceTab", () => {
     }
     fireEvent.click(oauthChecks[0]!);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "unchecked");
-    expect(oauthBox).toHaveAttribute("data-state", "indeterminate");
-    expect(oauth).toHaveTextContent(`${Number(count) - 1} checks selected`);
+    // No in-between state: the suite's box is checked only with every check.
+    expect(oauthBox).toHaveAttribute("data-state", "unchecked");
+    expect(oauth).toHaveTextContent(
+      `${Number(count) - 1}/${count} checks selected`,
+    );
     // The suite's box puts every check back, then leaves the flow out.
     fireEvent.click(oauthBox);
     expect(oauthChecks[0]).toHaveAttribute("data-state", "checked");
@@ -838,6 +963,8 @@ describe("ConformanceTab", () => {
     for (const box of oauthChecks) {
       expect(box).toHaveAttribute("data-state", "unchecked");
     }
+    expect(issAdvice).toHaveAttribute("data-state", "unchecked");
+    expect(issAdvice).toBeDisabled();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(
@@ -857,22 +984,23 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     // Every suite starts fully picked.
     const appsBox = screen.getByRole("checkbox", { name: "Run Apps" });
     expect(appsBox).toHaveAttribute("data-state", "checked");
 
-    // Leave one Apps check out: the suite reads as partly picked.
+    // Leave one Apps check out: the suite's box goes unchecked, and the
+    // count says how many of the suite's checks are left.
     const appsRow = appsBox.closest("label")!.parentElement!.parentElement!;
     const appsChecks = within(appsRow)
       .getAllByRole("checkbox")
       .filter((box) => box !== appsBox);
     const dropped = appsChecks[0]!;
     fireEvent.click(dropped);
-    expect(appsBox).toHaveAttribute("data-state", "indeterminate");
+    expect(appsBox).toHaveAttribute("data-state", "unchecked");
     expect(appsRow).toHaveTextContent(
-      `${appsChecks.length - 1} checks selected`,
+      `${appsChecks.length - 1}/${appsChecks.length} checks selected`,
     );
 
     // Leave Tasks and OAuth out entirely.
@@ -893,7 +1021,10 @@ describe("ConformanceTab", () => {
     // The whole protocol suite was picked, so it runs without a list.
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("alpha", {
-        protocolVersion: undefined,
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+        protocolVersion: "2025-11-25",
       }),
     );
     expect(mockRunTasks).not.toHaveBeenCalled();
@@ -907,7 +1038,7 @@ describe("ConformanceTab", () => {
     ).toHaveLength(2);
   });
 
-  it("keeps Run off in step 2 until something is picked", () => {
+  it("keeps Run off in step 2 until something is picked", async () => {
     const server = createHttpServer({ name: "alpha" });
     render(
       <ConformanceTab
@@ -917,7 +1048,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
       fireEvent.click(screen.getByRole("checkbox", { name: `Run ${suite}` }));
@@ -949,7 +1080,7 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     expect(onSelectServer).toHaveBeenCalledWith("beta");
@@ -964,6 +1095,9 @@ describe("ConformanceTab", () => {
     );
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       }),
     );
@@ -988,6 +1122,468 @@ describe("ConformanceTab", () => {
     await runToCompletion();
     expect(mockRunProtocol).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText("PASSED").length).toBeGreaterThan(0);
+  });
+
+  it("starts the server a saved run's Run again names, with its defaults, once", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        serverDefaults={{ alpha: { tasks: [], oauth: false } }}
+      />,
+    );
+
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    // Dropped, so a refresh does not run it again.
+    expect(window.location.search).toBe("");
+  });
+
+  it("starts a requested run once, on the Overview, even from the History tab", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const onSelectServer = vi.fn();
+    window.history.replaceState(
+      null,
+      "",
+      "/conformance?view=history&run=alpha",
+    );
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={onSelectServer}
+        history={<p>History table</p>}
+      />,
+    );
+
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    // Started once: a second start would replace the first, which a slower
+    // render lets begin, and leave behind as a cancelled run.
+    expect(onSelectServer).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe("");
+    expect(screen.queryByText("History table")).toBeNull();
+  });
+
+  it("waits for shared defaults before a saved rerun and sends its inputs once", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const defaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    const load = vi.fn(() => defaults.promise);
+    window.history.replaceState(
+      null,
+      "",
+      "/conformance?view=history&run=alpha",
+    );
+    render(
+      <StrictMode>
+        <ConformanceTab
+          server={alpha}
+          servers={[alpha]}
+          onSelectServer={vi.fn()}
+          onLoadServerDefaults={load}
+          history={<p>History</p>}
+        />
+      </StrictMode>,
+    );
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    await act(async () =>
+      defaults.resolve({
+        selection: {
+          protocol: ["ping"],
+          apps: [],
+          tasks: ["tasks-update-ack-shape"],
+          oauth: false,
+        },
+        inputs: {
+          tasksProbe: {
+            toolName: "job",
+            arguments: { count: 2 },
+            inputResponses: { confirm: true },
+          },
+        },
+      }),
+    );
+    await waitFor(() =>
+      expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+        checkIds: ["tasks-update-ack-shape"],
+        protocolVersion: "2025-11-25",
+        toolName: "job",
+        toolArguments: { count: 2 },
+        inputResponses: { confirm: true },
+      }),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    expect(mockRunTasks).toHaveBeenCalledTimes(1);
+    expect(window.location.search).toBe("");
+  });
+
+  it.each(["success", "failure"])(
+    "ignores a stale defaults %s after switching setup servers",
+    async (outcome) => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      const alpha = createHttpServer({ name: "alpha" });
+      const beta = createHttpServer({ name: "beta" });
+      const defaults =
+        createDeferred<
+          import("@/hooks/use-conformance-server-data").ConformanceDefaults
+        >();
+      const load = vi.fn((name: string) =>
+        name === "alpha"
+          ? defaults.promise
+          : Promise.resolve({
+              selection: {
+                protocol: [],
+                apps: [],
+                tasks: ["tasks-update-ack-shape"],
+                oauth: false,
+              },
+              inputs: {
+                tasksProbe: {
+                  toolName: "beta-job",
+                  arguments: { count: 2 },
+                  inputResponses: { confirm: true },
+                },
+              },
+            }),
+      );
+      const onSelectServer = vi.fn();
+      const props = {
+        servers: [alpha, beta],
+        onSelectServer,
+        onLoadServerDefaults: load,
+      };
+      const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+      fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+      await continueSetup();
+      expect(load).toHaveBeenCalledWith("alpha");
+      await user.click(screen.getByRole("button", { name: SERVER_FIELD }));
+      await user.click(serverRow("beta"));
+      await act(async () => {
+        if (outcome === "failure") defaults.reject(new Error("offline"));
+        else
+          defaults.resolve({
+            selection: { tasks: [], oauth: false },
+            inputs: { tasksProbe: { toolName: "alpha-job" } },
+          });
+      });
+      await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).not.toHaveBeenCalled();
+      await continueSetup();
+      await waitFor(() => expect(load).toHaveBeenLastCalledWith("beta"));
+      fireEvent.click(await screen.findByRole("button", { name: RUN_LABEL }));
+      expect(onSelectServer).toHaveBeenCalledWith("beta");
+      rerender(<ConformanceTab server={beta} {...props} />);
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("beta", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+          checkIds: ["tasks-update-ack-shape"],
+          protocolVersion: "2025-11-25",
+          toolName: "beta-job",
+          toolArguments: { count: 2 },
+          inputResponses: { confirm: true },
+        }),
+      );
+      expect(mockRunProtocol).not.toHaveBeenCalled();
+      expect(mockRunTasks).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("keeps the selected suites when an unsaved server runs again", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi.fn();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        isSavedServer={() => false}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await continueSetup();
+    for (const suite of ["Apps", "Tasks", "OAuth"]) {
+      fireEvent.click(
+        await screen.findByRole("checkbox", { name: `Run ${suite}` }),
+      );
+    }
+    fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("keeps setup edits as a draft until Run and discards them on Cancel", async () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const save = vi.fn();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection: {},
+          inputs: {},
+        }))}
+        onSaveServerDefaults={save}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await continueSetup();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(save).not.toHaveBeenCalled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Run again" })).toBeNull();
+  });
+
+  it("does not run with guessed defaults after a failed read and offers Retry", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({
+        selection: { tasks: [], oauth: false },
+        inputs: {},
+      });
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    for (const button of screen.getAllByRole("button", { name: RUN_OR_AGAIN }))
+      expect(button).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(1));
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks Run again after an input load error and recovers through Retry", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const defaults = { selection: { tasks: [], oauth: false }, inputs: {} };
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce(defaults)
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue(defaults);
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    fireEvent.click(retry);
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps other servers runnable after a defaults read fails", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const betaDefaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return betaDefaults.promise;
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+      lastRuns: {
+        alpha: createRunListItem("srv_a"),
+        beta: createRunListItem("srv_b"),
+      },
+      onViewRun: vi.fn(),
+    };
+    const { rerender } = render(<ConformanceTab server={alpha} {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Run alpha" }));
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeDisabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual(["alpha", "alpha"]);
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    rerender(<ConformanceTab server={beta} {...props} />);
+    for (const button of screen.getAllByRole("button", { name: RUN_LABEL }))
+      expect(button).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run beta" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Run beta" }));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Starting beta" }),
+    ).toBeDisabled();
+    await act(async () =>
+      betaDefaults.resolve({
+        selection: { protocol: ["ping"], apps: [], tasks: [], oauth: false },
+        inputs: {},
+      }),
+    );
+    await waitFor(() =>
+      expect(mockRunProtocol).toHaveBeenCalledWith(
+        "beta",
+        expect.objectContaining({ checkIds: ["ping"] }),
+      ),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(props.onSelectServer).toHaveBeenLastCalledWith("beta");
+  });
+
+  it("keeps Run again available when another server's defaults fail", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const load = vi.fn(async (name: string) => {
+      if (name === "alpha") throw new Error("offline");
+      return { selection: { apps: [], tasks: [], oauth: false }, inputs: {} };
+    });
+    const props = {
+      servers: [alpha, beta],
+      onSelectServer: vi.fn(),
+      onLoadServerDefaults: load,
+    };
+    window.history.replaceState(null, "", "/conformance?run=beta");
+    render(<ConformanceTab server={beta} {...props} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    expect(mockRunProtocol).toHaveBeenCalledTimes(1);
+    act(() => {
+      window.history.replaceState(null, "", "/conformance?run=alpha");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(3));
+    await screen.findByRole("button", { name: "Retry" });
+    expect(load.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "alpha",
+      "alpha",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Run again" }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalledTimes(2));
+    expect(load).toHaveBeenLastCalledWith("beta");
+    expect(mockRunProtocol.mock.calls.map(([name]) => name)).toEqual([
+      "beta",
+      "beta",
+    ]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("keeps setup on the same screen with Retry after an input read fails", async () => {
+    const alpha = createHttpServer({ name: "alpha" });
+    const load = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("bad saved inputs"))
+      .mockResolvedValue({ selection: {}, inputs: {} });
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onLoadServerDefaults={load}
+      />,
+    );
+    fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
+    await continueSetup();
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load your saved inputs. Try again.",
+    );
+    expect(screen.queryByRole("button", { name: RUN_LABEL })).toBeNull();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    fireEvent.click(retry);
+    expect(
+      await screen.findByRole("button", { name: RUN_LABEL }),
+    ).toBeEnabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
+  it("says so, and runs nothing, when Run again names a server it does not offer", async () => {
+    setupSuccessfulRunMocks();
+    const info = vi.spyOn(toast, "info");
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?run=gone");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(info).toHaveBeenCalledWith(
+        "gone is not one of this project's servers.",
+      ),
+    );
+    expect(window.location.search).toBe("");
+    expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
   it("lists servers with runs, and Run goes straight to a run with their defaults", async () => {
@@ -1033,10 +1629,13 @@ describe("ConformanceTab", () => {
 
     const card = screen.getByRole("list", { name: "Servers" });
     expect(card).toHaveTextContent("alpha");
-    expect(card).toHaveTextContent("Last run Oct 28, 2026 · Protocol Auto");
-    expect(card).toHaveTextContent("PASSED");
+    expect(card).toHaveTextContent("· Protocol Auto");
+    expect(card).toHaveTextContent(/Last run/);
+    expect(
+      within(card).getByRole("img", { name: "100%. 22 passed of 22" }),
+    ).toBeInTheDocument();
     expect(card).toHaveTextContent("100%");
-    expect(card).toHaveTextContent("22/22");
+    expect(card).not.toHaveTextContent("22/22");
 
     fireEvent.click(
       within(card).getByRole("button", { name: "View last run" }),
@@ -1053,37 +1652,15 @@ describe("ConformanceTab", () => {
   it("shows a server's logo on its card, and initials without one", () => {
     const alpha = createHttpServer({ name: "alpha" });
     const beta = createHttpServer({ name: "beta" });
-    const run = (id: string) => ({
-      _id: id,
-      projectId: "proj_1",
-      targetKind: "server",
-      targetKey: `server:${id}`,
-      serverId: id,
-      source: "ui",
-      verification: "mcpjam_verified" as const,
-      status: "completed",
-      outcome: "passed" as const,
-      incompleteReason: null,
-      score: 100,
-      applicable: 3,
-      passed: 3,
-      failed: 0,
-      couldNotRun: 0,
-      requestedSuites: ["protocol"],
-      protocolVersion: "2025-11-25",
-      actorLabel: null,
-      ciMetadata: null,
-      createdAt: Date.UTC(2026, 9, 28, 12),
-      completedAt: null,
-      durationMs: null,
-      sharingEnabled: false,
-    });
     render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
         onSelectServer={vi.fn()}
-        lastRuns={{ alpha: run("srv_a"), beta: run("srv_b") }}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
         onViewRun={vi.fn()}
         serverIcons={{ alpha: "https://example.test/alpha.png" }}
       />,
@@ -1101,6 +1678,106 @@ describe("ConformanceTab", () => {
     expect(betaCard).toHaveTextContent("Be");
   });
 
+  it("says which card is starting while every Run waits on its defaults", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
+    const defaults =
+      createDeferred<
+        import("@/hooks/use-conformance-server-data").ConformanceDefaults
+      >();
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={vi.fn(() => defaults.promise)}
+        serverDefaults={{ alpha: {}, beta: {} }}
+      />,
+    );
+
+    const list = screen.getByRole("list", { name: "Servers" });
+    fireEvent.click(within(list).getByRole("button", { name: "Run alpha" }));
+
+    const starting = within(list).getByRole("button", {
+      name: "Starting alpha",
+    });
+    expect(starting).toBeDisabled();
+    expect(starting).toHaveAttribute("aria-busy", "true");
+    expect(starting).toHaveTextContent("Starting...");
+    // The other card stays off, since a second Run would replace this one,
+    // but it does not claim to be starting.
+    const other = within(list).getByRole("button", { name: "Run beta" });
+    expect(other).toBeDisabled();
+    expect(other).not.toHaveAttribute("aria-busy");
+    expect(other).toHaveTextContent(/^Run$/);
+
+    await act(async () => defaults.resolve({ selection: {}, inputs: {} }));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+  });
+
+  it("keeps the card starting while its run connects the server", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({
+      name: "alpha",
+      connectionStatus: "disconnected",
+    });
+    const beta = createHttpServer({ name: "beta" });
+    const connected = createDeferred<"ready">();
+    const onConnectServer = vi.fn(() => connected.promise);
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, beta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection: {},
+          inputs: {},
+        }))}
+        serverDefaults={{ alpha: {}, beta: {} }}
+      />,
+    );
+
+    fireEvent.click(
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Run alpha" },
+      ),
+    );
+
+    // The defaults are in and the run is connecting alpha: the card still
+    // says which one is starting. The run view mounted anew, so the list is
+    // looked up again.
+    await waitFor(() => expect(onConnectServer).toHaveBeenCalled());
+    const starting = await waitFor(() =>
+      within(screen.getByRole("list", { name: "Servers" })).getByRole(
+        "button",
+        { name: "Starting alpha" },
+      ),
+    );
+    const list = screen.getByRole("list", { name: "Servers" });
+    expect(starting).toBeDisabled();
+    expect(starting).toHaveTextContent("Starting...");
+    // alpha still reports "disconnected" here; the other Run stays off anyway,
+    // since it would replace the run that is connecting.
+    const other = within(list).getByRole("button", { name: "Run beta" });
+    expect(other).toBeDisabled();
+    expect(other).toHaveTextContent(/^Run$/);
+
+    await act(async () => connected.resolve("ready"));
+  });
+
   it("shows progress, not a score, until the run finishes", async () => {
     setupSuccessfulRunMocks();
     // Protocol never answers: the run stays going.
@@ -1113,7 +1790,7 @@ describe("ConformanceTab", () => {
         onSelectServer={vi.fn()}
       />,
     );
-    clickRun();
+    await clickRun();
 
     expect(
       await screen.findByText(
@@ -1123,7 +1800,7 @@ describe("ConformanceTab", () => {
     // Apps and Tasks finished, yet no headline number claims a result.
     await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
     expect(screen.queryByText(/^\d+\/\d+ · partial$/)).toBeNull();
-    expect(screen.queryByText("Fully conformant.")).toBeNull();
+    expect(screen.queryByText("Conformant.")).toBeNull();
   });
 
   it("counts only the suites the run covers in its progress", async () => {
@@ -1139,7 +1816,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     // Tasks and OAuth are left out: two suites, Apps done, Protocol going.
@@ -1150,7 +1827,7 @@ describe("ConformanceTab", () => {
     ).toBeInTheDocument();
   });
 
-  it("goes back to the server list from History's Overview after a run", async () => {
+  it("goes back to the server list from the run's Back", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
     const lastRun = {
@@ -1198,8 +1875,7 @@ describe("ConformanceTab", () => {
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
-    fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
 
     // The page's home, not the run it just left.
     expect(screen.getByRole("list", { name: "Servers" })).toBeInTheDocument();
@@ -1246,7 +1922,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(
       screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
     );
@@ -1259,6 +1935,7 @@ describe("ConformanceTab", () => {
     expect(onSaveServerDefaults).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ oauthUnscored: [left.id] }),
+      {},
     );
     await waitFor(() => expect(mockStartOAuth).toHaveBeenCalled());
     await waitFor(() =>
@@ -1267,9 +1944,11 @@ describe("ConformanceTab", () => {
 
     // The failed step reads as unscored, and does not fail the run.
     fireEvent.click(suiteHeader("oauth"));
-    const row = screen.getByText(left.title).closest("div")!.parentElement!;
+    const row = screen.getByText(left.title).closest("button")!;
     expect(within(row).getByText("unscored")).toBeInTheDocument();
-    // Its failure is reported, not counted: grey, not red.
+    // Its failure is reported, not counted: grey, not red. It shows once open.
+    expect(within(row).queryByText("profile shape is wrong")).toBeNull();
+    fireEvent.click(row);
     const message = screen.getByText("profile shape is wrong");
     expect(message).toHaveClass("text-muted-foreground");
     expect(message).not.toHaveClass("text-red-600");
@@ -1281,7 +1960,7 @@ describe("ConformanceTab", () => {
     expect(within(suiteHeader("oauth")).queryByText("FAILED")).toBeNull();
   });
 
-  it("starts step 2 from the server's default checks", () => {
+  it("starts step 2 from the server's default checks", async () => {
     const alpha = createHttpServer({ name: "alpha" });
     render(
       <ConformanceTab
@@ -1292,7 +1971,7 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1320,20 +1999,27 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     expect(onSaveServerDefaults).toHaveBeenCalledWith(
       "alpha",
       expect.objectContaining({ tasks: [] }),
+      {},
     );
     await screen.findByRole("button", { name: /^(Run again|Running\.\.\.)$/ });
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
     );
 
+    // The checks that still need a tool stay picked in the defaults, so they
+    // run once a tool is set.
+    expect(onSaveServerDefaults.mock.calls[0]![1].protocol).toBeUndefined();
+
     // The saved row has not come back yet: Settings shows the run's picks.
+    // Its protocol checks that need a tool show unchecked, so the suite's box
+    // does too.
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1341,13 +2027,16 @@ describe("ConformanceTab", () => {
     );
     expect(
       screen.getByRole("checkbox", { name: "Run Protocol" }),
-    ).toHaveAttribute("data-state", "checked");
+    ).toHaveAttribute("data-state", "unchecked");
+    expect(
+      screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
+    ).not.toHaveTextContent(/(^|\D)0\/\d+ checks selected/);
   });
 
   it("runs again with the checks changed in Settings", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha]}
@@ -1360,6 +2049,19 @@ describe("ConformanceTab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: { tasks: [], tasksAdvice: [] } }}
+        history={<p>History table</p>}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // Run again picks up the change before the save comes back.
@@ -1394,14 +2096,17 @@ describe("ConformanceTab", () => {
     // A fixed message, not the raw backend error; the box goes back.
     await waitFor(() =>
       expect(error).toHaveBeenCalledWith(
-        "Could not save the default checks. Try again.",
+        "Could not save the default checks and inputs. Try again.",
       ),
     );
-    // Once the save settles, the boxes show what is saved again.
+    // Once the save settles, the boxes show what is saved again. The Tasks
+    // checks that need a tool stay unchecked, so the count shows the others.
+    const tasksHeader = () =>
+      screen.getByRole("button", { name: /^Tasks.*checks selected$/ });
     await waitFor(() =>
-      expect(
-        screen.getByRole("checkbox", { name: "Run Tasks" }),
-      ).toHaveAttribute("data-state", "checked"),
+      expect(tasksHeader()).not.toHaveTextContent(
+        /(^|\D)0\/\d+ checks selected/,
+      ),
     );
 
     // Run again does not use the change that was never saved.
@@ -1424,7 +2129,8 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByText("History table")).toBeInTheDocument();
@@ -1499,6 +2205,14 @@ describe("ConformanceTab", () => {
               properties: { message: { type: "string" } },
             },
           },
+          {
+            name: "weather",
+            annotations: { readOnlyHint: true },
+            outputSchema: {
+              type: "object",
+              properties: { temperature: { type: "number" } },
+            },
+          },
         ],
       });
     });
@@ -1521,8 +2235,12 @@ describe("ConformanceTab", () => {
         );
         await user.click(screen.getByRole("option", { name: pin }));
       }
-      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      await continueSetup();
     }
+
+    /** The field a tool dropdown sits in, with its arguments and level. */
+    const fieldOf = (combobox: HTMLElement) =>
+      within(combobox.parentElement as HTMLElement);
 
     /** Setup to step 2 with the Protocol suite open. */
     async function openProtocolChecks() {
@@ -1537,46 +2255,223 @@ describe("ConformanceTab", () => {
       );
     }
 
+    it.each([
+      {
+        suite: "Protocol",
+        field: "Tool that emits logs",
+        row: "Logs Require A Log Level",
+        missing: "2 optional checks need input",
+        ready: "1 optional check needs input",
+      },
+      {
+        suite: "Tasks",
+        field: "Tool that creates a task",
+        row: "Result Type Discipline",
+        missing: "11 optional checks need input",
+        ready: undefined,
+      },
+    ])(
+      "keeps required-argument badges in $suite until arguments are valid",
+      async ({ suite, field, row, missing, ready }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "echo",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: { projectId: { type: "string" } },
+                required: ["projectId"],
+              },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2();
+        const header = screen.getByRole("button", {
+          name: new RegExp(`^${suite}.*checks selected$`),
+        });
+        fireEvent.click(header);
+        const tool = screen.getByRole("combobox", { name: field });
+        await waitFor(() => expect(tool).toBeEnabled());
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+        );
+        const checkRow = screen.getByRole("button", {
+          name: new RegExp(`^${row}`),
+        });
+        expect(checkRow).toHaveTextContent("Needs input");
+        expect(
+          within(header).getByText(inputBadge(missing)),
+        ).toBeInTheDocument();
+
+        // Filled in through the form built from the tool's input schema.
+        const args = fieldOf(tool).getByPlaceholderText("Enter projectId");
+        fireEvent.change(args, { target: { value: "project-1" } });
+        expect(checkRow).toHaveTextContent("Input set");
+        if (ready)
+          expect(
+            within(header).getByText(inputBadge(ready)),
+          ).toBeInTheDocument();
+        else expect(within(header).queryByText(/needs? input/)).toBeNull();
+
+        // An emptied required box is not sent, so the check needs input again.
+        fireEvent.change(args, { target: { value: "" } });
+        expect(checkRow).toHaveTextContent("Needs input");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText(inputBadge(missing)),
+        ).toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      {
+        suite: "Protocol",
+        field: "Tool that emits logs",
+        row: "Logs Require A Log Level",
+      },
+      {
+        suite: "Tasks",
+        field: "Tool that creates a task",
+        row: "Result Type Discipline",
+      },
+    ])(
+      "clears $suite badges after manual selection when the schema cannot be checked",
+      async ({ suite, field, row }) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "echo",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  d: { type: "string", pattern: "^\\d{4}\\-\\d{2}$" },
+                },
+              },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2();
+        const header = screen.getByRole("button", {
+          name: new RegExp(`^${suite}.*checks selected$`),
+        });
+        fireEvent.click(header);
+        const tool = screen.getByRole("combobox", { name: field });
+        await waitFor(() => expect(tool).toBeEnabled());
+        const checkRow = screen.getByRole("button", {
+          name: new RegExp(`^${row}`),
+        });
+        expect(checkRow).toHaveTextContent("Needs input");
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+        );
+        expect(checkRow).toHaveTextContent("Input set");
+        // An optional argument: untick skip, then fill it in.
+        fireEvent.click(fieldOf(tool).getByRole("checkbox", { name: "skip" }));
+        fireEvent.change(fieldOf(tool).getByPlaceholderText("Enter d"), {
+          target: { value: "2026-11" },
+        });
+        expect(checkRow).toHaveTextContent("Input set");
+        fireEvent.click(header);
+        if (suite === "Tasks")
+          expect(within(header).queryByText(/needs? input/)).toBeNull();
+        else
+          expect(
+            within(header).getByText(
+              inputBadge("1 optional check needs input"),
+            ),
+          ).toBeInTheDocument();
+      },
+    );
+
+    it("sends the output check's tool on its own", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool to check output" }),
+      );
+      // Only tools that declare an output schema can be graded.
+      expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+        ["Not set", "weather·read-only"],
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunProtocol).toHaveBeenCalledWith(
+          "alpha",
+          expect.objectContaining({
+            probes: { toolCallProbe: { toolName: "weather" } },
+          }),
+        ),
+      );
+    });
+
     it("asks under the check which tool to call, and runs with it", async () => {
       const user = userEvent.setup();
       setupSuccessfulRunMocks();
       await openProtocolChecks();
 
-      // One field per tool, under the first check that calls it.
+      // One field per tool, under the check that calls it.
       expect(
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       ).toBeInTheDocument();
+      // The log level shows only once a tool is picked.
       expect(
-        screen.getByText("Calls the tool set under Logs Require A Log Level."),
-      ).toBeInTheDocument();
+        screen.queryByRole("combobox", { name: "Log level to request" }),
+      ).toBeNull();
 
-      await user.click(
-        screen.getByRole("combobox", { name: "Tool that emits logs" }),
-      );
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await user.click(logs);
       // Read-only tools first, and a warning on one that may modify data.
       const options = screen.getAllByRole("option").map((o) => o.textContent);
       expect(options).toEqual([
         "Not set",
-        "echo · read-only",
-        "delete_row · may modify data",
+        "echo·read-only",
+        "weather·read-only",
+        "delete_row·may modify data",
       ]);
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      // The arguments editor Evals uses, here with its Raw JSON switch on.
-      fireEvent.click(screen.getByRole("switch"));
-      const args = screen.getByRole("textbox", { name: "Arguments" });
-      fireEvent.change(args, { target: { value: "[1]" } });
-      expect(screen.getByText("Expected a JSON object")).toBeInTheDocument();
-      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
-      fireEvent.change(args, { target: { value: '{"message": "hi"}' } });
+      // A form from the tool's input schema; message is optional, so it
+      // starts skipped.
+      fireEvent.click(fieldOf(logs).getByRole("checkbox", { name: "skip" }));
+      fireEvent.change(fieldOf(logs).getByPlaceholderText("Enter message"), {
+        target: { value: "hi" },
+      });
       expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      // The level the log level advice asks for: the SDK's default until
+      // picked.
+      const level = screen.getByRole("combobox", {
+        name: "Log level to request",
+      });
+      expect(level).toHaveTextContent("warning");
+      await user.click(level);
+      await user.click(screen.getByRole("option", { name: "info" }));
 
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       const sent = {
         probes: {
-          logProbe: { toolName: "echo", arguments: { message: "hi" } },
+          logProbe: {
+            toolName: "echo",
+            arguments: { message: "hi" },
+            level: "info",
+          },
         },
       };
       await waitFor(() =>
@@ -1600,22 +2495,22 @@ describe("ConformanceTab", () => {
       );
     });
 
-    it("offers the tool's own argument names", async () => {
+    it("lists the tool's own arguments as fields", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await user.click(logs);
       await user.click(
-        screen.getByRole("combobox", { name: "Tool that emits logs" }),
-      );
-      await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      await user.click(screen.getByRole("button", { name: "Add argument" }));
-      await user.click(screen.getByText("Select arg…"));
-
+      expect(fieldOf(logs).getByText("message")).toBeInTheDocument();
       expect(
-        await screen.findByRole("option", { name: /message/ }),
+        fieldOf(logs).getByPlaceholderText("Enter message"),
       ).toBeInTheDocument();
+      expect(fieldOf(logs).queryByRole("switch")).toBeNull();
     });
 
     it("flags the checks that need an input before the suite is opened", async () => {
@@ -1628,11 +2523,14 @@ describe("ConformanceTab", () => {
       });
       expect(header).toHaveAttribute("aria-expanded", "false");
       expect(
-        within(header).getByText("3 checks need input"),
+        within(header).getByText(inputBadge("3 optional checks need input")),
       ).toBeInTheDocument();
+      // The protocol suite runs without these tools, so the badge says so.
+      expect(within(header).getByText("optional").tagName).toBe("EM");
 
       fireEvent.click(header);
-      expect(screen.getAllByText("Needs input")).toHaveLength(3);
+      // Three protocol checks, the log advice, and eleven Tasks checks.
+      expect(screen.getAllByText("Needs input")).toHaveLength(15);
       await waitFor(() =>
         expect(
           screen.getByRole("combobox", { name: "Tool that emits logs" }),
@@ -1642,29 +2540,405 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      // One tool serves both logging checks.
       expect(screen.getAllByText("Input set")).toHaveLength(2);
-      expect(screen.getAllByText("Needs input")).toHaveLength(1);
+      expect(screen.getAllByText("Needs input")).toHaveLength(13);
       expect(
-        within(header).getByText("1 check needs input"),
+        within(header).getByText(inputBadge("2 optional checks need input")),
       ).toBeInTheDocument();
     });
 
-    it("asks for no tool on Auto, where these checks do not run", async () => {
+    it("shows checks that need input unchecked until they have it", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2();
+
+      // Three protocol checks still need a tool: the count leaves them out,
+      // so the suite's box is unchecked.
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      const [, picked, total] = header
+        .textContent!.match(/(\d+)\/(\d+) checks selected/)!
+        .map(Number);
+      expect(picked).toBe(total! - 3);
+      const suiteBox = screen.getByRole("checkbox", { name: "Run Protocol" });
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      fireEvent.click(header);
+      const logsCheck = screen.getByRole("checkbox", {
+        name: "Run Logs Require A Log Level",
+      });
+      expect(logsCheck).toHaveAttribute("data-state", "unchecked");
+      expect(logsCheck).toBeDisabled();
+
+      // Every check that can run is picked, so the suite's box leaves the
+      // suite out, then picks it again.
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(`0/${total} checks selected`);
+      fireEvent.click(suiteBox);
+      expect(header).toHaveTextContent(
+        `${total! - 3}/${total} checks selected`,
+      );
+
+      // The tool field stays under the locked check, so it can still be set.
+      const logs = screen.getByRole("combobox", {
+        name: "Tool that emits logs",
+      });
+      await waitFor(() => expect(logs).toBeEnabled());
+      await user.click(logs);
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+      expect(logsCheck).toHaveAttribute("data-state", "checked");
+      expect(logsCheck).toBeEnabled();
+      expect(header).toHaveTextContent(
+        `${total! - 2}/${total} checks selected`,
+      );
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+
+      // The run still sends the checks without a tool, so the result reports
+      // them as not run for want of input, like Run again does.
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const { checkIds } = mockRunProtocol.mock.calls[0]![1] as {
+        checkIds?: string[];
+      };
+      expect(checkIds).toBeUndefined();
+    });
+
+    it("shades the output check when no tool declares an output schema", async () => {
+      const user = userEvent.setup();
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", annotations: { readOnlyHint: true } }],
+      });
+      await toStep2();
+      const header = screen.getByRole("button", {
+        name: /^Protocol.*checks selected$/,
+      });
+      fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", { name: "Tool that emits logs" }),
+        ).toBeEnabled(),
+      );
+
+      // Nothing to grade, so the check does not apply: no field, no tag, no
+      // count. It stays picked, so it runs once a tool declares a schema.
+      expect(
+        screen.queryByRole("combobox", { name: "Tool to check output" }),
+      ).toBeNull();
+      const box = screen.getByRole("checkbox", {
+        name: "Run Tool Output Schema Honored",
+      });
+      expect(box).toBeChecked();
+      const row = box.closest("label")!.parentElement!;
+      expect(row).toHaveClass("opacity-50");
+      await user.hover(within(row).getByText("Tool Output Schema Honored"));
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "No tool on this server declares an output schema, so this check does not apply.",
+      );
+      expect(
+        within(header).getByText(inputBadge("2 optional checks need input")),
+      ).toBeInTheDocument();
+    });
+
+    it("asks for no protocol tool on Auto, where these checks do not run", async () => {
       await toStep2("auto");
       const header = screen.getByRole("button", {
         name: /^Protocol.*checks selected$/,
       });
       expect(within(header).queryByText(/need(s)? input/)).toBeNull();
       fireEvent.click(header);
-      expect(screen.queryByText("Needs input")).toBeNull();
+      // Tasks still needs its tool on Auto; protocol tools do not apply.
+      expect(screen.getAllByText("Needs input")).toHaveLength(11);
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
-      expect(mockListTools).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["auto", undefined],
+      ["2025-11-25", undefined],
+      ["2026-07-28", undefined],
+      ["2026-07-28", "required"],
+      ["2026-07-28", "optional"],
+    ])(
+      "flags missing Tasks inputs on %s with task support %s even when the suite is closed",
+      async (pin, taskSupport) => {
+        if (taskSupport) {
+          mockListTools.mockResolvedValue({
+            tools: [
+              {
+                name: "echo",
+                annotations: { readOnlyHint: true },
+                execution: { taskSupport },
+              },
+            ],
+          });
+        }
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText(inputBadge("11 optional checks need input")),
+        ).toBeInTheDocument();
+        expect(within(header).getByText("optional").tagName).toBe("EM");
+
+        const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
+        fireEvent.click(suite);
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+        fireEvent.click(suite);
+        expect(
+          within(header).getByText(inputBadge("11 optional checks need input")),
+        ).toBeInTheDocument();
+
+        fireEvent.click(header);
+        const tool = await screen.findByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        const taskRow = screen.getByRole("button", {
+          name: /^Undeclared Task Creation Refused/,
+        });
+        expect(taskRow).toHaveTextContent("Needs input");
+        // A picked check without its tool sits the run out: shown unchecked,
+        // and locked until the tool is set.
+        const typeCheck = screen.getByRole("checkbox", {
+          name: "Run Result Type Discipline",
+        });
+        expect(typeCheck).toHaveAttribute("data-state", "unchecked");
+        expect(typeCheck).toBeDisabled();
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(
+          screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+        );
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+        expect(taskRow).toHaveTextContent("Input set");
+        expect(typeCheck).toHaveAttribute("data-state", "checked");
+        expect(typeCheck).toBeEnabled();
+
+        await user.click(
+          screen.getByRole("combobox", { name: "Tool that creates a task" }),
+        );
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(taskRow).toHaveTextContent("Needs input");
+        fireEvent.click(header);
+        expect(header).toHaveAttribute("aria-expanded", "false");
+        expect(
+          within(header).getByText(inputBadge("11 optional checks need input")),
+        ).toBeInTheDocument();
+      },
+    );
+
+    it.each([
+      ["auto", "required"],
+      ["auto", "optional"],
+      ["2025-11-25", "required"],
+      ["2025-11-25", "optional"],
+    ])(
+      "does not require a Tasks input on %s when a tool advertises %s task support",
+      async (pin, taskSupport) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "create_task",
+              execution: { taskSupport },
+              inputSchema: { type: "object", properties: {} },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        });
+        const user = userEvent.setup();
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        await waitFor(() =>
+          expect(within(header).queryByText(/needs? input/)).toBeNull(),
+        );
+        fireEvent.click(header);
+        const taskRow = screen.getByRole("button", {
+          name: /^Result Type Discipline/,
+        });
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        const tool = screen.getByRole("combobox", {
+          name: "Tool that creates a task",
+        });
+        await waitFor(() => expect(tool).toBeEnabled());
+        expect(tool).toHaveTextContent("Not set");
+
+        await user.click(tool);
+        await user.click(
+          screen.getByRole("option", { name: toolOption("create_task", "read-only") }),
+        );
+        expect(taskRow).toHaveTextContent("Input set");
+        await user.click(tool);
+        await user.click(screen.getByRole("option", { name: "Not set" }));
+        expect(within(taskRow).queryByText("Needs input")).toBeNull();
+        expect(within(header).queryByText(/needs? input/)).toBeNull();
+      },
+    );
+
+    it.each(["auto", "2025-11-25"])(
+      "keeps Tasks warnings on %s when the runner's automatic tool needs arguments",
+      async (pin) => {
+        mockListTools.mockResolvedValue({
+          tools: [
+            {
+              name: "z_create",
+              execution: { taskSupport: "required" },
+              inputSchema: {
+                type: "object",
+                properties: { message: { type: "string" } },
+                required: ["message"],
+              },
+            },
+            {
+              name: "a_create",
+              execution: { taskSupport: "required" },
+              inputSchema: { type: "object", properties: {} },
+            },
+            {
+              name: "optional_create",
+              execution: { taskSupport: "optional" },
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        });
+        await toStep2(pin);
+        const header = screen.getByRole("button", {
+          name: /^Tasks.*checks selected$/,
+        });
+        fireEvent.click(header);
+        await waitFor(() =>
+          expect(
+            screen.getByRole("combobox", {
+              name: "Tool that creates a task",
+            }),
+          ).toBeEnabled(),
+        );
+        expect(
+          within(header).getByText(inputBadge("11 optional checks need input")),
+        ).toBeInTheDocument();
+        expect(
+          screen.getByRole("button", {
+            name: /^Result Type Discipline/,
+          }),
+        ).toHaveTextContent("Needs input");
+      },
+    );
+
+    it("still requires a Tasks input when a tool forbids task execution", async () => {
+      mockListTools.mockResolvedValue({
+        tools: [{ name: "echo", execution: { taskSupport: "forbidden" } }],
+      });
+      await toStep2("2025-11-25");
+      const header = screen.getByRole("button", {
+        name: /^Tasks.*checks selected$/,
+      });
+      fireEvent.click(header);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", {
+            name: "Tool that creates a task",
+          }),
+        ).toBeEnabled(),
+      );
+      expect(
+        within(header).getByText(inputBadge("11 optional checks need input")),
+      ).toBeInTheDocument();
+    });
+
+    it("asks once for the Tasks tool on any pin, and for answers under the update check", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      // One field: the other checks that call it point to it.
+      expect(
+        screen.getAllByRole("combobox", { name: "Tool that creates a task" }),
+      ).toHaveLength(1);
+      expect(
+        screen.getAllByRole("checkbox", { name: "Use suite default" }).length,
+      ).toBeGreaterThan(0);
+      // The answers need a tool first.
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
+
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
+
+      const answers = screen.getByRole("textbox", {
+        name: "Answers to the task's questions (optional)",
+      });
+      fireEvent.change(answers, { target: { value: "[1]" } });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      // The message is tied to the box, so a screen reader reads it too.
+      expect(answers).toHaveAccessibleDescription(/Enter a JSON object/);
+      // Past the routes' cap the run would only get a 400.
+      fireEvent.change(answers, {
+        target: { value: JSON.stringify({ confirm: "x".repeat(10_001) }) },
+      });
+      expect(answers).toHaveAccessibleDescription(/under 10,000 characters/);
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
+      fireEvent.change(answers, {
+        target: { value: '{"confirm": {"action": "accept"}}' },
+      });
+      expect(screen.getByRole("button", { name: RUN_LABEL })).toBeEnabled();
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() =>
+        expect(mockRunTasks).toHaveBeenCalledWith("alpha", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+          toolName: "echo",
+          protocolVersion: "2025-11-25",
+          inputResponses: { confirm: { action: "accept" } },
+        }),
+      );
+    });
+
+    it("hides the flagged update check and its answers box", async () => {
+      enabledFlags.delete("conformance-tasks-update-check");
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await toStep2("auto");
+      fireEvent.click(
+        screen.getByRole("button", { name: /^Tasks.*checks selected$/ }),
+      );
+      const tool = await screen.findByRole("combobox", {
+        name: "Tool that creates a task",
+      });
+      await waitFor(() => expect(tool).toBeEnabled());
+      await user.click(tool);
+      await user.click(screen.getByRole("option", { name: toolOption("echo", "read-only") }));
+
+      expect(
+        screen.queryByText(TASKS_CHECK_CATALOG["tasks-update-ack-shape"].title),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("textbox", {
+          name: "Answers to the task's questions (optional)",
+        }),
+      ).toBeNull();
     });
 
     it("lists the tools once for every field, across pages", async () => {
@@ -1684,7 +2958,7 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that asks for input" }),
       );
       expect(
-        screen.getByRole("option", { name: "ask_user · read-only" }),
+        screen.getByRole("option", { name: toolOption("ask_user", "read-only") }),
       ).toBeInTheDocument();
       // Two fields, two pages: one call per page, not one per field.
       expect(mockListTools).toHaveBeenCalledTimes(2);
@@ -1716,13 +2990,16 @@ describe("ConformanceTab", () => {
         screen.getByRole("combobox", { name: "Tool that emits logs" }),
       );
       await user.click(
-        screen.getByRole("option", { name: "echo · read-only" }),
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
 
-      // Both checks that would call it are left out.
-      for (const title of ["Logs Require A Log Level", "Log Level Filtering"]) {
-        fireEvent.click(screen.getByRole("checkbox", { name: `Run ${title}` }));
-      }
+      // The check and the advice that would call it are left out.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Log Level Filtering" }),
+      );
       expect(
         screen.queryByRole("combobox", { name: "Tool that emits logs" }),
       ).toBeNull();
@@ -1730,6 +3007,125 @@ describe("ConformanceTab", () => {
       fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
       await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
       expect(mockRunProtocol.mock.calls[0]![1]).not.toHaveProperty("probes");
+      expect(mockRunProtocol.mock.calls[0]![1].readinessIds).not.toContain(
+        "readiness-log-level-filtering",
+      );
+    });
+
+    it("lists the advice under the checks, and moves the log tool to it when only it calls the tool", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      // Protocol, Tasks and OAuth each list theirs; Apps has none.
+      expect(
+        screen.getAllByText(/^Advice: \d+ tips?, run with the checks above\.$/),
+      ).toHaveLength(3);
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+      // Under the advice row: its own dropdown, filled with the check's tool,
+      // and the level.
+      expect(
+        screen.getByRole("checkbox", {
+          name: "Use the tool from Logs Require A Log Level",
+        }),
+      ).toBeChecked();
+      expect(
+        screen.getByRole("combobox", {
+          name: "Tool that emits logs for Log Level Filtering",
+        }),
+      ).toHaveTextContent("echo");
+      expect(
+        screen.getByRole("combobox", { name: "Log level to request" }),
+      ).toBeInTheDocument();
+
+      // Only the advice calls it now, so the tool field moves to its row.
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Run Logs Require A Log Level" }),
+      );
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+      // Another advice left out is not asked for.
+      fireEvent.click(
+        screen.getByRole("checkbox", {
+          name: "Run Explicit Session Termination",
+        }),
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      const sent = mockRunProtocol.mock.calls[0]![1];
+      expect(sent.probes).toEqual({ logProbe: { toolName: "echo" } });
+      expect(sent.checkIds).not.toContain("modern-logs-require-log-level");
+      expect(sent.readinessIds).toContain("readiness-log-level-filtering");
+      expect(sent.readinessIds).not.toContain("readiness-session-termination");
+    });
+
+    it("lets the advice pick its own log tool, and sends it with the run", async () => {
+      const user = userEvent.setup();
+      setupSuccessfulRunMocks();
+      await openProtocolChecks();
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+
+      const inherit = screen.getByRole("checkbox", {
+        name: "Use the tool from Logs Require A Log Level",
+      });
+      const adviceTool = screen.getByRole("combobox", {
+        name: "Tool that emits logs for Log Level Filtering",
+      });
+      await user.click(adviceTool);
+      await user.click(
+        screen.getByRole("option", { name: toolOption("weather", "read-only") }),
+      );
+      expect(inherit).not.toBeChecked();
+      expect(adviceTool).toHaveTextContent("weather");
+      // The check keeps its own tool.
+      expect(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      ).toHaveTextContent("echo");
+
+      fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
+      await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+      expect(mockRunProtocol.mock.calls[0]![1].probes).toEqual({
+        logProbe: { toolName: "echo" },
+        logLevelOverride: { toolName: "weather" },
+      });
+    });
+
+    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+      const user = userEvent.setup();
+      await openProtocolChecks();
+      // The advice calls the logs tool, so it can run once that is set.
+      await user.click(
+        screen.getByRole("combobox", { name: "Tool that emits logs" }),
+      );
+      await user.click(
+        screen.getByRole("option", { name: toolOption("echo", "read-only") }),
+      );
+      const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "unchecked");
+      const advice = screen.getByRole("checkbox", {
+        name: "Run Log Level Filtering",
+      });
+      expect(advice).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toBeDisabled();
+
+      fireEvent.click(suite);
+      // Two protocol checks still need a tool, so the suite's box stays
+      // unchecked while the advice comes back.
+      expect(suite).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toHaveAttribute("data-state", "checked");
+      expect(advice).toBeEnabled();
     });
   });
 
@@ -1767,24 +3163,35 @@ describe("ConformanceTab", () => {
   it("opens step 2 on the Settings defaults, not the last run's picks", async () => {
     setupSuccessfulRunMocks();
     const alpha = createHttpServer({ name: "alpha" });
-    render(
+    const props = { server: alpha, servers: [alpha], onSelectServer: vi.fn(), onSaveServerDefaults: vi.fn(async () => {}), history: <p>History table</p> };
+    const { rerender } = render(
       <ConformanceTab
-        server={alpha}
-        servers={[alpha]}
-        onSelectServer={vi.fn()}
-        onSaveServerDefaults={vi.fn(async () => {})}
-        history={<p>History table</p>}
+        {...props}
       />,
     );
     await runToCompletion();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: { tasks: [], tasksAdvice: [] } }}
+        history={<p>History table</p>}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
 
     // From History, Run opens the setup steps again.
-    fireEvent.click(screen.getByRole("button", { name: "Conformance History" }));
+    fireEvent.click(screen.getByTestId("conformance-run-back"));
+    fireEvent.click(screen.getByRole("tab", { name: "History" }));
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
@@ -1813,15 +3220,22 @@ describe("ConformanceTab", () => {
     expect(screen.getByText("Default Checks")).toBeInTheDocument();
     // Counts read "picked of total" here.
     expect(
-      screen.getByRole("button", { name: /^OAuth.*\d+ of \d+$/ }),
+      screen.getByRole("button", { name: /^OAuth.*checks selected$/ }),
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: "Run OAuth" }));
-    expect(onSaveServerDefaults).toHaveBeenCalledWith("alpha", {
-      oauth: false,
-    });
+    expect(onSaveServerDefaults).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        oauth: false,
+      }),
+      {},
+    );
 
     // Back to the run, which is still there.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
   });
@@ -1854,10 +3268,14 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
 
-    // Breadcrumb, Run again and when it ran; no pickers in the run's header.
-    expect(
-      screen.getByRole("button", { name: "Conformance History" }),
-    ).toBeInTheDocument();
+    // Back and the server's name, then Run again and when it ran; no
+    // Overview/History tabs and no pickers in the run's header.
+    expect(screen.getByTestId("conformance-run-back")).toHaveTextContent(
+      "Conformance",
+    );
+    expect(screen.getByRole("heading", { name: "alpha" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled();
     expect(screen.getByText(/ · UI$/)).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
@@ -1902,7 +3320,7 @@ describe("ConformanceTab", () => {
         onConnectServer={onConnectServer}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
     await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
   });
@@ -1918,7 +3336,7 @@ describe("ConformanceTab", () => {
     const error = vi.spyOn(toast, "error");
     const loading = vi.spyOn(toast, "loading");
     const success = vi.spyOn(toast, "success");
-    render(
+    const { rerender } = render(
       <ConformanceTab
         server={alpha}
         servers={[alpha, beta]}
@@ -1936,6 +3354,17 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledWith("beta", { signIn: false });
     // One toast says it is connecting, then settles into the result.
     expect(loading).toHaveBeenCalledWith("Connecting beta...");
+    // Not while beta is still loading into the session.
+    expect(success).not.toHaveBeenCalled();
+    const connectedBeta = createHttpServer({ name: "beta" });
+    rerender(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha, connectedBeta]}
+        onSelectServer={vi.fn()}
+        onConnectServer={onConnectServer}
+      />,
+    );
     await waitFor(() =>
       expect(success).toHaveBeenCalledWith("beta connected", {
         id: loading.mock.results[0]!.value,
@@ -1976,7 +3405,38 @@ describe("ConformanceTab", () => {
     rerender(
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+  });
+
+  it("lets History start a run with no server picked, as the header does", async () => {
+    // History's empty states read the page's run request; without a picked
+    // server the page must still provide it, or they lose their Run.
+    function HistoryRun() {
+      const request = useConformanceRunRequest();
+      return request ? (
+        <button type="button" onClick={request.run}>
+          History run
+        </button>
+      ) : null;
+    }
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?view=history");
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<HistoryRun />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "History run" }));
+
+    // The same setup steps the header's Run opens.
+    expect(
+      await screen.findByRole("button", { name: "Continue" }),
+    ).toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
   });
 
   it("connects the page's server when it arrives after step 1 opened", async () => {
@@ -2000,12 +3460,13 @@ describe("ConformanceTab", () => {
     expect(onConnectServer).toHaveBeenCalledTimes(1);
   });
 
-  it("reads no failure for a server named like an object built-in", () => {
+  it("reads no failure for a server named like an object built-in", async () => {
     // `in` would find the inherited `constructor` and loop on clearing it.
     const server = createHttpServer({ name: "constructor" });
     render(
       <ConformanceTab
         server={server}
+        serverTimeouts={{}}
         servers={[server]}
         onSelectServer={vi.fn()}
         onConnectServer={vi.fn(async () => "ready" as const)}
@@ -2014,7 +3475,11 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
 
     expect(screen.queryByRole("alert")).toBeNull();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(
+      screen.getByRole("heading", { name: "Set what you'd like to test" }),
+    ).toBeInTheDocument();
   });
 
   it("keeps each server's connect failure when they settle out of order", async () => {
@@ -2164,7 +3629,7 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={connected} servers={[connected]} {...props} />,
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
 
     // A later drop is a new state, not the old failure coming back.
     const dropped = { ...server, connectionStatus: "disconnected" as const };
@@ -2297,11 +3762,12 @@ describe("ConformanceTab", () => {
     await runToCompletion();
     fireEvent.click(suiteHeader("protocol"));
 
-    // Shut, an era skip says nothing to act on, so it carries no box.
-    expect(screen.queryByText(/Not applicable to the legacy era/)).toBeNull();
+    // Shut, an era skip stays in the inert content without a row preview.
+    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(isCollapsed(reason)).toBe(true);
 
     clickRow("No Session Id Minted");
-    const reason = screen.getByText(/Not applicable to the legacy era/);
+    expect(isCollapsed(reason)).toBe(false);
     expect(reason).toHaveClass("text-muted-foreground");
     expect(reason).not.toHaveClass("text-red-600");
   });
@@ -2316,45 +3782,6 @@ describe("ConformanceTab", () => {
         within(suiteHeader(suite)).getByText(SUITE_COPY[suite].title),
       ).toBeInTheDocument();
     }
-  });
-
-  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
-    // Directory submissions are a later phase than protocol conformance, so
-    // the sections stay out of the page until the flag says otherwise.
-    render(<ConformanceTab server={createHttpServer()} />);
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
-    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
-    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
-  });
-
-  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    render(<ConformanceTab server={createHttpServer()} />);
-
-    // Before any run, too: readiness has its own run control and recovers an
-    // in-flight run on mount, so hiding it until the suites run would strand
-    // both behind the full run, OAuth browser flow included.
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
-    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
-  });
-
-  it("keeps the readiness sections mounted when the first run starts", async () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    setupSuccessfulRunMocks();
-    render(<ConformanceTab server={createHttpServer()} />);
-    const before = screen.getByText("OpenAI Directory Readiness");
-
-    await runToCompletion();
-
-    // A remount would reset choices made before the run, such as the OpenAI
-    // submission mode; the same node means the same component instance.
-    expect(screen.getByText("OpenAI Directory Readiness")).toBe(before);
   });
 
   it("falls back to Overview when ?view=history has no History tab", () => {
@@ -2377,13 +3804,30 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // The app's list, never the suite default: the full suite includes
-    // `tasks-update-ack-shape`, which needs answers the app cannot send.
-    const [serverName, options] = mockRunTasks.mock.calls[0]!;
-    expect(serverName).toBe("http-server");
-    expect(options.checkIds).not.toContain("tasks-update-ack-shape");
-    expect(options.checkIds).toContain("tasks-wire-resolvable");
+    // The whole suite, and no tool, since none was set.
+    expect(mockRunTasks).toHaveBeenCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+      protocolVersion: "2025-11-25",
+    });
     expect(within(suiteHeader("tasks")).getByText("PASSED")).toBeDefined();
+  });
+
+  it("leaves the flagged update check out of a whole-suite Tasks run", async () => {
+    enabledFlags.delete("conformance-tasks-update-check");
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(mockRunTasks).toHaveBeenCalledWith(
+      "http-server",
+      expect.objectContaining({
+        checkIds: MCP_TASKS_CHECK_IDS.filter(
+          (id) => id !== "tasks-update-ack-shape",
+        ),
+      }),
+    );
   });
 
   it("marks Protocol and OAuth as not applicable for stdio servers", async () => {
@@ -2401,15 +3845,18 @@ describe("ConformanceTab", () => {
     expect(mockRunProtocol).not.toHaveBeenCalled();
   });
 
-  it("runs unpinned by default and forwards the OAuth profile's own version", async () => {
+  it("resolves Auto once and forwards that version to Protocol and OAuth", async () => {
     setupSuccessfulRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
 
-    clickRun();
+    await clickRun();
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenCalledWith("http-server", {
-        protocolVersion: undefined,
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
+        protocolVersion: "2025-11-25",
       });
     });
     await waitFor(() => {
@@ -2441,11 +3888,14 @@ describe("ConformanceTab", () => {
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2026-07-28" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     await waitFor(() => {
       expect(mockRunProtocol).toHaveBeenLastCalledWith("http-server", {
+        runTimeoutSeconds: 300,
+        remainingRunTimeoutMs: expect.any(Number),
+        signal: expect.any(AbortSignal),
         protocolVersion: "2026-07-28",
       });
     });
@@ -2493,18 +3943,18 @@ describe("ConformanceTab", () => {
       />,
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
-    // On "auto" the era is unknown, so both eras are listed.
+    // Auto resolves before step 2, so only its negotiated era is listed.
     expect(screen.getByText("Ping")).toBeDefined();
-    expect(screen.getByText("Modern Client Handshake")).toBeDefined();
+    expect(screen.queryByText("Modern Client Handshake")).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     await user.click(
       screen.getByRole("combobox", { name: "Select protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
-    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await continueSetup();
 
     // A legacy pin drops the modern-only checks entirely.
     expect(screen.queryByText("Modern Client Handshake")).toBeNull();
@@ -2542,7 +3992,7 @@ describe("ConformanceTab", () => {
     mockRunProtocol.mockReturnValue(pending.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     // The catalog line would read "not run yet", which is exactly wrong
     // while the run is live.
@@ -2572,7 +4022,7 @@ describe("ConformanceTab", () => {
     mockCompleteOAuth.mockReturnValue(poll.promise);
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     await screen.findByText("Waiting for browser authorization...");
     expect(suiteHeader("oauth").getAttribute("aria-expanded")).toBe("true");
@@ -2587,7 +4037,7 @@ describe("ConformanceTab", () => {
     );
 
     await waitFor(() => {
-      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1");
+      expect(mockCompleteOAuth).toHaveBeenCalledWith("session-1", { signal: expect.any(AbortSignal) });
     });
     expect(within(suiteHeader("oauth")).getByText("RUNNING")).toBeDefined();
     expect(screen.queryByText(/checks in this suite\. Not run yet/)).toBeNull();
@@ -2596,6 +4046,66 @@ describe("ConformanceTab", () => {
     await waitFor(() => {
       expect(within(suiteHeader("oauth")).getByText("PASSED")).toBeDefined();
     });
+    openSpy.mockRestore();
+  });
+
+  it("asks for sign-in at the top of the run, not in the OAuth suite at its end", async () => {
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockReturnValue({} as unknown as Window);
+    // Held back, so the run is on screen before sign-in is needed.
+    const oauthStart = createDeferred<{
+      phase: "authorization_needed";
+      sessionId: string;
+      authorizationUrl: string;
+    }>();
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockReturnValue(oauthStart.promise);
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await clickRun();
+    // The live region is there, empty, before sign-in is needed, so filling it
+    // is announced; inserted with its text, it may not be.
+    const announcement = await screen.findByTestId(
+      "conformance-oauth-announcement",
+    );
+    expect(announcement.getAttribute("role")).toBe("status");
+    expect(announcement.textContent).toBe("");
+    oauthStart.resolve({
+      phase: "authorization_needed",
+      sessionId: "session-1",
+      authorizationUrl: "https://auth.example.com/authorize",
+    });
+
+    // Below the fold, a run waiting on sign-in looked like one that never
+    // stops loading (CQT-97).
+    await screen.findByText("Waiting for browser authorization...");
+    const prompt = screen.getByTestId("conformance-oauth-prompt");
+    expect(screen.getByTestId("conformance-oauth-announcement")).toBe(
+      announcement,
+    );
+    expect(announcement.textContent).toBe(
+      "This run is waiting for you to sign in.",
+    );
+    expect(
+      prompt.compareDocumentPosition(suiteHeader("protocol")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(prompt).getByRole("button", { name: "Open sign-in page" }),
+    ).toBeDefined();
+    expect(
+      within(prompt).getByRole("button", { name: "Skip OAuth" }),
+    ).toBeDefined();
+    // One prompt: the OAuth suite points at it rather than repeating it.
+    expect(
+      screen.getAllByRole("button", { name: "Skip OAuth" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByText(
+        "Waiting for sign-in. Use the prompt at the top of the run.",
+      ),
+    ).toBeDefined();
     openSpy.mockRestore();
   });
 
@@ -2611,14 +4121,20 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
-    await screen.findByText(
-      "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page.",
-    );
+    // The blocked-window dialog asks; the note at the top of the run would
+    // repeat the same message and buttons, so it waits until the window opens.
+    await screen.findByRole("alertdialog");
+    expect(screen.queryByTestId("conformance-oauth-prompt")).toBeNull();
     expect(
       screen.queryByText("Waiting for browser authorization..."),
     ).toBeNull();
+    // The OAuth suite warns too: a spinner there reads as a run that never
+    // finishes (CQT-97).
+    expect(
+      screen.getByTestId("conformance-oauth-suite-blocked"),
+    ).toBeDefined();
 
     // Opening it again from a click is what a popup blocker lets through. The
     // blocked-window dialog sits over the page, so its button is the one in
@@ -2651,7 +4167,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     await screen.findByText("Waiting for browser authorization...");
 
     fireEvent.click(screen.getByRole("button", { name: "Skip OAuth" }));
@@ -2698,7 +4214,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     await screen.findByText("Waiting for browser authorization...");
 
     window.dispatchEvent(
@@ -2735,7 +4251,7 @@ describe("ConformanceTab", () => {
     });
 
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     await screen.findByText(/authorization URL is not an http or https/);
     expect(openSpy).not.toHaveBeenCalled();
@@ -2753,7 +4269,7 @@ describe("ConformanceTab", () => {
     // them, and the client sends no opt-in flag.
     expect(screen.queryByText("Run negative OAuth checks")).toBeNull();
 
-    clickRun();
+    await clickRun();
 
     await waitFor(() => {
       expect(mockStartOAuth).toHaveBeenCalledTimes(1);
@@ -2820,6 +4336,11 @@ describe("ConformanceTab", () => {
     clickRow("Ping");
 
     expect(isCollapsed(body)).toBe(false);
+    expect(isCollapsed(screen.getByText(/Round Trip Ms:/))).toBe(true);
+    fireEvent.click(
+      within(body.parentElement!).getByRole("button", { name: "More details" }),
+    );
+    expect(isCollapsed(screen.getByText(/Round Trip Ms:/))).toBe(false);
     expect(screen.getByText(/Round Trip Ms:/)).toBeInTheDocument();
     expect(screen.getByText(/"tools"/)).toBeInTheDocument();
     expect(screen.getByText(/"resources"/)).toBeInTheDocument();
@@ -3042,7 +4563,7 @@ describe("ConformanceTab", () => {
 
     const { rerender } = render(<ConformanceTab server={serverA} />);
 
-    clickRun();
+    await clickRun();
     await waitFor(() => {
       expect(within(suiteHeader("apps")).getByText("PASSED")).toBeDefined();
     });
@@ -3068,7 +4589,7 @@ describe("ConformanceTab", () => {
       result: createProtocolResult({ checks: [check("Fresh check")] }),
     });
 
-    clickRun();
+    await clickRun();
     await screen.findByText("Fresh check");
 
     staleProtocolRun.resolve({
@@ -3095,8 +4616,10 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     // The reason replaces the suite's description, under a neutral chip
-    // rather than a red failure.
-    const header = screen.getByText(/No login required/).closest("button")!;
+    // rather than a red failure, in the words a saved run uses too.
+    const header = screen
+      .getByText("OAuth doesn't apply: this server needs no login.")
+      .closest("button")!;
     expect(within(header).getByText("NOT APPLICABLE")).toBeDefined();
     expect(within(header).queryByText("FAILED")).toBeNull();
 
@@ -3276,12 +4799,14 @@ describe("ConformanceTab", () => {
         .closest("button"),
     ).toBe(pendingRow);
     // An unscored finding reads as information, not as a failure that counts.
+    fireEvent.click(pendingRow!);
     expect(screen.getByText("schema mismatch")).toHaveClass(
       "text-muted-foreground",
     );
 
     const scoredRow = screen.getByText("Ping").closest("button");
     expect(scoredRow).not.toHaveTextContent("unscored");
+    fireEvent.click(scoredRow!);
     expect(screen.getByText("pong missing")).toHaveClass("text-red-600");
   });
 
@@ -3296,6 +4821,30 @@ describe("ConformanceTab", () => {
     await runToCompletion();
 
     expect(within(suiteHeader("tasks")).getByText("INCOMPLETE")).toBeDefined();
+  });
+
+  it("shows Tasks advice the run could not judge as a grey line", async () => {
+    setupSuccessfulRunMocks();
+    const reason =
+      "Not checked: the task didn't fail, so there was no failure reason to look at.";
+    mockRunTasks.mockResolvedValue({
+      success: true,
+      result: createTasksResult({
+        uncheckedAdvice: [
+          {
+            id: "tasks-readiness-failed-status-message",
+            title: "Failed Task Status Message",
+            reason,
+          },
+        ],
+      }),
+    });
+
+    render(<ConformanceTab server={createHttpServer()} />);
+    await runToCompletion();
+
+    expect(screen.getByText("Failed Task Status Message")).toBeDefined();
+    expect(screen.getByText(reason)).toHaveClass("text-muted-foreground");
   });
 
   it("shows which URLs were probed on a failed OAuth step", async () => {
@@ -3390,13 +4939,14 @@ describe("ConformanceTab", () => {
     render(<ConformanceTab server={createHttpServer()} />);
     await runToCompletion();
 
-    // On the row itself, not only inside its collapsed details.
+    // The row shows its status; the reason waits for the row to open.
     const row = screen.getByText("Request Resource Metadata").closest("button");
     expect(row).not.toBeNull();
     expect(within(row!).getByText("!")).toBeInTheDocument();
-    expect(
-      within(row!).getByText("The authorization server timed out."),
-    ).toBeInTheDocument();
+    const reason = "The authorization server timed out.";
+    expect(within(row!).queryByText(reason)).toBeNull();
+    fireEvent.click(row!);
+    expect(screen.getByText(reason).closest("[inert]")).toBeNull();
   });
 });
 
@@ -3421,7 +4971,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     const dialog = await screen.findByRole("alertdialog");
     expect(within(dialog).getByText(DIALOG_TITLE)).toBeInTheDocument();
@@ -3442,7 +4992,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     const dialog = await screen.findByRole("alertdialog");
 
     fireEvent.click(
@@ -3456,7 +5006,7 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue(null);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
     const dialog = await screen.findByRole("alertdialog");
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Skip OAuth" }));
@@ -3471,11 +5021,375 @@ describe("ConformanceTab blocked sign-in window", () => {
     setupAuthorizationNeeded();
     vi.spyOn(window, "open").mockReturnValue({} as Window);
     render(<ConformanceTab server={createHttpServer()} />);
-    clickRun();
+    await clickRun();
 
     expect(
       await screen.findByText("Waiting for browser authorization..."),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
+  it("keeps local Tasks overrides when saved server inputs load and Settings saves", async () => {
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const local = {
+      tasksProbe: { toolName: "default-job" },
+      tasksOverrides: {
+        "tasks-inline-result": {
+          toolName: "custom-job",
+          arguments: { fast: true },
+        },
+      },
+    };
+    window.localStorage.setItem(
+      "mcpjam.conformance.probes.v1:alpha",
+      JSON.stringify(local),
+    );
+    const selection = {
+      protocol: [],
+      apps: [],
+      tasks: ["tasks-inline-result"],
+      oauth: false,
+    } satisfies import("@/hooks/use-conformance-run").ConformanceSelection;
+    const save = vi.fn(
+      async (_name: string, _selection: unknown, _inputs?: unknown) => {},
+    );
+    window.history.replaceState(null, "", "/conformance?run=alpha");
+    render(
+      <ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        serverInputs={{ alpha: { tasksProbe: { toolName: "shared-job" } } }}
+        serverDefaults={{ alpha: selection }}
+        onLoadServerDefaults={vi.fn(async () => ({
+          selection,
+          inputs: { tasksProbe: { toolName: "shared-job" } },
+        }))}
+        onSaveServerDefaults={save}
+      />,
+    );
+    await waitFor(() =>
+      expect(mockRunTasks).toHaveBeenCalledWith(
+        "alpha",
+        expect.objectContaining({
+          toolName: "default-job",
+          checkOverrides: {
+            "tasks-inline-result": {
+              toolName: "custom-job",
+              toolArguments: { fast: true },
+            },
+          },
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run again" })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Run OAuth" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    expect(save.mock.calls.at(-1)?.[2]).not.toHaveProperty("tasksOverrides");
+    expect(
+      JSON.parse(
+        window.localStorage.getItem("mcpjam.conformance.probes.v1:alpha")!,
+      ),
+    ).toEqual(local);
+  });
+
+});
+
+
+it("keeps completed suites and ignores late results after a shared timeout, including parked OAuth", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "session-timeout",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({
+      server, runTimeoutSeconds: 1, deferOAuthAuthorization: true,
+    }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("running");
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => { vi.advanceTimersByTime(1_000); });
+    expect(result.current.protocol.status).toBe("done");
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.oauth.status).toBe("unavailable");
+    expect(result.current.oauth.skipped).toBe(true);
+    await act(async () => { finishApps({ success: true, result: createAppsResult() }); });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("does not dispatch later suites when the deadline expires after preflight", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    vi.mocked(checkConformanceConnection).mockImplementationOnce(async () => {
+      // Move the wall clock without firing the timer: dispatch must notice expiry.
+      vi.setSystemTime(1_000);
+      return { status: "ready", protocolVersion: "2025-11-25" };
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { await result.current.runAll(); });
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(mockRunApps).not.toHaveBeenCalled();
+    expect(mockRunTasks).not.toHaveBeenCalled();
+    expect(mockStartOAuth).not.toHaveBeenCalled();
+    for (const suite of [result.current.protocol, result.current.apps, result.current.tasks, result.current.oauth]) {
+      expect(suite.status).toBe("error");
+      expect(suite.error).toBe("Run timed out after 1 seconds");
+    }
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("sets a saved server's run timeout in Settings and runs with it", async () => {
+  setupSuccessfulRunMocks();
+  const alpha = createHttpServer({ name: "alpha" });
+  const saveTimeout = vi.fn(async (_name: string, _seconds: number | null) => {});
+  render(<ConformanceTab
+    server={alpha}
+    servers={[alpha]}
+    persist={{ projectId: "project-1" }}
+    isSavedServer={() => true}
+    onSelectServer={vi.fn()}
+    onSaveServerDefaults={vi.fn(async () => {})}
+    serverDefaults={{ alpha: {} }}
+    serverTimeouts={{}}
+    onSaveServerTimeout={saveTimeout}
+  />);
+  await runToCompletion();
+  expect(mockRunProtocol).toHaveBeenLastCalledWith(
+    "alpha",
+    expect.objectContaining({ runTimeoutSeconds: 300 }),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+  const field = screen.getByLabelText("Total run timeout (seconds)");
+  expect(field).toHaveValue(300);
+  fireEvent.change(field, { target: { value: "90" } });
+  fireEvent.blur(field);
+  await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 90));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Back" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+  await runToCompletion();
+  expect(mockRunProtocol).toHaveBeenLastCalledWith(
+    "alpha",
+    expect.objectContaining({ runTimeoutSeconds: 90 }),
+  );
+});
+
+
+it.each(["lands", "fails"])(
+  "runs with a timeout whose save is still in flight, and drops it if the save %s badly",
+  async (outcome) => {
+    // Back works while the timeout saves, so Run again can start before the
+    // save lands: the run must already use the new value.
+    setupSuccessfulRunMocks();
+    const alpha = createHttpServer({ name: "alpha" });
+    const save = createDeferred<void>();
+    const saveTimeout = vi.fn(
+      (_name: string, _seconds: number | null) => save.promise,
+    );
+    const error = vi.spyOn(toast, "error").mockImplementation(() => "");
+    try {
+      render(<ConformanceTab
+        server={alpha}
+        servers={[alpha]}
+        persist={{ projectId: "project-1" }}
+        isSavedServer={() => true}
+        onSelectServer={vi.fn()}
+        onSaveServerDefaults={vi.fn(async () => {})}
+        serverDefaults={{ alpha: {} }}
+        serverTimeouts={{}}
+        onSaveServerTimeout={saveTimeout}
+      />);
+      await runToCompletion();
+
+      fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+      const field = screen.getByLabelText("Total run timeout (seconds)");
+      fireEvent.change(field, { target: { value: "90" } });
+      fireEvent.blur(field);
+      await waitFor(() => expect(saveTimeout).toHaveBeenCalledWith("alpha", 90));
+      fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+      // The save has not landed yet.
+      await runToCompletion();
+      expect(mockRunProtocol).toHaveBeenLastCalledWith(
+        "alpha",
+        expect.objectContaining({ runTimeoutSeconds: 90 }),
+      );
+
+      if (outcome === "fails") {
+        await act(async () => save.reject(new Error("offline")));
+        expect(error).toHaveBeenCalledWith(
+          "Could not save the run timeout. Try again.",
+        );
+        // Not saved, so the next run is back on the default.
+        await runToCompletion();
+        expect(mockRunProtocol).toHaveBeenLastCalledWith(
+          "alpha",
+          expect.objectContaining({ runTimeoutSeconds: 300 }),
+        );
+      } else {
+        await act(async () => save.resolve());
+        await runToCompletion();
+        expect(mockRunProtocol).toHaveBeenLastCalledWith(
+          "alpha",
+          expect.objectContaining({ runTimeoutSeconds: 90 }),
+        );
+      }
+    } finally {
+      error.mockRestore();
+    }
+  },
+);
+
+
+it("runs an unsaved project server, or one with no project, on the default timeout", async () => {
+  setupSuccessfulRunMocks();
+  // A value the old setup clock left behind is no longer read.
+  window.localStorage.setItem("mcpjam:conformance:timeout:local", "90");
+  try {
+    const unsaved = createHttpServer({ name: "unsaved" });
+    const view = render(<ConformanceTab
+      server={unsaved}
+      servers={[unsaved]}
+      persist={{ projectId: "project-1" }}
+      isSavedServer={() => false}
+      onSelectServer={vi.fn()}
+    />);
+    await runToCompletion();
+    expect(mockRunProtocol).toHaveBeenLastCalledWith(
+      "unsaved",
+      expect.objectContaining({ runTimeoutSeconds: 300 }),
+    );
+    view.unmount();
+
+    const local = createHttpServer({ name: "local" });
+    render(<ConformanceTab
+      server={local}
+      servers={[local]}
+      onSelectServer={vi.fn()}
+    />);
+    await runToCompletion();
+    expect(mockRunProtocol).toHaveBeenLastCalledWith(
+      "local",
+      expect.objectContaining({ runTimeoutSeconds: 300 }),
+    );
+  } finally {
+    window.localStorage.removeItem("mcpjam:conformance:timeout:local");
+  }
+});
+
+
+it("rejects a late suite response before a delayed deadline timer fires", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(0);
+    setupSuccessfulRunMocks();
+    let finishApps: (value: unknown) => void = () => {};
+    mockRunApps.mockImplementation(() => new Promise((resolve) => { finishApps = resolve; }));
+    const server = createHttpServer();
+    const { result } = renderHook(() => useConformanceRun({ server, runTimeoutSeconds: 1 }));
+    await act(async () => { void result.current.runAll(); });
+    expect(result.current.protocol.status).toBe("done");
+    await act(async () => {
+      vi.setSystemTime(1_001);
+      finishApps({ success: true, result: createAppsResult() });
+    });
+    expect(result.current.apps.status).toBe("error");
+    expect(result.current.apps.verdict).toBe("incomplete");
+    expect(result.current.pooledScore?.outcome).toBe("incomplete");
+    expect(result.current.protocol.status).toBe("done");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+
+it("leaves unstarted public-score OAuth unscored at the default deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "deferred-score",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, deferOAuthAuthorization: true }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    const completedScore = result.current.pooledScore;
+    expect(result.current.oauth.status).toBe("needs-authorization");
+    await act(async () => {
+      vi.advanceTimersByTime(300_000);
+    });
+    expect(result.current.pooledScore).toEqual(completedScore);
+    expect(cancelOAuthConformance).toHaveBeenCalledWith("deferred-score");
+    expect(result.current.oauth).toMatchObject({
+      status: "unavailable",
+      skipped: true,
+    });
+    expect(result.current.oauth.authorizationUrl).toBeUndefined();
+    expect(result.current.oauth.unavailableReason).toContain(
+      "Run again to authorize",
+    );
+    await act(async () => {
+      result.current.authorizeOAuth();
+    });
+    expect(mockStartOAuth).toHaveBeenCalledTimes(1);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it("still marks actively waiting OAuth incomplete when the run expires", async () => {
+  vi.useFakeTimers();
+  try {
+    setupSuccessfulRunMocks();
+    vi.spyOn(window, "open").mockReturnValue({} as Window);
+    mockStartOAuth.mockResolvedValue({
+      phase: "authorization_needed",
+      sessionId: "active-auth",
+      authorizationUrl: "https://auth.example/authorize",
+    });
+    const server = createHttpServer();
+    const { result } = renderHook(() =>
+      useConformanceRun({ server, runTimeoutSeconds: 1 }),
+    );
+    await act(async () => {
+      await result.current.runAll();
+    });
+    expect(result.current.oauth.status).toBe("running");
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(result.current.oauth.verdict).toBe("incomplete");
+    expect(result.current.oauth.error).toBe("Run timed out after 1 seconds");
+  } finally {
+    vi.useRealTimers();
+  }
 });

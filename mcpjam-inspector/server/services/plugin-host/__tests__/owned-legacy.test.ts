@@ -238,9 +238,16 @@ describe("installed form protocol capability", () => {
     expect(
       installedFormClientCapabilities({}, { legacy: binding, mrtr: false }, true),
     ).toEqual({ extensions: { "openai/elicitation": { form: {} } } });
-    expect(installedFormClientCapabilities(capture, { mrtr: true }, true)).toBe(
+    expect(installedFormClientCapabilities(capture, { mrtr: true }, true)).toEqual(
       capture,
     );
+    expect(installedFormClientCapabilities({}, { mrtr: true }, true)).toEqual({
+      elicitation: { form: {} },
+      extensions: { "openai/elicitation": { form: {} } },
+    });
+    expect(installedFormClientCapabilities({ elicitation: { url: {} } }, {
+      mrtr: true,
+    }, true)).toMatchObject({ elicitation: { form: {}, url: {} } });
     for (const [installed, forms] of [
       [{ mrtr: false }, true],
       [{ mrtr: false }, undefined],

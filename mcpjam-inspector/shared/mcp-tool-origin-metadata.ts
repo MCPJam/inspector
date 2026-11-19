@@ -315,13 +315,20 @@ export interface McpConnectionAttribution {
   connectionId: string;
   label: string;
   profileId?: string;
+  /**
+   * The server's only login (see `AuthorizedOAuthConnection.implicit`).
+   * Server-side bindings still see it; tool-call metadata never carries it.
+   */
+  implicit?: true;
 }
 export function mergeMcpToolConnectionMetadata(
   metadata: unknown,
   connection: McpConnectionAttribution | undefined,
 ) {
   const base = toProviderMetadata(metadata);
-  if (!connection || base.mcpjam?.connection)
+  // An implicit login is not an account choice: stamping it would mark every
+  // single-account call as "ran on a specific account" (and disable Run).
+  if (!connection || connection.implicit || base.mcpjam?.connection)
     return Object.keys(base).length ? base : undefined;
   return { ...base, mcpjam: { ...base.mcpjam, connection: { ...connection } } };
 }
@@ -337,12 +344,14 @@ export function toolConnectionAttribution(
           connectionId: string;
           label: string;
           profile?: { id: string };
+          implicit?: boolean;
         };
         _connectionForCall?: (id: string) => {
           serverId: string;
           connectionId: string;
           label: string;
           profile?: { id: string };
+          implicit?: boolean;
         };
       }
     | undefined;
@@ -356,6 +365,7 @@ export function toolConnectionAttribution(
         connectionId: c.connectionId,
         label: c.label,
         ...(c.profile ? { profileId: c.profile.id } : {}),
+        ...(c.implicit ? { implicit: true as const } : {}),
       }
     : undefined;
 }

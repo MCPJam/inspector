@@ -11,10 +11,7 @@ import {
   type BrowserEngineChoice,
 } from "@/lib/browser-engine-storage";
 import { useLocalBrowserConsent } from "./useLocalBrowserConsent";
-import {
-  useLocalBrowserEnabled,
-  useHostedBrowserEnabled,
-} from "./useComputersEnabled";
+import { useHostedBrowserEnabled } from "./useComputersEnabled";
 import { useComputersDataPlaneConfig } from "./useProjectComputer";
 
 /** Selection is independent of consent and readiness: never silently move a browser. */
@@ -25,12 +22,11 @@ export function useBrowserEngine(
   const { user, isLoading: authLoading } = useAuth();
   const config = useComputersDataPlaneConfig();
   const consent = useLocalBrowserConsent();
-  const enabled = useLocalBrowserEnabled();
   const hostedEnabled = useHostedBrowserEnabled();
   const [environmentId] = usePreviewedEnvironmentId(projectId);
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environmentMode =
-    scope === "conversation" && environmentsEnabled && Boolean(environmentId);
+    scope === "conversation" && !authLoading && Boolean(user) && environmentsEnabled && Boolean(environmentId);
   const boundLocation = useActiveChatSessionStore((state) =>
     state.browserLocation?.projectId === projectId &&
     state.browserLocation.sessionId === state.sessionId
@@ -56,7 +52,7 @@ export function useBrowserEngine(
     },
     [projectId, environmentMode],
   );
-  // Rollout chooses the default; explicit/bound local selection still needs
+  // Readiness chooses the default; explicit/bound local selection still needs
   // truthful server readiness so users can grant Browser permission.
   const localAvailable =
     !HOSTED_MODE &&
@@ -73,7 +69,7 @@ export function useBrowserEngine(
       ? "cloud"
       : (scope === "conversation" ? boundLocation : null) ??
         preference ??
-        ((enabled && localAvailable) || !cloudAvailable ? "local" : "cloud");
+        (localAvailable || !cloudAvailable ? "local" : "cloud");
   return {
     engine: selectedEngine,
     selectedEngine,

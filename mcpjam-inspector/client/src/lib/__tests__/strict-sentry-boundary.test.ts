@@ -188,3 +188,32 @@ it("reports denied recordings and reconstructs client counters and full-event he
   expect(send.mock.calls[0][0][1]).toHaveLength(2);
   expect(JSON.stringify(send.mock.calls)).not.toContain("SENTINEL");
 });
+
+it("titles and groups a guest-session or stalled-load report by its listed code", async () => {
+  const { deliver, send } = sender();
+  const report = (type: string, code: string) =>
+    deliver("event", {
+      event_id: eventId(),
+      exception: { values: [{ type, value: "SENTINEL" }] },
+      extra: { code, attempts: 4 },
+    });
+  await report("GuestSessionRequestError", "guest_session/network/SELF_SIGNED_CERT_IN_CHAIN");
+  await report("AppLoadStalledError", "app_load/guest_session_failed");
+  await report("GuestSessionRequestError", "guest_session/SENTINEL");
+  const [tls, stall, unlisted] = send.mock.calls.map((call) => call[0][1][0][1] as {
+    exception: { values: { type: string; value: string }[] };
+    fingerprint: string[];
+  });
+  expect(tls.exception.values[0]).toMatchObject({
+    type: "GuestSessionRequestError",
+    value: "guest_session/network/SELF_SIGNED_CERT_IN_CHAIN",
+  });
+  expect(tls.fingerprint).toContain("guest_session/network/SELF_SIGNED_CERT_IN_CHAIN");
+  expect(stall.exception.values[0]).toMatchObject({
+    type: "AppLoadStalledError",
+    value: "app_load/guest_session_failed",
+  });
+  // An unlisted code never leaves, so it cannot split or name an issue.
+  expect(unlisted.fingerprint).not.toContain("guest_session/SENTINEL");
+  expect(JSON.stringify(send.mock.calls)).not.toContain("SENTINEL");
+});

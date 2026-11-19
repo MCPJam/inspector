@@ -1,3 +1,10 @@
+import {
+  createConformanceDeadline,
+  runWithConformanceSignal,
+  deadlineFetch,
+  runWithinConformanceDeadline,
+  type ConformanceDeadlineInput,
+} from "./conformance-deadline.js";
 /**
  * Transport-agnostic conformance handlers.
  *
@@ -22,17 +29,21 @@ import {
   type MCPConformanceConfig,
   type MCPConformanceResult,
   type MCPCheckId,
+  type MCPReadinessId,
   type MCPServerConfig,
   type McpProtocolVersion,
   type MCPTasksConformanceConfig,
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
+  type MCPOAuthReadinessId,
   type OAuthConformanceProfile,
   type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import type { ConformanceProbes } from "./conformance-probes.js";
+import { protocolSdkFields } from "../../../shared/conformance-settings.js";
 import {
   createSession,
+  deleteSession,
   getSession,
   touchSession,
   setSessionError,
@@ -41,6 +52,10 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import {
+  bindCredentialHeaders,
+  type CredentialHeaderBinding,
+} from "../../utils/credential-header-binding.js";
 import { withHostedMcpAnswerBodies } from "../../utils/hosted-mcp-base-fetch.js";
 import {
   runDirectoryReadiness,
@@ -89,8 +104,14 @@ const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
  * documented the gap.
  *
  * A no-op outside hosted mode, where reaching localhost is the point.
+ *
+ * With a `binding`, the connection's own credentials (a delivered token, its
+ * stored credential headers) go only to the origins they are bound to.
  */
-export function createConformanceFetch(targetLabel: string): typeof fetch {
+export function createConformanceFetch(
+  targetLabel: string,
+  binding?: CredentialHeaderBinding,
+): typeof fetch {
   const fetchFn = createStreamingPinnedFetch({
     targetLabel,
     // DNS + connect + headers, summed across the redirect chain. Deliberately
@@ -105,9 +126,9 @@ export function createConformanceFetch(targetLabel: string): typeof fetch {
   // An MCP server's answers are read as MCP (hosted: see
   // `withHostedMcpAnswerBodies`). An OAuth endpoint's are not — its error
   // bodies are what the OAuth suite grades.
-  return targetLabel === "MCP server"
-    ? withHostedMcpAnswerBodies(fetchFn)
-    : fetchFn;
+  const answered =
+    targetLabel === "MCP server" ? withHostedMcpAnswerBodies(fetchFn) : fetchFn;
+  return binding ? bindCredentialHeaders(answered, binding) : answered;
 }
 
 // ── Result shapes shared with clients ───────────────────────────────────
@@ -136,14 +157,20 @@ export type CompleteOAuthConformanceResult =
 
 // ── Protocol ────────────────────────────────────────────────────────────
 
-export interface ResolvedHttpConfig {
+export interface ResolvedHttpConfig extends ConformanceDeadlineInput {
   serverUrl: string;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  /** The connection's delivered credentials, held to their origins. */
+  credentialBinding?: CredentialHeaderBinding;
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion?: McpProtocolVersion;
   /** Run only these checks; absent ⇒ every check the revision has. */
   checkIds?: MCPCheckId[];
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPReadinessId[];
+  /** Per-check limit in ms; absent ⇒ the SDK default. */
+  checkTimeout?: number;
 }
 
 export class UnsupportedTransportError extends Error {
@@ -164,16 +191,15 @@ export function assertHttpSupported(
 export async function runProtocolConformance(
   input: ResolvedHttpConfig & ConformanceProbes,
 ): Promise<{ result: MCPConformanceResult }> {
+  return runWithinConformanceDeadline(input, async (signal) => {
   const config: MCPConformanceConfig = {
+    signal,
     serverUrl: input.serverUrl,
     accessToken: input.accessToken,
     customHeaders: input.customHeaders,
     protocolVersion: input.protocolVersion,
-    ...(input.checkIds ? { checkIds: input.checkIds } : {}),
-    ...(input.logProbe ? { logProbe: input.logProbe } : {}),
-    ...(input.inputRequiredProbe
-      ? { inputRequiredProbe: input.inputRequiredProbe }
-      : {}),
+    ...(input.checkTimeout ? { checkTimeout: input.checkTimeout } : {}),
+    ...protocolSdkFields(input),
     // Checking the URL the caller named is not the same as checking the
     // addresses we end up dialing: a target can answer `302 Location:
     // http://169.254.169.254/`. This re-checks each hop. A no-op outside hosted
@@ -186,27 +212,51 @@ export async function runProtocolConformance(
     // record ("threading a base fetch through the client manager … does not
     // belong in this change") was taken up by the runner, and then by every
     // hosted connection factory when the gap it left became MJ-001.
-    fetchFn: createConformanceFetch("MCP server"),
+    fetchFn: deadlineFetch(
+      createConformanceFetch("MCP server", input.credentialBinding),
+      signal,
+    ),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
   return { result };
+  });
+}
+
+/** A run pin overrides saved accept-lists without changing the main connection. */
+function pinSuiteVersion<T extends MCPServerConfig>(
+  config: T,
+  protocolVersion?: McpProtocolVersion,
+): T {
+  return protocolVersion && "url" in config && config.url != null
+    ? {
+        ...config,
+        mcpProtocolVersion: protocolVersion,
+        supportedProtocolVersions: [protocolVersion],
+      }
+    : config;
 }
 
 // ── Apps ────────────────────────────────────────────────────────────────
 
-export async function runAppsConformance(
-  serverConfig: MCPAppsConformanceConfig,
-): Promise<{ result: MCPAppsConformanceResult }> {
-  // The apps suite is entirely client-driven — it has no raw probes — so
-  // before `baseFetch` existed there was no seam at all to guard it through,
-  // and a hosted apps run dialled the target with nothing in front of it.
-  const test = new MCPAppsConformanceTest({
-    ...serverConfig,
-    baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
+export async function runAppsConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPAppsConformanceConfig & ConformanceDeadlineInput & {
+  protocolVersion?: McpProtocolVersion;
+}): Promise<{ result: MCPAppsConformanceResult }> {
+  return runWithinConformanceDeadline(serverConfig, async (signal) => {
+    const test = new MCPAppsConformanceTest({
+      ...pinSuiteVersion(serverConfig, protocolVersion),
+      signal,
+      baseFetch: deadlineFetch(serverConfig.baseFetch ?? createConformanceFetch("MCP server"), signal),
+      // The browser counts the whole run once; a suite request must not.
+      __suppressTelemetry: true,
+    });
+    return { result: await test.run() };
   });
-  const result = await test.run();
-  return { result };
 }
 
 // ── Directory readiness ─────────────────────────────────────────────────
@@ -231,6 +281,7 @@ export async function runLocalDirectoryReadiness(input: {
   submissionMode?: OpenAISubmissionMode;
   accessToken?: string;
   customHeaders?: Record<string, string>;
+  credentialBinding?: CredentialHeaderBinding;
 }): Promise<{ result: DirectoryReadinessResult }> {
   const headers: Record<string, string> = { ...(input.customHeaders ?? {}) };
   if (input.accessToken) headers.authorization = `Bearer ${input.accessToken}`;
@@ -240,39 +291,68 @@ export async function runLocalDirectoryReadiness(input: {
     target: input.target,
     submissionMode: input.submissionMode,
     mcpHeaders: Object.keys(headers).length > 0 ? headers : undefined,
-    fetchFn: createConformanceFetch("MCP server"),
+    fetchFn: createConformanceFetch("MCP server", input.credentialBinding),
   });
   return { result };
 }
 
 // ── Tasks ───────────────────────────────────────────────────────────────
 
-export async function runTasksConformance(
-  serverConfig: MCPTasksConformanceConfig,
-): Promise<{ result: MCPTasksConformanceResult }> {
-  const test = new MCPTasksConformanceTest({
-    ...serverConfig,
-    baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
-  });
-  const result = await test.run();
-  return { result };
+export async function runTasksConformance({
+  protocolVersion,
+  ...serverConfig
+}: MCPTasksConformanceConfig &
+  ConformanceDeadlineInput & {
+    protocolVersion?: McpProtocolVersion;
+  }): Promise<{ result: MCPTasksConformanceResult }> {
+  const deadline = createConformanceDeadline(serverConfig);
+  try {
+    const test = new MCPTasksConformanceTest({
+      ...pinSuiteVersion(serverConfig, protocolVersion),
+      signal: deadline.signal,
+      baseFetch: deadlineFetch(
+        serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
+        deadline.signal,
+      ),
+      // The browser counts the whole run once; a Tasks group request must not.
+      __suppressTelemetry: true,
+    });
+    const result = await test.run();
+    deadline.signal.throwIfAborted();
+    return { result };
+  } finally {
+    deadline.dispose();
+  }
 }
 
 // ── OAuth (interactive, remote-browser) ─────────────────────────────────
 
-export interface StartOAuthConformanceInput {
+export interface StartOAuthConformanceInput extends ConformanceDeadlineInput {
   /** Fallback server URL when `oauthProfile.serverUrl` is not set. */
   defaultServerUrl: string;
   /** Fallback headers when `oauthProfile.customHeaders` is not set. */
   defaultCustomHeaders?: Record<string, string>;
+  /**
+   * The connection's delivered credentials among those headers, held to the
+   * server's origin: the suite also dials endpoints it discovers elsewhere.
+   */
+  credentialBinding?: CredentialHeaderBinding;
   /** Public callback URL that the authorization server will redirect to. */
   redirectUrl: string;
   oauthProfile?: OAuthConformanceProfile;
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds?: MCPOAuthReadinessId[];
   /**
    * Hosted only: the caller starting the run (`principalKey`). Only that
    * caller can then deliver its code or read its result. Local runs omit it.
    */
   owner?: string;
+  /**
+   * Hosted only: runs once the session waits for the user, before the URL is
+   * returned, so later calls can reach this run from any replica. If it
+   * throws, the session is dropped and the error surfaces from this call.
+   */
+  onAuthorizationNeeded?: (session: OAuthConformanceSession) => Promise<void>;
 }
 
 export async function startOAuthConformance(
@@ -283,13 +363,19 @@ export async function startOAuthConformance(
     normalizeCustomHeaders(input.oauthProfile?.customHeaders) ??
     input.defaultCustomHeaders;
 
+  const deadline = createConformanceDeadline(input);
   const session = createSession({
     redirectUrl: input.redirectUrl,
     owner: input.owner,
   });
+  session.cancelRunner = deadline.cancel;
   const { controller } = session;
+  const onAbort = () => controller.fail(deadline.signal.reason);
+  deadline.signal.addEventListener("abort", onAbort, { once: true });
+  if (deadline.signal.aborted) onAbort();
 
   const oauthConfig: OAuthConformanceConfig = {
+    signal: deadline.signal,
     serverUrl,
     protocolVersion: input.oauthProfile?.protocolVersion ?? "2025-11-25",
     registrationStrategy: input.oauthProfile?.registrationStrategy ?? "cimd",
@@ -316,20 +402,26 @@ export async function startOAuthConformance(
     // verifying the server *rejects* bad input is half of OAuth conformance.
     // The runner only reaches them once the happy path passes end to end.
     oauthConformanceChecks: true,
+    ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
     // The OAuth suite dials URLs it DISCOVERS — authorization, token,
     // registration and metadata endpoints all come out of the target's own
     // documents — so the profile URL it was handed is the one address here that
     // was ever checkable up front. Every request goes through the hop-checking
     // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
     // this suite grades redirects, and following one would erase the evidence.
-    fetchFn: createConformanceFetch("OAuth endpoint"),
+    fetchFn: deadlineFetch(
+      createConformanceFetch("OAuth endpoint", input.credentialBinding),
+      deadline.signal,
+    ),
+    // The browser counts the whole run once; a suite request must not.
+    __suppressTelemetry: true,
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {
     createInteractiveAuthorizationSession: () => controller.createSession(),
   });
 
-  const runnerPromise = test.run().then(
+  const runnerPromise = runWithConformanceSignal(deadline.signal, () => test.run()).then(
     (result) => {
       setSessionResult(session.id, result);
       return result;
@@ -341,7 +433,11 @@ export async function startOAuthConformance(
       );
       throw err;
     },
-  );
+  ).finally(() => {
+    session.cancelRunner = undefined;
+    deadline.dispose();
+    deadline.signal.removeEventListener("abort", onAbort);
+  });
   session.runnerPromise = runnerPromise;
   // Don't let an unhandled rejection propagate while we wait.
   runnerPromise.catch(() => undefined);
@@ -355,6 +451,14 @@ export async function startOAuthConformance(
   ]);
 
   if (outcome === "authorization_needed" && session.authorizationUrl) {
+    if (input.onAuthorizationNeeded) {
+      try {
+        await input.onAuthorizationNeeded(session);
+      } catch (error) {
+        deleteSession(session.id);
+        throw error;
+      }
+    }
     return {
       phase: "authorization_needed",
       sessionId: session.id,
@@ -367,6 +471,10 @@ export async function startOAuthConformance(
   // a result or surfaces its error.
   const result = await runnerPromise;
   return { phase: "complete", result };
+}
+
+export function cancelOAuthConformance(input: { sessionId: string; owner?: string }): void {
+  if (getSession(input.sessionId, input.owner)) deleteSession(input.sessionId);
 }
 
 export interface SubmitOAuthConformanceCodeInput {

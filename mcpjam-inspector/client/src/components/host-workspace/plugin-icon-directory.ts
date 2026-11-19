@@ -2,6 +2,7 @@ import { createContext, useContext, useMemo } from "react";
 import type {
   PluginIconRef,
   PluginIcons,
+  PluginSummary,
 } from "@/lib/plugins/plugin-api-types";
 import type { DiscoveredServer } from "./use-extension-discovery";
 import {
@@ -20,6 +21,8 @@ import {
 export interface PluginIconDirectory {
   /** pluginId → the plugin's manifest icons (`listProjectPlugins`). */
   plugins: ReadonlyMap<string, PluginIcons>;
+  /** Human-facing manifest labels, separate from stable server runtime names. */
+  pluginNames?: ReadonlyMap<string, string>;
   /** serverId → what discovery reported about the server itself. */
   servers: Readonly<Record<string, DiscoveredServer>>;
 }
@@ -72,9 +75,18 @@ export function serverDisplayName(
   servers: readonly { serverId: string; name?: string }[] = [],
 ): string {
   const value = label?.trim() ?? "";
+  const discovered =
+    directory.servers[value] ??
+    Object.values(directory.servers).find((server) => server.name === value);
   const named =
     servers.find((server) => server.serverId === value)?.name?.trim() ||
-    directory.servers[value]?.name?.trim();
+    discovered?.name?.trim();
+  // Materialization names include the component key and content hash. Keep
+  // those routing identities intact; only their displayed label is replaced.
+  if (/^.+:server:.+@[a-f0-9]{8}$/.test(named || value) && discovered?.pluginId) {
+    const pluginName = directory.pluginNames?.get(discovered.pluginId);
+    if (pluginName) return pluginName;
+  }
   if (named) return named;
   return value && !isRawServerId(value) ? value : "App";
 }
@@ -136,6 +148,17 @@ export function pluginIconsById(
     if (Object.keys(refs).length) byId.set(pluginId, refs);
   }
   return byId;
+}
+
+/** Manifest names from the same project subscription used for icons. */
+export function pluginDisplayNamesById(
+  rows:
+    | readonly Pick<PluginSummary, "pluginId" | "displayName" | "name">[]
+    | undefined,
+): ReadonlyMap<string, string> {
+  return new Map(
+    (rows ?? []).map((row) => [row.pluginId, row.displayName.trim() || row.name]),
+  );
 }
 
 /** `pluginIconsById`, stable while the icons are unchanged. */

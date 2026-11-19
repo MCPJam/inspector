@@ -19,8 +19,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { managerConstructions } = vi.hoisted(() => ({
+const { managerConstructions, collectorRegistrations } = vi.hoisted(() => ({
   managerConstructions: [] as Array<Record<string, unknown> | undefined>,
+  collectorRegistrations: [] as unknown[][],
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -35,7 +36,9 @@ vi.mock("@mcpjam/sdk", async () => {
       managerConstructions.push(options);
     }
     setElicitationCallback() {}
-    setMrtrInputCollector() {}
+    setMrtrInputCollector(...args: unknown[]) {
+      collectorRegistrations.push(args);
+    }
     async disconnectAllServers() {}
   }
   return { ...actual, MCPClientManager: RecordingManager };
@@ -46,6 +49,7 @@ async function withHostedMode<T>(hosted: boolean, run: () => Promise<T>) {
   process.env.VITE_MCPJAM_HOSTED_MODE = hosted ? "true" : "false";
   vi.resetModules();
   managerConstructions.length = 0;
+  collectorRegistrations.length = 0;
   try {
     return await run();
   } finally {
@@ -130,6 +134,27 @@ describe("createAuthorizedManager", () => {
       );
       expect(managerConstructions).toHaveLength(1);
       await expectGuardedFetch(managerConstructions[0]);
+    });
+  });
+
+  it("registers an owned collector's extension claims before connecting", async () => {
+    await withHostedMode(true, async () => {
+      const { createAuthorizedManager } = await import("../auth.js");
+      const collector = vi.fn();
+      const selector = vi.fn();
+      const options = {
+        extensionClaims: ["openai/elicitation"],
+        selectFormSchema: selector,
+      };
+      await createAuthorizedManager(
+        { authMethod: "jwt" } as never,
+        "bearer-token", "p1", ["s1"], 5_000, undefined, undefined,
+        {
+          mrtrInputCollectorForServer: () => collector,
+          mrtrInputOptionsForServer: () => options,
+        },
+      );
+      expect(collectorRegistrations).toEqual([["s1", collector, options]]);
     });
   });
 

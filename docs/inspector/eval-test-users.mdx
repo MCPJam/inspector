@@ -1,0 +1,143 @@
+---
+title: "Run evals as test users"
+description: "Share a server's sign-in with your project, upload each test user's token from CI, and choose which account each suite runs as."
+icon: "users"
+---
+
+Some MCP servers can't be signed in to from a browser on a schedule, for example because the test user needs a password and a passkey every day. Your CI can sign each test user in itself and upload the token to MCPJam. Eval runs then act as that user, and each run records which account it used.
+
+A project admin shares the server's sign-in, CI uploads each test user's token, and each person chooses which account their runs of a suite use.
+
+<Note>
+  Sharing a server's sign-in, the suite **Accounts** setting and the run
+  page's **Credentials** line are rolling out gradually. If you don't see
+  them, they aren't on for your account yet. Uploading tokens to your own
+  accounts and the `accounts` field in the API and CLI are available to
+  everyone.
+</Note>
+
+## Before you start
+
+- The server is saved in a project, signs in with OAuth and, if it is remote, uses HTTPS. Shared and uploaded accounts are refused over plain HTTP; loopback development addresses are allowed.
+- Use dedicated test accounts with the least access your tests need. Every project member can run as every shared account.
+
+## Share the server's sign-in
+
+A project admin does this once per server.
+
+<Steps>
+  <Step title="Open the server's Auth tab">
+    Open the server from your project and select the **Auth** tab.
+  </Step>
+  <Step title="Turn on Share sign-in with the project">
+    MCPJam asks you to confirm, because members' local apps will receive the
+    access tokens of the accounts admins connect here. Click **Share sign-in**.
+  </Step>
+  <Step title="Add the project accounts">
+    Connect accounts here, or upload them from CI as described below. A server
+    holds up to 8 project accounts.
+  </Step>
+</Steps>
+
+While sharing is on, members' runs act as the project accounts, and members' own accounts on this server aren't used. Members see the project accounts but can't change them. Sharing also turns on **Allow local runs** for the server, so members' local Inspectors can use the accounts too.
+
+Turning sharing on or off clears every suite's saved account choice for this server, because the choices name accounts of the other kind. Turning it off also deletes the project accounts and asks the sign-in provider to revoke their tokens.
+
+## Upload each test user's token from CI
+
+Sign the test user in from your CI job, then upload the access token under a name you choose:
+
+```bash
+./sign-in-test-user test-automation-1 > token.txt
+mcpjam cloud server-accounts set --project "My project" --server orders-api \
+  --account test-automation-1 --client-id "$CLIENT_ID" \
+  --access-token-file token.txt --expires-in 3600
+```
+
+`--access-token-env <VAR>` reads the token from an environment variable instead. The public API takes the same upload as `PUT /projects/{projectId}/servers/{serverId}/accounts/test-automation-1`. See [Server accounts](/reference/public-api#server-accounts) for the request body, and the [CLI reference](/cli/reference#cloud-server-accounts-set) for every flag.
+
+- **Upload again under the same name to replace the token.** The account keeps its ID, so suites that run as it keep doing so. Nothing checks who a token belongs to, so keep each name for one test user.
+- **Upload more often than the token lasts.** For tokens that last an hour, upload every 30 to 45 minutes, or upload in the step right before each run. Uploads are [budgeted](/troubleshooting/error-codes#upload-budget-spent) per person and server.
+- **Say when the token expires.** `--expires-in` (`tokens.expires_in` in the API) is the token's remaining lifetime in seconds. If you leave it out and the token is a JWT with an `exp` claim, MCPJam stops using the token at that time. When both are present, the earlier one applies. An opaque token uploaded without `--expires-in` has an unknown expiry, and MCPJam relies on the server to reject it once it expires.
+- **Use a project admin's API key, and only for this job.** Only a project admin can upload to a project account. A dedicated key can be revoked without breaking anything else. New keys expire after 90 days unless you pick another lifetime when you create them, so renew the key before then.
+
+## Choose which account a suite runs as
+
+<Steps>
+  <Step title="Open the suite's settings">
+    Open the suite's **Suite settings** page.
+  </Step>
+  <Step title="Find Runs as you">
+    Under **Accounts**, the **Runs as you** group lists each of the suite's
+    servers with the accounts you can choose: your own, or on a shared server
+    the project's.
+  </Step>
+  <Step title="Tick the test user's account">
+    Tick the account for each server. To run as one test user, leave only
+    that account ticked. The choice saves right away.
+  </Step>
+</Steps>
+
+The choice belongs to you, not to the suite. It applies to runs you start in the app or with your API key, and to schedules you own. Teammates choose their own accounts, and a schedule someone else owns uses that person's choice, shown under **Runs as** with their name. For CI, make the choice while signed in as the person who owns the CI job's API key.
+
+The choice applies to the whole suite: every case in it runs as the same accounts. When different tests need different users, use one suite per test user. Runs with no choice saved use the server's [default account](/reference/public-api#running-evals-as-an-account).
+
+## Run locally
+
+A member's local Inspector, version 3.22.0 or later, receives the access token of a shared or uploaded account when the server allows local runs. Refresh tokens and client secrets stay in MCPJam. A personal server's uploaded account is available locally only to its owner. See [`cloud server-accounts set`](/cli/reference#cloud-server-accounts-set) for what local delivery hands out and how to stop it.
+
+## What each run records
+
+When a run starts, it records each account it used and the facts of its token. A later upload doesn't change what an earlier run shows. The run page header shows **Ran as** (who started the run), **Accounts**, and a **Credentials** line for each account:
+
+```text
+orders-api · test-automation-1 · Uploaded Nov 18, 9:30 AM by Dana Kim · Expires Nov 18, 10:30 AM · Identity: user-1842, from the token · Email: test-automation-1@example.com, from the token
+```
+
+- **Uploaded** or **Signed in** says how the token was stored, then when and by whom.
+- **Expires** gives the token's expiry, or **Expiry unknown** when nothing stated one.
+- **Identity** comes from the server's [profile tool](#give-accounts-an-identity) when it answered: its `name` or `nickname`, and its `id`. Otherwise it comes from the token's claims: `preferred_username` as the name and `sub` as the subject, or the issuer (`iss`) when neither is present. MCPJam reads claims from a JWT without checking its signature, so it labels them "from the token".
+- **Email** comes from the profile tool's `email`, then the token's `email` claim, then the token's `sub` or `preferred_username` when one of them is an email address.
+
+Who can see the email depends on the account:
+
+| Account | Who sees its email |
+| --- | --- |
+| Project account, or a readiness reviewer login | Every member of the project |
+| Personal account | Only the person who started the run. For a run started with an API key, that is the key's owner |
+
+Organization admins follow the same rule. Share links and guests never see an email. The API and CLI return the same record; see [Which accounts a run used](/reference/public-api#which-accounts-a-run-used).
+
+## Give accounts an identity
+
+If your tokens aren't JWTs with useful claims, mark one tool on your server as its profile tool with `"_meta": { "openai/profile": true }`:
+
+```json
+{
+  "name": "whoami",
+  "description": "Returns the signed-in user's profile.",
+  "inputSchema": { "type": "object", "properties": {} },
+  "annotations": { "readOnlyHint": true },
+  "_meta": { "openai/profile": true }
+}
+```
+
+Its result must be an object with a non-empty string `id` and, optionally, `name`, `email` and `nickname`, all strings. Return it as `structuredContent` or as JSON text:
+
+```json
+{ "id": "user-1842", "name": "Test Automation 1", "email": "test-automation-1@example.com" }
+```
+
+MCPJam ignores the answer when it has any other field, and ignores the tool when more than one tool is marked. It calls the tool with no arguments, so the tool should only read.
+
+MCPJam asks the profile tool when a shared or uploaded account connects, in the browser or in the local Inspector, and only when the person connecting can manage that account: a project admin or an organization owner or admin for a project account, or the owner of a personal account. Each upload clears the stored answer, because it described the previous token. MCPJam asks again the next time someone who can manage the account connects the server. Runs started in between show the token's claims, or no identity.
+
+## Security controls
+
+- **No browser reveals.** The token of a shared or uploaded account can't be revealed in the browser or sent to a sandbox.
+- **Allow local runs.** A project admin can turn it off for each shared server on its **Auth** tab. Members' local apps then stop receiving the accounts' tokens from their next connection or run.
+- **Allow credential export.** Organization owners and admins can turn it off under **Organization settings → Security**. MCPJam-hosted connections keep working, and local apps, the CLI, sandboxes and browser reveals are refused. It covers every saved credential in the organization, not only test accounts. Members can view the setting but can't change it.
+
+Turning either switch off stops new deliveries only. A token already delivered keeps working until it expires, and API keys or secrets already sent keep working until you rotate them.
+
+The organization audit log records each delivery of a shared or uploaded account's token, each refusal, and each change to **Allow credential export**. Whether you can view the audit log depends on your plan.

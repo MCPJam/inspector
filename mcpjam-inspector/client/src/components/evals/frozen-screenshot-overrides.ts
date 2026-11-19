@@ -1,24 +1,66 @@
 import type {
+  EvalTraceBrowserAction,
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
+
+/**
+ * Actions that can move the App away from its opening state. `screenshot`
+ * (also what scripted asserts map to), `mouse_move` and `wait` only look, so
+ * the saved copy still matches what the run saw.
+ */
+const APP_STATE_CHANGING_ACTIONS: ReadonlySet<EvalTraceBrowserAction> = new Set(
+  ["left_click", "double_click", "right_click", "type", "key", "scroll"],
+);
+
+/** A step that actually acted on the App: a state-changing action that did
+ *  not fail and was not skipped (a `note` marks a step that never ran). */
+function changedAppState(step: EvalTraceBrowserInteractionStepView): boolean {
+  // Any step during which the App called a tool or sent a message counts too,
+  // even a wait or a screenshot: the App's state moved on from its saved copy.
+  if (step.widgetToolCalls?.length || step.followUps?.length) return true;
+  return (
+    APP_STATE_CHANGING_ACTIONS.has(step.action) &&
+    step.ok !== false &&
+    !step.note
+  );
+}
+
+/** The saved copy can mount as a live App: it has HTML and UI tool metadata.
+ *  PartSwitch reads its UI type from that metadata, so without it the tool
+ *  call would show as a bare tool card. */
+function canMountSavedApp(override: ToolRenderOverride | undefined): boolean {
+  return (
+    !!override?.cachedWidgetHtmlUrl &&
+    detectUIType(override.toolMetadata, undefined) !== null
+  );
+}
 
 /**
  * Build `frozenScreenshotUrl` tool-render overrides from a run's recorded
- * captures, so the Chat tab shows the captured widget instead of a live
- * re-render (which drifts to the widget's default state once its MCP server is
- * gone). See [[project_eval_chat_frozen_replay]].
+ * captures. See [[project_eval_chat_frozen_replay]].
  *
- * Merged onto `base` (the snapshot-derived overrides) keyed by `toolCallId` —
- * the SAME id the transcript tool part carries (`adaptTraceToUiMessages` re-keys
- * the message id but leaves the tool part's `toolCallId`).
+ * By default the Chat tab shows the REAL App, loaded from the run's saved copy
+ * (`cachedWidgetHtmlUrl` on the snapshot-derived `base` override). The recorded
+ * picture is a screenshot of the whole headless test page, not the App, so it
+ * is used only when:
+ * - the run acted on that App (a step that passes `changedAppState`, such as a
+ *   click or typing), because the saved copy would re-open at its default
+ *   state, not where the run left it; or
+ * - there is no saved copy that can mount as an App, as a backup.
+ *
+ * The run's recorded console errors and blocked requests stay on the override
+ * either way, so the Chat tab can still show them next to the live App.
+ *
+ * Merged onto `base` keyed by `toolCallId` — the SAME id the transcript tool
+ * part carries (`adaptTraceToUiMessages` re-keys the message id but leaves the
+ * tool part's `toolCallId`).
  *
  * Picks the LATEST screenshot per tool call across BOTH the initial render
- * observation AND every subsequent interaction-step capture (each `interact`
- * click screenshots the widget after the action). So the Chat tab shows the
- * widget's FINAL post-interaction state — e.g. after "Add to cart" / opening the
- * cart — not just the opening render. Sorting by `ts` means a re-render or a
+ * observation AND every interaction-step capture, so a picture shows the
+ * widget's FINAL post-interaction state. Sorting by `ts` means a re-render or a
  * later failed attempt can't shadow the good capture. Returns `base` unchanged
  * when there's nothing to add.
  */
@@ -67,25 +109,72 @@ export function buildFrozenScreenshotOverrides(
   }
   // Interaction-step captures are later than the initial render (they happen on
   // each click), so they win on `ts` — surfacing the post-interaction state.
+  const clickedToolCallIds = new Set<string>();
   for (const step of interactionSteps) {
+    if (changedAppState(step)) clickedToolCallIds.add(step.toolCallId);
     consider(step.toolCallId, step.screenshotUrl, step.ts);
   }
-  if (latestByTool.size === 0) return base;
-  const merged = { ...base };
-  for (const [toolCallId, { url, resourceUri }] of latestByTool) {
+  // Keep the live App (saved copy) unless the run acted on it. Its picture stays
+  // as a backup that PartSwitch shows only if the App can't render under the
+  // host being viewed.
+  const fallbackByTool = new Map<string, string>();
+  for (const [toolCallId, { url }] of [...latestByTool]) {
+    if (
+      !clickedToolCallIds.has(toolCallId) &&
+      canMountSavedApp(base[toolCallId])
+    ) {
+      latestByTool.delete(toolCallId);
+      fallbackByTool.set(toolCallId, url);
+    }
+  }
+  const recordedErrorsFor = (toolCallId: string) => {
     const errors = errorsByTool.get(toolCallId);
     const consoleErrors = [...(errors?.consoleErrors ?? [])];
     const blockedRequests = [...(errors?.blockedRequests ?? [])];
-    merged[toolCallId] = {
-      ...merged[toolCallId],
+    return consoleErrors.length || blockedRequests.length
+      ? { recordedWidgetErrors: { consoleErrors, blockedRequests } }
+      : {};
+  };
+  let merged: Record<string, ToolRenderOverride> | undefined;
+  const set = (toolCallId: string, override: ToolRenderOverride) => {
+    merged ??= { ...base };
+    merged[toolCallId] = override;
+  };
+  for (const [toolCallId, { url, resourceUri }] of latestByTool) {
+    set(toolCallId, {
+      ...base[toolCallId],
       frozenScreenshotUrl: url,
-      ...(merged[toolCallId]?.resourceUri || !resourceUri
-        ? {}
-        : { resourceUri }),
-      ...(consoleErrors.length || blockedRequests.length
-        ? { recordedWidgetErrors: { consoleErrors, blockedRequests } }
-        : {}),
-    };
+      ...(base[toolCallId]?.resourceUri || !resourceUri ? {} : { resourceUri }),
+      ...recordedErrorsFor(toolCallId),
+    });
   }
-  return merged;
+  for (const [toolCallId, url] of fallbackByTool) {
+    set(toolCallId, {
+      ...base[toolCallId],
+      fallbackScreenshotUrl: url,
+      ...recordedErrorsFor(toolCallId),
+    });
+  }
+  // A live App keeps the errors the run recorded for it.
+  for (const toolCallId of errorsByTool.keys()) {
+    if (
+      latestByTool.has(toolCallId) ||
+      fallbackByTool.has(toolCallId) ||
+      !base[toolCallId]
+    )
+      continue;
+    const errors = recordedErrorsFor(toolCallId);
+    if (errors.recordedWidgetErrors) {
+      set(toolCallId, { ...base[toolCallId], ...errors });
+    }
+  }
+  // Viewing a finished run: every saved App copy is a replay, so it gets no
+  // tool or message handlers, picture or not.
+  if (observations.length || interactionSteps.length) {
+    for (const [toolCallId, override] of Object.entries(merged ?? base)) {
+      if (override.cachedWidgetHtmlUrl && !override.readOnly)
+        set(toolCallId, { ...override, readOnly: true });
+    }
+  }
+  return merged ?? base;
 }

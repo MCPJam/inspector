@@ -106,14 +106,14 @@ describe("web routes — auth enforcement", () => {
     expect(data.code).toBe("UNAUTHORIZED");
   });
 
-  it("keeps mcp-apps sandbox-proxy public without bearer token", async () => {
+  it("refuses the unsigned mcp-apps sandbox-proxy without serving a bootstrap", async () => {
     const res = await getJson(app, "/api/web/apps/mcp-apps/sandbox-proxy");
     const body = await res.text();
 
-    expect(res.status).toBe(200);
-    expect(res.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
-    expect(body).toContain('const RECORDER_SHIM = "(function(){');
-    expect(body).toContain("recorderBootstrap();");
+    expect(res.status).toBe(403);
+    expect(res.headers.get("Content-Type")).toBe("text/plain; charset=UTF-8");
+    expect(body).not.toContain('const RECORDER_SHIM = "(function(){');
+    expect(body).not.toContain("recorderBootstrap();");
     expect(body).not.toContain('const RECORDER_SHIM = "__MCPJAM_RECORDER_SHIM__";');
   });
 

@@ -104,6 +104,21 @@ describe("the gatherer dials tools/list", () => {
     );
   });
 
+  it("keeps the server's instructions, which the model reads too", async () => {
+    const evidence = await gatherOpenAIReadinessEvidence({
+      target: TARGET,
+      mode: "mcp-only",
+      fetchFn: wireFetch({
+        initialize: [
+          { ...INITIALIZE, instructions: "Answer questions about the docs." },
+        ],
+        "tools/list": [{ tools: [WELL_ANNOTATED] }],
+      }),
+    });
+
+    expect(evidence.instructions).toBe("Answer questions about the docs.");
+  });
+
   it("does not dial when the caller already holds an attributable listing", async () => {
     const fetchFn = vi.fn(wireFetch({ initialize: [INITIALIZE] }));
     const evidence = await gatherOpenAIReadinessEvidence({
@@ -285,8 +300,12 @@ describe("model observations in a graded result", () => {
       reason: "schema_invalid",
       detail: "observations[0].id is not a published observation id",
     });
+    // The decision checks are there, each saying why no model judged it.
     expect(
-      invalid.findings.some((finding) => finding.provenance === "llm"),
+      invalid.findings.some(
+        (finding) =>
+          finding.provenance === "llm" && finding.status !== "not-evaluated"
+      )
     ).toBe(false);
     expect(invalid.llmObservations?.status).toBe("invalid-output");
   });

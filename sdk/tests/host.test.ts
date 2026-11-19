@@ -1,5 +1,7 @@
 import { Host } from "../src/host-config/index";
 import type { HostMcp } from "../src/host-config/index";
+import { canonicalToPublic } from "../src/host-config/host";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal";
 // Cross-entry check uses the browser entry (the Node `../src/index` barrel
 // transitively imports `.md` skill files that vitest's transform can't load;
 // the published `@mcpjam/sdk` main export is covered by `test:packaging`).
@@ -71,6 +73,47 @@ describe("Host — public surface", () => {
     const host = new Host({ style: "mcpjam", model: "test-model" });
     host.mcp.paginationTraversal = "firstPageOnly";
     expect(host.toJSON().mcp?.paginationTraversal).toBe("firstPageOnly");
+  });
+
+  it("round-trips toolListChanged through toJSON()", () => {
+    // `toolListChanged` was missing from CONFORMANCE_PROFILE_KEYS, so the
+    // public `Host` silently dropped it on the way in (hostMcpToProfile) and
+    // on the way out (profileToHostMcp).
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.toolListChanged = { listens: false, refetches: false };
+
+    const json = host.toJSON();
+    expect(json.mcp?.toolListChanged).toEqual({
+      listens: false,
+      refetches: false,
+    });
+    expect(new Host(json).toJSON()).toEqual(json);
+  });
+
+  it("toolListChanged alone keeps mcp present in toJSON()", () => {
+    // Guards isEmptyHostMcp for the same omission.
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    host.mcp.toolListChanged = { refetches: false };
+    expect(host.toJSON().mcp).toEqual({
+      toolListChanged: { refetches: false },
+    });
+  });
+
+  it("reads toolListChanged off a canonical profile (canonicalToPublic)", () => {
+    const json = canonicalToPublic(
+      canonicalizeHostConfigV2({
+        hostStyle: "mcpjam",
+        modelId: "test-model",
+        systemPrompt: "",
+        temperature: 0.7,
+        requireToolApproval: false,
+        connectionDefaults: { headers: {}, requestTimeout: 10000 },
+        clientCapabilities: {},
+        hostContext: {},
+        mcpProfile: { profileVersion: 1, toolListChanged: { listens: false } },
+      })
+    );
+    expect(json.mcp?.toolListChanged).toEqual({ listens: false });
   });
 
   it("exposes only public MCP vocabulary in toJSON() — no impl names leak", () => {
@@ -389,6 +432,49 @@ describe("Host — toJSON() round-trips", () => {
     // Explicit-empty ("no standalone skills") survives — absence is semantic.
     expect(json2.skillSelection).toEqual({ mode: "explicit", skillIds: [] });
     expect(new Host(json2).toJSON()).toEqual(json2);
+  });
+
+  it("round-trips the four mid-session sign-in knobs", () => {
+    const host = new Host({ style: "claude-code", model: "test-model" });
+    host.mcp.unauthorizedChallenge = "notify";
+    host.mcp.unauthorizedChallengeTrigger = "bearer-header";
+    host.mcp.toolResultAuthChallenge = "prompt";
+    host.mcp.toolResultAuthChallengeTrigger = "oauth2-scheme";
+
+    const json = host.toJSON();
+    expect(json.mcp).toEqual({
+      toolResultAuthChallenge: "prompt",
+      toolResultAuthChallengeTrigger: "oauth2-scheme",
+      unauthorizedChallenge: "notify",
+      unauthorizedChallengeTrigger: "bearer-header",
+    });
+    expect(new Host(json).toJSON()).toEqual(json);
+  });
+
+  it("keeps mcp present when a sign-in knob is the only field set", () => {
+    // isEmptyHostMcp reads CONFORMANCE_PROFILE_KEYS; a profile carrying only
+    // the `_meta` action must not collapse to "untouched".
+    const host = new Host({ style: "chatgpt", model: "test-model" });
+    host.mcp.toolResultAuthChallenge = "prompt";
+    expect(host.toJSON().mcp).toEqual({ toolResultAuthChallenge: "prompt" });
+  });
+
+  it("keeps an explicit absent-value sign-in literal distinct from absence", () => {
+    const explicit = new Host({ style: "mcpjam", model: "test-model" });
+    explicit.mcp.toolResultAuthChallenge = "passthrough";
+    const absent = new Host({ style: "mcpjam", model: "test-model" });
+    expect(explicit.toJSON().mcp).toEqual({
+      toolResultAuthChallenge: "passthrough",
+    });
+    expect(absent.toJSON().mcp).toBeUndefined();
+  });
+
+  it("rejects an unknown sign-in literal at toJSON()", () => {
+    const host = new Host({ style: "mcpjam", model: "test-model" });
+    (host.mcp as Record<string, unknown>).unauthorizedChallenge = "retry";
+    expect(() => host.toJSON()).toThrow(
+      /mcpProfile\.unauthorizedChallenge must be one of prompt, notify, passthrough/
+    );
   });
 });
 

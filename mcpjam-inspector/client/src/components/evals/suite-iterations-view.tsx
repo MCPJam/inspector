@@ -5,6 +5,7 @@ import { JudgeInstructionsEditor } from "./judge-instructions-editor";
 import { SharedSettingsGate } from "@/components/billing/SharedSettingsGate";
 import { ImportDatasetDialog } from "../evaluate/import-dataset-dialog";
 import { SuiteClientsSettings } from "./suite-clients-settings";
+import { SuiteAccountsRow } from "./suite-accounts-row";
 import type { ReactNode } from "react";
 import { Input } from "@mcpjam/design-system/input";
 import {
@@ -112,6 +113,16 @@ import { RunComparisonPage } from "../evaluate/run-comparison-page";
 import { resolveSuitePassThreshold } from "../evaluate/run-compare-lanes-model";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
+import {
+  RunResultPage,
+  type RunResultCrumbs,
+} from "../evaluate/run-result-pages/run-result-page";
+import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
+import {
+  CaseStepsPage,
+  opensInStepsEditor,
+} from "../evaluate/case-steps/case-steps-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -145,7 +156,11 @@ import type {
   EvalSuiteRunListItem,
   SuiteAggregate,
 } from "./types";
-import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
+import type {
+  EvalRoute,
+  SuiteOverviewView,
+  SuiteSettingsTab,
+} from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   canCommit,
@@ -174,6 +189,10 @@ import {
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
+import {
+  useSuiteSettingsTabs,
+  useSuiteSettingsTabsFlag,
+} from "./suite-settings-tabs";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -188,6 +207,7 @@ import {
   type EvalExportDraftInput,
 } from "@/lib/evals/eval-export";
 import { sameRunTarget } from "@/lib/eval-target-key";
+import { isEvalRunTerminalStatus } from "@mcpjam/sdk/contract";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: SuiteOverviewView) => void;
@@ -215,7 +235,12 @@ export interface SuiteNavigation {
       fromEvalServer?: string;
     },
   ) => void;
-  toSuiteEdit: (suiteId: string, fromCaseChecks?: string) => void;
+  toSuiteEdit: (
+    suiteId: string,
+    fromCaseChecks?: string,
+    tab?: SuiteSettingsTab,
+    options?: { replace?: boolean },
+  ) => void;
 }
 
 const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
@@ -374,13 +399,6 @@ export function sortRunsNewestFirst(
   return [...runs].sort((a, b) => compareRunsBySequence(b, a));
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
-
 /**
  * S6 — the run a rubric edit can be backtested against.
  *
@@ -395,7 +413,7 @@ export function pickBacktestableRun(
   return (
     sortRunsNewestFirst(runs).find(
       (run) =>
-        TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
+        isEvalRunTerminalStatus(run.status) &&
         (run.judgeScore != null ||
           ("goalCompletion" in run && run.goalCompletion != null)),
     ) ?? null
@@ -512,6 +530,7 @@ export function SuiteIterationsView({
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
   onGeneratingChange,
+  onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch: onDeleteTestCasesBatchProp,
@@ -664,9 +683,8 @@ export function SuiteIterationsView({
    * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
    * detail.
    *
-   * OFF by default on purpose. This is a shared component: the shipped
-   * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
-   * redesign is behind `evaluate-enabled`. Only `EvaluateTab` passes it.
+   * Only `EvaluateTab` enables this layout. Other callers retain the shared
+   * dashboard layout until their component trees are retired.
    */
   suiteDetailOverview?: boolean;
   /**
@@ -693,6 +711,8 @@ export function SuiteIterationsView({
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
   ) => void;
+  /** Breadcrumbs for an open run result page; see {@link RunResultPage}. */
+  onResultCrumbsChange?: (crumbs: RunResultCrumbs | null) => void;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -717,10 +737,11 @@ export function SuiteIterationsView({
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
   const selectedRunState = useSelectedRun(suite._id, selectedRunId);
   const selectedRunDetails = selectedRunState.run;
-  const { runs: groupRuns, loadGroup } = useRunGroupSummaries(
-    suite._id,
-    listedRuns,
-  );
+  const {
+    runs: groupRuns,
+    loadGroup,
+    groupStatus,
+  } = useRunGroupSummaries(suite._id, listedRuns);
   const runs = useMemo(() => {
     if (route.type !== "run-detail") return listedRuns;
     if (!selectedRunDetails) return groupRuns;
@@ -870,6 +891,14 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
+  // Evaluate's saved case: steps editor with the flag on; waits while it loads.
+  const stepsEditorFlag = useTestCaseStepsEditorEnabled();
+  const stepsEditorRoute =
+    evaluateCaseEditor &&
+    viewMode === "test-edit" &&
+    opensInStepsEditor(route) &&
+    stepsEditorFlag !== false;
+  const showStepsEditor = stepsEditorRoute && stepsEditorFlag === true;
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -1036,8 +1065,21 @@ export function SuiteIterationsView({
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S saves from the run list, and
   // the edits they were told they were leaving behind are still there.
-  useUnsavedChangesGuard(hasUnsavedSettings, () =>
-    dispatchDraft({ type: "discard" }),
+  const settingsTabs = useSuiteSettingsTabs({
+    enabled: useSuiteSettingsTabsFlag() && isEditMode,
+    route,
+    suiteId: suite._id,
+    toSuiteEdit: navigation.toSuiteEdit,
+    hasUnsavedChanges: hasUnsavedSettings,
+    isCommitting,
+    onDiscard: () => dispatchDraft({ type: "discard" }),
+  });
+  useUnsavedChangesGuard(
+    hasUnsavedSettings,
+    () => dispatchDraft({ type: "discard" }),
+    undefined,
+    isCommitting,
+    settingsTabs.isSamePage,
   );
 
   // The suite moved under us. An untouched row simply refreshes; a row the
@@ -1202,10 +1244,26 @@ export function SuiteIterationsView({
     [perRunMode, selectedRunDetails, runs, previousCompletedRunForSelectedRun],
   );
   const detailRows = useRunsIterations(detailRunIds, perRunMode);
+  // A result page can name a sibling column, so it waits for the launch's
+  // full membership; an unknown sibling is a failed read, not a missing result.
+  const launchGroupId = selectedRunDetails?.runGroupId;
+  const launchGroupStatus = launchGroupId
+    ? groupStatus(launchGroupId)
+    : "ready";
+  const resultPageFailedRunIds = useMemo(
+    () =>
+      launchGroupStatus === "failed" && selectedRunDetails
+        ? new Set(detailRows.failedRunIds).add(selectedRunDetails._id)
+        : detailRows.failedRunIds,
+    [launchGroupStatus, selectedRunDetails, detailRows.failedRunIds],
+  );
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
-    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+    !stepsEditorRoute &&
+    perRunMode &&
+    selectedTestId &&
+    !isDraftTestCaseId(selectedTestId)
       ? selectedTestId
       : null;
   const caseRows = useQuery(
@@ -1535,6 +1593,8 @@ export function SuiteIterationsView({
 
   const selectedRunTestCaseId =
     route.type === "run-detail" ? (route.testCaseId ?? null) : null;
+  // Old `?case=` and `?iteration=` links open their page once this is on.
+  const resultPagesEnabled = useRunResultPagesEnabled();
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -1792,7 +1852,10 @@ export function SuiteIterationsView({
       return `test-edit-${selectedTestId}`;
     if (viewMode === "test-detail" && selectedTestId)
       return `test-detail-${selectedTestId}`;
-    if (viewMode === "overview") return `overview-${runsViewMode}`;
+    // Evaluate's Runs | Test cases tabs switch in place: a remount would drop
+    // a Generate dialog opened from an empty suite.
+    if (viewMode === "overview")
+      return suiteDetailOverview ? "overview" : `overview-${runsViewMode}`;
     if (viewMode === "run-detail" && selectedRunId)
       return selectedCompareBaseRunId
         ? `run-diff-${selectedCompareBaseRunId}-${selectedRunId}`
@@ -1805,6 +1868,7 @@ export function SuiteIterationsView({
     selectedRunTestCaseId,
     selectedCompareBaseRunId,
     runsViewMode,
+    suiteDetailOverview,
   ]);
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
@@ -2085,9 +2149,11 @@ export function SuiteIterationsView({
       {showSuiteHeader ? (
         <div className="shrink-0">
           <SuiteHeader
+            settingsTabStrip={settingsTabs.strip}
             settingsActions={
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <Button
+                  hidden={settingsTabs.enabled}
                   variant="ghost"
                   size="sm"
                   onClick={() => navigation.toSuiteOverview(suite._id)}
@@ -2117,7 +2183,10 @@ export function SuiteIterationsView({
                         ? [
                             {
                               message: passOrFailRowError.message,
-                              onFix: () => openSetting("passOrFail"),
+                              onFix: () =>
+                                settingsTabs.goToSetting("passOrFail", openSetting, {
+                                  fromFix: true,
+                                }),
                             },
                           ]
                         : []),
@@ -2185,9 +2254,43 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {(viewMode === "test-edit" || viewMode === "test-detail") &&
-            selectedTestId &&
-            caseRowsPending ? (
+            {stepsEditorRoute && !showStepsEditor ? (
+              <RowsLoading key={contentKey} label="Loading test case..." />
+            ) : showStepsEditor && selectedTestId ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <CaseStepsPage
+                  suiteId={suite._id}
+                  testCaseId={selectedTestId}
+                  projectId={projectId}
+                  readOnly={editingDisabled}
+                  projectServers={projectServers}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
+                  onRunCase={isDirectGuest ? undefined : onRunCase}
+                  runOutOfCreditsReason={caseRunOutOfCreditsReason}
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  navigation={navigation}
+                />
+              </motion.div>
+            ) : (viewMode === "test-edit" || viewMode === "test-detail") &&
+              selectedTestId &&
+              caseRowsPending ? (
               <RowsLoading key={contentKey} label="Loading case history..." />
             ) : viewMode === "test-edit" && selectedTestId ? (
               <motion.div
@@ -2284,6 +2387,7 @@ export function SuiteIterationsView({
                       route.type === "test-edit" && route.checks
                         ? selectedTestId
                         : undefined,
+                      "evaluators",
                     )
                   }
                 />
@@ -2334,6 +2438,52 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : route.type === "run-detail" &&
+              (route.resultPage ||
+                (resultPagesEnabled === true &&
+                  (route.testCaseId || route.iteration))) &&
+              suiteDetailOverview &&
+              !selectedRunState.isUnavailable ? (
+              <RunResultPage
+                key={`${contentKey}-result`}
+                suiteId={suite._id}
+                runId={route.runId}
+                resultPage={
+                  route.resultPage ?? {
+                    caseKey: route.testCaseId ?? "",
+                    iterationId: route.iteration,
+                  }
+                }
+                fromOldLink={!route.resultPage}
+                run={selectedRunDetails ?? null}
+                runs={runs}
+                allIterations={allIterations}
+                hostNamesById={hostNamesById}
+                // This launch's rows only, so a sibling column resolves and
+                // a comparison run's read does not hold the page.
+                loading={
+                  !selectedRunDetails
+                    ? !selectedRunState.isUnavailable
+                    : launchGroupStatus === "loading" ||
+                      launchRuns(selectedRunDetails, runs).some(
+                        ({ _id: id }) =>
+                          !detailRows.byRun.has(id) &&
+                          !detailRows.failedRunIds.has(id),
+                      )
+                }
+                failedRunIds={resultPageFailedRunIds}
+                projectId={projectId}
+                decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                onEditCase={
+                  editingDisabled
+                    ? undefined
+                    : (testCaseId) =>
+                        onEditTestCase
+                          ? onEditTestCase(testCaseId)
+                          : navigation.toTestEdit(suite._id, testCaseId)
+                }
+                onCrumbsChange={onResultCrumbsChange}
+              />
             ) : selectedRunId && selectedRunState.isLoading ? (
               <RowsLoading key={contentKey} label="Loading run..." />
             ) : selectedRunId && selectedRunState.isUnavailable ? (
@@ -2485,6 +2635,10 @@ export function SuiteIterationsView({
                   runHistoryStatus={runHistoryStatus}
                   onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
+                  view={runsViewMode === "test-cases" ? "test-cases" : "runs"}
+                  onViewChange={(next) =>
+                    navigation.toSuiteOverview(suite._id, next)
+                  }
                   hostNamesById={hostNamesById}
                   onRerun={onRerunWithOverride}
                   importJobId={
@@ -2776,11 +2930,16 @@ export function SuiteIterationsView({
 
       {isEditMode && (
         <div ref={settingsScrollRef} className="flex-1 min-h-0 overflow-auto">
-          <div className="mx-auto w-full max-w-5xl space-y-6 px-6 py-8">
+          <div
+            className="group/settings mx-auto w-full max-w-5xl space-y-8 px-6 py-8"
+            data-settings-layout={settingsTabs.enabled ? "inline" : undefined}
+          >
+            {settingsTabs.dialog}
             {configLocked ? (
               <SuiteCiOwnedNotice onDuplicate={onDuplicateSuite} />
             ) : null}
             <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
               disabled={editingDisabled}
               className="m-0 min-w-0 space-y-8 border-0 p-0"
               data-testid={
@@ -3075,6 +3234,18 @@ export function SuiteIterationsView({
                   ) : null}
                 </SuiteSettingsRow>
               ) : null}
+            </fieldset>
+            {/* Each person's own choice, not suite configuration, so the CI
+                lock stops here: a CI-owned suite keeps its Run controls, and a
+                run started from it uses the starter's accounts. */}
+            <div hidden={settingsTabs.hiddenUnless("settings")}>
+              <SuiteAccountsRow suite={suite} projectId={projectId} />
+            </div>
+            <fieldset
+              hidden={settingsTabs.hiddenUnless("settings")}
+              disabled={editingDisabled}
+              className="m-0 min-w-0 space-y-8 border-0 p-0"
+            >
               <BudgetSettingRow
                 settingKey="turnTimeoutMs"
                 label="Per-turn timeout"
@@ -3190,6 +3361,12 @@ export function SuiteIterationsView({
                   />
                 }
               />
+            </fieldset>
+            <fieldset
+              hidden={settingsTabs.hiddenUnless("evaluators")}
+              disabled={editingDisabled}
+              className="m-0 min-w-0 border-0 p-0"
+            >
               <div data-setting-key="passOrFail" className="space-y-4">
                 <SuitePassOrFailSection
                   capabilities={capabilitiesReady ? capabilities : null}
@@ -3201,7 +3378,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                     discovery: (
@@ -3211,7 +3390,9 @@ export function SuiteIterationsView({
                         projectServers={factsProjectServers}
                         isAuthenticated={isAuthenticated}
                         composeCapable={composeCapable}
-                        onGoToWhereItRuns={() => openSetting("environments")}
+                        onGoToWhereItRuns={() =>
+                          settingsTabs.goToSetting("environments", openSetting)
+                        }
                       />
                     ),
                   }}

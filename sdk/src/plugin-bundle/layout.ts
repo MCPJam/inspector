@@ -1,5 +1,5 @@
 /**
- * Which file is the manifest, and which dialect reads it.
+ * Which dialect reads the manifest `plugin-root.ts` found.
  *
  * `strict` is Agent Plugins 1.0 exactly: the manifest is the root
  * `plugin.json`. `openai-compatible` adds the layouts OpenAI documents for
@@ -26,6 +26,7 @@ import {
 } from "./manifest.js";
 import type { PluginSkippedComponent } from "./mcp-config.js";
 import { resolveContainedPath } from "./paths.js";
+import type { PluginManifestLocation } from "./plugin-root.js";
 import { PluginIssueCollector } from "./validation.js";
 import {
   PLUGIN_PARSER_REVISIONS,
@@ -67,6 +68,8 @@ export interface ResolvedManifestSource {
 
 export interface ResolveManifestSourceInput {
   profile: PluginParserProfile;
+  /** The manifest `findPluginRoot` found. */
+  location: PluginManifestLocation;
   filePaths: ReadonlySet<string>;
   /** Parse one bundle file as JSON, reporting failures on `issues`. */
   readJson(path: string, issues: PluginIssueCollector): unknown | null;
@@ -332,38 +335,21 @@ function resolveRootManifest(
     : { interpretation, record: raw };
 }
 
-/**
- * Resolve the manifest for `parsePluginBundle`, or report `MANIFEST_MISSING`
- * and return `null` when the profile finds none.
- */
+/** Resolve the manifest `findPluginRoot` found, for `parsePluginBundle`. */
 export function resolveManifestSource(
   input: ResolveManifestSourceInput
-): ResolvedManifestSource | null {
-  const { profile, filePaths, readJson, issues } = input;
-  if (filePaths.has(PLUGIN_MANIFEST_PATH)) return resolveRootManifest(input);
+): ResolvedManifestSource {
+  const { profile, location, readJson, issues } = input;
+  if (location.layout === "agent-plugins") return resolveRootManifest(input);
 
-  const legacy =
-    profile === "openai-compatible"
-      ? LEGACY_MANIFEST_LOCATIONS.find(({ path }) => filePaths.has(path))
-      : undefined;
-  if (legacy === undefined) {
-    const legacyPaths = LEGACY_MANIFEST_LOCATIONS.map(({ path }) => path);
-    issues.error(
-      "MANIFEST_MISSING",
-      `bundle is missing "${PLUGIN_MANIFEST_PATH}" at its root${
-        profile === "strict" ? "" : ` (or ${legacyPaths.join(", ")})`
-      }`
-    );
-    return null;
-  }
-  reportIgnoredManifests(legacy.path, input);
+  reportIgnoredManifests(location.path, input);
   const interpretation: PluginBundleInterpretation = {
     profile,
     revision: PLUGIN_PARSER_REVISIONS[profile],
-    layout: legacy.layout,
-    manifestPath: legacy.path,
+    layout: location.layout,
+    manifestPath: location.path,
   };
-  const raw = readJson(legacy.path, issues);
+  const raw = readJson(location.path, issues);
   return isPlainRecord(raw)
     ? adaptLegacyManifest(raw, interpretation, input)
     : { interpretation, record: raw };

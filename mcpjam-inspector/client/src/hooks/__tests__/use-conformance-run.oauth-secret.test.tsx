@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   startOAuthConformance: vi.fn(),
   submitOAuthConformanceCode: vi.fn(),
   completeOAuthConformance: vi.fn(),
+  cancelOAuthConformance: vi.fn(async () => ({ success: true })),
   runProtocolConformance: vi.fn(),
   runAppsConformance: vi.fn(),
   runTasksConformance: vi.fn(),
@@ -21,6 +22,13 @@ const profile = vi.hoisted(() => ({
   serverUrl: "https://server.example/mcp",
   clientId: "prereg-client",
   clientSecret: "",
+}));
+
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: vi.fn(async (_name: string, version: string) => ({
+    status: "ready",
+    protocolVersion: version === "auto" ? "2026-07-28" : version,
+  })),
 }));
 
 vi.mock("@/lib/apis/mcp-conformance-api", () => api);

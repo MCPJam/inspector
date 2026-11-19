@@ -9,6 +9,7 @@ import {
   renderStructuredRunJson,
   runSuiteFile,
   type RunSuiteFileOptions,
+  type SuiteFileAuthRequired,
   type SuiteFileRunProgressEvent,
   type SuiteFileRunResult,
   type SuiteFileRunnerRuntime,
@@ -23,17 +24,22 @@ import {
 import { resolveLocalServerBindings } from "../lib/local-server-bindings.js";
 import {
   LOCAL_TEST_EXIT,
+  recordLocalTestOutcome,
   localTestExitCodeForError,
   localTestExitCodeForResult,
 } from "../lib/local-test-exit-code.js";
 import {
   CliError,
+  authChallengeHint,
+  signInUrlArgument,
+  displayableScope,
   cliError,
   setProcessExitCode,
   usageError,
   writeError,
   writeResult,
 } from "../lib/output.js";
+import { recordCommandOutcome } from "../lib/command-outcome.js";
 import {
   addPlatformOptions,
   addProjectOption,
@@ -263,6 +269,50 @@ function routeAiSdkWarnings(quiet: boolean): () => void {
   };
 }
 
+/**
+ * One line per target server that asked for sign-in during the run: what it
+ * refused and how to get it a credential. `mcpjam test` never signs in
+ * itself; it names the command, and where the result is bound.
+ */
+export function localSignInHints(
+  result: Pick<SuiteFileRunResult, "cases">,
+  servers: RunSuiteFileOptions["servers"]
+): string[] {
+  const byServer = new Map<string, SuiteFileAuthRequired>();
+  for (const entry of result.cases) {
+    for (const iteration of entry.iterations) {
+      const authRequired = iteration.authRequired;
+      if (!authRequired) continue;
+      const server = authRequired.server ?? "unknown";
+      if (!byServer.has(server)) byServer.set(server, authRequired);
+    }
+  }
+  return [...byServer].map(([name, authRequired]) => {
+    const binding = servers[name];
+    const url =
+      binding && "url" in binding.config && binding.config.url
+        ? String(binding.config.url)
+        : undefined;
+    const requiredScope = displayableScope(
+      authRequired.challenge.requiredScope
+    );
+    const lead = `Server "${name}" asked for sign-in when "${authRequired.toolName}" was called; a local run never signs in.`;
+    // `--credentials-file` binds only the server `--url` names; every other
+    // binding takes its credentials from its MCP config entry.
+    if (binding?.source === "--url") {
+      return `${lead} ${authChallengeHint(
+        requiredScope !== undefined ? { requiredScope } : {},
+        url
+      )}`;
+    }
+    const scopes =
+      requiredScope !== undefined ? ` --scopes "${requiredScope}"` : "";
+    return `${lead} Sign in with \`mcpjam oauth login --url ${signInUrlArgument(
+      url,
+    )}${scopes} --credentials-out <file>\`, then set "credentialsFile" to that file in the "${name}" entry of your MCP config.`;
+  });
+}
+
 function refusalToCliError(error: SuiteFileRunError): CliError {
   return cliError(error.code, error.message, localTestExitCodeForError(error), {
     phase: error.phase,
@@ -390,6 +440,7 @@ export function registerTestCommand(
             `\nReceived ${signal}; stopping and writing the partial report…\n`
           );
         }
+        recordCommandOutcome("interrupted");
         controller.abort(new Error(`interrupted by ${signal}`));
       };
       process.on("SIGINT", onSignal);
@@ -397,8 +448,8 @@ export function registerTestCommand(
       const restoreWarnings = routeAiSdkWarnings(globalOptions.quiet);
 
       let result: SuiteFileRunResult;
+      let servers: RunSuiteFileOptions["servers"] = {};
       try {
-        let servers: RunSuiteFileOptions["servers"] = {};
         // A binding that cannot be SET UP (missing, unreadable config, unset
         // variable) is held back until the SDK has validated the file and every
         // selected case: an unsupported case or a bad flag is the more useful
@@ -487,6 +538,7 @@ export function registerTestCommand(
         if (error instanceof CliError) {
           writeError(error, globalOptions.format);
           setProcessExitCode(error.exitCode);
+          recordCommandOutcome("error", error.code);
           return;
         }
         throw error;
@@ -531,12 +583,24 @@ export function registerTestCommand(
         // A rendering failure after evidence came back establishes nothing.
         writeError(error, globalOptions.format);
         setProcessExitCode(LOCAL_TEST_EXIT.notEstablished);
+        recordCommandOutcome(
+          "error",
+          error instanceof CliError ? error.code : undefined
+        );
         return;
+      }
+      // After the report, so stdout stays one document; reported, never a
+      // changed exit code (see `SuiteFileRunIssue`).
+      if (!globalOptions.quiet) {
+        for (const hint of localSignInHints(result, servers)) {
+          process.stderr.write(`${hint}\n`);
+        }
       }
       const exitCode = localTestExitCodeForResult(result, {
         artifactWriteFailed,
       });
       setProcessExitCode(exitCode);
+      recordLocalTestOutcome(exitCode);
     }
   );
 }

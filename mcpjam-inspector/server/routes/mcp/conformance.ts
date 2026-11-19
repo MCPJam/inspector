@@ -1,10 +1,14 @@
+import { conformanceDeadlineFields } from "../shared/conformance-deadline.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
   MCP_PROTOCOL_VERSIONS,
+  MCP_READINESS_IDS,
+  MCP_OAUTH_READINESS_IDS,
   MCP_TASKS_CHECK_IDS,
+  MCP_TASKS_READINESS_IDS,
   canRunConformance,
   oauthConformanceProfileSchema,
   type HttpServerConfig,
@@ -18,6 +22,7 @@ import {
   UnsupportedTransportError,
   assertHttpSupported,
   completeOAuthConformance,
+  cancelOAuthConformance,
   runAppsConformance,
   runLocalDirectoryReadiness,
   runProtocolConformance,
@@ -25,8 +30,14 @@ import {
   startOAuthConformance,
   submitOAuthConformanceCode,
 } from "../shared/conformance";
-import { conformanceProbeFields } from "../shared/conformance-probes";
+import {
+  conformanceInputResponsesSchema,
+  conformanceTaskOverridesSchema,
+  conformanceProbeFields,
+} from "../shared/conformance-probes";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
+import { checkConformanceConnection } from "../shared/conformance-connection.js";
+import { deliveredCredentialBinding } from "../../utils/delivered-oauth-credential.js";
 
 const conformance = new Hono();
 
@@ -56,6 +67,7 @@ function toHttpResolved(config: HttpServerConfig) {
     customHeaders: config.requestInit?.headers as
       | Record<string, string>
       | undefined,
+    credentialBinding: deliveredCredentialBinding(config),
   };
 }
 
@@ -72,20 +84,72 @@ function handleUnsupportedTransport(
   return undefined;
 }
 
+const connectionCheckSchema = z.object({
+    ...conformanceDeadlineFields,
+  serverId: z.string().min(1),
+  protocolVersion: z.enum(["auto", ...MCP_PROTOCOL_VERSIONS]),
+});
+
+conformance.post("/connection-check", async (c) => {
+  try {
+    const requestStartedAt = Date.now();
+    const parsed = connectionCheckSchema.safeParse(await readRequestJson(c));
+    if (!parsed.success)
+      return c.json(
+        { error: parsed.error.issues[0]?.message ?? "Invalid request" },
+        400,
+      );
+    const resolved = resolveServerConfig(
+      c.mcpClientManager,
+      parsed.data.serverId,
+    );
+    if ("error" in resolved) return c.json(resolved, 400);
+    assertHttpSupported("protocol", resolved.config);
+    const http = toHttpResolved(resolved.config as HttpServerConfig);
+    return c.json(
+      await checkConformanceConnection(
+        {
+          url: http.serverUrl,
+          accessToken: http.accessToken,
+          requestInit: { headers: http.customHeaders },
+          credentialSource: (resolved.config as HttpServerConfig)
+            .credentialSource,
+          credentialHeaderNames: (resolved.config as HttpServerConfig)
+            .credentialHeaderNames,
+        },
+        parsed.data.protocolVersion,
+      { requestStartedAt, signal: c.req.raw.signal, runTimeoutSeconds: parsed.data.runTimeoutSeconds, remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs },
+      ),
+    );
+  } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
+    reportRouteFailure("[Conformance Connection Check]", error, {
+      source: "mcp.conformance.connection_check",
+      hop: "user_server_hop",
+    });
+    return c.json({ error: "Could not check the server connection." }, 500);
+  }
+});
+
 // ── POST /protocol ──────────────────────────────────────────────────────
 
 const protocolSchema = z.object({
+  ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   /** Pin the run to one protocol version; absent ⇒ adopt the negotiated one. */
   protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_CHECK_IDS)).min(1).optional(),
+  /** Run only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_READINESS_IDS)).optional(),
   /** Tools named as safe for the checks that must call one. */
   ...conformanceProbeFields,
 });
 
 conformance.post("/protocol", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = protocolSchema.safeParse(body);
     if (!parsed.success) {
@@ -105,11 +169,18 @@ conformance.post("/protocol", async (c) => {
 
     assertHttpSupported("protocol", resolved.config);
     const { result } = await runProtocolConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       ...toHttpResolved(resolved.config as HttpServerConfig),
       protocolVersion: parsed.data.protocolVersion,
       checkIds: parsed.data.checkIds,
+      readinessIds: parsed.data.readinessIds,
       logProbe: parsed.data.logProbe,
+      logLevelFilteringProbe: parsed.data.logLevelFilteringProbe,
       inputRequiredProbe: parsed.data.inputRequiredProbe,
+      toolCallProbe: parsed.data.toolCallProbe,
     });
     return c.json({ success: true, result });
   } catch (error) {
@@ -134,6 +205,8 @@ conformance.post("/protocol", async (c) => {
 // ── POST /apps ──────────────────────────────────────────────────────────
 
 const appsSchema = z.object({
+    ...conformanceDeadlineFields,
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_APPS_CHECK_IDS)).min(1).optional(),
@@ -141,6 +214,7 @@ const appsSchema = z.object({
 
 conformance.post("/apps", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = appsSchema.safeParse(body);
     if (!parsed.success) {
@@ -165,7 +239,12 @@ conformance.post("/apps", async (c) => {
     }
 
     const { result } = await runAppsConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       ...serverConfig,
+      protocolVersion: parsed.data.protocolVersion,
       ...(parsed.data.checkIds ? { checkIds: parsed.data.checkIds } : {}),
     });
     return c.json({ success: true, result });
@@ -189,18 +268,25 @@ conformance.post("/apps", async (c) => {
 // ── POST /tasks ─────────────────────────────────────────────────────────
 
 const tasksSchema = z.object({
+    ...conformanceDeadlineFields,
+  protocolVersion: z.enum(MCP_PROTOCOL_VERSIONS).optional(),
   serverId: z.string().min(1),
   /** Tool used to provoke a task; required on the extension wire, where tools
    *  carry no task metadata to pick from. */
   toolName: z.string().min(1).optional(),
   toolArguments: z.record(z.string(), z.unknown()).optional(),
+  inputResponses: conformanceInputResponsesSchema,
+  checkOverrides: conformanceTaskOverridesSchema,
   pollTimeoutMs: z.number().int().positive().max(120_000).optional(),
   /** Run only these checks, as picked before Run; absent ⇒ all of them. */
   checkIds: z.array(z.enum(MCP_TASKS_CHECK_IDS)).min(1).optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_TASKS_READINESS_IDS)).optional(),
 });
 
 conformance.post("/tasks", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = tasksSchema.safeParse(body);
     if (!parsed.success) {
@@ -226,6 +312,8 @@ conformance.post("/tasks", async (c) => {
     }
 
     const { result } = await runTasksConformance({
+      requestStartedAt,
+      signal: c.req.raw.signal,
       ...serverConfig,
       ...runOptions,
     });
@@ -250,13 +338,17 @@ conformance.post("/tasks", async (c) => {
 // ── POST /oauth/start ───────────────────────────────────────────────────
 
 const oauthStartSchema = z.object({
+  ...conformanceDeadlineFields,
   serverId: z.string().min(1),
   oauthProfile: oauthConformanceProfileSchema.optional(),
   callbackOrigin: z.string().optional(),
+  /** Report only this advice; absent ⇒ all of it, empty ⇒ none. */
+  readinessIds: z.array(z.enum(MCP_OAUTH_READINESS_IDS)).optional(),
 });
 
 conformance.post("/oauth/start", async (c) => {
   try {
+    const requestStartedAt = Date.now();
     const body = await readRequestJson(c);
     const parsed = oauthStartSchema.safeParse(body);
     if (!parsed.success) {
@@ -269,7 +361,8 @@ conformance.post("/oauth/start", async (c) => {
       );
     }
 
-    const { serverId, oauthProfile, callbackOrigin } = parsed.data;
+    const { serverId, oauthProfile, callbackOrigin, readinessIds } =
+      parsed.data;
     const resolved = resolveServerConfig(c.mcpClientManager, serverId);
     if ("error" in resolved) {
       return c.json({ success: false, ...resolved }, 400);
@@ -291,10 +384,15 @@ conformance.post("/oauth/start", async (c) => {
     }
 
     const result = await startOAuthConformance({
+      requestStartedAt,
+      runTimeoutSeconds: parsed.data.runTimeoutSeconds,
+      remainingRunTimeoutMs: parsed.data.remainingRunTimeoutMs,
       defaultServerUrl: http.serverUrl,
       defaultCustomHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
       redirectUrl: `${callbackOrigin.replace(/\/$/, "")}/oauth/callback/debug`,
       oauthProfile,
+      readinessIds,
     });
     return c.json(result);
   } catch (error) {
@@ -365,6 +463,13 @@ conformance.post("/oauth/authorize", async (c) => {
       500,
     );
   }
+});
+
+conformance.post("/oauth/cancel", async (c) => {
+  const parsed = z.object({ sessionId: z.string().min(1) }).safeParse(await readRequestJson(c));
+  if (!parsed.success) return c.json({ success: false, error: "Invalid session" }, 400);
+  cancelOAuthConformance(parsed.data);
+  return c.json({ success: true });
 });
 
 // ── POST /oauth/complete ────────────────────────────────────────────────
@@ -518,6 +623,7 @@ conformance.post("/readiness/:publisher", async (c) => {
       submissionMode: parsed.data.submissionMode,
       accessToken: http.accessToken,
       customHeaders: http.customHeaders,
+      credentialBinding: http.credentialBinding,
     });
     return c.json({ success: true, result });
   } catch (error) {

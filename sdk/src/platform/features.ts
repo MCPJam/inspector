@@ -48,9 +48,9 @@ export const PLATFORM_FEATURE_KEYS = [
   "trace-destinations",
   "description-experiments",
   "conformance",
+  "directory-readiness",
   "unified-sessions",
   "unified-share-evals",
-  "unified-share-conformance",
   "github-checks",
   "scheduled-evals",
 ] as const;
@@ -79,9 +79,9 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "trace-destinations": "Trace destinations",
   "description-experiments": "Description experiments",
   conformance: "Conformance",
+  "directory-readiness": "Directory readiness",
   "unified-sessions": "The unified sessions feed",
   "unified-share-evals": "Eval run sharing",
-  "unified-share-conformance": "Conformance run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
 };
@@ -99,9 +99,10 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
 export type OperationFeature =
   PlatformFeatureKey | readonly PlatformFeatureKey[] | null;
 
+// A conformance run shares under `conformance`, the feature of its tab.
 const SHARE_FAMILY: readonly PlatformFeatureKey[] = [
   "unified-share-evals",
-  "unified-share-conformance",
+  "conformance",
   "sandboxes",
 ];
 
@@ -116,6 +117,26 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_conformance_run: "conformance",
   list_conformance_runs: "conformance",
   get_conformance_report: "conformance",
+  get_conformance_check: "conformance",
+  // Directory submissions. Only the writes and a run started from a
+  // submission are gated; the readiness starts above keep `conformance`.
+  create_directory_submission: "directory-readiness",
+  update_directory_submission: "directory-readiness",
+  start_directory_submission_run: "directory-readiness",
+  // A reviewer sign-in starts a run, as a submission's run does.
+  create_reviewer_attempt: "directory-readiness",
+  create_reviewer_handoff: "directory-readiness",
+  resume_reviewer_attempt: "directory-readiness",
+  record_directory_submission_status: "directory-readiness",
+  record_directory_submission_snapshot: "directory-readiness",
+  import_directory_finding: "directory-readiness",
+  save_directory_submission_test_plan: "directory-readiness",
+  set_directory_submission_evals: "directory-readiness",
+  import_directory_submission_test_cases: "directory-readiness",
+  // Resuming runs a run again under the gate it started under: `conformance`
+  // for a server's run, `directory-readiness` for a submission's. The backend
+  // checks which one the run needs.
+  resume_readiness_run: ["conformance", "directory-readiness"],
   // The unified sessions feed. `list_chat_sessions` reads chat sessions,
   // which are released.
   search_sessions: "unified-sessions",
@@ -200,7 +221,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   rebind_study: "sandboxes",
   // Minting a new share link, for several resource types: available when any
   // of them is. The backend checks the resource type (study shares follow
-  // `sandboxes`, eval and conformance runs their own share beta).
+  // `sandboxes`, eval runs their own share beta, conformance runs
+  // `conformance`).
   rotate_share_link: SHARE_FAMILY,
   // Kept available whatever the feature reports: what the backend leaves
   // open on purpose so an organization that lost a feature can still stop,
@@ -232,6 +254,28 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_readiness_runs: null,
   get_readiness_run: null,
   cancel_readiness_run: null,
+  // The flows are product data, and the backend leaves submission reads and
+  // the delete open, so an organization can still find and remove its own.
+  list_directory_flows: null,
+  get_directory_flow: null,
+  list_directory_submissions: null,
+  get_directory_submission: null,
+  get_directory_submission_results: null,
+  get_directory_submission_test_plan: null,
+  draft_directory_submission_test_plan: null,
+  get_directory_submission_tool_tests: null,
+  get_directory_submission_evals: null,
+  export_directory_submission_test_cases: null,
+  delete_directory_submission: null,
+  // Reading and stopping a reviewer sign-in stay open, as on the backend.
+  list_reviewer_attempts: null,
+  get_reviewer_attempt: null,
+  cancel_reviewer_attempt: null,
+  get_directory_submission_handoff: null,
+  list_directory_submission_findings: null,
+  get_directory_submission_finding: null,
+  export_directory_submission: null,
+  list_directory_submission_events: null,
   list_personas: null,
   get_persona: null,
   delete_persona: null,
@@ -286,6 +330,16 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   get_eval_run_disclosure: null,
   update_eval_suite: null,
   list_eval_suite_revisions: null,
+  list_server_revisions: null,
+  get_server_revision: null,
+  diff_server_revisions: null,
+  // Not hidden by `multi-account-connections`: a first account needs no
+  // feature, and the backend refuses a second one where the feature is off.
+  list_server_accounts: null,
+  get_server_account: null,
+  upload_server_account_tokens: null,
+  update_server_account: null,
+  delete_server_account: null,
   delete_eval_suite: null,
   set_eval_suite_environments: null,
   list_eval_cases: null,
@@ -312,6 +366,9 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   backtest_eval_run: null,
   backtest_eval_run_judge: null,
   request_eval_run_judge: null,
+  request_eval_run_insights: null,
+  cancel_eval_run_insights: null,
+  build_eval_run_findings: null,
   get_eval_run_steps: null,
   create_tunnel: null,
   close_tunnel: null,

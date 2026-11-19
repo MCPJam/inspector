@@ -70,6 +70,10 @@ import {
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+import {
+  SwarmPendingLaunchRows,
+  type SwarmLaunchRow,
+} from "./swarm-launch-progress";
 import { clientDisplayName } from "@/lib/client-display-name";
 
 export type SwarmLaunchedRun = {
@@ -725,6 +729,8 @@ export function NewSwarmRunningStep({
   hosts = [],
   chrome = "wizard",
   launchNotice = null,
+  launching = false,
+  launchRows = [],
   onLeave,
   onOpenSession,
   onRunsComplete,
@@ -732,6 +738,8 @@ export function NewSwarmRunningStep({
   projectId: string;
   organizationId?: string;
   runs: SwarmLaunchedRun[];
+  launching?: boolean;
+  launchRows?: SwarmLaunchRow[];
   /** Columns from the Describe-step environments — always shown. */
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
@@ -879,10 +887,8 @@ export function NewSwarmRunningStep({
     [],
   );
 
-  // Once any run snapshot has landed, columns come ONLY from those snapshots
-  // (what the runner actually fans out). Fallback env columns are a pre-load
-  // placeholder — keeping them after load made Cursor look "queued" when the
-  // journeys were still single-client.
+  // Keep the selected columns until every planned goal has a run. After startup,
+  // snapshots own the columns unless a goal could not launch at all.
   const columns = useMemo((): SwarmRunningColumn[] => {
     const seen = new Map<string, SwarmRunningColumn>();
     const addColumn = (column: SwarmRunningColumn) => {
@@ -892,28 +898,30 @@ export function NewSwarmRunningStep({
       });
     };
     const snapList = Object.values(snapshots);
-    if (snapList.length === 0) {
+    if (
+      snapList.length === 0 || launching ||
+      launchRows.some((row) => !row.runId)
+    ) {
       for (const column of fallbackColumns) {
         addColumn(column);
       }
-    } else {
-      for (const snap of snapList) {
-        for (const column of snap.columns) {
-          addColumn(column);
-        }
+    }
+    for (const snap of snapList) {
+      for (const column of snap.columns) {
+        addColumn(column);
       }
     }
     return Array.from(seen.values());
-  }, [clientLabel, fallbackColumns, snapshots]);
+  }, [clientLabel, fallbackColumns, snapshots, launching, launchRows]);
 
   const missingPlannedClients = useMemo(() => {
     const snapList = Object.values(snapshots);
-    if (snapList.length === 0 || fallbackColumns.length === 0) return [];
+    if (launching || snapList.length === 0 || fallbackColumns.length === 0) return [];
     const onRuns = new Set(
       snapList.flatMap((snap) => snap.columns.map((column) => column.key)),
     );
     return fallbackColumns.filter((column) => !onRuns.has(column.key));
-  }, [fallbackColumns, snapshots]);
+  }, [fallbackColumns, snapshots, launching]);
 
   const { done, total, allTerminal, succeeded, rateLimited, failed } =
     useMemo(() => {
@@ -922,7 +930,7 @@ export function NewSwarmRunningStep({
       let succeededCount = 0;
       let rateLimitedCount = 0;
       let failedCount = 0;
-      let terminal = runs.length > 0;
+      let terminal = runs.length > 0 && !launching;
       for (const run of runs) {
         const snap = snapshots[run.runId];
         if (!snap) {
@@ -946,7 +954,7 @@ export function NewSwarmRunningStep({
         rateLimited: rateLimitedCount,
         failed: failedCount,
       };
-    }, [runs, snapshots]);
+    }, [runs, snapshots, launching]);
 
   // A launched run with no snapshot yet has not reported a status, so it is
   // treated as still running — the stop must reach it.
@@ -1295,6 +1303,14 @@ export function NewSwarmRunningStep({
   );
 
   const launchNoticeVisible = launchNotice !== null && !launchNoticeDismissed;
+  const runById = new Map(runs.map((run) => [run.runId, run]));
+  const matrixRows = launchRows.length > 0
+    ? launchRows.map((planned) => ({
+        key: planned.key,
+        run: planned.runId ? runById.get(planned.runId) : undefined,
+        planned,
+      }))
+    : runs.map((run) => ({ key: run.runId, run, planned: undefined }));
   const showIntro =
     chrome === "wizard" ||
     launchNoticeVisible ||
@@ -1337,19 +1353,21 @@ export function NewSwarmRunningStep({
                     className="mb-0 min-w-0 flex-1 text-xl font-semibold tracking-[-0.02em] text-muted-foreground"
                     data-testid="new-swarm-running-title"
                   >
-                    {cleanupPending
-                      ? "Stop requested"
-                      : swarmRunningTitle({
-                      allTerminal,
-                      succeeded,
-                      rateLimited,
-                      done,
-                      total,
+                    {launching
+                      ? "Starting swarm"
+                      : cleanupPending
+                        ? "Stop requested"
+                        : swarmRunningTitle({
+                          allTerminal,
+                          succeeded,
+                          rateLimited,
+                          done,
+                          total,
                           stopped: cancellationRequested && !uncanceledIssues,
-                    })}
+                        })}
                   </h2>
                   <div className="flex shrink-0 items-center gap-2">
-                    {allTerminal ? null : (
+                    {allTerminal || launching ? null : (
                       <StopSwarmRunButton
                         runningCount={runningRunIds.length}
                         busy={stopBusy}
@@ -1371,6 +1389,7 @@ export function NewSwarmRunningStep({
                       size="sm"
                       className="shrink-0"
                       data-testid="new-swarm-running-open-findings"
+                      disabled={launching}
                       onClick={onLeave}
                     >
                       Open findings
@@ -1591,22 +1610,30 @@ export function NewSwarmRunningStep({
                     className={allTerminal ? "justify-end" : "justify-start"}
                   />
                   <div className="flex items-center gap-3">
-                    <div
-                      className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
-                      role="progressbar"
-                      aria-valuenow={Math.round(progress * 100)}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      data-testid="new-swarm-running-progress"
-                    >
-                      <div
-                        className="h-full rounded-full bg-primary transition-[width] duration-500"
-                        style={{ width: `${Math.round(progress * 100)}%` }}
-                      />
-                    </div>
-                    <span className="shrink-0 text-xs text-foreground">
-                      {`${Math.round(progress * 100)}%`}
-                    </span>
+                    {launching ? (
+                      <p role="status" className="text-sm text-muted-foreground">
+                        {runs.length} of {launchRows.length} goals started
+                      </p>
+                    ) : (
+                      <>
+                        <div
+                          className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted"
+                          role="progressbar"
+                          aria-valuenow={Math.round(progress * 100)}
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          data-testid="new-swarm-running-progress"
+                        >
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width] duration-500"
+                            style={{ width: `${Math.round(progress * 100)}%` }}
+                          />
+                        </div>
+                        <span className="shrink-0 text-xs text-foreground">
+                          {`${Math.round(progress * 100)}%`}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </>
               ) : null}
@@ -1656,13 +1683,16 @@ export function NewSwarmRunningStep({
                 </tr>
               </thead>
               <tbody>
-                {runs.map((run) => {
+                {matrixRows.map(({ key, run, planned }) => {
+                  if (!run) return planned ? (
+                    <SwarmPendingLaunchRows key={key} rows={[planned]} columns={columns} />
+                  ) : null;
                   const snap = snapshots[run.runId];
                   const goal = swarmRunGoalLabel(run);
 
                   return (
                     <tr
-                      key={run.runId}
+                      key={key}
                       className="border-b border-border/30 last:border-0"
                       data-testid="new-swarm-running-persona-row"
                     >
@@ -1797,7 +1827,9 @@ export function NewSwarmRunningStep({
           // `onLeave`, which threw away the session it was called with and left
           // the viewer on the flat Sessions list hunting for the transcript
           // they had been watching a moment earlier.
-          onOpenCompleted={(session) => onOpenSession(session.id)}
+          onOpenCompleted={(session) => {
+            if (!launching) onOpenSession(session.id);
+          }}
           fillHeight
         />
       </aside>

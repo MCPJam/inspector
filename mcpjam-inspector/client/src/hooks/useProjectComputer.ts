@@ -209,6 +209,8 @@ export interface ComputersDataPlaneConfig {
    * `localConfigured` (creds present ⇔ ephemeral exec works).
    */
   ephemeralCloudAvailable?: boolean;
+  /** Positive server declaration; absent/fallback configurations never grant it. */
+  pluginComputerRuntime?: boolean;
   /**
    * Per-engine availability. Always present POST-PARSE: servers that predate
    * the field get a derived block — local unavailable (an old server has no
@@ -308,6 +310,7 @@ function parseDataPlaneConfig(value: unknown): ComputersDataPlaneConfig | null {
     ...(typeof capabilities?.ephemeralCloudAvailable === "boolean"
       ? { ephemeralCloudAvailable: capabilities.ephemeralCloudAvailable }
       : {}),
+    pluginComputerRuntime: capabilities?.pluginComputerRuntime === true,
     engines: engines ?? derived.engines,
     defaultEngine: engines
       ? record.defaultEngine === "local" || record.defaultEngine === "cloud"

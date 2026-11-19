@@ -14,9 +14,21 @@ import { guestTabRecovery } from "./auth/guest-tab-recovery";
  */
 
 import {
+  GUEST_ACCESS_DISABLED_CODE,
+  GUEST_SESSION_REFUSAL_HEADER,
+  GUEST_SESSION_REVOKED_CODE,
   sanitizeGuestSessionFailureDetails,
   type GuestSessionFailureDetails,
 } from "@/shared/guest-session-failure";
+import {
+  GuestSessionRefusedError,
+  GuestSessionRequestError,
+  GuestSessionRevokedError,
+  isFinalGuestRefusal,
+  type GuestSessionRefusalReason,
+} from "./guest-session-errors";
+
+export { GuestSessionRefusedError, type GuestSessionRefusalReason };
 
 
 declare global {
@@ -59,14 +71,16 @@ let legacyMigrationConsumed = false;
 // token by overwriting cachedSession.
 let sessionGeneration = 0;
 const sessionListeners = new Set<() => void>();
-// Set when the server refused to CREATE a guest (429: per-IP daily cap).
-// While it stands, mint attempts short-circuit to null without a request —
-// the refusal is deterministic for the rest of the window, so retrying only
-// burns the network — and the app offers sign-in instead.
+// Set when the server refused to CREATE a guest: a 429 for the per-IP daily
+// cap, or a 403 when the deployment issues no guests at all. While it stands,
+// mint attempts short-circuit to null without a request — the refusal is
+// deterministic for the rest of the window, so retrying only burns the
+// network — and the app offers sign-in instead.
 const GUEST_SESSION_REFUSED_DEFAULT_MS = 10 * 60 * 1000;
 export interface GuestSessionRefusal {
   /** Epoch ms after which a new attempt is allowed. */
   readonly until: number;
+  readonly reason: GuestSessionRefusalReason;
 }
 let refusal: GuestSessionRefusal | null = null;
 let refusalExpiryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -166,6 +180,34 @@ export function isGuestActivated(guestId: string | null | undefined): boolean {
 }
 
 /**
+ * Forget the activation marker for `guestId`, so later sign-ins take the
+ * no-marker path. A marker that names another guest (one activated in another
+ * tab meanwhile) is left alone.
+ */
+export function clearGuestActivation(guestId: string): void {
+  try {
+    if (localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY) === guestId) {
+      localStorage.removeItem(GUEST_ACTIVATED_STORAGE_KEY);
+    }
+  } catch {
+    // ignore (private mode / storage disabled)
+  }
+}
+
+/**
+ * The guest this browser last activated, or null. Without a marker no guest
+ * cookie can pass `isGuestActivated`, so sign-in can skip the guest lookup
+ * that would only tell it there is nothing to promote.
+ */
+export function getActivatedGuestId(): string | null {
+  try {
+    return localStorage.getItem(GUEST_ACTIVATED_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the server-injected `window.__MCP_GUEST_BOOTSTRAP__` blob once at
  * module load (before the first React render), validate it, and seed the
  * in-memory cache so the lazy `useState` initializers in
@@ -235,51 +277,16 @@ function deleteLegacyToken(): void {
   legacyMigrationConsumed = true;
 }
 
-class GuestSessionRequestError extends Error {
-  /**
-   * The HTTP status when the server answered with a non-ok response. Absent
-   * for a network error or an unreadable body — that absence is the signal
-   * that the request never got a real answer from the server.
-   */
-  readonly status?: number;
-  /**
-   * Why the server could not get a session from ITS upstream, from the 503
-   * body. On a self-hosted install that 503 is made on the user's machine, so
-   * this is the only place the cause shows up.
-   */
-  readonly upstreamFailure?: GuestSessionFailureDetails;
-  constructor(
-    message: string,
-    status?: number,
-    upstreamFailure?: GuestSessionFailureDetails,
-    // What `fetch` threw when there is no status. Kept as `cause` so a report
-    // can name the browser's own error class instead of this wrapper's.
-    cause?: unknown,
-  ) {
-    super(message, cause === undefined ? undefined : { cause });
-    this.name = "GuestSessionRequestError";
-    this.status = status;
-    this.upstreamFailure = upstreamFailure;
-  }
-}
-
-/** The server refused to create a guest (429). Not transient: do not retry. */
-export class GuestSessionRefusedError extends GuestSessionRequestError {
-  readonly retryAfterMs: number;
-  constructor(retryAfterMs: number) {
-    super("guest-session creation refused (429)");
-    this.name = "GuestSessionRefusedError";
-    this.retryAfterMs = retryAfterMs;
-  }
-}
-
 // This fetch has no timeout, so reading a stalled error body without a bound
 // would hang the retry ladder behind a report that only wants a reason.
 const UPSTREAM_FAILURE_READ_TIMEOUT_MS = 1000;
 
-async function readUpstreamFailure(
-  response: Response,
-): Promise<GuestSessionFailureDetails | undefined> {
+type ErrorBody = {
+  code?: unknown;
+  details?: unknown;
+};
+
+async function readErrorBody(response: Response): Promise<ErrorBody | undefined> {
   if (typeof response.json !== "function") return undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -292,9 +299,7 @@ async function readUpstreamFailure(
         );
       }),
     ]);
-    return sanitizeGuestSessionFailureDetails(
-      (body as { details?: unknown } | null | undefined)?.details,
-    );
+    return body && typeof body === "object" ? (body as ErrorBody) : undefined;
   } catch {
     return undefined;
   } finally {
@@ -364,12 +369,41 @@ async function requestGuestSession(
   if (response.status === 429) {
     throw new GuestSessionRefusedError(
       parseRetryAfterMs(response.headers?.get?.("retry-after")),
+      "rate_limited",
+    );
+  }
+
+  if (
+    response.status === 403 &&
+    response.headers?.get?.(GUEST_SESSION_REFUSAL_HEADER) ===
+      GUEST_ACCESS_DISABLED_CODE
+  ) {
+    throw new GuestSessionRefusedError(
+      GUEST_SESSION_REFUSED_DEFAULT_MS,
+      "guest_access_disabled",
     );
   }
 
   if (!response.ok) {
-    const upstreamFailure = await readUpstreamFailure(response);
-    throw new GuestSessionRequestError(
+    const errorBody = await readErrorBody(response);
+    // The body still decides for a server that predates the refusal header.
+    if (
+      response.status === 403 &&
+      errorBody?.code === GUEST_ACCESS_DISABLED_CODE
+    ) {
+      throw new GuestSessionRefusedError(
+        GUEST_SESSION_REFUSED_DEFAULT_MS,
+        "guest_access_disabled",
+      );
+    }
+    const upstreamFailure = sanitizeGuestSessionFailureDetails(
+      errorBody?.details,
+    );
+    const revoked =
+      response.status === 403 &&
+      response.headers?.get?.(GUEST_SESSION_REFUSAL_HEADER) ===
+        GUEST_SESSION_REVOKED_CODE;
+    throw new (revoked ? GuestSessionRevokedError : GuestSessionRequestError)(
       `guest-session request failed: ${response.status} ${response.statusText}${describeUpstreamFailure(upstreamFailure)}`,
       response.status,
       upstreamFailure,
@@ -405,7 +439,7 @@ async function requestGuestSession(
  * memory and not within the expiry buffer; otherwise issues a single
  * `lookup_or_create` request and dedupes concurrent callers.
  *
- * Returns null on a refusal (429) or a definitive miss, and THROWS the real
+ * Returns null on a refusal or a definitive miss, and THROWS the real
  * cause on any other failure. Only the auth retry ladder calls this, so it can
  * report why a mint failed; everyone else uses `getOrCreateGuestSession`.
  */
@@ -441,7 +475,10 @@ export async function getOrCreateGuestSessionOrThrow(): Promise<GuestSession | n
       return session;
     } catch (error) {
       if (error instanceof GuestSessionRefusedError) {
-        setRefusal({ until: Date.now() + error.retryAfterMs });
+        setRefusal({
+          until: Date.now() + error.retryAfterMs,
+          reason: error.reason,
+        });
         return null;
       }
       console.error("Failed to create guest session:", error);
@@ -542,7 +579,8 @@ export async function getExistingGuestBearerToken(): Promise<string | null> {
  * Resolve the `guestId` of the guest backed by the current cookie WITHOUT
  * minting a new guest. Prefers the in-memory cache (the common same-tab
  * guest→sign-in case) and otherwise issues a single `lookup_only`. Returns
- * null when there is no existing guest cookie or on transient failure.
+ * null when the server answers that there is no usable guest: a 204, a
+ * revoked guest, or guest access turned off. Throws on a failed lookup.
  *
  * Used by the promotion path to look up the activation marker for the cookie
  * actually present, so an incidental document-bootstrap cookie (never
@@ -553,12 +591,15 @@ export async function getExistingGuestId(): Promise<string | null> {
   if (cached?.guestId) {
     return cached.guestId;
   }
-  try {
-    await getExistingGuestBearerToken();
-  } catch {
-    return null;
-  }
-  return getCachedGuestSession()?.guestId ?? null;
+  const token = await getExistingGuestBearerToken().catch((error: unknown) => {
+    if (isFinalGuestRefusal(error)) return null;
+    throw error;
+  });
+  if (token === null) return null;
+  const guestId = getCachedGuestSession()?.guestId;
+  // A session cleared while the lookup was in flight is not a confirmed miss.
+  if (!guestId) throw new Error("guest session cleared during lookup");
+  return guestId;
 }
 
 /**
@@ -585,15 +626,14 @@ export function clearGuestSession(): void {
  * who later signs out cannot resurrect the previous guest identity by
  * replaying the cookie.
  *
- * Idempotent: returns false if no cookie was present or revocation
- * failed; returns true on success. Always also clears the in-memory
- * cache so subsequent guest-token reads in this tab fall through to
- * a fresh `lookup_or_create` call.
+ * Idempotent. Returns true on any 2xx, which always expires the cookie even
+ * when the body says `revoked: false` (no cookie, or rows a promotion already
+ * revoked), and false when the request failed. Always clears the in-memory
+ * cache so later guest-token reads fall through to `lookup_or_create`.
  */
 export async function revokeGuestSessionAndCookie(): Promise<boolean> {
   const guestId = cachedSession?.guestId;
   const finishTransition = guestId ? guestTabRecovery.begin(guestId) : undefined;
-  let revoked = false;
   let succeeded = false;
   try {
     const response = await fetch("/api/web/guest-session/revoke", {
@@ -601,22 +641,14 @@ export async function revokeGuestSessionAndCookie(): Promise<boolean> {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
     });
-    if (response.ok) {
-      succeeded = true;
-      try {
-        const body = (await response.json()) as { revoked?: unknown };
-        revoked = body?.revoked === true;
-      } catch {
-        revoked = false;
-      }
-    }
+    succeeded = response.ok;
   } catch (error) {
     console.error("Failed to revoke guest session:", error);
   } finally {
     clearGuestSession();
     finishTransition?.(succeeded);
   }
-  return revoked;
+  return succeeded;
 }
 
 /**
@@ -664,9 +696,10 @@ export async function getGuestPromotionProof(): Promise<string | null> {
  * it can report why a refresh failed; everyone else uses
  * `forceRefreshGuestSession`.
  *
- * A 429 refusal resolves null and records the refusal, exactly as a mint
- * does: retrying it only spends more of the per-IP budget, and the ladder
- * reads the standing refusal as terminal instead of reporting a failure.
+ * A refusal resolves null and records it, exactly as a mint does: retrying
+ * it only spends more of the per-IP budget or asks a deployment that issues no
+ * guests, and the ladder reads the standing refusal as terminal instead of
+ * reporting a failure.
  */
 export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> {
   if (forceRefreshInFlight) {
@@ -697,7 +730,10 @@ export async function forceRefreshGuestSessionOrThrow(): Promise<string | null> 
       return session;
     } catch (error) {
       if (error instanceof GuestSessionRefusedError) {
-        setRefusal({ until: Date.now() + error.retryAfterMs });
+        setRefusal({
+          until: Date.now() + error.retryAfterMs,
+          reason: error.reason,
+        });
         return null;
       }
       console.error("Failed to refresh guest session:", error);

@@ -22,6 +22,7 @@ import {
   buildHostedScopeStepUpCancellation,
   buildHostedScopeStepUpResume,
   createHostedScopeStepUpContinuation,
+  checkResumeCredentialBinding,
 } from "../hosted-scope-step-up-continuation.js";
 
 function manager() {
@@ -95,6 +96,32 @@ describe("hosted scope step-up continuation", () => {
       }),
       undefined
     );
+  });
+
+  it.each([
+    [false, "acct-b"],
+    [true, undefined],
+  ])("an implicit login (%s) stays in the saved state, never on the event", async (implicit, onEvent) => {
+    const event = await createHostedScopeStepUpContinuation({
+      bearer: "bearer",
+      authPrincipal: "user-1",
+      projectId: "project-1",
+      chatSessionId: "chat-1",
+      manager: manager(),
+      connectionId: "acct-b",
+      ...(implicit ? { connectionImplicit: true } : {}),
+      info: {
+        serverId: "server-1",
+        toolCallId: "call-1",
+        requiredScope: "bench:write",
+      },
+      toolName: "bench_write",
+      toolInput: { value: 7 },
+    });
+    expect(event.connectionId).toBe(onEvent);
+    const saved = store.create.mock.calls[0][1];
+    const state = JSON.parse(saved.resumeState);
+    expect(state.connectionId).toBe("acct-b");
   });
 
   it("claims once, fences the wire, executes the saved call, and completes", async () => {
@@ -286,5 +313,30 @@ describe("hosted scope step-up continuation", () => {
     });
     expect(execute).not.toHaveBeenCalled();
     expect(store.markWire).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkResumeCredentialBinding", () => {
+  it("allows the first binding when the call used no credential", () => {
+    expect(checkResumeCredentialBinding(undefined, "new-personal")).toEqual({
+      ok: true,
+      firstBinding: true,
+    });
+    expect(checkResumeCredentialBinding(undefined, undefined)).toEqual({
+      ok: true,
+      firstBinding: true,
+    });
+  });
+
+  it("resumes only on the very credential the call used", () => {
+    expect(checkResumeCredentialBinding("c1", "c1")).toEqual({
+      ok: true,
+      firstBinding: false,
+    });
+  });
+
+  it("refuses an account switch, a replaced credential, or none at all", () => {
+    expect(checkResumeCredentialBinding("c1", "c2")).toEqual({ ok: false });
+    expect(checkResumeCredentialBinding("c1", undefined)).toEqual({ ok: false });
   });
 });

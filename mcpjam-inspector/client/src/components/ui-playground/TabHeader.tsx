@@ -78,7 +78,7 @@ export function TabHeader({
       location: "playground_tab_header",
       tool_count: toolCount,
     });
-    onTabChange("tools");
+    if (activeTab !== "tools") onTabChange("tools");
     onRefresh();
   };
 

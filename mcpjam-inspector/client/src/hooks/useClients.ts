@@ -35,6 +35,12 @@ export interface HostListItem {
   /** Runtime selector returned by the client list; absent on older backends. */
   harness?: HostConfigDtoV2["harness"] | null;
   agentLoop?: HostConfigDtoV2["agentLoop"] | null;
+  /**
+   * The runtime the client runs on (`agentLoop ?? harness`, resolved by the
+   * backend), `null` on MCPJam Harness; absent on older backends. Read it
+   * with `harnessTargetOfHost`, never by combining the two fields above.
+   */
+  runtime?: HostConfigDtoV2["harness"] | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.
@@ -42,6 +48,12 @@ export interface HostListItem {
   hasComputer?: boolean;
   /** Something still uses it, so `deleteHost` would refuse. Absent = unknown. */
   inUse?: boolean;
+  /**
+   * The MCP Events delivery modes it receives events by, resolved by the
+   * backend from its saved setting or style default. Absent on older
+   * backends: fall back to the style default.
+   */
+  eventDeliveryModes?: Array<"poll" | "push" | "webhook">;
   createdAt: number;
   updatedAt: number;
 }
@@ -50,6 +62,8 @@ export interface HostDetail {
   hostId: string;
   name: string;
   config: HostConfigDtoV2;
+  /** As on `HostListItem`: read with `harnessTargetOfHost`. */
+  runtime?: HostConfigDtoV2["harness"] | null;
   // Additive: the Scenario surface reads this to decide whether to render the
   // "managed by Swarms, no publish surface" notice instead of back-minting.
   ownerScope?: HostOwnerScope;

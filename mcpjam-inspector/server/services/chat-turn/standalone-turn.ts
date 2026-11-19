@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import type { ChatV2Request } from "@/shared/chat-v2";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { HOSTED_MODE, WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { resolveExecutionContext } from "../../utils/host-execution-context.js";
@@ -13,7 +14,7 @@ import {
   resolveChatReasoningEffort,
 } from "../../utils/chat-reasoning-effort.js";
 import { listLocalRuntimeSkills } from "../../utils/skill-tools.js";
-import { buildLiveEffectiveCapabilities } from "../environments/effective-capabilities.js";
+import { resolveTurnSkills } from "../environments/turn-skills.js";
 import {
   validateAppToolEntries,
   validatePageToolEntries,
@@ -131,6 +132,10 @@ export async function runStandaloneTurn(
       hostStyle: body.hostStyle ?? "claude",
     },
   });
+  const requireToolApproval = appliedToolApproval(
+    "chat",
+    execution.requireToolApproval,
+  );
   const localSkills = await listLocalRuntimeSkills().catch((error) => {
     logger.warn("[chat-v2] local skill scan failed", {
       error: error instanceof Error ? error.message : String(error),
@@ -169,7 +174,7 @@ export async function runStandaloneTurn(
         temperature: body.temperature ?? execution.temperature,
         reasoningEffort,
         explicitTemperature: effort.effort ? body.temperature : undefined,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         requireNativeToolDiscovery: execution.requireNativeToolDiscovery,
         respectToolVisibility: execution.respectToolVisibility,
         modelVisibleMcpToolResults: execution.modelVisibleMcpToolResults,
@@ -193,8 +198,17 @@ export async function runStandaloneTurn(
         widgetModelContext: validateWidgetModelContextEntries(
           body.widgetModelContext,
         ),
-        liveSkillSurface: true,
-        effectiveCapabilities: buildLiveEffectiveCapabilities({ localSkills }),
+        // No project: this machine's skills, and the connected servers' own.
+        skills: resolveTurnSkills({
+          source: {
+            kind: "live",
+            projectSkills: [],
+            liveExtras: { localSkills },
+          },
+          runtime: { kind: "agent" },
+          modelContextTokens: model.contextLength,
+        }),
+        skillsSurface: "playground",
         ...(execution.progressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {
@@ -214,7 +228,7 @@ export async function runStandaloneTurn(
         selectedServerNames: serverNames,
         systemPrompt: execution.systemPrompt,
         temperature: body.temperature ?? execution.temperature,
-        requireToolApproval: execution.requireToolApproval,
+        requireToolApproval,
         respectToolVisibility: execution.respectToolVisibility,
         mcpToolResultImageRendering: execution.mcpToolResultImageRendering,
         directVisibility: body.directVisibility,
@@ -229,6 +243,9 @@ export async function runStandaloneTurn(
         abortSignal: c.req.raw.signal,
         // The standalone debugger owns this manager beyond the current turn.
         dispose: async () => undefined,
+        // Mid-session sign-in with the spec defaults: a standalone chat has no
+        // host config.
+        authChallenge: {},
         localScopeStepUp: {
           bindingKey: JSON.stringify([
             process.env.CONVEX_HTTP_URL ?? "",

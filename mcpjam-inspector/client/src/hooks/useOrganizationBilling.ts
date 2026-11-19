@@ -1,3 +1,4 @@
+import { useContractExpiry } from "./use-contract-expiry";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { canCheckoutPlan } from "@/lib/pricing-catalog";
 import { useAction, useMutation, useQueries, useQuery } from "convex/react";
@@ -90,6 +91,7 @@ export interface OrganizationEntitlements {
 }
 
 export interface OrganizationBillingStatus {
+  unlimitedCreditsUntil?: number | null;
   organizationId: string;
   organizationName: string;
   catalogPlanId?: string;
@@ -98,6 +100,13 @@ export interface OrganizationBillingStatus {
   topUpEligible?: boolean;
   plan: OrganizationPlan;
   effectivePlan: OrganizationPlan;
+  /**
+   * Set only for a plan MCPJam staff gave the org outside Stripe; `plan` stays
+   * the stored plan and `effectivePlan` is the staff tier. `expiresAt` is an
+   * exclusive end (midnight UTC after the last day), null for no end date.
+   * Older backends omit it, which reads the same as null.
+   */
+  staffPlan?: { expiresAt: number | null } | null;
   source: "free" | "subscription" | "trial" | "simulation";
   billingInterval: BillingInterval | null;
   billingConfigured: boolean;
@@ -292,10 +301,11 @@ export function useOrganizationBillingStatus(
 
   // Soft: the app shell and sidebar call this, and a failed status read must
   // not replace the app. A failure reads as "no status", like a pending one.
-  return useSoftQuery<OrganizationBillingStatus>(
+  const result = useSoftQuery<OrganizationBillingStatus>(
     "billing:getOrganizationBillingStatus",
     enabled && organizationId ? { organizationId } : "skip",
   ).data;
+  return useContractExpiry(result);
 }
 
 const billingStatusQuery = makeFunctionReference<
@@ -361,7 +371,7 @@ export function useOrganizationBilling(
     );
   const bundleFailed = queryError !== undefined;
 
-  const billingStatus = bundle?.billingStatus;
+  const billingStatus = useContractExpiry(bundle?.billingStatus);
   const entitlements = bundle?.entitlements;
   const organizationPremiumness = bundle?.organizationPremiumness;
   // The bundle says null for "no projectId sent"; callers expect undefined,

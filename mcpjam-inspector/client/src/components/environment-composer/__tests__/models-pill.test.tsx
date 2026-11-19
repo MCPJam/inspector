@@ -295,6 +295,45 @@ describe("ModelsPill", () => {
     });
   });
 
+  it("saves an org pick with its connection and offers no row it can't save", async () => {
+    mockModels.requireOrgKeys = true;
+    const org = { id: "gpt-5.1", provider: "openai", hosted: false };
+    mockModels.availableModels = [
+      { ...org, name: "GPT-5.1", orgProvider: { providerKey: "openai", id: "conn_1" } },
+      // An older backend sends no connection id: nothing to save it with.
+      { ...org, id: "gpt-4o", name: "GPT-4o", orgProvider: { providerKey: "openai" } },
+    ];
+    const user = userEvent.setup();
+    const onChange = renderPill({ includeClientDefaults: false, explicitTargets: [] });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    expect(screen.queryByRole("option", { name: /^GPT-4o/ })).not.toBeInTheDocument();
+    await user.click(option("GPT-5.1"));
+    expect(onChange.mock.calls.at(-1)?.[0].explicitTargets).toEqual([
+      {
+        modelId: "openai/gpt-5.1",
+        selection: expect.objectContaining({
+          source: "org",
+          connectionRef: { kind: "orgProvider", id: "conn_1" },
+          nativeModelId: "gpt-5.1",
+        }),
+      },
+    ]);
+  });
+
+  it("replaces a target saved under the bare id when the org row is picked", async () => {
+    mockModels.requireOrgKeys = true;
+    mockModels.availableModels = [
+      { id: "gpt-5.1", name: "GPT-5.1", provider: "openai", hosted: false, orgProvider: { providerKey: "openai", id: "conn_1" } },
+    ];
+    const user = userEvent.setup();
+    const onChange = renderPill({ includeClientDefaults: false, explicitTargets: [{ modelId: "gpt-5.1" }] });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    await user.click(screen.getAllByRole("option", { name: /GPT-5\.1/ }).find((el) => !/Not allowed/.test(el.textContent ?? ""))!);
+    expect(onChange.mock.calls.at(-1)?.[0].explicitTargets).toEqual([
+      expect.objectContaining({ modelId: "openai/gpt-5.1" }),
+    ]);
+  });
+
   it("marks a legacy id without a saved selection as unavailable under the policy", async () => {
     mockModels.requireOrgKeys = true;
     mockModels.availableModels = [

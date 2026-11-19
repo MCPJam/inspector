@@ -1,6 +1,11 @@
 import { withLocalCheckSignal } from "./local-server-check-queue.js";
 import { createHash } from "node:crypto";
-import { describeError, type UnauthorizedRefreshHandler } from "@mcpjam/sdk";
+import {
+  describeError,
+  extractAuthChallenge,
+  type UnauthorizedRefreshHandler,
+} from "@mcpjam/sdk";
+import { stampAuthChallenge } from "./connection-effective-auth.js";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
   ErrorCode,
@@ -9,10 +14,28 @@ import {
 } from "../routes/web/errors.js";
 import { HOSTED_MODE } from "../config.js";
 import {
+  deliveryContractHeaders,
+  hostedCredentialDeliveryHeaders,
+} from "../services/service-credential.js";
+import { registerDeliveredSecret } from "../../shared/delivered-secret-registry.js";
+import { credentialOrigin } from "./credential-header-binding.js";
+import {
   refreshTokensAgainstPrivateAuthorizationServer,
   type PrivateAuthorizationServerRefreshMaterial,
 } from "./local-oauth-refresh.js";
 import { logger } from "./logger.js";
+import {
+  isRejectedGrant,
+  translateLocalRefreshFailure,
+} from "./private-refresh-material.js";
+import {
+  handOverRefreshedToken,
+  type DeliveredTokenFacts,
+} from "./token-origin-check.js";
+import {
+  type UploadedAccountRecovery,
+  withUploadedAccountRecovery,
+} from "./uploaded-account-recovery.js";
 
 /**
  * The backend cannot refresh this credential — its authorization server is on
@@ -174,7 +197,16 @@ export type HostedOAuthRefreshOptions = {
    * when this really is the local binary.
    */
   declareLocalRuntime?: boolean;
+  /** Told which account, and which origins, a returned token belongs to. */
+  onDelivered?: (delivered: DeliveredTokenFacts) => void;
+  /**
+   * The origin the caller sends the token to. A token bound elsewhere (the
+   * server moved since the caller read its address) is refused, not returned.
+   */
+  targetOrigin?: string | null;
 };
+
+export type { DeliveredTokenFacts };
 
 /**
  * A refresh the backend REFUSED for policy or origin reasons (not one that
@@ -184,6 +216,7 @@ export type HostedOAuthRefreshOptions = {
  */
 export function isCredentialRefusalError(error: unknown): boolean {
   if (!(error instanceof WebRouteError)) return false;
+  if (error.details?.originRefused === true) return true;
   const details = error.details as
     | { exportDenied?: unknown; secretOriginMismatch?: unknown }
     | undefined;
@@ -225,6 +258,8 @@ export async function forceRefreshHostedOAuthAccessToken(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${bearerToken}`,
+        ...hostedCredentialDeliveryHeaders(HOSTED_MODE),
+        ...deliveryContractHeaders(HOSTED_MODE),
       },
       body: JSON.stringify({
         projectId,
@@ -281,7 +316,15 @@ export async function forceRefreshHostedOAuthAccessToken(
     // reveal routes use, so the client names the policy (or opens the moved
     // server) instead of offering a reconnect that cannot help.
     if (body?.exportDenied === true || body?.secretOriginMismatch === true) {
-      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, message, {
+      // A shared or uploaded account's refusal names its own next step (a
+      // project admin allowing local runs, or none), so the backend's sentence
+      // is shown, whichever field carries it.
+      const sentence =
+        body.policy === "hostedOnlyAccount"
+          ? ([body.message, body.error].find((v) => typeof v === "string") ??
+            message)
+          : message;
+      throw new WebRouteError(response.status, ErrorCode.FORBIDDEN, sentence, {
         ...(body.exportDenied === true
           ? {
               exportDenied: true,
@@ -289,6 +332,9 @@ export async function forceRefreshHostedOAuthAccessToken(
                 typeof body.policy === "string"
                   ? body.policy
                   : "credentialExportPolicy",
+              // Which part of a shared or uploaded account's rule refused;
+              // `not_acknowledged` is the one an admin fixes.
+              ...(typeof body.cause === "string" ? { cause: body.cause } : {}),
             }
           : {
               secretOriginMismatch: true,
@@ -304,7 +350,14 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverName: options?.serverName ?? null,
       });
     }
-    const isReconnectRequired = code === "refresh_token_invalid";
+    // A login with no refresh token. The backend reports it as
+    // `refresh_token_invalid` plus a `refreshTokenUnavailable` flag, so an
+    // inspector that predates the flag still prompts a reconnect.
+    const refreshTokenUnavailable =
+      code === "refresh_token_unavailable" ||
+      body?.refreshTokenUnavailable === true;
+    const isReconnectRequired =
+      code === "refresh_token_invalid" || refreshTokenUnavailable;
     // The backend's 503: the credential is fine, the authorization server
     // never answered usably. Its `detail` is what that server actually
     // returned ({url, status, body}) — forwarded so the client can name the
@@ -317,7 +370,8 @@ export async function forceRefreshHostedOAuthAccessToken(
       isReconnectRequired
         ? {
             oauthRequired: true,
-            refreshTokenInvalid: true,
+            refreshTokenInvalid: !refreshTokenUnavailable,
+            refreshTokenUnavailable,
             serverId,
             serverName: options?.serverName ?? null,
             // The authorization server's own RFC 6749 reply ({error,
@@ -326,15 +380,15 @@ export async function forceRefreshHostedOAuthAccessToken(
             declined: body?.declined ?? null,
           }
         : isAuthServerUnreachable
-        ? {
-            authorizationServerUnreachable: true,
-            serverId,
-            serverName: options?.serverName ?? null,
-            failure: body?.detail ?? null,
-            // Set instead of `failure` when nothing answered at all.
-            transport: body?.transport ?? null,
-          }
-        : undefined
+          ? {
+              authorizationServerUnreachable: true,
+              serverId,
+              serverName: options?.serverName ?? null,
+              failure: body?.detail ?? null,
+              // Set instead of `failure` when nothing answered at all.
+              transport: body?.transport ?? null,
+            }
+          : undefined,
     );
   }
 
@@ -348,7 +402,23 @@ export async function forceRefreshHostedOAuthAccessToken(
     );
   }
 
-  return accessToken;
+  return handOverRefreshedToken(
+    accessToken,
+    {
+      ...(typeof body.credentialId === "string"
+        ? { credentialId: body.credentialId }
+        : {}),
+      ...(Array.isArray(body.boundOrigins)
+        ? {
+            boundOrigins: body.boundOrigins.filter(
+              (origin: unknown): origin is string => typeof origin === "string",
+            ),
+          }
+        : {}),
+    },
+    serverId,
+    options,
+  );
 }
 
 /**
@@ -492,6 +562,8 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
     }
   }
 
+  registerDeliveredSecret(material.refreshToken, "oauth-refresh-token");
+  registerDeliveredSecret(material.clientSecret, "oauth-client-secret");
   let tokens: OAuthTokens;
   try {
     tokens = await refreshTokensAgainstPrivateAuthorizationServer(material);
@@ -549,6 +621,7 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   const tokensToStore: OAuthTokens = tokens.refresh_token?.trim()
     ? tokens
     : { ...tokens, refresh_token: material.refreshToken };
+  registerDeliveredSecret(tokensToStore.refresh_token, "oauth-refresh-token");
 
   // Remember what this server needs, keyed to the token now in effect, so the
   // next expiry can refresh without spending backend budget on a call that
@@ -593,85 +666,16 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
     );
   }
 
-  return accessToken;
-}
-
-/** Did the authorization server itself reject the grant? */
-function isRejectedGrant(error: unknown): boolean {
-  const code =
-    error && typeof error === "object" && "code" in error
-      ? String((error as { code?: unknown }).code ?? "")
-      : "";
-  return /^(invalid_grant|invalid_client)$/i.test(code);
-}
-
-/**
- * Map a local-refresh failure onto the shapes the surrounding code already
- * knows, so the UX matches a backend refresh failing the same way.
- */
-function translateLocalRefreshFailure(
-  error: unknown,
-  material: PrivateAuthorizationServerRefreshMaterial,
-  serverId: string,
-  serverName: string | null
-): WebRouteError {
-  const message = parseErrorMessage(error);
-
-  // Two carriers for one OAuth code, both required. A conforming RFC 6749 §5.2
-  // decline arrives as the SDK's OAuthResponseError with the code on `.code`
-  // and the error_description in `message` — so matching the message alone
-  // misses the COMMON case. Non-conforming servers only put it in the text.
-  const oauthCode =
-    error && typeof error === "object" && "code" in error
-      ? String((error as { code?: unknown }).code ?? "")
-      : "";
-
-  // The authorization server rejected the grant. Same shape the backend sends
-  // for refresh_token_invalid, so the existing reconnect prompt just works.
-  //
-  // The message arm covers a server that puts the code only in its
-  // error_description, but it must never read text the SERVER did not author
-  // as OAuth. When the response was not JSON at all, the SDK embeds the raw
-  // body verbatim (`Invalid OAuth error response: ${body}`) — so a dev proxy's
-  // HTML error page that merely mentions `invalid_grant` turned a transport
-  // problem into "your refresh token was rejected, please reconnect", on a
-  // credential that was fine. Cut the message at that marker before matching.
-  //
-  // Word-bounded for a second false positive: `invalid_client` is a substring
-  // of the unrelated `invalid_client_metadata`.
-  const authoredMessage = message.split("Invalid OAuth error response:")[0];
-  if (
-    /^(invalid_grant|invalid_client)$/i.test(oauthCode) ||
-    /\b(invalid_grant|invalid_client)\b/i.test(authoredMessage)
-  ) {
-    return new WebRouteError(
-      401,
-      ErrorCode.UNAUTHORIZED,
-      "The stored refresh token was rejected. Please reconnect.",
-      { oauthRequired: true, refreshTokenInvalid: true, serverId, serverName }
-    );
-  }
-
-  // Their own server isn't running. The connect was going to fail regardless;
-  // say why rather than reporting a generic refresh error.
-  //
-  // Origin only, never the raw URL — the same rule
-  // `refreshTokensAgainstPrivateAuthorizationServer` applies to its debug log,
-  // and it binds harder here: this message is the HTTP response body and it
-  // reaches Sentry. An imported authorization-server URL can carry basic-auth
-  // userinfo or an `x-api-key`-style query parameter, and `.origin` drops
-  // userinfo, path and query while keeping the host the user needs to see.
-  let authorizationServerOrigin: string;
-  try {
-    authorizationServerOrigin = new URL(material.authorizationServerUrl).origin;
-  } catch {
-    authorizationServerOrigin = "the authorization server";
-  }
-  return new WebRouteError(
-    502,
-    ErrorCode.SERVER_UNREACHABLE,
-    `Could not reach the authorization server at ${authorizationServerOrigin}: ${message}`,
-    { serverId, serverName, authorizationServerUnreachable: true },
+  // Minted here from the account the backend named, for the server it named.
+  const origin = credentialOrigin(material.serverUrl);
+  return handOverRefreshedToken(
+    accessToken,
+    {
+      ...(material.connectionId ? { credentialId: material.connectionId } : {}),
+      ...(origin ? { boundOrigins: [origin] } : {}),
+    },
+    serverId,
+    options,
   );
 }
 
@@ -695,13 +699,19 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
    * dial a private address from production.
    */
   allowPrivateAuthorizationServerFallback?: boolean;
+  /**
+   * The origin this connection sends its token to. A refreshed token the
+   * backend bound elsewhere (the server moved since this connection opened)
+   * is refused instead of retried here.
+   */
+  targetOrigin?: string | null;
+  /** An uploaded account's one re-resolve; see `uploaded-account-recovery.ts`. */
+  uploaded?: UploadedAccountRecovery;
 };
 
 /**
  * Build the `onUnauthorized` callback used by the SDK's 401-retry path. The
- * handler closes over the routing context (bearer/project/server identity and
- * scope) so the SDK only has to invoke `({serverId, error}) => Promise<{accessToken}>`
- * without knowing how refresh actually happens.
+ * handler keeps routing context outside the SDK.
  */
 export function buildHostedOAuthUnauthorizedHandler(
   args: HostedOAuthUnauthorizedHandlerArgs
@@ -709,37 +719,61 @@ export function buildHostedOAuthUnauthorizedHandler(
   const refresh = args.allowPrivateAuthorizationServerFallback
     ? refreshHostedOAuthAccessTokenWithLocalFallback
     : forceRefreshHostedOAuthAccessToken;
-  return async () => {
+  return withUploadedAccountRecovery(async (context) => {
+    const unauthorized: unknown = context?.error;
+    // The 401 that prompted this refresh may have been a sign-in challenge
+    // for one protected operation. Keep it so the caller can offer sign-in
+    // instead of a generic refresh error.
+    const challenge = extractAuthChallenge(unauthorized);
+    const withChallenge = (failure: WebRouteError): WebRouteError => {
+      if (challenge) {
+        failure.details = {
+          ...(failure.details ?? {}),
+          authChallenge: stampAuthChallenge(challenge, "oauth"),
+        };
+      }
+      return failure;
+    };
     try {
-      return {
-        accessToken: await refresh(
-          args.bearerToken,
-          args.projectId,
-          args.serverId,
-          {
-            connectionId: args.connectionId,
-            accessScope: args.accessScope,
-            shareToken: args.shareToken,
-            scenarioId: args.scenarioId,
-            accessVersion: args.accessVersion,
-            serverName: args.serverName,
-          },
-        ),
-      };
+      const accessToken = await refresh(
+        args.bearerToken,
+        args.projectId,
+        args.serverId,
+        {
+          connectionId: args.connectionId,
+          accessScope: args.accessScope,
+          shareToken: args.shareToken,
+          scenarioId: args.scenarioId,
+          accessVersion: args.accessVersion,
+          serverName: args.serverName,
+          targetOrigin: args.targetOrigin,
+        },
+      );
+      return { accessToken };
     } catch (error) {
+      if (
+        error instanceof WebRouteError &&
+        error.details?.refreshTokenUnavailable === true &&
+        challenge?.source === "http_401" &&
+        unauthorized
+      ) {
+        throw unauthorized;
+      }
       if (error instanceof WebRouteError) {
-        throw error.withSetupFailureSource("oauth_refresh");
+        throw withChallenge(error).withSetupFailureSource("oauth_refresh");
       }
       const normalized = describeError(error);
-      const failure = new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        normalized.rawMessage || "OAuth token refresh failed.",
-        undefined,
-        normalized,
+      const failure = withChallenge(
+        new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          normalized.rawMessage || "OAuth token refresh failed.",
+          undefined,
+          normalized,
+        ),
       ).withSetupFailureSource("oauth_refresh");
       failure.cause = error;
       throw failure;
     }
-  };
+  }, args.uploaded, args.targetOrigin);
 }

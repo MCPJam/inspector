@@ -10,6 +10,8 @@ import { runByMode } from "@/lib/apis/mode-client";
 import { WebApiError } from "@/lib/apis/web/base";
 import {
   McpRequestError,
+  authChallengeFromError,
+  parseAuthChallenge,
   parseInsufficientScopeChallenge,
 } from "@/lib/apis/insufficient-scope";
 
@@ -147,6 +149,7 @@ export async function getPrompt(
         const message = error instanceof Error ? error.message : String(error);
         throw new McpRequestError(message, {
           insufficientScope,
+          authChallenge: authChallengeFromError(error),
           status: error instanceof WebApiError ? error.status : undefined,
         });
       }
@@ -171,6 +174,7 @@ export async function getPrompt(
           insufficientScope: parseInsufficientScopeChallenge(
             body?.mcpError?.insufficientScope,
           ),
+          authChallenge: parseAuthChallenge(body?.mcpError?.authChallenge),
           status: res.status,
         });
       }

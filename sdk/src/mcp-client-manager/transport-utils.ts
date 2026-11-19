@@ -11,6 +11,8 @@ import type {
 } from "@modelcontextprotocol/client";
 import type { RpcLogger } from "./types.js";
 import { isTasksExtensionEra } from "./tasks-dispatch.js";
+import { createRpcLogRedactor } from "./rpc-log-redaction.js";
+import type { FeatureFrameTap } from "./feature-observer.js";
 // The send side and the Tracing verdict read ONE set, so a method added to the
 // SEP-2663 routing requirement cannot be sent-but-unjudged (or vice versa).
 import { TASK_ROUTED_METHODS } from "./mcp-header-mirror.js";
@@ -119,16 +121,25 @@ export function stripAuthorizationFromRequestInit(
 /**
  * Creates a logging wrapper transport that logs JSON-RPC traffic.
  *
+ * Every logger receives a REDACTED COPY of the frame (MCP Events contract
+ * C8): this wrapper is the one capture boundary every downstream consumer —
+ * the wire-log bus, replay buffers, hosted RPC logs, exports, CLI output —
+ * reads from, so redacting here is redacting everywhere. The frame the
+ * transport sends and delivers is the original, byte for byte.
+ *
  * @param serverId - The server ID for logging context
  * @param logger - The RPC logger function
  * @param transport - The underlying transport to wrap
+ * @param tap - Optional feature tap for this connection; it sees every frame
  * @returns A new transport that logs all messages
  */
 export function wrapTransportForLogging(
   serverId: string,
   logger: RpcLogger,
-  transport: Transport
+  transport: Transport,
+  tap?: FeatureFrameTap
 ): Transport {
+  const redact = createRpcLogRedactor();
   class LoggingTransport implements Transport {
     onclose?: () => void;
     onerror?: (error: Error) => void;
@@ -140,10 +151,15 @@ export function wrapTransportForLogging(
         extra?: MessageExtraInfo
       ) => {
         try {
-          logger({ direction: "receive", message, serverId });
+          logger({
+            direction: "receive",
+            message: redact("receive", message) as JSONRPCMessage,
+            serverId,
+          });
         } catch {
           // Ignore logger errors
         }
+        tap?.observe("receive", message);
         this.onmessage?.(message, extra);
       };
       this.inner.onclose = () => {
@@ -165,10 +181,15 @@ export function wrapTransportForLogging(
       options?: TransportSendOptions
     ): Promise<void> {
       try {
-        logger({ direction: "send", message, serverId });
+        logger({
+          direction: "send",
+          message: redact("send", message) as JSONRPCMessage,
+          serverId,
+        });
       } catch {
         // Ignore logger errors
       }
+      tap?.observe("send", message);
       await this.inner.send(message as any, options as any);
     }
 
@@ -195,6 +216,7 @@ export function wrapTransportForLogging(
     }
 
     setProtocolVersion?(version: string): void {
+      tap?.setProtocolVersion(version);
       if (typeof this.inner.setProtocolVersion === "function") {
         this.inner.setProtocolVersion(version);
       }

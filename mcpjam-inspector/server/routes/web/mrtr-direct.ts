@@ -30,6 +30,7 @@
  * modern server never embeds a round.
  */
 import type { z } from "zod";
+import { withStampedAuthChallenge } from "../../utils/connection-effective-auth.js";
 import type { MCPClientManager, MrtrInputCollector } from "@mcpjam/sdk";
 import {
   attachHostedRouteLogs,
@@ -42,6 +43,11 @@ import {
   readJsonBody,
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
+import {
+  selectLocalMrtrForm as selectManualMrtrForm,
+  selectLocalMrtrSchema as selectManualMrtrSchema,
+} from "../mcp/local-mrtr-forms.js";
+import { MANUAL_PLUGIN_FORM_PROFILE } from "../../../shared/plugin-extensions/manual-form.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import {
   computeMrtrBindingFingerprint,
@@ -84,6 +90,7 @@ export interface HostedDirectMrtrPending {
   expiresAt: number;
   /** Echoed to `/resume`; part of the binding fingerprint. */
   negotiatedEra: string;
+  pluginFormProfile?: MrtrInputRequiredEvent["pluginFormProfile"];
 }
 
 function pendingOutcomeFromEvent(
@@ -102,6 +109,7 @@ function pendingOutcomeFromEvent(
     inputRequests: event.inputRequests,
     expiresAt: event.expiresAt,
     negotiatedEra,
+    ...(event.pluginFormProfile ? { pluginFormProfile: event.pluginFormProfile } : {}),
   };
 }
 
@@ -211,6 +219,7 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
               serverConfigDigest: deriveServerConfigDigest(mgr, serverId),
               authPrincipal,
             });
+            let extensionForm = false;
             const inner = createHostedMrtrCollector({
               bearer,
               projectId,
@@ -218,11 +227,19 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
               ...(serverName ? { serverName } : {}),
               negotiatedEra,
               bindingFingerprint,
+              selectFormSchema: (params) => {
+                const selected = selectManualMrtrForm(params);
+                extensionForm ||= selected.pluginForm === true;
+                return selected.schema;
+              },
               // Direct ops have no SSE stream — capture the round in-process and
               // return it as the JSON pending outcome instead of streaming a part.
               emit: (e) => {
                 if (e.kind === "input_required") {
-                  captured = { event: e, negotiatedEra };
+                  captured = {
+                    event: { ...e, ...(extensionForm ? { pluginFormProfile: MANUAL_PLUGIN_FORM_PROFILE } : {}) },
+                    negotiatedEra,
+                  };
                 }
               },
               ...(options?.seams?.createContinuation
@@ -238,6 +255,8 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
       : undefined;
 
     const { manager, body } = await connect(c, rawBody, schema, {
+      // Only the Inspector's own tool, prompt and resource calls run here.
+      observeFeatures: true,
       ...(options?.timeoutMs !== undefined
         ? { timeoutMs: options.timeoutMs }
         : {}),
@@ -250,7 +269,15 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
             httpLogger: rpcCollector.httpLogger,
           }
         : {}),
-      ...(mrtrInputCollectorForServer ? { mrtrInputCollectorForServer } : {}),
+      ...(mrtrInputCollectorForServer
+        ? {
+            mrtrInputCollectorForServer,
+            mrtrInputOptionsForServer: () => ({
+              extensionClaims: ["openai/elicitation"],
+              selectFormSchema: selectManualMrtrSchema,
+            }),
+          }
+        : {}),
     });
     managerHolder.manager = manager;
 
@@ -262,7 +289,10 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
     // suspend produces the discriminated `input_required` envelope.
     let outcome: R | HostedDirectMrtrPending;
     try {
-      outcome = await runVerb(manager, body as z.infer<S>, forwardLogMessages);
+      // Stamped here, where the server is known: see `connection-effective-auth`.
+      outcome = await withStampedAuthChallenge(manager, targetServerId, () =>
+        runVerb(manager, body as z.infer<S>, forwardLogMessages),
+      );
     } catch (error) {
       // A suspend is NOT a failure: the round was persisted + captured; return
       // the pending outcome so the browser drives the resume out of band.

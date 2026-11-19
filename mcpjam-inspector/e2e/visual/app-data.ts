@@ -35,6 +35,10 @@ export const queries: Record<string, unknown> = {
   "projectSecrets:listSecrets": [],
   "billing:getCreditBalance": null,
   "organizationModelProviders:getVisibleConfigForProject": { providers: [] },
+  "organizationHarnessModels:listForProject": [],
+  // The create-client dialog (mounted by the client selector) reads the model
+  // list, which asks whether the deployment stores model selections.
+  "projectEnvironments:getCapabilities": {},
   "hosts:listHosts": [],
   "projects:getProjectMembers": { members: [], canManageMembers: false },
 };
@@ -75,6 +79,14 @@ export const responses: Record<string, unknown> = {
   },
   "/api/version": { version: "3.15.0" },
   "/api/web/computers/config": { enabled: false },
+  "/api/mcp/computers/local-browser/status": {
+    runtime: "playwright",
+    surface: "frames",
+    installed: false,
+    install: { status: "idle" },
+    running: false,
+    leaseHeld: false,
+  },
   "/api/mcp/models": { models: [] },
   "/api/mcp/tokenizer/count-text": { tokenCount: 0 },
   "/api/tags": { models: [] },

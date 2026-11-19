@@ -32,7 +32,9 @@ describe("the Codex adapter", () => {
     expect(registeredHarnessIds().sort()).toEqual([
       "claude-code",
       "codex",
+      "copilot-cli",
       "cursor",
+      "opencode",
     ]);
     expect(isHarnessId("codex")).toBe(true);
     expect(harnessSupportsSkills("codex")).toBe(true);

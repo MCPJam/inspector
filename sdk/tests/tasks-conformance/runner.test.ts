@@ -15,6 +15,16 @@ import {
 } from "../../src/tasks-conformance/index.js";
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
+import type { MCPServerConfig } from "../../src/mcp-client-manager/index.js";
+import {
+  isMissingInputCheck,
+  missingInputForCheck,
+  missingInputMessage,
+  noTaskCreatedMessage,
+} from "../../src/conformance-input.js";
+import { scoreFromTasksResult } from "../../src/conformance-score.js";
+
+let activeFetch: typeof fetch | undefined;
 
 const EXT_ID = "io.modelcontextprotocol/tasks";
 const CAPS_META_KEY = "io.modelcontextprotocol/clientCapabilities";
@@ -53,12 +63,13 @@ function runAgainst(
   } = {}
 ) {
   vi.spyOn(operations, "withEphemeralClient").mockImplementation((async (
-    _config: unknown,
+    _config: MCPServerConfig,
     fn: unknown,
     opts: unknown
   ) => {
     const { rpcLogger } = (opts ?? {}) as { rpcLogger?: (e: unknown) => void };
     activeRpcLogger = rpcLogger;
+    activeFetch = _config.baseFetch;
     for (const message of options.sentMessages ?? []) {
       rpcLogger?.({ direction: "send", message, serverId: "srv" });
     }
@@ -117,7 +128,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     // The Mcp-Name check reads the headers the transport actually sent, so the
     // fake performs the routed HTTP round trip its real counterpart would.
     getTaskExt: async (_serverId: string, taskId: string) => {
-      await fetch("https://example.test/mcp", {
+      await (activeFetch ?? fetch)("https://example.test/mcp", {
         method: "POST",
         headers: { "mcp-name": taskId, "mcp-method": "tasks/get" },
         body: "{}",
@@ -207,9 +218,10 @@ function undeclaredCheck(
   );
 }
 
-// The Mcp-Name check instruments `globalThis.fetch`; no test talks to a real
-// network, so the fake transport's round trip resolves locally.
+// The fake transport uses each run's configured fetch; its network leaf
+// resolves locally.
 beforeEach(() => {
+  activeFetch = undefined;
   vi.stubGlobal(
     "fetch",
     vi.fn(async () => new Response("{}", { status: 200 }))
@@ -462,7 +474,7 @@ describe("completion acknowledgements", () => {
 });
 
 describe("shape validators", () => {
-  it("requires a flat CreateTaskResult; extra fields warn instead of failing", () => {
+  it("requires a flat CreateTaskResult; extra fields are not judged", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
     ).toEqual({ violations: [], warnings: [] });
@@ -481,39 +493,38 @@ describe("shape validators", () => {
       validateCreateTaskShape({ resultType: "task" }).violations[0]
     ).toContain("taskId");
     // A redundant nested `task` object is an extra field the spec does not
-    // forbid: an otherwise-valid flat result passes with a warning.
-    const nested = validateCreateTaskShape({
-      resultType: "task",
-      taskId: "t",
-      task: { taskId: "t" },
-    });
-    expect(nested.violations).toEqual([]);
-    expect(nested.warnings[0]).toContain("nested");
+    // forbid: an otherwise-valid flat result passes clean.
+    expect(
+      validateCreateTaskShape({
+        resultType: "task",
+        taskId: "t",
+        task: { taskId: "t" },
+      })
+    ).toEqual({ violations: [], warnings: [] });
   });
 
-  it("enforces era-native ttl fields; the other era's field warns", () => {
+  it("enforces era-native ttl fields; the other era's field is not judged", () => {
     expect(validateTaskTtlShape("extension", { ttlMs: null })).toEqual({
       violations: [],
       warnings: [],
     });
-    // `ttl` beside a missing/invalid `ttlMs`: one violation (ttlMs shape) and
-    // one warning (extra legacy field) — presence alone must not fail.
+    // `ttl` beside a missing `ttlMs`: the missing era-native field is the
+    // only violation — the extra legacy field alone must not fail.
     const mixed = validateTaskTtlShape("extension", { ttl: 5 });
     expect(mixed.violations).toHaveLength(1);
-    expect(mixed.warnings).toHaveLength(1);
-    const extraOnValid = validateTaskTtlShape("extension", {
-      ttlMs: null,
-      ttl: 5,
+    expect(mixed.warnings).toEqual([]);
+    expect(validateTaskTtlShape("extension", { ttlMs: null, ttl: 5 })).toEqual({
+      violations: [],
+      warnings: [],
     });
-    expect(extraOnValid.violations).toEqual([]);
-    expect(extraOnValid.warnings[0]).toContain("ttl");
     expect(validateTaskTtlShape("legacy", { ttl: 5 })).toEqual({
       violations: [],
       warnings: [],
     });
-    expect(validateTaskTtlShape("legacy", { ttlMs: 5 }).warnings[0]).toContain(
-      "ttlMs"
-    );
+    expect(validateTaskTtlShape("legacy", { ttlMs: 5 })).toEqual({
+      violations: [],
+      warnings: [],
+    });
   });
 });
 
@@ -800,7 +811,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("passes an undeclared creation the server refused, warning when the code is not -32021", async () => {
+  it("fails an undeclared creation refused with a code other than -32021", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -821,14 +832,14 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // No task was handed to a non-declaring client, which is what tasks.md:61
-    // requires — but the refusal is not the one the extension names.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("-32602");
+    // No task reached a non-declaring client (tasks.md:61), but a refusal
+    // must use -32021 (tasks.md:63).
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("-32602");
     expect(check?.details).toMatchObject({ undeclaredCreationCode: -32602 });
   });
 
-  it("warns that a -32003 refusal is the pre-final draft code", async () => {
+  it("fails a -32003 refusal and names it the pre-final draft code", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -849,14 +860,88 @@ describe("MCPTasksConformanceTest", () => {
     const check = result.checks.find(
       (c) => c.id === "tasks-undeclared-creation-refused"
     );
-    // Still a pass — no task reached a non-declaring client — but the warning
-    // has to say the code is stale rather than merely unexpected.
-    expect(check?.status).toBe("passed");
-    expect(check?.warnings?.[0]).toContain("corrected to -32021");
-    expect(check?.warnings?.[0]).toContain("pre-final draft");
+    // The message has to say the code is stale rather than merely unexpected.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("corrected to -32021");
   });
 
-  it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
+  it("cannot run when the declared call fails with the same code", async () => {
+    // A tool that rejects its arguments either way says nothing about the
+    // missing capability, so the -32021 rule is not put to the server.
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw Object.assign(new Error("bad args"), { code: -32602 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check?.error?.message).toContain("even with the tasks extension");
+  });
+
+  it("fails a -32021 creation refusal that does not name the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw Object.assign(new Error("nope"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    // tasks.md:63 — the -32021 must indicate the required extension.
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+  });
+
+  it("passes a -32021 creation refusal that names the extension", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw missingCapabilityError();
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    expect([check?.status, check?.warnings]).toEqual(["passed", undefined]);
+  });
+
+  it("passes a server advertising the extension on 2025-11-25, with no warning", async () => {
     const manager = extensionManager({
       getNegotiatedProtocolVersion: () => "2025-11-25",
       getServerCapabilities: () => ({
@@ -891,9 +976,7 @@ describe("MCPTasksConformanceTest", () => {
       (c) => c.id === "tasks-wire-resolvable"
     );
     expect(wireCheck?.status).toBe("passed");
-    expect(wireCheck?.warnings?.[0]).toContain(
-      "must use the 2025-11-25 tasks capability"
-    );
+    expect(wireCheck?.warnings).toBeUndefined();
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     // Extension-only checks do not apply to the legacy wire.
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -955,16 +1038,16 @@ describe("MCPTasksConformanceTest", () => {
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
   });
 
-  it("reports INCOMPLETE when the extension wire has no probe tool to select", async () => {
+  it("leaves checks out of the verdict when the extension wire has no probe tool to select", async () => {
     // No toolName, and the 2026 ToolSchema strips `execution.taskSupport`, so
-    // nothing can be auto-selected. Six checks never run — and the run must
-    // say so instead of scoring 2/8 as a pass.
+    // nothing can be auto-selected. Those checks never run; they need a setup
+    // input, so they are reported as such and do not hold the verdict back.
     const result = await runAgainst(extensionManager(), {
       config: { pollTimeoutMs: 500 },
     });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
+    expect(result.outcome).toBe("passed");
+    expect(result.passed).toBe(true);
     expect(result.checks.some((c) => c.status === "failed")).toBe(false);
     expect(
       result.checks.filter(
@@ -976,20 +1059,161 @@ describe("MCPTasksConformanceTest", () => {
       // `tasks-update-ack-shape` (since `mcp-tasks@2026-11-01.1`) — and the
       // rest are pending.
     ).toHaveLength(11);
-    expect(result.incompleteReason).toContain("--tool-name");
-    expect(result.incompleteReason).toContain("long_job");
+    expect(result.incompleteReason).toBeUndefined();
+    const guidance = result.checks
+      .filter(isMissingInputCheck)
+      .map((c) => c.error?.message ?? "")
+      .join(" ");
+    expect(guidance).toContain("--tool-name");
+    expect(guidance).toContain("long_job");
+    expect(result.checks.filter(isMissingInputCheck)).toHaveLength(11);
+    expect(scoreFromTasksResult(result)).toMatchObject({ score: 100, outcome: "passed", failed: 0 });
   });
 
-  it("reports INCOMPLETE when the requested probe tool is not listed", async () => {
+  it("shows a call that fails on args its schema rejects as a setup gap", async () => {
+    const invalid = Object.assign(
+      new Error("Invalid params: city is required"),
+      { code: -32602 }
+    );
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {
+              type: "object",
+              properties: { city: { type: "string" } },
+              required: ["city"],
+            },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw invalid;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(isMissingInputCheck(check), id).toBe(true);
+      expect(missingInputMessage(check), id).toMatch(
+        /^Your arguments for "long_job" don't match its input schema/
+      );
+    }
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
+  });
+
+  it("reports a 401 on the task call as a login gap, not bad arguments", async () => {
+    const manager = extensionManager({
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: { type: "object", required: ["city"] },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        throw Object.assign(new Error("Unauthorized"), { status: 401 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", toolArguments: {}, pollTimeoutMs: 500 },
+    });
+
+    // A 401 is the login to fix: "Not run" at no cost, never bad arguments,
+    // and never a failure of the result-type check.
+    for (const id of ["tasks-result-type-discipline", "tasks-ttl-shape"]) {
+      const check = result.checks.find((c) => c.id === id)!;
+      expect(check.skipReason, id).toBe("could-not-run");
+      expect(missingInputForCheck(check), id).toBe("login");
+    }
+  });
+
+  it("tells a recorded 401 challenge from a 403 on the task call", async () => {
+    const withChallenge = (source: string) =>
+      extensionManager({
+        executeTool: async () => {
+          throw Object.assign(new Error("Unauthorized"), {
+            name: "UnauthorizedError",
+            authChallenge: { source, facets: { challengeHeader: "bearer" } },
+          });
+        },
+      });
+
+    const unauthorized = await runAgainst(withChallenge("http_401"), {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+    const ttl401 = unauthorized.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl401)).toBe("login");
+
+    const forbidden = await runAgainst(
+      withChallenge("http_403_insufficient_scope"),
+      { config: { toolName: "long_job", pollTimeoutMs: 500 } }
+    );
+    const ttl403 = forbidden.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(missingInputForCheck(ttl403)).toBeUndefined();
+  });
+
+  it("keeps a failing call on args that fit as the server's to answer for", async () => {
+    const broken = Object.assign(new Error("Internal error"), { code: -32603 });
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw broken;
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    expect(statusMap(result)["tasks-result-type-discipline"]).toBe("failed");
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain('calling "long_job" failed');
+  });
+
+  it("keeps a tool error on args that fit as the server's to answer for", async () => {
+    const manager = extensionManager({
+      executeTool: async () => ({
+        resultType: "complete",
+        isError: true,
+        content: [{ type: "text", text: "upstream down" }],
+      }),
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(false);
+    expect(ttl.error?.message).toContain("returned a tool error");
+  });
+
+  it("shows an unlisted probe tool as a setup gap, at no cost", async () => {
     const result = await runAgainst(extensionManager(), {
       config: { toolName: "nope", pollTimeoutMs: 500 },
     });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(result.incompleteReason).toContain('"nope"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
-    expect(result.incompleteReason).toContain("long_job");
+    // Naming a tool the server does not list is the caller's setup to fix:
+    // every tool check is "Not run" and costs nothing.
+    const unlisted = result.checks.filter(isMissingInputCheck);
+    expect(unlisted.length).toBeGreaterThan(0);
+    expect(unlisted[0]!.error?.message).toContain('"nope"');
+    expect(unlisted[0]!.error?.message).toContain(
+      "is not listed by this server"
+    );
+    expect(missingInputMessage(unlisted[0]!)).toBe(
+      'This server doesn\'t list the tool "nope", so there was no task to check. Select a listed tool in setup, then run again.'
+    );
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
   });
 
   it("reports INCOMPLETE when the probed tool never produced a task", async () => {
@@ -1004,12 +1228,43 @@ describe("MCPTasksConformanceTest", () => {
       config: { toolName: "long_job", pollTimeoutMs: 500 },
     });
 
-    // Result-type discipline DID run (a normal result is conformant); the
-    // lifecycle checks did not, and that is the run's verdict.
+    // Result-type discipline DID run (a normal result is conformant). The
+    // lifecycle checks did not, but the server may decline a task: picking a
+    // tool that makes one is setup, so they are "Not run" at no cost.
     expect(statusMap(result)["tasks-result-type-discipline"]).toBe("passed");
     expect(statusMap(result)["tasks-ttl-shape"]).toBe("skipped");
-    expect(result.outcome).toBe("incomplete");
-    expect(result.incompleteReason).toContain("no task existed to inspect");
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(isMissingInputCheck(ttl)).toBe(true);
+    expect(ttl.error?.message).toContain(
+      '"long_job" returned a normal result instead of a task'
+    );
+    expect(ttl.error?.message).toContain("--tool-name");
+    // The app swaps the CLI flags for setup copy.
+    expect(missingInputMessage(ttl)).toBe(
+      '"long_job" did not create a task, so there was nothing to check. Select a tool that creates a task in setup, or change its arguments so it does, then run again.'
+    );
+    expect(noTaskCreatedMessage(ttl)).toBe(missingInputMessage(ttl));
+    expect(scoreFromTasksResult(result)).toMatchObject({ failed: 0 });
+  });
+
+  it("names a failed tool call instead of calling it a normal result", async () => {
+    const manager = extensionManager({
+      executeTool: async () => {
+        throw new Error("tool blew up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const ttl = result.checks.find((c) => c.id === "tasks-ttl-shape")!;
+    expect(ttl.skipReason).toBe("could-not-run");
+    expect(ttl.error?.message).toContain(
+      'calling "long_job" failed, so there was no task to check: tool blew up'
+    );
+    // The app keeps the real error instead of the setup advice.
+    expect(noTaskCreatedMessage(ttl)).toBeUndefined();
   });
 
   it("skips the task checks when the connection has no tasks wire", async () => {
@@ -1041,6 +1296,41 @@ describe("MCPTasksConformanceTest", () => {
         .filter((c) => c.status === "skipped")
         .every((c) => c.skipReason === "not-applicable")
     ).toBe(true);
+  });
+
+  it("does not send the unknown-id mutations when their advice was not picked", async () => {
+    const mutatedIds: string[] = [];
+    const manager = extensionManager({
+      updateTask: async (_serverId: string, taskId: string) => {
+        mutatedIds.push(taskId);
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+      cancelTaskExt: async (_serverId: string, taskId: string) => {
+        mutatedIds.push(taskId);
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+    });
+    const config = {
+      toolName: "long_job",
+      pollTimeoutMs: 1000,
+      checkIds: ["tasks-invalid-task-id-rejected"],
+    };
+
+    const unpicked = await runAgainst(manager, {
+      config: { ...config, readinessIds: [] },
+    });
+    expect(statusMap(unpicked)["tasks-invalid-task-id-rejected"]).toBe(
+      "passed"
+    );
+    expect(mutatedIds).toEqual([]);
+
+    await runAgainst(manager, {
+      config: {
+        ...config,
+        readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+      },
+    });
+    expect(mutatedIds).toHaveLength(2);
   });
 
   it("reports a connection failure as a failed run", async () => {
@@ -1102,6 +1392,26 @@ describe("undeclared task requests (-32021)", () => {
       { method: "subscriptions/listen", ...rejected },
       { method: "tasks/cancel", ...rejected },
     ]);
+  });
+
+  it("fails a -32021 whose requiredCapabilities does not name the extension", async () => {
+    // The core spec: the error's `data.requiredCapabilities` "lists the
+    // missing capabilities" (a MUST). The missing one is the tasks extension.
+    const result = await runProbe({
+      "tasks/get": () => {
+        throw Object.assign(new Error("missing capability"), {
+          code: -32021,
+          data: { requiredCapabilities: { elicitation: {} } },
+        });
+      },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-capability-names-requirements"
+    );
+    expect(check?.status).toBe("failed");
+    expect(check?.error?.message).toContain("does not name");
+    expect(check?.details).toMatchObject({ unspecific: ["tasks/get"] });
   });
 
   for (const method of [
@@ -1264,7 +1574,7 @@ describe("undeclared task requests (-32021)", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("probes the mutating methods only after every check that reads the task", async () => {
+  it("keeps the undeclared probe sequence together in its own group", async () => {
     const order: string[] = [];
     const base = extensionManager();
     const declaredGet = base.getTaskExt as (
@@ -1292,7 +1602,7 @@ describe("undeclared task requests (-32021)", () => {
 
     // Every declared read (polling + the Mcp-Name routing probe) happens
     // first; the undeclared probes trail, cancel last of all.
-    expect(order.slice(-4)).toEqual([
+    expect(order.filter((entry) => entry.startsWith("undeclared:"))).toEqual([
       "undeclared:tasks/get",
       "undeclared:tasks/update",
       "undeclared:subscriptions/listen",
@@ -1303,9 +1613,20 @@ describe("undeclared task requests (-32021)", () => {
     );
     expect(declaredReads.length).toBeGreaterThan(0);
     expect(order.indexOf("undeclared:tasks/update")).toBeGreaterThan(
-      order.lastIndexOf("declared:tasks/get")
+      order.indexOf("declared:tasks/get")
     );
     expect(statusMap(result)["tasks-inline-result"]).toBe("passed");
     expect(statusMap(result)["tasks-mcp-name-routing"]).toBe("passed");
   });
+});
+
+
+it("propagates caller cancellation instead of reporting a connection failure", async () => {
+  const controller = new AbortController();
+  const reason = new Error("run deadline reached");
+  controller.abort(reason);
+  vi.spyOn(operations, "withEphemeralClient").mockRejectedValueOnce(reason);
+  await expect(new MCPTasksConformanceTest({
+    url: "https://example.test/mcp", signal: controller.signal,
+  }).run()).rejects.toBe(reason);
 });

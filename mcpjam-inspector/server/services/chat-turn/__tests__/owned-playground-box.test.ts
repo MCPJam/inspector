@@ -1,0 +1,172 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const m = vi.hoisted(() => ({
+  acquire: vi.fn(),
+  release: vi.fn(async () => {}),
+  unavailable: vi.fn((): string | null => null),
+}));
+vi.mock("../../../utils/harness/playground-box.js", () => ({
+  acquirePlaygroundHarnessBox: m.acquire,
+  playgroundHarnessBoxUnavailableReason: m.unavailable,
+}));
+import {
+  acquireOwnedPlaygroundHarnessBox,
+  startPlaygroundBoxEarly,
+} from "../owned-playground-box.js";
+import { takeEarly } from "../../../utils/early-start.js";
+import { TurnTiming } from "../../../utils/turn-timing.js";
+import { TurnResources } from "../resources.js";
+
+const args = { bearer: "tok", projectId: "p1", chatSessionId: "c1" };
+const acquired = () => ({
+  ok: true,
+  box: {
+    surface: "playground",
+    binding: { sandboxRowId: "row", sandboxId: "sbx" },
+    release: m.release,
+  },
+});
+
+describe("acquireOwnedPlaygroundHarnessBox", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("hands the box's release to the turn that holds it", async () => {
+    m.acquire.mockResolvedValue(acquired());
+    const resources = new TurnResources(() => {});
+    const result = await acquireOwnedPlaygroundHarnessBox(resources, args);
+    expect(result.ok).toBe(true);
+    expect(m.acquire).toHaveBeenCalledWith(args);
+    expect(m.release).not.toHaveBeenCalled();
+    await resources.dispose();
+    expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a box that arrives after its turn ended, and reports why", async () => {
+    m.acquire.mockResolvedValue(acquired());
+    const resources = new TurnResources(() => {});
+    await resources.dispose();
+    await expect(
+      acquireOwnedPlaygroundHarnessBox(resources, args),
+    ).rejects.toThrow("Cannot acquire resources after a turn ended");
+    expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("counts creating or waking the box toward the turn's box wake, and keeps the recorder from the control plane", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    m.acquire.mockImplementation(async () => {
+      now += 1_800;
+      return acquired();
+    });
+    const resources = new TurnResources(() => {});
+    await acquireOwnedPlaygroundHarnessBox(resources, { ...args, timing });
+    expect(timing.boxAcquisitionMs()).toBe(1_800);
+    expect(m.acquire).toHaveBeenCalledWith(args);
+    await resources.dispose();
+  });
+
+  it("tells the turn's recorder its box was prepared before Send, and only then", async () => {
+    const resources = new TurnResources(() => {});
+    const prepared = new TurnTiming();
+    m.acquire.mockResolvedValueOnce({ ...acquired(), prepared: true });
+    await acquireOwnedPlaygroundHarnessBox(resources, {
+      ...args,
+      timing: prepared,
+    });
+    expect(prepared.boxWasPrepared()).toBe(true);
+    const plain = new TurnTiming();
+    m.acquire.mockResolvedValueOnce(acquired());
+    await acquireOwnedPlaygroundHarnessBox(resources, {
+      ...args,
+      timing: plain,
+    });
+    expect(plain.boxWasPrepared()).toBe(false);
+    expect(m.acquire).toHaveBeenCalledWith(args);
+    await resources.dispose();
+  });
+
+  it("gives a refused box nothing to release", async () => {
+    const refusal = {
+      ok: false,
+      refusal: { status: 503, error: "at capacity" },
+    };
+    m.acquire.mockResolvedValue(refusal);
+    const own = vi.fn();
+    await expect(acquireOwnedPlaygroundHarnessBox({ own }, args)).resolves.toBe(
+      refusal,
+    );
+    expect(own).not.toHaveBeenCalled();
+  });
+});
+
+describe("startPlaygroundBoxEarly", () => {
+  const boxArgs = { ...args, harness: "claude-code" };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    m.unavailable.mockReturnValue(null);
+  });
+
+  it("books a member's conversation box at once, owned by the turn", async () => {
+    m.acquire.mockResolvedValue(acquired());
+    const resources = new TurnResources(() => {});
+    const early = startPlaygroundBoxEarly(resources, "conversation", boxArgs, false);
+    expect(early).toBeDefined();
+    expect(m.acquire).toHaveBeenCalledWith(boxArgs);
+    await expect(takeEarly(early!)).resolves.toMatchObject({ ok: true });
+    await resources.dispose();
+    expect(m.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("times an early booking on the turn's recorder too", async () => {
+    let now = 0;
+    const timing = new TurnTiming({ now: () => now });
+    m.acquire.mockImplementation(async () => {
+      now += 2_400;
+      return acquired();
+    });
+    const resources = new TurnResources(() => {});
+    const early = startPlaygroundBoxEarly(
+      resources, "conversation", { ...boxArgs, timing }, false,
+    );
+    await takeEarly(early!);
+    expect(timing.boxAcquisitionMs()).toBe(2_400);
+    await resources.dispose();
+  });
+
+  it("keeps an early booking's prepared box for the turn, whatever a later acquisition says", async () => {
+    const timing = new TurnTiming();
+    const resources = new TurnResources(() => {});
+    m.acquire.mockResolvedValueOnce({ ...acquired(), prepared: true });
+    const early = startPlaygroundBoxEarly(
+      resources,
+      "conversation",
+      { ...boxArgs, timing },
+      false,
+    );
+    await takeEarly(early!);
+    expect(timing.boxWasPrepared()).toBe(true);
+    // The backend says it once, on the call that took the box.
+    m.acquire.mockResolvedValueOnce(acquired());
+    await acquireOwnedPlaygroundHarnessBox(resources, { ...boxArgs, timing });
+    expect(timing.boxWasPrepared()).toBe(true);
+    await resources.dispose();
+  });
+
+  it("leaves every box a check before the booking could refuse to its usual place", () => {
+    const own = vi.fn();
+    expect(startPlaygroundBoxEarly({ own }, "credential", boxArgs, false)).toBeUndefined();
+    expect(startPlaygroundBoxEarly({ own }, "compare", boxArgs, true)).toBeUndefined();
+    expect(startPlaygroundBoxEarly({ own }, null, boxArgs, false)).toBeUndefined();
+    expect(
+      startPlaygroundBoxEarly({ own }, "conversation", { ...boxArgs, chatSessionId: undefined }, false),
+    ).toBeUndefined();
+    expect(
+      startPlaygroundBoxEarly({ own }, "conversation", { ...boxArgs, harness: undefined }, false),
+    ).toBeUndefined();
+    m.unavailable.mockReturnValue("this server can't run boxes");
+    expect(startPlaygroundBoxEarly({ own }, "conversation", boxArgs, false)).toBeUndefined();
+    expect(m.acquire).not.toHaveBeenCalled();
+  });
+});

@@ -7,12 +7,21 @@ import {
   CONFORMANCE_CHECK_METADATA,
   MCP_APPS_CHECK_IDS,
   MCP_CHECK_IDS,
+  MCP_TASKS_CHECK_IDS,
+  MCP_OAUTH_READINESS_IDS,
+  MCP_READINESS_IDS,
+  MCP_TASKS_READINESS_IDS,
+  OAUTH_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   PROTOCOL_VERSION_ERAS,
+  READINESS_CATALOG,
+  READINESS_ERAS,
   TASKS_CHECK_CATALOG,
+  TASKS_READINESS_CATALOG,
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
-import { APP_TASKS_CHECK_IDS } from "@/hooks/conformance-suite-state";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { TASK_ANSWERS_CHECK } from "@/shared/conformance-settings";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
 import type { CatalogEntry } from "./ConformanceCheckRows";
 
@@ -40,15 +49,61 @@ export function protocolCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
   });
 }
 
+/** The protocol suite's advice, narrowed by a pin like its checks. */
+export function protocolAdviceCatalog(pin: ProtocolVersionPin): CatalogEntry[] {
+  const pinnedEra = pin === "auto" ? undefined : PROTOCOL_VERSION_ERAS[pin];
+  return MCP_READINESS_IDS.filter((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return pinnedEra === undefined || eras.includes(pinnedEra);
+  }).map((id) => {
+    const eras = READINESS_ERAS[id] as readonly string[];
+    return {
+      id,
+      ...READINESS_CATALOG[id],
+      note:
+        pinnedEra === undefined && eras.length === 1
+          ? `${eras[0]} only`
+          : undefined,
+    };
+  });
+}
+
+export const TASKS_ADVICE_CATALOG: CatalogEntry[] = MCP_TASKS_READINESS_IDS.map(
+  (id) => ({ id, ...TASKS_READINESS_CATALOG[id] }),
+);
+
+export const OAUTH_ADVICE_CATALOG: CatalogEntry[] = MCP_OAUTH_READINESS_IDS.map(
+  (id) => ({ id, ...OAUTH_READINESS_CATALOG[id] }),
+);
+
+// Catalog rows carry no spec link: `CatalogRow` builds it from the id and the
+// revision of the list it sits in (`ConformanceSourceVersion`), so a saved
+// run's rows and a pinned pre-run list link the pages they are graded against.
 export const APPS_CATALOG: CatalogEntry[] = MCP_APPS_CHECK_IDS.map((id) => ({
   id,
   ...APPS_CHECK_CATALOG[id],
 }));
 
-export const TASKS_CATALOG: CatalogEntry[] = APP_TASKS_CHECK_IDS.map((id) => ({
+export const TASKS_CATALOG: CatalogEntry[] = MCP_TASKS_CHECK_IDS.map((id) => ({
   id,
   ...TASKS_CHECK_CATALOG[id],
 }));
+
+/**
+ * The update acknowledgement check stays behind
+ * `conformance-tasks-update-check` until its answers get a real form: today
+ * they are raw JSON keyed by questions the server has not asked yet. `=== true`,
+ * so a missing flag (or one PostHog has not hydrated yet) keeps it hidden.
+ */
+export const useTasksUpdateCheckEnabled = () =>
+  useFeatureFlagEnabled("conformance-tasks-update-check") === true;
+
+/** The Tasks checks a user can see and pick. */
+export function shownTasksCatalog(updateCheck: boolean): CatalogEntry[] {
+  return updateCheck
+    ? TASKS_CATALOG
+    : TASKS_CATALOG.filter((entry) => entry.id !== TASK_ANSWERS_CHECK);
+}
 
 // Only the post-flow checks have static identities. The authorization flow
 // steps themselves depend on the server's registration strategy and protocol

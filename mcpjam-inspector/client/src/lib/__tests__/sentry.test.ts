@@ -6,6 +6,9 @@ const browserTracingIntegration = vi.fn(() => ({ name: "BrowserTracing" }));
 const getClient = vi.fn();
 const addIntegration = vi.fn();
 const captureException = vi.fn();
+const captureMessage = vi.fn();
+const addEventProcessor = vi.fn();
+const withScope = vi.fn((callback: (scope: unknown) => void) => callback({ addEventProcessor }));
 
 vi.mock("@sentry/react", () => ({
   init,
@@ -14,6 +17,8 @@ vi.mock("@sentry/react", () => ({
   getClient,
   addIntegration,
   captureException,
+  captureMessage,
+  withScope,
 }));
 
 /** Stand in for the Replay integration instance the client hands back. */
@@ -96,6 +101,19 @@ describe("client sentry init", () => {
     const { resolveClientSentryConfig } = await import("../sentry");
 
     expect(resolveClientSentryConfig().enabled).toBe(false);
+  });
+
+  it("stops reporting when the server says DO_NOT_TRACK, with no rebuild", async () => {
+    window.__MCP_RUNTIME_CONFIG__ = { doNotTrack: true };
+    try {
+      const { initSentry, resolveClientSentryConfig } = await import("../sentry");
+
+      expect(resolveClientSentryConfig().enabled).toBe(false);
+      initSentry();
+      expect(init.mock.calls[0][0].enabled).toBe(false);
+    } finally {
+      delete window.__MCP_RUNTIME_CONFIG__;
+    }
   });
 
   it("tags hosted when the bundle is built for hosted mode", async () => {
@@ -623,4 +641,17 @@ describe("Sentry Replay waits for analytics consent", () => {
     expect(captureException).toHaveBeenCalledWith(error, undefined);
     expect(replayIntegration).not.toHaveBeenCalled();
   });
+});
+
+it("removes OAuth callback URLs and breadcrumbs from recovery alerts only", async () => {
+  const { captureSentryMessage } = await import("../sentry");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Chat sign-in recovery failed", { tags: { source: "chat_auth_resume" }, extra: { continuationId: "c1" } });
+  const filter = addEventProcessor.mock.calls[0][0];
+  const cleaned = filter({ request: { url: "https://app.test/oauth/callback?code=SECRET&state=SECRET" }, breadcrumbs: [{ message: "SECRET" }], contexts: { page: { url: "SECRET" } }, extra: { continuationId: "c1" } });
+  expect(JSON.stringify(cleaned)).not.toContain("SECRET");
+  expect(cleaned.extra.continuationId).toBe("c1");
+  addEventProcessor.mockClear();
+  captureSentryMessage("Other issue", { tags: { source: "other" } });
+  expect(addEventProcessor).not.toHaveBeenCalled();
 });

@@ -41,3 +41,4 @@ jobs:
       - run: npm install --ignore-scripts --no-audit --no-fund
       - run: npm run typecheck -w @mcpjam/soundcheck
       - run: npm run test:auth -w @mcpjam/soundcheck
+      - run: npm run test:release -w @mcpjam/soundcheck

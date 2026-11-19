@@ -48,6 +48,9 @@ const BODYLESS_WRITES = new Set([
   // heartbeat, and a body could only be a place to pass options a cancellation
   // does not have.
   "post /projects/{projectId}/readiness-runs/{runId}/cancel",
+  // Resuming takes the run's own inputs from the run itself: a body could only
+  // be a place to change them, which a resume must not do.
+  "post /projects/{projectId}/readiness-runs/{runId}/resume",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
   "post /projects/{projectId}/goal-findings/{findingId}/dismiss",
@@ -234,6 +237,107 @@ const KNOWN_UNDOCUMENTED = new Set([
   // capability probe above. Document them when durable turns ship on.
   "get /projects/{projectId}/agent/jobs/{jobId}",
   "post /projects/{projectId}/agent/jobs/{jobId}/cancel",
+  // Directory submissions and the flows they rehearse. Creating, editing and
+  // running a submission is decided per organization (the directory-readiness
+  // beta), and `docs/README.md` is explicit that such a feature is not
+  // documented until the flag comes off ("a feature that is enforced per
+  // organization must not be documented until the flag comes off", and its
+  // routes are "kept out of reference/openapi.json and listed in the
+  // Inspector's KNOWN_UNDOCUMENTED baseline"). The flow reads go with them:
+  // they describe the gated forms. The SDK client carries the surface in the
+  // meantime, for organizations in the beta. Document them all when the flag
+  // comes off.
+  "get /directory-flows",
+  "get /directory-flows/{flowId}",
+  "get /projects/{projectId}/directory-submissions",
+  "get /projects/{projectId}/directory-submissions/{submissionId}",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/results",
+  "post /projects/{projectId}/directory-submissions",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}",
+  "delete /projects/{projectId}/directory-submissions/{submissionId}",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/runs",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/handoff",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/findings/{checkId}",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/export",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/events",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/snapshots",
+  // A submission's reviewer sign-in attempts, gated with it.
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/resume",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/handoff",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/reviewer-attempts/{attemptId}/cancel",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/test-plan",
+  "put /projects/{projectId}/directory-submissions/{submissionId}/test-plan",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/test-plan/draft",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/tool-tests",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "patch /projects/{projectId}/directory-submissions/{submissionId}/evals",
+  "post /projects/{projectId}/directory-submissions/{submissionId}/evals/import",
+  "get /projects/{projectId}/directory-submissions/{submissionId}/evals/export",
+  // Features that are not yet on for everyone. docs/README.md keeps a feature
+  // off the public docs until its flag is on for everyone the page is for.
+  // Document each group when its rollout finishes.
+  // Agent browsers and the API session browser (hosted-browser rollout).
+  "post /browser-sessions/session",
+  "post /browser-sessions/sessions",
+  "post /browser-sessions/command",
+  "post /browser-sessions/note",
+  "post /browser-sessions/trace",
+  "post /browser-sessions/artifact",
+  "post /browser-sessions/close",
+  "post /chat-sessions/{sessionId}/browser/open",
+  "post /chat-sessions/{sessionId}/browser/command",
+  "post /chat-sessions/{sessionId}/browser/note",
+  "post /chat-sessions/{sessionId}/browser/trace",
+  "post /chat-sessions/{sessionId}/browser/artifact",
+  "post /chat-sessions/{sessionId}/browser/close",
+  "post /chat-sessions/browser",
+  // Sandbox images and resetting a computer to its image.
+  "get /projects/{projectId}/images",
+  "post /projects/{projectId}/images",
+  "get /projects/{projectId}/images/{imageId}",
+  "patch /projects/{projectId}/images/{imageId}",
+  "delete /projects/{projectId}/images/{imageId}",
+  "get /projects/{projectId}/images/{imageId}/builds",
+  "post /projects/{projectId}/images/{imageId}/build",
+  "post /projects/{projectId}/images/{imageId}/promote",
+  "post /projects/{projectId}/images/{imageId}/use",
+  "post /projects/{projectId}/computer/reset",
+  "post /projects/{projectId}/images/validate",
+  // GitHub Checks repositories (the Integrations tab beta).
+  "get /organizations/{organizationId}/eval-check-repos",
+  "post /organizations/{organizationId}/eval-check-repos",
+  // The MCP registry.
+  "get /registry/directory-servers",
+  "get /registry/directory-servers/{idOrName}",
+  "get /registry/directory-sources",
+  "get /projects/{projectId}/registry/servers",
+  "get /projects/{projectId}/registry/connections",
+  "post /projects/{projectId}/registry/directory-installs",
+  "post /projects/{projectId}/registry/installs",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}",
+  // Agent plugins.
+  "get /projects/{projectId}/plugins",
+  "get /plugin-versions/{pluginVersionId}",
+  // Cloud project skills. Server skills (skills over MCP) stay documented.
+  "get /projects/{projectId}/skills",
+  "get /projects/{projectId}/skills/{skillId}",
+  // Named-environment writes. Listing, resolving, archiving and ad hoc
+  // environments stay documented.
+  "post /projects/{projectId}/environments",
+  "patch /projects/{projectId}/environments/{environmentId}",
+  "post /projects/{projectId}/environments/{environmentId}/name",
+  "post /projects/{projectId}/environments/{environmentId}/restore",
+  // The pre-run disclosure for a suite launch plan.
+  "get /projects/{projectId}/eval-suites/{suiteId}/run-disclosure",
+  // The unified sessions feed.
+  "get /projects/{projectId}/sessions",
+  // A harness client's native built-in tools.
+  "get /harness/{harnessId}/builtin-tools",
 ]);
 
 /**

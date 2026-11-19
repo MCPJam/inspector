@@ -80,7 +80,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -108,9 +107,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -120,6 +116,11 @@ vi.mock("../harness-model-broker.js", () => ({
     proxyBaseUrl: "https://broker.example",
     delivery: "e2b-network-transform",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -138,10 +139,7 @@ import {
   HarnessSandboxResolutionError,
   resolveHarnessSandbox,
 } from "../resolve-sandbox.js";
-import {
-  reserveHarnessBox,
-  startHarnessModelBroker,
-} from "../harness-model-broker.js";
+import { startHarnessModelBroker } from "../harness-model-broker.js";
 import type { MCPJamEngineErrorEvent } from "../../mcpjam-stream-handler";
 import { classifyEvalInfraError } from "../../../services/evals/infra-error-classification";
 
@@ -287,8 +285,8 @@ describe("runHarnessTurn — structured failure evidence", () => {
     });
   });
 
-  it("a box that cannot be reserved is a typed SANDBOX setup failure", async () => {
-    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+  it("a busy broker admission remains a typed setup failure", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
       ok: false,
       status: 409,
       error: "box is busy",

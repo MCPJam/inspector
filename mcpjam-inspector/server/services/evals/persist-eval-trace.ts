@@ -1,6 +1,7 @@
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { ConvexHttpClient } from "convex/browser";
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ModelMessage } from "ai";
 import type {
   BrowserInteractionStepPayload,
@@ -180,6 +181,46 @@ type FanoutResult =
   | { persisted: true; turnsWritten: number }
   | { persisted: false; turnsWritten: number; error: Error };
 
+/**
+ * Until when this process writes eval turns without `skillsAtTurn`. A backend
+ * whose validator predates the field rejects the whole write, so the turn is
+ * written again without it, and later writes leave it off for a while rather
+ * than pay that refusal on every iteration.
+ */
+let skillsAtTurnRefusedUntil = 0;
+const SKILLS_AT_TURN_RETRY_MS = 10 * 60_000;
+
+async function appendEvalTurnTrace(
+  convexClient: ConvexHttpClient,
+  payload: { turn: Record<string, unknown> } & Record<string, unknown>,
+): Promise<{ skipped?: boolean } | undefined> {
+  const write = (body: typeof payload) =>
+    convexClient.action(
+      "testSuites:appendEvalTurnTrace" as any,
+      body,
+    ) as Promise<{ skipped?: boolean } | undefined>;
+  try {
+    return await write(payload);
+  } catch (error) {
+    if (
+      !("skillsAtTurn" in payload.turn) ||
+      !/extra field `?skillsAtTurn/.test(String(error))
+    ) {
+      throw error;
+    }
+    skillsAtTurnRefusedUntil = Date.now() + SKILLS_AT_TURN_RETRY_MS;
+    logger.info(
+      "[evals] the backend does not take eval skill records yet; writing turns without them",
+    );
+    const { skillsAtTurn: _refused, ...turn } = payload.turn;
+    return await write({ ...payload, turn });
+  }
+}
+
+/** Whose model spend an eval session was (`chatSessions.modelSource`). */
+export type EvalTraceModelSource =
+  "mcpjam" | "byok" | "local_byok" | "external-account";
+
 export async function persistEvalTraceFanout(args: {
   convexClient: ConvexHttpClient;
   iterationId: string;
@@ -192,10 +233,22 @@ export async function persistEvalTraceFanout(args: {
   iterationStartedAt?: number;
   modelId?: string;
   /** Maps to `chatSessions.modelSource`. Defaults to 'mcpjam'. */
-  modelSource?: "mcpjam" | "byok" | "local_byok";
+  modelSource?: EvalTraceModelSource;
   messages: ModelMessage[];
   spans: EvalTraceSpan[] | undefined;
   requestPayloads?: LiveChatTraceRequestPayloadEntry[];
+  /**
+   * Each harness turn's MCP route, by promptIndex. Sent with its own turn, and
+   * only when that turn has one: a turn without a record keeps the payload
+   * shape an older backend's validator accepts.
+   */
+  harnessMcpByPromptIndex?: ReadonlyMap<number, HarnessMcpAtTurn>;
+  /**
+   * The skills the iteration's turns ran with, sent with every turn: an eval
+   * iteration's skills do not change between its turns. Absent when the run
+   * froze no skills.
+   */
+  skillsAtTurn?: Array<Record<string, unknown>>;
   prompts: PromptTraceSummary[] | undefined;
   /**
    * Eval widget snapshots captured via `captureMcpAppWidgetSnapshots`.
@@ -294,8 +347,11 @@ export async function persistEvalTraceFanout(args: {
       // wire shape of non-Computer-Use evals is unchanged.
       const obsForThisTurn = obsByPromptIndex.get(turn.promptIndex) ?? [];
       const stepsForThisTurn = stepsByPromptIndex.get(turn.promptIndex) ?? [];
-      const result = (await args.convexClient.action(
-        "testSuites:appendEvalTurnTrace" as any,
+      const harnessMcpAtTurn = args.harnessMcpByPromptIndex?.get(
+        turn.promptIndex,
+      );
+      const result = await appendEvalTurnTrace(
+        args.convexClient,
         {
           iterationId: args.iterationId,
           modelId,
@@ -347,9 +403,13 @@ export async function persistEvalTraceFanout(args: {
             ...(stepsForThisTurn.length
               ? { browserInteractionSteps: stepsForThisTurn }
               : {}),
+            ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
+            ...(args.skillsAtTurn && Date.now() >= skillsAtTurnRefusedUntil
+              ? { skillsAtTurn: args.skillsAtTurn }
+              : {}),
           },
         },
-      )) as { skipped?: boolean } | undefined;
+      );
       // If the backend reports `skipped: true`, the flag flipped off
       // between our cache check and the per-turn call. Bail out so the
       // caller can decide whether to fall back to the W1 single-call path.

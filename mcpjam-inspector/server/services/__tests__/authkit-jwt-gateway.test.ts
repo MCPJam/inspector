@@ -62,9 +62,10 @@ async function sign(
     sub?: string | null;
     sid?: string | null;
     expSecondsFromNow?: number | null;
+    claims?: Record<string, unknown>;
   } = {},
 ): Promise<string> {
-  const payload: Record<string, unknown> = { org_id: "org_1" };
+  const payload: Record<string, unknown> = { org_id: "org_1", ...opts.claims };
   if (opts.sid !== null) payload.sid = opts.sid ?? SID;
   const builder = new SignJWT(payload)
     .setProtectedHeader({ alg: "RS256", kid: "k1" })
@@ -271,6 +272,94 @@ describe("classifyAuthKitBearer", () => {
       ).resolves.toMatchObject({
         kind: "keys_unavailable",
         reason: "connect ECONNREFUSED 127.0.0.1:1",
+      });
+    });
+  });
+
+  describe("agent-registration tokens (auth.md)", () => {
+    const REGISTRATION = "agent_reg_test_1";
+    const APPROVER = "user_approver_1";
+    const agentDeps = (): AuthKitGatewayDeps => ({
+      ...deps(),
+      agentResourceAudiences: [MCP_AUDIENCE],
+    });
+    const agentToken = (
+      opts: { aud?: string; iss?: string; act?: unknown } = {},
+    ) =>
+      sign(trustedPrivate, {
+        iss: opts.iss ?? OAUTH_ISSUER,
+        aud: opts.aud ?? CLIENT_ID,
+        sub: REGISTRATION,
+        sid: null,
+        claims: {
+          sub_profile: "ai_agent",
+          ...("act" in opts ? { act: opts.act } : { act: { sub: APPROVER } }),
+        },
+      });
+
+    it("names the registration and the approving user", async () => {
+      await expect(
+        classifyAuthKitBearer(await agentToken(), agentDeps()),
+      ).resolves.toEqual({
+        kind: "verified",
+        sub: REGISTRATION,
+        orgId: "org_1",
+        agent: { registrationId: REGISTRATION, userId: APPROVER },
+      });
+    });
+
+    it("accepts a token issued for one of our MCP resources", async () => {
+      const token = await agentToken({ aud: MCP_AUDIENCE });
+      await expect(
+        classifyAuthKitBearer(token, agentDeps()),
+      ).resolves.toMatchObject({
+        kind: "verified",
+        agent: { registrationId: REGISTRATION, userId: APPROVER },
+      });
+    });
+
+    it("refuses any other audience instead of passing it downstream", async () => {
+      const token = await agentToken({ aud: "https://elsewhere.test/mcp" });
+      await expect(classifyAuthKitBearer(token, agentDeps())).resolves.toEqual({
+        kind: "invalid",
+        reason: "audience",
+      });
+    });
+
+    it("accepts MCP resources only from the AuthKit OAuth issuer", async () => {
+      const token = await agentToken({ iss: WORKOS_ISSUER, aud: MCP_AUDIENCE });
+      await expect(classifyAuthKitBearer(token, agentDeps())).resolves.toEqual({
+        kind: "invalid",
+        reason: "audience",
+      });
+    });
+
+    it("leaves the user out when no WorkOS user approved the agent", async () => {
+      for (const act of [undefined, { sub: "admin@example.test" }, "user_1"]) {
+        const verdict = await classifyAuthKitBearer(
+          await agentToken({ act }),
+          agentDeps(),
+        );
+        expect(verdict).toMatchObject({
+          kind: "verified",
+          agent: { registrationId: REGISTRATION },
+        });
+        expect(verdict.kind === "verified" && verdict.agent?.userId).toBe(
+          undefined,
+        );
+      }
+    });
+
+    it("keeps an impersonation token on the user path", async () => {
+      // WorkOS impersonation also sets `act`, holding the admin's email.
+      const token = await sign(trustedPrivate, {
+        claims: { act: { sub: "admin@example.test" } },
+      });
+      await expect(classifyAuthKitBearer(token, deps())).resolves.toEqual({
+        kind: "verified",
+        sub: SUB,
+        sid: SID,
+        orgId: "org_1",
       });
     });
   });

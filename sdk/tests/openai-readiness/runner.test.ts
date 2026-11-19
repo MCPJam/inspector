@@ -374,3 +374,37 @@ describe("grading is pure", () => {
     }
   });
 });
+
+describe("the lazy-authentication badge after a failed anonymous initialize", () => {
+  function lazyBadgeState(initialize: {
+    status?: number;
+    unreachable?: boolean;
+  }) {
+    const result = gradeOpenAIReadiness(
+      evidence({
+        mode: "mcp-only",
+        lazyAuthProbe: {
+          attempted: true,
+          protocolVersion: "2025-06-18",
+          eraNote: "test",
+          initialize: { ok: false, error: "initialize failed", ...initialize },
+        },
+      })
+    );
+    return result.badges.find(
+      (badge) => badge.id === "openai.feature.lazy-authentication"
+    )?.state;
+  }
+
+  it.each([401, 403])("reads HTTP %s as sign-in at connect time", (status) => {
+    expect(lazyBadgeState({ status })).toBe("unsupported");
+  });
+
+  it.each([
+    ["HTTP 500", { status: 500 }],
+    ["HTTP 404", { status: 404 }],
+    ["no response", { unreachable: true }],
+  ])("leaves the feature unevaluated after %s", (_label, initialize) => {
+    expect(lazyBadgeState(initialize)).toBe("not-evaluated");
+  });
+});

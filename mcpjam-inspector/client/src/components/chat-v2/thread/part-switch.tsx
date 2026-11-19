@@ -1,3 +1,4 @@
+import { PLUGIN_MODEL_APP_META, pluginModelAppSchema } from "@/shared/plugin-model-app";
 import { retainedResourceProofFor } from "@/shared/retained-app-resources";
 import { isForwardingApprovalId } from "@/shared/forwarding-approval";
 import { ContextAttachmentChip } from "../chat-input/attachments/context-attachment-chip";
@@ -58,6 +59,9 @@ import {
   isToolPart,
 } from "./thread-helpers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { resolveScopeStepUpServer } from "@/lib/scope-step-up";
+import { presentWidgetAuthChallenge } from "@/lib/auth-challenge-lifecycle";
+import { authChallengeFromError } from "@/lib/apis/insufficient-scope";
 import { localServerNameForId } from "@/lib/apis/web/context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
@@ -121,15 +125,12 @@ function FrozenWidgetScreenshot({
   toolName: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
+    <div className="flex flex-col" data-testid="frozen-widget-replay">
       <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"
       />
-      <span className="text-[11px] text-muted-foreground">
-        Recorded render — this run's captured widget (not re-rendered live)
-      </span>
     </div>
   );
 }
@@ -447,6 +448,14 @@ function LivePartSwitch({
       readMcpToolOriginServerId((toolPart as any).callProviderMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerMetadata) ??
       readMcpToolOriginServerId((toolPart as any).providerOptions);
+    // Owned Apps obtain their resource URI from the admitted instance when opened.
+    // The tool catalog need not still contain the declaration from this turn.
+    const marker = originalResult !== undefined && streamedToolMeta?.[PLUGIN_MODEL_APP_META];
+    const parsedApp = marker ? pluginModelAppSchema.safeParse(marker) : undefined;
+    const attributedModelApp =
+      parsedApp?.success && parsedApp.data.serverId === providerMetadataServerId
+        ? parsedApp.data
+        : undefined;
     // Which credential produced this result, when the server had more than one
     // live. Rerun resolves a server, not a connection, so a call made on a
     // specific account cannot be replayed faithfully yet.
@@ -628,7 +637,8 @@ function LivePartSwitch({
       hostSupportsWidgetRendering(resolveHostCaps(serverId ?? undefined), {
         hostStyle,
       }) &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS);
 
@@ -637,7 +647,8 @@ function LivePartSwitch({
     // frozen screenshots: the Browser tab owns recorded renders for Sessions.
     if (
       widgetPolicy === "placeholder" &&
-      (uiType === UIType.OPENAI_SDK ||
+      (attributedModelApp !== undefined ||
+        uiType === UIType.OPENAI_SDK ||
         uiType === UIType.MCP_APPS ||
         uiType === UIType.OPENAI_SDK_AND_MCP_APPS ||
         renderOverride?.resourceUri ||
@@ -652,6 +663,7 @@ function LivePartSwitch({
             uiType={uiType}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
           />
@@ -664,8 +676,17 @@ function LivePartSwitch({
     // widget eligibility: a completed run's widget can fail host-caps / server /
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
-    if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
-      const isFrozenWidget = !!renderOverride?.frozenScreenshotUrl;
+    // An eval replay that prefers the live App keeps its picture as a backup
+    // for when the App can't render under the host being viewed. A closed or
+    // torn-down App shows the plain tool card instead.
+    const frozenScreenshotUrl =
+      renderOverride?.frozenScreenshotUrl ||
+      (!shouldRenderWidget && !isWidgetTornDown
+        ? renderOverride?.fallbackScreenshotUrl
+        : null) ||
+      undefined;
+    if (widgetSlotShouldRender(shouldRenderWidget, { frozenScreenshotUrl })) {
+      const isFrozenWidget = !!frozenScreenshotUrl;
       const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
@@ -714,10 +735,14 @@ function LivePartSwitch({
             editVersion={editVersion}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            keepLiveWidgetDiagnostics={!isFrozenWidget}
             recordedWidgetDiagnostics={
-              isFrozenWidget
+              // A live App from an eval run still shows the errors the run
+              // recorded, not only those from this replay.
+              isFrozenWidget || renderOverride?.recordedWidgetErrors
                 ? {
                     resourceUri:
                       renderOverride?.resourceUri ??
@@ -736,13 +761,14 @@ function LivePartSwitch({
             }
             {...approvalProps}
           />
-          {renderOverride?.frozenScreenshotUrl ? (
+          {frozenScreenshotUrl ? (
             <FrozenWidgetScreenshot
-              url={renderOverride.frozenScreenshotUrl}
+              url={frozenScreenshotUrl}
               toolName={toolInfo.toolName}
             />
           ) : (
             <WidgetReplay
+              attributedModelApp={attributedModelApp}
               serverId={serverId}
               chatSessionId={chatSessionId}
               toolName={toolInfo.toolName}
@@ -836,13 +862,51 @@ function LivePartSwitch({
               resolveHostSupportsWidget={(sid) =>
                 hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
               }
-              onSendFollowUp={interactive ? onSendFollowUp : undefined}
+              onSendFollowUp={
+                interactive && !renderOverride?.readOnly
+                  ? onSendFollowUp
+                  : undefined
+              }
               onCallTool={
-                interactive
+                interactive && !renderOverride?.readOnly
                   ? (toolName, params) => {
                       const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
                       const bound = widgetContext ?? proof;
-                      return bound ? forwardedWidgetCalls.call(bound, toolName, params) : callTool(serverId ?? "offline-view", toolName, params);
+                      if (bound)
+                        return forwardedWidgetCalls.call(
+                          bound,
+                          toolName,
+                          params,
+                        );
+                      // A sign-in challenge on the widget's own call shows a
+                      // Connect card in host chrome under this tool call; the
+                      // iframe still gets its result or error unchanged.
+                      const widgetServer = serverId
+                        ? resolveScopeStepUpServer(appState, { serverId })
+                        : undefined;
+                      return callTool(
+                        serverId ?? "offline-view",
+                        toolName,
+                        params,
+                        {
+                          onResultAuthChallenge: (challenge, schemes) =>
+                            presentWidgetAuthChallenge({
+                              server: widgetServer,
+                              signal: challenge,
+                              toolName,
+                              toolCallId: toolInfo.toolCallId,
+                              schemes,
+                            }),
+                        },
+                      ).catch((error: unknown) => {
+                        presentWidgetAuthChallenge({
+                          server: widgetServer,
+                          signal: authChallengeFromError(error),
+                          toolName,
+                          toolCallId: toolInfo.toolCallId,
+                        });
+                        throw error;
+                      });
                     }
                   : undefined
               }
@@ -883,6 +947,7 @@ function LivePartSwitch({
         uiType={uiType}
         minimalMode={minimalMode}
         serverId={serverId}
+        resourceServerId={toolServerId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
         rawOutput={rawToolOutput}
         {...approvalProps}

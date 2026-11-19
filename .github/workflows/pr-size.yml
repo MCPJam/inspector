@@ -6,10 +6,6 @@ name: PR Size
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
-  # Judges the PR's diff and labels, which the queue's merge commit lacks. The
-  # verdict on the PR stands; in the queue the job is skipped, which satisfies
-  # the required check.
-  merge_group:
 
 permissions:
   contents: read
@@ -39,4 +35,5 @@ jobs:
       - name: Count hand-written changed lines
         env:
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: node scripts/slop/pr-size.mjs --base HEAD^1

@@ -1,4 +1,6 @@
 import { runOpenAIProfileChecks } from "./checks/profile.js";
+import { openAIPackageSubmissionAnswers, openAIPackageCountries } from "./package/submission-answers.js";
+import { gradeOpenAISubmissionAnswers } from "./checks/submission-answers.js";
 /**
  * The composite readiness run, split into two halves that do not resemble each
  * other.
@@ -28,19 +30,37 @@ import { runOpenAIProfileChecks } from "./checks/profile.js";
  */
 
 import { enforceCapabilityGate } from "../directory-readiness/types.js";
+import { CHATGPT_PLUGIN_FLOW } from "../directory-readiness/flows/chatgpt-plugin.js";
+import type { DirectoryReviewerRunInput } from "../directory-readiness/reviewer/evidence.js";
+import { holdToReviewerAccount } from "../directory-readiness/reviewer/grade.js";
 import { rollUpLaneStatus as rollUpDirectoryLaneStatus } from "../directory-readiness/types.js";
 import {
   decideLaneStatus,
   summarizeLaneCoverage,
 } from "../directory-readiness/types.js";
 import { resolveMcpHeaders } from "../directory-readiness/discovery.js";
-import { dialMcpServer } from "../directory-readiness/mcp-dial.js";
+import {
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
+  dialMcpServer,
+} from "../directory-readiness/mcp-dial.js";
+import {
+  lazyAuthRediscoveryTrigger,
+  normalizeFeatureClaims,
+  refusedLazyAuthProbe,
+  resolveLazyAuthProbeMode,
+  type DirectoryFeatureClaim,
+  type DirectoryLazyAuthProbeConfig,
+  type DirectoryLazyAuthProbeEvidence,
+} from "../directory-readiness/lazy-auth.js";
+import { probeLazyAuthentication } from "../directory-readiness/lazy-auth-probe.js";
+import type { DirectoryDecisionScan } from "../directory-readiness/decisions/grade.js";
 import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
 import {
   mapOpenAIObservationsToFindings,
   type OpenAIObservationState,
 } from "./observations.js";
 import { OPENAI_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { withPortalCode } from "./portal-codes/issue-codes.js";
 import { OPENAI_APP_HTML_MIME } from "./profile.js";
 import {
   readOpenAIPluginPackage,
@@ -57,17 +77,20 @@ import {
   type OpenAIAppsUiEvidence,
 } from "./checks/apps-ui.js";
 import { runOpenAIAuthChecks } from "./checks/auth.js";
+import { runOpenAIDecisionChecks } from "./checks/decisions.js";
 import { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
 import { runOpenAIMigrationChecks } from "./checks/migration.js";
 import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
 import { runOpenAIPolicyChecks } from "./checks/policy.js";
 import { runOpenAIReleaseContractChecks } from "./checks/release-contract.js";
+import { runOpenAIReviewerChecks } from "./checks/reviewer.js";
 import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
 import { runOpenAISubmissionChecks } from "./checks/submission.js";
 import {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIAuthMetadata,
   discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
@@ -111,8 +134,10 @@ import type { PluginFileSource } from "../plugin-bundle/types.js";
  * Deliberately holds no functions, no streams and no client handles: an
  * evidence object that could not survive `JSON.stringify` would defeat the
  * split this module exists to make.
+ *
+ * A submission run also brings its reviewer path and client-signature probe.
  */
-export interface OpenAIReadinessEvidence {
+export interface OpenAIReadinessEvidence extends DirectoryReviewerRunInput {
   /** The endpoint or package the run graded, as the caller named it. */
   target: string;
   /** The DECLARED submission shape. Never inferred — see the module docblock. */
@@ -146,6 +171,8 @@ export interface OpenAIReadinessEvidence {
   toolListingComplete?: boolean;
   /** Why the tool listing is partial or absent, in plain words. */
   toolListingError?: string;
+  /** The server's `instructions` from `initialize`, which the model reads. */
+  instructions?: string;
   /** Skills advertised for import, when the run read them. */
   importedSkills?: OpenAISkillsEvidence;
   /** UI resources the server serves, and the screenshots that go with them. */
@@ -160,6 +187,8 @@ export interface OpenAIReadinessEvidence {
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
   submissionProfile?: unknown;
+  /** Saved portal answers, including partial submissions. */
+  submissionAnswers?: readonly import("../directory-readiness/flows/types.js").DirectoryAnswer[];
   /** Tools observed carrying a destructive or open-world annotation. */
   annotatedTools?: string[];
   /** UI frame domains observed on the wire. */
@@ -169,6 +198,16 @@ export interface OpenAIReadinessEvidence {
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
   /**
+   * The lazy-auth probe's two unauthenticated calls, when a caller armed it.
+   *
+   * The only evidence that can establish a mid-session challenge: an
+   * unauthenticated `initialize` that succeeds looks the same from an
+   * authless server and from a lazy-authentication one.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeEvidence;
+  /** Features the submitter claimed. A claim is reported, never verified by itself. */
+  claimedFeatures?: DirectoryFeatureClaim[];
+  /**
    * The model-observation axis, whatever happened on it.
    *
    * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
@@ -177,6 +216,8 @@ export interface OpenAIReadinessEvidence {
    * if it wanted to.
    */
   llmObservations?: OpenAIObservationState;
+  /** What the decision scan asked and the answers. Absent, the scan is off. */
+  decisionScan?: DirectoryDecisionScan;
 }
 
 const LANE_SUMMARIES: Record<OpenAIReadinessLane, string> = {
@@ -373,13 +414,14 @@ function readUiCspDomains(meta: Record<string, unknown> | undefined) {
 }
 
 /**
- * Everything a package says about ITSELF, for the guideline metadata rules.
+ * Everything a package says about ITSELF, for the guideline metadata rules
+ * and the decision scan's listing text.
  *
  * Collected here rather than in the check so the check stays a pure function of
  * named strings: it grades copy, and it should not have to know the shape of a
  * package to find it.
  */
-function packageSelfDescription(
+export function packageSelfDescription(
   evidence: OpenAIPluginPackageEvidence | undefined
 ): { field: string; text: string }[] {
   if (!evidence) return [];
@@ -415,7 +457,7 @@ export function gradeOpenAIReadiness(
   // down the "no input" branch would hide a caller's mistake behind a status
   // that reads like our limitation.
   const parsedProfile =
-    evidence.submissionProfile === undefined
+    evidence.submissionAnswers !== undefined || evidence.submissionProfile === undefined
       ? {
           profile: undefined as OpenAISubmissionProfile | undefined,
           issues: [],
@@ -430,6 +472,21 @@ export function gradeOpenAIReadiness(
     evidence.hasPublishedVersion ??
     false;
 
+  const packageAnswers = openAIPackageSubmissionAnswers(evidence.package, evidence.submissionAnswers);
+  const packageKeys = new Set(packageAnswers.map((answer) => answer.key));
+  const submissionAnswers = evidence.submissionAnswers === undefined
+    ? undefined
+    : [...evidence.submissionAnswers.filter((answer) => !packageKeys.has(answer.key)), ...packageAnswers];
+  const listingKeys = ["listing.displayName", "listing.shortDescription", "listing.description"];
+  const listingCopy = submissionAnswers?.flatMap((answer) =>
+    listingKeys.includes(answer.key) && typeof answer.value === "string" && answer.value.trim()
+      ? [{ field: answer.key, text: answer.value }] : []
+  );
+
+  const answerToken = submissionAnswers?.find(
+    (answer) => answer.key === "mcp.verificationToken"
+  )?.value;
+
   const shape = OPENAI_SUBMISSION_MODE_SHAPES[evidence.mode];
 
   // Server-side checks run only in a shape that HAS a server. In a shape that
@@ -442,7 +499,9 @@ export function gradeOpenAIReadiness(
           complete: evidence.toolListingComplete,
           error: evidence.toolListingError,
         }),
-        ...runOpenAIAuthChecks(evidence.auth, stamp),
+        ...runOpenAIAuthChecks(evidence.auth, stamp, {
+          lazyAuthProbe: evidence.lazyAuthProbe,
+        }),
         ...runOpenAIAnnotationChecks(evidence.tools, stamp, {
           complete: evidence.toolListingComplete,
           error: evidence.toolListingError,
@@ -450,7 +509,12 @@ export function gradeOpenAIReadiness(
         ...runOpenAIDomainVerificationChecks(
           {
             evidence: evidence.domainVerification,
-            declaredToken: parsedProfile.profile?.domainVerificationToken,
+            declaredTokenInput: evidence.submissionAnswers ? "mcp.verificationToken" : undefined,
+            declaredToken: evidence.submissionAnswers
+              ? typeof answerToken === "string"
+                ? answerToken
+                : undefined
+              : parsedProfile.profile?.domainVerificationToken,
           },
           stamp
         ),
@@ -470,6 +534,14 @@ export function gradeOpenAIReadiness(
 
   const optional = runOpenAIOptionalFeatureChecks(
     {
+      lazyAuthentication: observedLazyAuthentication(
+        evidence.lazyAuthProbe,
+        serverFindings.find(
+          (finding) => finding.id === "openai.auth.runtime-challenge"
+        )?.status
+      ),
+      lazyAuthenticationClaimed:
+        evidence.claimedFeatures?.includes("lazy-authentication") === true,
       importedSkills: evidence.importedSkills?.extensionAdvertised,
       uiResourceCount: evidence.appsUi?.resources?.length,
       clientIdMetadataDocuments: evidence.auth?.authorizationServers?.some(
@@ -494,9 +566,10 @@ export function gradeOpenAIReadiness(
       ? annotatedToolNames(evidence.tools)
       : evidence.annotatedTools;
 
-  const findings: OpenAIReadinessFinding[] = enforceCapabilityGate(
+  const graded: OpenAIReadinessFinding[] = enforceCapabilityGate(
     [
       ...serverFindings,
+      ...runOpenAIReviewerChecks(evidence, stamp),
       ...runOpenAIMcpSkillChecks(
         { mode: evidence.mode, evidence: evidence.importedSkills },
         stamp
@@ -511,6 +584,7 @@ export function gradeOpenAIReadiness(
       ...runOpenAIPolicyChecks(
         {
           profile: parsedProfile.profile,
+          listingMetadata: submissionAnswers ? listingCopy : undefined,
           packageMetadata: packageSelfDescription(evidence.package),
           hasCommerce: evidence.hasCommerce,
         },
@@ -525,16 +599,42 @@ export function gradeOpenAIReadiness(
         stamp
       ),
       ...optional.findings,
-      ...runOpenAISubmissionChecks(
-        {
-          profile: parsedProfile.profile,
-          profileIssues: parsedProfile.issues,
-          annotatedTools,
-          frameDomains: evidence.frameDomains,
-          hasPublishedVersion,
-        },
-        stamp
+      ...runOpenAIDecisionChecks(
+        evidence.decisionScan,
+        stamp,
+        shape.hasMcpServer
+          ? {
+              read: evidence.tools !== undefined,
+              complete: evidence.toolListingComplete,
+              error: evidence.toolListingError,
+            }
+          : undefined
       ),
+      ...(evidence.submissionAnswers
+        ? gradeOpenAISubmissionAnswers(
+            runOpenAISubmissionChecks(
+              {
+                profileIssues: [],
+                annotatedTools,
+                frameDomains: evidence.frameDomains,
+                hasPublishedVersion,
+              },
+              stamp
+            ),
+            submissionAnswers ?? [],
+            stamp,
+            { hasPublishedVersion, countries: openAIPackageCountries(evidence.package), annotatedTools: evidence.toolListingComplete === false ? undefined : annotatedTools, frameDomains: evidence.frameDomains }
+          )
+        : runOpenAISubmissionChecks(
+            {
+              profile: parsedProfile.profile,
+              profileIssues: parsedProfile.issues,
+              annotatedTools,
+              frameDomains: evidence.frameDomains,
+              hasPublishedVersion,
+            },
+            stamp
+          )),
       // LAST, and inside the capability gate like everything else. The mapper
       // can only emit `heuristic`/`manual-review` findings in
       // `experience-insights`, which `decideLaneStatus` does not consult — so
@@ -547,6 +647,16 @@ export function gradeOpenAIReadiness(
       ),
     ],
     evidence.capabilities
+  ).map(withPortalCode).map((finding) => {
+    const reads = CHATGPT_PLUGIN_FLOW.placements.find((placement) => placement.checkId === finding.id)?.reads ?? [];
+    return submissionAnswers && (reads.some((key) => packageKeys.has(key)) || (finding.id === "openai.submission.geography" && openAIPackageCountries(evidence.package) !== undefined))
+      ? { ...finding, details: { ...finding.details, packageDerived: true } }
+      : finding;
+  });
+  const findings = holdToReviewerAccount(
+    graded,
+    CHATGPT_PLUGIN_FLOW,
+    evidence.reviewerPath?.account
   );
 
   const badges: OpenAICapabilityBadge[] = optional.badges;
@@ -583,6 +693,45 @@ export function gradeOpenAIReadiness(
     startedAt: evidence.startedAt,
     durationMs: evidence.durationMs,
   };
+}
+
+/**
+ * What the lazy-auth probe established about the feature, or `undefined`.
+ *
+ * Read off the runtime-challenge FINDING rather than re-deciding it, so the
+ * badge and the finding cannot disagree about one call. `supported` also
+ * needs the public half: a server that challenges every call is not lazy,
+ * however well-formed its challenge.
+ */
+function observedLazyAuthentication(
+  probe: DirectoryLazyAuthProbeEvidence | undefined,
+  runtimeChallenge: OpenAIReadinessFinding["status"] | undefined
+): boolean | undefined {
+  if (!probe?.attempted) return undefined;
+  // Refused with 401 or 403 before any call: the server signs users in at
+  // connect time. A supported shape, and not this one. Any other failure
+  // says nothing about sign-in.
+  if (probe.initialize && !probe.initialize.ok) {
+    const status = probe.initialize.status;
+    return status === 401 || status === 403 ? false : undefined;
+  }
+  const publicOutcome = probe.publicCall?.outcome;
+  // A public call that failed only on the probe's empty arguments shows
+  // nothing about anonymous access.
+  if (probe.publicCall?.invalidArguments) return undefined;
+  if (
+    publicOutcome === "unauthorized" ||
+    publicOutcome === "forbidden" ||
+    probe.publicCall?.challenge
+  )
+    return false;
+  if (publicOutcome !== undefined && publicOutcome !== "succeeded")
+    return undefined;
+  if (runtimeChallenge === "violated") return false;
+  if (runtimeChallenge === "satisfied" && publicOutcome === "succeeded") {
+    return true;
+  }
+  return undefined;
 }
 
 /**
@@ -690,6 +839,23 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   hasPublishedVersion?: boolean;
   evidenceSources?: string[];
   /**
+   * Arm the lazy-auth probe: at most two unauthenticated calls to read-only
+   * tools — one public, one protected — in a session of the probe's own.
+   *
+   * It sends NO credentials, whatever `mcpHeaders` holds, and calls only
+   * tools annotated `readOnlyHint: true`. When the protected call's challenge
+   * names Protected Resource Metadata (or is a 401 naming none), discovery
+   * runs again from it and the authorization lanes are graded on what that
+   * finds — which is the only way a server serving its metadata solely at the
+   * challenge's pointer is graded at all.
+   */
+  lazyAuthProbe?: DirectoryLazyAuthProbeConfig;
+  /**
+   * Features the submitter claims, e.g. `"lazy-authentication"`. Unknown
+   * entries are ignored here; surfaces refuse them before they arrive.
+   */
+  claimedFeatures?: readonly string[];
+  /**
    * An ALREADY VALIDATED observation state.
    *
    * The gatherer performs every side effect this product performs, and calling
@@ -745,13 +911,14 @@ export async function gatherOpenAIReadinessEvidence(
         }
       : undefined;
 
-  const [endpoint, auth, domainVerification] = discovery
+  const [endpoint, initialAuth, domainVerification] = discovery
     ? await Promise.all([
         traceOpenAIEndpoint(discovery),
         discoverOpenAIAuthEvidence(discovery),
         fetchOpenAIDomainVerification(discovery),
       ])
     : [undefined, undefined, undefined];
+  let auth = initialAuth;
 
   // THE TOOL LISTING, DIALLED. Until this landed the gatherer accepted a
   // listing as an argument and never fetched one, so every wire run graded the
@@ -789,6 +956,64 @@ export async function gatherOpenAIReadinessEvidence(
   const toolListingComplete = hasSuppliedTools
     ? undefined
     : dialled?.tools?.complete;
+
+  // THE LAZY-AUTH PROBE, after the dial so a named tool the anonymous session
+  // cannot see can still be found in the listing the dial already holds.
+  // Requested-and-refused is recorded rather than dropped: a caller who asked
+  // for the probe should read why it did not run.
+  let lazyAuthProbe: DirectoryLazyAuthProbeEvidence | undefined;
+  if (options.lazyAuthProbe !== undefined && discovery) {
+    const mode = resolveLazyAuthProbeMode(options.lazyAuthProbe);
+    if (!mode.enabled) {
+      lazyAuthProbe = refusedLazyAuthProbe(
+        mode.reason,
+        DIRECTORY_DIAL_PROTOCOL_VERSION
+      );
+    } else {
+      lazyAuthProbe = await probeLazyAuthentication({
+        // Field by field: the probe must never see `mcpHeaders`.
+        enteredUrl: discovery.enteredUrl,
+        fetchFn: discovery.fetchFn,
+        timeoutMs: discovery.timeoutMs,
+        signal: discovery.signal,
+        mode,
+        knownTools: tools,
+      });
+      // RE-DISCOVER FROM THE CHALLENGE. ChatGPT follows a `_meta` challenge on
+      // a tool whose schemes include oauth2, and any client follows a 401; in
+      // either case the metadata it reaches is the metadata to grade.
+      const trigger = lazyAuthRediscoveryTrigger(lazyAuthProbe.protectedCall, [
+        "http_401",
+        "tool_result_meta",
+      ]);
+      if (trigger && auth) {
+        const rediscovered = await discoverOpenAIAuthMetadata(
+          discovery,
+          trigger.pointer
+        );
+        // Keep a rediscovery that found nothing too when the first one found
+        // nothing: it carries what following the challenge's pointer hit,
+        // including a refused pointer, which is the defect to report.
+        const firstFoundNothing =
+          !auth.prm || auth.prm.discoveredVia === "not-found";
+        if (
+          rediscovered.prm &&
+          (rediscovered.prm.discoveredVia !== "not-found" || firstFoundNothing)
+        ) {
+          auth = { ...auth, ...rediscovered };
+        }
+        lazyAuthProbe.rediscovery = {
+          trigger: trigger.trigger,
+          source: trigger.source,
+          prmFound: !!rediscovered.prm && rediscovered.prm.discoveredVia !== "not-found",
+          ...(rediscovered.prm?.url ? { prmUrl: rediscovered.prm.url } : {}),
+          ...(rediscovered.prm?.discoveredVia
+            ? { discoveredVia: rediscovered.prm.discoveredVia }
+            : {}),
+        };
+      }
+    }
+  }
 
   // Skills are read only in the shape that imports them. Calling `skills/list`
   // against a server that does not advertise the extension would turn a
@@ -835,6 +1060,7 @@ export async function gatherOpenAIReadinessEvidence(
     tools,
     toolListingComplete,
     toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
+    instructions: dialled?.initialize.instructions,
     importedSkills,
     // THE DIALLED RESOURCES ARE USED, not discarded. Requesting them and then
     // returning only the caller's `appsUi` would leave the UI lane
@@ -852,6 +1078,10 @@ export async function gatherOpenAIReadinessEvidence(
     frameDomains: options.frameDomains,
     hasPublishedVersion: options.hasPublishedVersion,
     evidenceSources: options.evidenceSources,
+    ...(lazyAuthProbe ? { lazyAuthProbe } : {}),
+    ...(options.claimedFeatures !== undefined
+      ? { claimedFeatures: normalizeFeatureClaims(options.claimedFeatures).claims }
+      : {}),
     llmObservations: options.llmObservations,
   };
 }

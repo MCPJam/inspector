@@ -13,6 +13,7 @@ import {
   type ConformanceScore,
 } from "./conformance-score.js";
 import { deepJsonSafe } from "./json-safe.js";
+import { readinessAdvisoryFields } from "./conformance-report-advisories.js";
 import { redactForTelemetry } from "./telemetry-redaction.js";
 import type { ConformanceProfileStamp } from "./conformance-profile.js";
 import type {
@@ -165,9 +166,10 @@ export interface ConformanceReport {
   durationMs: number;
   groups: ConformanceReportGroup[];
   /**
-   * Ungraded statements. Absent for the conformance suites, which have none;
-   * present for readiness, whose experience-insights lane is entirely
-   * advisory. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
+   * Ungraded statements. For the conformance suites, their SHOULD/MAY advice
+   * (`readiness` warnings), absent when a run raised none; for readiness, its
+   * experience-insights lane, which is entirely advisory. Saved with the report
+   * so a run reopened from history can still list its advice. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
    * consumer reading a readiness report ignores it and still gets a valid
    * report, which is the property a version bump would otherwise be asserting.
    */
@@ -590,6 +592,12 @@ function createProtocolReport(
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `mcp-${index + 1}`,
+        }))
+      ),
     };
   }
 
@@ -603,6 +611,9 @@ function createProtocolReport(
     ...(result.profile ? { profile: result.profile } : {}),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "mcp-1" },
+    ]),
   };
 }
 
@@ -621,6 +632,12 @@ function createAppsReport(
       groups: result.results.map((entry, index) =>
         appsGroupFromResult(entry, entry.label, index),
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `apps-${index + 1}`,
+        }))
+      ),
     };
   }
 
@@ -633,6 +650,9 @@ function createAppsReport(
     score: scoreFromAppsResult(result),
     durationMs: result.durationMs,
     groups: [appsGroupFromResult(result, "MCP Apps Conformance", 0)],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "apps-1" },
+    ]),
   };
 }
 
@@ -709,6 +729,12 @@ function createOAuthReport(
           verdicts[index]!.passed
         )
       ),
+      ...readinessAdvisoryFields(
+        result.results.map((entry, index) => ({
+          readiness: entry.readiness,
+          group: `oauth-${index + 1}`,
+        }))
+      ),
     };
   }
 
@@ -731,6 +757,9 @@ function createOAuthReport(
         verdict.passed
       ),
     ],
+    ...readinessAdvisoryFields([
+      { readiness: result.readiness, group: "oauth-1" },
+    ]),
   };
 }
 
@@ -1153,6 +1182,9 @@ export function toConformanceReport(
       groups: [
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
       ],
+      ...readinessAdvisoryFields([
+        { readiness: result.readiness, group: "tasks-1" },
+      ]),
     };
   }
 
@@ -1282,9 +1314,33 @@ function renderConformanceTestSuite(
   return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${properties}${cases}\n  </testsuite>`;
 }
 
+/** One report's `<testsuite>` elements and tallies, without the document root. */
+export interface ConformanceJUnitSuites {
+  name: string;
+  tests: number;
+  failures: number;
+  skipped: number;
+  durationMs: number;
+  /** Zero or more `<testsuite>` elements, newline-joined. */
+  xml: string;
+}
+
 export function renderConformanceReportJUnitXml(
   report: ConformanceReport,
 ): string {
+  const suites = renderConformanceReportJUnitSuites(report);
+  const time = (suites.durationMs / 1000).toFixed(3);
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${escapeXml(suites.name)}" tests="${suites.tests}" failures="${suites.failures}" skipped="${suites.skipped}" time="${time}">\n${suites.xml}\n</testsuites>\n`;
+}
+
+/**
+ * The body of {@link renderConformanceReportJUnitXml}, for a document that
+ * holds several reports under one `<testsuites>` root: a second XML prolog or
+ * root element would make the whole file unparseable.
+ */
+export function renderConformanceReportJUnitSuites(
+  report: ConformanceReport
+): ConformanceJUnitSuites {
   const redactedReport = renderConformanceReportJson(report);
   const tests = redactedReport.groups.reduce(
     (sum, group) => sum + group.cases.length,
@@ -1307,9 +1363,6 @@ export function renderConformanceReportJUnitXml(
       ).length,
     0,
   );
-  const time = (redactedReport.durationMs / 1000).toFixed(3);
-  const name = escapeXml(redactedReport.name);
-
   const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
     .map((group) =>
@@ -1333,5 +1386,12 @@ export function renderConformanceReportJUnitXml(
         )}\n    </properties>\n  </testsuite>`
       : "";
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
+  return {
+    name: redactedReport.name,
+    tests,
+    failures,
+    skipped,
+    durationMs: redactedReport.durationMs,
+    xml: `${suites}${orphanSuite}`,
+  };
 }

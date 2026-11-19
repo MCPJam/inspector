@@ -1,3 +1,4 @@
+import { PluginIconDirectoryProvider } from "../../host-workspace/plugin-icon-directory";
 import {
   act,
   fireEvent,
@@ -6,7 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { ComposerFormCard } from "../ComposerFormCard";
+import { ComposerFormCard, ComposerFormFrame } from "../ComposerFormCard";
 import {
   compileComposerForm,
   logComposerFormDiagnostics,
@@ -180,7 +181,7 @@ describe("composer form card", () => {
 
   it.each([
     ["Decline", "decline"],
-    ["Close", "cancel"],
+    ["Cancel form", "cancel"],
   ])("%s sends %s without content", async (name, action) => {
     const respond = card(steps);
     fireEvent.change(screen.getByLabelText(/Name/), {
@@ -264,7 +265,7 @@ describe("composer form card", () => {
     // Same step, every control usable again.
     expect(screen.getByText("3 of 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip for now" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Close" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel form" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
     await waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
     expect(respond.mock.calls[1]).toEqual(respond.mock.calls[0]);
@@ -445,4 +446,22 @@ describe("composer form card", () => {
       "plugin-extensions/PLUGIN_FORM_PREVIEW_DROPPED",
     ]);
   });
+});
+
+it("labels a plugin form with its manifest name while preserving the request identity", () => {
+  const runtimeName = "bits-and-bolts:server:bits-and-bolts@2cc7fa5b";
+  const close = vi.fn();
+  render(
+    <PluginIconDirectoryProvider value={{
+      plugins: new Map(), pluginNames: new Map([["bits", "Bits & Bolts"]]),
+      servers: { server: { pluginId: "bits", name: runtimeName } },
+    }}>
+      <ComposerFormFrame title="" serverName={runtimeName} requestId="request-identity" onClose={close} />
+    </PluginIconDirectoryProvider>,
+  );
+  const frame = screen.getByRole("region", { name: "Bits & Bolts requests information" });
+  expect(frame.getAttribute("data-composer-form")).toBe("request-identity");
+  expect(frame.textContent).not.toContain(runtimeName);
+  fireEvent.click(screen.getByRole("button", { name: /cancel|close/i }));
+  expect(close).toHaveBeenCalledTimes(1);
 });

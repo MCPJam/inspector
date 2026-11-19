@@ -1,9 +1,14 @@
+import { DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS } from "@/shared/conformance-timeout";
 import type {
   MCPConformanceResult,
   MCPAppsCheckId,
   MCPAppsConformanceResult,
   MCPCheckId,
+  MCPOAuthReadinessId,
+  MCPReadinessId,
   MCPTasksCheckId,
+  MCPTasksCheckOverrides,
+  MCPTasksReadinessId,
   MCPTasksConformanceResult,
   McpProtocolVersion,
   ConformanceResult as OAuthConformanceResult,
@@ -12,8 +17,32 @@ import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildServerRequest } from "@/lib/apis/web/context";
 import { webPost } from "@/lib/apis/web/base";
 import { localPost } from "@/lib/apis/local-post";
+import {
+  protocolProbeFields,
+  type ConformanceProbe,
+  type ConformanceProbes,
+} from "@/shared/conformance-settings";
 
 // ── Types ───────────────────────────────────────────────────────────────
+
+export interface ConformanceRunBudget {
+  runTimeoutSeconds?: number;
+  remainingRunTimeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+export function conformanceBudgetFields(budget?: ConformanceRunBudget) {
+  if (
+    budget?.runTimeoutSeconds === undefined &&
+    budget?.remainingRunTimeoutMs === undefined
+  )
+    return {};
+  return {
+    runTimeoutSeconds:
+      budget?.runTimeoutSeconds ?? DEFAULT_CONFORMANCE_RUN_TIMEOUT_SECONDS,
+    remainingRunTimeoutMs: budget.remainingRunTimeoutMs,
+  };
+}
 
 export interface OAuthConformanceStartResult {
   phase: "authorization_needed" | "complete";
@@ -29,7 +58,7 @@ export interface OAuthConformanceCompleteResult {
   result?: OAuthConformanceResult;
 }
 
-export interface OAuthStartInput {
+export interface OAuthStartInput extends ConformanceRunBudget {
   serverNameOrId: string;
   oauthProfile?: {
     serverUrl?: string;
@@ -41,76 +70,75 @@ export interface OAuthStartInput {
     customHeaders?: Array<{ key: string; value: string }>;
   };
   callbackOrigin?: string;
+  /** The advice to report; absent reports all of it, empty none. */
+  readinessIds?: MCPOAuthReadinessId[];
 }
 
 // ── Public API ──────────────────────────────────────────────────────────
 
-/** A tool named as safe for a protocol check to call, with its arguments. */
-export interface ConformanceProbe {
-  toolName: string;
-  arguments?: Record<string, unknown>;
-}
-
-/**
- * The tools the checks that must call one may use: `logProbe` for the two
- * logging checks, `inputRequiredProbe` for the undeclared-capability check.
- */
-export interface ConformanceProbes {
-  logProbe?: ConformanceProbe;
-  inputRequiredProbe?: ConformanceProbe;
-}
+export type { ConformanceProbe, ConformanceProbes };
 
 export async function runProtocolConformance(
   serverNameOrId: string,
-  options?: {
+  options?: ConformanceRunBudget & {
     protocolVersion?: McpProtocolVersion;
     checkIds?: MCPCheckId[];
+    /** The advice to run; absent runs all of it, empty runs none. */
+    readinessIds?: MCPReadinessId[];
     probes?: ConformanceProbes;
   },
 ): Promise<{ success: boolean; result: MCPConformanceResult }> {
   const versionFields = {
+    ...conformanceBudgetFields(options),
     ...(options?.protocolVersion
       ? { protocolVersion: options.protocolVersion }
       : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
-    ...(options?.probes?.logProbe ? { logProbe: options.probes.logProbe } : {}),
-    ...(options?.probes?.inputRequiredProbe
-      ? { inputRequiredProbe: options.probes.inputRequiredProbe }
-      : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...protocolProbeFields(options?.probes),
   };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/protocol", {
         serverId: serverNameOrId,
         ...versionFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/protocol", {
         ...request,
         ...versionFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
 
 export async function runAppsConformance(
   serverNameOrId: string,
-  options?: { checkIds?: MCPAppsCheckId[] },
+  options?: ConformanceRunBudget & {
+    checkIds?: MCPAppsCheckId[];
+    protocolVersion?: McpProtocolVersion;
+  },
 ): Promise<{ success: boolean; result: MCPAppsConformanceResult }> {
-  const checkFields = options?.checkIds ? { checkIds: options.checkIds } : {};
+  const checkFields = {
+    ...conformanceBudgetFields(options),
+    ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
+  };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/apps", {
         serverId: serverNameOrId,
         ...checkFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/apps", {
         ...request,
         ...checkFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
@@ -122,29 +150,45 @@ export async function runAppsConformance(
  */
 export async function runTasksConformance(
   serverNameOrId: string,
-  options?: {
+  options?: ConformanceRunBudget & {
+    protocolVersion?: McpProtocolVersion;
+    checkOverrides?: MCPTasksCheckOverrides;
     toolName?: string;
     toolArguments?: Record<string, unknown>;
+    inputResponses?: Record<string, unknown>;
     checkIds?: MCPTasksCheckId[];
+    /** The advice to report; absent reports all of it, empty none. */
+    readinessIds?: MCPTasksReadinessId[];
   },
 ): Promise<{ success: boolean; result: MCPTasksConformanceResult }> {
   const optionFields = {
+    ...conformanceBudgetFields(options),
+    ...(options?.protocolVersion
+      ? { protocolVersion: options.protocolVersion }
+      : {}),
     ...(options?.checkIds ? { checkIds: options.checkIds } : {}),
+    ...(options?.readinessIds ? { readinessIds: options.readinessIds } : {}),
+    ...(options?.checkOverrides
+      ? { checkOverrides: options.checkOverrides }
+      : {}),
     ...(options?.toolName ? { toolName: options.toolName } : {}),
     ...(options?.toolArguments ? { toolArguments: options.toolArguments } : {}),
+    ...(options?.inputResponses
+      ? { inputResponses: options.inputResponses }
+      : {}),
   };
   return runByMode({
     local: () =>
       localPost("/api/mcp/conformance/tasks", {
         serverId: serverNameOrId,
         ...optionFields,
-      }),
+      }, ...(options?.signal ? [{ signal: options.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(serverNameOrId);
       return webPost("/api/web/conformance/tasks", {
         ...request,
         ...optionFields,
-      });
+      }, ...(options?.signal ? [{ signal: options.signal }] : []));
     },
   });
 }
@@ -156,16 +200,20 @@ export async function startOAuthConformance(
     local: () =>
       localPost("/api/mcp/conformance/oauth/start", {
         serverId: input.serverNameOrId,
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
-      }),
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
+      }, ...(input.signal ? [{ signal: input.signal }] : [])),
     hosted: () => {
       const request = buildServerRequest(input.serverNameOrId);
       return webPost("/api/web/conformance/oauth/start", {
         ...request,
+        ...conformanceBudgetFields(input),
         oauthProfile: input.oauthProfile,
         callbackOrigin: input.callbackOrigin,
-      });
+        ...(input.readinessIds ? { readinessIds: input.readinessIds } : {}),
+      }, ...(input.signal ? [{ signal: input.signal }] : []));
     },
   });
 }
@@ -174,26 +222,34 @@ export async function submitOAuthConformanceCode(input: {
   sessionId: string;
   code: string;
   state?: string;
-}): Promise<{ success: boolean }> {
+}, options?: { signal?: AbortSignal }): Promise<{ success: boolean }> {
   const path = isHostedMode()
     ? "/api/web/conformance/oauth/authorize"
     : "/api/mcp/conformance/oauth/authorize";
 
   if (isHostedMode()) {
-    return webPost(path, input);
+    return webPost(path, input, options);
   }
-  return localPost(path, input);
+  return localPost(path, input, options);
 }
 
 export async function completeOAuthConformance(
   sessionId: string,
+  options?: { signal?: AbortSignal },
 ): Promise<OAuthConformanceCompleteResult> {
   const path = isHostedMode()
     ? "/api/web/conformance/oauth/complete"
     : "/api/mcp/conformance/oauth/complete";
 
   if (isHostedMode()) {
-    return webPost(path, { sessionId });
+    return webPost(path, { sessionId }, options);
   }
-  return localPost(path, { sessionId });
+  return localPost(path, { sessionId }, options);
+}
+
+export async function cancelOAuthConformance(sessionId: string): Promise<{ success: boolean }> {
+  return runByMode({
+    local: () => localPost("/api/mcp/conformance/oauth/cancel", { sessionId }),
+    hosted: () => webPost("/api/web/conformance/oauth/cancel", { sessionId }),
+  });
 }

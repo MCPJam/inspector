@@ -83,6 +83,7 @@ import {
   updateThemePreset,
 } from "./lib/theme-utils";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
+import { useAppLoadStallReport } from "./lib/app-load-stall";
 import { DbUserReadyProvider } from "./contexts/db-user-ready-context";
 import { LegalAcceptanceGate } from "./components/legal/LegalAcceptanceGate";
 import {
@@ -120,7 +121,8 @@ if (sandboxOriginFault) {
 }
 
 function AuthBootstrap({ children }: { children: ReactNode }) {
-  const { isEnsuringUser, isUserReady } = useEnsureDbUser();
+  const { isEnsuringUser, isUserReady, hasIdentity } = useEnsureDbUser();
+  useAppLoadStallReport(isUserReady, hasIdentity);
   useEffect(() => {
     authRefusalDiagnostics.update({ ready: isUserReady });
     return () => authRefusalDiagnostics.update({ ready: false });
@@ -434,9 +436,11 @@ if (isInIframe) {
       onRedirectCallback={({ state }) => {
         const carried = state as Record<string, unknown> | null;
         const promoReturn = promoSignInReturn(carried);
-        if (promoReturn && readAppSignInReturnPath() === "/redeem") {
-          consumeAppSignInReturnPath();
-        }
+        const savedPath = readAppSignInReturnPath();
+        const savedPromoReturn =
+          savedPath?.split("?")[0] === "/redeem"
+            ? consumeAppSignInReturnPath()
+            : null;
         const returnTo =
           takeHandoffSignInReturn(
             carried?.[HANDOFF_SIGN_IN_STATE_KEY],
@@ -452,9 +456,7 @@ if (isInIframe) {
             window.location.origin,
           ) ??
           promoReturn ??
-          (readAppSignInReturnPath() === "/redeem"
-            ? consumeAppSignInReturnPath()
-            : null);
+          savedPromoReturn;
         if (returnTo) {
           // A scoped return cannot navigate until App has the database user
           // and authoritative memberships. Keep it in same-origin storage and

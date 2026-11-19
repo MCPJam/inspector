@@ -1,4 +1,5 @@
 import { logLegacyEvalRequest } from "../../services/evals/legacy-eval-telemetry.js";
+import { loadSuiteConnectionIdSets } from "../../services/evals/suite-account-choices.js";
 import {
   captureToolSnapshotForEvalAuthoring,
   requireConvexHttpUrl,
@@ -46,6 +47,7 @@ import {
   toSuspectedConditionProjection,
 } from "./eval-friction-projection.js";
 import { toExecutionProjection } from "./eval-execution-projection.js";
+import { toRunAccountsProjection } from "./eval-run-accounts.js";
 import {
   buildEvalRunDecisionSummaryResponse,
   decisionSummaryPageIsComplete,
@@ -59,7 +61,6 @@ import {
   toRunCompareDto,
   type RunCompareBaseline,
 } from "./eval-compare-projection.js";
-import { ConvexHttpClient } from "convex/browser";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import { type RequestedModelSelection } from "@mcpjam/sdk";
 import {
@@ -164,10 +165,10 @@ import {
   hostClientCapabilities,
 } from "../../services/host-connection-pins.js";
 import {
-  TERMINAL_ITERATION_STATUSES,
-  TERMINAL_RUN_STATUSES,
-} from "../../services/evals/run-status.js";
-import { shouldSkipExecution } from "../shared/evals.js";
+  isEvalIterationTerminalStatus,
+  isEvalRunTerminalStatus,
+} from "@mcpjam/sdk/contract";
+import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
 import {
   createEvalCasesInBatches,
   withMintedCaseIds,
@@ -232,9 +233,12 @@ import {
   translateImportIneligibleError,
 } from "./convex-errors.js";
 import {
+  ConvexHttpStatusError,
   classifyConvexReadError,
   translateConvexReadError,
+  translateConvexStatusError,
 } from "./convex-read-errors.js";
+import { createConvexClient } from "./convex-client.js";
 import {
   requireConvexIdParam,
   requireConvexIdShape,
@@ -1139,28 +1143,18 @@ function releaseRunGroupSlotRef(slot: RunGroupSlot): void {
  */
 export const MAX_RUN_GROUP_TARGETS = 10;
 
-// ── Convex read client ───────────────────────────────────────────────
-
-function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(convexAuthToken);
-  return client;
-}
-
 /**
  * Convex throws generic Errors from queries; the common authorization
  * failures ("not found", "unauthorized", "Not a member") all mean the same
  * thing to a v1 caller: this run/suite is not visible to you.
+ *
+ * Never a `ConvexHttpStatusError`: that answer came from Convex's HTTP layer
+ * before the function ran, so it cannot be a refusal, and its body ("401
+ * Unauthorized", "404 Not Found") would otherwise read as one. The read
+ * translator answers it from its status instead.
  */
 function isConvexNotVisibleError(error: unknown): boolean {
+  if (error instanceof ConvexHttpStatusError) return false;
   const message = error instanceof Error ? error.message : String(error);
   return /not found|unauthorized|not a member/i.test(message);
 }
@@ -1187,6 +1181,16 @@ function scopedEvalReadOptions(
     redactedIsRefusal: phase === "preflight",
   } as const;
 }
+
+/**
+ * For a catch that answers through the write translator or rethrows: a
+ * status error there still reads by its status. See
+ * `translateConvexStatusError`.
+ */
+const EVAL_RUN_STATUS_READ = {
+  scope: "v1.evals",
+  notFoundMessage: "Eval run not found",
+} as const;
 
 /**
  * Every id parameter on this surface is a Convex document id, so each one is
@@ -1279,7 +1283,7 @@ async function readSuiteInProject(
   });
   let suite: SuiteDoc | null;
   try {
-    suite = await createConvexReadClient(convexAuthToken).query(
+    suite = await createConvexClient(convexAuthToken).query(
       "testSuites:getTestSuite" as any,
       { suiteId },
     );
@@ -1314,7 +1318,7 @@ async function describeAttachedEnvironments(
   let rows: Array<Record<string, unknown>> = [];
   try {
     rows =
-      ((await createConvexReadClient(convexAuthToken).query(
+      ((await createConvexClient(convexAuthToken).query(
         "projectEnvironments:listEnvironments" as any,
         { projectId, includeArchived: true },
       )) as Array<Record<string, unknown>> | null) ?? [];
@@ -1377,7 +1381,7 @@ async function assertEphemeralEnvironmentLaunchable(
     notFoundMessage: "Environment not found",
   });
   requireProjectIdShape(projectId);
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let row: {
     environmentId?: string;
     projectId?: string;
@@ -1568,7 +1572,7 @@ export async function fetchSuiteRunServerSelection(
       notFoundMessage: "Host not found",
     });
   }
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let selection: {
     serverIds?: unknown;
     serverNames?: unknown;
@@ -1619,30 +1623,6 @@ export async function fetchSuiteRunServerSelection(
     );
   }
   return { serverIds, serverNames };
-}
-
-/**
- * Whether the run record already reached a terminal status. Used by the
- * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
- * itself before rethrowing, so a rejected `execute()` usually means the
- * terminal write already happened — re-finalizing would restamp
- * `completedAt` and overwrite the runner's notes.
- */
-async function isRunAlreadyTerminal(
-  convexAuthToken: string,
-  runId: string,
-): Promise<boolean> {
-  try {
-    const run: RunDoc | null = await createConvexReadClient(
-      convexAuthToken,
-    ).query("testSuites:getTestSuiteRun" as any, { runId });
-    return TERMINAL_RUN_STATUSES.has(String(run?.status));
-  } catch {
-    // Can't tell — let the defensive finalize proceed. recorder.finalize
-    // tolerates deleted/unauthorized runs, so the worst case is the
-    // duplicate terminal write we'd have done unconditionally before.
-    return false;
-  }
 }
 
 // ── DTO mapping ──────────────────────────────────────────────────────
@@ -1867,6 +1847,9 @@ function toRunDto(run: RunDoc) {
           },
         }
       : {}),
+    // Which account the run used on each server, as the API key's owner may
+    // see it. Omitted when the run recorded none. See `toRunAccountsProjection`.
+    ...toRunAccountsProjection(run.accountsAtRun),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(run.client
@@ -2086,7 +2069,7 @@ function toIterationDto(
   // with the trial, so its duration is measurable (a setup failure has a real
   // elapsed time) and withholding it would report `durationMs: null` for the
   // one class of failure an operator is trying to time.
-  const isTerminal = TERMINAL_ITERATION_STATUSES.has(iteration.status);
+  const isTerminal = isEvalIterationTerminalStatus(iteration.status);
   const durationMs =
     isTerminal && startedAt !== null && typeof iteration.updatedAt === "number"
       ? Math.max(iteration.updatedAt - startedAt, 0)
@@ -4103,6 +4086,14 @@ function translateConvexWriteError(
       `This MCPJam deployment does not serve ${feature}.`,
     );
   }
+  // A failure Convex's HTTP layer answered before the mutation ran reads by
+  // its status: the shared translator below reads an expired token's
+  // "Unauthorized" as a refusal (404) and a proxy's 500 as our own.
+  const statusError = translateConvexStatusError(error, {
+    scope: "v1.evals",
+    notFoundMessage: "Resource not found",
+  });
+  if (statusError) return statusError;
   const data = (error as { data?: unknown } | null | undefined)?.data;
   if (data && typeof data === "object" && !Array.isArray(data)) {
     const code = (data as { code?: unknown }).code;
@@ -4177,7 +4168,7 @@ function translateConvexWriteError(
  * be able to echo what it just set without a second read.
  */
 async function resolveComputerEnvironment(
-  readClient: ReturnType<typeof createConvexReadClient>,
+  readClient: ReturnType<typeof createConvexClient>,
   projectId: string,
   selector: string,
 ): Promise<{ id: string; name: string }> {
@@ -4424,6 +4415,11 @@ async function launchEvalRun(params: {
         conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
       )
     : undefined;
+  // The key owner's saved accounts for this suite; an inline suite has none.
+  const connectionIdSets = await loadSuiteConnectionIdSets(
+    createConvexClients(convexAuthToken).convexClient,
+    { suiteId: body.suiteId },
+  );
   const { manager } = await createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
@@ -4433,6 +4429,9 @@ async function launchEvalRun(params: {
     undefined,
     params.hostConfig ? hostClientCapabilities(params.hostConfig) : undefined,
     {
+      // Eval setup has no iteration sandbox and cannot reserve a personal Computer.
+      pluginComputerRuntime: false,
+      ...(connectionIdSets ? { connectionIdSets } : {}),
       serverNames,
       // The issuer makes per-server XAA servers mint instead of failing with
       // 'Missing XAA issuer'. The enterprise policy now comes from the run's
@@ -4504,77 +4503,25 @@ async function launchEvalRun(params: {
     throw error;
   }
 
-  // Detach: the runner owns terminal run status (it finalizes a failed
-  // run itself, then rethrows). The catch is defense for errors thrown
-  // outside the runner's own try (provider construction, etc.) — it only
-  // finalizes when the run record is still non-terminal, so the runner's
-  // completedAt/notes are never restamped by a second terminal write.
-  // A REPLAY of a finished run executes nothing. `prepared.execute()` would
-  // re-run every case and bill for it, writing over results that are already
-  // final — the exact double-spend the caller sent an idempotency key to
-  // prevent. The slot and the manager still have to be settled here, because
-  // the `.finally` that normally does it belongs to an execution that is not
-  // going to happen.
-  if (shouldSkipExecution(prepared)) {
-    logger.info("[v1 evals] idempotent replay — not re-executing", {
-      runId: prepared.runId,
-      suiteId: prepared.suiteId,
-      status: prepared.status,
-      projectId,
-    });
-    onSettled();
-    void manager.disconnectAllServers().catch(() => {});
-    return {
-      runId: prepared.runId,
-      suiteId: prepared.suiteId,
-      status: prepared.status ?? "running",
-      deduped: true,
-      caseUpsert: prepared.caseUpsert,
-      servers: serverIds.map((serverId, index) => ({
-        id: serverId,
-        ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
-      })),
-      environment: environmentLaunch
-        ? {
-            id: environmentLaunch.environmentRef.environmentId,
-            name: environmentLaunch.environmentRef.name,
-            revision: environmentLaunch.environmentRef.revision,
-          }
-        : null,
-    };
-  }
-
-  void prepared
-    .execute()
-    .catch(async (error) => {
-      logger.error("[v1 evals] background eval run failed", error, {
-        runId: prepared.runId,
-        suiteId: prepared.suiteId,
-        projectId,
-      });
-      if (await isRunAlreadyTerminal(convexAuthToken, prepared.runId)) {
-        return;
-      }
-      await prepared.recorder
-        .finalize({
-          status: "failed",
-          notes:
-            error instanceof Error
-              ? error.message.slice(0, 500)
-              : String(error).slice(0, 500),
-        })
-        .catch(() => {});
-    })
-    .finally(() => {
+  // Detach: the runner owns terminal run status. A replay of a finished run
+  // executes nothing (see `detachPreparedEvalRun`), and the slot and the
+  // manager are settled either way.
+  detachPreparedEvalRun({
+    prepared,
+    convexAuthToken,
+    logPrefix: "[v1 evals]",
+    logContext: { projectId },
+    cleanup: () => {
       onSettled();
-      void manager.disconnectAllServers().catch(() => {});
-    });
+      return manager.disconnectAllServers();
+    },
+  });
 
   return {
     runId: prepared.runId,
     suiteId: prepared.suiteId,
-    // Executing now. A replay of a run still IN FLIGHT lands here too and is
-    // reported as running, which is what it is.
+    // `running` for a launch or a replay still in flight; a replay of a
+    // finished run reports what it finished as.
     status: prepared.status ?? "running",
     deduped: prepared.deduped === true,
     caseUpsert: prepared.caseUpsert,
@@ -4665,7 +4612,7 @@ async function resolveLaunchServers(params: {
   let serverIds = params.requestedServerIds;
   let serverNames = params.requestedServerNames;
   if (environmentId) {
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
     try {
       environmentLaunch = await resolveEnvironmentForLaunch(convex, {
         serverSource: EVAL_LAUNCH_SERVER_SOURCE,
@@ -4797,7 +4744,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // Resolve all inline attachments before authoring, including server picks.
   const hostAttachments = body.hosts?.length
     ? await resolveHostAttachments(
-        createConvexReadClient(convexAuthToken),
+        createConvexClient(convexAuthToken),
         projectId,
         {
           environment: {
@@ -4842,7 +4789,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // `loadSuiteHostConfig` is never hostless — a suite with no attachment and no
   // config resolves to the default MCPJam host.
   const runHostConfig = await loadSuiteHostConfig(
-    createConvexReadClient(convexAuthToken),
+    createConvexClient(convexAuthToken),
     body.suiteId,
     body.namedHostId ?? environmentLaunch?.hostId,
   );
@@ -5191,7 +5138,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     // config carrying a harness would refuse a group of environments that
     // never referenced it.
     const hostConfig = await loadSuiteHostConfig(
-      createConvexReadClient(convexAuthToken),
+      createConvexClient(convexAuthToken),
       body.suiteId,
       // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row will
       // freeze, so the dry run and the launch judge one configuration.
@@ -5623,11 +5570,11 @@ evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
 
 // GET /v1/projects/:projectId/eval-runs/:runId
 // Run status + summary. Poll this until status is terminal
-// (completed | failed | cancelled).
+// (completed | failed | cancelled | timed_out).
 evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -5734,7 +5681,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       "previewChars must be a number",
     );
   }
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   // Fetch the compare run FIRST so an unauthorized or cross-project caller
   // gets a 404 from the cheap read, before the action does any work.
@@ -5761,6 +5708,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     if (isConvexNotVisibleError(error)) {
       throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
     }
+    // An undeployed action answers 422 whatever status carried the refusal.
+    if (isConvexFunctionMissing(error)) throw translateConvexWriteError(error);
     // Translated rather than rethrown. The action refuses a malformed
     // baseline selection with a structured `ConvexError` code, and a raw
     // rethrow would land on the v1 error boundary as a 500 + INTERNAL_ERROR
@@ -5769,7 +5718,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
     // codes to 400 and keeps the message; anything it does not recognize
     // still answers 500, which is the honest outcome for a code we do not
     // know about.
-    throw translateConvexWriteError(error);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexWriteError(error)
+    );
   }
 
   const envelope = (result ?? {}) as Record<string, unknown>;
@@ -5846,64 +5798,8 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
   return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
 });
 
-// POST /v1/projects/:projectId/eval-runs/:runId/insights
-// Request (or with force, regenerate) the run's insights — serverQuality
-// behind the common envelope. SPENDS the org's model budget; 202 receipt,
-// poll the detail's `insights` envelope rather than re-requesting. Same
-// Convex mutation the in-app button uses, so role/limit/billing checks are
-// identical.
-evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
-  const projectId = c.req.param("projectId");
-  const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
-
-  let run: RunDoc | null;
-  try {
-    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
-  } catch (error) {
-    throw translateConvexReadError(
-      error,
-      scopedEvalReadOptions("Eval run not found"),
-    );
-  }
-  requireProjectMatch(run, projectId, "Eval run");
-
-  // This endpoint SPENDS, so the body is validated rather than coerced. A
-  // bodyless POST is the common case and stays valid; malformed JSON is a 400
-  // rather than a silently-empty body that bills anyway, and `force` must be
-  // a real boolean — `{"force":"false"}` is a truthy string, and treating it
-  // as consent would charge for a regeneration nobody asked for.
-  const raw = await c.req.text();
-  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
-  // and a literal `null` is a value the schema should reject — treating
-  // either as "no body" would bill for a request nobody wrote.
-  let body: unknown = {};
-  if (raw.length > 0) {
-    try {
-      body = JSON.parse(raw);
-    } catch {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "Request body must be valid JSON.",
-      );
-    }
-  }
-  const force = parseWithSchema(
-    z.object({ force: z.boolean().optional() }).strict(),
-    body,
-  ).force;
-
-  try {
-    await convex.mutation("serverQuality:requestServerQuality" as any, {
-      suiteRunId: runId,
-      ...(force === true ? { force: true } : {}),
-    });
-  } catch (error) {
-    throw translateConvexError(error, { resource: "Eval run insights" });
-  }
-  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
-});
+// The run's insights routes (request, cancel, findings build) live in
+// `./eval-run-insights.ts`.
 
 // POST /v1/projects/:projectId/eval-runs/:runId/judge
 // Request (or with force, re-request) LLM-as-judge grading of a finished run.
@@ -5913,7 +5809,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
 evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -5979,7 +5875,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   let run: RunDoc | null;
   try {
@@ -6000,7 +5896,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     return v1Resource(c, toRunDto(run!));
   }
   // Completed/failed runs can't be cancelled — surface a clear 409.
-  if (TERMINAL_RUN_STATUSES.has(status)) {
+  if (isEvalRunTerminalStatus(status)) {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,
@@ -6099,7 +5995,7 @@ async function readRerunPreview(
 ) {
   let preview: RunDoc | null;
   try {
-    preview = await createConvexReadClient(token).query(
+    preview = await createConvexClient(token).query(
       "testSuites:getRerunPreview" as any,
       { runId },
     );
@@ -6133,7 +6029,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/rerun", async (c) => {
   // Same precedence as the run launch: the header wins over a body value.
   const idempotencyKey = headerIdempotencyKey ?? body.idempotencyKey;
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   // Refused at the door, before a server is connected or a slot is taken. The
   // launch mutation makes the same decision again; this only spares the
@@ -6364,7 +6260,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
     await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
 
   let run: RunDoc | null;
   try {
@@ -6413,7 +6309,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
 evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
   const projectId = c.req.param("projectId");
   const runId = evalIdParam(c, "runId", "Eval run");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   try {
@@ -6439,7 +6335,10 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate-waivers", async (c) => {
     // and the write translator is the only thing that knows how to read the
     // backend's `kind: 'forbidden'` shape. Nothing is written on this path;
     // the name is about which error vocabulary it speaks, not about the verb.
-    throw translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS);
+    throw (
+      translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+      translateConvexError(error, GATE_WAIVER_TRANSLATE_OPTIONS)
+    );
   }
 
   return v1Resource(c, { waiver: toGateWaiverDto(waiver) });
@@ -6462,7 +6361,7 @@ evals.delete(
       notFoundMessage: GATE_WAIVER_NOT_FOUND_FOR_RUN,
     });
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
 
     let run: RunDoc | null;
     try {
@@ -6547,7 +6446,7 @@ evals.get(
     // request that carried a cursor has already skipped rows, so whatever it gets
     // back cannot be the run's complete failure list however short it is.
     const cursor = c.req.query("cursor") ?? null;
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let run: RunDoc | null;
     let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
@@ -6607,7 +6506,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
     200,
   );
   const cursor = c.req.query("cursor") ?? null;
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let run: RunDoc | null;
   let page: { page: IterationDoc[]; isDone: boolean; continueCursor: string };
@@ -6647,7 +6546,7 @@ evals.get(
     // Held rather than inlined: the same bearer authorizes the read AND names
     // the human in the audit row below (see services/eval-trace-access-audit).
     const convexAuthToken = await getConvexBearerForRequest(c);
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
 
     let trace: unknown;
     let scopeVerified = false;
@@ -6718,7 +6617,7 @@ evals.get(
     const runId = evalIdParam(c, "runId", "Eval run");
     const iterationId = evalIdParam(c, "iterationId", "Eval iteration");
     const convexAuthToken = await getConvexBearerForRequest(c);
-    const convex = createConvexReadClient(convexAuthToken);
+    const convex = createConvexClient(convexAuthToken);
 
     let iteration: IterationDoc | null;
     try {
@@ -6799,7 +6698,7 @@ evals.get(
         failure.kind !== "invalid-argument" &&
         failure.kind !== "redacted"
       ) {
-        throw error;
+        throw translateConvexStatusError(error, { scope: "v1.evals" }) ?? error;
       }
       // Counted, not silent: this is now the branch that hides a broken blob
       // loader, so it needs the same rate-alertable footprint the id gate has.
@@ -6849,7 +6748,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
     Math.max(Number(c.req.query("limit") ?? 25) || 25, 1),
     100,
   );
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let runs: RunDoc[];
   let suite: { projectId?: unknown } | null;
@@ -6938,7 +6837,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
   });
   const limit = query.limit ?? 25;
   const cursor = query.cursor ?? null;
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let page: {
     page: Array<Record<string, any>>;
@@ -7060,7 +6959,7 @@ evals.get(
     // `null`, never `undefined`: Convex pagination requires an explicit null
     // first cursor, and `undefined` would be dropped from the args object.
     const cursor = query.cursor ?? null;
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let page: {
       page: unknown[];
@@ -7193,7 +7092,7 @@ evals.get(
       scope: "v1.evals",
       notFoundMessage: RUN_ANALYTICS_NOT_FOUND,
     });
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let document: unknown;
     let runSuiteId: string | undefined;
@@ -7316,7 +7215,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_GATE_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let scopeVerified = false;
@@ -7411,7 +7310,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_ROUTE_FACTS_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let runSuiteId: string | undefined;
@@ -7512,7 +7411,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/server-facts", async (c) => {
     scope: "v1.evals",
     notFoundMessage: RUN_SERVER_FACTS_NOT_FOUND,
   });
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
 
   let document: unknown;
   let runSuiteId: string | undefined;
@@ -7737,7 +7636,7 @@ async function readBackDescriptionExperimentArms(
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
     try {
-      const current = (await createConvexReadClient(convexAuthToken).query(
+      const current = (await createConvexClient(convexAuthToken).query(
         "descriptionExperiments:getDescriptionExperiment" as any,
         { experimentId },
       )) as Record<string, unknown> | null;
@@ -7893,7 +7792,7 @@ evals.get(
   async (c) => {
     const projectId = c.req.param("projectId");
     const runId = evalIdParam(c, "runId", "Eval run");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let run: RunDoc | null;
     try {
@@ -7921,7 +7820,7 @@ evals.get(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw error;
+      throw translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ?? error;
     }
 
     const items = (Array.isArray(rows) ? rows : []).map((row) => {
@@ -7965,7 +7864,7 @@ evals.post(
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
 
     let run: RunDoc | null;
     try {
@@ -8002,9 +7901,12 @@ evals.post(
       if (isConvexNotVisibleError(error)) {
         throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, EVAL_RUN_STATUS_READ) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     return v1Resource(c, toDescriptionExperimentDto(experiment ?? {}), 202);
@@ -8026,7 +7928,7 @@ evals.post(
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     const { convexClient } = createConvexClients(token);
 
     let experiment: Record<string, unknown> | null;
@@ -8145,9 +8047,15 @@ evals.post(
           DESCRIPTION_EXPERIMENT_NOT_FOUND,
         );
       }
-      throw translateConvexError(error, {
-        resource: "Eval description experiment",
-      });
+      throw (
+        translateConvexStatusError(error, {
+          scope: "v1.evals",
+          notFoundMessage: DESCRIPTION_EXPERIMENT_NOT_FOUND,
+        }) ??
+        translateConvexError(error, {
+          resource: "Eval description experiment",
+        })
+      );
     }
 
     const sourceRunId = String(launching.sourceRunId ?? experiment.sourceRunId);
@@ -8397,7 +8305,7 @@ evals.get(
       "experimentId",
       "Eval description experiment",
     );
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
 
     let document: unknown;
     try {
@@ -8490,7 +8398,7 @@ async function readSuiteDetail(
   vocabulary: EvalVocabulary,
   phase: EvalReadPhase,
 ) {
-  const convex = createConvexReadClient(convexAuthToken);
+  const convex = createConvexClient(convexAuthToken);
   let suite: SuiteDoc | null;
   try {
     suite = await convex.query("testSuites:getTestSuite" as any, { suiteId });
@@ -8537,7 +8445,7 @@ async function readSuiteDetail(
 
 /** Default execution models for a new case: the suite's configured model. */
 async function defaultCaseModels(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   suiteId: string,
 ): Promise<Array<{ model: string; provider: string }>> {
   try {
@@ -8579,7 +8487,7 @@ async function defaultCaseModels(
  * authorization only accepts IDs).
  */
 async function resolveProjectServerSelectors(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   projectId: string,
   selectors: string[],
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
@@ -8739,7 +8647,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const { convexClient } = createConvexClients(token);
 
   // Read first: project-scope guard + source for host/server-subset resolution.
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9257,7 +9165,7 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9305,7 +9213,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     );
   }
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9387,7 +9295,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
 evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = evalIdParam(c, "suiteId", "Eval suite");
-  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+  const convex = createConvexClient(await getConvexBearerForRequest(c));
   let suite: SuiteDoc | null;
   let cases: CaseDoc[];
   let scopeVerified = false;
@@ -9415,7 +9323,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
 
 /** Load a case and assert it belongs to the given suite + project. */
 async function loadCaseInScope(
-  convex: ReturnType<typeof createConvexReadClient>,
+  convex: ReturnType<typeof createConvexClient>,
   projectId: string,
   suiteId: string,
   caseId: string,
@@ -9446,7 +9354,7 @@ evals.get(
     const projectId = c.req.param("projectId");
     const suiteId = evalIdParam(c, "suiteId", "Eval suite");
     const caseId = evalIdParam(c, "caseId", "Eval case");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
     const testCase = await loadCaseInScope(
       convex,
       projectId,
@@ -9465,7 +9373,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const body = parseCreateCaseBody(c, await readJsonObjectBody(c));
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
-  const readClient = createConvexReadClient(token);
+  const readClient = createConvexClient(token);
   let suite: SuiteDoc | null;
   try {
     suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9523,7 +9431,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     );
   }
   const created = await loadCaseInScope(
-    createConvexReadClient(token),
+    createConvexClient(token),
     projectId,
     suiteId,
     String(committed.testCaseId),
@@ -9555,7 +9463,7 @@ evals.post(
     );
 
     const token = await getConvexBearerForRequest(c);
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9692,7 +9600,7 @@ evals.patch(
     const body = parseUpdateCaseBody(c, await readJsonObjectBody(c));
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
-      createConvexReadClient(token),
+      createConvexClient(token),
       projectId,
       suiteId,
       caseId,
@@ -9743,7 +9651,7 @@ evals.patch(
     // returns void so we never call toCaseDto on undefined (→ 500).
     if (!updated) {
       updated = await loadCaseInScope(
-        createConvexReadClient(token),
+        createConvexClient(token),
         projectId,
         suiteId,
         caseId,
@@ -9763,7 +9671,7 @@ evals.delete(
     const caseId = evalIdParam(c, "caseId", "Eval case");
     const token = await getConvexBearerForRequest(c);
     await loadCaseInScope(
-      createConvexReadClient(token),
+      createConvexClient(token),
       projectId,
       suiteId,
       caseId,
@@ -9819,7 +9727,7 @@ evals.post(
     const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
     // Project-scope guard.
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -9942,7 +9850,7 @@ evals.post(
     // dropped key means paying to author the same document twice.
     const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
-    const readClient = createConvexReadClient(token);
+    const readClient = createConvexClient(token);
     let suite: SuiteDoc | null;
     try {
       suite = await readClient.query("testSuites:getTestSuite" as any, {
@@ -10045,7 +9953,7 @@ evals.post(
 evals.get(
   "/projects/:projectId/eval-suites/:suiteId/authoring/:jobId",
   async (c) => {
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convex = createConvexClient(await getConvexBearerForRequest(c));
     let job: Record<string, unknown> | null;
     try {
       job = await convex.query("evalAuthoringState:status" as any, {
@@ -10158,7 +10066,7 @@ async function startAuthoringJobAndAwait(
   c: Context,
   args: {
     token: string;
-    readClient: ReturnType<typeof createConvexReadClient>;
+    readClient: ReturnType<typeof createConvexClient>;
     projectId: string;
     serverIds: string[];
     suiteId: string;

@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   allEffectiveSkills,
-  buildLiveEffectiveCapabilities,
   pluginOriginByServerId,
   resolveEffectiveCapabilities,
-  withLiveProjectSkills,
-  type RuntimeStandaloneSkill,
+  withLocalSkills,
+  type RuntimeLocalSkill,
 } from "../effective-capabilities";
 import type { PluginRuntimeAttribution } from "../plugin-attribution";
 import type { ResolvedEnvironmentRuntime } from "../runtime";
@@ -430,103 +429,69 @@ describe("resolveEffectiveCapabilities — degraded attribution", () => {
   });
 });
 
-describe("withLiveProjectSkills — the Playground's hidden environment", () => {
-  function live(name: string, skillId = `sk_${name}`): RuntimeStandaloneSkill {
+describe("withLocalSkills — this machine's skills beside an environment", () => {
+  function local(name: string): RuntimeLocalSkill {
     return {
-      ref: name,
-      skillId,
+      ref: `local/${name}`,
+      skillId: `local:${name}`,
       name,
       description: `${name} skill`,
       content: async () => `${name} body`,
       aggregateHash: `agg_${name}`,
-      channels: [],
       files: [],
+      directory: `/fixture/${name}`,
     };
   }
 
-  const pluginSpec = () =>
-    spec({
-      skills: [
-        {
-          skillId: "sk_plugin",
-          name: "triage",
-          description: "Plugin skill",
-          content: "plugin body",
-          aggregateHash: "agg_plugin",
-          channels: ["plugin"],
-          files: [],
-          provenance: { modelRef: "alpha/triage" },
-        },
-        {
-          skillId: "sk_host",
-          name: "release-notes",
-          description: "Host-channel skill",
-          content: "host body",
-          aggregateHash: "agg_host",
-          channels: ["host"],
-          files: [],
-        },
-      ],
-      pluginVersions: [PLUGIN_A],
-    });
-
-  it("merges local machine skills without discarding environment skills", () => {
-    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
-    const local = { ...live("local/review"), directory: "/fixture/review" };
-    const merged = withLiveProjectSkills(set, buildLiveEffectiveCapabilities({ localSkills: [local] }));
-    expect(merged.localSkills).toEqual([local]);
-    expect(merged.standaloneSkills).toEqual(set.standaloneSkills);
-    expect(merged.pluginSkills).toEqual(set.pluginSkills);
-  });
-
-  it("adds the project's skills after the environment's own", () => {
-    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
-    const merged = withLiveProjectSkills(
-      set,
-      buildLiveEffectiveCapabilities({
-        standaloneSkills: [live("onboarding"), live("glossary")],
-      })
+  const environmentSet = () =>
+    resolveEffectiveCapabilities(
+      spec({
+        skills: [
+          {
+            skillId: "sk_plugin",
+            name: "triage",
+            description: "Plugin skill",
+            content: "plugin body",
+            aggregateHash: "agg_plugin",
+            channels: ["plugin"],
+            files: [],
+            provenance: { modelRef: "alpha/triage" },
+          },
+          {
+            skillId: "sk_host",
+            name: "release-notes",
+            description: "Host-channel skill",
+            content: "host body",
+            aggregateHash: "agg_host",
+            channels: ["host"],
+            files: [],
+          },
+        ],
+        pluginVersions: [PLUGIN_A],
+      }),
+      attribution(),
     );
-    expect(merged.standaloneSkills.map((skill) => skill.ref)).toEqual([
-      "release-notes",
-      "onboarding",
-      "glossary",
-    ]);
-    // Plugin skills, servers and versions are the environment's, untouched.
+
+  it("adds the machine's skills after the environment's own", () => {
+    const set = environmentSet();
+    const review = local("review");
+    const merged = withLocalSkills(set, [review]);
+    expect(merged.localSkills).toEqual([review]);
+    // Skills, servers and versions are the environment's, untouched.
+    expect(merged.standaloneSkills).toEqual(set.standaloneSkills);
     expect(merged.pluginSkills).toEqual(set.pluginSkills);
     expect(merged.pluginVersions).toEqual(set.pluginVersions);
     expect(merged.effectiveServerIds).toEqual(set.effectiveServerIds);
-    expect(merged.problems).toEqual(set.problems);
   });
 
-  it("does not add a skill the client already delivered on the host channel", () => {
-    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
-    const merged = withLiveProjectSkills(
-      set,
-      buildLiveEffectiveCapabilities({
-        standaloneSkills: [live("release-notes", "sk_host")],
-      })
-    );
-    expect(merged).toBe(set);
+  it("returns the environment's set when the machine has none", () => {
+    const set = environmentSet();
+    expect(withLocalSkills(set, [])).toBe(set);
   });
 
-  it("keeps the environment's entry on a ref collision and reports it", () => {
-    const set = resolveEffectiveCapabilities(pluginSpec(), attribution());
-    const merged = withLiveProjectSkills(
-      set,
-      buildLiveEffectiveCapabilities({
-        standaloneSkills: [live("release-notes", "sk_other")],
-      })
-    );
-    expect(merged.standaloneSkills.map((skill) => skill.skillId)).toEqual([
-      "sk_host",
-    ]);
-    expect(merged.problems.slice(set.problems.length)).toEqual([
-      expect.objectContaining({
-        code: "skill_ref_collision",
-        ref: "release-notes",
-        skillId: "sk_other",
-      }),
-    ]);
+  it("keeps the environment's entry when a local skill wants its ref", () => {
+    const set = environmentSet();
+    const clash = { ...local("release-notes"), ref: "release-notes" };
+    expect(withLocalSkills(set, [clash]).localSkills).toEqual([]);
   });
 });

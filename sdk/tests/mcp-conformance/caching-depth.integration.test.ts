@@ -24,6 +24,8 @@ interface CacheFixtureOptions {
   templatePageScopes?: unknown[];
   /** Answer a read of an unknown resource with `{ contents: [] }`. */
   emptyContentsForMissing?: boolean;
+  missingResourceStatus?: number;
+  missingResourceCode?: number;
   /**
    * Answer these methods with a non-complete `resultType` and NO hints — the
    * shape the extension explicitly excuses from carrying them.
@@ -37,6 +39,8 @@ interface CacheFixtureOptions {
   withholdCapabilities?: string[];
   /** Answer `resources/list` with an empty array. */
   listNoResources?: boolean;
+  /** With `listNoResources`, still send a `nextCursor` on that empty page. */
+  emptyPageCursor?: string;
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -126,6 +130,9 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             resources: options.listNoResources
               ? []
               : [{ uri: LISTED_RESOURCE, name: "greeting" }],
+            ...(options.emptyPageCursor !== undefined
+              ? { nextCursor: options.emptyPageCursor }
+              : {}),
           });
         case "resources/templates/list": {
           if (options.templatePageScopes) {
@@ -154,14 +161,17 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           if (options.emptyContentsForMissing) {
             return ok({ contents: [] });
           }
-          return send({
-            jsonrpc: "2.0",
-            id,
-            error: {
-              code: -32602,
-              message: "Resource not found",
+          return send(
+            {
+              jsonrpc: "2.0",
+              id,
+              error: {
+                code: options.missingResourceCode ?? -32602,
+                message: `Resource not found: ${uri}`,
+              },
             },
-          });
+            options.missingResourceStatus ?? 200,
+          );
         }
         default:
           return send(
@@ -258,16 +268,28 @@ describe("modern-cache-hint-coverage", () => {
   it("passes a server that advertises resources but lists none", async () => {
     // Templates-only, or resources created at runtime: there is nothing to
     // read, so resources/read is inapplicable rather than an untested gap.
-    const check = byId(
-      (await run({ listNoResources: true }, [ID])).checks,
-      ID,
-    );
+    const check = byId((await run({ listNoResources: true }, [ID])).checks, ID);
     expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
     expect(check.details?.unprobed).toEqual([]);
     expect(
       (check.details?.notApplicable as Array<{ method: string }>).map(
-        (entry) => entry.method,
-      ),
+        (entry) => entry.method
+      )
+    ).toEqual(["resources/read"]);
+  });
+
+  it("keeps resources/read a gap when the empty page has a nextCursor", async () => {
+    // A later page may hold a resource, so an empty FIRST page is not proof
+    // there is nothing to read. An empty-string cursor still counts.
+    const check = byId(
+      (await run({ listNoResources: true, emptyPageCursor: "" }, [ID])).checks,
+      ID
+    );
+    expect(check.status).toBe("skipped");
+    expect(
+      (check.details?.unprobed as Array<{ method: string }>).map(
+        (entry) => entry.method
+      )
     ).toEqual(["resources/read"]);
   });
 
@@ -432,5 +454,37 @@ describe("modern-resource-read-no-empty-contents", () => {
       ["modern-resource-not-found-invalid-params", "failed"],
       ["modern-resource-read-no-empty-contents", "failed"],
     ]);
+  });
+});
+
+describe("modern-resource-not-found-invalid-params", () => {
+  const ID: MCPCheckId = "modern-resource-not-found-invalid-params";
+
+  it.each([200, 400])("accepts -32602 on HTTP %i", async (status) => {
+    const check = byId(
+      (await run({ missingResourceStatus: status }, [ID])).checks,
+      ID,
+    );
+    expect(check.status).toBe("passed");
+    expect(check.details).toMatchObject({
+      httpStatus: status,
+      jsonRpcCode: -32602,
+    });
+  });
+
+  it.each([200, 400])("rejects a wrong error code on HTTP %i", async (status) => {
+    const check = byId(
+      (
+        await run(
+          { missingResourceStatus: status, missingResourceCode: -32002 },
+          [ID],
+        )
+      ).checks,
+      ID,
+    );
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain(
+      "expected in-band JSON-RPC code -32602",
+    );
   });
 });

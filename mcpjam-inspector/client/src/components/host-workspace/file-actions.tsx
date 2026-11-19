@@ -19,6 +19,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { cn } from "@/lib/utils";
 import type { ThreadAppApi, ThreadAppDeclaration } from "./thread-app-api";
+import type { ChooseFileViewer } from "./local-file-host";
 import { logExtensionEvent } from "./extension-log";
 
 export interface FileResourceReference {
@@ -26,14 +27,18 @@ export interface FileResourceReference {
   resourceUri: string;
 }
 export interface WorkspaceFileActions {
+  /** Embedded Apps open viewers only in this same owning workspace. */
+  workspaceId?: string;
   api: ThreadAppApi;
   /** Enabled saved IDs from the current workspace, never a name lookup. */
   serverIds: readonly string[];
   open: (serverId: string, entry: ThreadAppDeclaration) => Promise<void>;
+  chooseViewer?: ChooseFileViewer;
   /** The client's file viewers setting; off means no new opens. */
   enabled?: boolean;
 }
 const FileActionsContext = createContext<WorkspaceFileActions | null>(null);
+export const useWorkspaceFileActions = () => useContext(FileActionsContext);
 
 export interface ResourceLinkTarget {
   serverId: string;
@@ -137,13 +142,21 @@ function useFileOpen(
   const [failed, setFailed] = useState(false);
   const request = useRef<AbortController | null>(null);
   const binding = JSON.stringify([reference?.serverId, reference?.resourceUri]);
+  const live = useRef({ actions, reference });
+  live.current = { actions, reference };
+  const isCurrent = () =>
+    live.current.actions?.api === actions?.api &&
+    live.current.actions?.workspaceId === actions?.workspaceId &&
+    live.current.reference?.serverId === reference?.serverId &&
+    live.current.reference?.resourceUri === reference?.resourceUri &&
+    usableActions(live.current.actions, live.current.reference);
   useEffect(() => {
     setMenu({ state: "closed" });
     setFailed(false);
     return () => request.current?.abort();
   }, [binding, actions?.api]);
   const open = async (entry: ThreadAppDeclaration) => {
-    if (!usableActions(actions, reference)) return;
+    if (!usableActions(actions, reference) || !isCurrent()) return;
     setMenu({ state: "closed" });
     setFailed(false);
     try {
@@ -153,7 +166,7 @@ function useFileOpen(
     }
   };
   const activate = async () => {
-    if (!usableActions(actions, reference)) return;
+    if (!usableActions(actions, reference) || !isCurrent()) return;
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
@@ -165,7 +178,7 @@ function useFileOpen(
         reference.resourceUri,
         controller.signal,
       );
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !isCurrent()) return;
       if (entries.length === 1) {
         await open(entries[0]);
         return;
@@ -180,7 +193,7 @@ function useFileOpen(
         });
       setMenu({ state: "ready", entries });
     } catch {
-      if (controller.signal.aborted) return;
+      if (controller.signal.aborted || !isCurrent()) return;
       setMenu({ state: "error" });
       logExtensionEvent({
         serverId: reference.serverId,
@@ -279,45 +292,6 @@ export function FileLink({
         </span>
       )}
     </DropdownMenu>
-  );
-}
-
-/** Reference metadata requests discovery; only the server may grant file access. */
-export function FileOpenWith({
-  reference,
-}: {
-  reference?: FileResourceReference | null;
-}) {
-  const actions = useContext(FileActionsContext);
-  const file = useFileOpen(actions, reference);
-  if (!usableActions(actions, reference)) return null;
-  return (
-    <span onClick={(event) => event.stopPropagation()}>
-      <DropdownMenu
-        open={file.menu.state === "ready" || file.menu.state === "error"}
-        onOpenChange={(open) => {
-          if (!open) file.setMenu({ state: "closed" });
-        }}
-      >
-        <DropdownMenuTrigger asChild {...holdMenu}>
-          <button
-            type="button"
-            onClick={() => void file.activate()}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium hover:bg-accent"
-          >
-            Open
-            {file.menu.state === "loading" ? (
-              <Loader2 className="size-3 animate-spin" aria-hidden />
-            ) : null}
-          </button>
-        </DropdownMenuTrigger>
-        <ViewerMenuContent
-          menu={file.menu}
-          onOpen={(entry) => void file.open(entry)}
-        />
-      </DropdownMenu>
-      {file.failed && <span role="alert">Could not open viewer</span>}
-    </span>
   );
 }
 

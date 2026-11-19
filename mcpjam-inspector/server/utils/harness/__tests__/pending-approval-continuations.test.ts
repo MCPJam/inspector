@@ -95,12 +95,18 @@ describe("approval history converted by the AI SDK", () => {
 
       park("a2");
       const messages = await history(first, second);
-      // The real conversion repeats the completed provider-executed approval.
+      // convertToModelMessages repeats the completed provider-executed
+      // approval on the trailing tool message, including when the new
+      // decision is a denial (`execution-denied` is not consumed).
+      // pendingApprovalContinuations below still drops a1.
       expect(
         collectHarnessAgentToolApprovalContinuations({
           messages,
-        }),
-      ).toHaveLength(second ? 2 : 1);
+        }).map((part) => [part.approvalId, part.approved]),
+      ).toEqual([
+        ["a1", first],
+        ["a2", second],
+      ]);
       const next = pendingApprovalContinuations(messages);
       expect(next.map((part) => [part.approvalId, part.approved])).toEqual([
         ["a2", second],

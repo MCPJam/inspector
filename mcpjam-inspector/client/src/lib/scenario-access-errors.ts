@@ -24,7 +24,7 @@ interface RouteErrorBodyShape {
   code?: unknown;
   message?: unknown;
   error?: unknown;
-  details?: { code?: unknown } | null;
+  details?: { code?: unknown; oauthRequired?: unknown } | null;
 }
 
 function readString(value: unknown): string | undefined {
@@ -71,7 +71,11 @@ export function classifyScenarioAccessError(
   if (
     code === "SCENARIO_ACCESS_DENIED" ||
     code === "SCENARIO_SIGN_IN_REQUIRED" ||
-    (status === 401 && code === "UNAUTHORIZED")
+    // The chat route also uses UNAUTHORIZED for an upstream MCP server's
+    // OAuth challenge. Keep the chat mounted so its OAuth handler can run.
+    (status === 401 &&
+      code === "UNAUTHORIZED" &&
+      shaped.details?.oauthRequired !== true)
   ) {
     return { kind: "denied", status, code, message };
   }
@@ -97,6 +101,7 @@ export function classifyScenarioAccessError(
 export async function classifyScenarioAccessResponse(
   response: Response,
 ): Promise<ScenarioAccessErrorInfo | null> {
+  if (response.headers.get("X-MCP-Auth-Required") === "oauth") return null;
   try {
     const body = await response.clone().json();
     return classifyScenarioAccessError(response.status, body);

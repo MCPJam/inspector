@@ -17,6 +17,7 @@ import {
 import { SuiteRunReview, type SuiteRunReviewProps } from "./suite-run-review";
 import type { RunVerdictHeroView } from "./run-verdict-hero-model";
 import { launchRuns } from "./run-results-matrix-model";
+import { RunServerGroups } from "./run-server-groups";
 import { cancellableRunIds, runClientIdentity } from "../evals/helpers";
 import {
   ArrowUpRight,
@@ -43,8 +44,11 @@ import type {
   EvalSuiteRunListItem,
 } from "../evals/types";
 import { EvaluateRunCompare } from "./evaluate-run-compare";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { trackRunViewed } from "./run-result-pages/run-view-events";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { modelsFromRun } from "./run-launch-context";
+import { RunAccountFacts } from "./run-account-facts";
+import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
 import { usePreferencesStoreWithDefaults } from "@/stores/preferences/preferences-provider";
 import {
   Tooltip,
@@ -145,6 +149,9 @@ export function EvaluateRunPage({
   useEffect(() => {
     setReviewing(false);
   }, [run._id]);
+  useEffect(() => {
+    trackRunViewed({ suiteId: run.suiteId, runId: run._id }, "grid");
+  }, [run.suiteId, run._id]);
   const targets = launchRuns<EvalSuiteRunListItem>(
     run,
     relatedRuns ?? otherRuns,
@@ -160,6 +167,7 @@ export function EvaluateRunPage({
     useState<EvaluateRunPageHeaderActions | null>(null);
   const [, setHeaderVerdict] = useState<HeaderVerdict | null>(null);
   const canCompare = otherRuns.length >= 1;
+  const accountsEnabled = useEvalAccountSelectionEnabled();
 
   return (
     <HeaderActionsContext.Provider value={setHeaderActions}>
@@ -194,6 +202,11 @@ export function EvaluateRunPage({
                   {scope}
                 </p>
               ) : null}
+              <RunServerGroups
+                targets={targets}
+                hostNamesById={hostNamesById}
+              />
+              {accountsEnabled ? <RunAccountFacts runs={targets} /> : null}
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1">
               {SHOW_EXPORT_REPORT && onExport && (
@@ -380,6 +393,7 @@ type PairingMark = {
   key: string;
   label: string;
   client: string;
+  hostStyle?: string;
 };
 
 function pairingModel(
@@ -416,6 +430,7 @@ function groupPairingsByDecision(
       key: target._id,
       label: `${client} · ${model}`,
       client,
+      hostStyle: runClientIdentity(target).hostStyle,
     };
     const bucket = buckets.get(decision.tone);
     if (!bucket) {
@@ -512,7 +527,10 @@ function RunPairingDecisions({
                     className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-background"
                   >
                     <img
-                      src={resolveHostLogoByName(mark.client, theme)}
+                      src={resolveHostLogo(
+                        { name: mark.client, hostStyle: mark.hostStyle },
+                        theme,
+                      )}
                       alt=""
                       className="size-3.5 object-contain"
                     />

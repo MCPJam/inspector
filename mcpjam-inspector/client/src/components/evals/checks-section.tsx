@@ -1938,10 +1938,11 @@ function StructuredArgsEditor({
   return (
     <div className="space-y-2">
       {entries.length === 0 ? (
-        paper ? null : (
+        // Arguments to send are optional, so an empty list needs no notice;
+        // Add argument below is enough.
+        paper || toSend ? null : (
           <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3 text-[11px] text-muted-foreground">
-            {toSend ? "No arguments" : "No expected arguments"}. Use Add
-            argument below.
+            No expected arguments. Use Add argument below.
           </div>
         )
       ) : (

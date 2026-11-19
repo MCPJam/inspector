@@ -32,6 +32,8 @@ import {
   SUPPORTED_LOCAL_HARNESS_IDS,
   type SupportedLocalHarnessId,
 } from "./utils/harness/local/targets.js";
+import { DEFAULT_LOCAL_HARNESS_ID } from "./utils/harness/local/runtimes/index.js";
+import { harnessDisplayName } from "../shared/harness-model-support.js";
 
 export type { DoctorReport, RuntimeInstallStatus };
 
@@ -39,13 +41,12 @@ export type { DoctorReport, RuntimeInstallStatus };
 export const supportedHarnessIds: readonly string[] = SUPPORTED_LOCAL_HARNESS_IDS;
 
 /** Human names, for the command's own output. */
-export const harnessDisplayNames: Readonly<Record<SupportedLocalHarnessId, string>> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-};
+export const harnessDisplayNames = Object.fromEntries(
+  SUPPORTED_LOCAL_HARNESS_IDS.map((id) => [id, harnessDisplayName(id)]),
+) as Readonly<Record<SupportedLocalHarnessId, string>>;
 
 function harnessIdOf(value: string | undefined): SupportedLocalHarnessId {
-  const id = value ?? "claude-code";
+  const id = value ?? DEFAULT_LOCAL_HARNESS_ID;
   if (!(SUPPORTED_LOCAL_HARNESS_IDS as readonly string[]).includes(id)) {
     throw new Error(
       `unknown harness ${JSON.stringify(id)} (expected one of ${SUPPORTED_LOCAL_HARNESS_IDS.join(", ")})`,

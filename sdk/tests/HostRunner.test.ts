@@ -8,6 +8,7 @@ import type { Tool } from "../src/mcp-client-manager/types";
 // Mock the ai module
 vi.mock("ai", () => ({
   generateText: vi.fn(),
+  wrapLanguageModel: vi.fn(({ model }: { model: unknown }) => model),
   hasToolCall: vi.fn((name: string) => ({
     type: "hasToolCall",
     value: name,

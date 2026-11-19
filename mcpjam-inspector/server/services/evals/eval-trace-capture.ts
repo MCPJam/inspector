@@ -3,12 +3,18 @@ import { toolConnectionAttribution } from "@/shared/mcp-tool-origin-metadata";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
+import type { ModelCallCostEvidence } from "@mcpjam/sdk";
 import {
   appendDedupedModelMessages,
   createOffsetInterval,
 } from "@/shared/eval-trace";
 import type { ModelMessage } from "ai";
 import { isToolPolicyBlockResult } from "./tool-policy-gate.js";
+import {
+  annotateToolAuthChallenge,
+  classifyToolAuthChallenge,
+  type ToolAuthChallengeFinding,
+} from "./run-setup-signals.js";
 
 /**
  * Pull the MCP error code off a thrown tool error. This is an MCP-LAYER code,
@@ -47,6 +53,8 @@ type StepSpanMeta = {
   responseId?: string;
   responseTimestamp?: string;
   ttfcMs?: number;
+  /** The step's one provider call; applied to the llm span alone, never the step. */
+  cost?: ModelCallCostEvidence;
 };
 
 /** Mutable state for `generateText` eval tracing (prepareStep + wrapped tools + onStepFinish). */
@@ -278,23 +286,38 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         let success = true;
         let policyBlocked = false;
         let mcpErrorCode: number | undefined;
+        let authChallenge: ToolAuthChallengeFinding | undefined;
         try {
           const result = await origExecute(input, options);
           policyBlocked = isToolPolicyBlockResult(result);
           if (policyBlocked) return result;
           if (isCallToolResultError(result)) {
             success = false;
+            authChallenge = classifyToolAuthChallenge(
+              { result },
+              { serverId, toolName: name },
+            );
           }
           return result;
         } catch (err) {
           success = false;
           mcpErrorCode = extractMcpErrorCode(err);
+          authChallenge = classifyToolAuthChallenge(
+            { error: err },
+            { serverId, toolName: name },
+          );
           throw err;
         } finally {
           const toolFinishedAt = Date.now();
           ctx.openTools.delete(toolCallId);
+          // The account this call ran on, as the backend-tools wrapper records it.
+          const connectionId = toolConnectionAttribution(
+            raw,
+            input,
+            toolCallId,
+          )?.connectionId;
           if (!policyBlocked) {
-            ctx.recordedSpans.push({
+            const toolSpan: EvalTraceSpan = {
               id: `tool-${toolCallId}`,
               name,
               category: "tool",
@@ -305,6 +328,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               toolName: name,
               serverId,
               toolOrigin: origin,
+              ...(connectionId ? { connectionId } : {}),
               status: success ? "ok" : "error",
               ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
               ...createOffsetInterval(
@@ -312,7 +336,18 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolStartedAt,
                 toolFinishedAt,
               ),
-            });
+            };
+            if (authChallenge) {
+              annotateToolAuthChallenge(toolSpan, {
+                ...authChallenge,
+                toolCallId,
+                toolName: name,
+                ...(serverId ? { serverId } : {}),
+                spanId: toolSpan.id,
+                promptIndex: resolvedPromptIndex,
+              });
+            }
+            ctx.recordedSpans.push(toolSpan);
             if (!success) {
               ctx.recordedSpans.push({
                 id: `tool-err-${toolCallId}`,
@@ -324,6 +359,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
                 toolCallId,
                 toolName: name,
                 serverId,
+                ...(connectionId ? { connectionId } : {}),
                 status: "error",
                 ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
                 ...createOffsetInterval(
@@ -366,6 +402,7 @@ export function emitAiSdkOnStepFinish(
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, llmEnd),
+    ...(spanMeta?.cost ? { cost: spanMeta.cost } : {}),
   };
   applyStepMeta(llmSpan, {
     modelId: spanMeta?.modelId ?? stepMeta.modelId,
@@ -629,6 +666,7 @@ export function pushBackendStepSuccessSpans(
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -670,6 +708,30 @@ export function pushBackendStepLlmFailureSpans(
   };
   applyStepMeta(stepSpan, { ...meta, status: "error" });
   spans.push(stepSpan);
+  // Reported usage or cost means the provider answered, even with no content.
+  // Model-call counts, llm token totals and cost rollups read llm spans only,
+  // so that call keeps one, as on the success path. Totals never read the
+  // step span, so its tokens are not counted twice, and it never carries cost.
+  if (
+    meta?.cost ||
+    typeof meta?.inputTokens === "number" ||
+    typeof meta?.outputTokens === "number" ||
+    typeof meta?.totalTokens === "number"
+  ) {
+    const llmSpan: EvalTraceSpan = {
+      id: `${stepParentId}-llm`,
+      parentId: stepParentId,
+      name: formatRecordedLlmSpanName(meta.modelId),
+      category: "llm",
+      promptIndex,
+      stepIndex,
+      status: "error",
+      ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
+      ...(meta.cost ? { cost: meta.cost } : {}),
+    };
+    applyStepMeta(llmSpan, { ...meta, status: "error" });
+    spans.push(llmSpan);
+  }
   spans.push({
     id: `${stepParentId}-err`,
     parentId: stepParentId,
@@ -716,6 +778,7 @@ export function pushBackendStepToolFailureSpans(
     stepIndex,
     status: "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
+    ...(meta?.cost ? { cost: meta.cost } : {}),
   };
   applyStepMeta(llmSpan, meta);
   spans.push(llmSpan);
@@ -812,19 +875,28 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
         let mcpErrorCode: number | undefined;
+        let authChallenge: ToolAuthChallengeFinding | undefined;
         try {
           const result = await origExecute(input, options);
           if (isCallToolResultError(result)) {
             success = false;
+            authChallenge = classifyToolAuthChallenge(
+              { result },
+              { serverId: raw._serverId, toolName: name },
+            );
           }
           return result;
         } catch (error) {
           success = false;
           mcpErrorCode = extractMcpErrorCode(error);
+          authChallenge = classifyToolAuthChallenge(
+            { error },
+            { serverId: raw._serverId, toolName: name },
+          );
           throw error;
         } finally {
           const finishedAt = Date.now();
-          params.spans.push({
+          const toolSpan: EvalTraceSpan = {
             id: `backend-tool-${toolCallId}`,
             parentId: formatBackendStepSpanId(
               params.promptIndex,
@@ -850,7 +922,18 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             status: success ? "ok" : "error",
             ...(mcpErrorCode !== undefined ? { mcpErrorCode } : {}),
             ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
-          });
+          };
+          if (authChallenge) {
+            annotateToolAuthChallenge(toolSpan, {
+              ...authChallenge,
+              toolCallId,
+              toolName: name,
+              ...(raw._serverId ? { serverId: raw._serverId } : {}),
+              spanId: toolSpan.id,
+              promptIndex: params.promptIndex,
+            });
+          }
+          params.spans.push(toolSpan);
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,

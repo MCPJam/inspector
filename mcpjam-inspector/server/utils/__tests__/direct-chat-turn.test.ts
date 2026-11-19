@@ -222,6 +222,54 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     await expect(consumeDirectChatTurnHeadless(handle)).resolves.toBeDefined();
   });
 
+  it("prices each step's call with the caller's pricer, on the llm span only", async () => {
+    let engine: any;
+    streamTextMock.mockImplementationOnce((options: any) => {
+      engine = options;
+      return defaultStreamTextReturn();
+    });
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd: 0.0123,
+      source: "provider_reported" as const,
+      funding: "customer" as const,
+    };
+    const priceStepCall = vi.fn(async () => cost);
+    const snapshotSpans: any[][] = [];
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "anthropic/claude-sonnet-4.5",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+      priceStepCall,
+      traceEvents: {
+        onStepSnapshot: ({ traceTurn }) =>
+          snapshotSpans.push(traceTurn.turnSpans.map((span) => ({ ...span }))),
+      },
+    });
+
+    await engine.prepareStep({ stepNumber: 0, messages: [] });
+    const usage = { inputTokens: 3, outputTokens: 2, totalTokens: 5 };
+    const providerMetadata = { openrouter: { usage: { cost: 0.0123 } } };
+    await engine.onStepFinish({
+      usage,
+      providerMetadata,
+      response: { messages: [] },
+      finishReason: "stop",
+      toolCalls: [],
+    });
+
+    expect(priceStepCall).toHaveBeenCalledWith({ usage, providerMetadata });
+    const priced = handle.traceContext.recordedSpans.filter((span) => span.cost);
+    expect(priced).toEqual([expect.objectContaining({ category: "llm", cost })]);
+    // The step's live snapshot already carries it.
+    expect(snapshotSpans.at(-1)?.find((span) => span.category === "llm")?.cost).toEqual(cost);
+    handle.cleanup();
+  });
+
   it("threads progressive-discovery `activeTools` through `prepareStep`", async () => {
     // PR 4a invariant: the chat-side active-tool gating from PR 1
     // carries over to the shared helper so eval (PR 4b) gets it for
@@ -542,6 +590,58 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     expect(result.turnTrace.requestPayloads![1].payload.messages).toHaveLength(
       2,
     );
+  });
+
+  it("keeps every call suspended in one step out of the persisted history", async () => {
+    // A lazy-auth server refuses each protected tool, so two parallel calls
+    // can both suspend; each one's temporary error must stay out of history.
+    let options: any;
+    streamTextMock.mockImplementationOnce((value) => {
+      options = value;
+      return defaultStreamTextReturn();
+    });
+    const onPersist = vi.fn();
+    const suspended = new Set(["call-a", "call-b"]);
+    runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "hi" }] as any,
+      systemPrompt: "",
+      tools: {} as any,
+      suspendedToolCallIds: () => suspended,
+      onPersist,
+    });
+    const result = (toolCallId: string) => ({
+      type: "tool-result",
+      toolCallId,
+      toolName: "orders",
+      output: { type: "error-text", value: "suspended" },
+    });
+    await options.onFinish({
+      steps: [
+        {
+          toolResults: ["call-a", "call-b", "call-c"].map((id) => ({
+            toolCallId: id,
+          })),
+          response: {
+            messages: [
+              { role: "tool", content: ["call-a", "call-b", "call-c"].map(result) },
+            ],
+          },
+        },
+      ],
+      totalUsage: {},
+      finishReason: "tool-calls",
+    });
+    const persisted = onPersist.mock.calls[0][0];
+    expect(persisted.toolResults.map((r: any) => r.toolCallId)).toEqual([
+      "call-c",
+    ]);
+    expect(
+      persisted.responseMessages.flatMap((m: any) =>
+        m.content.map((part: any) => part.toolCallId),
+      ),
+    ).toEqual(["call-c"]);
   });
 
   it("flips `isAborted` true when the abort signal fires", async () => {

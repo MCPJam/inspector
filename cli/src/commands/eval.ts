@@ -61,6 +61,10 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "../lib/eval-import-live-validation.js";
+import {
+  runAccountServerNames,
+  writeRunAccounts,
+} from "../lib/eval-run-accounts.js";
 import { JsonInputContext } from "../lib/json-input.js";
 import {
   type RenderedScreenshot,
@@ -112,6 +116,7 @@ import {
   EVAL_SUITE_SCHEMA_VERSION,
   EVAL_SUITE_SCHEMA_VERSIONS,
   composeSuiteGateWithBaseReport,
+  isEvalRunTerminalStatus,
   type EvalSuiteSchemaVersion,
 } from "@mcpjam/sdk/contract";
 import type {
@@ -130,6 +135,7 @@ import type {
   RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
+import { registerEvalInsightsCommands } from "./eval-insights.js";
 import {
   buildSuiteFileFromPlatform,
   defaultSuiteFilePath,
@@ -159,7 +165,6 @@ import {
 import {
   EVAL_GATE_INCOMPLETE_EXIT_CODE,
   EVAL_GATE_USAGE_EXIT_CODE,
-  TERMINAL_RUN_STATUSES,
   evalGateExitCode,
   isNonVerdictRunResult,
   isNonVerdictRunStatus,
@@ -796,9 +801,7 @@ function writeRunDisclosure(
  * are a contract scripts parse. A trailing prose line would break every one
  * of them, so the gate lives here at the call site.
  *
- * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
- * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
- * the run path.
+ * Uses the current `/evaluate` run URL from the shared permalink builder.
  */
 function writeRunLink(
   format: string,
@@ -1463,7 +1466,7 @@ async function waitForEvalRun(
 ) {
   let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
-  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+  while (!isEvalRunTerminalStatus(run.status)) {
     if (run.status === "grading" && !extended && gradingExtensionMs > 0) {
       extended = true;
       deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
@@ -1680,7 +1683,7 @@ async function runEvalGate(
           { signal }
         );
 
-        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+        while (!isEvalRunTerminalStatus(run.status)) {
           // Granted once, on first seeing the hold. See `waitForEvalRun`.
           if (
             run.status === "grading" &&
@@ -3969,6 +3972,7 @@ export function registerEvalCommands(program: Command): void {
           }
           throw error;
         }
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         const completion = await runPlatformCommand(
           platformOptionsOf(command),
           // The extension has to be in the OUTER budget too. That budget aborts
@@ -4019,6 +4023,13 @@ export function registerEvalCommands(program: Command): void {
             const runs = waited.flatMap((entry) =>
               entry.ok ? [entry.run] : []
             );
+            accountServerNames = await runAccountServerNames(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              globalOptions.format
+            );
             const waitErrors = waited.flatMap((entry) =>
               !entry.ok
                 ? [
@@ -4052,7 +4063,7 @@ export function registerEvalCommands(program: Command): void {
               const soloSummary =
                 result.targets.length === 1 &&
                 runs.length === 1 &&
-                TERMINAL_RUN_STATUSES.has(runs[0]!.status)
+                isEvalRunTerminalStatus(runs[0]!.status)
                   ? await readEvalRunDecisionSummary(
                       client,
                       signal,
@@ -4237,6 +4248,11 @@ export function registerEvalCommands(program: Command): void {
             },
             globalOptions.format
           );
+          writeRunAccounts(
+            globalOptions.format,
+            completion.runs,
+            accountServerNames
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
           // Human only, and after the receipt: the receipt carries the run ids
           // and must reach stdout first whatever else happens.
@@ -4318,6 +4334,7 @@ export function registerEvalCommands(program: Command): void {
         const globalOptions = evalGlobalOptions(command);
         // Set by the operation's first step, before any use.
         let webOrigin = "";
+        let accountServerNames: ReadonlyMap<string, string> = new Map();
         let decisionSummary: EvalRunDecisionSummary | undefined;
         const resolved = resolveCloudProjectArgs(options);
         // VALIDATED, not cast. The cast this replaced asserted a shape rather
@@ -4357,6 +4374,13 @@ export function registerEvalCommands(program: Command): void {
               client: context.client,
               signal: context.signal,
             });
+            accountServerNames = await runAccountServerNames(
+              context.client,
+              context.signal,
+              result.project.id,
+              [result.run],
+              globalOptions.format
+            );
             // Any terminal run that did NOT pass — not just a failed one.
             // `inconclusive` and a run that stopped without a verdict are the
             // outcomes a reader is least able to explain on their own, and the
@@ -4369,7 +4393,7 @@ export function registerEvalCommands(program: Command): void {
             // network read (and, on old deployments, a second iteration walk).
             if (
               globalOptions.format === "human" &&
-              TERMINAL_RUN_STATUSES.has(result.run.status) &&
+              isEvalRunTerminalStatus(result.run.status) &&
               result.run.result !== "passed"
             ) {
               decisionSummary = result.decisionSummary;
@@ -4395,6 +4419,7 @@ export function registerEvalCommands(program: Command): void {
               })()
             : result;
         writeResult(resultForOutput, globalOptions.format);
+        writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
         writeJudgeSummary(globalOptions.format, result.run.judges);
         // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
         // it is the one thing a reader acts on after reading the rest, and a
@@ -4833,6 +4858,7 @@ export function registerEvalCommands(program: Command): void {
       const resolved = resolveCloudProjectArgs(options);
       // Set by the operation's first step, before any use.
       let webOrigin = "";
+      let accountServerNames: ReadonlyMap<string, string> = new Map();
 
       let outcome;
       try {
@@ -4886,6 +4912,13 @@ export function registerEvalCommands(program: Command): void {
                 Date.now() + waitTimeoutMs,
                 gradingExtensionMs
               );
+              accountServerNames = await runAccountServerNames(
+                client,
+                signal,
+                projectId,
+                [run],
+                format
+              );
               return { projectId, rerun, run };
             } catch (error) {
               // Not thrown from here: the receipt below is the only place the
@@ -4935,6 +4968,7 @@ export function registerEvalCommands(program: Command): void {
         { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
         format
       );
+      writeRunAccounts(format, run ? [run] : [], accountServerNames);
       writeRunLink(format, webOrigin, {
         projectId: outcome.projectId,
         suiteId: rerun.suiteId,
@@ -6642,4 +6676,6 @@ export function registerEvalCommands(program: Command): void {
         await executeOp(importEvalCasesOperation, input, options, command);
       }
     );
+
+  registerEvalInsightsCommands(evals);
 }

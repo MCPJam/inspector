@@ -41,6 +41,8 @@ import {
 
 export interface OpenAIPolicyEvidence {
   profile?: OpenAISubmissionProfile;
+  /** Saved portal listing answers, when this is a rehearsal. */
+  listingMetadata?: { field: string; text: string }[];
   /**
    * Metadata the PACKAGE carries, so a run with no submission profile is still
    * gradeable.
@@ -76,7 +78,7 @@ const NON_PROMOTIONAL_PACKAGE: OpenAICheckDefinition = {
   title: "The package's own copy is descriptive rather than promotional",
   lane: "directory-policy",
   class: "required",
-  source: openaiPolicySource("app-guidelines", "§Metadata"),
+  source: openaiPolicySource("plugin-guidelines", "§Metadata"),
   provenance: "static",
   intrusiveness: "passive",
 };
@@ -86,7 +88,7 @@ const NON_PROMOTIONAL_LISTING: OpenAICheckDefinition = {
   title: "Listing copy is descriptive rather than promotional",
   lane: "submission-artifacts",
   class: "required",
-  source: openaiPolicySource("app-guidelines", "§Metadata"),
+  source: openaiPolicySource("plugin-guidelines", "§Metadata"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -105,7 +107,7 @@ const NO_ADVERTISING: OpenAICheckDefinition = {
   title: "The plugin does not carry advertising",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Prohibited content"),
+  source: openaiPolicySource("plugin-guidelines", "§Prohibited content"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -128,7 +130,7 @@ const ORIGINALITY: OpenAICheckDefinition = {
   title: "The plugin is the submitter's own work or authorized",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Originality"),
+  source: openaiPolicySource("plugin-guidelines", "§Originality"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -138,7 +140,7 @@ const PREDICTABLE_SIDE_EFFECTS: OpenAICheckDefinition = {
   title: "Tools do only what a user would expect them to do",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Predictable side effects"),
+  source: openaiPolicySource("plugin-guidelines", "§Predictable side effects"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -148,7 +150,7 @@ const RESPONSE_MINIMIZATION: OpenAICheckDefinition = {
   title: "Tool responses return only what the task needs",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Data minimization"),
+  source: openaiPolicySource("plugin-guidelines", "§Data minimization"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -158,7 +160,7 @@ const PRIVACY_CONSISTENCY: OpenAICheckDefinition = {
   title: "The privacy disclosure matches what the plugin actually collects",
   lane: "experience-insights",
   class: "manual-review",
-  source: openaiPolicySource("app-guidelines", "§Privacy"),
+  source: openaiPolicySource("plugin-guidelines", "§Privacy"),
   provenance: "declared",
   intrusiveness: "passive",
 };
@@ -263,7 +265,7 @@ export function runOpenAIPolicyChecks(
   findings.push(
     gradeCopy(
       NON_PROMOTIONAL_LISTING,
-      profile
+      evidence.listingMetadata ?? (profile
         ? [
             { field: "listing.name", text: profile.name },
             {
@@ -272,13 +274,15 @@ export function runOpenAIPolicyChecks(
             },
             { field: "listing.description", text: profile.description },
           ]
-        : [],
+        : []),
       () =>
         notEvaluated(
           NON_PROMOTIONAL_LISTING,
           stamp,
-          "no submission profile was supplied, so there is no listing copy to read",
-          missingInput(OPENAI_READINESS_INPUTS.submissionProfile),
+          evidence.listingMetadata !== undefined
+            ? "This rehearsal has no listing text to check. Supply the listing name and descriptions in the plugin package."
+            : "no submission profile was supplied, so there is no listing copy to read",
+          missingInput(evidence.listingMetadata !== undefined ? "listing text" : OPENAI_READINESS_INPUTS.submissionProfile),
         ),
     ),
   );

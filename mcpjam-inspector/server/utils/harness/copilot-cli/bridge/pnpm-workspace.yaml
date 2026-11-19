@@ -1,0 +1,4 @@
+packages:
+  - "."
+overrides:
+  "@github/copilot": "1.0.92"

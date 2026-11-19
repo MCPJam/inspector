@@ -1,4 +1,15 @@
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import {
+  hasComparisonAuthRecoveryRequest,
+  markComparisonColumnSettled,
+  readComparisonAuthRecovery,
+  registerComparisonLayout,
+  clearComparisonAuthRecovery,
+} from "@/lib/comparison-auth-recovery";
+import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
+import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
+import { PluginOnboardingHandoff } from "@/components/host-workspace/plugin-onboarding-handoff";
 import { WorkspaceFileActionsProvider } from "@/components/host-workspace/file-actions";
 import type { RunPluginOnboarding } from "@/components/host-workspace/use-plugin-onboarding";
 import {
@@ -7,18 +18,31 @@ import {
   type SendPluginOnboarding,
 } from "./playground-onboarding";
 import { useComposerMentions } from "@/components/host-workspace/use-composer-mentions";
-import { usePluginIconsById } from "@/components/host-workspace/plugin-icon-directory";
+import {
+  usePluginIconsById,
+  pluginDisplayNamesById,
+} from "@/components/host-workspace/plugin-icon-directory";
 import { useProjectPlugins } from "@/hooks/usePluginImportApi";
 import { usePlaygroundHiddenEnvironment } from "@/hooks/use-playground-hidden-environment";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { ActivePluginServer } from "@/hooks/useActivePlugins";
 import { buildExtensionServers } from "./playground-plugins";
+import { buildComparePaneTarget } from "@/lib/compare-pane-target";
+import {
+  connectedTesterServerNames,
+  oauthRequiredFromChatError,
+  withSingleServerName,
+  type TesterChatRules,
+} from "@/components/hosted/tester-chat";
+import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
+import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
 import { skippedPluginsForNotice } from "@/lib/plugins/hidden-environment";
 import {
   showPluginNotice,
   type PluginNoticeData,
 } from "@/lib/plugins/plugin-notice-display";
 import { usePluginMessage } from "@/hooks/use-plugin-message";
+import { useSingleFlight } from "@/hooks/use-single-flight";
 import { useAppMessageDraft } from "@/components/host-workspace/use-app-message-draft";
 import { useChatThreadTransition } from "@/hooks/use-chat-thread-transition";
 import {
@@ -29,9 +53,12 @@ import {
   ChatPluginFormHosts,
   OwnedPluginFormHost,
 } from "@/components/elicitation/OwnedPluginFormHost";
+import { TakeoverFormSlot } from "@/components/elicitation/TakeoverFormSlot";
 import { cancelComposerForms } from "@/components/elicitation/composer-form-store";
 import { shouldUseOwnedExtensionModelRoute } from "@/components/host-workspace/model-route";
 import {
+  displayBehaviorForHost,
+  entrypointWithoutFullscreenForHost,
   pluginExtensionsForHost,
   pluginExtensionProfileForHost,
   type PluginExtensionsHostConfig,
@@ -53,6 +80,7 @@ import {
   useExtensionSlot,
   useExtensionStore,
   useExtensionWorkspaceState,
+  type ExtensionPorts,
 } from "@/components/host-workspace/ExtensionWorkspaceProvider";
 import { useElementViewportRect } from "@/components/host-workspace/use-element-rect";
 import {
@@ -124,6 +152,7 @@ import {
   UrlElicitationRequiredDialog,
 } from "@/components/elicitation/ElicitationRequestDialog";
 import { HostedMrtrHost } from "@/components/elicitation/HostedMrtrHost";
+import { MrtrElicitationHost } from "@/components/elicitation/MrtrElicitationHost";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -135,7 +164,6 @@ import {
   AlertDialogTitle,
 } from "@mcpjam/design-system/alert-dialog";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
-import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
@@ -154,6 +182,7 @@ import {
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
   cloneUiMessages,
   extractUserMessageText,
+  UPSTREAM_ERROR_PAGE_CODE,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
@@ -197,7 +226,6 @@ import {
   getScenarioChatBackground,
   getScenarioHostFamily,
   getScenarioHostLogo,
-  getScenarioShellStyle,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { DEFAULT_HOST_STYLE, type ChatUiOverride } from "@/lib/client-styles";
@@ -242,7 +270,8 @@ import {
 } from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useProjectEnvironmentsVisible } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
 import { ConversationTargetNotice } from "@/components/playground/ConversationTargetNotice";
@@ -268,11 +297,23 @@ import {
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { isRetryableOrgKeysRefusal } from "@/lib/org-keys-refusal";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
-import { usePersistedHost } from "@/hooks/use-persisted-host";
+import { useComparePanes } from "@/hooks/use-compare-panes";
+import { useCompareEnvironmentPanes } from "@/hooks/use-compare-environment-panes";
+import { useCompareEnvironmentHandoff } from "@/hooks/use-compare-environment-handoff";
+import { resolveEnvironmentPaneColumn } from "@/lib/compare-environment-columns";
+import { useComparePaneStore } from "@/stores/compare-pane-store";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
 import { usePlaygroundBrowserToolSlots } from "@/hooks/use-playground-browser-tool-slots";
 import { clientDisplayName } from "@/lib/client-display-name";
-import { replaceLeadHostId } from "@/lib/selected-host-storage";
+import {
+  chipClientLimit,
+  paneHostId,
+  promoteLeadPane,
+  type ComparePaneTarget,
+} from "@/lib/compare-panes";
+import { useComparePaneSkillsSection } from "./compare-pane-skills";
+import { useComparePaneControls } from "./use-compare-pane-controls";
+import { useComparePaneDisplayStore } from "@/stores/compare-pane-display-store";
 import { usePlaygroundClientInitialization } from "./use-playground-client-initialization";
 import { useMissingLeadFallback } from "./use-missing-lead-fallback";
 import { playgroundClientInitNotice } from "./playground-client-init-notice";
@@ -286,6 +327,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -304,6 +346,8 @@ import {
 } from "@/contexts/scenario-client-style-context";
 import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useHarnessBoxPreparation } from "@/hooks/use-harness-box-preparation";
+import { useNativeHarnessHandoff } from "./use-native-harness-handoff";
 import { useModelSelectorLayoutLock } from "@/hooks/use-model-selector-layout-lock";
 import {
   getAppDraftInteractivity,
@@ -319,6 +363,11 @@ import {
   hostStyleSupportsModelVisibleMcpToolImages,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
+import {
+  createCompareBroadcast,
+  compareBroadcastRecipient,
+  type CompareBroadcastDelivery,
+} from "./compare-broadcast";
 import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import { type MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import {
@@ -330,12 +379,16 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
 import {
   chatHistoryAction,
-  getChatHistoryDetail,
+  getChatHistoryState,
   type ChatHistorySession,
   type ChatHistoryDetailSession,
   type ChatHistoryWidgetSnapshot,
   type ChatHistoryTurnTrace,
 } from "@/lib/apis/web/chat-history-api";
+import {
+  presendStateIsCurrent,
+  withPresendSyncTimeout,
+} from "@/lib/chat-history-presend";
 import { resolveRestorableServerNames } from "@/components/chat-v2/history/session-restore";
 import {
   getCachedChatHistoryDetail,
@@ -353,14 +406,15 @@ import {
 import { WebApiError } from "@/lib/apis/web/base";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
+import { ChatAppDisplayBehaviorProvider } from "@/contexts/chat-app-display-behavior-context";
 import type { RecorderProps } from "@/components/chat-v2/thread/recorder-types";
 import {
   isToolPart,
   isDynamicTool,
   getToolInfo,
 } from "@/components/chat-v2/thread/thread-helpers";
-import type { WidgetModelContextEntry } from "@/shared/chat-v2";
-import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
+import { useWidgetModelContextQueue } from "@/hooks/use-widget-model-context-queue";
+import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { artifactStableKey } from "@/lib/artifact-urls";
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 
@@ -412,6 +466,28 @@ interface PlaygroundCompareThemeScopeProps {
   hostShellStyle: CSSProperties;
 }
 
+/**
+ * A study already provides the capability override from its session. Wrapping
+ * again with the visitor's Playground preference, even `undefined`, replaces
+ * that value. Ordinary Playground chats keep the preference provider.
+ */
+function PlaygroundCapabilitiesScope({
+  inheritOuter,
+  value,
+  children,
+}: {
+  inheritOuter: boolean;
+  value: Record<string, unknown> | undefined;
+  children: ReactNode;
+}) {
+  if (inheritOuter) return children;
+  return (
+    <ScenarioHostCapabilitiesOverrideProvider value={value}>
+      {children}
+    </ScenarioHostCapabilitiesOverrideProvider>
+  );
+}
+
 function PlaygroundCompareThemeScope({
   children,
   hostStyle,
@@ -419,17 +495,19 @@ function PlaygroundCompareThemeScope({
   chatUiOverride,
   effectiveThreadTheme,
   hostShellStyle,
-}: PlaygroundCompareThemeScopeProps) {
+  inheritCapabilities,
+}: PlaygroundCompareThemeScopeProps & { inheritCapabilities?: boolean }) {
   return (
     <ScenarioHostStyleProvider value={hostStyle}>
-      <ScenarioHostCapabilitiesOverrideProvider
+      <PlaygroundCapabilitiesScope
+        inheritOuter={inheritCapabilities === true}
         value={hostCapabilitiesOverride}
       >
         <ScenarioChatUiOverrideProvider value={chatUiOverride}>
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden",
+                "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-col overflow-hidden bg-background text-foreground",
                 effectiveThreadTheme === "dark" && "dark",
               )}
               data-testid="playground-compare-shell"
@@ -441,7 +519,7 @@ function PlaygroundCompareThemeScope({
             </div>
           </ScenarioHostThemeProvider>
         </ScenarioChatUiOverrideProvider>
-      </ScenarioHostCapabilitiesOverrideProvider>
+      </PlaygroundCapabilitiesScope>
     </ScenarioHostStyleProvider>
   );
 }
@@ -576,6 +654,12 @@ interface PlaygroundMainProps {
    * the page's query string would be a side effect on someone else's route.
    */
   syncConversationToUrl?: boolean;
+  /**
+   * User-testing study. When set, this chat is the tester's: guest access,
+   * the study's model and servers, and no Playground chrome. Absent on the
+   * Playground itself and on the eval preview.
+   */
+  tester?: TesterChatRules;
 }
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -655,8 +739,9 @@ export function PlaygroundMain({
   suppressHistoryConflictToast,
   recorder,
   syncConversationToUrl = false,
+  tester,
 }: PlaygroundMainProps) {
-  const { signUp } = useInspectorAuth();
+  const { signUp, user: compareAuthUser } = useInspectorAuth();
   const clearLogs = useTrafficLogStore((s) => s.clear);
 
   // Chat-history coordination — Playground equivalent of ChatTabV2's history
@@ -754,9 +839,8 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue] = useState<
-    WidgetModelContextEntry[]
-  >([]);
+  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
+    useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -771,7 +855,8 @@ export function PlaygroundMain({
     PreludeTraceExecution[]
   >([]);
   const [broadcastRequest, setBroadcastRequest] =
-    useState<BroadcastChatTurnRequest | null>(null);
+    useState<CompareBroadcastDelivery | null>(null);
+  const broadcastSequence = useRef(0);
   const [deterministicExecutionRequest, setDeterministicExecutionRequest] =
     useState<PlaygroundDeterministicExecutionRequest | null>(null);
   const [stopBroadcastRequestId, setStopBroadcastRequestId] = useState(0);
@@ -827,6 +912,7 @@ export function PlaygroundMain({
   const compareSeedSourceRef = useRef<Record<string, string>>({});
   // Device config from store (managed by ClientContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
+  const paneDisplays = useComparePaneDisplayStore((s) => s.byPane);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const patchHostContext = useHostContextStore((s) => s.patchHostContext);
@@ -853,6 +939,13 @@ export function PlaygroundMain({
 
   const appState = useSharedAppState();
   const servers = appState.servers;
+  const activeProject = appState.projects[appState.activeProjectId];
+  const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const [comparisonRecovery, setComparisonRecovery] = useState(() =>
+    readComparisonAuthRecovery(convexProjectId ?? "local"),
+  );
+  const [comparisonServersRestored, setComparisonServersRestored] =
+    useState(false);
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
@@ -869,13 +962,27 @@ export function PlaygroundMain({
   }, [playgroundServerSelectorProps, servers]);
 
   const selectedServers = useMemo(() => {
+    // A study names its own servers. The Playground's recovered comparison
+    // set and the signed-in project catalog are a different chat.
+    if (tester) return connectedTesterServerNames(tester);
+    // Reconnecting other saved servers must not rename the recovered tools
+    // or change the context of the suspended calls.
+    if (comparisonRecovery && !comparisonServersRestored)
+      return comparisonRecovery.selectedServers;
     if (multiSelectedServerNames.length > 0) {
       return multiSelectedServerNames;
     }
     return serverName && servers[serverName]?.connectionStatus === "connected"
       ? [serverName]
       : [];
-  }, [multiSelectedServerNames, serverName, servers]);
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    serverName,
+    servers,
+    tester,
+  ]);
 
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",
@@ -892,8 +999,6 @@ export function PlaygroundMain({
   );
 
   // Hosted mode context (projectId, serverIds, OAuth tokens)
-  const activeProject = appState.projects[appState.activeProjectId];
-  const convexProjectId = activeProject?.sharedProjectId ?? null;
 
   // Resolved Local⇄Cloud engine for this project's personal computer. Passed
   // into useChatSession so a direct turn runs this host's bash on the local
@@ -939,16 +1044,24 @@ export function PlaygroundMain({
     projectId: convexProjectId,
     isAuthenticated: isConvexAuthenticated,
   });
-  const attachmentUploadInFlightRef = useRef(false);
   const projectOrganizationId = activeProject?.organizationId ?? null;
   const hostedOrgModelConfig = useHostedOrgModelConfig({
-    projectId: convexProjectId,
-    organizationId: projectOrganizationId,
+    projectId: tester?.hostedContext.projectId ?? convexProjectId,
+    organizationId: tester?.hostedContext.scenarioId
+      ? null
+      : projectOrganizationId,
+    // Share-link guests are not project members. The study's model comes from
+    // `tester.executionConfig`, and this query would throw and blank the page.
+    disabled: Boolean(tester?.hostedContext.scenarioId),
   });
   const manageOrgProviders = useOrgModelsHandoff(projectOrganizationId);
   const refusalHandoff = useMemo(
-    () => orgAiRefusalHandoff({ onManageOrgProviders: manageOrgProviders }),
-    [manageOrgProviders],
+    () =>
+      orgAiRefusalHandoff({
+        visitor: Boolean(tester?.hostedContext.scenarioId),
+        onManageOrgProviders: manageOrgProviders,
+      }),
+    [manageOrgProviders, tester?.hostedContext.scenarioId],
   );
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -957,13 +1070,18 @@ export function PlaygroundMain({
   // Optional: present app-wide, absent in isolated embeds. Drives the hosted
   // harness preflight (resolve/persist selected server names → Convex ids).
   const playgroundServerActions = useServerActionsOptional();
-  const hostedSelectedServerIds = useMemo(
-    () =>
-      selectedServers
-        .map((name) => serversByName.get(name))
-        .filter((serverId): serverId is string => !!serverId),
-    [selectedServers, serversByName],
-  );
+  const hostedSelectedServerIds = useMemo(() => {
+    if (tester?.hostedContext.selectedServerIds) {
+      return tester.hostedContext.selectedServerIds;
+    }
+    return selectedServers
+      .map((name) => serversByName.get(name))
+      .filter((serverId): serverId is string => !!serverId);
+  }, [
+    selectedServers,
+    serversByName,
+    tester?.hostedContext.selectedServerIds,
+  ]);
 
   // Mirror the previewed host's chat-execution fields (system prompt,
   // temperature, tool approval, selected servers) into the chat session
@@ -986,16 +1104,42 @@ export function PlaygroundMain({
   const [previewedHostId, setPreviewedHostId] = usePreviewedHostId(
     convexProjectId ?? activeProjectId,
   );
-  // Same storage scope as `usePersistedHost` / `usePreviewedHostId` below.
+  // Same storage scope as `useComparePanes` / `usePreviewedHostId` below.
   // Hoisted above `useChatSession` because the environment target has to be in
   // the hosted context before the first transport body is built.
   const multiHostProjectId = convexProjectId ?? activeProjectId ?? null;
+  // The Compare panes, pane 0 on the lead: `useComparePanes` reads the lead
+  // from the per-project `usePreviewedHostId`.
+  //
+  // This is the SINGLE source of truth for picker + grid. The chat-input
+  // `ClientSelector` (`clientSelector` below) is a controlled component —
+  // it does NOT call `useComparePanes` itself. Two sibling hooks
+  // wouldn't stay in sync because `compare-panes.ts` doesn't
+  // dispatch same-tab events on `saveComparePanes` (deliberate, per
+  // the Phase-1 multi-select regression fix); lifting state to this
+  // common parent is the correct fix instead of adding event traffic.
+  const {
+    panes: comparePanes,
+    restorePanes,
+    setPaneOverrides,
+    setPanePick,
+    setPaneTarget,
+    selectedHostIds,
+    setSelectedHostIds,
+    multiHostEnabled,
+    setMultiHostEnabled,
+  } = useComparePanes(multiHostProjectId);
   // Project Environments (Phase 2). Flag-gated and fail-closed inside the hook;
   // outside environment mode every field below is inert and the Playground
   // behaves exactly as it does today.
-  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId);
-  const isEnvironmentMode = playgroundEnvironment.isEnvironmentMode;
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const paneMember = useIsMemberActor();
+  const environmentsEnabled = useProjectEnvironmentsVisible(paneMember);
+  const playgroundEnvironment = usePlaygroundEnvironment(multiHostProjectId, environmentsEnabled);
+  // Each Compare pane says what it runs, so while Compare shows, the page's
+  // environment rests; single chat and a reopened conversation still run it.
+  const isEnvironmentMode =
+    playgroundEnvironment.isEnvironmentMode &&
+    (isSharedSession || viewingHistoryReplay || comparePanes.length < 2);
   // Whether this turn may use the tools of the page open in the WebMCP tab.
   // Derived from session liveness: a closed status leaves the last tool
   // snapshot in place, and advertising a dead browser's tools to a model is
@@ -1042,10 +1186,17 @@ export function PlaygroundMain({
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
-        previewedHost?.config?.mcpToolResultImageRendering,
-        previewedHost?.config?.modelVisibleMcpToolResults,
+        // The top-level chat option wins over executionConfig. A study has to
+        // supply its own policy here, or the visitor's previewed host replaces it.
+        tester
+          ? tester.executionConfig.mcpToolResultImageRendering
+          : previewedHost?.config?.mcpToolResultImageRendering,
+        tester
+          ? tester.executionConfig.modelVisibleMcpToolResults
+          : previewedHost?.config?.modelVisibleMcpToolResults,
       ),
     [
+      tester,
       previewedHost?.config?.mcpToolResultImageRendering,
       previewedHost?.config?.modelVisibleMcpToolResults,
     ],
@@ -1145,6 +1296,7 @@ export function PlaygroundMain({
     hostId: previewedHostId,
     harnessId: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     hostResolved: !previewedHostConfigUnresolved,
+    computerAttached: !!previewedHost?.config?.computer,
   });
 
   // ONE dialog for the whole surface. Six composers each owning their own
@@ -1196,7 +1348,9 @@ export function PlaygroundMain({
   // harness host: its files ride inline and the server lands them on the box
   // the turn actually runs on.
   const computerAttachmentsActive = isComputerAttachmentUploadActive({
-    computersEnabled: computersEnabled === true,
+    // A study has no Playground computer. This upload uses the visitor's
+    // project, so a study attachment stays an inline file part.
+    computersEnabled: !tester && computersEnabled === true,
     isAuthenticated: isConvexAuthenticated,
     hostHasComputer: !!previewedHost?.config?.computer,
     hostHasHarness: !!(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
@@ -1205,7 +1359,11 @@ export function PlaygroundMain({
 
   // Use shared chat session hook
   const composerOnResetRef = useRef<() => void>(() => {});
-  const hostStyle = usePreferencesStore((s) => s.hostStyle);
+  const preferenceHostStyle = usePreferencesStore((s) => s.hostStyle);
+  const scenarioHostStyle = useScenarioHostStyle();
+  // A study paints its own host. The Playground keeps the preference.
+  const hostStyle =
+    tester && scenarioHostStyle ? scenarioHostStyle : preferenceHostStyle;
   const hostStyleFamily = getScenarioHostFamily(hostStyle) ?? "claude";
   const extensionsFlag =
     useFeatureFlagEnabled("plugin-extensions-enabled") === true;
@@ -1216,7 +1374,7 @@ export function PlaygroundMain({
     projectId: convexProjectId,
   });
   // Per-client "OpenAI plugin extensions" setting (C1): on by default only
-  // for the ChatGPT and Codex styles, never by visual family.
+  // for the ChatGPT, Codex and Claude styles, never by visual family.
   const pluginExtensions = useMemo(
     () =>
       pluginExtensionsForHost({
@@ -1228,6 +1386,16 @@ export function PlaygroundMain({
     [hostStyle, previewedHost?.config?.agentLoop, previewedHost?.config?.harness, previewedHost?.config?.mcpProfile],
   );
   const pluginExtensionsEnabled = pluginExtensions.enabled;
+  // ChatGPT's or Claude's rules for this client's Apps: how they choose a
+  // display mode, and where an entry App that can't go fullscreen opens.
+  const pluginExtensionHost = {
+    hostStyle,
+    harness: previewedHost?.config?.harness,
+    mcpProfile: previewedHost?.config?.mcpProfile,
+  };
+  const displayBehavior = displayBehaviorForHost(pluginExtensionHost);
+  const entrypointWithoutFullscreen =
+    entrypointWithoutFullscreenForHost(pluginExtensionHost);
   // Who owns extension state for this client. Null turns every extension off.
   const extensionIdentity = useMemo<ExtensionOwnerIdentity | null>(
     () =>
@@ -1292,6 +1460,7 @@ export function PlaygroundMain({
     setMessages,
     sendMessage,
     stop,
+    canStopApproval,
     error,
     chatSessionId,
     selectedModel,
@@ -1302,6 +1471,8 @@ export function PlaygroundMain({
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
+    catalogModels,
     isAuthLoading,
     systemPrompt,
     setSystemPrompt,
@@ -1313,6 +1484,7 @@ export function PlaygroundMain({
     seedReasoningEffort,
     reasoningEffortLevelsFor,
     setReasoningEffortForModel,
+    hasPickedModel,
     toolsMetadata,
     toolServerMap,
     tokenUsage,
@@ -1350,12 +1522,15 @@ export function PlaygroundMain({
     dismissUrlElicitationRequired,
     hiddenEnvironmentActive,
     outOfCreditsReason,
+    harnessStartupPhase,
+    harnessBoxPreparation,
   } = useChatSession({
     pluginWorkspace: extensionWorkspaceForSession,
     pluginContextReferences: currentExtensionContext,
     pluginGlobalContext: currentGlobalExtensionContext,
     selectedServers,
-    reasoningEffortEnabled: true,
+    // A study runs the host's config. The visitor's effort chip would be ignored.
+    reasoningEffortEnabled: !tester?.hostedContext.scenarioId,
     // A harness turn offers only what its adapter verified (none today).
     reasoningEffortHarness: (previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness),
     // Opt-in from the Tools panel's Page tools section. Off unless the user
@@ -1363,90 +1538,58 @@ export function PlaygroundMain({
     usePageTools: webmcpPageToolsEnabled,
     directVisibility: pendingDirectVisibility,
     hostedOrgModelConfig,
-    selectionIntent: isEnvironmentMode || previewedHostId ? "inherit" : "picked",
-    hostedContext: {
-      ...(shouldUseOwnedExtensionModelRoute({
-        flag: extensionsFlag,
-        admitted: extensionsAccess?.enabled === true,
-        extensionsEnabled: pluginExtensionsEnabled,
-        harness: previewedHost?.config?.harness,
-        agentLoop: previewedHost?.config?.agentLoop,
-        hostId: previewedHostId,
-        actorId: currentUserForSender?._id,
-      })
-        ? { requiresWebChatApi: true }
-        : {}),
-      projectId: convexProjectId,
-      selectedServerIds: hostedSelectedServerIds,
-      // ENVIRONMENT MODE (Phase 2) and host mode are mutually exclusive on the
-      // wire — `normalizeExecutionTarget` 400s a body carrying both pointers.
-      ...(isEnvironmentMode
-        ? {
-            executionTarget: playgroundEnvironment.executionTarget,
-            // Only present when the user explicitly overrode the server set.
-            ...(playgroundEnvironment.environmentOverrides
-              ? {
-                  environmentOverrides:
-                    playgroundEnvironment.environmentOverrides,
-                }
-              : {}),
-            // The environment's servers resolve by Convex id server-side (and
-            // some are plugin-contributed, i.e. invisible to the browser's
-            // catalog), so the turn MUST use the managed setup, which
-            // resolves them.
-            requiresWebChatApi: true,
-            // Deliberately NO `ensureServerIds`: resolving environment servers
-            // by NAME would fail for plugin-contributed ones and bypass plugin
-            // lifecycle semantics for the rest.
-            //
-            // NOT a second execution pointer — a client-side cache key. The
-            // environment's host is already the previewed host (presentation
-            // only), and host-keyed client caches (the harness workdir the
-            // Shell opens a terminal in) are read by that id, so the write side
-            // has to know it. The server still resolves the host from the
-            // environment.
-            ...(previewedHostId ? { presentationHostId: previewedHostId } : {}),
-          }
-        : {
-            // Resolve/persist selected server names → Convex ids before a hosted
-            // harness send (ad-hoc/App servers included), so the proxy never
-            // sees a display name. Absent in isolated embeds → falls back to the
-            // pre-resolved selection above.
-            ...(playgroundServerActions?.ensureHostedServerIdsForNames
-              ? {
-                  ensureServerIds:
-                    playgroundServerActions.ensureHostedServerIdsForNames,
-                }
-              : {}),
-            // Forward the previewed host id so the server re-resolves its
-            // authoritative runtime config (harness/computer) for this direct
-            // session, and so switching hosts forks the chat session.
-            ...(previewedHostId ? { hostId: previewedHostId } : {}),
-            // The project has a runnable plugin and the environments UI is
-            // hidden: the chat hook sends this composition INSTEAD of
-            // `hostId` wherever a managed turn runs, keeping
-            // the server preflight above for the chat's own servers. Absent
-            // otherwise, so a chat without plugins sends exactly what it did.
-            ...(hiddenEnvironment.wanted || hiddenEnvironment.blockingError
-              ? {
-                  hiddenEnvironment: {
-                    environmentId: hiddenEnvironment.environmentId,
-                    blockingError: hiddenEnvironment.blockingError,
-                    pluginServerIds: hiddenEnvironment.pluginServerIds,
-                    venue: hiddenEnvironment.venue,
-                    recover: hiddenEnvironment.recover,
-                  },
-                }
-              : {}),
+    inheritedEnvironmentModel: isEnvironmentMode ? playgroundEnvironment.preview?.host : undefined,
+    selectionIntent: tester?.hostedContext.scenarioId
+      ? "inherit"
+      : isEnvironmentMode || previewedHostId
+        ? "inherit"
+        : "picked",
+    // A study must not write the visitor's model pick into the Playground's storage.
+    rememberPickedTarget: !tester,
+    hostedContext: tester
+      ? {
+          ...tester.hostedContext,
+          projectId: tester.hostedContext.projectId,
+          selectedServerIds:
+            tester.hostedContext.selectedServerIds ?? hostedSelectedServerIds,
+        }
+      : {
+          ...(shouldUseOwnedExtensionModelRoute({
+            flag: extensionsFlag,
+            admitted: extensionsAccess?.enabled === true,
+            extensionsEnabled: pluginExtensionsEnabled,
+            harness: previewedHost?.config?.harness,
+            agentLoop: previewedHost?.config?.agentLoop,
+            hostId: previewedHostId,
+            actorId: currentUserForSender?._id,
+          })
+            ? { requiresWebChatApi: true }
+            : {}),
+          projectId: convexProjectId,
+          selectedServerIds: hostedSelectedServerIds,
+          ...buildComparePaneTarget({
+            target: isEnvironmentMode ? playgroundEnvironment.executionTarget : undefined,
+            hostId: previewedHostId,
+            overrides: playgroundEnvironment.environmentOverrides,
+            ensureServerIds: playgroundServerActions?.ensureHostedServerIdsForNames,
+            composition: hiddenEnvironment,
           }),
-    },
+        },
+    // Present only for a study. Including the key with `undefined` would put the
+    // Playground into controlled mode and lock fields the author is free to edit.
+    ...(tester
+      ? { executionConfig: tester.executionConfig, minimalMode: true as const }
+      : {}),
     // Source the host-level toggle from the previewed host's resolved
     // DTO so flipping it in the host's Agent → Behavior tab takes
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
-    modelVisibleMcpToolResults:
-      previewedHost?.config?.modelVisibleMcpToolResults,
+    // The hook prefers this option over executionConfig. A study's policy is
+    // on its execution config, so the visitor's saved host must not replace it.
+    modelVisibleMcpToolResults: tester
+      ? undefined
+      : previewedHost?.config?.modelVisibleMcpToolResults,
     mcpToolResultImageRendering: effectiveMcpToolResultImageRendering,
     // Same live-source pattern: built-in tool attachments flow from the
     // effective host's hostConfig. The server re-resolves via the shared
@@ -1466,7 +1609,7 @@ export function PlaygroundMain({
     harnessModelTarget: previewedHarnessId
       ? { harnessId: previewedHarnessId }
       : null,
-    preferredModelId: previewedHost?.config?.modelId ?? null,
+    preferredModelId: tester ? null : (previewedHost?.config?.modelId ?? null),
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -1485,6 +1628,19 @@ export function PlaygroundMain({
       composerOnResetRef.current();
     },
   });
+
+  const onOAuthRequired = tester?.onOAuthRequired;
+  const reportedOAuthErrorRef = useRef<unknown>(null);
+  useEffect(() => {
+    if (!onOAuthRequired || !error) return;
+    // `selectedServers` is a new array when a server connects. Reporting the
+    // same chat error again would reopen the study's authorize step.
+    if (reportedOAuthErrorRef.current === error) return;
+    const parsed = oauthRequiredFromChatError(error);
+    if (!parsed.required) return;
+    reportedOAuthErrorRef.current = error;
+    onOAuthRequired(withSingleServerName(parsed.details, selectedServers));
+  }, [error, onOAuthRequired, selectedServers]);
 
   // The Browser tab lives in the sibling right rail. Publish the current
   // conversation only while this Playground center is mounted; the rail then
@@ -1521,7 +1677,7 @@ export function PlaygroundMain({
   const onSelectMultipleServers =
     playgroundServerSelectorProps?.onSelectMultipleServers;
   const previewedHostConfigId = previewedHost?.config.id;
-  const lastSeededHostRef = useRef<{ hostId: string; configId: string } | null>(
+  const lastSeededHostRef = useRef<{ hostId: string; configId: string; environment: boolean } | null>(
     null,
   );
   // Whether the last host switch seeded an effort (so a switch to a host
@@ -1569,12 +1725,13 @@ export function PlaygroundMain({
       lastSeededHostRef.current = {
         hostId: previewedHostId,
         configId: previewedHost.config.id,
+        environment: isEnvironmentMode,
       };
       return;
     }
     const configId = previewedHost.config.id;
     const last = lastSeededHostRef.current;
-    if (last && last.hostId === previewedHostId && last.configId === configId) {
+    if (last && last.hostId === previewedHostId && last.configId === configId && last.environment === isEnvironmentMode) {
       return;
     }
 
@@ -1592,17 +1749,22 @@ export function PlaygroundMain({
     if (ids.length > 0 && serversById.size === 0) return;
 
     // The first seed of this mount (a page reload, or coming back to a host
-    // after it was unavailable) re-applies the host to the single chat, as it
-    // always has, but leaves the compare panes alone: pane 1 is a model and
-    // effort the user saved, and a reload must not swap it for the host's.
-    // Only a host SWITCH (or an edit of the host's config) moves the host's
-    // model into pane 1.
+    // after it was unavailable) leaves the compare panes alone: pane 1 is a
+    // model and effort the user saved, and a reload must not swap it for the
+    // host's. The single chat keeps a model the user picked for this host the
+    // same way. Only a host SWITCH (or an edit of the host's config) moves
+    // the host's model in.
     const isFirstSeedThisMount = last === null;
-    lastSeededHostRef.current = { hostId: previewedHostId, configId };
+    lastSeededHostRef.current = { hostId: previewedHostId, configId, environment: isEnvironmentMode };
 
-    setSystemPrompt(cfg.systemPrompt);
-    setTemperature(cfg.temperature);
-    setRequireToolApproval(cfg.requireToolApproval);
+    // A study's prompt, temperature, and approval come from its execution
+    // config. This seed is the visitor's saved Playground host, and writing
+    // it here replaces the study on the next send.
+    if (!tester) {
+      setSystemPrompt(cfg.systemPrompt);
+      setTemperature(cfg.temperature);
+      setRequireToolApproval(cfg.requireToolApproval);
+    }
 
     if (onSelectMultipleServers) {
       const seen = new Set<string>();
@@ -1622,7 +1784,7 @@ export function PlaygroundMain({
     // path in applyHostConfigToPlayground covers cross-tab + cold-start;
     // this covers in-tab host switches without waiting for the storage
     // event round-trip.
-    const desiredModelId = cfg.modelId?.trim();
+    const desiredModelId = isEnvironmentMode ? undefined : cfg.modelId?.trim();
     if (desiredModelId) {
       // Selection-aware, as the host Agent tab resolves it: a saved canonical
       // id (`openai/gpt-5`) for a bare BYOK row must land on THAT row, not on
@@ -1632,7 +1794,7 @@ export function PlaygroundMain({
         availableModels,
         undefined,
       );
-      if (match) {
+      if (match && !(isFirstSeedThisMount && hasPickedModel)) {
         setSelectedModel(match, { selection: cfg.modelSelection });
         // A selected host's saved effort is the default for its own model
         // (a later pick on the chip wins and is remembered per model).
@@ -1690,6 +1852,8 @@ export function PlaygroundMain({
     previewedHostId,
     previewedHostConfigId,
     previewedHost,
+    tester,
+    isEnvironmentMode,
     serversById,
     onSelectMultipleServers,
     setSystemPrompt,
@@ -1697,6 +1861,7 @@ export function PlaygroundMain({
     setRequireToolApproval,
     setSelectedModel,
     seedReasoningEffort,
+    hasPickedModel,
   ]);
 
   // Currently selected protocol — derived from the selected tool's metadata
@@ -1739,11 +1904,14 @@ export function PlaygroundMain({
   // One subscription to the project's plugins; discovery names each
   // server's plugin, and the hidden environment's plugin servers carry them
   // directly.
-  const pluginIconsById = usePluginIconsById(
-    useProjectPlugins(
-      extensionScope?.projectId ??
-        (hiddenPluginServers.length > 0 ? convexProjectId : null),
-    ),
+  const projectPlugins = useProjectPlugins(
+    extensionScope?.projectId ??
+      (hiddenPluginServers.length > 0 ? convexProjectId : null),
+  );
+  const pluginIconsById = usePluginIconsById(projectPlugins);
+  const pluginNamesById = useMemo(
+    () => pluginDisplayNamesById(projectPlugins),
+    [projectPlugins],
   );
   // A chat that carries its plugins through a hidden environment shows their
   // servers beside the selected ones: they run on every turn, so the Apps
@@ -1799,6 +1967,7 @@ export function PlaygroundMain({
     (
       hostId: string | null | undefined,
       hostConfig: PluginExtensionsHostConfig | null | undefined,
+      servers: typeof compareExtensionServers = compareExtensionServers,
     ) => {
       if (
         !extensionsFlag ||
@@ -1818,8 +1987,11 @@ export function PlaygroundMain({
           projectId: convexProjectId,
           hostId,
         },
-        servers: compareExtensionServers,
+        servers,
         capabilities: resolved.capabilities,
+        displayBehavior: hostConfig
+          ? displayBehaviorForHost(hostConfig)
+          : displayBehavior,
         profile: pluginExtensionProfileForHost(hostConfig),
       };
     },
@@ -1829,6 +2001,7 @@ export function PlaygroundMain({
       currentUserForSender?._id,
       convexProjectId,
       pluginExtensions,
+      displayBehavior,
       compareExtensionServers,
     ],
   );
@@ -1855,6 +2028,10 @@ export function PlaygroundMain({
   const sendPluginOnboardingRef = useRef<SendPluginOnboarding>(async () => {
     throw new Error("Onboarding is unavailable");
   });
+  // Assigned once the new-chat transition below exists.
+  const beginNewChatRef = useRef<ExtensionPorts["beginNewChat"]>(
+    async () => null,
+  );
   // In the Playground, extension state lives in ExtensionWorkspaceProvider
   // (around the whole panel group) and this center only registers its scope.
   // Embedded chats without the provider keep their own inline workspace.
@@ -1863,6 +2040,8 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: ((...args) =>
         runPluginOnboardingRef.current(...args)) as RunPluginOnboarding,
+      beginNewChat: (isCurrent: () => boolean) =>
+        beginNewChatRef.current(isCurrent),
     }),
     [dispatchPluginMessage],
   );
@@ -1889,9 +2068,14 @@ export function PlaygroundMain({
           identity: extensionIdentity,
           chatId: chatSessionId,
           servers: extensionServers,
+          ...(hiddenEnvironmentActive && hiddenEnvironment.environmentId && hiddenPluginServers.length
+            ? { includedPluginTools: { environmentId: hiddenEnvironment.environmentId, serverIds: hiddenPluginServers.map((server) => server.serverId), includeAppOnly: previewedHost?.config?.respectToolVisibility === false } }
+            : {}),
           // The client's per-extension toggles (C1). One switched off removes
           // only that capability; running Apps keep running.
           capabilities: pluginExtensions.capabilities,
+          displayBehavior,
+          entrypointWithoutFullscreen,
           profile: pluginExtensionProfileForHost(previewedHost?.config),
           // A save re-checks open Apps; it never reloads them by itself.
           hostRevision: previewedHost?.config?.id,
@@ -1908,12 +2092,20 @@ export function PlaygroundMain({
       sendMessage: dispatchPluginMessage,
       runOnboarding: (...args) => runPluginOnboardingRef.current(...args),
       capabilities: pluginExtensions.capabilities,
+      displayBehavior,
       launchProfile: pluginExtensionProfileForHost(previewedHost?.config),
       hostRevision: previewedHost?.config?.id,
     },
   );
   const extensionOwners = useExtensionOwners();
   const setGlobalTakeoverSlot = useExtensionSlot("takeover");
+  const setInlineAppSlot = useExtensionSlot("inline");
+  // A chat with an entry App opened inline shows the thread layout, with the
+  // App at its top and the footer composer, though it has no messages yet.
+  const showsInlineApp =
+    useExtensionWorkspaceState(
+      (state) => !!state.chats[chatSessionId]?.apps.some((row) => row.inline),
+    ) === true;
   const releaseExtensionChat = useExtensionChatRelease();
   // A global App takes the client area over; closing it returns to the chat.
   const globalTakeoverOpen =
@@ -1933,6 +2125,14 @@ export function PlaygroundMain({
     : inlineThreadApps;
   const globalOwnerApps =
     hasExtensionProvider && extensionScope ? extensionOwners.global : null;
+  const retainedGlobalScope = extensionOwners.global?.scope;
+  const globalFormScope = hasExtensionProvider && !isSigningOut &&
+    (extensionIdentity || extensionIdentityPending) && retainedGlobalScope &&
+    retainedGlobalScope.projectId === convexProjectId &&
+    retainedGlobalScope.hostId === previewedHostId &&
+    (!extensionIdentity || retainedGlobalScope.pluginWorkspace.workspaceId ===
+      globalOwnerWorkspace(extensionIdentity).workspaceId)
+      ? retainedGlobalScope : null;
   const threadApps = {
     fileActions: chatOwnerApps?.fileActions ?? null,
     approveMention: (
@@ -1981,9 +2181,10 @@ export function PlaygroundMain({
     // not tear down running model Apps, only stop the next turn and the
     // composer from carrying their (now refused) context references.
     pluginExtensions.capabilities.modelContext,
-    pluginExtensions.capabilities.displayModes,
+    displayBehavior,
+    pluginExtensionProfileForHost(previewedHost?.config),
   );
-  usePublishPluginIcons(pluginIconsById);
+  usePublishPluginIcons(pluginIconsById, pluginNamesById);
   const composerMentions = useComposerMentions(
     pluginExtensions.capabilities.mentions ? extensionScope : null,
     extensionServers,
@@ -2025,11 +2226,6 @@ export function PlaygroundMain({
   const hostBackgroundColor =
     getScenarioChatBackground(hostStyle, effectiveThreadTheme) ??
     DEFAULT_HOST_STYLE.chatUi.resolveChatBackground(effectiveThreadTheme);
-  const hostShellStyle = getScenarioShellStyle(
-    hostStyle,
-    effectiveThreadTheme,
-    chatUiOverride,
-  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -2154,52 +2350,26 @@ export function PlaygroundMain({
   // affordance also drives the "reset a stale persisted multiModelEnabled"
   // effect below, so it cannot be re-enabled behind the environment's back.
   const canEnableMultiModel =
+    !tester &&
     enableMultiModelChat &&
     availableModels.length > 1 &&
     !isSharedSession &&
     !isEnvironmentMode;
 
-  // Phase 4 (multi-host plan): read multi-host state in parallel to
-  // multi-model. Lead host is derived inside `usePersistedHost` from the
-  // per-project `usePreviewedHostId`, so `selectedHostIds[0]` is always
-  // the lead.
-  //
-  // This is the SINGLE source of truth for picker + grid. The chat-input
-  // `ClientSelector` (`clientSelector` below) is a controlled component —
-  // it does NOT call `usePersistedHost` itself. Two sibling hooks
-  // wouldn't stay in sync because `selected-host-storage.ts` doesn't
-  // dispatch same-tab events on `saveSelectedHostIds` (deliberate, per
-  // the Phase-1 multi-select regression fix); lifting state to this
-  // common parent is the correct fix instead of adding event traffic.
-  const {
-    selectedHostIds,
-    setSelectedHostIds,
-    multiHostEnabled,
-    setMultiHostEnabled,
-  } = usePersistedHost(multiHostProjectId);
 
-  // Environment mode ⇒ single host, always.
-  //
-  //  1. Multi-host comparison is switched OFF. Comparison runs one turn against
-  //     several hosts; an environment names exactly one, so the two states
-  //     cannot both be true without one of them lying about what ran.
-  //  2. The environment's host becomes the PREVIEWED host — for PRESENTATION
-  //     only (model chip, harness built-ins, host chrome). It is not sent as a
-  //     `hostId` on the wire; `executionTarget` is the single statement about
-  //     what executes, and the server re-resolves this host from the
-  //     environment itself.
+  // An environment's chat presents the environment's host as the PREVIEWED
+  // host (model chip, harness built-ins, host chrome). It is not sent as a
+  // `hostId` on the wire; `executionTarget` is the single statement about
+  // what executes, and the server re-resolves this host from the environment.
   const environmentHostId = playgroundEnvironment.preview?.host.hostId ?? null;
   useEffect(() => {
     if (!isEnvironmentMode) return;
-    if (multiHostEnabled) setMultiHostEnabled(false);
     if (environmentHostId && previewedHostId !== environmentHostId) {
       setPreviewedHostId(environmentHostId);
     }
   }, [
     isEnvironmentMode,
     environmentHostId,
-    multiHostEnabled,
-    setMultiHostEnabled,
     previewedHostId,
     setPreviewedHostId,
   ]);
@@ -2282,21 +2452,27 @@ export function PlaygroundMain({
   // Fixed 3-slot `useHost` calls (the multi-host cap is 3). Each slot
   // short-circuits on null id so passing fewer ids is free. See
   // `usePlaygroundHostSlots` for the rules-of-hooks reasoning.
+  const compareEnvironments = useCompareEnvironmentPanes({
+    projectId: multiHostProjectId,
+    panes: comparePanes,
+    hosts: hostList,
+  });
+  // An environment pane loads its environment's client.
   const hostSlots = usePlaygroundHostSlots(
     isConvexAuthenticated,
-    selectedHostIds,
+    comparePanes.map(
+      (pane) =>
+        paneHostId(pane) ??
+        compareEnvironments.byPane.get(pane.paneId)?.preview?.host.hostId,
+    ),
   );
-  // `!isEnvironmentMode`: comparison and environment mode are mutually
-  // exclusive in v1 (see the effect above). Withdrawing the affordance also
-  // drives the existing "reset a stale persisted multiHostEnabled" effect
-  // below, so the two can't be re-enabled behind the environment's back.
-  const canEnableMultiHost =
-    hostList.length > 1 && !isSharedSession && !isEnvironmentMode;
+  const canEnableMultiHost = hostList.length > 1 && !isSharedSession;
 
   // The "is the user actually comparing right now" signal for render-
   // gating and mutual-exclusion, computed fresh every render from
   // `selectedHostIds` (reliably persisted — see
-  // `usePlaygroundClientInitialization` and `usePersistedHost`) rather than trusted from the separately-persisted
+  // `usePlaygroundClientInitialization` and `useComparePanes`) rather than
+  // trusted from the separately-persisted
   // `multiHostEnabled` flag. Removing the "Multiple clients" toggle
   // (PUR-11) means there's no longer any legitimate way to have 2+ hosts
   // checked with comparison intentionally off, so `multiHostEnabled` no
@@ -2310,30 +2486,76 @@ export function PlaygroundMain({
   // host list caught up, since the ref doesn't survive a remount).
   // Deriving this fresh from already-correct persisted data has no state
   // to fall out of sync in the first place, including across a remount.
+  // A study is one chat. Saved Playground panes would otherwise render a
+  // comparison whose panes do not carry the study's session.
   const isComparingHosts =
-    !isSharedSession && !isEnvironmentMode && selectedHostIds.length > 1;
-
+    !tester && !isSharedSession && comparePanes.length > 1;
+  // Whether this page load came back from a comparison's sign-in. Read once:
+  // a Connect click on this page adds the request before it redirects.
+  const [comparisonRecoveryRequested, setComparisonRecoveryRequested] =
+    useState(hasComparisonAuthRecoveryRequest);
+  const comparisonRecoveryMissing =
+    comparisonRecoveryRequested && !comparisonRecovery;
+  const comparisonRecoveryGroupId = comparisonRecovery?.id ?? chatSessionId;
+  const comparisonLayoutRestoredRef = useRef(false);
+  useEffect(() => {
+    if (!comparisonRecovery || comparisonLayoutRestoredRef.current) return;
+    if (comparisonRecovery.projectId !== (convexProjectId ?? "local")) return;
+    comparisonLayoutRestoredRef.current = true;
+    setMultiModelEnabled(comparisonRecovery.multiModelEnabled);
+    if (comparisonRecovery.modelSelections)
+      setCompareSelections(comparisonRecovery.modelSelections);
+    if (comparisonRecovery.version === 2 && comparisonRecovery.panes.length > 0)
+      restorePanes(comparisonRecovery.panes);
+    else setSelectedHostIds(comparisonRecovery.hostIds);
+  }, [
+    comparisonRecovery,
+    convexProjectId,
+    restorePanes,
+    setMultiModelEnabled,
+    setCompareSelections,
+    setSelectedHostIds,
+  ]);
   const isMultiHostMode = isComparingHosts && !viewingHistoryReplay;
   const leadHost = hostSlots[0].host;
-  const clientResolutions = useMemo(
+  const { status: hostedCatalogStatus } = useHostedModelCatalog();
+  // Just after a page load (the sign-in redirect is one) a pane's saved model
+  // can be missing only because these have not loaded yet.
+  const compareModelsSettling =
+    isAuthLoading ||
+    !isSessionBootstrapComplete ||
+    hostedCatalogStatus === "loading";
+  const currentClientResolutions = useMemo(
     () =>
       !isMultiHostMode
         ? []
-        : selectedHostIds.map((hostId, index) =>
-            resolvePlaygroundClientColumn({
-              hostId,
+        : comparePanes.map((pane, index) => {
+            const input = {
+              paneId: pane.paneId,
               slot: hostSlots[index],
               hosts: hostList,
-              models: availableModels,
+              // Unfiltered: each column applies its own harness.
+              models: catalogModels,
               orgConfig: hostedOrgModelConfig,
-            }),
-          ),
+              pickedSelection: pane.pickedSelection,
+            };
+            const environment = compareEnvironments.byPane.get(pane.paneId);
+            return environment
+              ? resolveEnvironmentPaneColumn({ ...input, index, environment })
+              : resolvePlaygroundClientColumn({
+                  ...input,
+                  hostId: paneHostId(pane) ?? "",
+                  modelsSettling: compareModelsSettling,
+                });
+          }),
     [
       isMultiHostMode,
-      selectedHostIds,
+      comparePanes,
+      compareEnvironments.byPane,
       hostList,
-      availableModels,
+      catalogModels,
       hostedOrgModelConfig,
+      compareModelsSettling,
       hostSlots[0].host,
       hostSlots[0].isLoading,
       hostSlots[1].host,
@@ -2342,12 +2564,139 @@ export function PlaygroundMain({
       hostSlots[2].isLoading,
     ],
   );
+  const clientResolutions = useRetainedCompareClients({
+    scope: multiHostProjectId && (compareAuthUser?.id || currentUserForSender?._id)
+      ? JSON.stringify([compareAuthUser?.id ?? currentUserForSender?._id, multiHostProjectId, multiModelSessionGeneration]) : null,
+    resolutions: currentClientResolutions, slots: hostSlots,
+    running: new Set(Object.entries(compareSummaries).filter(([, value]) => value.status === "running").map(([id]) => id)),
+    paused: !isConvexAuthenticated || !isSessionBootstrapComplete,
+    canConfirmMissing: isConvexAuthenticated && isSessionBootstrapComplete,
+  });
+  useEffect(
+    () =>
+      registerComparisonLayout(comparisonRecoveryGroupId, {
+        projectId: convexProjectId ?? "local",
+        multiModelEnabled,
+        modelSelections: compareSelections,
+        hostIds: selectedHostIds,
+        panes: isComparingHosts ? [...comparePanes] : [],
+        unavailablePaneIds: clientResolutions.flatMap((r) =>
+          r.status === "unavailable" ? [r.compareId] : [],
+        ),
+        selectedServers,
+      }),
+    [
+      comparisonRecoveryGroupId,
+      clientResolutions,
+      isComparingHosts,
+      comparePanes,
+      convexProjectId,
+      multiModelEnabled,
+      compareSelections,
+      selectedHostIds,
+      selectedServers,
+    ],
+  );
+
   const multiHostColumns = clientResolutions.flatMap((result) =>
     result.status === "ready" ? [result.column] : [],
   );
+  const skillsSection = useComparePaneSkillsSection(paneMember ? convexProjectId : null, environmentsEnabled);
+  // A pane on a new target starts a new conversation.
+  const handlePaneTarget = useCallback(
+    (paneId: string, target: ComparePaneTarget) => {
+      delete compareTranscriptsRef.current[
+        `host:${activeProjectId}:${multiModelSessionGeneration}:${paneId}`
+      ];
+      setPaneTarget(paneId, target);
+    },
+    [activeProjectId, multiModelSessionGeneration, setPaneTarget],
+  );
+  const connectedServerNames = useMemo(
+    () =>
+      Object.keys(servers).filter(
+        (name) => servers[name]?.connectionStatus === "connected",
+      ),
+    [servers],
+  );
+  const paneControls = useComparePaneControls({
+    sections: skillsSection,
+    active: isMultiHostMode,
+    panes: comparePanes,
+    resolutions: clientResolutions,
+    sharedServers: selectedServers,
+    connectedServers: connectedServerNames,
+    serverIdByName: serversByName,
+    orgConfig: hostedOrgModelConfig,
+    restorePanes,
+    setPaneOverrides,
+    setPanePick,
+    setPaneTarget: handlePaneTarget,
+    targets: compareEnvironments.targets,
+    paneEnvironments: compareEnvironments.byPane,
+  });
+  // A client pane with its own servers shows their Apps, not the chat's.
+  const paneLaneServers = useMemo(
+    () =>
+      new Map(
+        comparePanes.flatMap((pane) => {
+          const names = paneControls.paneServers(pane.paneId)?.names;
+          if (!names) return [];
+          const laneServers = buildExtensionServers({
+            isEnvironmentMode: false,
+            environmentServers: [],
+            selectedServers: names,
+            serversByName,
+            servers,
+            pluginServers: NO_PLUGIN_SERVERS,
+          });
+          return [[pane.paneId, laneServers] as const];
+        }),
+      ),
+    [comparePanes, paneControls.paneServers, serversByName, servers],
+  );
+  // The id alone: the panes themselves are republished on every render.
+  const selectedComparePaneId = useComparePaneStore(
+    (state) => state.selectedPaneId ?? state.panes[0]?.paneId ?? null,
+  );
+  const compareHandoff = useCompareEnvironmentHandoff({
+    panes: comparePanes,
+    restorePanes,
+    setSelectedHostIds,
+    pageEnvironmentId: playgroundEnvironment.isEnvironmentMode
+      ? playgroundEnvironment.environmentId
+      : null,
+    selectEnvironment: playgroundEnvironment.selectEnvironment,
+    clearEnvironment: playgroundEnvironment.clearEnvironment,
+    environmentTargets: compareEnvironments.targets.environments,
+  });
+  const retainedClientsPaused = clientResolutions.some((client) => client.status === "ready" && !!client.pausedReason);
   const unavailableClients = clientResolutions.filter(
     (result) => result.status !== "ready",
   );
+  // A restored host column whose host no longer exists renders no card, so
+  // nothing else settles it. Only a definite answer counts: signed in, the
+  // list loaded, and the slot's query done without a host.
+  const absentRestoredHostIds =
+    comparisonRecovery && isConvexAuthenticated && !hostListLoading
+      ? clientResolutions.flatMap((resolution, index) =>
+          resolution.status === "unavailable" &&
+          !hostSlots[index].host &&
+          !hostSlots[index].isLoading
+            ? [resolution.compareId]
+            : [],
+        )
+      : [];
+  // A string, so the effect runs when the set changes, not on every render.
+  const absentRestoredHostKey = absentRestoredHostIds.join("\n");
+  useEffect(() => {
+    if (!absentRestoredHostKey) return;
+    for (const compareId of absentRestoredHostKey.split("\n"))
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "host",
+        compareId,
+      });
+  }, [absentRestoredHostKey, convexProjectId]);
 
   // When viewing a history session the transcript lives on the single chat
   // session; compare layout would override that render. Matches ChatTabV2.
@@ -2363,7 +2712,7 @@ export function PlaygroundMain({
   // key in local mode has no server-side check to refuse it.
   const submitBlocked =
     baseSubmitBlocked ||
-    (isMultiHostMode && unavailableClients.length > 0) ||
+    (isMultiHostMode && (unavailableClients.length > 0 || retainedClientsPaused)) ||
     (isMultiModelMode &&
       modelCompareCards.some((entry) => isOrgKeysDisallowedRow(entry.model)));
   // Unified "the compare grid is live" flag. Submit/stop/deterministic-
@@ -2457,6 +2806,7 @@ export function PlaygroundMain({
     [multiModelSessionGeneration],
   );
   const ensureCompareReady = () => {
+    if (retainedClientsPaused) return false;
     const states = compareLanes.map(({ id }) =>
       compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`),
     );
@@ -2483,14 +2833,7 @@ export function PlaygroundMain({
   // inline its own copy of that logic, which read neither the member's saved
   // Browser setting nor its loading state — see
   // `usePlaygroundBrowserToolSlots`.
-  const columnBuiltInToolIds = usePlaygroundBrowserToolSlots(
-    multiHostColumns.map((column) => ({
-      hostId: column.compareId,
-      config: column.hostConfig,
-    })),
-    playgroundBrowserEngine.engine,
-    convexProjectId,
-  );
+  const columnBrowsers = usePlaygroundBrowserToolSlots(multiHostColumns, comparePanes, convexProjectId);
 
   // ── The same question, asked once per COLUMN ─────────────────────────────
   //
@@ -2506,21 +2849,19 @@ export function PlaygroundMain({
   // that could never unblock it — the local target is not a thing that lane
   // can ever have.
   //
-  // Keyed by `compareId` (the column's hostId) rather than by harness, so a
+  // Keyed by `compareId` (the column's pane) rather than by harness, so a
   // grid comparing two Claude Code hosts still gets one entry each.
   const localHarnessExecutionByColumn = useMemo(() => {
     const byColumn = new Map<string, typeof localHarnessExecutionOption>();
     for (const column of multiHostColumns) {
-      const columnHarness = (column.hostConfig?.agentLoop ?? column.hostConfig?.harness) ?? null;
+      const columnHarness = effectiveHarnessId(column.hostConfig);
       const columnInScope =
         isLocalHarnessScope({
-          // This column's own host, not the previewed one.
+          // This column's own host and environment, not the page's.
           harnessId: columnHarness,
           hostedMode: HOSTED_MODE,
-          environmentId: isEnvironmentMode
-            ? (playgroundEnvironment.environmentId ?? null)
-            : null,
-          requiresWebChatApi: isEnvironmentMode,
+          environmentId: column.environmentId ?? null,
+          requiresWebChatApi: !!column.environmentId,
           sharedRun: isSharedSession || replayingAnotherUsersThread,
         }) &&
         // The page has ONE controller, for the previewed host's harness, and
@@ -2537,8 +2878,6 @@ export function PlaygroundMain({
     return byColumn;
   }, [
     multiHostColumns,
-    isEnvironmentMode,
-    playgroundEnvironment.environmentId,
     isSharedSession,
     replayingAnotherUsersThread,
     localHarness.requestedTarget,
@@ -2649,7 +2988,8 @@ export function PlaygroundMain({
   }, [isMultiModelMode, modelCompareCards]);
 
   const effectiveHasMessages = isMultiModelLayoutMode
-    ? Object.values(compareHasMessages).some(Boolean)
+    ? Object.values(compareHasMessages).some(Boolean) ||
+      Boolean(comparisonRecovery?.columns.some((column) => column.hasMessages))
     : !isThreadEmpty;
   const preludeTraceEnvelope = useMemo(
     () =>
@@ -2665,7 +3005,9 @@ export function PlaygroundMain({
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
-    traceViewsSupported && (!isMultiModelLayoutMode || !effectiveHasMessages);
+    !tester &&
+    traceViewsSupported &&
+    (!isMultiModelLayoutMode || !effectiveHasMessages);
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -2681,6 +3023,7 @@ export function PlaygroundMain({
     useChatStopControls({
       isCompareMode,
       isStreaming,
+      canStopApproval,
       multiModelSummaries: compareSummaries,
       setStopBroadcastRequestId,
       stop,
@@ -2707,6 +3050,12 @@ export function PlaygroundMain({
     isThreadEmpty: !effectiveHasMessages,
   });
   composerOnResetRef.current = composer.onSessionReset;
+  // A new hosted harness chat's computer is set up while its first message is typed.
+  // Compare sends on the cards' conversations, not the hidden root session.
+  useHarnessBoxPreparation(
+    isCompareMode ? null : harnessBoxPreparation,
+    composer.input,
+  );
   // Project Environments (Phase 2). Selecting an environment activates the new
   // `executionTarget` synchronously, but the things that must agree with it do
   // not land in the same tick: the chat scope re-keys on the new target, and
@@ -2760,12 +3109,18 @@ export function PlaygroundMain({
 
   // Ongoing App admission excludes only this action's own connection preparation.
   // Read-only, target, history and streaming denials remain live across awaits.
+  const studyComposerBlocked = tester?.composerBlocked === true;
   const pluginActionInteractivity = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: apiSessionViewOnly || disableChatInput || submitBlocked,
+    composerDisabled:
+      apiSessionViewOnly ||
+      disableChatInput ||
+      submitBlocked ||
+      studyComposerBlocked,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
+      studyComposerBlocked ||
       composer.submitGatedByServer ||
       isEnvironmentTargetPending ||
       loadingHistorySessionId !== null ||
@@ -2779,10 +3134,12 @@ export function PlaygroundMain({
       apiSessionViewOnly ||
       disableChatInput ||
       submitBlocked ||
+      studyComposerBlocked ||
       isPreparingServerForSend,
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
+      studyComposerBlocked ||
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
       isEnvironmentTargetPending ||
@@ -3100,7 +3457,10 @@ export function PlaygroundMain({
     apiSessionViewOnly ||
     needsConversationTargetAck ||
     loadingHistorySessionId !== null ||
-    restoringTarget !== null;
+    restoringTarget !== null ||
+    // The composer reads this through `sendBlocked`. Widget follow-ups, edits,
+    // and App messages read the ref, so the study block has to be here too.
+    studyComposerBlocked;
   const acknowledgeConversationTarget = useCallback(() => {
     setRestoredConversation((previous) =>
       previous ? { ...previous, acknowledged: true } : previous,
@@ -3218,6 +3578,69 @@ export function PlaygroundMain({
     },
     [playgroundServerSelectorProps, serverName, servers, serversById],
   );
+
+  const comparisonSelectionShownRef = useRef(false);
+  useEffect(() => {
+    if (!comparisonRecovery || comparisonServersRestored) return;
+    const same = (names: readonly string[], expected: readonly string[]) =>
+      names.length === expected.length &&
+      expected.every((name) => names.includes(name));
+    const saved = comparisonRecovery.selectedServers;
+    const live =
+      multiSelectedServerNames.length > 0
+        ? multiSelectedServerNames
+        : serverName && servers[serverName]?.connectionStatus === "connected"
+          ? [serverName]
+          : [];
+    const restorable = resolveRestorableServerNames(
+      saved,
+      serversById,
+      Object.keys(servers),
+    );
+    // A saved server that was removed or renamed cannot come back, so the
+    // ones that still exist are the whole restore.
+    if (
+      same(live, saved) ||
+      (restorable.length > 0 && same(live, restorable))
+    ) {
+      setComparisonServersRestored(true);
+      return;
+    }
+    // Once the selector shows the saved servers, a different choice is the
+    // user's own. It wins even while a saved server never reconnects.
+    const multi = playgroundServerSelectorProps?.selectedMultipleServers;
+    const chosen =
+      Array.isArray(multi) && multi.length > 0
+        ? multi
+        : serverName
+          ? [serverName]
+          : [];
+    if (restorable.length > 0 && same(chosen, restorable)) {
+      comparisonSelectionShownRef.current = true;
+    } else if (comparisonSelectionShownRef.current) {
+      setComparisonServersRestored(true);
+    }
+  }, [
+    comparisonRecovery,
+    comparisonServersRestored,
+    multiSelectedServerNames,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+    serversById,
+  ]);
+
+  const comparisonServersRestoredRef = useRef(false);
+  useEffect(() => {
+    if (
+      !comparisonRecovery ||
+      comparisonServersRestoredRef.current ||
+      Object.keys(servers).length === 0
+    )
+      return;
+    comparisonServersRestoredRef.current = true;
+    restoreHistoryServerSelection(comparisonRecovery.selectedServers);
+  }, [comparisonRecovery, servers, restoreHistoryServerSelection]);
 
   const loadHistorySession = useCallback(
     async (
@@ -3492,29 +3915,21 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
-  const currentHistoryTargetRef = useRef({
-    chatSessionId,
-    projectId: convexProjectId,
-  });
-  currentHistoryTargetRef.current = {
-    chatSessionId,
-    projectId: convexProjectId,
-  };
+  const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
 
   const refreshCurrentHistorySession = useCallback(
     async ({ retries = 0, markRead = false } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
-          const detail = await getChatHistoryDetail({
+          const detail = await getChatHistoryState({
             chatSessionId,
             projectId: convexProjectId ?? undefined,
           });
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
-            currentHistoryTargetRef.current.chatSessionId !== chatSessionId ||
-            currentHistoryTargetRef.current.projectId !== convexProjectId ||
+            !isCurrentHistoryTarget({ chatSessionId, projectId: convexProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           )
             return null;
@@ -3561,6 +3976,7 @@ export function PlaygroundMain({
       activeHistorySessionId,
       chatSessionId,
       convexProjectId,
+      isCurrentHistoryTarget,
       markHistorySessionRead,
       syncResumedVersion,
     ],
@@ -3579,10 +3995,22 @@ export function PlaygroundMain({
    */
   const ensureThreadReadyForSend = useCallback(async () => {
     if (!activeHistorySessionId) return true;
+    if (
+      presendStateIsCurrent({
+        activeHistorySessionId,
+        chatSessionId,
+        live: reactiveHistorySession,
+        resumedVersion,
+        visibility: pendingDirectVisibility,
+      })
+    ) {
+      return true;
+    }
 
+    const target = { chatSessionId, projectId: convexProjectId };
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await refreshCurrentHistorySession();
+      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
     } catch (error) {
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
@@ -3592,6 +4020,9 @@ export function PlaygroundMain({
       return false;
     }
     if (detail) return true;
+    // Another thread opened while the read was in flight: this send belonged
+    // to the one that closed, so drop it rather than detach the open thread.
+    if (!isCurrentHistoryTarget(target)) return false;
 
     detachHistorySession(
       "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
@@ -3599,8 +4030,14 @@ export function PlaygroundMain({
     return false;
   }, [
     activeHistorySessionId,
+    chatSessionId,
+    convexProjectId,
     detachHistorySession,
+    isCurrentHistoryTarget,
+    pendingDirectVisibility,
+    reactiveHistorySession,
     refreshCurrentHistorySession,
+    resumedVersion,
   ]);
 
   const handleSelectThread = useCallback(
@@ -3818,6 +4255,9 @@ export function PlaygroundMain({
   }, [availableModels, chatSessionId, selectedModel, setSelectedModel]);
 
   const resetMultiModelSessions = useCallback(() => {
+    clearComparisonAuthRecovery();
+    setComparisonRecovery(null);
+    setComparisonRecoveryRequested(false);
     clearMultiModelUiState();
     compareTranscriptsRef.current = {};
     setMultiModelSessionGeneration((previous) => previous + 1);
@@ -3872,6 +4312,7 @@ export function PlaygroundMain({
     ]),
     begin: (isCurrent) => handleNewChat({ isCurrent }),
   });
+  beginNewChatRef.current = extensionThreadTransition.begin;
 
   // Archive-all clears the composer only once its archive request returns,
   // so App drafts wait for it as they wait for the discard dialog.
@@ -3940,8 +4381,11 @@ export function PlaygroundMain({
         session._id === activeHistorySessionId
       ) {
         try {
+          const target = { chatSessionId, projectId: convexProjectId };
           const detail = await refreshCurrentHistorySession();
-          if (!detail) {
+          // No row is "no longer shared" only while that thread is still the
+          // open one; a read that outlived it says nothing about the new one.
+          if (!detail && isCurrentHistoryTarget(target)) {
             detachHistorySession(
               "This chat is no longer shared with you. Continuing locally in a new thread.",
             );
@@ -3956,7 +4400,10 @@ export function PlaygroundMain({
     },
     [
       activeHistorySessionId,
+      chatSessionId,
+      convexProjectId,
       detachHistorySession,
+      isCurrentHistoryTarget,
       refreshCurrentHistorySession,
       releaseExtensionChat,
       extensionIdentity,
@@ -4316,6 +4763,15 @@ export function PlaygroundMain({
     ) {
       return true;
     }
+    // On the multi-select Playground, `serverName` is the app-wide selection,
+    // which may not be one of the servers this chat runs against. Only a
+    // server the user added here may hold up the send.
+    if (
+      playgroundServerSelectorProps?.isMultiSelectEnabled &&
+      !playgroundServerSelectorProps.selectedMultipleServers.includes(serverName)
+    ) {
+      return true;
+    }
 
     const connectionStatus = servers[serverName]?.connectionStatus;
     if (connectionStatus === "connected") {
@@ -4348,7 +4804,13 @@ export function PlaygroundMain({
     } finally {
       setIsPreparingServerForSend(false);
     }
-  }, [ensureServersReady, serverName, servers]);
+  }, [
+    ensureServersReady,
+    isEnvironmentMode,
+    playgroundServerSelectorProps,
+    serverName,
+    servers,
+  ]);
 
   const localAutoApprove = useLocalAutoApproveConsent({
     enabled: localHarnessRequested && requireToolApproval === false,
@@ -4390,7 +4852,11 @@ export function PlaygroundMain({
         try {
           return await localAutoApprove.ensure();
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+          );
           return false;
         }
       }
@@ -4409,13 +4875,27 @@ export function PlaygroundMain({
         );
         return await localAutoApprove.ensure();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : `${localHarness.harnessName ?? "Claude Code"} is not ready. Retry setup from the client settings.`,
+        );
         return false;
       } finally {
         localHarnessPreparingRef.current = false;
         setLocalHarnessPreparing(false);
       }
-    }, [localHarnessRequested, localHarnessInScope, convexProjectId, localHarness.phase, localHarness.harnessId, localHarness.harnessName, localAutoApprove.ensure]);
+    },
+    [
+      localHarnessRequested,
+      localHarnessInScope,
+      convexProjectId,
+      localHarness.phase,
+      localHarness.harnessId,
+      localHarness.harnessName,
+      localAutoApprove.ensure,
+    ],
+  );
 
   const extensionOwnerScope = JSON.stringify([
     currentUserForSender?._id,
@@ -4482,7 +4962,7 @@ export function PlaygroundMain({
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
-      void (async () => {
+      return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
@@ -4516,12 +4996,36 @@ export function PlaygroundMain({
           composer.setInput(text);
           return;
         }
-        sendMessage({
+        // The first check is stale once the gates above have yielded. A study
+        // block, a target disclosure, or a history restore that landed in that
+        // window has to win, or the follow-up still goes out.
+        if (conversationSendBlockedRef.current) {
+          return;
+        }
+        const sentContext = modelContextQueue;
+        const sent = await sendMessage({
           text,
           metadata: outgoingSenderMetadata,
-          widgetModelContext: modelContextQueue,
+          widgetModelContext: sentContext,
+          // The gates above can finish and this call can still await server
+          // preparation. The study block has to be read again at dispatch.
+          isCurrent: () => !conversationSendBlockedRef.current,
         });
-        setModelContextQueue([]);
+        // A refusal keeps the queue. A success drops only the objects this
+        // request carried: a widget can replace or add entries during the
+        // preparation above, and those were not sent.
+        if (sent) {
+          setModelContextQueue((current) =>
+            current.filter(
+              (entry) =>
+                !sentContext.some(
+                  (sentEntry) =>
+                    sentEntry.toolCallId === entry.toolCallId &&
+                    sentEntry === entry,
+                ),
+            ),
+          );
+        }
       })();
     },
     [
@@ -4600,22 +5104,6 @@ export function PlaygroundMain({
   useEffect(() => {
     onStreamingChange?.(isRunBusy);
   }, [isRunBusy, onStreamingChange]);
-
-  // Handle model context updates from widgets (SEP-1865 ui/update-model-context)
-  const handleModelContextUpdate = useCallback(
-    (
-      toolCallId: string,
-      context: {
-        content?: ContentBlock[];
-        structuredContent?: Record<string, unknown>;
-      },
-    ) => {
-      setModelContextQueue((previous) =>
-        upsertWidgetModelContextEntry(previous, toolCallId, context),
-      );
-    },
-    [],
-  );
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
@@ -4773,6 +5261,12 @@ export function PlaygroundMain({
       const next = setCompareCardEffort(compareCards, cardKey, effort);
       if (!next) return;
       compareSeedSourceRef.current[next.key] = cardKey;
+      // The replaced card unmounts, perhaps mid-restore; left unsettled, its
+      // saved column would bring the old effort back on the next reload.
+      markComparisonColumnSettled(convexProjectId ?? "local", {
+        kind: "model",
+        compareId: cardKey,
+      });
       setCompareSelections(next.selections);
       // A new effort is a new comparison key; the phone switcher follows
       // the card rather than falling back to the first one.
@@ -4780,7 +5274,7 @@ export function PlaygroundMain({
         current === `model:${cardKey}` ? `model:${next.key}` : current,
       );
     },
-    [compareCards, setCompareSelections],
+    [compareCards, convexProjectId, setCompareSelections],
   );
 
   // Efforts in the model menu: a model and its effort in one pick; in
@@ -4826,23 +5320,23 @@ export function PlaygroundMain({
       // once the host list caught up afterward `isMultiHostMode` would win
       // over the multi-model the user just turned on, undoing their action
       // with no visible cause.
-      if (enabled && selectedHostIds.length > 1) {
+      if (enabled && comparePanes.length > 1) {
         setMultiHostEnabled(false);
-        setSelectedHostIds([]);
+        restorePanes([]);
       }
     },
     [
       setMultiModelEnabled,
-      selectedHostIds.length,
+      comparePanes.length,
       setMultiHostEnabled,
-      setSelectedHostIds,
+      restorePanes,
     ],
   );
 
   // Phase 4 lightweight mutual exclusion (see comment on
   // `handleMultiModelEnabledChange`). Wired into the chat-input
   // `ClientSelector` via `onMultiHostEnabledChange`. The selector does
-  // not call `usePersistedHost` itself — both the toggle value and its
+  // not call `useComparePanes` itself — both the toggle value and its
   // setter come from THIS component's single hook instance, so any flip
   // propagates without storage events.
   const handleMultiHostEnabledChange = useCallback(
@@ -4857,17 +5351,17 @@ export function PlaygroundMain({
 
   // Lead-host promotion: the picker delegates the "make this host the
   // lead" gesture to the parent so the canonical write
-  // (`replaceLeadHostId(projectId, hostId)`) targets the SAME project
-  // id as `usePersistedHost` above. If the picker called
-  // `replaceLeadHostId` itself with a different project id (e.g.
+  // (`promoteLeadPane(projectId, hostId)`) targets the SAME project
+  // id as `useComparePanes` above. If the picker called
+  // `promoteLeadPane` itself with a different project id (e.g.
   // `activeProjectId` while the grid was scoped to `convexProjectId`),
   // the storage scope would split and the grid wouldn't see the
-  // promotion. See `selected-host-storage.ts` for the canonical-write
+  // promotion. See `compare-panes.ts` for the canonical-write
   // contract.
   const handlePromoteLead = useCallback(
     (hostId: string) => {
       if (!multiHostProjectId) return;
-      replaceLeadHostId(multiHostProjectId, hostId);
+      promoteLeadPane(multiHostProjectId, hostId);
     },
     [multiHostProjectId],
   );
@@ -4929,26 +5423,45 @@ export function PlaygroundMain({
     ],
   );
 
-  // Compare mode ONLY. `broadcastRequest` has no consumer in single-model
-  // mode, but freshly mounted compare cards replay whatever request is stored
-  // here — so a single-model send that wrote this state would be re-sent to
-  // every column when the user later enables compare. Single-model paths call
-  // `trackSendMessage` directly instead.
-  const queueBroadcastRequest = useCallback(
-    (
-      request: Omit<BroadcastChatTurnRequest, "id">,
-      captureProps?: Record<string, unknown>,
-    ) => {
-      if (!ensureCompareReady()) return false;
-      trackSendMessage(captureProps);
-      setBroadcastRequest({
-        ...request,
-        id: Date.now(),
-      });
-      return true;
-    },
-    [trackSendMessage, ensureCompareReady],
-  );
+  const broadcastRecipient = (kind: "host" | "model", compareId: string) => {
+    const client = clientResolutions.find((value) => value.status === "ready" && value.column.compareId === compareId);
+    const laneHostId = client?.status === "ready" ? client.column.hostId : null;
+    return compareBroadcastRecipient({
+      actorId: currentUserForSender?._id ?? null,
+      projectId: convexProjectId ?? activeProjectId ?? null,
+      chatSessionId,
+      generation: multiModelSessionGeneration,
+      kind,
+      hostId: kind === "host" ? laneHostId : (previewedHostId ?? null),
+      compareId,
+      ownerKey: kind === "host" && client?.status === "ready" ? client.ownerKey : null,
+    });
+  };
+  const currentBroadcastRecipients = compareLanes.map(({ id }) => {
+    const kind = isMultiHostMode ? "host" : "model";
+    return broadcastRecipient(kind, id.slice(kind.length + 1));
+  });
+  useLayoutEffect(() => {
+    broadcastRequest?.retainRecipients(currentBroadcastRecipients);
+  }, [broadcastRequest, currentBroadcastRecipients]);
+  const queueBroadcastRequest = (
+    request: Omit<BroadcastChatTurnRequest, "id">,
+    captureProps?: Record<string, unknown>,
+  ) => {
+    if (!isCompareMode || !ensureCompareReady()) return false;
+    trackSendMessage(captureProps);
+    const kind = isMultiHostMode ? "host" : "model";
+    const recipients = compareLanes.map(({ id }) =>
+      broadcastRecipient(kind, id.slice(kind.length + 1)),
+    );
+    setBroadcastRequest(
+      createCompareBroadcast(
+        { ...request, id: ++broadcastSequence.current },
+        recipients,
+      ),
+    );
+    return true;
+  };
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -4982,6 +5495,18 @@ export function PlaygroundMain({
     }
     return map;
   }, [messages]);
+
+  const assistantPromptIndexById = useMemo(
+    () => buildAssistantPromptIndex(messages),
+    [messages],
+  );
+  const turnIdByPromptIndex = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const turn of liveTraceEnvelope?.turns ?? []) {
+      map.set(turn.promptIndex, turn.turnId);
+    }
+    return map;
+  }, [liveTraceEnvelope]);
 
   const recorderPromptIndexSnapshotRef = useRef<{
     key: string;
@@ -5045,6 +5570,12 @@ export function PlaygroundMain({
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
+  if (tester) {
+    placeholder =
+      studyComposerBlocked && tester.composerBlockedReason
+        ? tester.composerBlockedReason
+        : MINIMAL_CHAT_COMPOSER_PLACEHOLDER;
+  }
   if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -5054,7 +5585,8 @@ export function PlaygroundMain({
   }
 
   const shouldShowUpsell = disableForAuthentication && !isAuthLoading;
-  const showMultiModelStarterPrompts = !shouldShowUpsell && !isAuthLoading;
+  const showMultiModelStarterPrompts =
+    !tester && !shouldShowUpsell && !isAuthLoading;
   const handleSignUp = () => {
     track("sign_up_button_clicked", {
       location: "app_builder_tab",
@@ -5075,7 +5607,8 @@ export function PlaygroundMain({
     skillResults.length > 0 ||
     fileAttachments.length > 0;
 
-  // Submit handler — shared by the composer form and eval Quick Run.
+  // Submit handler — the docked composer and the fullscreen overlays reach it
+  // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
     if (isCompareMode && !ensureCompareReady()) return false;
@@ -5093,7 +5626,7 @@ export function PlaygroundMain({
       return false;
     }
     // The composer is disabled in this state, so this is the belt to that
-    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    // brace: Enter-to-send and the fullscreen overlays' Send land here.
     if (conversationSendBlockedRef.current) {
       return false;
     }
@@ -5123,10 +5656,6 @@ export function PlaygroundMain({
     // et al. keep working).
     let composerText = composer.input;
     if (fileAttachments.length > 0 && computerAttachmentsActive) {
-      if (attachmentUploadInFlightRef.current) {
-        return false;
-      }
-      attachmentUploadInFlightRef.current = true;
       try {
         const entries = await computerAttachmentUpload.uploadAttachments(
           fileAttachments.map((a) => a.file),
@@ -5156,8 +5685,6 @@ export function PlaygroundMain({
           );
         }
         return false;
-      } finally {
-        attachmentUploadInFlightRef.current = false;
       }
     }
 
@@ -5165,6 +5692,11 @@ export function PlaygroundMain({
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
+
+    // Re-read after server prep, thread sync, and attachment work. Those
+    // awaits can outlive the check at the top, and a study that blocked in
+    // that window must keep the draft: it is cleared only after a send.
+    if (conversationSendBlockedRef.current) return false;
 
     // EXPLICIT injection (INS-4): a prompt the user expanded and a skill they
     // attached are turn CONTENT, not context the model has to go fetch. The
@@ -5195,12 +5727,9 @@ export function PlaygroundMain({
       setModelContextQueue([]);
     } else {
       trackSendMessage({ single_model_send: true });
-      // Single-model mode has no broadcast consumer, so the prepends have to
-      // land in the thread here — before `sendMessage`, so the request carries
-      // them as history rather than arriving after the model answered.
-      if (prependMessages.length > 0) {
-        setMessages((prev) => [...prev, ...prependMessages]);
-      }
+      // `sendMessage` writes the prompt and skill turns after its own
+      // admission check, so a study block during server preparation neither
+      // sends nor leaves those turns in the thread.
       const sent = await sendMessage({
         text: composerText,
         files,
@@ -5208,6 +5737,9 @@ export function PlaygroundMain({
         widgetModelContext: modelContextQueue,
         pluginMentions: composerMentions.selections,
         extraParts: draftItems.map((item) => item.part),
+        prependMessages:
+          prependMessages.length > 0 ? prependMessages : undefined,
+        isCurrent: () => !conversationSendBlockedRef.current,
       });
       if (!sent) return false;
       composerMentions.clear();
@@ -5243,22 +5775,29 @@ export function PlaygroundMain({
     trackSendMessage,
     modelContextQueue,
     sendMessage,
-    setMessages,
     outgoingSenderMetadata,
     onFirstMessageSent,
     computerAttachmentsActive,
     computerAttachmentUpload,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
-  // first and clears it last.
-  const performComposerSubmit = useCallback(async (): Promise<boolean> => {
-    const release = appMessageDraft.hold();
-    try {
-      return await submitComposer();
-    } finally {
-      release();
-    }
-  }, [submitComposer, appMessageDraft.hold]);
+  // first and clears it last. One submit at a time: the gates above await the
+  // network with the draft still in the box, where a second Enter would send
+  // it again. The lock is released after the draft is cleared; until that
+  // render lands, the committed `isSubmitting` keeps Enter and Send refused.
+  const composerSend = useSingleFlight();
+  const performComposerSubmit = useCallback(
+    async (): Promise<boolean> =>
+      (await composerSend.run(async () => {
+        const release = appMessageDraft.hold();
+        try {
+          return await submitComposer();
+        } finally {
+          release();
+        }
+      })) ?? false,
+    [submitComposer, appMessageDraft.hold, composerSend.run],
+  );
 
   const onboardingDeps = {
     onboardingLiveRef,
@@ -5468,6 +6007,15 @@ export function PlaygroundMain({
     }
     return "";
   }, [messages]);
+  useNativeHarnessHandoff({
+    error,
+    projectId: convexProjectId,
+    hostId: previewedHostId,
+    chatSessionId,
+    refusedText: lastUserMessageText,
+    startNewChat: handleNewChat,
+    setComposerInput: composer.setInput,
+  });
   const handleRetryLastMessage = useCallback(() => {
     if (
       !lastUserMessageText ||
@@ -5476,13 +6024,30 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    trackSendMessage({ single_model_send: true });
-    handleSendFollowUp(lastUserMessageText);
-  }, [lastUserMessageText, sendBlocked, trackSendMessage, handleSendFollowUp]);
+    // A resend of the same text: one at a time, like the composer.
+    void composerSend.run(async () => {
+      trackSendMessage({ single_model_send: true });
+      await handleSendFollowUp(lastUserMessageText);
+    });
+  }, [
+    lastUserMessageText,
+    sendBlocked,
+    trackSendMessage,
+    handleSendFollowUp,
+    composerSend.run,
+  ]);
+  // The study chat used to retry a gateway error page and a concurrency
+  // throttle. Both lift on their own. A spent allowance does not, and the
+  // Playground still offers Retry only for a temporary organization-key refusal.
+  const studyTransientFailure =
+    !!tester &&
+    (errorMessage?.code === UPSTREAM_ERROR_PAGE_CODE ||
+      (errorMessage?.code === "user_rate_limit" &&
+        errorMessage.limitKind === "concurrency"));
   const errorRetryHandler =
     !isCompareMode &&
     lastUserMessageText &&
-    isRetryableOrgKeysRefusal(errorMessage?.code)
+    (isRetryableOrgKeysRefusal(errorMessage?.code) || studyTransientFailure)
       ? handleRetryLastMessage
       : undefined;
 
@@ -5509,7 +6074,10 @@ export function PlaygroundMain({
         composer.setInput(prompt);
         return;
       }
-      void (async () => {
+      // Shares the composer's lock: the chip clears the composer, so one
+      // clicked while a submit is being prepared would wipe that submit's
+      // attachments and the submit would still send its draft.
+      void composerSend.run(async () => {
         if (!(await ensureSelectedServerReadyForChat())) {
           composer.setInput(prompt);
           return;
@@ -5532,11 +6100,17 @@ export function PlaygroundMain({
           })) { composer.setInput(prompt); return; }
         } else {
           trackSendMessage({ single_model_send: true });
-          sendMessage({
+          // Held until dispatch: the chips stay on screen through the hosted
+          // preflight inside sendMessage, and a second click there would send.
+          const sent = await sendMessage({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
           });
+          if (!sent) {
+            composer.setInput(prompt);
+            return;
+          }
         }
         setModelContextQueue([]);
         composer.setInput("");
@@ -5548,10 +6122,11 @@ export function PlaygroundMain({
         revokeFileAttachmentUrls(fileAttachments);
         setFileAttachments([]);
         onFirstMessageSent?.();
-      })();
+      });
     },
     [
       composer,
+      composerSend.run,
       composerDisabled,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
@@ -5831,7 +6406,7 @@ export function PlaygroundMain({
 
   const sharedChatInputProps = {
     hideExecutionControls: isMultiHostMode,
-    showContextPopover: !isMultiHostMode,
+    showContextPopover: tester ? false : !isMultiHostMode,
     mentions: composerMentions.mentions,
     // Forms take the composer's place whether or not mentions are on.
     formWorkspaceId: extensionScope?.pluginWorkspace.workspaceId,
@@ -5848,9 +6423,12 @@ export function PlaygroundMain({
     stop: stopActiveChat,
     disabled: composerDisabled,
     isLoading: isStreamingActive,
+    isSubmitting: composerSend.pending,
+    canStop: !isCompareMode && canStopApproval,
     placeholder,
     currentModel: selectedModel,
     availableModels,
+    harnessScope: modelHarnessScope,
     onModelChange: handleSingleModelChange,
     onModelSelectorOpenChange,
     multiModelEnabled: isMultiModelMode,
@@ -5862,7 +6440,7 @@ export function PlaygroundMain({
     // Client chip in the chat input toolbar (sibling to the model chip).
     // Replaces the standalone "Compare" button that used to live in the
     // playground header. Shared sessions can't switch hosts, so leave it off.
-    clientSelector: isSharedSession
+    clientSelector: tester || isSharedSession
       ? undefined
       : {
           hosts: hostList,
@@ -5874,10 +6452,11 @@ export function PlaygroundMain({
           currentHostId: previewedHostId ?? null,
           selectedHostIds,
           onHostChange: (hostId: string) => setPreviewedHostId(hostId),
-          onSelectedHostIdsChange: setSelectedHostIds,
+          ...compareHandoff,
           onMultiHostEnabledChange: handleMultiHostEnabledChange,
           onPromoteLead: handlePromoteLead,
           enableMultiHost: canEnableMultiHost,
+          maxSelectedHosts: chipClientLimit(comparePanes),
         },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
@@ -5888,6 +6467,7 @@ export function PlaygroundMain({
     submitDisabled:
       disableChatInput ||
       submitBlocked ||
+      studyComposerBlocked ||
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
       // Same environment-transition gate as `sharedChatInputProps` above.
@@ -5913,9 +6493,15 @@ export function PlaygroundMain({
     mcpToolsTokenCount,
     mcpToolsTokenCountLoading,
     mcpToolsTokenCountErrors,
-    connectedOrConnectingServerConfigs: Object.fromEntries(
-      selectedServers.map((name) => [name, { name }]),
-    ),
+    connectedOrConnectingServerConfigs: tester
+      ? tester.serverConfigs
+      : Object.fromEntries(selectedServers.map((name) => [name, { name }])),
+    ...(tester?.optionalServers && tester.optionalServers.length > 0
+      ? {
+          scenarioAttachableServers: tester.optionalServers,
+          onAttachScenarioServer: tester.onEnableOptionalServer,
+        }
+      : {}),
     systemPromptTokenCount: null,
     // Launchers moved to the rails (global Apps on the left, side panels in
     // the right rail's +); the composer keeps @ mentions only.
@@ -5930,7 +6516,7 @@ export function PlaygroundMain({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     pulseSubmit: composer.sendButtonOnboardingPulse,
-    minimalMode: showPostConnectGuide,
+    minimalMode: showPostConnectGuide || Boolean(tester),
     moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
     // ENVIRONMENT MODE swaps the "+" menu's server section wholesale: the
     // backend connects the environment's servers on every turn, so the
@@ -5947,7 +6533,8 @@ export function PlaygroundMain({
           onResetEnvironmentServers:
             playgroundEnvironment.resetServersToEnvironment,
         }
-      : {
+      : ((isMultiHostMode &&
+          paneControls.composerServers(selectedComparePaneId)) || {
           allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
           // The chat's plugins add these to every turn it carries them on,
           // so they show as on and can't be toggled here — and they never
@@ -5959,10 +6546,10 @@ export function PlaygroundMain({
           onReconnectServer: playgroundServerSelectorProps?.onReconnect,
           onDisconnectServer: playgroundServerSelectorProps?.onDisconnect,
           onAddServer: playgroundServerSelectorProps?.onConnect,
-        }),
-    voiceInputContext: convexProjectId
+        })),
+    voiceInputContext: (tester?.hostedContext.projectId ?? convexProjectId)
       ? {
-          projectId: convexProjectId,
+          projectId: tester?.hostedContext.projectId ?? convexProjectId,
           ...(hostedSelectedServerIds.length > 0
             ? { selectedServerIds: hostedSelectedServerIds }
             : {}),
@@ -5984,8 +6571,8 @@ export function PlaygroundMain({
   const isWidgetFullTakeover =
     isMobileFullTakeover || isTabletFullscreenTakeover;
 
-  // ChatGPT and Codex (plugin extensions on): a model-invoked chat App that
-  // goes fullscreen moves into a right-rail tab with "Exit full screen",
+  // ChatGPT, Codex and Claude (Display modes on): a model-invoked chat App
+  // that goes fullscreen moves into a right-rail tab with "Exit full screen",
   // and the chat stays beside it. Other clients keep the full overlay.
   const railFullscreenEligible =
     hasExtensionProvider &&
@@ -6045,6 +6632,7 @@ export function PlaygroundMain({
             onEnter: (app) => extensionStore.setState({ modelFullscreen: app }),
             // Leaving from the App gives a narrow window its chat back.
             onExit: () => dismissRail(extensionStore),
+            reveal: () => revealRail(extensionStore),
           }
         : null,
     [
@@ -6073,15 +6661,25 @@ export function PlaygroundMain({
    * condition that matters here), and the trace-diagnostics shell has its own
    * composer with the device frame behind it set to `display: none`.
    */
+  // A study has no welcome hero. The centered shell would float the shared
+  // composer in the middle of the page, so an empty study uses the same
+  // docked footer as a conversation.
+  const threadLayoutEmpty = isThreadEmpty && !showsInlineApp && !tester;
   const showPinnedConversationTargetNotice =
     !!(apiSessionNotice || conversationTargetNotice) &&
     isWidgetFullTakeover &&
     !showLiveTraceDiagnostics &&
-    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+    !(threadLayoutEmpty && showSingleModelEmptyStateComposer);
 
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <OwnedModelAppPortsProvider value={ownedModelWorkspace.value}>
+      {/* While this chat's plugin extensions run (a scope exists only then), the
+          client's display rules reach every App in it, owned or not. The
+          provider alone isn't enough: it is mounted with the flag off too. */}
+      <ChatAppDisplayBehaviorProvider
+        value={extensionScope ? displayBehavior : undefined}
+      >
       <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
       <ChatDeepLinkProvider value={chatDeepLinks}>
       <WorkspaceFileActionsProvider value={threadApps.fileActions}>
@@ -6103,13 +6701,6 @@ export function PlaygroundMain({
                 : []
             }
           />
-          {/* Forms asked for by global Apps belong to the global owner. */}
-          {extensionScope && extensionIdentity && globalOwnerApps ? (
-            <OwnedPluginFormHost
-              projectId={extensionScope.projectId}
-              workspaceId={globalOwnerWorkspace(extensionIdentity).workspaceId}
-            />
-          ) : null}
           {showPinnedConversationTargetNotice ? (
             <div
               data-testid="pinned-conversation-target-notice"
@@ -6120,7 +6711,7 @@ export function PlaygroundMain({
               </div>
             </div>
           ) : null}
-          {isThreadEmpty ? (
+          {threadLayoutEmpty ? (
             // Empty state — centered (welcome + composer, or post-connect guide)
             <div
               data-testid="playground-empty-state-shell"
@@ -6190,7 +6781,7 @@ export function PlaygroundMain({
                         )}
                         <PostConnectGuide />
                       </div>
-                    ) : hideWelcomeHero ? null : (
+                    ) : hideWelcomeHero || tester ? null : (
                       <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                         <div className="text-center max-w-md">
                           {/*
@@ -6296,7 +6887,9 @@ export function PlaygroundMain({
             >
               <div className="relative flex-1 min-h-0">
                 <StickToBottom.Content className="flex flex-col min-h-0">
+                  <div ref={setInlineAppSlot} />
                   <Thread
+                    harnessStartupPhase={harnessStartupPhase}
                     chatSessionId={chatSessionId}
                     messages={messages}
                     sendFollowUpMessage={handleSendFollowUp}
@@ -6312,7 +6905,8 @@ export function PlaygroundMain({
                     interactive={
                       !apiSessionViewOnly &&
                       loadingHistorySessionId === null &&
-                      restoringTarget === null
+                      restoringTarget === null &&
+                      !studyComposerBlocked
                     }
                     onToolApprovalResponse={(response) => {
                       if (!conversationSendBlockedRef.current)
@@ -6322,7 +6916,26 @@ export function PlaygroundMain({
                     mcpToolResultImageRendering={
                       effectiveMcpToolResultImageRendering
                     }
-                    showInlineEdit={!hideInlineEdit}
+                    minimalMode={Boolean(tester)}
+                    reasoningDisplayMode={tester ? "hidden" : "inline"}
+                    renderAssistantTurnFooter={
+                      tester?.renderAssistantTurnActions && chatSessionId
+                        ? (message) => {
+                            const promptIndex = assistantPromptIndexById.get(
+                              message.id,
+                            );
+                            if (promptIndex === undefined) return null;
+                            return tester.renderAssistantTurnActions?.({
+                              message,
+                              chatSessionId,
+                              promptIndex,
+                              turnId:
+                                turnIdByPromptIndex.get(promptIndex) ?? null,
+                            });
+                          }
+                        : undefined
+                    }
+                    showInlineEdit={!hideInlineEdit && !tester}
                     // Also gated on `isConvexAuthenticated`, not just compare mode
                     // and the evals panel's opt-out. Editing seeds a fresh session
                     // with the prefix and leaves the original behind, and the whole
@@ -6362,6 +6975,7 @@ export function PlaygroundMain({
                     // turn path flattens the copied prefix into the first prompt,
                     // withholding is the honest option.
                     onEditUserMessage={
+                      tester ||
                       isCompareMode ||
                       hideMessageEdit ||
                       !isConvexAuthenticated ||
@@ -6372,7 +6986,7 @@ export function PlaygroundMain({
                     }
                     editDisabled={sendBlocked || needsConversationTargetAck}
                     renderUserMessageActions={
-                      chatSessionId && convexProjectId
+                      !tester && chatSessionId && convexProjectId
                         ? (message) => {
                             const promptIndex = userPromptIndexById.get(
                               message.id,
@@ -6406,15 +7020,16 @@ export function PlaygroundMain({
             </StickToBottom>
           )}
 
-          {/* Footer ChatInput: with messages, or empty when center has no composer
-          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
+          {/* Footer ChatInput: with messages, an empty study, or an empty thread
+          whose center has no composer (auth loading / upsell). The
+          Playground's empty thread uses the centered composer only. */}
           {!isWidgetFullTakeover &&
             !showFullscreenChatOverlay &&
-            (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
+            (!threadLayoutEmpty || shouldShowUpsell || isAuthLoading) && (
               <div
                 className={cn(
                   "mx-auto w-full max-w-4xl shrink-0",
-                  isThreadEmpty ? "px-4 pb-4" : "p-3",
+                  threadLayoutEmpty ? "px-4 pb-4" : "p-3",
                 )}
               >
                 {errorMessage && (
@@ -6444,6 +7059,7 @@ export function PlaygroundMain({
           {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
           {showFullscreenChatOverlay && (
             <FullscreenChatOverlay
+              contextAttachments={sharedChatInputProps.contextAttachments}
               chatSessionId={chatSessionId}
               messages={messages}
               open={isFullscreenChatOpen}
@@ -6466,6 +7082,7 @@ export function PlaygroundMain({
                 !needsConversationTargetAck
               }
               isThinking={isStreamingActive}
+              isSubmitting={composerSend.pending}
               onStop={stopActiveChat}
               // Same submit path as the docked composer. Its own copy dropped
               // attached prompts/skills (it sent raw text and then cleared the
@@ -6480,6 +7097,7 @@ export function PlaygroundMain({
       </WorkspaceFileActionsProvider>
       </ChatDeepLinkProvider>
       </WidgetFullscreenPlacementContext.Provider>
+      </ChatAppDisplayBehaviorProvider>
     </OwnedModelAppPortsProvider>
   );
 
@@ -6495,12 +7113,17 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {comparisonRecoveryMissing && (
+        <div role="alert" className="p-3 text-sm text-destructive">
+          MCPJam couldn’t restore this comparison. Please start a new chat.
+        </div>
+      )}
       {/* ONE dialog for the surface. Rendered here rather than by a composer
           because there are six composers and a compare view mounts several at
           once — each owning its own would race one approval. */}
       <LocalHarnessAutoApproveDialog
         open={localAutoApprove.open}
-        name={(previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness) === "codex" ? "Codex" : "Claude Code"}
+        name={HARNESS_DESCRIPTORS[previewedHost?.config?.agentLoop ?? previewedHost?.config?.harness ?? "claude-code"].displayName}
         onCancel={localAutoApprove.cancel}
         onApprove={localAutoApprove.approve}
       />
@@ -6547,6 +7170,30 @@ export function PlaygroundMain({
             : "bg-muted/20",
         )}
       >
+        <PluginOnboardingHandoff projectId={convexProjectId} compareActive={isMultiModelLayoutMode} />
+        {/* The global owner remains mounted in both single chat and Compare. */}
+        {globalFormScope ? (
+          <ScenarioHostStyleProvider value={hostStyle}>
+            <PlaygroundCapabilitiesScope
+              inheritOuter={Boolean(tester)}
+              value={hostCapabilitiesOverride}
+            >
+              <ScenarioHostThemeProvider value={effectiveThreadTheme}>
+                <WidgetFullscreenPlacementContext.Provider value={railFullscreenPlacement}>
+                  <ChatDeepLinkProvider value={chatDeepLinks}>
+                    <WorkspaceFileActionsProvider value={threadApps.fileActions}>
+                      <OwnedPluginFormHost
+                        retainWhileLoading
+                        projectId={globalFormScope.projectId}
+                        workspaceId={globalFormScope.pluginWorkspace.workspaceId}
+                      />
+                    </WorkspaceFileActionsProvider>
+                  </ChatDeepLinkProvider>
+                </WidgetFullscreenPlacementContext.Provider>
+              </ScenarioHostThemeProvider>
+            </PlaygroundCapabilitiesScope>
+          </ScenarioHostStyleProvider>
+        ) : null}
         {hasExtensionProvider ? (
           // Global Apps are portaled in here: mounted once, never moved, and
           // hidden (not unmounted) when you return to the chat.
@@ -6563,6 +7210,7 @@ export function PlaygroundMain({
           // The chat fullscreen's floating composer, over the global App.
           // Messages go to the current chat.
           <FullscreenChatOverlay
+            contextAttachments={sharedChatInputProps.contextAttachments}
             contained
             chatSessionId={chatSessionId}
             messages={messages}
@@ -6577,11 +7225,18 @@ export function PlaygroundMain({
               !sendBlocked && composerHasContent && !needsConversationTargetAck
             }
             isThinking={isStreamingActive}
+            isSubmitting={composerSend.pending}
             onStop={stopActiveChat}
             onSend={() => {
               setIsTakeoverChatOpen(true);
               void performComposerSubmit();
             }}
+          />
+        ) : null}
+        {hasExtensionProvider && globalTakeoverOpen ? (
+          <TakeoverFormSlot
+            chatWorkspaceId={extensionScope?.pluginWorkspace.workspaceId}
+            globalWorkspaceId={globalFormScope?.pluginWorkspace.workspaceId}
           />
         ) : null}
         {showLoadingOverlay && (
@@ -6594,7 +7249,7 @@ export function PlaygroundMain({
           </div>
         )}
         {/* Center header strip — hidden during onboarding and embedded eval preview */}
-        {!showPostConnectGuide && !hideCenterHeaderChrome && (
+        {!showPostConnectGuide && !hideCenterHeaderChrome && !tester && (
           <PlaygroundCenterHeaderBar
             showTraceTabs={showTraceViewTabs}
             mode={activeTraceViewMode}
@@ -6621,12 +7276,12 @@ export function PlaygroundMain({
             // (which is a popover and would hide the resolved bundle behind a
             // click). Flag-gated, fail-closed.
             leading={
-              environmentsEnabled && !isSharedSession ? (
+              environmentsEnabled && !isSharedSession && !isMultiHostMode ? (
                 <PlaygroundEnvironmentSection
                   projectId={multiHostProjectId}
                   environment={playgroundEnvironment}
-                  // Switching environments forks the chat scope and exits
-                  // comparison mode. Doing that mid-turn would strand the
+                  // Compare's panes choose theirs in pane settings. Switching
+                  // environments forks the chat scope. Doing that mid-turn would strand the
                   // in-flight request — its results vanish from the UI and the
                   // Stop control goes with them. Same gate the chat-input
                   // client selector uses.
@@ -6681,9 +7336,13 @@ export function PlaygroundMain({
             <PlaygroundCompareThemeScope
               hostStyle={hostStyle}
               hostCapabilitiesOverride={hostCapabilitiesOverride}
+              inheritCapabilities={Boolean(tester)}
               chatUiOverride={chatUiOverride}
-              effectiveThreadTheme={effectiveThreadTheme}
-              hostShellStyle={hostShellStyle}
+              // The compare shell is workspace chrome: the canvas and shared
+              // composer follow the app theme, not the selected client's saved
+              // theme or palette. Per-pane overrides live inside each card.
+              effectiveThreadTheme={globalThemeMode}
+              hostShellStyle={{ colorScheme: globalThemeMode }}
             >
               {showMultiModelTraceEmptyPanel && multiModelTracePanelModel ? (
                 <MultiModelEmptyTraceDiagnosticsPanel
@@ -6800,17 +7459,22 @@ export function PlaygroundMain({
                       data-testid="playground-multi-host-grid"
                       className={cn(
                         "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
-                        selectedHostIds.length <= 1 && "grid-cols-1",
-                        selectedHostIds.length === 2 &&
+                        comparePanes.length <= 1 && "grid-cols-1",
+                        comparePanes.length === 2 &&
                           "grid-cols-1 xl:grid-cols-2",
-                        selectedHostIds.length >= 3 &&
+                        comparePanes.length >= 3 &&
                           "grid-cols-1 xl:grid-cols-3",
                       )}
                     >
                       {clientResolutions.map((resolution, columnIndex) => {
                         if (resolution.status !== "ready") return (
                           <div key={resolution.compareId} role="status" className="rounded-lg border p-4 text-sm">
-                            <strong>{resolution.compareLabel}</strong>
+                            <div className="flex items-center justify-between gap-2">
+                              <strong>{resolution.compareLabel}</strong>
+                              {paneControls.blockedPaneActions(
+                                resolution.compareId,
+                              )}
+                            </div>
                             {/* The composer's sign-in notice already explains this case. */}
                             {resolution.status === "unavailable" &&
                             needsSignIn(resolution.model) ? null : (
@@ -6819,21 +7483,26 @@ export function PlaygroundMain({
                           </div>
                         );
                         const column = resolution.column;
-                        const columnTheme = extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
+                        const columnDisplay = paneDisplays[column.compareId];
+                        const columnTheme = columnDisplay?.theme ?? extractHostTheme(column.hostConfig.hostContext) ?? globalThemeMode;
                         return (
                         <MultiModelPlaygroundCard
                           className={compareLaneHidden(`host:${column.compareId}`)}
+                          active={!singleCompareLane || activeCompareLaneId === `host:${column.compareId}`}
                           extensionBinding={compareLaneBinding(
-                            column.compareId,
+                            column.hostId,
                             {
                               hostStyle: column.hostConfig.hostStyle,
                               harness: column.hostConfig.harness,
                               agentLoop: column.hostConfig.agentLoop,
                               mcpProfile: column.hostConfig.mcpProfile,
                             },
+                            paneControls.environmentLaneServers.get(
+                              column.compareId,
+                            ) ?? paneLaneServers.get(column.compareId),
                           )}
                           browserWorkspace={{
-                            id: chatSessionId,
+                            id: comparisonRecoveryGroupId,
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
@@ -6842,17 +7511,34 @@ export function PlaygroundMain({
                           // swap between multi-model and multi-host can't
                           // accidentally reuse a card instance keyed by a
                           // hostId that happens to equal a modelId string.
-                          key={`${multiModelSessionGeneration}:host:${column.compareId}`}
+                          key={resolution.ownerKey}
+                          readinessNotice={resolution.pausedReason}
                           onSendReadinessChange={reportCompareReadiness}
                           compareId={column.compareId}
                           compareLabel={column.compareLabel}
                           compareKind="host"
                           compareSubLabel={column.compareSubLabel}
                           model={column.model}
-                          selection={column.hostConfig.modelSelection}
+                          selection={column.selection}
+                          modelPicked={column.modelPicked}
+                          inheritedEnvironmentModel={
+                            column.inheritedEnvironmentModel
+                          }
+                          renderPaneHeader={paneControls.renderPaneHeader(
+                            column.compareId,
+                          )}
                           comparisonSummaries={Object.values(compareSummaries)}
-                          selectedServers={selectedServers}
-                          broadcastRequest={broadcastRequest}
+                          selectedServers={
+                            paneControls.paneServers(column.compareId)?.names ??
+                            selectedServers
+                          }
+                          broadcastRequest={broadcastRequest?.request ?? null}
+                          claimBroadcastDelivery={(request) =>
+                            broadcastRequest?.claim(
+                              request,
+                              broadcastRecipient("host", column.compareId),
+                            ) ?? false
+                          }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
                           }
@@ -6864,15 +7550,18 @@ export function PlaygroundMain({
                             // host's own config. Exactly what the single pane
                             // sends, rather than substituting the raw host
                             // list and pre-empting the loading guard.
-                            builtInToolIds: columnBuiltInToolIds[selectedHostIds.indexOf(column.compareId)],
+                            builtInToolIds:
+                              columnBrowsers.get(column.compareId)?.builtInToolIds,
                           }}
                           hostedContext={{
                             projectId: convexProjectId,
-                            selectedServerIds: hostedSelectedServerIds,
-                            hostId: column.compareId,
+                            ...paneControls.paneRequest(
+                              column.compareId,
+                              hostedSelectedServerIds,
+                            ),
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
-                          personalBrowserEngine={personalBrowserEngineOption}
+                          personalBrowserEngine={columnBrowsers.get(column.compareId)?.personalBrowserEngine}
                           personalComputerEngine={personalComputerEngineOption}
                           localHarnessExecution={
                             localHarnessExecutionByColumn.get(
@@ -6883,7 +7572,8 @@ export function PlaygroundMain({
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
                           effectiveThreadTheme={columnTheme}
-                          deviceType={storeDeviceType}
+                          deviceType={columnDisplay?.deviceType ?? storeDeviceType}
+                          displayOverrides={columnDisplay}
                           hideInlineEdit={hideInlineEdit}
                           onWidgetStateChange={onWidgetStateChange}
                           toolRenderOverrides={externalToolRenderOverrides}
@@ -6934,6 +7624,7 @@ export function PlaygroundMain({
                         return (
                           <MultiModelPlaygroundCard
                             className={compareLaneHidden(`model:${compareId}`)}
+                            active={!singleCompareLane || activeCompareLaneId === `model:${compareId}`}
                             extensionBinding={compareLaneBinding(
                               previewedHostId,
                               previewedHost?.config
@@ -6947,7 +7638,7 @@ export function PlaygroundMain({
                                 : null,
                             )}
                             browserWorkspace={{
-                              id: chatSessionId,
+                              id: comparisonRecoveryGroupId,
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}
@@ -6960,6 +7651,7 @@ export function PlaygroundMain({
                             compareId={compareId}
                             compareLabel={entry.label}
                             pluginHostResolved={!previewedHostConfigUnresolved}
+                            pluginComputerAttached={!!previewedHost?.config?.computer}
                             pluginHarnessId={
                               previewedHost?.config?.agentLoop ??
                               previewedHost?.config?.harness
@@ -6987,7 +7679,13 @@ export function PlaygroundMain({
                               compareSummaries,
                             )}
                             selectedServers={selectedServers}
-                            broadcastRequest={broadcastRequest}
+                            broadcastRequest={broadcastRequest?.request ?? null}
+                            claimBroadcastDelivery={(request) =>
+                              broadcastRequest?.claim(
+                                request,
+                                broadcastRecipient("model", compareId),
+                              ) ?? false
+                            }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest
                             }
@@ -7079,7 +7777,8 @@ export function PlaygroundMain({
             <>
               {showLiveTraceDiagnostics && (
                 <ScenarioHostStyleProvider value={hostStyle}>
-                  <ScenarioHostCapabilitiesOverrideProvider
+                  <PlaygroundCapabilitiesScope
+                    inheritOuter={Boolean(tester)}
                     value={hostCapabilitiesOverride}
                   >
                     <ScenarioHostThemeProvider value={effectiveThreadTheme}>
@@ -7150,7 +7849,7 @@ export function PlaygroundMain({
                         </div>
                       </div>
                     </ScenarioHostThemeProvider>
-                  </ScenarioHostCapabilitiesOverrideProvider>
+                  </PlaygroundCapabilitiesScope>
                 </ScenarioHostStyleProvider>
               )}
 
@@ -7162,7 +7861,8 @@ export function PlaygroundMain({
                 }
               >
                 <ScenarioHostStyleProvider value={hostStyle}>
-                  <ScenarioHostCapabilitiesOverrideProvider
+                  <PlaygroundCapabilitiesScope
+                    inheritOuter={Boolean(tester)}
                     value={hostCapabilitiesOverride}
                   >
                     <ScenarioHostThemeProvider value={effectiveThreadTheme}>
@@ -7196,7 +7896,7 @@ export function PlaygroundMain({
                         </div>
                       </div>
                     </ScenarioHostThemeProvider>
-                  </ScenarioHostCapabilitiesOverrideProvider>
+                  </PlaygroundCapabilitiesScope>
                 </ScenarioHostStyleProvider>
               </div>
             </>
@@ -7255,6 +7955,7 @@ export function PlaygroundMain({
       />
       {/* Hosted MRTR (§12.5): a suspended `input_required` round. Durable, so
           it outlives its turn — answering it re-drives the chat turn. */}
+      <MrtrElicitationHost />
       <HostedMrtrHost />
     </WidgetSurfaceProvider>
   );

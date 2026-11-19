@@ -127,6 +127,7 @@ const renderSchema = z
     projectId: z.string().min(1),
     serverId: z.string().min(1),
     toolName: z.string().min(1),
+    clientCapabilities: z.record(z.string(), z.unknown()).optional(),
     parameters: z.record(z.string(), z.unknown()).optional(),
     /**
      * The widget as a text tree. DEFAULT ON — see the module docblock.

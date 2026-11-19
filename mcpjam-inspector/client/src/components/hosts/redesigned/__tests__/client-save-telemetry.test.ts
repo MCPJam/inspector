@@ -55,6 +55,42 @@ describe("changedClientSettings", () => {
     ).toEqual(["mcp.tool_call_cancellation.legacy"]);
   });
 
+  it("reports each mid-session sign-in knob as its own setting", () => {
+    expect(
+      changedClientSettings({
+        savedName: "Client",
+        draftName: "Client",
+        savedConfig: config(),
+        draftConfig: config({
+          mcpProfile: {
+            profileVersion: 1,
+            unauthorizedChallenge: "notify",
+            unauthorizedChallengeTrigger: "bearer-header",
+            toolResultAuthChallenge: "prompt",
+            toolResultAuthChallengeTrigger: "oauth2-scheme",
+          },
+        }),
+      }),
+    ).toEqual([
+      "mcp.unauthorized_challenge",
+      "mcp.unauthorized_challenge_trigger",
+      "mcp.tool_result_auth_challenge",
+      "mcp.tool_result_auth_challenge_trigger",
+    ]);
+
+    // Clearing one back to its default is a change too.
+    expect(
+      changedClientSettings({
+        savedName: "Client",
+        draftName: "Client",
+        savedConfig: config({
+          mcpProfile: { profileVersion: 1, toolResultAuthChallenge: "prompt" },
+        }),
+        draftConfig: config(),
+      }),
+    ).toEqual(["mcp.tool_result_auth_challenge"]);
+  });
+
   it("returns each changed setting once for a multi-setting save", () => {
     expect(
       changedClientSettings({

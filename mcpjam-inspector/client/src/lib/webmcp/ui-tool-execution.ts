@@ -105,6 +105,7 @@ const INSPECTOR_COMMAND_ERROR_CODES = new Set<string>([
   "unsupported_in_mode",
   "invalid_request",
   "execution_failed",
+  "authorization_required",
 ] satisfies InspectorCommandErrorCode[]);
 
 export function structuredErrorCode(output: UiToolResult): string | undefined {

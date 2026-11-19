@@ -15,6 +15,8 @@ import {
   wrapToolSetForEvalTrace,
 } from "../eval-trace-capture";
 import { TOOL_POLICY_BLOCK_MARKER } from "../tool-policy-gate";
+import { attachAuthChallenge, parseChallengeHeader } from "@mcpjam/sdk";
+import { toolAuthChallengeOf } from "../run-setup-signals";
 
 describe("eval-trace-capture", () => {
   const runAt = 10_000;
@@ -91,6 +93,73 @@ describe("eval-trace-capture", () => {
       runAt + 15,
     );
     expect(spans.filter((s) => s.category === "error")).toHaveLength(1);
+  });
+
+  it("backend cost lands on the llm span only, on success and on failures", () => {
+    const cost = {
+      calculationVersion: 1,
+      currency: "USD" as const,
+      completeness: "complete" as const,
+      amountUsd: 0.0021,
+      source: "provider_reported" as const,
+    };
+    const meta = { inputTokens: 10, outputTokens: 4, totalTokens: 14, cost };
+    const llm = { startAbs: runAt, endAbs: runAt + 10 };
+    const success: EvalTraceSpan[] = [];
+    pushBackendStepSuccessSpans(success, runAt, 0, 0, runAt, llm, undefined, meta);
+    const toolFailure: EvalTraceSpan[] = [];
+    pushBackendStepToolFailureSpans(
+      toolFailure, runAt, 0, 0, runAt, llm, runAt + 10, runAt + 15, meta,
+    );
+    const llmFailure: EvalTraceSpan[] = [];
+    pushBackendStepLlmFailureSpans(
+      llmFailure, runAt, 0, 0, runAt, runAt, runAt + 10, meta,
+    );
+    for (const spans of [success, toolFailure, llmFailure]) {
+      expect(spans.filter((span) => span.cost)).toEqual([
+        expect.objectContaining({ category: "llm", cost, inputTokens: 10 }),
+      ]);
+    }
+  });
+
+  it("backend LLM failure with usage but no cost keeps an llm span without cost", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { inputTokens: 10, outputTokens: 0 };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    const categories = spans.map((span) => span.category);
+    expect(categories).toEqual(["step", "llm", "error"]);
+    const llm = spans.filter((span) => span.category === "llm");
+    expect(llm).toEqual([
+      expect.objectContaining({ status: "error", ...meta }),
+    ]);
+    expect(llm[0]).not.toHaveProperty("cost");
+  });
+
+  it.each([
+    ["output tokens", { outputTokens: 4 }],
+    ["total tokens", { totalTokens: 14 }],
+  ])(
+    "backend LLM failure reporting only %s keeps an llm span",
+    (_label, meta) => {
+      const spans: EvalTraceSpan[] = [];
+      pushBackendStepLlmFailureSpans(
+        spans, runAt, 0, 0, runAt, runAt, runAt + 5, meta,
+      );
+      expect(spans.map((span) => span.category)).toEqual([
+        "step",
+        "llm",
+        "error",
+      ]);
+    },
+  );
+
+  it("backend LLM failure with neither usage nor cost adds no llm span", () => {
+    const spans: EvalTraceSpan[] = [];
+    const meta = { modelId: "gpt-test" };
+    const end = runAt + 5;
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, end, meta);
+    expect(spans.map((span) => span.category)).toEqual(["step", "error"]);
   });
 
   it("AI SDK: one step, no tools — step + LLM only", () => {
@@ -562,5 +631,98 @@ describe("eval-trace-capture", () => {
 
     const toolSpan = spans.find((s) => s.category === "tool");
     expect(toolSpan?.mcpErrorCode).toBe(-32001);
+  });
+
+  describe("a tool call that asks for sign-in", () => {
+    const HEADER =
+      'Bearer error="invalid_token", resource_metadata="https://x.example/.well-known/oauth-protected-resource", scope="orders:read"';
+
+    it("AI SDK: annotates the tool span with the classified challenge, and still rethrows", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(runAt);
+      const ctx = createAiSdkEvalTraceContext(runAt);
+      registerAiSdkPrepareStep(ctx, 0);
+      const refused = Object.assign(new Error("HTTP 401"), { status: 401 });
+      attachAuthChallenge(refused, parseChallengeHeader(HEADER));
+      const tools = wrapToolSetForEvalTrace(
+        {
+          list_orders: {
+            _serverId: "orders",
+            execute: async () => {
+              throw refused;
+            },
+          },
+        },
+        ctx,
+      ) as any;
+      await expect(
+        tools.list_orders.execute({}, { toolCallId: "tc401", messages: [] }),
+      ).rejects.toBe(refused);
+
+      const tool = ctx.recordedSpans.find((s) => s.id === "tool-tc401")!;
+      expect(toolAuthChallengeOf(tool)).toMatchObject({
+        setupFailureSource: "authorization_required",
+        attribution: "ours",
+        toolCallId: "tc401",
+        toolName: "list_orders",
+        serverId: "orders",
+        spanId: "tool-tc401",
+        promptIndex: 0,
+        authChallenge: { source: "http_401", requiredScope: "orders:read" },
+      });
+      // The persisted span shape is unchanged: the backend validator is closed.
+      expect(Object.keys(JSON.parse(JSON.stringify(tool)))).not.toContain(
+        "authChallenge",
+      );
+      // The error span stays a plain error span.
+      const err = ctx.recordedSpans.find((s) => s.id === "tool-err-tc401");
+      expect(toolAuthChallengeOf(err)).toBeUndefined();
+    });
+
+    it("backend: annotates from a completed isError result carrying the _meta challenge", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(runAt);
+      const spans: EvalTraceSpan[] = [];
+      const result = {
+        isError: true,
+        content: [{ type: "text", text: "Sign in required." }],
+        _meta: { "mcp/www_authenticate": [HEADER] },
+      };
+      const backendTools = wrapBackendToolsForTrace(
+        {
+          list_orders: {
+            execute: async () => result,
+            _serverId: "orders",
+          },
+        },
+        { runStartedAt: runAt, promptIndex: 1, stepIndex: 0, spans },
+      ) as any;
+      // The model still gets the result unchanged.
+      await expect(
+        backendTools.list_orders.execute({}, { toolCallId: "tcmeta" }),
+      ).resolves.toBe(result);
+      const tool = spans.find((s) => s.id === "backend-tool-tcmeta")!;
+      expect(tool.status).toBe("error");
+      expect(toolAuthChallengeOf(tool)).toMatchObject({
+        toolCallId: "tcmeta",
+        promptIndex: 1,
+        authChallenge: { source: "tool_result_meta" },
+      });
+    });
+
+    it("leaves ordinary tool failures unannotated", async () => {
+      const spans: EvalTraceSpan[] = [];
+      const backendTools = wrapBackendToolsForTrace(
+        {
+          search: {
+            execute: async () => ({
+              isError: true,
+              content: [{ type: "text", text: "not found" }],
+            }),
+          },
+        },
+        { runStartedAt: runAt, promptIndex: 0, stepIndex: 0, spans },
+      ) as any;
+      await backendTools.search.execute({}, { toolCallId: "tcplain" });
+      expect(spans.every((span) => !toolAuthChallengeOf(span))).toBe(true);
+    });
   });
 });

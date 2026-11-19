@@ -3,6 +3,7 @@ import {
   codexNativeMcpServers,
   refreshNativeMcpServers,
   renderCodexNativeMcpServers,
+  needsNativeMcpReload,
 } from "../shared/native-mcp.js";
 import { RELAY_MCP_SERVER_NAME } from "../shared/tool-names.js";
 
@@ -15,6 +16,13 @@ describe("Codex per-server MCP configuration", () => {
       headers: { Connection: "close", "X-MCPJam-Forwarding-Context": "old" },
     },
   };
+  it("skips only an empty native server set, preserving additions, removal and credential refresh", () => {
+    expect(needsNativeMcpReload(undefined, {})).toBe(false);
+    expect(needsNativeMcpReload({}, {})).toBe(false);
+    expect(needsNativeMcpReload({}, current)).toBe(true);
+    expect(needsNativeMcpReload(current, {})).toBe(true);
+    expect(needsNativeMcpReload(current, current)).toBe(true);
+  });
   it("refreshes only the connection context on the existing route", () => {
     const result = refreshNativeMcpServers(current, {
       a: {

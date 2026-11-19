@@ -6,7 +6,15 @@ import type {
   OrganizationBillingStatus,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
-import { formatPlanName } from "@/lib/billing-entitlements";
+import {
+  canShowSubscriptionNotices,
+  formatPlanName,
+} from "@/lib/billing-entitlements";
+import {
+  formatStaffPlanEndLine,
+  getDisplayedCurrentPlan,
+  isStaffSetPlan,
+} from "@/lib/billing-staff-plan";
 import { canCheckoutPlanEntry, isLegacyTeamEntry } from "@/lib/pricing-catalog";
 
 function formatCurrency(
@@ -57,12 +65,31 @@ function getScheduledChangeDateMs(
   return billingStatus.stripeScheduledEffectiveAt;
 }
 
+/**
+ * An Enterprise organization with no Stripe customer: invoiced or
+ * courtesy-funded by agreement, so "No active subscription" and the Stripe
+ * portal don't apply.
+ */
+export function isEnterpriseBilledOffline(
+  billingStatus: OrganizationBillingStatus,
+): boolean {
+  return (
+    billingStatus.plan === "enterprise" &&
+    billingStatus.source === "subscription" &&
+    !billingStatus.hasCustomer
+  );
+}
+
 export function getCurrentPlanRenewalLine(
   billingStatus: OrganizationBillingStatus,
   formattedPeriodEnd: string,
   formattedCancellationDate: string,
   formattedScheduledChangeDate: string,
 ): string {
+  if (!canShowSubscriptionNotices(billingStatus)) {
+    return "No active subscription";
+  }
+
   if (billingStatus.stripeCancelAtPeriodEnd) {
     return formattedCancellationDate === "Not available"
       ? "Will not renew"
@@ -79,13 +106,16 @@ export function getCurrentPlanRenewalLine(
   if (billingStatus.paymentState === "past_due") {
     return "Payment failed";
   }
+  if (isEnterpriseBilledOffline(billingStatus)) {
+    return "Managed by MCPJam";
+  }
   if (billingStatus.stripeCurrentPeriodEnd != null) {
     if (billingStatus.subscriptionStatus === "trialing") {
       return `First charge ${formattedPeriodEnd}`;
     }
     return `Renews ${formattedPeriodEnd}`;
   }
-  if (billingStatus.plan === "free" || !billingStatus.hasCustomer) {
+  if (!billingStatus.hasCustomer) {
     return "No active subscription";
   }
   if (billingStatus.subscriptionStatus) {
@@ -98,7 +128,10 @@ function getScheduledCancellationDetailLine(
   billingStatus: OrganizationBillingStatus,
   formattedCancellationDate: string,
 ): string | null {
-  if (!billingStatus.stripeCancelAtPeriodEnd) {
+  if (
+    !canShowSubscriptionNotices(billingStatus) ||
+    !billingStatus.stripeCancelAtPeriodEnd
+  ) {
     return null;
   }
 
@@ -116,7 +149,11 @@ function getScheduledChangeDetailLine(
   const scheduledPlan = billingStatus.stripeScheduledPlan;
   const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
 
-  if (!scheduledPlan || !scheduledBillingInterval) {
+  if (
+    !canShowSubscriptionNotices(billingStatus) ||
+    !scheduledPlan ||
+    !scheduledBillingInterval
+  ) {
     return null;
   }
 
@@ -170,6 +207,9 @@ function formatCurrentPlanBillingDetailLine(
     return "Simulation active · billing changes are not applied";
   }
 
+  if (isEnterpriseBilledOffline(billingStatus)) {
+    return "Billing follows your agreement with MCPJam";
+  }
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
   const entry = planCatalog.plans[plan];
@@ -228,6 +268,9 @@ export function OrganizationCurrentPlanPanel({
   const currentPlan = billingStatus.plan ?? "free";
   const isTrial = billingStatus.source === "trial";
   const isSimulation = billingStatus.source === "simulation";
+  // A staff plan has no Stripe subscription: the card names its tier and end.
+  const isStaffPlan = isStaffSetPlan(billingStatus);
+  const showSubscriptionNotices = canShowSubscriptionNotices(billingStatus);
   const currentEntry = planCatalog?.plans[currentPlan];
   const isLegacyTeam =
     currentPlan === "team" &&
@@ -244,9 +287,9 @@ export function OrganizationCurrentPlanPanel({
     ? (billingStatus.trialPlan ?? billingStatus.effectivePlan)
     : isSimulation
       ? billingStatus.effectivePlan
-      : currentPlan;
+      : getDisplayedCurrentPlan(billingStatus);
   const billingConfigured = billingStatus.billingConfigured ?? false;
-  const canManageBilling = billingStatus.canManageBilling ?? false;
+  const canManageBilling = (billingStatus.canManageBilling ?? false) && billingStatus.hasCustomer === true;
   const formattedPeriodEnd = formatBillingDate(
     billingStatus.stripeCurrentPeriodEnd,
   );
@@ -261,9 +304,13 @@ export function OrganizationCurrentPlanPanel({
   const effectiveBillingInterval = billingStatus.billingInterval ?? "monthly";
   const targetBillingInterval: BillingInterval =
     effectiveBillingInterval === "annual" ? "monthly" : "annual";
-  const billingDetailLine = planCatalog
-    ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
-    : null;
+  const billingDetailLine = isStaffPlan
+    ? formatStaffPlanEndLine(billingStatus.staffPlan?.expiresAt ?? null)
+    : (billingStatus.unlimitedCreditsUntil ?? 0) > Date.now()
+      ? `Contract through ${formatBillingDate(billingStatus.unlimitedCreditsUntil ?? null)}`
+      : planCatalog
+        ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
+        : null;
   const scheduledCancellationDetailLine = getScheduledCancellationDetailLine(
     billingStatus,
     scheduledCancellationDate,
@@ -277,7 +324,8 @@ export function OrganizationCurrentPlanPanel({
         displayPlan,
       )}, while billing remains on ${formatPlanName(currentPlan)}.`
     : null;
-  const isPastDue = billingStatus.paymentState === "past_due";
+  const isPastDue =
+    showSubscriptionNotices && billingStatus.paymentState === "past_due";
   const paymentGraceEndsLabel = formatBillingDate(
     billingStatus.paymentGraceEndsAt ?? null,
   );
@@ -285,7 +333,7 @@ export function OrganizationCurrentPlanPanel({
   const showIntervalPortalLink =
     billingConfigured &&
     canManageBilling &&
-    !isTrial &&
+    showSubscriptionNotices &&
     (currentPlan === "team" || currentPlan === "pro") &&
     billingStatus.billingInterval != null &&
     // The catalog only speaks for the bundle the org actually holds. When it
@@ -365,7 +413,7 @@ export function OrganizationCurrentPlanPanel({
             Legacy
           </Badge>
         ) : null}
-        {billingStatus.stripeCancelAtPeriodEnd ? (
+        {showSubscriptionNotices && billingStatus.stripeCancelAtPeriodEnd ? (
           <Badge
             variant="outline"
             className="rounded-md border-amber-500/40 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-900 dark:text-amber-100"
@@ -374,7 +422,7 @@ export function OrganizationCurrentPlanPanel({
             Will not renew
           </Badge>
         ) : null}
-        {displayPlan !== "free" || isTrial ? (
+        {showSubscriptionNotices || isTrial ? (
           <span
             className="text-sm text-muted-foreground"
             data-testid="current-plan-renewal"
@@ -446,7 +494,9 @@ export function OrganizationCurrentPlanPanel({
           </div>
         </div>
 
-        {currentPlan !== "free" && canManageBilling ? (
+        {showSubscriptionNotices &&
+        canManageBilling &&
+        !isEnterpriseBilledOffline(billingStatus) ? (
           <Button
             variant="ghost"
             size="sm"
@@ -466,7 +516,10 @@ export function OrganizationCurrentPlanPanel({
         ) : null}
       </div>
       {scheduledCancellationDetailLine || scheduledChangeDetailLine ? (
-        <div className="rounded-lg border border-border bg-muted/40 p-3">
+        <div
+          className="rounded-lg border border-border bg-muted/40 p-3"
+          data-testid="current-plan-subscription-notice"
+        >
           {scheduledCancellationDetailLine ? (
             <p
               className="text-xs font-medium text-amber-900 dark:text-amber-100"
