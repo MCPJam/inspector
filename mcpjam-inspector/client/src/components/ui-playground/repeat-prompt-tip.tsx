@@ -137,7 +137,7 @@ export function RepeatPromptTip({
           className="mb-2 flex items-center gap-3 rounded-lg border border-border bg-card py-2 pl-3 pr-2 text-sm shadow-sm duration-500 ease-out animate-in fade-in slide-in-from-bottom-4 motion-reduce:animate-none"
         >
           <Badge>Tip</Badge>
-          <p className="min-w-0 flex-1 text-foreground/80">
+          <p className="min-w-0 flex-1 text-foreground">
             You&apos;ve asked {serverName} this before. Save it as a test case
             to rerun it anytime.
           </p>
