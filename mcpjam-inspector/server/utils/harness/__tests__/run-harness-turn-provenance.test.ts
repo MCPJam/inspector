@@ -229,6 +229,30 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
     ]));
   });
 
+  it("keeps the saved tool name when a result-only resume reports a renamed tool", async () => {
+    const onToolResult = vi.fn();
+    harnessState.streamParts = [
+      { type: "tool-result", toolCallId: "paused-call", toolName: "mcp__docs__a_b", output: "done" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    await runHarnessTurn({
+      ...baseOptions(),
+      // Since the call was saved, the server added a literal `a_b`.
+      mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({ "a.b": {}, a_b: {} })) },
+      onToolResult,
+      messages: [
+        { role: "user", content: "Run a.b" },
+        { role: "assistant", content: [{
+          type: "tool-call", toolCallId: "paused-call", toolName: "a.b", input: {},
+          providerOptions: { mcpjam: { serverId: "docs" } },
+        }] },
+      ],
+    } as never, "none");
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "docs", toolName: "a.b" }),
+    );
+  });
+
   it.each([
     {
       name: "MCP failure",
