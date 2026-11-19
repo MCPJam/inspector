@@ -15,22 +15,24 @@ describe("runtime read-ahead", () => {
   );
   it("leaves unsupported adapters and unknown identity unchanged", async () => {
     const run = vi.fn();
-    for (const id of [undefined, "cursor", "opencode", "copilot-cli"]) {
+    for (const id of [undefined, "cursor", "unknown"]) {
       await readAheadRuntime(run, { harnessId: id }, undefined, enabled);
     }
     expect(run).not.toHaveBeenCalled();
   });
-  it("makes no remote request when resuming, even with the flag on", async () => {
+  it.each(["claude-code", "codex", "opencode", "copilot-cli"])("skips a resumed %s session", async (harnessId) => {
     const run = vi.fn();
-    await readAheadRuntime(run, { harnessId: "claude-code", resuming: true }, undefined, enabled);
+    await readAheadRuntime(run, { harnessId, resuming: true }, undefined, enabled);
     expect(run).not.toHaveBeenCalled();
   });
-  it("passes cancellation and a bounded timeout without any credential environment", async () => {
+  it.each(["codex", "copilot-cli", "opencode"])("warms a fresh %s session with a bounded timeout and no credential environment", async (harnessId) => {
     const signal = new AbortController().signal;
     const run = vi.fn().mockResolvedValue({ stdout: '{"outcome":"cached","bytes":0,"durationMs":1}' });
     const log = vi.spyOn(logger, "info").mockImplementation(() => {});
-    await readAheadRuntime(run, { harnessId: "codex" }, signal, enabled);
-    expect(run).toHaveBeenCalledWith(runtimeReadAheadCommand("codex"), { signal, timeoutMs: 5000 });
+    await readAheadRuntime(run, { harnessId }, signal, enabled);
+    const command = runtimeReadAheadCommand(harnessId);
+    expect(command?.endsWith(`'${harnessId}'`)).toBe(true);
+    expect(run).toHaveBeenCalledWith(command, { signal, timeoutMs: 5000 });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("[harness][read-ahead] outcome=cached bytes=0"), expect.objectContaining({ outcome: "cached", bytes: 0 }));
   });
   it("falls back without leaking output when the optional hint fails", async () => {

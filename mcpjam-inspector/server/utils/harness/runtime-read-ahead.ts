@@ -27,14 +27,23 @@ def main():
     if sys.argv[2]=='claude-code':
         package=(root/'claude-code/node_modules/@anthropic-ai/claude-agent-sdk').resolve(strict=True)
         binary=package.parent/'claude-agent-sdk-linux-x64/claude'
-    else:
+    elif sys.argv[2]=='codex':
         package=(root/'codex-appserver/node_modules/@openai/codex').resolve(strict=True)
         binary=package.parent/'codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex'
+    elif sys.argv[2]=='copilot-cli':
+        package=(root/'copilot-cli/node_modules/@github/copilot').resolve(strict=True)
+        binary=package.parent/'copilot-linux-x64/copilot'
+    elif sys.argv[2]=='opencode':
+        binary=root/'opencode/node_modules/opencode-ai/bin/opencode.exe'
+    else:
+        result('skipped','missing'); return
     binary=binary.resolve(strict=True)
     if not binary.is_relative_to(root):
         result('skipped','scope'); return
-    node=pathlib.Path(shutil.which('node') or '/usr/local/bin/node').resolve(strict=True)
-    files=[binary,node]; fds=[]; jobs=[]; total=0; chunk=4*1024*1024
+    files=[binary]
+    if sys.argv[2] in ('claude-code','codex'):
+        files.append(pathlib.Path(shutil.which('node') or '/usr/local/bin/node').resolve(strict=True))
+    fds=[]; jobs=[]; total=0; chunk=4*1024*1024
     libc=ctypes.CDLL(None,use_errno=True)
     libc.mincore.argtypes=[ctypes.c_void_p,ctypes.c_size_t,ctypes.c_void_p]
     libc.mincore.restype=ctypes.c_int
@@ -71,7 +80,7 @@ except (OSError,ValueError):
 `;
 
 export function runtimeReadAheadCommand(harnessId: string): string | undefined {
-  if (harnessId !== "claude-code" && harnessId !== "codex") return undefined;
+  if (!["claude-code", "codex", "copilot-cli", "opencode"].includes(harnessId)) return undefined;
   const root = `${HARNESS_BAKE_HOME}/${HARNESS_STATE_DIRECTORY_NAME}/.harness-bootstrap`;
   return `python3 -c ${shellQuote(SCRIPT)} ${shellQuote(root)} ${shellQuote(harnessId)}`;
 }
