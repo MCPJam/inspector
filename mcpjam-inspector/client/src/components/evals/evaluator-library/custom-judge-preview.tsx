@@ -51,7 +51,7 @@ function statusOf(result: Extract<PreviewResult, { ok: true }>["result"]) {
 }
 
 /**
- * "Test on a past run": grades one stored trial with the judge as it is in
+ * "Test on a past trial": grades one stored trial with the judge as it is in
  * the editor, before saving. It spends a judge call and writes nothing, so it
  * runs only on the button, never on mount or on edit.
  */
@@ -122,7 +122,7 @@ export function CustomJudgePreview({
           title={disabledReason}
           onClick={run}
         >
-          {running ? "Testing…" : "Test on a past run"}
+          {running ? "Testing…" : "Test on a past trial"}
         </Button>
         <span className="text-xs text-muted-foreground">
           Uses one judge call. Saves nothing.

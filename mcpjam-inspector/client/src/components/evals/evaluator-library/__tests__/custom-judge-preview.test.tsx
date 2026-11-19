@@ -33,7 +33,7 @@ describe("CustomJudgePreview", () => {
       result: { status: "scored", value: 1, passed: true, reason: "Says 42." },
     });
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
-    fireEvent.click(screen.getByRole("button", { name: "Test on a past run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test on a past trial" }));
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Says 42."),
     );
@@ -53,7 +53,7 @@ describe("CustomJudgePreview", () => {
       />,
     );
     expect(
-      screen.getByRole("button", { name: "Test on a past run" }),
+      screen.getByRole("button", { name: "Test on a past trial" }),
     ).toBeDisabled();
   });
 
@@ -63,7 +63,7 @@ describe("CustomJudgePreview", () => {
       reason: "iteration_not_gradable",
     });
     renderWithProviders(<CustomJudgePreview suiteId="s1" judge={judge} />);
-    fireEvent.click(screen.getByRole("button", { name: "Test on a past run" }));
+    fireEvent.click(screen.getByRole("button", { name: "Test on a past trial" }));
     expect(await screen.findByRole("status")).toHaveTextContent(
       "This trial cannot be graded. Choose another trial.",
     );
