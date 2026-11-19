@@ -70,6 +70,43 @@ function countCommentLines(text, regex) {
   return count;
 }
 
+/**
+ * A comment that justifies a workaround instead of fixing its cause: a named
+ * hack, a wait for React or the browser to catch up, a deferral by a frame or
+ * tick, or a cause nobody understood. Chosen from the words that, in this
+ * repo's comments, almost only appear in that sense; "deliberately",
+ * "best-effort" and "defensive" mostly explain real decisions, so they are not
+ * here.
+ */
+const WORKAROUND =
+  /(?<!\bnot (?:an? )?)\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
+
+/**
+ * A third-party bug tracker link. A workaround forced by someone else's bug
+ * cannot be fixed here, and the link is how a reader knows when to remove it.
+ * Our own issues do not count: those are ours to fix.
+ */
+const UPSTREAM_ISSUE =
+  /https?:\/\/(?:github\.com\/(?!mcpjam\/)[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+|(?:crbug\.com|bugs\.[\w.-]+|bugzilla\.[\w.-]+)\/)/i;
+
+/** Like `countCommentLines`, but a comment block that links `exempt` counts 0. */
+function countUnexemptCommentLines(text, regex, exempt) {
+  let count = 0;
+  let block = 0;
+  let exempted = false;
+  for (const line of text.split("\n")) {
+    if (!COMMENT_LINE.test(line)) {
+      if (!exempted) count += block;
+      block = 0;
+      exempted = false;
+      continue;
+    }
+    if (exempt.test(line)) exempted = true;
+    if (regex.test(line)) block += 1;
+  }
+  return exempted ? count : count + block;
+}
+
 /** Strings of user-facing copy in a UI file that match `regex`. */
 function countCopy(text, regex) {
   return extractUiStrings(text).filter((item) => regex.test(item.text)).length;
@@ -169,6 +206,14 @@ export const RULES = [
     id: "history-comment",
     label: "comments citing a PR number or a date",
     count: (text) => countCommentLines(stripProtocolVersions(text), HISTORY),
+  },
+  {
+    id: "workaround-comment",
+    label:
+      "comments that justify a workaround (hack, wait for React, next frame)",
+    fix: "Fix the cause: act on the event or state change the code is waiting for, or fix the ordering. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
+    count: (text) =>
+      countUnexemptCommentLines(text, WORKAROUND, UPSTREAM_ISSUE),
   },
   // Copy rules read only the strings a user sees (ui-strings.mjs), so a dash
   // or a sales word in a comment or an identifier does not count.

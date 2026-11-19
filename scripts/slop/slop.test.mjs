@@ -166,6 +166,41 @@ describe("rules", () => {
     assert.equal(counts["history-comment"], 1);
   });
 
+  it("counts workaround comments, not ones that explain a decision", () => {
+    const counts = count(
+      [
+        "// Hack: the picker reads stale props.",
+        " * Same vendor declaration workaround as schema.ts.",
+        "// Yield one frame so React can flush the status update.",
+        "/** Wait for React to paint the new screen before measuring. */",
+        "// `requestAnimationFrame` defers the scroll one paint so it wins.",
+        "// For some reason the second call returns null.",
+        "const hack = workaround();",
+        "// Deliberately not cached: the token rotates.",
+        "// Best-effort: telemetry must not block the save.",
+        "// The retry is not a workaround for a flaky server.",
+        "// Renders a hackathon banner.",
+      ].join("\n"),
+    );
+    assert.equal(counts["workaround-comment"], 6);
+  });
+
+  it("does not count a workaround that links an upstream issue", () => {
+    const counts = count(
+      [
+        "// Workaround for a Radix focus bug:",
+        "// https://github.com/radix-ui/primitives/issues/1234",
+        "useThing();",
+        "// Workaround until our own fix lands:",
+        "// https://github.com/MCPJam/inspector/issues/99",
+        "useThing();",
+        "/* Wait for the browser to paint first; see",
+        " * https://crbug.com/40123 */",
+      ].join("\n"),
+    );
+    assert.equal(counts["workaround-comment"], 1);
+  });
+
   it("counts suppressions", () => {
     const counts = count(
       "// @ts-nocheck\n// @ts-ignore\n// @ts-expect-error\n/* eslint-disable no-console */\n",
