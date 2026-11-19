@@ -58,9 +58,10 @@ export function normalizeHeaders(
 export function getExistingAuthorization(
   headers: Record<string, string>
 ): string | undefined {
-  const key = Object.keys(headers).find(
+  const keys = Object.keys(headers).filter(
     (candidate) => candidate.toLowerCase() === "authorization"
   )
+  const key = keys[keys.length - 1]
   return key === undefined ? undefined : headers[key]
 }
 

@@ -83,6 +83,22 @@ describe("buildRequestInit (#3453)", () => {
     }
   });
 
+  it("keeps the last caller Authorization value when several casings collide and an accessToken is set", () => {
+    const requestInit = buildRequestInit("my-access-token", {
+      headers: {
+        authorization: "Bearer stale",
+        Authorization: "Bearer current",
+        "X-Test": "value",
+      },
+    });
+
+    // Later values win, matching deduplicateRequestHeaders on the no-token path.
+    expect(requestInit?.headers).toEqual({
+      Authorization: "Bearer current",
+      "X-Test": "value",
+    });
+  });
+
   it("injects Bearer accessToken when no Authorization header was provided", () => {
     const requestInit = buildRequestInit("new-token", {
       headers: { "X-Test": "value" },
