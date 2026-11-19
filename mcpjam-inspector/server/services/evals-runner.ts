@@ -17,11 +17,8 @@ import { buildGuardedOrgModel } from "../utils/guarded-org-model.js";
 import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
-import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
-import {
-  creditRecoveryOfRefusal,
-  type CreditRecovery,
-} from "@mcpjam/sdk/contract";
+import { runStopRefusal } from "../../shared/credit-exhaustion.js";
+import type { CreditRecovery } from "@mcpjam/sdk/contract";
 import { creditStopNote } from "./evals/credit-stop.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
 import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
@@ -5912,12 +5909,11 @@ const runLocalIteration = async ({
       message: acc.iterationError,
       details: acc.iterationErrorDetails,
     };
-    const creditsExhausted = isCreditExhaustion(creditRefusal);
-    // Only MCPJam's own credit refusal names a step. Another error's body
+    // Only MCPJam's own stop refusal names a step. Another error's body
     // is not ours to repeat as an instruction.
-    const creditRecovery = creditsExhausted
-      ? creditRecoveryOfRefusal(creditRefusal)
-      : undefined;
+    const stopRefusal = runStopRefusal(creditRefusal);
+    const creditsExhausted = stopRefusal !== undefined;
+    const creditRecovery = stopRefusal?.recovery;
     if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     const finishParams = buildIterationFinishParams({
       iterationId,
@@ -6237,12 +6233,12 @@ const runLocalIteration = async ({
     // credits" is their provider balance, not MCPJam's: it must not stop the
     // run as out of MCPJam credits.
     const creditRefusal = { message: errorMessage, details: errorDetails };
-    const creditsExhausted =
-      acc.stepErrorEvidence?.source !== "provider_call" &&
-      isCreditExhaustion(creditRefusal);
-    const creditRecovery = creditsExhausted
-      ? creditRecoveryOfRefusal(creditRefusal)
-      : undefined;
+    const stopRefusal =
+      acc.stepErrorEvidence?.source !== "provider_call"
+        ? runStopRefusal(creditRefusal)
+        : undefined;
+    const creditsExhausted = stopRefusal !== undefined;
+    const creditRecovery = stopRefusal?.recovery;
     if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. Same threading as the
@@ -7194,9 +7190,8 @@ const runHostedIterationWithBrowser = async (
         false,
       );
     }
-    const setupCreditRecovery = isCreditExhaustion(error)
-      ? creditRecoveryOfRefusal(error)
-      : undefined;
+    const setupStop = runStopRefusal(error);
+    const setupCreditRecovery = setupStop?.recovery;
     if (setupCreditRecovery) {
       iterationMetadataBase.creditRecovery = setupCreditRecovery;
     }
@@ -7245,7 +7240,7 @@ const runHostedIterationWithBrowser = async (
     );
     failedEvaluation.passed = false;
     return {
-      creditsExhausted: isCreditExhaustion(error),
+      creditsExhausted: setupStop !== undefined,
       ...(setupCreditRecovery ? { creditRecovery: setupCreditRecovery } : {}),
       evaluation: failedEvaluation,
       iterationId,
@@ -7773,12 +7768,13 @@ const runHostedIterationWithBrowser = async (
     message: iterationError,
     details: iterationErrorDetails,
   };
-  const creditsExhausted =
-    modelSource !== "external-account" && isCreditExhaustion(creditRefusal);
+  const stopRefusal =
+    modelSource !== "external-account"
+      ? runStopRefusal(creditRefusal)
+      : undefined;
+  const creditsExhausted = stopRefusal !== undefined;
   // On the row, where the v1 projection reads it back as `infraError.recovery`.
-  const creditRecovery = creditsExhausted
-    ? creditRecoveryOfRefusal(creditRefusal)
-    : undefined;
+  const creditRecovery = stopRefusal?.recovery;
   if (creditRecovery) iterationMetadataBase.creditRecovery = creditRecovery;
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
