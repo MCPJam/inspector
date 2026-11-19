@@ -15,6 +15,8 @@
  *     --instance B,http://localhost:5174,<storage-state.json>,<inspector.log>[,<label>] \
  *     --project <projectId> --client "Claude Code" --pairs 5 \
  *     --workloads first,followup,echo3 --primers 1 --out <results.jsonl>
+ *     [--send-delay <ms typed before Send>] [--settle <ms idle that ends a turn>]
+ *     [--gap <ms before each new chat>]
  *
  * Every measured turn is kept, failures included. Summaries: report.mjs.
  */
@@ -27,7 +29,7 @@ const require = createRequire(new URL("../../package.json", import.meta.url));
 const { chromium } = require("playwright");
 
 function parseArgs(argv) {
-  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0, settleMs: 1_500 };
+  const args = { instances: [], pairs: 5, primers: 1, workloads: ["first", "followup"], turnTimeoutMs: 180_000, sendDelayMs: 0, settleMs: 1_500, gapMs: 0 };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
@@ -50,6 +52,7 @@ function parseArgs(argv) {
       case "--send-delay": args.sendDelayMs = Number(value); i += 1; break;
       // How long a closed, idle turn must stay idle before the next Send; 0 sends a follow-up as soon as the composer is free.
       case "--settle": args.settleMs = Number(value); i += 1; break;
+      case "--gap": args.gapMs = Number(value); i += 1; break;
       case "--headed": args.headed = true; break;
       case "--require-servers": args.requireServers = true; break;
       default: throw new Error(`Unknown argument ${flag}`);
@@ -345,6 +348,9 @@ async function runSequence(instance, args, meta) {
   const rows = [];
   for (const workload of args.workloads) {
     try {
+      // A member holds at most four live boxes, each live for its idle window
+      // after its turn: a gap before each new chat keeps preparation possible.
+      if (workload !== "followup" && args.gapMs) await sleep(args.gapMs);
       if (workload !== "followup") await freshChat(instance, args);
       const row = await runTurn(instance, workload, meta, args);
       rows.push(row);

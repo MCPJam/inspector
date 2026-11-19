@@ -73,6 +73,11 @@ export function overlapMcpConfigWithBroker(
   return env.MCPJAM_HARNESS_OVERLAP_MCP_CONFIG === "1";
 }
 
+/** `MCPJAM_HARNESS_PREP_READ_AHEAD=1`: a box preparation also warms the runtime's pages, fenced. */
+export function preparationReadAhead(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.MCPJAM_HARNESS_PREP_READ_AHEAD === "1";
+}
+
 /** `MCPJAM_HARNESS_SKIP_FIRST_REAP=1`: a conversation's first turn, on its new box, reaps no bridges. */
 export function skipFirstTurnReap(
   env: NodeJS.ProcessEnv = process.env,

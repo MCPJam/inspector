@@ -272,6 +272,20 @@ describe("preparing a new chat's box", () => {
     }
   });
 
+  it("with the read-ahead switch on, also warms the runtime's pages, fenced", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_PREP_READ_AHEAD", "1");
+    try {
+      const box = fakeBox({ baked: true });
+      await expect(prepare()).resolves.toEqual({ outcome: "prepared" });
+      const hints = box.runs.filter((run) => run.command.includes("python3 -c"));
+      expect(hints).toHaveLength(1);
+      expect(hints[0]!.command).toMatch(BOUNDED);
+      expect(releasedAs()).toBe("clean");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("on a baked box only checks the markers", async () => {
     const box = fakeBox({ baked: true });
     await expect(prepare()).resolves.toEqual({ outcome: "prepared" });

@@ -27,6 +27,8 @@
  */
 import { markBoxPreparationSettled } from "./box-preparation-signal.js";
 import { traceEvent } from "./harness-trace.js";
+import { runtimeReadAheadCommand } from "./runtime-read-ahead.js";
+import { preparationReadAhead } from "./startup-overlap.js";
 import { createHarnessSandboxTemplate } from "@ai-sdk/harness/agent";
 import type { HarnessAgentAdapter } from "@ai-sdk/harness/agent";
 import { preparePlaygroundTerminalSandbox } from "../computers/control-plane-client.js";
@@ -282,6 +284,16 @@ export async function prepareConversationBox(args: {
         harnesses: [runtime],
       });
       await template?.prepare({ session: fenced, abortSignal: signal });
+    }
+    // The page-cache hint a Send's session starts with, so the Send's bridge
+    // and agent start on warm pages: it only reads installed files, runs
+    // fenced like every command here, and its exit code never stops this.
+    const readAhead = preparationReadAhead()
+      ? runtimeReadAheadCommand(args.harnessId)
+      : undefined;
+    if (readAhead) {
+      const hint = await fenced.run({ command: readAhead });
+      traceEvent("prep.read-ahead", { exitCode: hint.exitCode });
     }
     const observed = await harnessBootstrapObservation(provider);
     logger.info("[harness-prepare] box prepared", {
