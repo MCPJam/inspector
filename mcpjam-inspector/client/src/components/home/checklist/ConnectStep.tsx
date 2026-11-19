@@ -36,15 +36,19 @@ function nameFor(url: string, servers: Record<string, ServerWithName>) {
   const base = deriveServerName(url);
   for (let n = 1; ; n += 1) {
     const name = n === 1 ? base : `${base} ${n}`;
-    const existing = servers[name];
-    if (!existing || urlOf(existing) === url) return name;
+    if (!servers[name]) return name;
   }
 }
 
 function looksLikeUrl(value: string): boolean {
   if (!/^https?:\/\/\S+$/i.test(value)) return false;
   try {
-    return Boolean(new URL(value).hostname.includes("."));
+    const { hostname } = new URL(value);
+    return (
+      hostname.includes(".") ||
+      hostname === "localhost" ||
+      hostname.startsWith("[")
+    );
   } catch {
     return false;
   }
@@ -54,6 +58,7 @@ export function ConnectStep({
   servers,
   onConnect,
   onRemove,
+  onReconnect,
   onConfirmed,
   onTrack,
   onAttemptChange,
@@ -64,6 +69,8 @@ export function ConnectStep({
     options: { suppressErrorToast: boolean; suppressSuccessToast: boolean },
   ) => Promise<unknown>;
   onRemove: (name: string) => Promise<unknown>;
+  /** Reconnects a saved server as it is, keeping its saved authentication. */
+  onReconnect: (name: string) => Promise<unknown>;
   onConfirmed: (name: string) => void;
   onTrack: (action: ConnectAction) => void;
   /** The unconfirmed server, so the step isn't checked before Confirm. */
@@ -84,6 +91,17 @@ export function ConnectStep({
     if (current?.created) void onRemove(current.name);
   };
 
+  const connect = (target: Attempt) => {
+    if (!target.created) {
+      void onReconnect(target.name);
+      return;
+    }
+    void onConnect(target.formData, {
+      suppressErrorToast: true,
+      suppressSuccessToast: true,
+    });
+  };
+
   const start = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return;
@@ -91,7 +109,10 @@ export function ConnectStep({
       setError("Enter a full URL, like https://mcp.example.com/mcp.");
       return;
     }
-    const name = nameFor(trimmed, servers);
+    const saved = Object.values(servers).find(
+      (candidate) => urlOf(candidate) === trimmed,
+    );
+    const name = saved?.name ?? nameFor(trimmed, servers);
     const formData: ServerFormData = {
       name,
       type: "http",
@@ -105,12 +126,10 @@ export function ConnectStep({
       return;
     }
     setError(null);
-    setAttempt({ name, formData, created: !servers[name] });
+    const next = { name, formData, created: !saved };
+    setAttempt(next);
     onTrack("auto_started");
-    void onConnect(formData, {
-      suppressErrorToast: true,
-      suppressSuccessToast: true,
-    });
+    connect(next);
   };
 
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -215,10 +234,7 @@ export function ConnectStep({
           }
           onRetry={() => {
             onTrack("retried");
-            void onConnect(attempt.formData, {
-              suppressErrorToast: true,
-              suppressSuccessToast: true,
-            });
+            connect(attempt);
           }}
         />
       ) : null}

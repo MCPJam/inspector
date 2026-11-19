@@ -18,6 +18,7 @@ function setup(servers: Record<string, ServerWithName> = {}) {
     servers,
     onConnect: vi.fn().mockResolvedValue(undefined),
     onRemove: vi.fn().mockResolvedValue(undefined),
+    onReconnect: vi.fn().mockResolvedValue(undefined),
     onConfirmed: vi.fn(),
     onTrack: vi.fn(),
     onAttemptChange: vi.fn(),
@@ -93,13 +94,25 @@ describe("ConnectStep", () => {
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
   });
 
-  it("keeps an existing server with the same URL when cancelled", () => {
+  it("reconnects a saved server with that URL instead of overwriting it", () => {
     const { props } = setup({ Acme: server("disconnected") });
     typeUrl(URL_VALUE);
     act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).not.toHaveBeenCalled();
+    expect(props.onReconnect).toHaveBeenCalledWith("Acme");
     fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-    expect(props.onConnect).toHaveBeenCalledTimes(2);
+    expect(props.onReconnect).toHaveBeenCalledTimes(2);
     typeUrl("https://other.example.com/mcp");
     expect(props.onRemove).not.toHaveBeenCalled();
+  });
+
+  it("accepts a localhost URL", () => {
+    const { props } = setup();
+    typeUrl("http://localhost:3001/mcp");
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(props.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "http://localhost:3001/mcp" }),
+      expect.anything(),
+    );
   });
 });

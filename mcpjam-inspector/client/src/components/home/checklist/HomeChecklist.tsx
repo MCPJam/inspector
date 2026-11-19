@@ -251,6 +251,11 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
             servers={runtimeServers}
             onConnect={ctx.handleConnect}
             onRemove={ctx.handleRemoveServer}
+            onReconnect={(name) =>
+              ctx.reconnectServerWithResult(name, {
+                allowInteractiveOAuthFlow: true,
+              })
+            }
             onAttemptChange={setProvisional}
             onConfirmed={(name) => {
               ctx.setSelectedServer(name);
