@@ -5049,6 +5049,8 @@ export function PlaygroundMain({
   // empty. `handleSendFollowUp` ensures the server is connected first. The ref
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
+  // Declared further down; read through a ref so the effect can broadcast.
+  const queueBroadcastRef = useRef<typeof queueBroadcastRequest>(() => false);
   useEffect(() => {
     if (
       !shouldAutoRunPreview({
@@ -5080,6 +5082,17 @@ export function PlaygroundMain({
     // be there. `autoRanRef` is already set, so the only send that can follow
     // is the user's own.
     composer.setInput("");
+    // Comparison lanes take a broadcast, the way a starter chip sends there.
+    if (isCompareMode) {
+      const sent = queueBroadcastRef.current({
+        text: autoRunInput as string,
+        prependMessages: [],
+        widgetModelContext: modelContextQueue,
+      });
+      if (sent) onAutoRunSent?.();
+      else composer.setInput(autoRunInput as string);
+      return;
+    }
     void handleSendFollowUp(autoRunInput as string).then((sent) => {
       if (sent) onAutoRunSent?.();
     });
@@ -5091,6 +5104,8 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
+    isCompareMode,
+    modelContextQueue,
     handleSendFollowUp,
     onAutoRunSent,
   ]);
@@ -5470,6 +5485,7 @@ export function PlaygroundMain({
     );
     return true;
   };
+  queueBroadcastRef.current = queueBroadcastRequest;
 
   const mergedToolRenderOverrides = useMemo(
     () => ({

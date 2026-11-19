@@ -2142,6 +2142,39 @@ describe("PlaygroundMain — multi-host render path", () => {
     expect(latestBroadcast.text).toBe("hello hosts");
   });
 
+  it("auto-runs its prompt as one broadcast to the compare cards", async () => {
+    multiHostFixture.hostList = [
+      { hostId: "h-A", name: "Host A" },
+      { hostId: "h-B", name: "Host B" },
+    ];
+    multiHostFixture.hosts = {
+      "h-A": makeHost("h-A", "Host A", { hostStyle: "chatgpt" }),
+      "h-B": makeHost("h-B", "Host B", { hostStyle: "claude" }),
+    };
+    multiHostFixture.selectedHostIds = ["h-A", "h-B"];
+    multiHostFixture.multiHostEnabled = true;
+    const onAutoRunSent = vi.fn();
+
+    render(
+      <PlaygroundMain
+        {...defaultProps}
+        autoRunInput="What can this server do?"
+        onAutoRunSent={onAutoRunSent}
+      />,
+    );
+
+    await waitFor(() => expect(onAutoRunSent).toHaveBeenCalledTimes(1));
+    expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    const broadcasts = new Set(
+      mockMultiModelPlaygroundCard.mock.calls
+        .map(([props]) => props.broadcastRequest)
+        .filter(Boolean),
+    );
+    expect([...broadcasts].map((request) => request.text)).toEqual([
+      "What can this server do?",
+    ]);
+  });
+
   it("gives each pane its own servers and its picked model", () => {
     projectServersFixture.byName = new Map([["test-server", "srv-test"]]);
     const previousModels = mockUseChatSession.availableModels;
