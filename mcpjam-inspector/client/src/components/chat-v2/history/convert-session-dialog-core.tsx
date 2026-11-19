@@ -1026,7 +1026,7 @@ function ConvertSessionDialogCoreInner({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+      <DialogContent className="flex max-h-[90vh] flex-col gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
         <div className="px-6 pt-6">
           <DialogHeader className="space-y-1.5 pr-10">
             <DialogTitle>Promote to test case</DialogTitle>
@@ -1036,7 +1036,7 @@ function ConvertSessionDialogCoreInner({
           </DialogHeader>
         </div>
 
-        <div className="space-y-5 px-6 py-5">
+        <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
           {blockingNotice ?? (
             <>
               <div className="space-y-2">
