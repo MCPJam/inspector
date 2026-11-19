@@ -118,6 +118,11 @@ import {
   type RunResultCrumbs,
 } from "../evaluate/run-result-pages/run-result-page";
 import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
+import {
+  CaseStepsPage,
+  opensInStepsEditor,
+} from "../evaluate/case-steps/case-steps-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -886,6 +891,14 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
+  // Evaluate's saved case: steps editor with the flag on; waits while it loads.
+  const stepsEditorFlag = useTestCaseStepsEditorEnabled();
+  const stepsEditorRoute =
+    evaluateCaseEditor &&
+    viewMode === "test-edit" &&
+    opensInStepsEditor(route) &&
+    stepsEditorFlag !== false;
+  const showStepsEditor = stepsEditorRoute && stepsEditorFlag === true;
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -1247,7 +1260,10 @@ export function SuiteIterationsView({
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
-    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+    !stepsEditorRoute &&
+    perRunMode &&
+    selectedTestId &&
+    !isDraftTestCaseId(selectedTestId)
       ? selectedTestId
       : null;
   const caseRows = useQuery(
@@ -2238,9 +2254,43 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {(viewMode === "test-edit" || viewMode === "test-detail") &&
-            selectedTestId &&
-            caseRowsPending ? (
+            {stepsEditorRoute && !showStepsEditor ? (
+              <RowsLoading key={contentKey} label="Loading test case..." />
+            ) : showStepsEditor && selectedTestId ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <CaseStepsPage
+                  suiteId={suite._id}
+                  testCaseId={selectedTestId}
+                  projectId={projectId}
+                  readOnly={editingDisabled}
+                  projectServers={projectServers}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
+                  onRunCase={isDirectGuest ? undefined : onRunCase}
+                  runOutOfCreditsReason={caseRunOutOfCreditsReason}
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  navigation={navigation}
+                />
+              </motion.div>
+            ) : (viewMode === "test-edit" || viewMode === "test-detail") &&
+              selectedTestId &&
+              caseRowsPending ? (
               <RowsLoading key={contentKey} label="Loading case history..." />
             ) : viewMode === "test-edit" && selectedTestId ? (
               <motion.div

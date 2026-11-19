@@ -393,6 +393,25 @@ describe("AssertionEditor", () => {
     expect(screen.getAllByRole("option", { name: "get_me" })).toHaveLength(1);
   });
 
+  it("can't move while a field holds text that isn't valid", () => {
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep({ type: "noToolErrors" })}
+        actionId="p1"
+        actions={actions}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy
+        moveBlocked
+        onChange={vi.fn()}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Graded after" }),
+    ).toBeDisabled();
+  });
+
   it("reads Before the first step for a leading assertion", () => {
     renderWithProviders(
       <AssertionEditor

@@ -1,5 +1,6 @@
 /** Inside a step's card: the prompt box, the action card, an assertion's fields. */
 import { ChevronDown, MousePointerClick, Wrench } from "lucide-react";
+import { checkRole } from "@mcpjam/sdk/predicates";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Textarea } from "@mcpjam/design-system/textarea";
@@ -20,6 +21,7 @@ import {
   WidgetAssertionFields,
   type AvailableTool,
 } from "@/components/evals/step-fields";
+import type { ArgMatchMode } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
   type AssertStep,
@@ -264,6 +266,8 @@ export function AssertionEditor({
   availableTools,
   readOnly,
   checkPolicy,
+  moveBlocked = false,
+  caseMatching,
   onChange,
   onMove,
 }: {
@@ -275,12 +279,27 @@ export function AssertionEditor({
   readOnly: boolean;
   /** The deployment grades a check's own role; without it, no role control. */
   checkPolicy: boolean;
+  /** A field draft is invalid: moving would remount and drop it. */
+  moveBlocked?: boolean;
+  /** The case's argument matching, which a blocking tool check is graded by. */
+  caseMatching?: {
+    value: ArgMatchMode;
+    onChange: (mode: ArgMatchMode) => void;
+  };
   onChange: (next: AssertStep) => void;
   /** The step it should be graded after. */
   onMove: (actionId: string) => void;
 }) {
   const assertion = step.assertion;
   const widget = isWidgetAssertion(assertion);
+  // A blocking tool check is matched by the case's mode, so it edits that.
+  const caseWide =
+    caseMatching &&
+    !widget &&
+    assertion.type === "toolCalledWith" &&
+    checkRole(assertion) !== "advisory"
+      ? caseMatching
+      : null;
   const toolNames = [...new Set(availableTools.map((tool) => tool.name))];
   return (
     <fieldset disabled={readOnly} className="min-w-0 space-y-3">
@@ -291,11 +310,14 @@ export function AssertionEditor({
           </Label>
           <Select
             value={actionId ?? undefined}
-            disabled={readOnly}
+            disabled={readOnly || moveBlocked}
             onValueChange={onMove}
           >
             <SelectTrigger
               aria-label="Graded after"
+              title={
+                moveBlocked ? "Fix the highlighted fields first." : undefined
+              }
               className="h-9 w-full text-sm font-normal"
             >
               <SelectValue placeholder="Before the first step" />
@@ -339,21 +361,53 @@ export function AssertionEditor({
           Passes when no tool reports an error.
         </p>
       ) : (
-        <CheckRow
-          noun="assertion"
-          embedded
-          paper
-          predicate={assertion}
-          availableTools={toolNames}
-          toolArgSchemas={Object.fromEntries(
-            availableTools.map((tool) => [
-              tool.name,
-              tool.inputSchema?.properties ?? {},
-            ]),
-          )}
-          readOnly={readOnly}
-          onChange={(next) => onChange({ ...step, assertion: next })}
-        />
+        <>
+          {caseWide ? (
+            <p className="text-xs text-muted-foreground">
+              Argument matching applies to every blocking tool check in this
+              case.
+            </p>
+          ) : null}
+          <CheckRow
+            noun="assertion"
+            embedded
+            paper
+            predicate={
+              caseWide && assertion.type === "toolCalledWith"
+                ? {
+                    ...assertion,
+                    args: {
+                      ...assertion.args,
+                      argumentMatching: caseWide.value,
+                    },
+                  }
+                : assertion
+            }
+            availableTools={toolNames}
+            toolArgSchemas={Object.fromEntries(
+              availableTools.map((tool) => [
+                tool.name,
+                tool.inputSchema?.properties ?? {},
+              ]),
+            )}
+            readOnly={readOnly}
+            onChange={(next) => {
+              if (caseWide && next.type === "toolCalledWith") {
+                const mode = next.args?.argumentMatching;
+                if (mode && mode !== caseWide.value) caseWide.onChange(mode);
+                const stored =
+                  assertion.type === "toolCalledWith"
+                    ? assertion.args?.argumentMatching
+                    : undefined;
+                next = {
+                  ...next,
+                  args: { ...next.args, argumentMatching: stored },
+                };
+              }
+              onChange({ ...step, assertion: next });
+            }}
+          />
+        </>
       )}
     </fieldset>
   );
