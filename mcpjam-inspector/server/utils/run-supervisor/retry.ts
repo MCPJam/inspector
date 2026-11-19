@@ -210,11 +210,14 @@ export function retryAfterMsOf(
       ? (headers as Headers).get("retry-after")
       : undefined;
   // MCPClientManager preserves the wire header in SdkHttpError.data before
-  // the transport discards it. Unlike normalized top-level values, this is
-  // a string in seconds or HTTP-date format, not milliseconds.
+  // the transport discards it, and a SwarmAgentError keeps it verbatim as a
+  // top-level string. Unlike normalized top-level numbers, these are seconds
+  // or an HTTP-date, not milliseconds.
   const sdkRetryAfter = errorRecord(record.data)?.retryAfter;
   const raw =
-    header ?? (typeof sdkRetryAfter === "string" ? sdkRetryAfter : undefined);
+    header ??
+    (typeof sdkRetryAfter === "string" ? sdkRetryAfter : undefined) ??
+    (typeof record.retryAfter === "string" ? record.retryAfter : undefined);
   if (!raw) return undefined;
   const seconds = Number(raw);
   if (Number.isFinite(seconds)) {
@@ -283,10 +286,15 @@ export function classifyRetry(error: unknown): RetryClassification {
 
   // A credit refusal whose recovery is not a transient hold is terminal: the
   // fix is an upgrade or a purchase, which no timer brings about. A `wait`
-  // recovery (in-flight requests hold the last credits) falls through to the
-  // rate-limit and transient rules, which keep its retry.
+  // recovery (in-flight requests hold the last credits) is retried, and is
+  // decided here rather than by the code match below: a hold answers with
+  // `user_rate_limit`, which a `SwarmAgentError` carries in its message.
   const recovery = creditRecoveryOf(error);
-  if (recovery && recovery.action !== "wait") return { class: "terminal" };
+  if (recovery) {
+    return recovery.action === "wait"
+      ? withWait("rate_limited")
+      : { class: "terminal" };
+  }
 
   const code = codeOf(error);
   const message = messageOf(error);
