@@ -30,10 +30,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import {
-  ClientAttachmentsEditor,
-  type HostAttachmentDraft,
-} from "@/components/evals/client-attachments-editor";
+import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
+import { ClientMultiSelect } from "@/components/hosts/client-multi-select";
+import { DestinationCard } from "@/components/chat-v2/history/convert-session-dialog-core";
+import { RadioGroup } from "@mcpjam/design-system/radio-group";
 import { ServerPicker } from "@/components/hosts/server-picker";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
@@ -63,7 +63,6 @@ type SaveAsTestCaseActionProps = {
   /** Clients to attach to a new suite, in place of the project's first client. */
   suggestedHostIds?: string[];
   /** An earlier prompt this one repeats, shown as context. */
-  similarPromptText?: string;
 };
 
 type DestinationMode = "existing" | "new";
@@ -81,7 +80,6 @@ export function SaveAsTestCaseAction({
   open: controlledOpen,
   onOpenChange,
   suggestedHostIds,
-  similarPromptText,
 }: SaveAsTestCaseActionProps) {
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const isUserReady = useDbUserReady();
@@ -295,22 +293,17 @@ export function SaveAsTestCaseAction({
         </Tooltip>
       )}
       <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Save as test case</DialogTitle>
-            <DialogDescription>
-              Captures this prompt and the assistant's tool calls. Turns with no
-              observed tool calls can't be saved here — create a negative test
-              from the Evals suite instead.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            {similarPromptText && (
-              <p className="line-clamp-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-                Similar to: {similarPromptText}
-              </p>
-            )}
-            <div className="space-y-1.5">
+        <DialogContent className="flex max-h-[90vh] flex-col gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+          <div className="px-6 pt-6">
+            <DialogHeader className="space-y-1.5 pr-10">
+              <DialogTitle>Save as test case</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                Turn this prompt and its tool calls into a reusable case.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="min-h-0 space-y-5 overflow-y-auto px-6 py-5">
+            <div className="space-y-2">
               <Label htmlFor="save-as-test-case-title">Test case name</Label>
               <Input
                 id="save-as-test-case-title"
@@ -320,79 +313,99 @@ export function SaveAsTestCaseAction({
                 autoFocus
               />
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="save-as-test-case-destination">Destination</Label>
-              <Select
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-foreground">Add to</p>
+              <RadioGroup
                 value={destinationMode}
-                onValueChange={(value) =>
-                  setDestinationMode(value as DestinationMode)
+                onValueChange={(next) =>
+                  setDestinationMode(next === "existing" ? "existing" : "new")
                 }
+                aria-label="Add to"
+                className="gap-2"
               >
-                <SelectTrigger id="save-as-test-case-destination">
-                  <SelectValue placeholder="Destination" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="existing">
-                    Add to existing suite
-                  </SelectItem>
-                  <SelectItem value="new">Create a new suite</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {destinationMode === "existing" ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="save-as-test-case-suite">Suite</Label>
-                <Select
-                  value={selectedSuiteId}
-                  onValueChange={setSelectedSuiteId}
-                  disabled={availableSuites.length === 0}
+                <DestinationCard
+                  value="existing"
+                  title="Existing suite"
+                  selected={destinationMode === "existing"}
+                  disabled={submitting}
                 >
-                  <SelectTrigger id="save-as-test-case-suite">
-                    <SelectValue
-                      placeholder={
-                        suitesOverview === undefined
-                          ? "Loading suites…"
-                          : availableSuites.length === 0
-                            ? "No suites yet — create one instead"
-                            : "Pick a suite"
-                      }
+                  <div className="space-y-2">
+                    <Label htmlFor="save-as-test-case-suite">Suite</Label>
+                    <Select
+                      value={selectedSuiteId}
+                      onValueChange={setSelectedSuiteId}
+                      disabled={availableSuites.length === 0}
+                    >
+                      <SelectTrigger
+                        id="save-as-test-case-suite"
+                        className="w-full"
+                      >
+                        <SelectValue
+                          placeholder={
+                            suitesOverview === undefined
+                              ? "Loading suites…"
+                              : availableSuites.length === 0
+                                ? "No suites yet. Create one instead."
+                                : "Pick a suite"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableSuites.map((entry) => (
+                          <SelectItem
+                            key={entry.suite._id}
+                            value={entry.suite._id}
+                          >
+                            {entry.suite.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </DestinationCard>
+                <DestinationCard
+                  value="new"
+                  title="New suite"
+                  selected={destinationMode === "new"}
+                  disabled={submitting}
+                >
+                  <div className="space-y-2">
+                    <Label htmlFor="save-as-test-case-new-suite">
+                      Suite name
+                    </Label>
+                    <Input
+                      id="save-as-test-case-new-suite"
+                      value={newSuiteName}
+                      onChange={(e) => setNewSuiteName(e.target.value)}
+                      placeholder="e.g. github-issue-flow"
                     />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableSuites.map((entry) => (
-                      <SelectItem key={entry.suite._id} value={entry.suite._id}>
-                        {entry.suite.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="save-as-test-case-new-suite">
-                    New suite name
-                  </Label>
-                  <Input
-                    id="save-as-test-case-new-suite"
-                    value={newSuiteName}
-                    onChange={(e) => setNewSuiteName(e.target.value)}
-                    placeholder="e.g. github-issue-flow"
-                  />
-                </div>
-
-                {attachmentPickersEnabled && projectId ? (
-                  <div className="divide-y rounded-lg border bg-muted/20">
-                    <div className="flex items-start justify-between gap-4 p-3">
-                      <div className="min-w-0 space-y-0.5">
-                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Servers
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          Server set all clients run against.
-                        </p>
+                  </div>
+                  {attachmentPickersEnabled && projectId ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="min-w-0 space-y-2">
+                        <Label htmlFor="save-as-test-case-clients">
+                          Client
+                        </Label>
+                        <ClientMultiSelect
+                          hosts={projectHosts}
+                          value={hostAttachments.map(
+                            (draft) => draft.namedHostId,
+                          )}
+                          onChange={(hostIds) =>
+                            setHostAttachments(
+                              hostIds.map((namedHostId) => ({
+                                namedHostId,
+                                enabledOptionalServerIds: [],
+                              })),
+                            )
+                          }
+                          disabled={submitting}
+                          triggerId="save-as-test-case-clients"
+                          inModal
+                        />
                       </div>
-                      <div className="shrink-0">
+                      <div className="min-w-0 space-y-2">
+                        <Label htmlFor="save-as-test-case-server">Server</Label>
                         <ServerPicker
                           projectId={projectId}
                           value={serverAttachmentId}
@@ -401,36 +414,22 @@ export function SaveAsTestCaseAction({
                           // down so a delete in the picker reaches this form.
                           onClearSelection={() => setServerAttachmentId(null)}
                           offerClear={false}
+                          variant="field"
+                          triggerId="save-as-test-case-server"
                           inModal
                           disabled={submitting}
                         />
                       </div>
                     </div>
-                    <div className="space-y-2 p-3">
-                      <div className="space-y-0.5">
-                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Clients
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          Each attached client fans out into its own run.
-                        </p>
-                      </div>
-                      <ClientAttachmentsEditor
-                        projectId={projectId}
-                        value={hostAttachments}
-                        onChange={setHostAttachments}
-                        disabled={submitting}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            )}
+                  ) : null}
+                </DestinationCard>
+              </RadioGroup>
+            </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="border-t border-border/50 px-6 py-4">
             <Button
               type="button"
-              variant="ghost"
+              variant="outline"
               onClick={() => handleOpenChange(false)}
               disabled={submitting}
             >
@@ -445,7 +444,7 @@ export function SaveAsTestCaseAction({
               {submitting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : null}
-              Save
+              Save as test case
             </Button>
           </DialogFooter>
         </DialogContent>

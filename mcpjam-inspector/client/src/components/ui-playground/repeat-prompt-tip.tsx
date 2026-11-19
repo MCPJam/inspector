@@ -33,7 +33,7 @@ function seenKey(projectId: string, serverName: string): string {
   return `${SEEN_KEY_PREFIX}:${projectId}:${serverName.toLowerCase()}`;
 }
 
-type RepeatMatch = { turn: PromptTurn; similarText: string };
+type RepeatMatch = { turn: PromptTurn };
 
 type RepeatPromptTipProps = {
   projectId: string | null;
@@ -85,7 +85,7 @@ export function RepeatPromptTip({
 
     const local = findRepeatInConversation(messages, turn);
     if (local) {
-      setMatch({ turn, similarText: local });
+      setMatch({ turn });
       return;
     }
     findSimilar({
@@ -100,7 +100,7 @@ export function RepeatPromptTip({
       .then((result) => {
         // Re-renders don't cancel the lookup; a newer turn does.
         if (result && checkedKey.current === key) {
-          setMatch({ turn, similarText: result.promptText });
+          setMatch({ turn });
         }
       })
       .catch((error: unknown) => {
@@ -134,17 +134,17 @@ export function RepeatPromptTip({
         <div
           ref={contentRef}
           role="status"
-          className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs"
+          className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-1.5 text-xs duration-300 animate-in fade-in slide-in-from-bottom-2 motion-reduce:animate-none"
         >
-          <Badge variant="secondary">Tip</Badge>
-          <p className="min-w-0 flex-1 truncate text-muted-foreground">
+          <Badge>Tip</Badge>
+          <p className="min-w-0 flex-1 text-foreground/80">
             You&apos;ve asked {serverName} this before. Save it as a test case
             to rerun it anytime.
           </p>
           <Button
             variant="link"
             size="sm"
-            className="h-auto px-0"
+            className="h-auto px-0 font-medium text-foreground underline"
             onClick={() => {
               track("playground_repeat_tip_clicked", {
                 location: "playground",
@@ -179,7 +179,6 @@ export function RepeatPromptTip({
         promptPreview={match.turn.text}
         projectId={projectId}
         suggestedHostIds={hostIds}
-        similarPromptText={match.similarText}
       />
     </>
   );

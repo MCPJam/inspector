@@ -132,7 +132,7 @@ type DestinationCardProps = {
  * are siblings: nesting them inside the label would hand every click on a
  * select to the radio.
  */
-function DestinationCard({
+export function DestinationCard({
   value,
   title,
   selected,

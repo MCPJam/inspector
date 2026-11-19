@@ -43,10 +43,8 @@ vi.mock("@/hooks/useClients", () => ({
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-picker" />,
 }));
-vi.mock("@/components/evals/client-attachments-editor", () => ({
-  ClientAttachmentsEditor: () => (
-    <div data-testid="client-attachments-editor" />
-  ),
+vi.mock("@/components/hosts/client-multi-select", () => ({
+  ClientMultiSelect: () => <div data-testid="client-multi-select" />,
 }));
 
 vi.mock("@/lib/toast", () => ({ toast: mockToast }));
@@ -123,7 +121,7 @@ async function promoteToExistingSuite() {
   await user.click(
     await screen.findByRole("button", { name: "Excalidraw suite" }),
   );
-  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(screen.getByRole("button", { name: "Save as test case" }));
 }
 
 describe("SaveAsTestCaseAction", () => {

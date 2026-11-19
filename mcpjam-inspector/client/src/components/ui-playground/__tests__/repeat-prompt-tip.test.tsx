@@ -26,12 +26,10 @@ vi.mock("@/components/chat-v2/shared/save-as-test-case-action", () => ({
     open: boolean;
     promptIndex: number;
     suggestedHostIds: string[];
-    similarPromptText: string;
   }) =>
     props.open ? (
       <div data-testid="save-dialog">
-        {props.promptIndex}|{props.suggestedHostIds.join(",")}|
-        {props.similarPromptText}
+        {props.promptIndex}|{props.suggestedHostIds.join(",")}
       </div>
     ) : null,
 }));
@@ -102,7 +100,7 @@ describe("RepeatPromptTip", () => {
       screen.getByRole("button", { name: "Save as test case" }),
     );
     expect(screen.getByTestId("save-dialog")).toHaveTextContent(
-      "0|host-a,host-b|list open linear issues",
+      "0|host-a,host-b",
     );
     expect(screen.queryByText("Tip")).not.toBeInTheDocument();
   });
