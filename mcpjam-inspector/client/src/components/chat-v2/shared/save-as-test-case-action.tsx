@@ -455,7 +455,7 @@ export function SaveAsTestCaseAction({
             </div>
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="save-as-test-case-assert-tools">
-                Also check each tool call
+                Also save each tool call
               </Label>
               <Switch
                 id="save-as-test-case-assert-tools"
