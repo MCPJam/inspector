@@ -22,6 +22,25 @@ import {
   startTraceRecord,
   type TraceRecord,
 } from "../../utils/harness/harness-trace.js";
+import type { MCPClientManager } from "@mcpjam/sdk";
+import { describeReplyForTrace } from "./harness-mcp-trace.js";
+import {
+  checkTurnWithReuse,
+  harnessMcpTurnCacheEnabled,
+  withTurnManager,
+} from "./harness-mcp-turn-cache.js";
+import {
+  DISCOVER_METHOD,
+  LISTEN_METHOD,
+  acknowledgedListenStream,
+  INITIALIZED_NOTIFICATION,
+  harnessLeanDiscoveryEnabled,
+  harnessLegacyDownstreamEnabled,
+  harnessListenAckEnabled,
+  isDiscoveryMethod,
+  isJsonRpcId,
+  methodNotFound,
+} from "./harness-mcp-listen.js";
 import { Hono } from "hono";
 import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
@@ -284,7 +303,18 @@ async function handleRequest(
       ? () =>
           sameSessionTurn(sessionEnvelope, serverId, boxGrant, session.turnId)
       : undefined;
-  const denied = turn ? await checkTurn?.() : undefined;
+  // With per-turn reuse on, a POST's first turn check waits for its method, so
+  // a discovery request can reuse a pass from the same turn's last 2 s.
+  const turnKey =
+    harnessMcpTurnCacheEnabled() && (turn || session)
+      ? [claims.userId, claims.projectId, serverId, session?.turnId ?? JSON.stringify(turn)].join("|")
+      : undefined;
+  const checkFirst = (discovery: boolean) =>
+    turnKey && discovery && checkTurn ? checkTurnWithReuse(turnKey, checkTurn) : checkTurn?.();
+  const denied =
+    turn && !(turnKey && c.req.method === "POST")
+      ? await checkFirst(c.req.method !== "POST")
+      : undefined;
   trace?.mark("turn");
   if (denied) return denied;
 
@@ -355,6 +385,37 @@ async function handleRequest(
   }
   const body = validation.body;
   trace?.set("method", typeof body.method === "string" ? body.method : "response");
+  if (trace) {
+    const params = (body as { params?: Record<string, unknown> }).params ?? {};
+    const meta = (params._meta ?? {}) as Record<string, unknown>;
+    trace.set("params", Object.keys(params).filter((key) => key !== "_meta").join("+") || "-");
+    trace.set("pv", String(meta["io.modelcontextprotocol/protocolVersion"] ?? c.req.header("mcp-protocol-version") ?? "-"));
+  }
+  if (turn && turnKey) {
+    const deniedAfterParse = await checkFirst(
+      isDiscoveryMethod(body.method) ||
+        body.method === INITIALIZED_NOTIFICATION ||
+        body.method === DISCOVER_METHOD,
+    );
+    trace?.mark("turn");
+    if (deniedAfterParse) return deniedAfterParse;
+  }
+  const leanDiscovery = harnessLeanDiscoveryEnabled();
+  if (leanDiscovery && body.method === INITIALIZED_NOTIFICATION && body.id === undefined) {
+    return c.body("Accepted", 202);
+  }
+  const recheckTurn = leanDiscovery && isDiscoveryMethod(body.method) ? undefined : checkTurn;
+  if (body.method === DISCOVER_METHOD && harnessLegacyDownstreamEnabled()) {
+    return c.json(methodNotFound(isJsonRpcId(body.id) ? body.id : null, DISCOVER_METHOD));
+  }
+  if (body.method === LISTEN_METHOD && isJsonRpcId(body.id) && harnessListenAckEnabled()) {
+    return c.body(acknowledgedListenStream(body.id, HARNESS_MCP_STREAM_MAX_MS), 200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+  }
   // A session client cancels with a separate request; it stops the call only
   // where that call runs.
   const cancelled = session ? cancelledRequestId(body) : undefined;
@@ -380,223 +441,230 @@ async function handleRequest(
   };
 
   try {
-    const response = await withManager(
+    const createAuthorized = () =>
       createAuthorizedManager(
-        caller,
-        "", // bearer ignored on the workos_api_key path
-        claims.projectId,
-        [serverId],
-        sealed?.profile?.timeout ?? HARNESS_MCP_TIMEOUT_MS,
-        undefined,
-        sealed?.profile?.clientCapabilities,
-        {
-          ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
-          // Per-server XAA works on the harness proxy (configured servers
-          // mint instead of 500ing). KNOWN LIMITATION: the host's
-          // enterprise-managed POLICY is NOT enforced here — the harness
-          // token's claims carry projectId/serverId but not the host, so an
-          // unconfigured `auto` server on a policy host takes the discover
-          // ladder in a harness turn instead of 409ing. Fix by threading the
-          // host policy (or hostId) into the harness token claims.
-          xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-          // Publish the sandbox's MCP traffic into the in-process rpc-log bus
-          // so a live harness turn ON THIS INSTANCE can forward it into the
-          // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and
-          // the local-mode Logs SSE/buffer sees it too. Observation-only —
-          // never affects the proxy result: the bus isolates subscribers, and
-          // this guard is the belt-and-suspenders so no logging failure can
-          // reach the RPC try/catch below.
-          //
-          // COMP-21: ALSO enqueue the frame to the shared Convex sink (batched,
-          // best-effort) so a turn streaming from ANOTHER instance can pull it —
-          // cross-instance fan-in on the scaled hosted plane. The enqueue never
-          // throws to here (own try/catch inside), and the sink no-ops when
-          // Convex isn't configured (single-instance / self-hosted).
-          rpcLogger: ({ direction, message, serverId: sid }) => {
-            const timestamp = new Date().toISOString();
-            try {
-              rpcLogBus.publish({
+          caller,
+          "", // bearer ignored on the workos_api_key path
+          claims.projectId,
+          [serverId],
+          sealed?.profile?.timeout ?? HARNESS_MCP_TIMEOUT_MS,
+          undefined,
+          sealed?.profile?.clientCapabilities,
+          {
+            ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
+            // Per-server XAA works on the harness proxy (configured servers
+            // mint instead of 500ing). KNOWN LIMITATION: the host's
+            // enterprise-managed POLICY is NOT enforced here — the harness
+            // token's claims carry projectId/serverId but not the host, so an
+            // unconfigured `auto` server on a policy host takes the discover
+            // ladder in a harness turn instead of 409ing. Fix by threading the
+            // host policy (or hostId) into the harness token claims.
+            xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+            // Publish the sandbox's MCP traffic into the in-process rpc-log bus
+            // so a live harness turn ON THIS INSTANCE can forward it into the
+            // Playground Logs panel (see bridgeHarnessRpcLogsToCollector), and
+            // the local-mode Logs SSE/buffer sees it too. Observation-only —
+            // never affects the proxy result: the bus isolates subscribers, and
+            // this guard is the belt-and-suspenders so no logging failure can
+            // reach the RPC try/catch below.
+            //
+            // COMP-21: ALSO enqueue the frame to the shared Convex sink (batched,
+            // best-effort) so a turn streaming from ANOTHER instance can pull it —
+            // cross-instance fan-in on the scaled hosted plane. The enqueue never
+            // throws to here (own try/catch inside), and the sink no-ops when
+            // Convex isn't configured (single-instance / self-hosted).
+            rpcLogger: ({ direction, message, serverId: sid }) => {
+              const timestamp = new Date().toISOString();
+              try {
+                rpcLogBus.publish({
+                  serverId: sid,
+                  direction,
+                  timestamp,
+                  message,
+                });
+              } catch (error) {
+                logger.warn(
+                  `[harness-mcp] rpc log publish failed serverId=${sid}: ${
+                    error instanceof Error ? error.message : error
+                  }`,
+                );
+              }
+              enqueueHarnessRpcLog({
                 serverId: sid,
+                projectId: claims.projectId,
+                organizationId: claims.orgId,
                 direction,
-                timestamp,
+                loggedAt: timestamp,
                 message,
               });
-            } catch (error) {
-              logger.warn(
-                `[harness-mcp] rpc log publish failed serverId=${sid}: ${
-                  error instanceof Error ? error.message : error
-                }`,
-              );
-            }
-            enqueueHarnessRpcLog({
-              serverId: sid,
-              projectId: claims.projectId,
-              organizationId: claims.orgId,
-              direction,
-              loggedAt: timestamp,
-              message,
-            });
-          },
-          // The header half of the same traffic, onto the same bus. Without
-          // this a harness turn's Logs panel shows frames and no headers,
-          // which from 2026-07-28 is the half that explains a
-          // `-32020 HeaderMismatch`. Same observation-only contract as
-          // `rpcLogger`: guarded, and a failure can never reach the RPC.
-          //
-          // NOT enqueued to the Convex sink: that shape carries JSON-RPC
-          // frames only, so cross-instance harness turns still get frames
-          // without headers. Widening the sink is a backend change; this at
-          // least closes the same-instance case rather than leaving the bus
-          // branch unexercised.
-          httpLogger: (exchange) => {
-            try {
-              rpcLogBus.publish({
-                kind: "http",
-                serverId: exchange.serverId,
-                timestamp: new Date().toISOString(),
-                exchange,
-              });
-            } catch (error) {
-              logger.warn(
-                `[harness-mcp] http log publish failed serverId=${
-                  exchange.serverId
-                }: ${error instanceof Error ? error.message : error}`,
-              );
-            }
-          },
-        },
-      ),
-      async (manager) => {
-        trace?.mark("connect");
-        // Connecting to a slow server can outlive the message that requested it.
-        const refused = await checkTurn?.();
-        trace?.mark("turn2");
-        if (refused) return refused;
-        // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
-        // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
-        // unfiltered, and a block is a success envelope carrying the marker —
-        // see `harness-proxy-policy-enforcement.ts`.
-        if (sealed) {
-          const block = evaluateHarnessProxyToolPolicy({
-            body,
-            policyServerId: serverId,
-            policy: sealed.policy,
-            hasServer: (id) => manager.hasServer(id),
-          });
-          if (block) {
-            logger.info(
-              `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`,
-            );
-            // Report the refusal to the RUN, not just to the model: the harness
-            // adapter flattens this result's content blocks to a bare string, so
-            // the `_meta` marker cannot be the accounting mechanism. The proxy
-            // knows it blocked — deliver that on the same channel a
-            // cross-instance scope step-up uses, correlated by the turn id every
-            // generated `.mcp.json` entry already carries.
-            const event: HarnessPolicyBlockEvent = {
-              serverId,
-              toolName: block.marker.toolName,
-              reason: block.marker.reason,
-              classification: block.marker.classification,
-              at: Date.now(),
-            };
-            const deliveredLocally = publishHarnessPolicyBlock(
-              correlationId,
-              event,
-            );
-            if (
-              !deliveredLocally &&
-              correlationId &&
-              isRpcLogSinkConfigured()
-            ) {
-              const relay = buildCrossInstanceHarnessPolicyBlockMessage(
-                correlationId,
-                event,
-              );
-              if (relay) {
-                enqueueHarnessRpcLog({
-                  serverId,
-                  projectId: claims.projectId,
-                  organizationId: claims.orgId,
-                  direction: "receive",
-                  loggedAt: new Date().toISOString(),
-                  message: relay,
+            },
+            // The header half of the same traffic, onto the same bus. Without
+            // this a harness turn's Logs panel shows frames and no headers,
+            // which from 2026-07-28 is the half that explains a
+            // `-32020 HeaderMismatch`. Same observation-only contract as
+            // `rpcLogger`: guarded, and a failure can never reach the RPC.
+            //
+            // NOT enqueued to the Convex sink: that shape carries JSON-RPC
+            // frames only, so cross-instance harness turns still get frames
+            // without headers. Widening the sink is a backend change; this at
+            // least closes the same-instance case rather than leaving the bus
+            // branch unexercised.
+            httpLogger: (exchange) => {
+              try {
+                rpcLogBus.publish({
+                  kind: "http",
+                  serverId: exchange.serverId,
+                  timestamp: new Date().toISOString(),
+                  exchange,
                 });
-                // Flush now rather than on the ~1s batch timer: the turn may
-                // finish before a batched frame would ever be written.
-                await flushHarnessRpcLogs();
+              } catch (error) {
+                logger.warn(
+                  `[harness-mcp] http log publish failed serverId=${
+                    exchange.serverId
+                  }: ${error instanceof Error ? error.message : error}`,
+                );
               }
-            }
-            return block.response;
-          }
-        }
-        return handleJsonRpc(serverId, body, manager, "adapter", {
-          ...(call ? { signal: call.signal } : {}),
-          downstreamProtocolVersion: downstreamProtocolVersionOf(body),
-          // Inert unless this token carries an authorized eval scope AND the
-          // harness named a turn — so playground traffic and capture-off runs
-          // pay nothing and behave identically.
-          ...(evidenceHook ? { toolCallEvidence: evidenceHook } : {}),
-          // Bridge failures answer 200 with a JSON-RPC error envelope —
-          // invisible to http.request.failed; this is their typed record.
-          failureReporter: createRequestStreamFailureReporter(c, "harness-mcp"),
-          onToolCallError: async (context) => {
-            const info = scopeStepUpInfoFromToolError(context);
-            if (!info) return;
-            const event = {
-              ...info,
-              ...(context.toolName ? { toolName: context.toolName } : {}),
-              ...(Object.prototype.hasOwnProperty.call(context, "toolInput")
-                ? { toolInput: context.toolInput }
-                : {}),
-            };
-            const deliveredLocally = publishHarnessScopeStepUp(
-              correlationId,
-              event,
-            );
-            if (
-              deliveredLocally ||
-              !correlationId ||
-              !isRpcLogSinkConfigured()
-            ) {
-              return;
-            }
-
-            const relay = buildCrossInstanceHarnessScopeStepUpMessage(
-              correlationId,
-              event,
-            );
-            if (!relay) return;
-            enqueueHarnessRpcLog({
-              serverId,
-              projectId: claims.projectId,
-              organizationId: claims.orgId,
-              direction: "receive",
-              loggedAt: new Date().toISOString(),
-              message: relay,
-            });
-            await flushHarnessRpcLogs();
-            // The live turn polls once per second. Hold only this actionable
-            // error response briefly so the remote replica can suspend before
-            // the harness sees a failure and asks the model to narrate it.
-            await new Promise((resolve) =>
-              setTimeout(
-                resolve,
-                CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS,
-              ),
-            );
+            },
           },
+        );
+    const handleOnManager = async (manager: MCPClientManager) => {
+      trace?.mark("connect");
+      // Connecting to a slow server can outlive the message that requested it.
+      const refused = await recheckTurn?.();
+      trace?.mark("turn2");
+      if (refused) return refused;
+      // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
+      // reach `executeTool`. Only `tools/call` is gated, `tools/list` stays
+      // unfiltered, and a block is a success envelope carrying the marker —
+      // see `harness-proxy-policy-enforcement.ts`.
+      if (sealed) {
+        const block = evaluateHarnessProxyToolPolicy({
+          body,
+          policyServerId: serverId,
+          policy: sealed.policy,
+          hasServer: (id) => manager.hasServer(id),
         });
-      },
-    );
+        if (block) {
+          logger.info(
+            `[harness-mcp] tool policy blocked serverId=${serverId} tool=${block.marker.toolName} reason=${block.marker.reason}`,
+          );
+          // Report the refusal to the RUN, not just to the model: the harness
+          // adapter flattens this result's content blocks to a bare string, so
+          // the `_meta` marker cannot be the accounting mechanism. The proxy
+          // knows it blocked — deliver that on the same channel a
+          // cross-instance scope step-up uses, correlated by the turn id every
+          // generated `.mcp.json` entry already carries.
+          const event: HarnessPolicyBlockEvent = {
+            serverId,
+            toolName: block.marker.toolName,
+            reason: block.marker.reason,
+            classification: block.marker.classification,
+            at: Date.now(),
+          };
+          const deliveredLocally = publishHarnessPolicyBlock(
+            correlationId,
+            event,
+          );
+          if (
+            !deliveredLocally &&
+            correlationId &&
+            isRpcLogSinkConfigured()
+          ) {
+            const relay = buildCrossInstanceHarnessPolicyBlockMessage(
+              correlationId,
+              event,
+            );
+            if (relay) {
+              enqueueHarnessRpcLog({
+                serverId,
+                projectId: claims.projectId,
+                organizationId: claims.orgId,
+                direction: "receive",
+                loggedAt: new Date().toISOString(),
+                message: relay,
+              });
+              // Flush now rather than on the ~1s batch timer: the turn may
+              // finish before a batched frame would ever be written.
+              await flushHarnessRpcLogs();
+            }
+          }
+          return block.response;
+        }
+      }
+      return handleJsonRpc(serverId, body, manager, "adapter", {
+        ...(call ? { signal: call.signal } : {}),
+        downstreamProtocolVersion: downstreamProtocolVersionOf(body),
+        // Inert unless this token carries an authorized eval scope AND the
+        // harness named a turn — so playground traffic and capture-off runs
+        // pay nothing and behave identically.
+        ...(evidenceHook ? { toolCallEvidence: evidenceHook } : {}),
+        // Bridge failures answer 200 with a JSON-RPC error envelope —
+        // invisible to http.request.failed; this is their typed record.
+        failureReporter: createRequestStreamFailureReporter(c, "harness-mcp"),
+        onToolCallError: async (context) => {
+          const info = scopeStepUpInfoFromToolError(context);
+          if (!info) return;
+          const event = {
+            ...info,
+            ...(context.toolName ? { toolName: context.toolName } : {}),
+            ...(Object.prototype.hasOwnProperty.call(context, "toolInput")
+              ? { toolInput: context.toolInput }
+              : {}),
+          };
+          const deliveredLocally = publishHarnessScopeStepUp(
+            correlationId,
+            event,
+          );
+          if (
+            deliveredLocally ||
+            !correlationId ||
+            !isRpcLogSinkConfigured()
+          ) {
+            return;
+          }
+
+          const relay = buildCrossInstanceHarnessScopeStepUpMessage(
+            correlationId,
+            event,
+          );
+          if (!relay) return;
+          enqueueHarnessRpcLog({
+            serverId,
+            projectId: claims.projectId,
+            organizationId: claims.orgId,
+            direction: "receive",
+            loggedAt: new Date().toISOString(),
+            message: relay,
+          });
+          await flushHarnessRpcLogs();
+          // The live turn polls once per second. Hold only this actionable
+          // error response briefly so the remote replica can suspend before
+          // the harness sees a failure and asks the model to narrate it.
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              CROSS_INSTANCE_SCOPE_STEP_UP_DELIVERY_GRACE_MS,
+            ),
+          );
+        },
+      });
+    };
+    const response = turnKey
+      ? await withTurnManager(
+          `${turnKey}|${JSON.stringify(sealed?.profile ?? null)}`,
+          () => createAuthorized().then((result) => ("manager" in result ? result.manager : result)),
+          handleOnManager,
+        )
+      : await withManager(createAuthorized(), handleOnManager);
     trace?.mark("exec");
     if (response instanceof Response) return response;
     // A tool already running at Stop may finish. Never return its data to a later turn.
-    const finished = await checkTurn?.();
+    const finished = await recheckTurn?.();
     trace?.mark("finish");
     if (finished) return finished;
     // Notification (no id) → 202 Accepted, no body.
     if (!response) return c.body("Accepted", 202);
+    if (trace) trace.set("reply", describeReplyForTrace(response));
     return c.json(response);
   } catch (e: any) {
     // Report the real cause server-side (classified — the old bare

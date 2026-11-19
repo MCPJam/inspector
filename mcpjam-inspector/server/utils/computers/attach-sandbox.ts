@@ -10,6 +10,7 @@ import {
   getSandboxEgressStatus,
   prepareSandboxConnection,
 } from "./control-plane-client.js";
+import { attachInParallel } from "../harness/startup-overlap.js";
 
 /** The control plane owns all wakes; attachment must not create a late wake. */
 export class SandboxAttachmentError extends Error {
@@ -88,6 +89,17 @@ async function readRunningSandboxConnection(
       );
   }
   const config = new ConnectionConfig(options);
+  // After the broker's acknowledgement the two reads are independent: start
+  // the policy barrier with the box read. Both must pass before anything runs.
+  // Settled into a value now and thrown after the box read's own checks, so a
+  // gone or paused box is still reported as that, as in the sequential order.
+  const policyBarrier =
+    preparedByBroker && attachInParallel()
+      ? requireReadyPolicy(sandboxId, signal, deadline).then(
+          () => ({ passed: true as const }),
+          (error: unknown) => ({ passed: false as const, error }),
+        )
+      : undefined;
   const response = await new ApiClient(config).api.GET(
     "/sandboxes/{sandboxID}",
     {
@@ -118,7 +130,12 @@ async function readRunningSandboxConnection(
       "sandbox_policy_unavailable",
       "This sandbox cannot run safely. Start a new sandbox.",
     );
-  await requireReadyPolicy(sandboxId, signal, deadline);
+  if (policyBarrier) {
+    const barrier = await policyBarrier;
+    if (!barrier.passed) throw barrier.error;
+  } else {
+    await requireReadyPolicy(sandboxId, signal, deadline);
+  }
   return {
     ...options,
     sandboxId,

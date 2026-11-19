@@ -44,6 +44,15 @@ import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { traceSandboxSession, traceSpan } from "./harness-trace.js";
+import {
+  EARLY_REAP_STATE_DIR,
+  SANDBOX_HOME_COMMAND,
+  memoizeSandboxHome,
+  readAheadInBackground,
+  reapBridgesEarly,
+  rememberSandboxHome,
+  rememberedSandboxHome,
+} from "./startup-overlap.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
@@ -371,14 +380,26 @@ export function createE2BHarnessSandboxProvider(
     try {
       // Preparation must finish before exposing the session. The read-only
       // hint and proxy socket cleanup are independent of the package guard.
-      const preparation = await Promise.allSettled([
-        traceSpan("box.prepare", "read-ahead", () =>
-          readAheadRuntime(
-            (command, options) => sandbox.commands.run(command, options),
-            { harnessId: opts.harnessId, resuming },
-            connectSignal,
-          ),
+      // In the background, the hint warms the runtime's pages while the
+      // framework's own setup runs; it reads files only and never fails a turn.
+      const readAhead = traceSpan("box.prepare", "read-ahead", () =>
+        readAheadRuntime(
+          (command, options) => sandbox.commands.run(command, options),
+          { harnessId: opts.harnessId, resuming },
+          connectSignal,
         ),
+      );
+      const backgroundReadAhead = readAheadInBackground();
+      if (backgroundReadAhead) {
+        // The hint never fails a turn; it rejects only when the turn is cancelled.
+        void readAhead.catch((error: unknown) => {
+          logger.debug("[harness][read-ahead] background hint stopped", {
+            reason: error instanceof Error ? error.name : "unknown",
+          });
+        });
+      }
+      const preparation = await Promise.allSettled([
+        ...(backgroundReadAhead ? [] : [readAhead]),
         ...(opts.skipPnpmGuard
           ? []
           : [
@@ -444,6 +465,17 @@ export function createE2BHarnessSandboxProvider(
       }
     };
 
+    // A fresh session has no bridge of its own yet, so its first spawn's reap
+    // can run now, while the framework's setup commands run, and the spawn
+    // waits for it. Never on a resume: its own bridge may be the one it
+    // reattaches to. Later spawns of the session reap as before.
+    let earlyReap: Promise<void> | undefined =
+      !resuming && reapBridgesEarly()
+        ? traceSpan("box.prepare", "early-reap", () =>
+            reapBridges(EARLY_REAP_STATE_DIR, connectSignal),
+          )
+        : undefined;
+
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
       defaultWorkingDirectory: cwd,
@@ -505,6 +537,15 @@ export function createE2BHarnessSandboxProvider(
 
       // ── exec ──────────────────────────────────────────────────────────
       run: async ({ command, workingDirectory, env, abortSignal }) => {
+        // The framework asks for the box's home several times per session.
+        // It cannot change while the box lives, so it is asked once per box.
+        const homeQuery =
+          memoizeSandboxHome() &&
+          command === SANDBOX_HOME_COMMAND &&
+          env?.HOME === undefined &&
+          sessionEnv?.HOME === undefined;
+        const knownHome = homeQuery ? rememberedSandboxHome(opts.sandboxId) : undefined;
+        if (knownHome !== undefined) return { exitCode: 0, stdout: knownHome, stderr: "" };
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
@@ -512,6 +553,7 @@ export function createE2BHarnessSandboxProvider(
             timeoutMs: commandTimeoutMs,
             ...signalOpt(abortSignal),
           });
+          if (homeQuery && res.exitCode === 0) rememberSandboxHome(opts.sandboxId, res.stdout);
           // E2B accepted and completed the command, so the session env was
           // actually handed to the box. A transport rejection before
           // acceptance must not mark delivery.
@@ -546,7 +588,11 @@ export function createE2BHarnessSandboxProvider(
         const stateDir = isBridgeSpawn(env)
           ? bridgeStateDirOf(command)
           : undefined;
-        if (stateDir) await reapBridges(stateDir, abortSignal);
+        if (stateDir) {
+          const reaped = earlyReap;
+          earlyReap = undefined;
+          await (reaped ?? reapBridges(stateDir, abortSignal));
+        }
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;

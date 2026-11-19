@@ -49,6 +49,7 @@ function parseArgs(argv) {
       case "--turn-timeout": args.turnTimeoutMs = Number(value) * 1000; i += 1; break;
       case "--send-delay": args.sendDelayMs = Number(value); i += 1; break;
       case "--headed": args.headed = true; break;
+      case "--require-servers": args.requireServers = true; break;
       default: throw new Error(`Unknown argument ${flag}`);
     }
   }
@@ -149,6 +150,8 @@ async function composerState(page) {
       client: labels.find((l) => l.startsWith("Client: ")) ?? null,
       effort: labels.find((l) => l.startsWith("Reasoning effort")) ?? null,
       messages: document.querySelectorAll("[data-message-id]").length,
+      // The tools panel says so when the client has no connected server.
+      servers: document.body.innerText.includes("No server connected yet") ? "none" : "connected",
     };
   });
 }
@@ -185,11 +188,39 @@ function between(a, b) {
   return a == null || b == null ? null : Math.round(b - a);
 }
 
+
+// The echo workload measures the system, not a person deciding: tool approval
+// is switched off in the composer's options before it (and the row says so).
+async function setToolApproval(page, wanted) {
+  await page.getByRole("button", { name: "Options", exact: true }).first().click();
+  const toggle = page
+    .locator('div.justify-between:has-text("Tool Approval")')
+    .locator('[role="switch"]')
+    .first();
+  let state = "missing";
+  if (await toggle.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    state = (await toggle.getAttribute("aria-checked")) === "true";
+    if (state !== wanted) {
+      await toggle.click();
+      state = wanted;
+    }
+  }
+  await page.keyboard.press("Escape");
+  await sleep(300);
+  return state;
+}
+
 async function runTurn(instance, workload, meta, args) {
   const { page } = instance;
   const spec = PROMPTS[workload]();
+  if (args.requireServers && (await composerState(page)).servers !== "connected") {
+    // Auto-connect lives in each browser origin's storage, and a fresh sign-in
+    // drops it: a turn without its server would measure a different workload.
+    throw new Error("the client has no connected server (run setup-project.mjs)");
+  }
   const composer = page.locator('textarea[placeholder^="Try a prompt"]').first();
   await composer.waitFor({ timeout: 30_000 });
+  const toolApproval = spec.markers ? await setToolApproval(page, false) : null;
   const before = readLogSince(instance.log, instance.logOffset);
   instance.logOffset = before.offset;
   const wallStart = Date.now();
@@ -261,7 +292,7 @@ async function runTurn(instance, workload, meta, args) {
   const row = {
     run: args.run, ...meta, instance: instance.name, label: instance.label, client: args.client,
     workload, ok: failure === null, failure, verified, approvals, requests: probe.requests.length,
-    chatSessionId, at: new Date(wallStart).toISOString(),
+    chatSessionId, toolApproval, at: new Date(wallStart).toISOString(),
     error: request ? { status: request.status, body: request.errorBody ?? null, stream: request.streamError ?? null } : null,
     composer: await composerState(page),
     browser: {

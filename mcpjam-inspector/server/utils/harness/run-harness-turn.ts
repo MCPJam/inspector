@@ -1,3 +1,4 @@
+import { traceEvent } from "./harness-trace.js";
 import { createHostToolCancellation } from "./host-tool-cancellation";
 import { retainedAppResourcesEligible } from "./forwarding/retained-app-eligibility";
 import { cursorRuntimeLogin } from "./runtime-login.js";
@@ -1784,9 +1785,11 @@ export async function runHarnessTurn(
       // an eval turn has no lane to keep.
       const deferSessionConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !evalIterationId &&
         harnessMcpProxy?.plane === "web-authorized";
+      traceEvent("pre.mcpConfig.start");
       const proxyConfig = nativeMcpDelivery && !harnessExecutionTarget && !useNativeForwarding && !deferSessionConfig
         ? await buildNativeProxyConfig()
         : { mcpJson: { mcpServers: {} }, keyToServerId: {} };
+      traceEvent("pre.mcpConfig.end");
       let { mcpJson, keyToServerId } = proxyConfig;
 
       // Report the run's frozen decision as the mint saw it. The driver reads
@@ -1886,6 +1889,7 @@ export async function runHarnessTurn(
       // unknown (`null`) and `skillsHash` undefined, so it is OMITTED from
       // claim/commit and the backend reuses the stored hash (no resume churn,
       // no empty-hash commit), and the box is left exactly as it is.
+      traceEvent("pre.turnSkills.start");
       const turnSkills = await harnessTurnSkills({
         pinnedHarnessSkills,
         serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
@@ -1893,6 +1897,7 @@ export async function runHarnessTurn(
         ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
         liveTurn,
       });
+      traceEvent("pre.turnSkills.end");
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;
       const skillsHash = turnSkills.skillsHash;
@@ -1966,6 +1971,7 @@ export async function runHarnessTurn(
       // The same check the Playground routes run before they boot a box (a
       // refused credential must provision nothing); it THROWS rather than
       // starting the CLI with no usable key.
+      traceEvent("pre.orgKeyPlan.start");
       const externalAccountAuth = (
         await resolveOrgKeyCredentialPlan({
           harness: harnessAdapter,
@@ -1975,6 +1981,7 @@ export async function runHarnessTurn(
           ...(abortSignal ? { signal: abortSignal } : {}),
         })
       )?.auth;
+      traceEvent("pre.orgKeyPlan.end");
       // What the BOX's session env carries: everything the project materialized
       // MINUS the credential names the adapter authenticates with. An empty
       // result is treated exactly like "no secrets" below.
@@ -2029,6 +2036,7 @@ export async function runHarnessTurn(
       }
       // MCP-server skills through MCPJam's skill tools, and the gate that holds
       // the runtime's commands while one is in use.
+      traceEvent("pre.serverSkills.start");
       const serverSkills = await harnessServerSkills(harnessAdapter, {
         mode: turnSkills.mode,
         live: turnSkills.live,
@@ -2039,6 +2047,7 @@ export async function runHarnessTurn(
         messages,
         signal: abortSignal,
       });
+      traceEvent("pre.serverSkills.end");
       const instructions =
         `${systemPrompt ?? ""}${serverSkills?.promptSection ?? ""}` ||
         undefined;
@@ -2223,6 +2232,7 @@ export async function runHarnessTurn(
         const leaseId = crypto.randomUUID();
         // A runtime that binds approvals renumbers them per process: a decision names its call too.
         decided = isApprovalResume && forwardingRuntime?.boundApprovals ? decidedCalls(messages, approvalContinuations) : undefined;
+        traceEvent("pre.claim.start");
         const claim = await claimHarnessSessionState({
           owner,
           requestId: options.harnessStartupRequestId,
@@ -2236,6 +2246,7 @@ export async function runHarnessTurn(
           bearer: await currentAuthorization(),
           ...(abortSignal ? { signal: abortSignal } : {}),
         });
+        traceEvent("pre.claim.end");
         if (!claim.ok) {
           // FAIL CLOSED for chat-backed owners (this block only runs for
           // direct-chat/scenario-chat). Never silently start a fresh,
@@ -2310,6 +2321,7 @@ export async function runHarnessTurn(
       if (useNativeForwarding && !harnessExecutionTarget && !evalIterationId && continuity?.laneId && publicBaseUrl &&
         !harnessAdapter.fingerprintsMcpConfig)
         sessionGrantOrigin = new URL(publicBaseUrl).origin;
+      traceEvent("pre.sessionConfig.start");
       if (deferSessionConfig) {
         if (continuity?.laneId && publicBaseUrl) {
           ({ mcpJson, keyToServerId } = await buildNativeProxyConfig(undefined, { owner: continuity.owner, leaseId: continuity.leaseId, turnId }));
@@ -2317,6 +2329,7 @@ export async function runHarnessTurn(
         } else ({ mcpJson, keyToServerId } = await perTurnProxyConfig());
         harnessKeyToServerId = keyToServerId;
       }
+      traceEvent("pre.sessionConfig.end");
       const sessionGrantMissed = (grantOrigin: string | undefined) => {
         logger.warn("[harness] session grant origin differs from the MCP proxy; using per-turn tokens", {
           proxyOrigin: sessionGrantOrigin, grantOrigin: grantOrigin ?? null,
