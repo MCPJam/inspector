@@ -6,7 +6,6 @@ import {
   useChecklistProgress,
 } from "../checklist-progress";
 import {
-  clearHomeChecklistAutorun,
   consumeHomeChecklistAutorun,
   writeHomeChecklistAutorun,
 } from "../playground-autorun";
@@ -38,12 +37,6 @@ describe("Playground autorun handoff", () => {
       prompt: "What can this server do?",
       progressKey: "k",
     });
-    expect(window.sessionStorage.length).toBe(0);
-    // A Playground that remounts before sending still gets the prompt.
-    expect(consumeHomeChecklistAutorun()?.prompt).toBe(
-      "What can this server do?",
-    );
-    clearHomeChecklistAutorun();
     expect(consumeHomeChecklistAutorun()).toBeNull();
   });
 });

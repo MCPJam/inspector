@@ -20,10 +20,7 @@ import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSel
 import type { ProjectHostContextDraft } from "@/lib/client-config";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
-import {
-  clearHomeChecklistAutorun,
-  consumeHomeChecklistAutorun,
-} from "@/components/home/checklist/playground-autorun";
+import { consumeHomeChecklistAutorun } from "@/components/home/checklist/playground-autorun";
 import { updateChecklistProgress } from "@/components/home/checklist/checklist-progress";
 
 interface PlaygroundCenterProps {
@@ -123,12 +120,10 @@ export function PlaygroundCenter({
         autoRunInput={homeAutorun?.prompt}
         onAutoRunSent={
           homeAutorun
-            ? () => {
-                clearHomeChecklistAutorun();
+            ? () =>
                 updateChecklistProgress(homeAutorun.progressKey, {
                   chat: true,
-                });
-              }
+                })
             : undefined
         }
         // The copy needs the server up; retiring the run does not. A message
@@ -139,7 +134,6 @@ export function PlaygroundCenter({
             ? () => {
                 // A deferred auto-run is sent from the composer instead.
                 if (homeAutorun) {
-                  clearHomeChecklistAutorun();
                   updateChecklistProgress(homeAutorun.progressKey, {
                     chat: true,
                   });
