@@ -106,7 +106,7 @@ export const COMPLETION_FEATURES: readonly FeatureDefinition[] = [
     name: "Prompt argument completion (ref/prompt)",
     summary: "Suggests values for a prompt argument as the user types.",
     howTo:
-      "Answer completion/complete for ref/prompt with matching values. Use Run checks to test it.",
+      "Answer completion/complete for ref/prompt with matching values.",
     owner: "server",
     spec: coreSpec("2026-07-28", COMPLETION, "requesting-completions"),
     stage: "stable",
