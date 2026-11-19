@@ -20,6 +20,8 @@ import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { SharedSlackChannelCard } from "./home/SharedSlackChannelCard";
+import { HomeChecklist } from "./home/checklist/HomeChecklist";
+import { useHomeChecklistVariant } from "./home/checklist/use-home-checklist-variant";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 import {
@@ -139,6 +141,12 @@ export function HomeTab({
   const agentEnabled = isPlatformAgentEnabled();
   const sessionParam = agentEnabled ? searchParams.get("session") : null;
   const composeParam = agentEnabled && searchParams.get("compose") === "1";
+  const checklistVariant = useHomeChecklistVariant();
+  // Once the checklist is done or skipped, Home is today's page again.
+  const [checklistFinished, setChecklistFinished] = useState(false);
+  const finishChecklist = useCallback(() => setChecklistFinished(true), []);
+  const showChecklist =
+    checklistVariant === "treatment" && !checklistFinished && Boolean(projectId);
 
   // Re-arms whenever loading restarts; only fires while still loading.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -371,6 +379,16 @@ export function HomeTab({
           />
         </header>
 
+        {showChecklist ? (
+          <ErrorBoundary
+            name="home-checklist"
+            fallback={null}
+            onError={finishChecklist}
+          >
+            <HomeChecklist onFinished={finishChecklist} />
+          </ErrorBoundary>
+        ) : (
+          <>
           {agentEnabled ? (
             <McpjamAgentHero
               surface="home"
@@ -393,6 +411,8 @@ export function HomeTab({
           />
           <RecommendedHosts projectId={projectId} />
         </div>
+          </>
+        )}
       </div>
     </div>
   );

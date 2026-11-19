@@ -448,6 +448,8 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_connection_started: { source: "client" },
   first_run_onboarding_connection_succeeded: { source: "client" },
   first_run_onboarding_connection_failed: { source: "client" },
+  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional `error_slug`.
+  home_checklist_step: { source: "client" },
   first_run_onboarding_connection_cancelled: { source: "client" },
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },
