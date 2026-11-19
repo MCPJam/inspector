@@ -175,6 +175,7 @@ export function RepeatPromptTip({
       )}
       <SaveAsTestCaseAction
         source="repeat_tip"
+        serverNames={serverNames}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         chatSessionId={chatSessionId}

@@ -151,6 +151,24 @@ describe("SaveAsTestCaseAction", () => {
     projectHosts.value = [{ hostId: "host-first" }];
   });
 
+  it("names a new suite after the prompt's server", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+        serverNames={["Linear"]}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByDisplayValue("Linear")).toBeInTheDocument();
+  });
+
   it("creates and attaches a client when the project has none", async () => {
     projectHosts.value = [];
     const user = userEvent.setup();

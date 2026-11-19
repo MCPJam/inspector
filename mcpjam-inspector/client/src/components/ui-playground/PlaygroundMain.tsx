@@ -6819,6 +6819,7 @@ export function PlaygroundMain({
                                 promptIndex={promptIndex}
                                 promptPreview={extractUserMessageText(message)}
                                 projectId={convexProjectId}
+                                serverNames={selectedServers}
                               />
                             );
                           }

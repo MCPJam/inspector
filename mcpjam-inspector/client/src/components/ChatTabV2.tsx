@@ -3048,6 +3048,7 @@ export function ChatTabV2({
                                       promptPreview={extractUserMessageText(
                                         message
                                       )}
+                                      serverNames={selectedConnectedServerNames}
                                       projectId={effectiveHostedProjectId}
                                     />
                                   );

@@ -40,6 +40,7 @@ import { ServerPicker } from "@/components/hosts/server-picker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
+import { buildServerBasedSuiteName } from "@/components/evals/suite-environment-utils";
 
 type SaveAsTestCaseActionProps = {
   /**
@@ -67,6 +68,8 @@ type SaveAsTestCaseActionProps = {
   suggestedHostIds?: string[];
   /** Where the save started, for analytics. */
   source?: "message_menu" | "repeat_tip";
+  /** Servers the prompt ran against, to name a new suite. */
+  serverNames?: string[];
 };
 
 type DestinationMode = "existing" | "new";
@@ -85,7 +88,12 @@ export function SaveAsTestCaseAction({
   onOpenChange,
   suggestedHostIds,
   source = "message_menu",
+  serverNames,
 }: SaveAsTestCaseActionProps) {
+  const defaultSuiteName = buildServerBasedSuiteName(
+    serverNames,
+    "Playground suite",
+  );
   const { isAuthenticated: convexAuthed } = useConvexAuth();
   const isUserReady = useDbUserReady();
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
@@ -102,7 +110,7 @@ export function SaveAsTestCaseAction({
   const [destinationMode, setDestinationMode] =
     useState<DestinationMode>("existing");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
-  const [newSuiteName, setNewSuiteName] = useState<string>("");
+  const [newSuiteName, setNewSuiteName] = useState<string>(defaultSuiteName);
   const [assertToolCalls, setAssertToolCalls] = useState(false);
   // Picker state for the new-suite branch. Mirrors CreateSuiteDialog and
   // ConvertChatSessionDialog. Gated on `attachmentPickersEnabled`.
@@ -206,7 +214,7 @@ export function SaveAsTestCaseAction({
       setCaseTitle(seedTitleFromPrompt(promptPreview));
       setAssertToolCalls(false);
       setSelectedSuiteId("");
-      setNewSuiteName("");
+      setNewSuiteName(defaultSuiteName);
       setDestinationMode("existing");
       setServerAttachmentId(null);
       setHostAttachments([]);
