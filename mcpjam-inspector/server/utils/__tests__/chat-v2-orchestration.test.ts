@@ -28,6 +28,7 @@ import {
   type AppToolEntry,
   type UiToolEntry,
 } from "../chat-v2-orchestration";
+import { HarnessToolNameCollisionError } from "../harness/harness-tool-names";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import { listCloudSkills } from "../computers/cloud-skills";
 import {
@@ -48,9 +49,17 @@ import {
   resolveActiveToolNames,
 } from "@mcpjam/sdk";
 
-function mockManager(tools: Record<string, unknown>) {
+function mockManager(
+  tools: Record<string, unknown>,
+  toolNamesByServer: Record<string, string[]> = {},
+) {
   return {
     getToolsForAiSdk: vi.fn().mockResolvedValue(tools),
+    getAllToolAnnotations: vi.fn((serverId: string) =>
+      Object.fromEntries(
+        (toolNamesByServer[serverId] ?? []).map((name) => [name, {}]),
+      ),
+    ),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
@@ -612,33 +621,54 @@ describe("prepareChatV2", () => {
     expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
-  describe("MCP tool names Anthropic rejects", () => {
+  describe("MCP tool names with dots on harness turns", () => {
     const anthropicModel = {
       id: "anthropic/claude-sonnet-4.5",
       provider: "anthropic",
     } as any;
-
-    it("prepares a direct or hosted turn, which aliases them on the wire", async () => {
-      const result = await prepareChatV2({
-        mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
-        selectedServers: ["shop"],
+    const prepare = (
+      toolNamesByServer: Record<string, string[]>,
+      harness?: any,
+    ) => {
+      // The merged map keeps one tool per name, as the real manager does.
+      const tools: Record<string, unknown> = {};
+      for (const [serverId, names] of Object.entries(toolNamesByServer)) {
+        for (const name of names) tools[name] = { _serverId: serverId };
+      }
+      return prepareChatV2({
+        mcpClientManager: mockManager(tools, toolNamesByServer),
+        selectedServers: Object.keys(toolNamesByServer),
         modelDefinition: anthropicModel,
         systemPrompt: "Base prompt.",
+        harness,
       });
+    };
 
+    it("prepares a Claude Code turn with a dotted tool name", async () => {
+      const result = await prepare({ shop: ["cart.add"] }, "claude-code");
       expect(Object.keys(result.allTools)).toContain("cart.add");
     });
 
-    it("refuses a harness turn, which builds its own tool names", async () => {
-      await expect(
-        prepareChatV2({
-          mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
-          selectedServers: ["shop"],
-          modelDefinition: anthropicModel,
-          systemPrompt: "Base prompt.",
-          harness: "claude-code",
-        }),
-      ).rejects.toThrow("Invalid tool name(s) for Anthropic: 'cart.add'");
+    it("refuses a Claude Code turn when two tools on one server rename to the same name", async () => {
+      const turn = prepare({ shop: ["cart.add", "cart_add"] }, "claude-code");
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+      await expect(turn).rejects.toThrow("`cart.add` and `cart_add`");
+    });
+
+    it("finds the collision when another server has a tool of the same name", async () => {
+      // `other` is listed last, so the merged map credits `cart.add` to it.
+      const turn = prepare(
+        { shop: ["cart.add", "cart_add"], other: ["cart.add"] },
+        "claude-code",
+      );
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+    });
+
+    it("prepares the same pair on OpenCode, which MCPJam names itself", async () => {
+      const result = await prepare({ shop: ["cart.add", "cart_add"] }, "opencode");
+      expect(Object.keys(result.allTools)).toEqual(
+        expect.arrayContaining(["cart.add", "cart_add"]),
+      );
     });
   });
 
@@ -2233,6 +2263,22 @@ describe("prepareChatV2 isolated plugin servers", () => {
   it("still fails the turn for a server it does not isolate", async () => {
     await expect(turn(["plugin"])).rejects.toThrow("fetch failed");
     await expect(turn(["chosen"], ["plugin"])).rejects.toThrow("fetch failed");
+  });
+
+  it("ignores a stale tool-name collision on a plugin server the turn runs without", async () => {
+    const manager = managerWith(["plugin"]);
+    // The cache still holds the plugin's last list, with a pair Claude Code would merge.
+    manager.getAllToolAnnotations = vi.fn((key: string) =>
+      key === "plugin" ? { "a.b": {}, a_b: {} } : { chosen_tool: {} },
+    );
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["chosen", "plugin"],
+      isolatedServers: ["plugin"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      harness: "claude-code",
+    });
+    expect(Object.keys(result.allTools)).toContain("chosen_tool");
   });
 
   it("reports nothing when every isolated server listed", async () => {
