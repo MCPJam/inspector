@@ -33,9 +33,7 @@ export function promptSimilarity(left: string, right: string): number {
 export type PromptTurn = { promptIndex: number; text: string };
 
 function calledTools(message: UIMessage): boolean {
-  return message.parts.some(
-    (part) => isToolUIPart(part) || part.type === "dynamic-tool",
-  );
+  return message.parts.some((part) => isToolUIPart(part));
 }
 
 /** The latest user prompt, if its turn finished with at least one tool call. */
