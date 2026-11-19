@@ -621,7 +621,7 @@ export function CaseSpine({
         >
           <EvalAddDrawer
             allowRouteChecks={card.route.route?.kind !== "locked"}
-            className={`${filled && !compact ? "h-12" : "h-9"} w-full rounded-none border-0 border-solid bg-card text-[13px] font-medium text-secondary-foreground shadow-none`}
+            className={`${filled && !compact ? "h-12" : "h-9"} w-full rounded-none border-0 border-solid bg-card text-[13px] font-medium text-card-foreground shadow-none`}
             triggerLabel="Add assertion or action"
             onPromptFocus={() => addedPromptRef.current?.focus()}
             authorableKinds={authorableKinds}
