@@ -5109,7 +5109,6 @@ export function PlaygroundMain({
           widgetModelContext: modelContextQueue,
         });
         if (sent) autoRunBroadcastIdRef.current = broadcastSequence.current;
-        // A lane dropped back to setting up; retry when it reports ready.
         else autoRanRef.current = false;
       })();
       return;

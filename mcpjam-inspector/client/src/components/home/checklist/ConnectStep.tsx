@@ -87,7 +87,6 @@ export function ConnectStep({
   latest.current = { onRemove, onAttemptChange, onTrack };
   const attemptName = attempt?.name ?? null;
   useEffect(() => onAttemptChange(attemptName), [attemptName, onAttemptChange]);
-  // Leaving the step abandons an unconfirmed attempt, as Cancel does.
   useEffect(
     () => () => {
       window.clearTimeout(timer.current);
@@ -103,7 +102,6 @@ export function ConnectStep({
   const status = attempt ? (server?.connectionStatus ?? "connecting") : null;
 
   const errorSlug = server?.lastNormalizedError?.slug;
-  // Once per failure; Retry clears it so the next failure counts too.
   const trackedFailure = useRef<Attempt | null>(null);
   useEffect(() => {
     if (status !== "failed" || !attempt) return;
