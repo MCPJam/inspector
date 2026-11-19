@@ -4880,8 +4880,8 @@ export function PlaygroundMain({
         setModelContextQueue([]);
         // Settles once the message is dispatched, so Retry's lock covers the
         // hosted preflight too.
-        await sent;
-        return true;
+        // `sendMessage` resolves false when it refuses the send.
+        return (await sent) !== false;
       })();
     },
     [
