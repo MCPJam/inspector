@@ -25,6 +25,11 @@ import {
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { describeReplyForTrace } from "./harness-mcp-trace.js";
 import {
+  cancelRelayedListen,
+  harnessListenRelayEnabled,
+  relayListenStream,
+} from "./harness-mcp-listen-relay.js";
+import {
   checkTurnWithReuse,
   harnessMcpTurnCacheEnabled,
   withTurnManager,
@@ -408,7 +413,17 @@ async function handleRequest(
   if (body.method === DISCOVER_METHOD && harnessLegacyDownstreamEnabled()) {
     return c.json(methodNotFound(isJsonRpcId(body.id) ? body.id : null, DISCOVER_METHOD));
   }
-  if (body.method === LISTEN_METHOD && isJsonRpcId(body.id) && harnessListenAckEnabled()) {
+  const relayListen = harnessListenRelayEnabled();
+  // The harness's own listens, by its request id, for this caller and turn.
+  const listenKey = (id: unknown) =>
+    [claims.userId, serverId, session?.laneId ?? JSON.stringify(turn ?? null), String(id)].join("|");
+  if (relayListen && body.method === "notifications/cancelled") {
+    const requestId = (body as { params?: { requestId?: unknown } }).params?.requestId;
+    if (isJsonRpcId(requestId) && cancelRelayedListen(listenKey(requestId))) {
+      return c.body("Accepted", 202);
+    }
+  }
+  if (body.method === LISTEN_METHOD && isJsonRpcId(body.id) && harnessListenAckEnabled() && !relayListen) {
     return c.body(acknowledgedListenStream(body.id, HARNESS_MCP_STREAM_MAX_MS), 200, {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
@@ -527,6 +542,40 @@ async function handleRequest(
             },
           },
         );
+    if (relayListen && body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
+      // A manager of the stream's own, for as long as the stream lasts.
+      const created = await createAuthorized();
+      const manager = "manager" in created ? created.manager : created;
+      const refused = await checkTurn?.();
+      if (refused) {
+        await manager.disconnectAllServers();
+        return refused;
+      }
+      return c.body(
+        relayListenStream({
+          id: body.id,
+          params: (body as { params?: unknown }).params,
+          serverId,
+          manager,
+          cancelKey: listenKey(body.id),
+          maxMs: HARNESS_MCP_STREAM_MAX_MS,
+          ...(checkTurn ? { stillAuthorized: async () => (await checkTurn()) === undefined } : {}),
+          onEnd: () =>
+            void manager.disconnectAllServers().catch((error: unknown) =>
+              logger.debug("[harness-mcp] relayed listen: disconnect failed", {
+                error: error instanceof Error ? error.name : "unknown",
+              }),
+            ),
+        }),
+        200,
+        {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      );
+    }
     const handleOnManager = async (manager: MCPClientManager) => {
       trace?.mark("connect");
       // Connecting to a slow server can outlive the message that requested it.
