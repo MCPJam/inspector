@@ -984,25 +984,26 @@ function selectEnabledRunCases(
   return selected;
 }
 
+type FileSuiteContext = {
+  client: PlatformApiClient;
+  signal: AbortSignal;
+};
+
+type FileSuiteParams = {
+  source: { text: string; bytes: number; buffer: Uint8Array };
+  label: string;
+  knobs: EvalRunFileKnobs;
+  projectSelector?: string;
+};
+
 /**
  * Auth has already happened: the caller invoked this inside
  * `runPlatformCommand` so the first network request is project resolution.
  */
-export async function executeEvalRunFromFile(
-  context: {
-    client: PlatformApiClient;
-    signal: AbortSignal;
-    onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
-    onDisclosureUnavailable?: (reason: string) => void;
-    onIdempotencyKey?: (key: string) => void;
-  },
-  params: {
-    source: { text: string; bytes: number; buffer: Uint8Array };
-    label: string;
-    knobs: EvalRunFileKnobs;
-    projectSelector?: string;
-  }
-): Promise<RunEvalSuiteResult> {
+async function prepareFileOwnedSuite(
+  context: FileSuiteContext,
+  params: FileSuiteParams
+) {
   const page = await context.client.listProjects(
     {},
     { signal: context.signal }
@@ -1197,6 +1198,53 @@ export async function executeEvalRunFromFile(
       { client: negotiated.client, signal: context.signal }
     );
   }
+  return {
+    project,
+    synced,
+    negotiated,
+    sourceHash,
+    outgoingCases,
+    syncedCases,
+    fileEnvironment,
+    fileHosts,
+  };
+}
+
+/** Synchronize the file-owned suite and its cases without launching a run. */
+export async function syncEvalSuiteFromFile(
+  context: FileSuiteContext,
+  params: Omit<FileSuiteParams, "knobs">
+) {
+  const { project, synced, syncedCases } = await prepareFileOwnedSuite(
+    context,
+    { ...params, knobs: {} }
+  );
+  return {
+    project: { id: project.id, name: project.name },
+    suite: { id: synced.suite.id, name: synced.suite.name },
+    enabledCaseCount: syncedCases.enabledCases.length,
+  };
+}
+
+export async function executeEvalRunFromFile(
+  context: FileSuiteContext & {
+    onDisclosure?: (disclosure: PlatformEvalRunDisclosure) => void;
+    onDisclosureUnavailable?: (reason: string) => void;
+    onIdempotencyKey?: (key: string) => void;
+  },
+  params: FileSuiteParams
+): Promise<RunEvalSuiteResult> {
+  const {
+    project,
+    synced,
+    negotiated,
+    sourceHash,
+    outgoingCases,
+    syncedCases,
+    fileEnvironment,
+    fileHosts,
+  } = await prepareFileOwnedSuite(context, params);
+  const { knobs } = params;
   const runCases = selectEnabledRunCases(
     syncedCases.enabledCases,
     outgoingCases,

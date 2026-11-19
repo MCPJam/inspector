@@ -2397,6 +2397,30 @@ describe("the upload contract guard", () => {
   });
 });
 
+describe("eval sync", () => {
+  test("writes a suite and its cases, returns the hosted ID, and starts no run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha");
+        argv[argv.indexOf("run")] = "sync";
+        const result = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(result.result.exitCode, 0, result.stderr);
+        assert.equal(fixture.fromFileBodies.length, 1);
+        assert.equal(fixture.batchBodies.length, 1);
+        assert.equal(fixture.runBodies.length, 0);
+        assert.equal(JSON.parse(result.stdout).suite.id, "suite-file-1");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
 describe("eval run --file", () => {
   test("invalid file exits 2 after auth and creates no run", async () => {
     const fixture = await startFileRunFixture();

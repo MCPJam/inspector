@@ -144,6 +144,7 @@ import {
 } from "../lib/eval-suite-export.js";
 import {
   executeEvalRunFromFile,
+  syncEvalSuiteFromFile,
   looksLikeVersionedSuiteFile,
   MAX_APPROVAL_REASON_LENGTH,
 } from "../lib/eval-run-file.js";
@@ -5492,6 +5493,31 @@ export function registerEvalCommands(program: Command): void {
         command
       ) => {
         await runEvalCompare(options, command);
+      }
+    );
+
+  evals
+    .command("sync")
+    .description("Sync a versioned eval suite file into a project without running it")
+    .requiredOption("--file <path>", "Suite file path, or - for stdin")
+    .requiredOption("--project <id-or-name>", PROJECT_OPT)
+    .action(
+      async (options: { file: string; project: string }, command: Command) => {
+        const globalOptions = evalGlobalOptions(command);
+        const scope = resolveCloudProjectArgs(options);
+        const source = readSuiteFileInput(options.file);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            syncEvalSuiteFromFile({ client, signal }, {
+              source,
+              label: options.file === "-" ? "<stdin>" : options.file,
+              projectSelector: scope.project,
+            }),
+          { projectScope: scope.projectScope }
+        );
+        writeResult(result, globalOptions.format);
       }
     );
 
