@@ -34,6 +34,7 @@ export async function runMutationChecks(context: TaskCheckContext) {
     received,
     sent,
     readiness,
+    passedAdvice,
   } = context;
   if (selected.has("tasks-invalid-task-id-rejected")) {
     const stepStartedAt = Date.now();
@@ -82,6 +83,19 @@ export async function runMutationChecks(context: TaskCheckContext) {
           message: `An unknown task id should be rejected with -32602 (Invalid params): ${wrongAnswers.join("; ")}.`,
           details: { probedTaskId: probe.taskId, wrongAnswers },
           informational: true,
+        });
+      } else if (
+        probe.mutations.some((entry) => entry.outcome !== "local-failure")
+      ) {
+        // Only when a mutating call actually reached the server: a run that
+        // left this advice out sends none, and a call that never got an
+        // answer judged nothing.
+        passedAdvice.push({
+          id: "tasks-readiness-unknown-task-id-mutations",
+          title:
+            TASKS_READINESS_CATALOG["tasks-readiness-unknown-task-id-mutations"]
+              .title,
+          specStrength: "SHOULD",
         });
       }
       const detail = { probedTaskId: probe.taskId, ...probe.detail };

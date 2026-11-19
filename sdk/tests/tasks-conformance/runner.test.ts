@@ -1323,14 +1323,25 @@ describe("MCPTasksConformanceTest", () => {
       "passed"
     );
     expect(mutatedIds).toEqual([]);
+    // Not asked, so neither warned about nor claimed as met.
+    expect(unpicked.passedAdvice).toBeUndefined();
 
-    await runAgainst(manager, {
+    const picked = await runAgainst(manager, {
       config: {
         ...config,
         readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
       },
     });
     expect(mutatedIds).toHaveLength(2);
+    // Both mutations answered -32602, so the advice is met.
+    expect(picked.readiness).toBeUndefined();
+    expect(picked.passedAdvice).toEqual([
+      {
+        id: "tasks-readiness-unknown-task-id-mutations",
+        title: "Unknown Task Id On Update And Cancel",
+        specStrength: "SHOULD",
+      },
+    ]);
   });
 
   it("reports a connection failure as a failed run", async () => {

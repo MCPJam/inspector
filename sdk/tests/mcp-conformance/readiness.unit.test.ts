@@ -10,8 +10,11 @@
 
 import type { Tool } from "@modelcontextprotocol/client";
 import {
+  collectClientAdvice,
   collectClientReadiness,
+  collectRawAdvice,
   collectRawReadiness,
+  splitReadinessOutcomes,
 } from "../../src/mcp-conformance/readiness.js";
 import type {
   MCPClientCheckContext,
@@ -425,6 +428,97 @@ describe("raw readiness advice", () => {
     expect(
       await collectRawReadiness(rawContext(fetchFn, "2026-07-28"))
     ).toEqual([]);
+  });
+
+  it("reports a legacy DELETE answered 405 as advice the server meets", async () => {
+    const outcomes = await collectRawAdvice(
+      rawContext(legacyDeleteAnswering(405))
+    );
+    expect(outcomes).toContainEqual({
+      id: "readiness-session-termination",
+      title: "Explicit Session Termination",
+      specStrength: "SHOULD",
+    });
+  });
+
+  it("claims no pass for a probe that never got an answer", async () => {
+    const fetchFn = (async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+
+    expect(await collectRawAdvice(rawContext(fetchFn, "2026-07-28"))).toEqual(
+      []
+    );
+  });
+});
+
+describe("advice the server meets", () => {
+  it("lists every client advice that applied and found nothing to change", async () => {
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    const outcomes = await collectClientAdvice(clientContext(), surface());
+
+    expect(outcomes).toEqual([
+      {
+        id: "readiness-tool-order-deterministic",
+        title: "Deterministic Tool Order",
+        specStrength: "SHOULD",
+      },
+      {
+        id: "readiness-tool-name-conventions",
+        title: expect.any(String),
+        specStrength: "SHOULD",
+      },
+      {
+        id: "readiness-deprecated-feature-use",
+        title: expect.any(String),
+        specStrength: "Deprecation Notice",
+      },
+    ]);
+    expect(await collectClientReadiness(clientContext(), surface())).toEqual(
+      []
+    );
+  });
+
+  it("claims no tool advice for a server with no tools", async () => {
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [],
+      nextCursor: undefined,
+    } as never);
+
+    const outcomes = await collectClientAdvice(
+      clientContext(),
+      surface({ tools: [] })
+    );
+
+    expect(outcomes.map((outcome) => outcome.id)).toEqual([
+      "readiness-deprecated-feature-use",
+    ]);
+  });
+
+  it("splits warnings from passes for the result", () => {
+    const passedAdvice = {
+      id: "readiness-tool-order-deterministic" as const,
+      title: "Deterministic Tool Order",
+      specStrength: "SHOULD" as const,
+    };
+    const warning = {
+      ...passedAdvice,
+      id: "readiness-session-termination" as const,
+      severity: "warning" as const,
+      message: "DELETE got HTTP 500",
+    };
+
+    expect(splitReadinessOutcomes([warning, passedAdvice])).toEqual({
+      readiness: [warning],
+      passedAdvice: [passedAdvice],
+    });
+    expect(splitReadinessOutcomes([warning])).toEqual({
+      readiness: [warning],
+    });
   });
 });
 

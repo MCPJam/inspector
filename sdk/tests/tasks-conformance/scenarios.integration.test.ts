@@ -258,6 +258,7 @@ describe("tasks-status-payload-shape", () => {
   it("says the failed-task advice was not checked when the task did not fail", async () => {
     const result = await run(await serve(quickPhases()), [ID]);
     expect(result.readiness).toBeUndefined();
+    expect(result.passedAdvice).toBeUndefined();
     expect(result.uncheckedAdvice).toEqual([
       {
         id: "tasks-readiness-failed-status-message",
@@ -268,10 +269,17 @@ describe("tasks-status-payload-shape", () => {
     ]);
   });
 
-  it("reports neither when a failed task carries a statusMessage", async () => {
+  it("lists the advice as met when a failed task carries a statusMessage", async () => {
     const result = await run(await serve(failedTaskPhases()), [ID]);
     expect(result.readiness).toBeUndefined();
     expect(result.uncheckedAdvice).toBeUndefined();
+    expect(result.passedAdvice).toEqual([
+      {
+        id: "tasks-readiness-failed-status-message",
+        title: "Failed Task Status Message",
+        specStrength: "SHOULD",
+      },
+    ]);
   });
 
   it("leaves out the not-checked line when the advice was not picked", async () => {

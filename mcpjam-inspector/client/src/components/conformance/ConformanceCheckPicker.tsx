@@ -10,10 +10,12 @@
  * A check still missing its input shows unchecked, locked while picked. The
  * pick is kept: the run still sends it, so the result says it was not run for
  * want of input, and it runs once the input is set. A suite's box is checked
- * only with every check picked.
+ * only with every check picked; while picked checks still need input, a click
+ * on it shakes the needs-input tag instead of changing the picks, and a second
+ * click in a row leaves the suite out.
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import type {
@@ -207,6 +209,7 @@ export function ConformanceCheckPicker({
   renderSuiteExtra,
   checkInputStatus,
   checkNotApplicable,
+  inputsSettling = false,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
@@ -244,6 +247,12 @@ export function ConformanceCheckPicker({
     suite: CheckSuite,
     checkId: string,
   ) => string | undefined;
+  /**
+   * The server's tools are still loading, so which checks have their input,
+   * and so the Protocol and Tasks counts, would still change. Those counts
+   * wait for the list instead of ticking up in front of the user.
+   */
+  inputsSettling?: boolean;
 }) {
   const catalogs = {
     ...checkCatalogs(versionPin),
@@ -367,6 +376,8 @@ export function ConformanceCheckPicker({
               renderTag={renderTag}
               notApplicableReason={notApplicableReason}
               advice={suiteAdvice?.prop}
+              // Apps checks take no input, so its count is final already.
+              countPending={inputsSettling && suite !== "apps"}
               needsInputCount={
                 catalog.filter(
                   (entry) =>
@@ -421,6 +432,7 @@ function SuiteChecks({
   notApplicableReason,
   needsInputCount = 0,
   advice,
+  countPending = false,
 }: {
   title: string;
   description: string;
@@ -448,8 +460,16 @@ function SuiteChecks({
     isPicked: (id: string) => boolean;
     onChange?: (id: string, picked: boolean) => void;
   };
+  /** The count would still change: hold it, and the needs-input tag, back. */
+  countPending?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Bumped on each blocked select-all, so the tag remounts and shakes again.
+  const [shakes, setShakes] = useState(0);
+  // The picks a blocked click shook on. Clicked again with nothing changed,
+  // the box leaves the suite out: the picks waiting on input are locked, so
+  // the box is the only way to drop them.
+  const [shookOn, setShookOn] = useState<string | null>(null);
   const missing = (id: string) => Boolean(needsInput?.(id));
   const picked = (id: string) => Boolean(isPicked?.(id));
   // A picked check missing its input shows unchecked and is locked until the
@@ -462,13 +482,32 @@ function SuiteChecks({
   const pickedCount = catalog.filter(
     (entry) => picked(entry.id) && !missing(entry.id),
   ).length;
-  // The box follows the count, so the two never disagree. Once every check
-  // that can run is picked, a click leaves the suite out, so it is never a
-  // dead click while some checks still need input.
+  // The box follows the count, so the two never disagree. Unchecked, a click
+  // selects all; once every check that can run is picked and the rest wait on
+  // input, selecting all cannot go further, so the needs-input tag shakes to
+  // say what is left instead of the click dropping every pick.
   const checked = pickedCount === catalog.length;
-  const turnsOff =
-    catalog.some((entry) => picked(entry.id)) &&
-    catalog.every((entry) => missing(entry.id) || picked(entry.id));
+  // Every check picked yet the box unchecked: the rest wait on input. Not
+  // while the count is held back: the tag that would shake is hidden then.
+  const blockedByInput =
+    !countPending && !checked && catalog.every((entry) => picked(entry.id));
+  const pickKey = catalog
+    .filter((entry) => picked(entry.id))
+    .map((entry) => entry.id)
+    .join(",");
+  // Once the box is no longer blocked, a later block starts with a shake again.
+  useEffect(() => {
+    if (!blockedByInput) setShookOn(null);
+  }, [blockedByInput]);
+  const onSuiteBox = () => {
+    if (blockedByInput && shookOn !== pickKey) {
+      setShakes((count) => count + 1);
+      setShookOn(pickKey);
+      return;
+    }
+    setShookOn(null);
+    onSuiteChange(blockedByInput ? false : !checked);
+  };
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-start gap-3 p-4 transition-colors hover:bg-muted/30">
@@ -476,7 +515,7 @@ function SuiteChecks({
         <label className="-m-1 flex size-6 shrink-0 cursor-pointer items-center justify-center">
           <Checkbox
             checked={checked}
-            onCheckedChange={() => onSuiteChange(!turnsOff)}
+            onCheckedChange={onSuiteBox}
             aria-label={`Run ${title}`}
           />
         </label>
@@ -489,8 +528,14 @@ function SuiteChecks({
           <span className="flex min-w-0 grow flex-col gap-0.5">
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold">{title}</span>
-              {needsInputCount > 0 ? (
-                <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
+              {needsInputCount > 0 && !countPending ? (
+                <span
+                  key={shakes}
+                  className={cn(
+                    "rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground",
+                    shakes > 0 && "animate-needs-input-shake",
+                  )}
+                >
                   {needsInputCount} <em>optional</em>{" "}
                   {needsInputCount === 1
                     ? "check needs input"
@@ -500,9 +545,19 @@ function SuiteChecks({
             </span>
             <span className="text-sm text-muted-foreground">{description}</span>
           </span>
-          <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
-            {countLabel(pickedCount, catalog.length)}
-          </span>
+          {countPending ? (
+            <span className="shrink-0 text-sm font-medium text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="inline-block h-3.5 w-28 animate-pulse rounded bg-muted align-middle motion-reduce:animate-none"
+              />
+              <span className="sr-only">Counting checks</span>
+            </span>
+          ) : (
+            <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
+              {countLabel(pickedCount, catalog.length)}
+            </span>
+          )}
           <ChevronRight
             className={cn(
               "mt-0.5 size-4 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none",

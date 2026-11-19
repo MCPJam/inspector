@@ -239,6 +239,18 @@ async function continueSetup() {
   const next = screen.getByRole("button", { name: "Continue" });
   await waitFor(() => expect(next).toBeEnabled());
   fireEvent.click(next);
+  // Counts that hang on the server's tools wait for the list to land.
+  await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
+}
+
+/**
+ * Leaves a suite out with its box. A suite whose picked checks wait on input
+ * shakes its needs-input tag on the first click, so it takes a second.
+ */
+function leaveSuiteOut(box: HTMLElement) {
+  fireEvent.click(box);
+  const row = box.closest(".border-b");
+  if (row?.querySelector(".animate-needs-input-shake")) fireEvent.click(box);
 }
 
 /** Starts a run and waits until no suite is still running. */
@@ -489,7 +501,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Suggested Protocol Deprecated Feature Use",
+      "Suggested (Deprecated) Protocol Deprecated Feature Use",
     );
   });
 
@@ -1004,7 +1016,7 @@ describe("ConformanceTab", () => {
     );
 
     // Leave Tasks and OAuth out entirely.
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    leaveSuiteOut(screen.getByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run OAuth" }));
     expect(screen.getByRole("checkbox", { name: "Run OAuth" })).toHaveAttribute(
       "data-state",
@@ -1051,7 +1063,7 @@ describe("ConformanceTab", () => {
     await continueSetup();
 
     for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
-      fireEvent.click(screen.getByRole("checkbox", { name: `Run ${suite}` }));
+      leaveSuiteOut(screen.getByRole("checkbox", { name: `Run ${suite}` }));
     }
     expect(screen.getByRole("button", { name: RUN_LABEL })).toBeDisabled();
 
@@ -1321,7 +1333,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
     for (const suite of ["Apps", "Tasks", "OAuth"]) {
-      fireEvent.click(
+      leaveSuiteOut(
         await screen.findByRole("checkbox", { name: `Run ${suite}` }),
       );
     }
@@ -1354,7 +1366,7 @@ describe("ConformanceTab", () => {
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
-    fireEvent.click(await screen.findByRole("checkbox", { name: "Run Tasks" }));
+    leaveSuiteOut(await screen.findByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(save).not.toHaveBeenCalled();
@@ -2000,7 +2012,7 @@ describe("ConformanceTab", () => {
     );
     fireEvent.click(screen.getAllByRole("button", { name: RUN_LABEL })[0]);
     await continueSetup();
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    leaveSuiteOut(screen.getByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("button", { name: RUN_LABEL }));
 
     expect(onSaveServerDefaults).toHaveBeenCalledWith(
@@ -2021,6 +2033,7 @@ describe("ConformanceTab", () => {
     // Its protocol checks that need a tool show unchecked, so the suite's box
     // does too.
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
       "unchecked",
@@ -2048,7 +2061,7 @@ describe("ConformanceTab", () => {
     expect(mockRunTasks).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    leaveSuiteOut(screen.getByRole("checkbox", { name: "Run Tasks" }));
     rerender(
       <ConformanceTab
         server={alpha}
@@ -2091,7 +2104,8 @@ describe("ConformanceTab", () => {
       new Error("[Request ID: abc] Server Error"),
     );
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
+    leaveSuiteOut(screen.getByRole("checkbox", { name: "Run Tasks" }));
 
     // A fixed message, not the raw backend error; the box goes back.
     await waitFor(() =>
@@ -2574,13 +2588,20 @@ describe("ConformanceTab", () => {
       expect(logsCheck).toHaveAttribute("data-state", "unchecked");
       expect(logsCheck).toBeDisabled();
 
-      // Every check that can run is picked, so the suite's box leaves the
-      // suite out, then picks it again.
-      fireEvent.click(suiteBox);
-      expect(header).toHaveTextContent(`0/${total} checks selected`);
+      // Every check is picked and the rest wait on input, so selecting all
+      // cannot go further: the box shakes the needs-input tag and keeps every
+      // pick, instead of leaving the suite out.
+      const badge = inputBadge("3 optional checks need input");
+      expect(within(header).getByText(badge)).not.toHaveClass(
+        "animate-needs-input-shake",
+      );
       fireEvent.click(suiteBox);
       expect(header).toHaveTextContent(
         `${total! - 3}/${total} checks selected`,
+      );
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+      expect(within(header).getByText(badge)).toHaveClass(
+        "animate-needs-input-shake",
       );
 
       // The tool field stays under the locked check, so it can still be set.
@@ -2691,6 +2712,12 @@ describe("ConformanceTab", () => {
         expect(within(header).getByText("optional").tagName).toBe("EM");
 
         const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
+        // Every check is picked and the rest wait on input: the first click
+        // shakes the tag, the second leaves the suite out.
+        fireEvent.click(suite);
+        expect(
+          within(header).getByText(inputBadge("11 optional checks need input")),
+        ).toHaveClass("animate-needs-input-shake");
         fireEvent.click(suite);
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         fireEvent.click(suite);
@@ -3101,7 +3128,7 @@ describe("ConformanceTab", () => {
       });
     });
 
-    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+    it("keeps the advice picked when the suite's box waits on input", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
       // The advice calls the logs tool, so it can run once that is set.
@@ -3112,20 +3139,20 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
       const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
-      fireEvent.click(suite);
-      expect(suite).toHaveAttribute("data-state", "unchecked");
       const advice = screen.getByRole("checkbox", {
         name: "Run Log Level Filtering",
       });
-      expect(advice).toHaveAttribute("data-state", "unchecked");
-      expect(advice).toBeDisabled();
+      expect(advice).toHaveAttribute("data-state", "checked");
 
+      // Two protocol checks still need a tool, so the box cannot select all:
+      // it shakes the needs-input tag and changes no pick, advice included.
       fireEvent.click(suite);
-      // Two protocol checks still need a tool, so the suite's box stays
-      // unchecked while the advice comes back.
       expect(suite).toHaveAttribute("data-state", "unchecked");
       expect(advice).toHaveAttribute("data-state", "checked");
       expect(advice).toBeEnabled();
+      expect(
+        screen.getByText(inputBadge("2 optional checks need input")),
+      ).toHaveClass("animate-needs-input-shake");
     });
   });
 
@@ -3144,10 +3171,11 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
     onSaveServerDefaults.mockClear();
 
     for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
-      fireEvent.click(screen.getByRole("checkbox", { name: `Run ${suite}` }));
+      leaveSuiteOut(screen.getByRole("checkbox", { name: `Run ${suite}` }));
     }
 
     // The last box would leave nothing to run: refused, not saved.
@@ -3171,7 +3199,7 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
+    leaveSuiteOut(screen.getByRole("checkbox", { name: "Run Tasks" }));
     rerender(
       <ConformanceTab
         server={alpha}
