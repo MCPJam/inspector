@@ -25,7 +25,7 @@ describe("stored predicate status on the scorecard", () => {
           reason: "ok",
         },
       ],
-    } as never);
+    });
     expect(parsed?.map((row) => row.status)).toEqual([
       "not_applicable",
       "error",
