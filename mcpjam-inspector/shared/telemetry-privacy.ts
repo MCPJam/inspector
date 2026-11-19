@@ -453,6 +453,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "scenarios",
   "score",
   "secrets",
+  "security",
   "servers",
   "sessions",
   "settings",

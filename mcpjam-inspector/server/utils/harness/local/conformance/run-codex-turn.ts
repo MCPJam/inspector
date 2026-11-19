@@ -33,7 +33,7 @@ import { z } from "zod";
 import { HarnessAgent } from "@ai-sdk/harness/agent";
 import { getHarnessAdapter } from "../../registry.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
-import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, withAnsweredNativeRequests } from "../../auto-approve-harness.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import {
   createSupervisedLocalHarnessProvider,
@@ -56,7 +56,7 @@ import {
   type LocalPlatform,
 } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
-import { isLoopbackListener, treeListeners } from "./process-checks.js";
+import { descendants, isLoopbackListener, treeListeners } from "./process-checks.js";
 import { CODEX_LOCAL_ADAPTER_IDENTITY } from "../../codex-appserver/local-identity.js";
 
 const execFileP = promisify(execFile);
@@ -177,11 +177,6 @@ const freePort = () =>
  * arm that asks the OS directly, as `run-native-turn.ts` does: `tasklist` for
  * liveness, `netstat -ano` for listeners, and CIM for the parent/child tree.
  */
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
-
 async function running(pid: number): Promise<boolean> {
   if (WIN) {
     try {
@@ -198,25 +193,6 @@ async function running(pid: number): Promise<boolean> {
     return false;
   }
   return state.length > 0 && !state.startsWith("Z");
-}
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
-    }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
 }
 async function psEnv(pid: number) {
   try { return (await execFileP("ps", ["-E", "-o", "command=", "-p", String(pid)])).stdout; }
@@ -410,7 +386,7 @@ async function main() {
   });
   const localHarness = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
-    harness: (AUTO_APPROVE ? withAutoApprovedNativeRequests(localHarness) : localHarness) as any,
+    harness: (AUTO_APPROVE ? withAnsweredNativeRequests(localHarness, APPROVE_NATIVE_REQUEST) : localHarness) as any,
     sandbox: provider,
     permissionMode: UNATTENDED ? plan.permissionMode : "allow-reads",
     instructions: "You are running a conformance check.",

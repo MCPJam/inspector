@@ -11,8 +11,10 @@ export function createCopilotCli(settings: {
   model: string;
   startupTimeoutMs?: number;
   auth: Readonly<Record<string, string>>;
-  /** Forwarded servers the CLI's own MCP client dials. */
+  /** MCPJam proxy or forwarder endpoints the CLI's own MCP client dials. */
   nativeMcpServers?: HarnessMcpJson["mcpServers"];
+  /** The servers are forwarded, so each call carries the correlation id. */
+  correlateNativeMcp?: boolean;
 }) {
   return createRetainedBridgeHarness(settings, {
     id: harnessId,
@@ -34,8 +36,11 @@ export function createCopilotCli(settings: {
 /**
  * A live Copilot session keeps the MCP headers it started with (measured on
  * 1.0.92: restarting a server with a new config reuses the old headers), so a
- * paused forwarded turn cannot take the grant its continuation mints. New
- * turns resume the session with fresh headers and are unaffected.
+ * paused turn cannot take credentials its continuation mints: a forwarded
+ * turn's grant, or a proxy token bound to the paused turn's lease. A chat
+ * lane's session configuration has none to take (`session-mcp-config.ts`), so
+ * only a turn on per-turn credentials is refused. New turns resume the session
+ * with the current configuration and are unaffected.
  */
 export function refuseForwardedContinuation<T extends HarnessV1>(
   runtime: T,

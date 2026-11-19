@@ -50,14 +50,16 @@ const TESTS_PREFIX = "tests / ";
  * anything and renders a permanently-pending phantom row while the real job
  * lands in the unknown-append list below.
  *
- * Order reflects the pipeline after the parallelization work: the backend
- * promote and the npm package build both run alongside the desktop builds
- * rather than behind them, and finalize no longer waits on the webapp deploy.
+ * Order follows release.yml: the tests, preflight and every build start
+ * together; `verified` passes once the tests and preflight have, and only
+ * then do the backend deploy, npm publish and webapp deploy start.
  */
 const JOB_ORDER = [
   TESTS_ROW,
   "build-and-test / Build and Test",
   "preflight",
+  "harness-consistency",
+  "verified",
   "build-mac / build-mac",
   "build-windows / make-windows",
   "build-packages",
@@ -66,7 +68,8 @@ const JOB_ORDER = [
   "deploy-webapp / deploy",
   "deploy-webapp / smoke / smoke",
   "deploy-slack-app / Deploy to Railway",
-  "finalize"
+  "finalize",
+  "shipped"
 ];
 
 export function ReleaseProgressSkeleton() {

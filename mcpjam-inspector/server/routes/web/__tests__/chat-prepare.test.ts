@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   prepare: vi.fn(),
   selectsMaterialized: vi.fn(),
   canProvision: vi.fn(),
+  credentialRefusal: vi.fn(),
 }));
 
 vi.mock("../../../services/chat-turn/managed-setup.js", () => ({
@@ -28,6 +29,10 @@ vi.mock("../../../utils/harness/environment-secret-delivery.js", () => ({
 vi.mock("../../../utils/harness/harness-box.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   canProvisionHarnessBoxes: mocks.canProvision,
+}));
+vi.mock("../../../utils/harness/playground-box.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  playgroundCredentialRefusal: mocks.credentialRefusal,
 }));
 
 import chatPrepare from "../chat-prepare.js";
@@ -76,6 +81,7 @@ beforeEach(() => {
   mocks.prepare.mockResolvedValue({ outcome: "prepared" });
   mocks.selectsMaterialized.mockResolvedValue(false);
   mocks.canProvision.mockReturnValue(true);
+  mocks.credentialRefusal.mockResolvedValue(null);
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -149,14 +155,72 @@ describe("POST /api/web/chat/prepare", () => {
     expect(mocks.prepare.mock.calls[0]![0].projectEnvironmentId).toBe("env_1");
   });
 
+  it.each(["codex", "copilot-cli", "opencode"])(
+    "prepares a %s chat's box the same way",
+    async (harness) => {
+      mocks.setup.mockResolvedValue(
+        setupValue({ resolvedExecution: { harness } }),
+      );
+      expect(await (await post()).json()).toEqual({ outcome: "prepared" });
+      expect(mocks.prepare.mock.calls[0]![0]).toMatchObject({
+        harnessId: harness,
+        chatSessionId: "chat_1",
+      });
+      expect(mocks.credentialRefusal).not.toHaveBeenCalled();
+    },
+  );
+
+  it("checks a Cursor CLI chat's organization key first, and boots its box with the turn environment's grant, as the Send does", async () => {
+    mocks.setup.mockResolvedValue(
+      setupValue({ resolvedExecution: { harness: "cursor" } }),
+    );
+    expect(await (await post()).json()).toEqual({ outcome: "prepared" });
+    expect(mocks.credentialRefusal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        harnessId: "cursor",
+        bearer: "member",
+        projectId: "project_1",
+      }),
+    );
+    expect(mocks.prepare.mock.calls[0]![0]).toMatchObject({
+      harnessId: "cursor",
+      projectEnvironmentId: "env_1",
+    });
+  });
+
+  it("boots nothing for a Cursor CLI chat whose organization has no key ready", async () => {
+    mocks.setup.mockResolvedValue(
+      setupValue({ resolvedExecution: { harness: "cursor" } }),
+    );
+    mocks.credentialRefusal.mockResolvedValue(
+      "Ask an org admin to add a Cursor key in Organization → AI providers.",
+    );
+    expect(await (await post()).json()).toEqual({
+      outcome: "skipped",
+      reason: "not_eligible",
+    });
+    expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["another client", { resolvedExecution: { harness: "cursor" } }],
+    ["an unknown runtime", { resolvedExecution: { harness: "not-a-harness" } }],
     ["no harness", { resolvedExecution: { harness: undefined } }],
     ["a local runtime", { harnessExecutionTarget: { kind: "local" } }],
     ["a study", { turnMode: "recorded" }],
     [
       "a compare column",
       {
+        hostedBody: {
+          projectId: "project_1",
+          chatSessionId: "chat_1",
+          comparePane: true,
+        },
+      },
+    ],
+    [
+      "a Cursor CLI compare column",
+      {
+        resolvedExecution: { harness: "cursor" },
         hostedBody: {
           projectId: "project_1",
           chatSessionId: "chat_1",

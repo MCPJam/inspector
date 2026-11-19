@@ -51,6 +51,24 @@ describe("dark default", () => {
 });
 
 describe("DarkDefaultNudge", () => {
+  it("defers without marking seen until announcements are enabled", () => {
+    const { rerender } = render(<DarkDefaultNudge enabled={false} />);
+    expect(mocks.custom).not.toHaveBeenCalled();
+    expect(localStorage.getItem(DARK_DEFAULT_NUDGE_KEY)).toBeNull();
+
+    rerender(<DarkDefaultNudge enabled />);
+    expect(mocks.custom).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(DARK_DEFAULT_NUDGE_KEY)).toBe("1");
+  });
+
+  it("dismisses an existing toast when announcements become disabled", () => {
+    const { rerender } = render(<DarkDefaultNudge />);
+    expect(mocks.custom).toHaveBeenCalledTimes(1);
+
+    rerender(<DarkDefaultNudge enabled={false} />);
+    expect(mocks.dismiss).toHaveBeenCalledWith("dark-default-nudge");
+  });
+
   it("shows once to someone who never picked a theme", () => {
     const { unmount } = render(<DarkDefaultNudge />);
     expect(mocks.custom).toHaveBeenCalledTimes(1);

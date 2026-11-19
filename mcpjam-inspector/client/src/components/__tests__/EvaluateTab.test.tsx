@@ -1273,7 +1273,7 @@ describe("EvaluateTab", () => {
       );
     });
 
-    it("runEvalSuite launches the count Setup Run would start at, not each case's saved runs", async () => {
+    it("runEvalSuite launches the count the Set up run sheet would start at, not each case's saved runs", async () => {
       localStorage.setItem("mcpjam:suite-run-iterations:suite-b", "1");
       try {
         render(<EvaluateTab projectId="ws-1" />);

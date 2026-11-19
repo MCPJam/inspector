@@ -488,9 +488,15 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   generate_goals:
     "Same as generate_personas: spends, and the drafts want the picker the tab already has.",
   request_swarm_run_insights:
-    "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the swarm run it applies to.",
+    "Counts against the organization's shared daily insight quota. The Swarms tab has the button, next to the swarm run it applies to.",
   cancel_swarm_run_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  request_eval_run_insights:
+    "Counts against the organization's shared daily insight quota. The run page has the Analyze button, next to the run it applies to.",
+  cancel_eval_run_insights:
+    "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  build_eval_run_findings:
+    "The first half of the run page's Analyze button, which builds findings and then requests the analysis in one click.",
   // Launches a browser and executes the caller's tool. The Apps tab renders
   // the same widget interactively, with the console and network panes beside
   // it — a chat tool would hand back a verdict with none of that context.

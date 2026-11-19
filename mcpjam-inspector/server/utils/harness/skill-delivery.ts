@@ -88,8 +88,18 @@ export async function harnessTurnSkills(args: {
   /** The turn is a client's or a study's, on servers connected now, not a
    *  named environment's. */
   liveTurn?: boolean;
+  /** The runtime takes captured MCP-server skills through MCPJam's skill
+   *  tools (`takesServerSkillsAsTools`): a run's copies of them stay off the
+   *  box. */
+  serverSkillsAsTools?: boolean;
 }): Promise<HarnessTurnSkills> {
-  const source = selectHarnessSkillSource(args);
+  const pinned = args.serverSkillsAsTools
+    ? args.pinnedHarnessSkills?.filter((copy) => !copy.server)
+    : args.pinnedHarnessSkills;
+  const source = selectHarnessSkillSource({
+    ...args,
+    pinnedHarnessSkills: pinned,
+  });
   const live = source.mode !== "pinned" && args.liveTurn === true;
   if (source.mode === "none") {
     return {
@@ -102,7 +112,7 @@ export async function harnessTurnSkills(args: {
   }
   const files =
     source.mode === "pinned"
-      ? (args.pinnedHarnessSkills ?? []).flatMap((artifact, index) =>
+      ? (pinned ?? []).flatMap((artifact, index) =>
           (artifact.files ?? []).map((file) => ({
             ...file,
             skillId: source.skills[index]!.skillId,

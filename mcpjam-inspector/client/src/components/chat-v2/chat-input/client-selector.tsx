@@ -22,7 +22,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { clientDisplayName } from "@/lib/client-display-name";
@@ -43,7 +43,10 @@ import { useOpenAcrossRemount } from "./use-open-across-remount";
  * parent's mutual-exclusion logic keeps working unchanged.
  */
 export interface ClientSelectorData {
-  hosts: Pick<HostListItem, "hostId" | "name" | "displayName">[];
+  hosts: Pick<
+    HostListItem,
+    "hostId" | "name" | "displayName" | "hostStyle"
+  >[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
   projectId: string | null;
@@ -227,7 +230,7 @@ export function ClientSelector({
       ? (environmentPanes[0]?.label ?? "Select client")
       : "Select client";
   const leadHostLogo = leadHost?.name
-    ? resolveHostLogoByName(leadHost.name, themeMode)
+    ? resolveHostLogo(leadHost, themeMode)
     : null;
 
   const isComparing =
@@ -370,8 +373,8 @@ export function ClientSelector({
                         const name = compactHostLabel(
                           host ? clientDisplayName(host) : hostId,
                         );
-                        const logo = resolveHostLogoByName(
-                          host?.name ?? name,
+                        const logo = resolveHostLogo(
+                          host ?? { name },
                           themeMode,
                         );
                         return (
@@ -450,8 +453,8 @@ export function ClientSelector({
                   const host = hostsById.get(hostId);
                   const isLead = index === 0 && !environmentLeads;
                   const name = host ? clientDisplayName(host) : hostId;
-                  const logo = resolveHostLogoByName(
-                    host?.name ?? name,
+                  const logo = resolveHostLogo(
+                    host ?? { name },
                     modalThemeMode,
                   );
                   return (
@@ -512,7 +515,7 @@ export function ClientSelector({
                 const isSelected = selectedIds.has(host.hostId);
                 const isLimitedOut =
                   checklistMode && !isSelected && limitReached;
-                const logo = resolveHostLogoByName(host.name, modalThemeMode);
+                const logo = resolveHostLogo(host, modalThemeMode);
 
                 // A real button, not the row's own click target. Outside a
                 // comparison the row body switches clients; while comparing it
