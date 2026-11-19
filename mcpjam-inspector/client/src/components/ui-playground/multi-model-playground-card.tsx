@@ -870,6 +870,14 @@ export function MultiModelPlaygroundCard({
     onTurnSettled?.(compareId, chatSessionId, messages);
   }, [isStreaming, messages, compareId, chatSessionId, onTurnSettled]);
 
+  // An empty transcript tells the parent this lane's session is gone.
+  const onTurnSettledRef = useRef(onTurnSettled);
+  onTurnSettledRef.current = onTurnSettled;
+  useEffect(
+    () => () => onTurnSettledRef.current?.(compareId, chatSessionId, []),
+    [compareId, chatSessionId],
+  );
+
   useEffect(() => {
     // A restored column loads its own history instead of any seed.
     if (recoveryColumn) return;

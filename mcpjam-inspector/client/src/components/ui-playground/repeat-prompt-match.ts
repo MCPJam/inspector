@@ -54,6 +54,15 @@ export function latestToolPromptTurn(messages: UIMessage[]): PromptTurn | null {
   return text ? { promptIndex, text } : null;
 }
 
+export type CompareLaneTurn = { chatSessionId: string; messages: UIMessage[] };
+
+/** The first compare lane whose latest turn called tools. */
+export function pickCompareTipSource(
+  lanes: CompareLaneTurn[],
+): CompareLaneTurn | undefined {
+  return lanes.find((lane) => latestToolPromptTurn(lane.messages) !== null);
+}
+
 /** An earlier prompt in this conversation that `turn` repeats. */
 export function findRepeatInConversation(
   messages: UIMessage[],

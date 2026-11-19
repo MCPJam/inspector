@@ -37,6 +37,7 @@ vi.mock("@/components/chat-v2/shared/save-as-test-case-action", () => ({
 }));
 
 import { RepeatPromptTip } from "../repeat-prompt-tip";
+import { pickCompareTipSource } from "../repeat-prompt-match";
 
 function user(id: string, text: string): UIMessage {
   return { id, role: "user", parts: [{ type: "text", text }] };
@@ -154,5 +155,50 @@ describe("RepeatPromptTip", () => {
     renderTip([user("u1", "List my open Linear issues"), toolReply("a1")]);
     await waitFor(() => expect(findSimilar).not.toHaveBeenCalled());
     expect(screen.queryByText("Tip")).not.toBeInTheDocument();
+  });
+
+  it("skips its own session and keeps sibling compare lanes out of the match", async () => {
+    findSimilar.mockResolvedValue(null);
+    render(
+      <RepeatPromptTip
+        projectId="proj-1"
+        chatSessionId="lane-a"
+        messages={[user("u1", "List my open Linear issues"), toolReply("a1")]}
+        isStreaming={false}
+        serverNames={["Linear"]}
+        hostIds={["host-a"]}
+        excludeChatSessionIds={["lane-a", "lane-b"]}
+      />,
+    );
+    await waitFor(() =>
+      expect(findSimilar).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatSessionId: "lane-a",
+          excludeChatSessionIds: ["lane-b"],
+        }),
+      ),
+    );
+  });
+});
+
+describe("pickCompareTipSource", () => {
+  it("picks the first lane whose latest turn called tools", () => {
+    const noTools = {
+      chatSessionId: "lane-a",
+      messages: [
+        user("u1", "List my open Linear issues"),
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{ type: "text", text: "ok" }],
+        } as UIMessage,
+      ],
+    };
+    const withTools = {
+      chatSessionId: "lane-b",
+      messages: [user("u1", "List my open Linear issues"), toolReply("a1")],
+    };
+    expect(pickCompareTipSource([noTools, withTools])).toBe(withTools);
+    expect(pickCompareTipSource([noTools])).toBeUndefined();
   });
 });

@@ -177,6 +177,7 @@ import {
   extractUserMessageText,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { RepeatPromptTip } from "./repeat-prompt-tip";
+import { pickCompareTipSource } from "./repeat-prompt-match";
 import { SaveAsTestCaseAction } from "@/components/chat-v2/shared/save-as-test-case-action";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import {
@@ -2777,10 +2778,12 @@ export function PlaygroundMain({
   >({});
   const handleCompareTurnSettled = useCallback(
     (compareId: string, laneSessionId: string, laneMessages: UIMessage[]) =>
-      setSettledCompareTurns((prev) => ({
-        ...prev,
-        [compareId]: { chatSessionId: laneSessionId, messages: laneMessages },
-      })),
+      setSettledCompareTurns((prev) => {
+        const next = { ...prev };
+        if (laneMessages.length === 0) delete next[compareId];
+        else next[compareId] = { chatSessionId: laneSessionId, messages: laneMessages };
+        return next;
+      }),
     [],
   );
 
@@ -6239,13 +6242,14 @@ export function PlaygroundMain({
           onReasoningEffortChange: undefined,
         };
 
-  // Compare lanes run the same prompt, so any settled lane stands for all.
+  // Compare lanes run the same prompt, so any lane that called tools stands for all.
   const compareTipTurns = isCompareMode ? Object.values(settledCompareTurns) : [];
+  const compareTipSource = pickCompareTipSource(compareTipTurns);
   const repeatPromptTip = (
     <RepeatPromptTip
       projectId={convexProjectId}
-      chatSessionId={compareTipTurns[0]?.chatSessionId ?? chatSessionId}
-      messages={isCompareMode ? (compareTipTurns[0]?.messages ?? []) : messages}
+      chatSessionId={compareTipSource?.chatSessionId ?? chatSessionId}
+      messages={isCompareMode ? (compareTipSource?.messages ?? []) : messages}
       isStreaming={isCompareMode ? false : isStreaming}
       excludeChatSessionIds={compareTipTurns.map((turn) => turn.chatSessionId)}
       serverNames={selectedServers}
