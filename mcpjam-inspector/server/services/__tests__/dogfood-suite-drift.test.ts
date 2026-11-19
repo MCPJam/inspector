@@ -199,16 +199,24 @@ describe("the dogfood eval suites", () => {
         answer,
       ).toBe(true);
     }
-    expect(
-      passes(asserts, {
-        toolCalls: ["list_projects"],
-        answer: "The suites are Smoke and Nightly.",
-      }),
-    ).toBe(false);
+    for (const answer of [
+      "The suites are Smoke and Nightly.",
+      "I don't see any problems. The suites are Smoke and Nightly.",
+    ]) {
+      expect(
+        passes(asserts, { toolCalls: ["list_projects"], answer }),
+        answer,
+      ).toBe(false);
+    }
+    // An answer the pattern accepts, so only the create prohibition fails it.
+    const answer = "That project does not exist.";
+    expect(passes(asserts, { toolCalls: ["list_projects"], answer })).toBe(
+      true,
+    );
     expect(
       passes(asserts, {
         toolCalls: ["list_projects", "create_project"],
-        answer: "It did not exist, so I created it.",
+        answer,
       }),
     ).toBe(false);
   });

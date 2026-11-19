@@ -410,6 +410,15 @@ cases:
         assertion:
           type: toolNeverCalled
           toolName: run_eval_suite
+      - id: a5
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_case
+      - id: a6
+        kind: assert
+        assertion:
+          type: finalAssistantMessageNonEmpty
 
   # The suite is named by prefix: the staging and production files name it
   # differently, and the cases below the `cases:` line must match byte for
@@ -466,6 +475,11 @@ cases:
         assertion:
           type: responseMatches
           pattern: "OpenRouter|Vercel|Convex"
+      - id: a4
+        kind: assert
+        assertion:
+          type: toolNeverCalled
+          toolName: run_eval_case
 
   # -------------------------------------------------------------- environments
   # The project lists no environments, even with archived ones included, while
@@ -585,7 +599,9 @@ cases:
   # suites or create the one it could not find. The two observation checks are
   # advisory, as the suite schema requires. The NOT_FOUND from the server is
   # the expected answer here, so the suite's standard tool-error check is
-  # off for this case: with it on, a perfect answer failed every trial.
+  # off for this case: with it on, a perfect answer failed every trial. The
+  # absence phrase must sit next to "project" (or the name's '7f3a'), so "I
+  # don't see any problems" does not count as saying the project is missing.
   - id: c_HN6OkNOUMLM1qKTaZK6Ui
     title: says a named project does not exist instead of guessing
     intent: negative
@@ -598,7 +614,7 @@ cases:
         kind: assert
         assertion:
           type: responseMatches
-          pattern: "[Nn]ot found|[Dd]oes(n't| not) exist|[Cc]ould(n't| not) find|[Cc]an('t|not) find|[Dd]o(n't| not) see|[Nn]o (such )?project|[Uu]nable to find|[Nn]o match"
+          pattern: "([Nn]ot found|[Dd]oes(n't| not) exist|[Cc]ould(n't| not) find|[Cc]an('t|not) find|[Dd]o(n't| not) see|[Uu]nable to find|[Nn]o match)[^.]{0,40}([Pp]roject|7f3a)|[Pp]roject[^.]{0,60}([Nn]ot found|[Dd]oes(n't| not) exist|[Nn]o match)|[Nn]o (such )?project"
       - id: a2
         kind: assert
         assertion:
