@@ -138,6 +138,7 @@ export function PlaygroundCenter({
             ? () => {
                 // A deferred auto-run is sent from the composer instead.
                 if (homeAutorun) {
+                  clearHomeChecklistAutorun();
                   updateChecklistProgress(homeAutorun.progressKey, {
                     chat: true,
                   });
