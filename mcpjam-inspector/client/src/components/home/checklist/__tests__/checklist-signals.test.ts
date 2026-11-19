@@ -96,6 +96,23 @@ describe("computeChecklistSignals", () => {
     expect(ran.done.create_eval).toBe(true);
     expect(ran.eval.passRate).toBe(0.8);
   });
+
+  it("keeps the eval step done when a later run is still going", () => {
+    const entry = {
+      ...suite("me", { status: "running", createdBy: "me" }),
+      recentRuns: [
+        { status: "running", createdBy: "me" },
+        {
+          status: "completed",
+          createdBy: "me",
+          summary: { total: 4, passed: 3, failed: 1, passRate: 0.75 },
+        },
+      ],
+    } as EvalSuiteOverviewEntry;
+    const signals = computeChecklistSignals({ ...base, suites: [entry] });
+    expect(signals.done.create_eval).toBe(true);
+    expect(signals.eval.passRate).toBe(0.75);
+  });
 });
 
 describe("normalizeHomeChecklistVariant", () => {

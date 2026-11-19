@@ -49,23 +49,34 @@ export function computeChecklistSignals({
   const ownSuites = userId
     ? suites.filter((entry) => entry.suite.createdBy === userId)
     : [];
-  const ran = ownSuites.find(
-    (entry) =>
-      entry.latestRun?.status === "completed" &&
-      entry.latestRun.createdBy === userId,
-  );
+  // Any finished run of theirs counts, not just the latest: a later run that
+  // is still going, failed, or was a teammate's doesn't undo the step.
+  let ran: { suiteId: string; passRate: number | null } | null = null;
+  for (const entry of ownSuites) {
+    const finished = [entry.latestRun, ...(entry.recentRuns ?? [])].find(
+      (candidate) =>
+        candidate?.status === "completed" && candidate.createdBy === userId,
+    );
+    if (finished) {
+      ran = {
+        suiteId: entry.suite._id,
+        passRate: finished.summary?.passRate ?? null,
+      };
+      break;
+    }
+  }
   return {
     done: {
       connect: hasServer,
       chat: progress.chat === true,
       onboard_agent: progress.agent === true || progress.skippedAgent === true,
       check_server: run !== null,
-      create_eval: ran !== undefined,
+      create_eval: ran !== null,
     },
     conformance: { run },
     eval: {
-      suiteId: ran?.suite._id ?? ownSuites[0]?.suite._id ?? null,
-      passRate: ran?.latestRun?.summary?.passRate ?? null,
+      suiteId: ran?.suiteId ?? ownSuites[0]?.suite._id ?? null,
+      passRate: ran?.passRate ?? null,
     },
   };
 }
