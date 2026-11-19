@@ -11,12 +11,14 @@ import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import type { ComparisonAuthRecovery } from "@/lib/comparison-auth-recovery";
 import type { MultiModelRestore } from "@/lib/multi-model-session-restore";
 
-const flag = vi.hoisted(() => ({ enabled: false }));
+// `undefined` while PostHog is still loading flags.
+const flag = vi.hoisted(() => ({ enabled: false as boolean | undefined }));
 const fetchRestore = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
 vi.mock("../useMultiModelSessionsEnabled", () => ({
-  useMultiModelSessionsEnabled: () => flag.enabled,
+  useMultiModelSessionsEnabled: () => flag.enabled === true,
+  useMultiModelSessionsDisabled: () => flag.enabled === false,
 }));
 vi.mock("@/lib/multi-model-session-restore", () => ({
   fetchMultiModelRestore: fetchRestore,
@@ -62,7 +64,7 @@ const loadedCatalog: ServerCatalog = {
 
 function setup(
   options: {
-    branchBlocked?: boolean;
+    branchBlockedBy?: string;
     projectId?: string;
     serverCatalog?: ServerCatalog;
   } = {},
@@ -94,7 +96,7 @@ function setup(
         unavailableHostIds: [],
         modelsReady: true,
         openColumnAlone: vi.fn(),
-        branchBlocked: options.branchBlocked ?? false,
+        branchBlockedBy: options.branchBlockedBy ?? null,
       });
     },
     {
@@ -285,7 +287,7 @@ describe("useMultiModelSessions", () => {
 
   it("refuses to branch a column on a harness client", async () => {
     flag.enabled = true;
-    const { branchFromThread, hook } = setup({ branchBlocked: true });
+    const { branchFromThread, hook } = setup({ branchBlockedBy: "Claude Code" });
     await openAlone(hook);
     let sent: boolean | undefined;
     await act(async () => {
@@ -293,7 +295,44 @@ describe("useMultiModelSessions", () => {
     });
     expect(sent).toBe(false);
     expect(branchFromThread).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringMatching(/^Claude Code can't continue a saved column/),
+    );
+  });
+
+  it("branches a column sent from while the flag is still loading", async () => {
+    flag.enabled = undefined;
+    const { branchFromThread, hook } = setup();
+    await openAlone(hook);
+    let sent: boolean | undefined;
+    await act(async () => {
+      sent = await hook.result.current.sendInColumn?.({ text: "early" });
+    });
+    expect(sent).toBe(true);
+    expect(branchFromThread).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "early" }),
+    );
+  });
+
+  it("keeps a column opened while an earlier column's branch was pending", async () => {
+    flag.enabled = true;
+    const { branchFromThread, hook } = setup();
+    const branch = deferred<{ previousChatSessionId: string }>();
+    branchFromThread.mockReturnValueOnce(branch.promise);
+    await openAlone(hook);
+    let pending: Promise<boolean> | undefined;
+    act(() => {
+      pending = hook.result.current.sendInColumn?.({ text: "next" });
+    });
+    const other = { ...session, _id: "row-b", chatSessionId: "b" };
+    await act(async () => {
+      await hook.result.current.openFromHistory(other, undefined, () => true);
+    });
+    await act(async () => {
+      branch.resolve({ previousChatSessionId: "a" });
+      await pending;
+    });
+    expect(hook.result.current.sendInColumn).not.toBeNull();
   });
 
   it("drops an Open multi-model session that a reset overtook", async () => {

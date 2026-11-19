@@ -19,7 +19,10 @@ import {
 import type { UseChatSessionReturn } from "./use-chat-session";
 import { useMultiModelPositions } from "./use-multi-model-positions";
 import { useHostedModelCatalog } from "./use-hosted-model-catalog";
-import { useMultiModelSessionsEnabled } from "./useMultiModelSessionsEnabled";
+import {
+  useMultiModelSessionsDisabled,
+  useMultiModelSessionsEnabled,
+} from "./useMultiModelSessionsEnabled";
 import { track } from "@/lib/analytics";
 import { isRebuiltLineup } from "@/lib/multi-model-analytics";
 
@@ -74,15 +77,16 @@ export function useMultiModelSessions(deps: {
   /** Opens one saved column as a single chat, as its row in Sessions does. */
   openColumnAlone: (column: ChatHistorySession) => void;
   /**
-   * The opened column runs on a harness client. Those keep the conversation
-   * on their side and receive only the newest message, so a branch would
-   * answer with none of the copied history.
+   * The harness the opened column runs on ("Claude Code"), or null. Harnesses
+   * keep the conversation on their side and receive only the newest message,
+   * so a branch would answer with none of the copied history.
    */
-  branchBlocked: boolean;
+  branchBlockedBy: string | null;
 }) {
   const { groupId, projectId, selectedServers, serverCatalog, applyRestore } =
     deps;
   const enabled = useMultiModelSessionsEnabled();
+  const disabled = useMultiModelSessionsDisabled();
   const positions = useMultiModelPositions(groupId);
   const { seed, syncLiveColumns } = positions;
   const liveColumns = deps.liveColumnKeys.join("\n");
@@ -246,13 +250,14 @@ export function useMultiModelSessions(deps: {
   const sendInColumn = useCallback(
     async (message: BranchMessage): Promise<boolean> => {
       if (!openedColumn) return false;
-      if (deps.branchBlocked) {
+      if (deps.branchBlockedBy) {
         toast.error(
-          "This client can't continue a saved column in a new chat. Open the multi-model session to keep chatting.",
+          `${deps.branchBlockedBy} can't continue a saved column in a new chat. Open the multi-model session to keep chatting.`,
         );
         return false;
       }
       openRequest.current += 1;
+      const column = openedColumn;
       const label = formatChatHistoryModelLabel(
         openedColumn,
         (id) => hostedCatalog.find((model) => String(model.id) === id)?.name,
@@ -265,13 +270,14 @@ export function useMultiModelSessions(deps: {
         },
       });
       if (!outcome) return false;
-      setOpenedColumn(null);
+      // A column opened while this one branched stays open.
+      setOpenedColumn((current) => (current === column ? null : current));
       toast.success(multiModelBranchToast(label), { position: "bottom-right" });
       return true;
     },
     [
       branchFromThread,
-      deps.branchBlocked,
+      deps.branchBlockedBy,
       detachForBranch,
       hostedCatalog,
       openedColumn,
@@ -352,8 +358,12 @@ export function useMultiModelSessions(deps: {
       ) : missingColumns.length > 0 ? (
         <MultiModelMissingColumnsNotice columns={missingColumns} />
       ) : null,
-    /** Set while a column is open alone: sends go to a new branch instead. */
-    sendInColumn: enabled && openedColumn ? sendInColumn : null,
+    /**
+     * Set while a column is open alone: sends go to a new branch instead.
+     * Also while the flag is still loading, so an early send can't write into
+     * the saved column.
+     */
+    sendInColumn: !disabled && openedColumn ? sendInColumn : null,
     clearOpenedColumn: useCallback(() => {
       openRequest.current += 1;
       setOpenedColumn(null);

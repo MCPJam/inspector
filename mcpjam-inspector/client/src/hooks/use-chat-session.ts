@@ -857,6 +857,12 @@ export interface UseChatSessionReturn {
       > & {
         /** Attached prompt and skill messages, copied in after the transcript. */
         prependMessages?: UIMessage[];
+        /**
+         * Runs when the branch went live but its send never ran. The reset
+         * that minted it cleared the composer's queued context, which is
+         * still owed to the next send.
+         */
+        onDispatchRefused?: () => void;
       },
   ) => Promise<{ previousChatSessionId: string } | null>;
   stop: () => void;
@@ -6193,9 +6199,11 @@ export function useChatSession(
           widgetModelContext: options.widgetModelContext,
         });
       } catch {
+        options.onDispatchRefused?.();
         return null;
       }
       if (!dispatched) {
+        options.onDispatchRefused?.();
         return null;
       }
 

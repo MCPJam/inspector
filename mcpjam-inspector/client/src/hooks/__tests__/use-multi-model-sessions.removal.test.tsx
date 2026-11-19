@@ -6,6 +6,7 @@ const markRemoved = vi.hoisted(() => vi.fn());
 
 vi.mock("../useMultiModelSessionsEnabled", () => ({
   useMultiModelSessionsEnabled: () => true,
+  useMultiModelSessionsDisabled: () => false,
 }));
 vi.mock("@/lib/apis/web/chat-history-api", async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -55,7 +56,7 @@ function setup(initial: Lineup) {
         unavailableHostIds: [],
         modelsReady: true,
         openColumnAlone: vi.fn(),
-        branchBlocked: false,
+        branchBlockedBy: null,
       }),
     { initialProps: initial },
   );

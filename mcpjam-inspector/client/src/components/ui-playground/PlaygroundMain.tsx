@@ -335,6 +335,7 @@ import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import { isOrgKeysDisallowedRow } from "@/components/chat-v2/shared/available-models";
 import { resolvePlaygroundClientColumn } from "@/lib/playground-client-columns";
 import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import { harnessDisplayName } from "@/shared/harness-model-support";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { useHostContextStore } from "@/stores/client-context-store";
 import {
@@ -846,8 +847,12 @@ export function PlaygroundMain({
   );
   const [fileAttachments, setFileAttachments] = useState<FileAttachment[]>([]);
   const [skillResults, setSkillResults] = useState<SkillResult[]>([]);
-  const [modelContextQueue, setModelContextQueue, handleModelContextUpdate] =
-    useWidgetModelContextQueue();
+  const [
+    modelContextQueue,
+    setModelContextQueue,
+    handleModelContextUpdate,
+    restoreModelContext,
+  ] = useWidgetModelContextQueue();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
@@ -4115,18 +4120,24 @@ export function PlaygroundMain({
     unavailableHostIds: unavailableClients.map((client) => client.compareId),
     modelsReady: availableModels.length > 0,
     openColumnAlone: (column) => void handleSelectThread(column),
-    branchBlocked: Boolean(previewedHarnessId),
+    branchBlockedBy: previewedHarnessId
+      ? harnessDisplayName(previewedHarnessId)
+      : null,
   });
   // While a column is open alone, every send starts a new chat from it, so
   // the saved column keeps the turns its session ran.
   const sendOrBranch = useCallback(
     // A branch copies `prependMessages` in after the transcript; an ordinary
     // send writes them itself after its admission check.
-    (message: Parameters<typeof sendMessage>[0]) =>
-      multiModelSessions.sendInColumn
-        ? multiModelSessions.sendInColumn(message)
-        : sendMessage(message),
-    [multiModelSessions.sendInColumn, sendMessage],
+    (message: Parameters<typeof sendMessage>[0]) => {
+      if (!multiModelSessions.sendInColumn) return sendMessage(message);
+      const context = message.widgetModelContext ?? [];
+      return multiModelSessions.sendInColumn({
+        ...message,
+        onDispatchRefused: () => restoreModelContext(context),
+      });
+    },
+    [multiModelSessions.sendInColumn, restoreModelContext, sendMessage],
   );
   const { clearOpenedColumn } = multiModelSessions;
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);

@@ -3402,6 +3402,9 @@ describe("PlaygroundMain", () => {
         fireEvent.submit(screen.getByTestId("chat-input"));
       });
       expect(mockUseChatSession.branchFromThread).not.toHaveBeenCalled();
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "next message" })
+      );
     });
 
     it("keeps the column open alone when the edit is refused", async () => {

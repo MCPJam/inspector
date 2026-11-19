@@ -1354,6 +1354,40 @@ describe("useChatSession fork preservation", () => {
     expect(outcome).toBeNull();
   });
 
+  it("tells a column branch its send never ran once the branch is live", async () => {
+    // The reset that minted the branch cleared the composer's queued widget
+    // context; the caller needs to know the send failed to put it back.
+    const ensureServerIds = vi
+      .fn()
+      .mockRejectedValue(new Error("could not resolve servers"));
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+    const columnChatSessionId = result.current.chatSessionId;
+    act(() => {
+      result.current.setMessages([
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+      ] as UIMessage[]);
+    });
+    const onDispatchRefused = vi.fn();
+
+    const outcome = await result.current.branchFromThread({
+      text: "follow up",
+      onDispatchRefused,
+    });
+
+    expect(outcome).toBeNull();
+    expect(result.current.chatSessionId).not.toBe(columnChatSessionId);
+    expect(onDispatchRefused).toHaveBeenCalledTimes(1);
+  });
+
   it("is a no-op when the target message is no longer in the thread", async () => {
     const { result } = renderHook(() =>
       useChatSession({
