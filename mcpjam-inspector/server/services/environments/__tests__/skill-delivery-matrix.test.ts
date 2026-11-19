@@ -21,7 +21,6 @@ import { readScenarioServerSkills } from "../../../utils/scenario-server-skills"
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
 import { replayRunSkills } from "../../evals/replay-suite-run";
 import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
-import { resolveEffectiveCapabilities } from "../effective-capabilities";
 import {
   environmentTurnSkills,
   studyLibraryTurnSkills,
@@ -41,7 +40,6 @@ import {
   evalEnvironment,
   evalRunPins,
   harnessToolsServe,
-  liveTurnSource,
   preparedRunSkills,
   preparedTargetSkills,
   visibleScopeEnvironment,
@@ -118,13 +116,6 @@ interface Surface {
 
 const RUN_SKILLS = ["release-notes", "summarize", "search"];
 
-const noSkillsOn = (refs: string[]): Expected => ({
-  delivered: [],
-  excluded: refs.map((ref) => [ref, "unsupported-harness"]),
-  serverSkillsVia: "none",
-  recorded: [],
-});
-
 /**
  * What each engine receives of the fixture's three skills wherever they were
  * pinned: an eval run, its replay and a swarm target all deliver the same.
@@ -156,20 +147,26 @@ const PINNED: Record<Engine, Expected> = {
   },
   cursor: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   opencode: {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
   "copilot-cli": {
     delivered: RUN_SKILLS,
+    box: ["release-notes", "summarize"],
+    viaTools: ["docs/search"],
     excluded: [],
-    serverSkillsVia: "box-files",
+    serverSkillsVia: "harness-tools",
     recorded: RUN_SKILLS,
   },
 };
@@ -183,17 +180,16 @@ const runtimeOf = (engine: Engine): TurnRuntime =>
     : { kind: "harness", harnessId: engine };
 
 /** The box of a harness turn and the server skills its tools serve; MCPJam's
- *  agent has none. `environment` is the set an environment turn carries. */
+ *  agent has none. */
 const harnessBox = async (
   engine: Engine,
   source: Parameters<typeof boxReceives>[1],
-  environment?: Parameters<typeof harnessToolsServe>[2],
 ) =>
   engine === "mcpjam-agent"
     ? null
     : {
         ...(await boxReceives(engine, source)),
-        viaTools: await harnessToolsServe(engine, source, environment),
+        viaTools: await harnessToolsServe(engine, source),
       };
 
 /** A preview records nothing: it plans a turn it does not run. */
@@ -216,9 +212,7 @@ const EVAL: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      box: await harnessBox(engine, skills),
     };
   },
   expected: PINNED,
@@ -242,9 +236,7 @@ const REPLAY: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      box: await harnessBox(engine, skills),
     };
   },
   expected: PINNED,
@@ -263,9 +255,7 @@ const swarm =
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: [...target.harnessSkills],
-      }),
+      box: await harnessBox(engine, skills),
     };
   };
 
@@ -293,9 +283,15 @@ const EVALUATE_PREVIEW: Surface = {
         source: { kind: "environment", spec, attribution, frozen: true },
         runtime: runtimeOf(engine),
       }),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      // The box is the run's, not the preview's: the preview plans what the
+      // run will deliver.
+      box: await harnessBox(
+        engine,
+        resolveTurnSkills({
+          source: run.pinnedSkillSource,
+          runtime: runtimeOf(engine),
+        }),
+      ),
     };
   },
   expected: previewing(EVAL.expected),
@@ -323,15 +319,6 @@ const liveRows = (
     serverSkillsVia: "harness-tools",
     recorded: recorded ? names : [],
   };
-  // These harnesses can read captured server skills from frozen runs, but
-  // live turns do not write captured server skills to their boxes.
-  const liveBoxNames = ["release-notes", "summarize", ...extra];
-  const boxFilesOnly: Expected = {
-    delivered: liveBoxNames,
-    excluded: [["docs/search", "server-skill-unsupported"]],
-    serverSkillsVia: "none",
-    recorded: recorded ? liveBoxNames : [],
-  };
   return {
     "mcpjam-agent": {
       delivered: refs,
@@ -343,9 +330,9 @@ const liveRows = (
     },
     "claude-code": harness,
     codex: harness,
-    cursor: boxFilesOnly,
-    opencode: boxFilesOnly,
-    "copilot-cli": boxFilesOnly,
+    cursor: harness,
+    opencode: harness,
+    "copilot-cli": harness,
   };
 };
 
@@ -354,17 +341,11 @@ const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
   name: "compare preview, named environment",
   async plan(engine) {
     const { spec, attribution } = evalEnvironment();
-    return {
-      skills: resolveTurnSkills({
-        source: { kind: "environment", spec, attribution },
-        runtime: runtimeOf(engine),
-      }),
-      box: await harnessBox(
-        engine,
-        liveTurnSource(spec),
-        resolveEffectiveCapabilities(spec, attribution),
-      ),
-    };
+    const skills = resolveTurnSkills({
+      source: { kind: "environment", spec, attribution },
+      runtime: runtimeOf(engine),
+    });
+    return { skills, box: await harnessBox(engine, skills) };
   },
   expected: liveRows([], false),
 };
@@ -375,17 +356,11 @@ const COMPARE_CLIENT_PREVIEW: Surface = {
   name: "compare preview, client with its own skills",
   async plan(engine) {
     const { spec, attribution } = visibleScopeEnvironment();
-    return {
-      skills: resolveTurnSkills({
-        source: { kind: "environment", spec, attribution, liveExtras: {} },
-        runtime: runtimeOf(engine),
-      }),
-      box: await harnessBox(
-        engine,
-        liveTurnSource(spec),
-        resolveEffectiveCapabilities(spec, attribution),
-      ),
-    };
+    const skills = resolveTurnSkills({
+      source: { kind: "environment", spec, attribution, liveExtras: {} },
+      runtime: runtimeOf(engine),
+    });
+    return { skills, box: await harnessBox(engine, skills) };
   },
   expected: liveRows(["my-notes"], false),
 };
@@ -401,14 +376,7 @@ async function plannedLiveTurn(
     ...(turn.turnProvenance
       ? { skillsAtTurn: turn.turnProvenance.skillsAtTurn }
       : {}),
-    box: await harnessBox(engine, {
-      ...(turn.box
-        ? {
-            runtimeSkillsOverride: turn.box.skills,
-            ...(turn.box.set ? { effectiveCapabilities: turn.box.set } : {}),
-          }
-        : {}),
-    }),
+    box: await harnessBox(engine, turn.skills),
   };
 }
 
@@ -508,19 +476,19 @@ const OLDER_STUDY_TURN: Surface = {
     cursor: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
     opencode: {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
     "copilot-cli": {
       delivered: ["release-notes"],
       excluded: [],
-      serverSkillsVia: "none",
+      serverSkillsVia: "harness-tools",
       recorded: [],
     },
   },

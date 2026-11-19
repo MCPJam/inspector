@@ -296,6 +296,31 @@ describe("ServerCanvasPage", () => {
     expect(screen.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
   });
 
+  it("refreshes from a feature whose background checks have not run", async () => {
+    mockSoftQuery.mockReturnValue(
+      evidence({ ...storedEvidence(), probeResults: [] }),
+    );
+    mockAuthFetch.mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ status: "accepted" }),
+    });
+    renderPage("/servers/srv_1?feature=auth-ext.client-credentials.token-auth-methods");
+    const detail = screen.getByTestId("feature-detail");
+    expect(
+      within(detail).getByText(
+        "Background checks have not run for this connection. Refresh to run them.",
+      ),
+    ).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(within(detail).getByRole("button", { name: "Refresh" }));
+    });
+    expect(mockAuthFetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/servers\/canvas\/refresh$/),
+      expect.anything(),
+    );
+  });
+
   it("prompts a never-connected server to connect", () => {
     mockSoftQuery.mockReturnValue({
       data: { inspection: null, probeResults: [], observations: [], latestConformanceRun: null },
