@@ -21,7 +21,6 @@ import { readScenarioServerSkills } from "../../../utils/scenario-server-skills"
 import { iterationTurnSkills } from "../../evals/pinned-skill-source";
 import { replayRunSkills } from "../../evals/replay-suite-run";
 import { sessionTurnSkills } from "../../sessionSimulation/session-skills";
-import { resolveEffectiveCapabilities } from "../effective-capabilities";
 import {
   environmentTurnSkills,
   studyLibraryTurnSkills,
@@ -41,7 +40,6 @@ import {
   evalEnvironment,
   evalRunPins,
   harnessToolsServe,
-  liveTurnSource,
   preparedRunSkills,
   preparedTargetSkills,
   visibleScopeEnvironment,
@@ -182,17 +180,16 @@ const runtimeOf = (engine: Engine): TurnRuntime =>
     : { kind: "harness", harnessId: engine };
 
 /** The box of a harness turn and the server skills its tools serve; MCPJam's
- *  agent has none. `environment` is the set an environment turn carries. */
+ *  agent has none. */
 const harnessBox = async (
   engine: Engine,
   source: Parameters<typeof boxReceives>[1],
-  environment?: Parameters<typeof harnessToolsServe>[2],
 ) =>
   engine === "mcpjam-agent"
     ? null
     : {
         ...(await boxReceives(engine, source)),
-        viaTools: await harnessToolsServe(engine, source, environment),
+        viaTools: await harnessToolsServe(engine, source),
       };
 
 /** A preview records nothing: it plans a turn it does not run. */
@@ -344,17 +341,11 @@ const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
   name: "compare preview, named environment",
   async plan(engine) {
     const { spec, attribution } = evalEnvironment();
-    return {
-      skills: resolveTurnSkills({
-        source: { kind: "environment", spec, attribution },
-        runtime: runtimeOf(engine),
-      }),
-      box: await harnessBox(
-        engine,
-        liveTurnSource(spec),
-        resolveEffectiveCapabilities(spec, attribution),
-      ),
-    };
+    const skills = resolveTurnSkills({
+      source: { kind: "environment", spec, attribution },
+      runtime: runtimeOf(engine),
+    });
+    return { skills, box: await harnessBox(engine, { skillPlan: skills }) };
   },
   expected: liveRows([], false),
 };
@@ -365,17 +356,11 @@ const COMPARE_CLIENT_PREVIEW: Surface = {
   name: "compare preview, client with its own skills",
   async plan(engine) {
     const { spec, attribution } = visibleScopeEnvironment();
-    return {
-      skills: resolveTurnSkills({
-        source: { kind: "environment", spec, attribution, liveExtras: {} },
-        runtime: runtimeOf(engine),
-      }),
-      box: await harnessBox(
-        engine,
-        liveTurnSource(spec),
-        resolveEffectiveCapabilities(spec, attribution),
-      ),
-    };
+    const skills = resolveTurnSkills({
+      source: { kind: "environment", spec, attribution, liveExtras: {} },
+      runtime: runtimeOf(engine),
+    });
+    return { skills, box: await harnessBox(engine, { skillPlan: skills }) };
   },
   expected: liveRows(["my-notes"], false),
 };
@@ -391,14 +376,7 @@ async function plannedLiveTurn(
     ...(turn.turnProvenance
       ? { skillsAtTurn: turn.turnProvenance.skillsAtTurn }
       : {}),
-    box: await harnessBox(engine, {
-      ...(turn.box
-        ? {
-            runtimeSkillsOverride: turn.box.skills,
-            ...(turn.box.set ? { effectiveCapabilities: turn.box.set } : {}),
-          }
-        : {}),
-    }),
+    box: await harnessBox(engine, { skillPlan: turn.skills }),
   };
 }
 

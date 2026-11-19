@@ -881,9 +881,7 @@ export async function runHarnessTurn(
     scenarioParticipant,
     skillPlan,
     pinnedHarnessSkills,
-    runtimeSkillsOverride,
     effectiveCapabilities,
-    liveTurn,
     environmentId,
     environmentUnresolvedReason,
     runtimeSecrets: runtimeSecretsOverride,
@@ -1894,9 +1892,6 @@ export async function runHarnessTurn(
         : await harnessTurnSkills({
             pinnedHarnessSkills,
             serverSkillsAsTools: takesServerSkillsAsTools(harnessAdapter),
-            runtimeSkillsOverride,
-            ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
-            liveTurn,
           });
       const skillsArePinned = turnSkills.mode === "pinned";
       const runtimeSkills = turnSkills.skills;

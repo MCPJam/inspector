@@ -80,16 +80,16 @@ function planned(plan: TurnSkills, harnessId: string) {
 const runtimeOf = (harnessId: string) =>
   ({ kind: "harness", harnessId }) as const;
 
-/** An environment turn as the legacy inputs carried it. */
-function legacyOf(turn: LiveTurnSkills): Legacy {
+/** An environment turn as the runner's older inputs carried it. */
+function legacyOf(
+  spec: Parameters<typeof runtimeSkills>[0],
+  turn: LiveTurnSkills,
+  live: boolean,
+): Legacy {
   return {
-    ...(turn.box
-      ? {
-          runtimeSkillsOverride: turn.box.skills,
-          ...(turn.box.set ? { effectiveCapabilities: turn.box.set } : {}),
-        }
-      : {}),
-    ...(turn.live ? { liveTurn: true } : {}),
+    runtimeSkillsOverride: runtimeSkills(spec),
+    ...(turn.capabilities ? { effectiveCapabilities: turn.capabilities } : {}),
+    ...(live ? { liveTurn: true } : {}),
   };
 }
 
@@ -140,7 +140,10 @@ describe.each(HARNESSES)("%s runs its turn's skill plan", (harnessId) => {
       ...(liveExtras ? { liveExtras } : {}),
       runtime: runtimeOf(harnessId),
     });
-    const reference = await selected(harnessId, legacyOf(turn));
+    const reference = await selected(
+      harnessId,
+      legacyOf(spec, turn, liveExtras !== undefined),
+    );
     expect(reference.mode).toBe("environment");
     expect(reference.live).toBe(liveExtras !== undefined);
     expect(await planned(turn.skills, harnessId)).toEqual(reference);
