@@ -123,7 +123,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: false,
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A private home inside the installed recipe: Cursor reads only its folders
   // (and its working directory, with no walk-up), once, when its `agent acp`
@@ -150,7 +150,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       surface: "cli",
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A per-session home, and the SDK's empty mode keeps skills off until the
   // bridge sets `enableSkills` and passes this folder as a skill directory,
@@ -170,18 +170,28 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: true,
     },
     headlessLoading: "bridge-opt-in",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
 };
 
-/** Whether a runtime takes MCP-server skills through MCPJam's skill tools:
- *  it must take skills at all, and its descriptor must say so. */
+/**
+ * Whether a runtime takes MCP-server skills through MCPJam's skill tools: it
+ * must take skills at all, its descriptor must say so, and MCPJam's command
+ * gate must be able to hold both its own commands and MCPJam's host tools.
+ * The turn plan, the box writer and the skill tools all read this one answer,
+ * so a server skill is never kept off the box without being served instead.
+ */
 export function takesServerSkillsAsTools(adapter: {
   supportsSkills: boolean;
   skills: HarnessSkillsDescriptor;
+  supportsNativeToolApproval: boolean;
+  supportsHostExecutedToolApproval: boolean;
 }): boolean {
   return (
-    adapter.supportsSkills && adapter.skills.serverSkills === "harness-tools"
+    adapter.supportsSkills &&
+    adapter.skills.serverSkills === "harness-tools" &&
+    adapter.supportsNativeToolApproval &&
+    adapter.supportsHostExecutedToolApproval
   );
 }
 

@@ -118,8 +118,8 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ themeMode: "light" }),
 }));
 
-vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: (props: {
+vi.mock("@/components/hosted/ScenarioPlaygroundChat", () => ({
+  ScenarioPlaygroundChat: (props: {
     onOAuthRequired?: (details?: {
       serverUrl?: string | null;
       serverId?: string | null;

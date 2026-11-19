@@ -114,7 +114,7 @@ function webhookFeature(
 const SUBSCRIBE_IN_PLAYGROUND =
   "Subscribe to one of the server's events in MCPJam and watch Tracing.";
 const SET_UP_WEBHOOK =
-  "Set up an event webhook for this server in MCPJam, then subscribe.";
+  "Accept webhook subscriptions and deliver events to the subscriber's URL. You can subscribe a webhook from the Events tab; this page does not record deliveries yet.";
 
 export const EVENTS_FEATURES: readonly FeatureDefinition[] = [
   feature({
@@ -183,7 +183,7 @@ export const EVENTS_FEATURES: readonly FeatureDefinition[] = [
     name: "events/poll",
     summary: "Clients fetch new occurrences with a cursor at their own pace.",
     howTo:
-      "Offer poll delivery in events/list and answer events/poll. Run checks to send a poll.",
+      "Offer poll delivery in events/list and answer events/poll.",
     spec: specAt("events", "poll-based-delivery"),
     assessment: {
       primary: "checked",
