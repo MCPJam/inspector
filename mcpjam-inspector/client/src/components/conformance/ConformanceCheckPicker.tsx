@@ -9,13 +9,13 @@
  *
  * A check still missing its input shows unchecked, locked while picked. The
  * pick is kept: the run still sends it, so the result says it was not run for
- * want of input, and it runs once the input is set. A suite's box is checked
- * only with every check picked; while picked checks still need input, a click
- * on it shakes the needs-input tag instead of changing the picks, and a second
- * click in a row leaves the suite out.
+ * want of input, and it runs once the input is set. A suite's box toggles
+ * between every check and none: it shows a dash while every check is picked
+ * but some wait on input, and selecting all shakes the needs-input tag as it
+ * appears, to point at what is left.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
 import type {
@@ -464,12 +464,9 @@ function SuiteChecks({
   countPending?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  // Bumped on each blocked select-all, so the tag remounts and shakes again.
+  // Bumped on each select-all that leaves checks waiting on input, so the
+  // needs-input tag remounts and shakes as it appears.
   const [shakes, setShakes] = useState(0);
-  // The picks a blocked click shook on. Clicked again with nothing changed,
-  // the box leaves the suite out: the picks waiting on input are locked, so
-  // the box is the only way to drop them.
-  const [shookOn, setShookOn] = useState<string | null>(null);
   const missing = (id: string) => Boolean(needsInput?.(id));
   const picked = (id: string) => Boolean(isPicked?.(id));
   // A picked check missing its input shows unchecked and is locked until the
@@ -482,31 +479,27 @@ function SuiteChecks({
   const pickedCount = catalog.filter(
     (entry) => picked(entry.id) && !missing(entry.id),
   ).length;
-  // The box follows the count, so the two never disagree. Unchecked, a click
-  // selects all; once every check that can run is picked and the rest wait on
-  // input, selecting all cannot go further, so the needs-input tag shakes to
-  // say what is left instead of the click dropping every pick.
+  // Two states, like any select-all: every check picked, or not. With every
+  // check picked but some waiting on input the box shows a dash, since the
+  // count says fewer will run; a click on it leaves the suite out. A click on
+  // an unchecked box picks every check, and when some of them still need
+  // input the needs-input tag shakes as it appears, to say what is left.
+  const allPicked = catalog.every((entry) => picked(entry.id));
   const checked = pickedCount === catalog.length;
-  // Every check picked yet the box unchecked: the rest wait on input. Not
-  // while the count is held back: the tag that would shake is hidden then.
-  const blockedByInput =
-    !countPending && !checked && catalog.every((entry) => picked(entry.id));
-  const pickKey = catalog
-    .filter((entry) => picked(entry.id))
-    .map((entry) => entry.id)
-    .join(",");
-  // Once the box is no longer blocked, a later block starts with a shake again.
-  useEffect(() => {
-    if (!blockedByInput) setShookOn(null);
-  }, [blockedByInput]);
+  const boxState: boolean | "indeterminate" = checked
+    ? true
+    : allPicked
+      ? "indeterminate"
+      : false;
   const onSuiteBox = () => {
-    if (blockedByInput && shookOn !== pickKey) {
-      setShakes((count) => count + 1);
-      setShookOn(pickKey);
+    if (allPicked) {
+      onSuiteChange(false);
       return;
     }
-    setShookOn(null);
-    onSuiteChange(blockedByInput ? false : !checked);
+    if (catalog.some((entry) => missing(entry.id))) {
+      setShakes((count) => count + 1);
+    }
+    onSuiteChange(true);
   };
   return (
     <div className="border-b border-border/60 last:border-b-0">
@@ -514,7 +507,7 @@ function SuiteChecks({
         {/* A 24px target around the box: the label passes its clicks on. */}
         <label className="-m-1 flex size-6 shrink-0 cursor-pointer items-center justify-center">
           <Checkbox
-            checked={checked}
+            checked={boxState}
             onCheckedChange={onSuiteBox}
             aria-label={`Run ${title}`}
           />

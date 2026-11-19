@@ -399,9 +399,7 @@ describe("ConformanceRunDetailPage", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
-    // Apps, not Tasks: Tasks checks wait on a tool here, so its first click
-    // only shakes the needs-input tag.
-    fireEvent.click(screen.getByRole("checkbox", { name: "Run Apps" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
     fireEvent.click(screen.getByRole("checkbox", { name: "Run OAuth" }));
     expect(save).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("button", { name: "Back" })).toBeDisabled();
