@@ -489,7 +489,6 @@ export function ServerConnectionHandoff() {
         ) : (
           <ErrorCard
             error={error}
-            variant="inline"
             onRetry={
               retryableCompletion
                 ? () => {

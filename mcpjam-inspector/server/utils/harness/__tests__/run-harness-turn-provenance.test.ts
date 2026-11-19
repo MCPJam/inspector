@@ -70,7 +70,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -98,13 +97,15 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -224,6 +225,80 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
     expect(result.messageHistory).toEqual(expect.arrayContaining([
       expect.objectContaining({ role: "tool", content: expect.arrayContaining([
         expect.objectContaining({ toolCallId: "paused-call", providerOptions: { mcpjam: { serverId: "deepwiki" } } }),
+      ]) }),
+    ]));
+  });
+
+  it("keeps the saved tool name when a result-only resume reports a renamed tool", async () => {
+    const onToolResult = vi.fn();
+    harnessState.streamParts = [
+      { type: "tool-result", toolCallId: "paused-call", toolName: "mcp__docs__a_b", output: "done" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    await runHarnessTurn({
+      ...baseOptions(),
+      // Since the call was saved, the server added a literal `a_b`.
+      mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({ "a.b": {}, a_b: {} })) },
+      onToolResult,
+      messages: [
+        { role: "user", content: "Run a.b" },
+        { role: "assistant", content: [{
+          type: "tool-call", toolCallId: "paused-call", toolName: "a.b", input: {},
+          providerOptions: { mcpjam: { serverId: "docs" } },
+        }] },
+      ],
+    } as never, "none");
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "docs", toolName: "a.b" }),
+    );
+  });
+
+  it.each([
+    {
+      name: "MCP failure",
+      output: { content: [{ type: "text", text: "server refused" }], isError: true },
+      failed: true,
+    },
+    {
+      name: "MCP success",
+      output: { content: [{ type: "text", text: "done" }], isError: false },
+      failed: false,
+    },
+    {
+      name: "generic JSON with an isError property",
+      output: { isError: true, meaning: "application data" },
+      failed: false,
+    },
+    {
+      name: "generic JSON with non-MCP content",
+      output: { content: ["application data"], isError: true },
+      failed: false,
+    },
+  ])("classifies a flagless $name in callbacks, spans, and history", async ({ output, failed }) => {
+    const onToolResult = vi.fn();
+    harnessState.streamParts = [
+      { type: "tool-call", toolCallId: "mcp-result", toolName: "read_settings", input: {} },
+      { type: "tool-result", toolCallId: "mcp-result", toolName: "read_settings", output },
+      { type: "finish", finishReason: "stop" },
+    ];
+    const result = await runHarnessTurn({ ...baseOptions(), onToolResult } as never, "none");
+    expect(onToolResult).toHaveBeenCalledWith(expect.objectContaining({
+      toolCallId: "mcp-result",
+      isError: failed,
+    }));
+    expect(result.turnTrace?.spans).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        toolCallId: "mcp-result",
+        category: "tool",
+        status: failed ? "error" : "ok",
+      }),
+    ]));
+    expect(result.messageHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "tool", content: expect.arrayContaining([
+        expect.objectContaining({
+          toolCallId: "mcp-result",
+          output: expect.objectContaining({ type: failed ? "error-text" : "json" }),
+        }),
       ]) }),
     ]));
   });

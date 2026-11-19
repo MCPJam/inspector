@@ -65,6 +65,38 @@ export function usesMcpjamInlineStreamingFooter(
   return hostStyle === "mcpjam";
 }
 
+const STARTUP_PHASE_HOLD_MS = 500;
+
+type VisibleStartupPhase = Exclude<HarnessStartupPhase, "ready">;
+
+// A startup phase is earlier than the model thinking, so its line owns the
+// indicator until the phase clears. A later phase waits briefly so a step
+// that ends quickly does not replace the line already on screen.
+function useHeldStartupPhase(
+  startupPhase: HarnessStartupPhase | null | undefined,
+): VisibleStartupPhase | null {
+  const active: VisibleStartupPhase | null =
+    startupPhase && startupPhase !== "ready" ? startupPhase : null;
+  const [held, setHeld] = useState<VisibleStartupPhase | null>(active);
+
+  useEffect(() => {
+    if (!active) {
+      setHeld(null);
+      return;
+    }
+    if (held === null || held === active) {
+      setHeld(active);
+      return;
+    }
+    const timer = setTimeout(() => setHeld(active), STARTUP_PHASE_HOLD_MS);
+    return () => clearTimeout(timer);
+  }, [active, held]);
+
+  if (!active) return null;
+  if (held && held !== active) return held;
+  return active;
+}
+
 /**
  * Brand thinking indicator. Looks up the host's `chatUi.loadingIndicator`
  * via the registry; falls back to an animated "Thinking…" string when
@@ -80,25 +112,22 @@ export function LoadingIndicatorContent({
   modelProvider?: string | null;
   startupPhase?: HarnessStartupPhase | null;
 }) {
-  const [visiblePhase, setVisiblePhase] = useState<HarnessStartupPhase | null>(null);
-  useEffect(() => {
-    setVisiblePhase(null);
-    if (!startupPhase || startupPhase === "ready") return;
-    const timer = setTimeout(() => setVisiblePhase(startupPhase), 500);
-    return () => clearTimeout(timer);
-  }, [startupPhase]);
-  const startupLabels = {
+  const visiblePhase = useHeldStartupPhase(startupPhase);
+  const startupLabels: Record<VisibleStartupPhase, string> = {
     preparing: "Preparing your chat…",
     computer: "Starting your computer…",
     authorization: "Preparing secure access…",
     agent: "Starting your agent…",
-    ready: "",
   };
   const hostStyle = useResolvedHostStyleForIndicator(modelProvider);
   const chatUiOverride = useScenarioChatUiOverride();
 
-  if (visiblePhase && visiblePhase === startupPhase) {
-    return <span role="status" className={className}>{startupLabels[visiblePhase]}</span>;
+  if (visiblePhase) {
+    return (
+      <span role="status" className={className}>
+        {startupLabels[visiblePhase]}
+      </span>
+    );
   }
 
   if (hostStyle) {

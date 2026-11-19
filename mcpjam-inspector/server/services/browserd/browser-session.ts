@@ -35,6 +35,7 @@ import type {
   BrowserdHandle,
   BrowserdSandbox,
 } from "./boot-browserd";
+import { BROWSERD_READY_TIMEOUT_MS } from "./boot-browserd";
 import type {
   BrowserdRecordArgs,
   BrowserdRecordResult,
@@ -45,9 +46,11 @@ import type {
 } from "./browserd-client";
 import {
   BROWSERD_PROTOCOL_VERSION,
+  BROWSERD_PUBLIC_NETWORK_FEATURE,
   formatBrowserdError,
   HOSTED_DISPLAY,
   type BrowserCommand,
+  type BrowserCommandSecret,
 } from "./protocol";
 import type {
   BrowserContextMode,
@@ -68,6 +71,7 @@ import {
   shouldTouchSessionCommand,
 } from "../../utils/computers/activity-touch.js";
 import type { BrowserSessionService } from "./session-service.js";
+import type { PreviewGrantClient } from "../workspace-preview/workspace-tunnel.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -108,8 +112,9 @@ export interface SessionCommandOptions {
   /**
    * Values for the command's `{{secret:NAME}}` placeholders. Never a command
    * field: the command is echoed into the ledger, trace and durable mirror.
+   * Send one with `origins` only to a daemon announcing `secret-origins`.
    */
-  secrets?: ReadonlyArray<{ name: string; value: string }>;
+  secrets?: ReadonlyArray<BrowserCommandSecret>;
 }
 
 export interface SessionClient {
@@ -142,6 +147,8 @@ export interface SessionClient {
   recordStatus?(): Promise<BrowserdRecordState>;
   /** Export the persistent profile after the daemon queue has drained. */
   exportProfile?(): Promise<Uint8Array>;
+  /** Serve a workspace port on the browser box's loopback (hosted only). */
+  previewGrant?: PreviewGrantClient["previewGrant"];
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -317,6 +324,12 @@ export interface EnsureBrowserSessionArgs {
    * a blank one) is a silent correctness failure either way.
    */
   contextMode?: BrowserContextMode;
+  /**
+   * `public`: a per-run box whose browser reaches public internet addresses
+   * only. Booted that way, and a daemon that does not announce it is never
+   * reused for this session.
+   */
+  networkPolicy?: "public";
   /** Durable logical identity, when this surface has one. */
   logicalSessionId?: string;
   /** Saved profile bytes to apply only if this ensure has to boot a daemon. */
@@ -335,7 +348,8 @@ export interface EnsureBrowserSessionArgs {
  * return the hosted member specifically, so hosted call sites need no narrow.
  */
 export type BrowserSessionHandle =
-  HostedBrowserSessionHandle | LocalBrowserSessionHandle;
+  | HostedBrowserSessionHandle
+  | LocalBrowserSessionHandle;
 
 interface HostedBrowserSessionHandleCommon {
   engine: "hosted";
@@ -361,8 +375,7 @@ interface HostedBrowserSessionHandleCommon {
  * A daemon on the member's durable computer — the Playground's browser, with
  * their logins, a panel that can watch it and a lease a person can take.
  */
-export interface ComputerHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface ComputerHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "computer";
   computerId: string;
   streamUrl: string;
@@ -377,8 +390,7 @@ export interface ComputerHostedBrowserSessionHandle
  * back. Making it a union member rather than optional fields is what stops a
  * `streamUrl: ""` placeholder from reaching a panel that would render it.
  */
-export interface SandboxHostedBrowserSessionHandle
-  extends HostedBrowserSessionHandleCommon {
+export interface SandboxHostedBrowserSessionHandle extends HostedBrowserSessionHandleCommon {
   target: "sandbox";
   /** The control-plane row — the session's identity and its teardown hook. */
   sandboxRowId: string;
@@ -391,7 +403,8 @@ export interface SandboxHostedBrowserSessionHandle
 }
 
 export type HostedBrowserSessionHandle =
-  ComputerHostedBrowserSessionHandle | SandboxHostedBrowserSessionHandle;
+  | ComputerHostedBrowserSessionHandle
+  | SandboxHostedBrowserSessionHandle;
 
 /**
  * A browserd running INSIDE this inspector process — the npm engine's
@@ -446,6 +459,12 @@ export async function ensureBrowserSession(
 ): Promise<HostedBrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
   const target = args.target ?? { kind: "computer" };
+  if (args.networkPolicy && target.kind !== "sandbox") {
+    throw new BrowserSessionTargetError(
+      "unsupported_target",
+      "a public-only browser runs on a per-run sandbox, never the project computer",
+    );
+  }
   if (target.kind === "sandbox") {
     // A PER-RUN BOX, already provisioned by whatever asked for a browser.
     //
@@ -467,7 +486,7 @@ export async function ensureBrowserSession(
         target.watched
           ? "a watched Playground sandbox browser is always persistent"
           : "a per-run sandbox browser is always ephemeral: the box dies with " +
-            "the run, so a persistent profile on it could keep nothing",
+              "the run, so a persistent profile on it could keep nothing",
       );
     }
     // Keyed per BOX. Two ensures for one row serialize (the fixed port and one
@@ -719,6 +738,8 @@ async function trySandboxReuse(
   logicalContext?: LogicalSessionContext,
   /** Written when this gate is the one that refused. @see EnsureDiagnostics */
   diagnostics?: EnsureDiagnostics,
+  /** A daemon that does not announce this is not reused. */
+  requiredFeature?: string,
 ): Promise<SandboxHostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
@@ -726,6 +747,9 @@ async function trySandboxReuse(
   const client = deps.createClient(session.publicOrigin, session.browserdToken);
   const status = await client.status().catch(() => null);
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
+    return null;
+  }
+  if (requiredFeature && !status.features?.includes(requiredFeature)) {
     return null;
   }
   // Same wire check as `tryReuse`. Without it every command is refused with
@@ -766,6 +790,13 @@ async function trySandboxReuse(
  */
 const RELAUNCH_HOLDER_PREFIX = "relaunch:";
 const RELAUNCH_FENCE_TTL_MS = 30_000;
+
+/**
+ * How long a relaunch claim lasts: the whole boot deadline, plus a minute for
+ * the wake, kill, upload, stream and record around it. Shorter than a slow
+ * boot, an expired claim lets another replica pkill the daemon mid-launch.
+ */
+export const RELAUNCH_CLAIM_TTL_MS = BROWSERD_READY_TIMEOUT_MS + 60_000;
 
 /** A lease this relaunch is holding, to be given back if the kill fails. */
 interface RelaunchFence {
@@ -848,20 +879,21 @@ async function fenceForRelaunch(
   // this box's browser?", and a persistent daemon with a person on it is the
   // most emphatic possible yes. Reusing the mode-filtered answer here read that
   // yes as "no row, nothing to protect" and killed them.
-  const owner = await (target.computerId !== undefined
-    ? deps.store.lookup({
-        computerId: target.computerId,
-        expectedBundleHash: bundleHash,
-        expectedContextMode: "any",
-        ...(signal ? { signal } : {}),
-      })
-    : deps.store.lookup({
-        sandboxRowId: target.sandboxRowId,
-        ...(target.watched ? { watched: true } : {}),
-        expectedBundleHash: bundleHash,
-        expectedContextMode: "any",
-        ...(signal ? { signal } : {}),
-      })
+  const owner = await (
+    target.computerId !== undefined
+      ? deps.store.lookup({
+          computerId: target.computerId,
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
+      : deps.store.lookup({
+          sandboxRowId: target.sandboxRowId,
+          ...(target.watched ? { watched: true } : {}),
+          expectedBundleHash: bundleHash,
+          expectedContextMode: "any",
+          ...(signal ? { signal } : {}),
+        })
   ).catch(() => null);
   // RESIDUAL, and named rather than papered over: the backend checks the bundle
   // hash BEFORE the mode, so a daemon booted from a previous bundle answers
@@ -1169,6 +1201,10 @@ function withActivityTouches(
     ...(client.exportProfile
       ? { exportProfile: () => client.exportProfile!() }
       : {}),
+    // Same rule: without it a hosted session cannot open the workspace's apps.
+    ...(client.previewGrant
+      ? { previewGrant: (grant) => client.previewGrant!(grant) }
+      : {}),
   };
 }
 
@@ -1468,6 +1504,7 @@ async function bootAndPublish<THandle>(
     sandbox: SessionSandbox;
     contextMode: BrowserContextMode;
     profileArchive?: Uint8Array;
+    networkPolicy?: "public";
     /** Re-read the store for THIS target and verify what comes back. */
     reuseAgain: () => Promise<THandle | null>;
     /**
@@ -1499,6 +1536,7 @@ async function bootAndPublish<THandle>(
       ...(args.profileArchive
         ? { profileArchivePath: BROWSERD_PROFILE_ARCHIVE_PATH }
         : {}),
+      ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
       // Applied to BOTH targets: a per-run desktop box has a display for the
       // same reason a computer does, and `hostedDisplayEnv` already keeps the
       // scale factor pinned at 1 for an ephemeral context — which is every
@@ -1574,11 +1612,19 @@ async function ensureOnSandbox(
   contextMode: BrowserContextMode,
   args: Pick<
     EnsureBrowserSessionArgs,
-    "signal" | "logicalSessionId" | "profileArchive" | "expectedExistingBootId"
+    | "signal"
+    | "logicalSessionId"
+    | "profileArchive"
+    | "expectedExistingBootId"
+    | "networkPolicy"
   > &
     Partial<Pick<EnsureBrowserSessionArgs, "bearer" | "projectId">>,
 ): Promise<SandboxHostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
+  const requiredFeature =
+    args.networkPolicy === "public"
+      ? BROWSERD_PUBLIC_NETWORK_FEATURE
+      : undefined;
   const logicalContext = logicalContextFromArgs(args);
   const diagnostics: EnsureDiagnostics = {};
   if (!args.expectedExistingBootId)
@@ -1626,6 +1672,7 @@ async function ensureOnSandbox(
     args.signal,
     logicalContext,
     diagnostics,
+    requiredFeature,
   );
   if (reusedHandle) {
     if (
@@ -1673,6 +1720,7 @@ async function ensureOnSandbox(
       args.signal,
       logicalContext,
       diagnostics,
+      requiredFeature,
     );
   let releaseClaim: () => Promise<void> = async () => {};
   let fence: RelaunchFence | null = null;
@@ -1706,6 +1754,7 @@ async function ensureOnSandbox(
         sandboxRowId: target.sandboxRowId,
         watched: true,
         claimId,
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
         ...(args.signal ? { signal: args.signal } : {}),
       });
       // Only a REFUSAL stops us, exactly as on the computer arm. `undefined`
@@ -1758,6 +1807,7 @@ async function ensureOnSandbox(
         contextMode,
         diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+        ...(args.networkPolicy ? { networkPolicy: args.networkPolicy } : {}),
         reuseAgain,
         publish: async (booted) => {
           handle = booted;
@@ -1953,6 +2003,7 @@ async function ensureOnComputer(
     const claimed = await deps.store.claimRelaunch?.({
       computerId,
       claimId,
+      ttlMs: RELAUNCH_CLAIM_TTL_MS,
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (claimed?.ok === false && claimed.reason === "claimed") {

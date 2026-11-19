@@ -47,14 +47,14 @@ it("keeps real packaged constructor file/line locations without shipping functio
     const frames = ${framesFrom("EvalTest", bundle)};
     const customerFrames = ${framesFrom("CustomerTest", customer)};
     const sent = [];
-    const transport = sdkDiagnosticBoundary('@mcpjam/sdk@1.2.3')({ send: async envelope => { sent.push(envelope); return {}; }, flush: async () => true });
+    const transport = sdkDiagnosticBoundary('mcpjam-sdk@1.2.3')({ send: async envelope => { sent.push(envelope); return {}; }, flush: async () => true });
     const raw = { exception: { values: [{ type: 'Error', value: 'PRIVATE_SENTINEL', stacktrace: { frames: [
       ...[...frames, ...customerFrames].map(frame => ({ ...frame, function: 'PRIVATE_SENTINEL', pre_context: ['PRIVATE_SENTINEL'] })),
       { filename: '/customer/PRIVATE_SENTINEL/index.mjs', lineno: 10, function: 'PRIVATE_SENTINEL' }
     ] } }] } };
     await transport.send([{}, [[{ type: 'event' }, raw], [{ type: 'attachment' }, 'PRIVATE_SENTINEL']]]);
     const unknown = [];
-    await customerBoundary('@mcpjam/sdk@1.2.3')({ send: async envelope => { unknown.push(envelope); return {}; }, flush: async () => true })
+    await customerBoundary('mcpjam-sdk@1.2.3')({ send: async envelope => { unknown.push(envelope); return {}; }, flush: async () => true })
       .send([{}, [[{ type: 'event' }, { exception: { values: [{ type: 'Error', stacktrace: { frames: [...customerFrames, ...frames, { filename: 'dist/index.js', lineno: 1 }] } }] } }]]]);
     process.stdout.write(JSON.stringify({ count: frames.length, customerCount: customerFrames.length, sent, unknown }));
   `], { encoding: "utf8", env: { ...process.env, DO_NOT_TRACK: "", MCPJAM_TELEMETRY_DISABLED: "" }, timeout: 20000 }));
@@ -99,7 +99,7 @@ it.each(["import", "require"])("retains owned frames from the actual built packa
     const frames = ${framesFrom("sdk.EvalTest", bundle)};
     delete process.env.DO_NOT_TRACK;
     const sent = [];
-    await sdk.testBoundary('@mcpjam/sdk@9.3.0')({ send: async value => { sent.push(value); return {}; }, flush: async () => true }).send([{}, [[{ type: 'event' }, { exception: { values: [{ type: 'Error', stacktrace: { frames } }] } }]]]);
+    await sdk.testBoundary('mcpjam-sdk@9.3.0')({ send: async value => { sent.push(value); return {}; }, flush: async () => true }).send([{}, [[{ type: 'event' }, { exception: { values: [{ type: 'Error', stacktrace: { frames } }] } }]]]);
     process.stdout.write(JSON.stringify({ count: frames.length, sent }));
   `;
   const script = load === "import" ? program : `(async () => { ${program} })().catch(error => { process.stderr.write(String(error)); process.exitCode = 1; });`;

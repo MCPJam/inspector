@@ -54,6 +54,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
+import { ConvexHttpStatusError } from "../convex-read-errors.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -101,6 +102,7 @@ const ENV_ROW = {
 };
 // Same id, but owned by a DIFFERENT project — the scope guard must 404 it.
 const CROSS_PROJECT_ENV = { ...ENV_ROW, projectId: "other" };
+const P = "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/images";
 
 function mockQuery(map: Record<string, unknown>) {
   convexQueryMock.mockImplementation(async (fn: string) =>
@@ -198,6 +200,49 @@ describe("v1 images routes", () => {
         "VALIDATION_ERROR"
       );
     });
+
+    it.each([
+      ["list", "GET", P, undefined, "computerEnvironments:listEnvironments"],
+      [
+        "detail",
+        "GET",
+        `${P}/env1`,
+        undefined,
+        "computerEnvironments:getEnvironment",
+      ],
+      [
+        "validate",
+        "POST",
+        `${P}/validate`,
+        { blueprint: "b" },
+        "computerEnvironments:validateBlueprint",
+      ],
+      [
+        "builds list",
+        "GET",
+        `${P}/env1/builds`,
+        undefined,
+        "computerEnvironments:listEnvironmentBuilds",
+      ],
+    ])(
+      "answers a status error on the %s read by its status",
+      async (_label, method, path, body, failing) => {
+        // By body text the write translator reads these as 404 and 500.
+        for (const [error, status] of [
+          [new ConvexHttpStatusError(401, "Unauthorized"), 401],
+          [new ConvexHttpStatusError(500, "500 Internal Server Error"), 502],
+        ] as const) {
+          convexQueryMock.mockImplementation(async (fn: string) => {
+            if (fn === failing) throw error;
+            return fn === "computerEnvironments:getEnvironment"
+              ? ENV_ROW
+              : null;
+          });
+          const res = await request(method, path, { body });
+          expect(res.status).toBe(status);
+        }
+      },
+    );
 
     it("404s a missing environment", async () => {
       mockQuery({ "computerEnvironments:getEnvironment": null });
@@ -410,6 +455,43 @@ describe("v1 images routes", () => {
         reused: false,
       });
     });
+
+    // Create and reset have no scope-guard read in front, so the mutation's
+    // own catch is the first to see an expired bearer.
+    it.each([
+      ["create", P, { name: "n", blueprint: "b" }],
+      ["build", `${P}/env1/build`, undefined],
+      [
+        "reset",
+        "/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/computer/reset",
+        undefined,
+      ],
+    ])(
+      "answers a status error on %s by its status",
+      async (_label, path, body) => {
+        // By body text the write translator reads the 401 as 404 and the
+        // proxy's 500 as our own.
+        for (const [error, status, code] of [
+          [new ConvexHttpStatusError(401, "Unauthorized"), 401, "UNAUTHORIZED"],
+          [
+            new ConvexHttpStatusError(500, "500 Internal Server Error"),
+            502,
+            "SERVER_UNREACHABLE",
+          ],
+          [
+            new ConvexHttpStatusError(504, "upstream request timeout"),
+            504,
+            "TIMEOUT",
+          ],
+        ] as const) {
+          mockQuery({ "computerEnvironments:getEnvironment": ENV_ROW });
+          convexMutationMock.mockRejectedValueOnce(error);
+          const res = await request("POST", path, { body });
+          expect(res.status).toBe(status);
+          expect(((await res.json()) as { code?: string }).code).toBe(code);
+        }
+      },
+    );
 
     // Locks BOTH sides of the naming boundary: the PUBLIC response says
     // `imageId` (matching the OpenAPI ComputerAttached schema), while the

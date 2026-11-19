@@ -108,7 +108,9 @@ describe("externalAccountPlanWallError", () => {
     // the reader to the wrong place entirely.
     const message = externalAccountPlanWallError("Cursor CLI").message;
     expect(message).toContain("Cursor CLI");
-    expect(message).toContain("CURSOR_API_KEY");
+    // The org's key, which an admin manages, not a project secret.
+    expect(message).toContain("your organization's key");
+    expect(message).not.toContain("CURSOR_API_KEY");
     expect(message).toMatch(/Cursor account/i);
   });
 
@@ -116,7 +118,7 @@ describe("externalAccountPlanWallError", () => {
     // The turn LOOKS successful to the runtime, so the error has to explain why
     // it is being failed — otherwise it reads as MCPJam losing an answer.
     expect(externalAccountPlanWallError("Cursor CLI").message).toMatch(
-      /model never ran|failed turn/i,
+      /didn't run the model/i,
     );
   });
 });

@@ -1,6 +1,8 @@
 import { type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import type { ModelCostRollup } from "@mcpjam/sdk/browser";
 import type { ModelDefinition } from "@/shared/types";
+import { CompareCostRow } from "@/components/chat-v2/compare-cost-row";
 import {
   ChatTraceViewModeHeaderBar,
   TraceViewModeTabs,
@@ -27,6 +29,17 @@ export interface MultiModelCardSummary {
   interactionCount?: number;
   status: MultiModelCardStatus;
   hasMessages: boolean;
+  /**
+   * The id of the parent's broadcast the latest turn answered. Absent after a
+   * follow-up sent to this card alone, which is a different workload: cards
+   * rank on cost only when every one answered the same broadcast.
+   */
+  broadcastId?: number;
+  /**
+   * The latest turn's cost. Absent while `trace-cost` is off and when no call
+   * on the turn carries cost evidence.
+   */
+  cost?: ModelCostRollup;
 }
 
 function formatCardDuration(durationMs: number | null): string {
@@ -71,6 +84,8 @@ export function ModelCompareCardHeader({
   tabsInline = false,
   actionsSlot,
   titleAccessory,
+  identityActions,
+  identitySummary,
   className,
 }: {
   /** Full model definition (used in Chat multi-model). Optional when `modelLabel` is provided. */
@@ -138,6 +153,10 @@ export function ModelCompareCardHeader({
    * effort chip).
    */
   titleAccessory?: ReactNode;
+  /** Controls at the end of the identity row (a Compare pane's settings). */
+  identityActions?: ReactNode;
+  /** A row under the identity row (a Compare pane's model and servers). */
+  identitySummary?: ReactNode;
   className?: string;
 }) {
   if (!showComparisonChrome && !showTraceTabs && !showIdentityHeader) {
@@ -326,15 +345,17 @@ export function ModelCompareCardHeader({
             {displayName.slice(0, 2)}
           </span>
         )}
-        <span className="min-w-0 truncate text-sm font-semibold leading-tight">
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">
           {displayName}
         </span>
+        {identityActions}
       </div>
     ) : null;
 
   return (
     <>
       {identityHeader}
+      {identityHeader ? identitySummary : null}
 
       {showComparisonChrome ? (
         <div
@@ -452,6 +473,8 @@ export function ModelCompareCardHeader({
                 </span>
               </div>
             </div>
+
+            <CompareCostRow summary={summary} allSummaries={allSummaries} />
 
             {!compactCompareHeader ? (
               <div className="flex items-center gap-2">

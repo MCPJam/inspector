@@ -14,7 +14,10 @@
  *     both the record and the handle.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BrowserdHandle } from "../boot-browserd";
+import {
+  BROWSERD_READY_TIMEOUT_MS,
+  type BrowserdHandle,
+} from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
@@ -34,6 +37,7 @@ import {
   BrowserSessionInUseError,
   BrowserSessionTargetError,
   ensureBrowserSession,
+  RELAUNCH_CLAIM_TTL_MS,
   type BrowserSessionDeps,
   type SessionClient,
   type SessionSandbox,
@@ -117,8 +121,8 @@ function leaseBackedBy(lease: HandoffLease): LeaseActionFn {
       args.action === "acquire"
         ? lease.acquire(args.holder, args.ttlMs, args.kind)
         : args.action === "heartbeat"
-        ? lease.heartbeat(args.holder, args.ttlMs)
-        : lease.resume(args.holder);
+          ? lease.heartbeat(args.holder, args.ttlMs)
+          : lease.resume(args.holder);
     // Mirrors request-handler.ts: only an acquire can fail to take.
     const took =
       args.action !== "acquire" ||
@@ -644,6 +648,10 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const claimOrder = f.claimRelaunch.mock.invocationCallOrder[0]!;
     const killOrder = f.sandbox.killBrowserd.mock.invocationCallOrder[0]!;
     expect(claimOrder).toBeLessThan(killOrder);
+    // Outlasts the boot it guards: an expired claim lets another replica
+    // pkill a daemon that is still launching Chromium.
+    expect(f.claimRelaunch.mock.calls[0]![0].ttlMs).toBe(RELAUNCH_CLAIM_TTL_MS);
+    expect(RELAUNCH_CLAIM_TTL_MS).toBeGreaterThan(BROWSERD_READY_TIMEOUT_MS);
     expect(f.releaseRelaunch).toHaveBeenCalledWith(
       expect.objectContaining({
         claimId: f.claimRelaunch.mock.calls[0]![0].claimId,
@@ -1281,6 +1289,7 @@ describe("ensureBrowserSession — sandbox target", () => {
         sandboxRowId: SANDBOX_ROW,
         watched: true,
         claimId: expect.any(String),
+        ttlMs: RELAUNCH_CLAIM_TTL_MS,
       }),
     );
     expect(f.releaseRelaunch).toHaveBeenCalledWith(
@@ -1404,6 +1413,34 @@ describe("ensureBrowserSession — sandbox target", () => {
    * trigger never happened, and a per-run browser stayed stuck until its
    * sandbox died.
    */
+  it("boots a public-only browser, and never reuses a daemon without it", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      // On the current wire, but booted open.
+      status: async () => ({
+        kind: "ok",
+        bootId: SANDBOX_SESSION.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    const handle = await ensureBrowserSession(f.deps, {
+      ...SANDBOX_ARGS,
+      networkPolicy: "public",
+    });
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ networkPolicy: "public" }),
+    );
+    // Only on a per-run box.
+    await expect(
+      ensureBrowserSession(makeFakes().deps, {
+        ...ARGS,
+        networkPolicy: "public",
+      }),
+    ).rejects.toThrow(/per-run sandbox/);
+  });
+
   it("does NOT reuse a sandbox daemon on a different wire", async () => {
     const f = makeFakes({
       lookups: [liveSandboxLookup()],
@@ -1855,7 +1892,9 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
             observedSessionId: ROW.sessionId,
           },
         ],
-        bootError: new Error("browserd did not report listening within 30000ms"),
+        bootError: new Error(
+          "browserd did not report listening within 30000ms",
+        ),
       });
       const error = await ensureBrowserSession(f.deps, ARGS).catch(
         (thrown: unknown) => thrown,
@@ -2085,8 +2124,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          } as BrowserdStatus),
-        sendCommand: async () => ({ kind: "ok" } as never),
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
         ...spies,
       }),
     );
@@ -2171,8 +2210,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          } as BrowserdStatus),
-        sendCommand: async () => ({ kind: "ok" } as never),
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
         exportProfile,
       }),
     );
@@ -2199,8 +2238,8 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
             bootId: ROW.bootId,
             protocolVersion: BROWSERD_PROTOCOL_VERSION,
             bundleHash: HASH,
-          } as BrowserdStatus),
-        sendCommand: async () => ({ kind: "ok" } as never),
+          }) as BrowserdStatus,
+        sendCommand: async () => ({ kind: "ok" }) as never,
       }),
     );
 

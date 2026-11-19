@@ -29,6 +29,7 @@
  *                           misconfigured remote URL can't forward in a loop.
  */
 import { Hono } from "hono";
+import { canColocatePluginStdio } from "../../services/plugins/computer-stdio.js";
 import {
   HOSTED_MODE,
   LOCAL_BROWSER_ENABLED,
@@ -47,7 +48,7 @@ import {
   type BashRunner,
 } from "../../utils/computers/run-command.js";
 import { handleRoute, parseWithSchema, readJsonBody } from "./auth.js";
-import { assertBearerToken } from "./errors.js";
+import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 
 const execSchema = z.object({
   projectId: z.string().min(1),
@@ -115,6 +116,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
         browserConsent: true,
         personalCloudAvailable,
         ephemeralCloudAvailable: localConfigured,
+        pluginComputerRuntime: canColocatePluginStdio(),
       },
       // Harness EXECUTION targets, which are a different axis from the
       // computer engines above: an engine decides where a bash tool call runs,
@@ -147,7 +149,7 @@ export function createComputersRoutes(runner: BashRunner = e2bRunner): Hono {
 
   computers.post("/exec", async (c) =>
     handleRoute(c, async () => {
-      const bearerToken = assertBearerToken(c);
+      const bearerToken = await getConvexBearerForRequest(c);
       const body = parseWithSchema(execSchema, await readJsonBody(c));
       return runComputerCommand(
         {

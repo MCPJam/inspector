@@ -19,12 +19,14 @@ import {
   buildInspectorBrowserUrl,
   clearInspectorSessionTokenCache,
   ensureInspector,
+  ensureInspectorBackend,
   getNpxExecutable,
   normalizeInspectorFrontendUrl,
   normalizeInspectorBaseUrl,
   resolveInspectorBrowserBaseUrl,
   stopInspector,
 } from "../src/lib/inspector-api.js";
+import { CliError } from "../src/lib/output.js";
 
 const testHome = mkdtempSync(path.join(os.tmpdir(), "inspector-cli-test-"));
 const TEST_TOKEN = "inspector-cli-test-credential";
@@ -762,6 +764,51 @@ test("resolveInspectorBrowserBaseUrl prefers first usable discovered frontend de
   );
 });
 
+/**
+ * The engine lives in the SDK and throws its own error. If a wrapper here
+ * stopped converting it, `normalizeCliError` would classify the error by its
+ * message and change the code and exit status the CLI has always reported.
+ */
+function assertOperationalCliError(error: unknown) {
+  assert.ok(error instanceof CliError, "the CLI's own error type");
+  assert.equal(error.code, "OPERATIONAL_ERROR");
+  assert.equal(error.exitCode, 1);
+}
+
+async function closedLocalUrl(): Promise<string> {
+  const server = http.createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return `http://127.0.0.1:${port}`;
+}
+
+test("every wrapper reports an engine failure as the CLI's OPERATIONAL_ERROR", async () => {
+  assert.throws(
+    () => normalizeInspectorBaseUrl("not a url"),
+    (error: unknown) => {
+      assertOperationalCliError(error);
+      return true;
+    },
+  );
+
+  const closed = await closedLocalUrl();
+  for (const call of [
+    () => ensureInspector({ baseUrl: closed }),
+    () => ensureInspectorBackend({ baseUrl: closed }),
+    // No discovery file exists for this port, so the engine cannot read a token.
+    () => fetchInspectorSessionToken(closed),
+    // stopInspector reports a dead Inspector as `stopped: false`, so an invalid
+    // URL is the one input that makes it throw.
+    () => stopInspector("not a url"),
+  ]) {
+    await assert.rejects(call, (error: unknown) => {
+      assertOperationalCliError(error);
+      return true;
+    });
+  }
+});
+
 test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by backend", async () => {
   await withServer(
     (frontendRequest, frontendResponse) => {
@@ -799,6 +846,7 @@ test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by bac
             () => resolveInspectorBrowserBaseUrl(baseUrl, frontendUrl),
             (error: unknown) => {
               assert.ok(error instanceof Error);
+              assertOperationalCliError(error);
               assert.match(error.message, /frontend .* is reachable/i);
               assert.doesNotMatch(
                 error.message,
@@ -1099,4 +1147,67 @@ test("browser links carry the credential only in the fragment and preserve the t
     TEST_TOKEN
   );
   assert.equal(new URLSearchParams(link.hash.slice(1)).get("tab"), "tools");
+});
+
+
+test("InspectorApiClient binds connect to the selected saved project and actor", async () => {
+  const seen: Array<{ body: unknown; authorization: string | undefined }> = [];
+  await withServer(
+    async (request, response) => {
+      if (request.url === "/api/session-token") {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      seen.push({
+        body: await readJsonBody(request),
+        authorization: request.headers.authorization,
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ success: true }));
+    },
+    async (baseUrl) => {
+      const client = new InspectorApiClient({ baseUrl });
+      await client.connectServer(
+        "ignored",
+        { url: "https://ignored.test" },
+        {
+          target: {
+            projectId: "project-selected",
+            serverId: "saved-server",
+            serverName: "CAD",
+            accessToken: "actor-token",
+          },
+        },
+      );
+    },
+  );
+  assert.deepEqual(seen, [
+    {
+      body: {
+        projectId: "project-selected",
+        serverId: "saved-server",
+        serverName: "CAD",
+      },
+      authorization: "Bearer actor-token",
+    },
+  ]);
+});
+
+test("InspectorApiClient explains saved-server requirement on current Inspector", async () => {
+  await withServer((request, response) => {
+    response.setHeader("Content-Type", "application/json");
+    if (request.url === "/api/session-token") {
+      response.end(JSON.stringify({ ok: true }));
+    } else {
+      response.writeHead(400);
+      response.end(JSON.stringify({ error: "projectId is required" }));
+    }
+  }, async (baseUrl) => {
+    const client = new InspectorApiClient({ baseUrl });
+    await assert.rejects(
+      client.connectServer("adhoc", { url: "https://example.test/mcp" }),
+      /--server-id <id> with --project <id-or-name>/,
+    );
+  });
 });

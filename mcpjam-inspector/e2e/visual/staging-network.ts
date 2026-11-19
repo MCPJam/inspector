@@ -99,9 +99,7 @@ export function isSponsorshipAllowanceRead(body: string | null): boolean {
 }
 
 // The synthetic user is a bot, so it declines analytics the way posthog-js
-// stores a declined consent. The app honors that for PostHog and for its own
-// launch beacon (lib/launch-analytics.ts), which otherwise POSTs
-// /tlm/launch-engagement when the launch card renders. The token is the public
+// stores a declined consent, which the app honors. The token is the public
 // project key in client/src/lib/PosthogUtils.ts.
 export const ANALYTICS_CONSENT_KEY =
   "__ph_opt_in_out_phc_dTOPniyUNU2kD8Jx8yHMXSqiZHM8I91uWopTMX6EBE9";

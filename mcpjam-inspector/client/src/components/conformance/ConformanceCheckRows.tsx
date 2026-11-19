@@ -6,12 +6,14 @@
 import { useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  ArrowUpRight,
   ChevronDown,
   ChevronRight,
   MinusCircle,
 } from "lucide-react";
 import type { OAuthConformanceStepResult } from "@mcpjam/sdk";
 import {
+  conformanceCheckSourceUrl,
   isTimedOutCheck,
   isMissingInputCheck,
   missingInputMessage,
@@ -31,6 +33,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { Collapse, StatusIcon } from "./conformance-ui";
+import { useConformanceSourceVersion } from "./conformance-source-version";
 
 /** One row in a suite's "what this will run" preview, before any run. */
 export interface CatalogEntry {
@@ -137,6 +140,82 @@ function RowChevron({ expanded }: { expanded: boolean }) {
   );
 }
 
+/** The spec section a check is graded against, opened in a new tab. */
+export function SourceLink({
+  href,
+  checkTitle,
+  className,
+}: {
+  href: string;
+  checkTitle: string;
+  className?: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={href}
+      aria-label={`Source for ${checkTitle} in the specification (opens in a new tab)`}
+      className={cn(
+        "inline-flex flex-shrink-0 items-center gap-0.5 rounded-sm text-xs text-muted-foreground underline decoration-muted-foreground/40 underline-offset-2 transition-colors hover:text-foreground hover:decoration-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        className,
+      )}
+    >
+      Source
+      <ArrowUpRight aria-hidden="true" className="size-3" />
+    </a>
+  );
+}
+
+/**
+ * A result row's always-visible line. The button opens the row; the source
+ * link sits beside it rather than inside, since a link in a button is invalid
+ * HTML and its click would toggle the row too. The chevron comes last, as on
+ * every row, and opens the row on a pointer click like the button does.
+ */
+function ResultRowHeader({
+  expanded,
+  onToggle,
+  title,
+  sourceUrl,
+  children,
+}: {
+  expanded: boolean;
+  onToggle: () => void;
+  /** The check's title, naming the source link for screen readers. */
+  title: string;
+  sourceUrl?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-2.5 pr-1 transition-colors hover:bg-muted/30">
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-start gap-2.5 py-1.75 pl-7 text-left cursor-pointer"
+        onClick={onToggle}
+        aria-expanded={expanded}
+      >
+        {children}
+      </button>
+      {sourceUrl ? (
+        <SourceLink
+          href={sourceUrl}
+          checkTitle={title}
+          className="mt-1.75 py-0.5"
+        />
+      ) : null}
+      <span
+        aria-hidden="true"
+        className="cursor-pointer py-1.75"
+        onClick={onToggle}
+      >
+        <RowChevron expanded={expanded} />
+      </span>
+    </div>
+  );
+}
+
 /**
  * The tag on a result that does not count toward the score: a check the
  * profile does not score yet, or an OAuth step the server's settings leave out.
@@ -205,7 +284,7 @@ export function NeedsInputTag({
 export function NotRunTag() {
   return (
     <span
-      title="This check needs an input before it can run."
+      title="This check needs a setup change before it can run."
       className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-xs leading-none text-muted-foreground"
     >
       Not run
@@ -234,20 +313,21 @@ export function CheckRow({
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const sourceVersion = useConformanceSourceVersion();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const missingInput = isMissingInputCheck(check);
   const detailEntries = Object.entries(check.details ?? {}).filter(
-    ([key]) => key !== "missingInput",
+    ([key]) => key !== "missingInput" && key !== "missingInputMessage",
   );
   const warnings = check.warnings;
 
   return (
     <div className="border-b border-border/60 last:border-0">
-      <button
-        type="button"
-        className="w-full flex items-start gap-2.5 py-1.75 pl-7 pr-1 text-left hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
+      <ResultRowHeader
+        expanded={expanded}
+        onToggle={() => setExpanded((value) => !value)}
+        title={check.title}
+        sourceUrl={conformanceCheckSourceUrl(check.id, sourceVersion)}
       >
         <span className="mt-0.5">
           <StatusIcon
@@ -278,8 +358,7 @@ export function CheckRow({
             {check.durationMs}ms
           </span>
         )}
-        <RowChevron expanded={expanded} />
-      </button>
+      </ResultRowHeader>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
           <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
@@ -365,14 +444,16 @@ export function OAuthStepRow({
   pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Flow steps have no source entry, so only the post-flow checks link.
+  const sourceVersion = useConformanceSourceVersion();
 
   return (
     <div className="border-b border-border/60 last:border-0">
-      <button
-        type="button"
-        className="w-full flex items-start gap-2.5 py-1.75 pl-7 pr-1 text-left hover:bg-muted/30 transition-colors cursor-pointer"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
+      <ResultRowHeader
+        expanded={expanded}
+        onToggle={() => setExpanded((value) => !value)}
+        title={step.title}
+        sourceUrl={conformanceCheckSourceUrl(step.step, sourceVersion)}
       >
         <span className="mt-0.5">
           <StatusIcon
@@ -389,8 +470,7 @@ export function OAuthStepRow({
             {step.durationMs}ms
           </span>
         )}
-        <RowChevron expanded={expanded} />
-      </button>
+      </ResultRowHeader>
       <Collapse open={expanded}>
         <div className="space-y-2 pb-2 pl-14 pr-1">
           <div className="text-sm text-muted-foreground whitespace-pre-wrap break-words">
@@ -496,8 +576,12 @@ export function CatalogRow({
   notApplicable,
 }: {
   entry: CatalogEntry;
-  /** Shown under the row, e.g. the tool a picked check will call. */
-  children?: ReactNode;
+  /**
+   * Shown under the row, e.g. the tool a picked check will call. As a
+   * function it gets whether the row is open, so an off check can show its
+   * field only then.
+   */
+  children?: ReactNode | ((opened: boolean) => ReactNode);
   /** Shown after the title, e.g. that the check needs an input. */
   tag?: ReactNode;
   /**
@@ -514,8 +598,15 @@ export function CatalogRow({
   notApplicable?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  // Like a result row, the link follows the revision the rows around it are
+  // for: a saved run's, or the pin before a run.
+  const sourceUrl = conformanceCheckSourceUrl(
+    entry.id,
+    useConformanceSourceVersion(),
+  );
   const expandable = Boolean(entry.description);
   const selectable = selected !== undefined;
+  const extra = typeof children === "function" ? children(expanded) : children;
   const title = (
     <button
       type="button"
@@ -580,9 +671,15 @@ export function CatalogRow({
       <Collapse open={expanded && Boolean(entry.description)}>
         <div className="px-6 pb-2 text-sm text-muted-foreground whitespace-pre-wrap break-words">
           {entry.description}
+          {sourceUrl ? (
+            <>
+              {" "}
+              <SourceLink href={sourceUrl} checkTitle={entry.title} />
+            </>
+          ) : null}
         </div>
       </Collapse>
-      {children ? <div className="pr-1 pb-2 pl-8">{children}</div> : null}
+      {extra ? <div className="pr-1 pb-2 pl-8">{extra}</div> : null}
     </div>
   );
 }
@@ -596,6 +693,7 @@ export function CatalogList({
   note = ".",
   heading,
   isSelected,
+  isLocked,
   onSelectedChange,
   renderExtra,
   renderTag,
@@ -606,8 +704,8 @@ export function CatalogList({
   note?: string;
   /** Replaces that line, for a list that is not the suite's checks. */
   heading?: string;
-  /** What a row shows under it; see `CatalogRow`'s children. */
-  renderExtra?: (entry: CatalogEntry) => ReactNode;
+  /** What a row shows under it, given whether it is open; see `CatalogRow`'s children. */
+  renderExtra?: (entry: CatalogEntry, opened: boolean) => ReactNode;
   /** What a row shows after its title; see `CatalogRow`'s tag. */
   renderTag?: (entry: CatalogEntry) => ReactNode;
   /** Why a row's check does not apply; see `CatalogRow`'s notApplicable. */
@@ -617,6 +715,8 @@ export function CatalogList({
    * `onSelectedChange` too, the user picks rows one by one.
    */
   isSelected?: (id: string) => boolean;
+  /** A row whose checkbox the user cannot change, e.g. one missing its input. */
+  isLocked?: (id: string) => boolean;
   onSelectedChange?: (id: string, selected: boolean) => void;
 }) {
   return (
@@ -629,7 +729,7 @@ export function CatalogList({
           key={entry.id}
           entry={entry}
           {...(isSelected ? { selected: isSelected(entry.id) } : {})}
-          {...(isSelected && onSelectedChange
+          {...(isSelected && onSelectedChange && !isLocked?.(entry.id)
             ? {
                 onSelectedChange: (selected: boolean) =>
                   onSelectedChange(entry.id, selected),
@@ -638,7 +738,9 @@ export function CatalogList({
           tag={renderTag?.(entry)}
           notApplicable={notApplicableReason?.(entry)}
         >
-          {renderExtra?.(entry)}
+          {renderExtra
+            ? (opened: boolean) => renderExtra(entry, opened)
+            : undefined}
         </CatalogRow>
       ))}
     </div>

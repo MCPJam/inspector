@@ -179,6 +179,7 @@ type HostItem = {
   hostId: string;
   name: string;
   // Enriched by `hosts:listHosts` (additive) — powers the journey host chips.
+  hostStyle?: string | null;
   modelId?: string;
   serverCount?: number;
   hasComputer?: boolean;
@@ -1100,6 +1101,7 @@ export function SwarmsTab({
           <main className="min-w-0 flex-1 overflow-hidden">
             <SwarmOverviewPanel
               projectId={effectiveProjectId}
+              hosts={hosts}
               hasPersonas={
                 personas === undefined ? undefined : personas.length > 0
               }

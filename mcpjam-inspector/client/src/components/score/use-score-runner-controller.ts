@@ -66,6 +66,7 @@ export function useScoreRunnerController({
     // Nothing runs until `runAll` is called, and that only happens once a real
     // row exists.
     server: server ?? EMPTY_SERVER,
+    analyticsLocation: "score_runner",
     // OAuth is opt-in here. A public landing page must not throw an
     // unrequested popup at a visitor, and a skipped OAuth suite shows as
     // *not scored* — never a deduction.

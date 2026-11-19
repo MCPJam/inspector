@@ -9,6 +9,7 @@ import { getCachedGuestSession } from "./guest-session";
 import { getPostHogTabStorageOptions } from "./posthog-tab-storage";
 import { VANITY_LANDING_HOSTS } from "./vanity-landing-hosts";
 import { HOSTED_MODE } from "./config";
+import { getRuntimeDoNotTrack } from "./runtime-config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
 import {
@@ -191,7 +192,17 @@ export const LANDING_ANALYTICS_HOSTS = VANITY_LANDING_HOSTS;
 // Check if PostHog should be disabled
 export const isPostHogDisabled =
   import.meta.env.VITE_DISABLE_POSTHOG_LOCAL === "true" ||
-  getPostHogApiHost() === "/tlm";
+  getPostHogApiHost() === "/tlm" ||
+  getRuntimeDoNotTrack();
+
+// DO_NOT_TRACK sends nothing at all, not even the remote config and survey
+// loads the opted-out branch otherwise still makes. Flags are the server's
+// bootstrap, which needs no request of its own.
+const NO_REQUEST_OPTIONS = {
+  advanced_disable_flags: true,
+  disable_surveys: true,
+  disable_external_dependency_loading: true,
+} as const;
 
 // The credential-URL sanitizer lives in shared/ so the relay can use it too.
 export { scrubSensitiveUrl };
@@ -314,7 +325,6 @@ export const options = {
     // targeting degrading to "no person properties" is acceptable; throwing
     // inside `loaded` would take out the whole analytics init.
     posthog.setPersonPropertiesForFlags?.({
-      ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
       deployment: HOSTED_MODE ? "hosted" : "self_hosted",
       platform: detectPlatform(),
     });
@@ -377,6 +387,7 @@ export const getPostHogOptions = (
         // every page load for events that are then discarded.
         disable_session_recording: true,
         capture_exceptions: false,
+        ...(getRuntimeDoNotTrack() ? NO_REQUEST_OPTIONS : {}),
         // Disable event capture; flags still arrive through the server bootstrap.
         // Must be `opt_out_capturing_by_default` — `opt_out_capturing` is a method,
         // not a config field, so passing it here was silently ignored and dev
@@ -393,7 +404,6 @@ export const getPostHogOptions = (
         // Same flag person properties as the enabled branch.
         loaded: (posthog: any) => {
           posthog.setPersonPropertiesForFlags?.({
-            ...(!HOSTED_MODE ? { local_browser_security_version: "1" } : {}),
             deployment: HOSTED_MODE ? "hosted" : "self_hosted",
             platform: detectPlatform(),
           });

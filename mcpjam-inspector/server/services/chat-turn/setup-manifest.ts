@@ -198,7 +198,7 @@ export function capturePreparedWebSetup(args: {
   } = args;
   return buildSetupManifest({
     environment: persist.setupEnvironment,
-    capabilities: prepare.effectiveCapabilities,
+    capabilities: prepare.skills?.set,
     model: {
       id: String(prepare.modelDefinition.id),
       provider: prepare.modelDefinition.provider,

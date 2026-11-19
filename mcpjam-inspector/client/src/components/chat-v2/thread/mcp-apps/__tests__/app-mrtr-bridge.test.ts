@@ -76,7 +76,7 @@ function register(
 const callTool = (bridge: StubBridge, name: string, args: unknown) =>
   (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
     { name, arguments: args },
-    {},
+    { signal: new AbortController().signal },
   );
 
 /**

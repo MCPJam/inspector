@@ -1,6 +1,7 @@
 import { usesMcpjamClient } from "@/shared/harness-descriptors";
 import { makeFunctionReference } from "convex/server";
 import type { PluginWorkspaceDescriptor } from "../../../shared/plugin-workspace.js";
+import { isStandalonePublishedPluginId } from "../../../shared/plugin-deep-link.js";
 import { createConvexClient } from "../evals/route-helpers.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { timedPluginStep } from "./timing.js";
@@ -38,6 +39,7 @@ export async function readPluginExecutionContext(options: {
   serverBindings: ReadonlyMap<string, Readonly<PluginServerIdentity>>;
   hostConfig?: HostRuntimeConfig;
   serverNamesById: Readonly<Record<string, string>>;
+  publishedPluginIdsByServerId: Readonly<Partial<Record<string, string>>>;
 }> {
   if (
     !options.projectId?.trim() ||
@@ -110,8 +112,23 @@ export async function readPluginExecutionContext(options: {
           serverNamesById[id] = name;
       }
     }
+    const publishedPluginIdsByServerId: Record<string, string> =
+      Object.create(null);
+    const publishedIds = reply.publishedPluginIdsByServerId;
+    if (
+      publishedIds &&
+      typeof publishedIds === "object" &&
+      !Array.isArray(publishedIds)
+    ) {
+      for (const [id, binding] of bindings) {
+        const value = (publishedIds as Record<string, unknown>)[id];
+        if (binding.kind === "standalone" && isStandalonePublishedPluginId(value))
+          publishedPluginIdsByServerId[id] = value;
+      }
+    }
     return {
       serverNamesById: Object.freeze(serverNamesById),
+      publishedPluginIdsByServerId: Object.freeze(publishedPluginIdsByServerId),
       serverBindings: bindings,
       ...(options.hostId
         ? { hostConfig: reply.hostConfig as HostRuntimeConfig }
@@ -295,6 +312,8 @@ export interface PluginWorkspaceAdmission {
   readonly actorId: string;
   readonly projectId: string;
   readonly workspaceId: string;
+  /** Bound by the server to the same admitted turn identity, never serialized. */
+  readonly getAuthorization?: () => Promise<string>;
   /** A fresh backend query. A prior successful read is never an execution grant. */
   revalidate(options?: {
     expectedActorId?: string;
@@ -308,10 +327,7 @@ export function assertPluginWorkspaceRuntime(runtime: {
   agentLoop?: string;
   hostPolicy: { hostStyle?: string };
 }): void {
-  if (
-    !usesMcpjamClient(runtime) ||
-    (!runtime.agentLoop && !runtime.harness && runtime.hostPolicy.hostStyle !== "chatgpt")
-  ) {
+  if (!usesMcpjamClient(runtime)) {
     throw new PluginWorkspaceAdmissionError();
   }
 }
@@ -342,6 +358,7 @@ export async function admitPluginWorkspace(options: {
   descriptor: PluginWorkspaceDescriptor;
   projectId: string | undefined;
   bearer: string;
+  getAuthorization?: () => Promise<string>;
   signal?: AbortSignal;
 }): Promise<PluginWorkspaceAdmission> {
   const { projectId, bearer, descriptor } = options;
@@ -365,9 +382,11 @@ export async function admitPluginWorkspace(options: {
     const deadline = AbortSignal.timeout(WEB_CALL_TIMEOUT_MS);
     const querySignal = AbortSignal.any([...requestSignals, deadline]);
     try {
+      const currentBearer = options.getAuthorization
+        ? await awaitAdmission(options.getAuthorization(), querySignal) : bearer;
       const result: unknown = await timedPluginStep("backend-admission", () =>
         awaitAdmission(
-          createConvexClient(bearer).query(ADMISSION_QUERY, { projectId }),
+          createConvexClient(currentBearer).query(ADMISSION_QUERY, { projectId }),
           querySignal,
         ),
       );
@@ -398,6 +417,7 @@ export async function admitPluginWorkspace(options: {
     actorId,
     projectId,
     workspaceId,
+    ...(options.getAuthorization ? { getAuthorization: options.getAuthorization } : {}),
     async revalidate(
       next: { expectedActorId?: string; signal?: AbortSignal } = {},
     ) {

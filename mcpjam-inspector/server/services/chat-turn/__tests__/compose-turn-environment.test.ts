@@ -1,38 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConvexHttpClient } from "convex/browser";
 import { composeTurnEnvironment } from "../compose-turn-environment.js";
-import { fetchHostRuntimeConfig } from "../../../utils/host-runtime-config.js";
-import { shouldUseLocalHarness } from "../../../utils/harness/local/run-resources.js";
-import { resolvePlaygroundCredentialEnvironment } from "../../../utils/harness/playground-box.js";
+import {
+  fetchHostRuntimeConfig,
+  type HostRuntimeConfigResult,
+} from "../../../utils/host-runtime-config.js";
 
 vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: vi.fn(),
 }));
-vi.mock("../../../utils/harness/local/run-resources.js", () => ({
-  shouldUseLocalHarness: vi.fn(),
-}));
-vi.mock("../../../utils/harness/playground-box.js", () => ({
-  resolvePlaygroundCredentialEnvironment: vi.fn(),
-}));
 
 beforeEach(() => {
-  vi.mocked(shouldUseLocalHarness).mockResolvedValue(false);
+  vi.mocked(fetchHostRuntimeConfig).mockReset();
   vi.mocked(fetchHostRuntimeConfig).mockResolvedValue({ ok: true, config: {} });
-  vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValue({
-    ok: true,
-    environmentId: "credential-env",
-  });
 });
 
+function client() {
+  const client = new ConvexHttpClient("https://test.convex.cloud");
+  const mutation = vi.spyOn(client, "mutation").mockResolvedValue({
+    hostId: "mcpjam",
+    environment: { environmentId: "chat-env" },
+  });
+  return { client, mutation };
+}
+
 describe("chat composition", () => {
-  function client() {
-    const client = new ConvexHttpClient("https://test.convex.cloud");
-    const mutation = vi.spyOn(client, "mutation").mockResolvedValue({
-      hostId: "mcpjam",
-      environment: { environmentId: "chat-env" },
-    });
-    return { client, mutation };
-  }
   it("requests the MCPJam default rather than the first visible client", async () => {
     const { client: convex, mutation } = client();
     await composeTurnEnvironment({
@@ -49,63 +41,34 @@ describe("chat composition", () => {
       "mcpjam",
     );
   });
-  it("keeps a local Cursor turn independent of project credentials", async () => {
+
+  it("composes a Cursor client like any other: its key is the organization's", async () => {
     const { client: convex, mutation } = client();
     vi.mocked(fetchHostRuntimeConfig).mockResolvedValue({
       ok: true,
       config: { harness: "cursor" },
     });
-    vi.mocked(shouldUseLocalHarness).mockResolvedValue(true);
-    vi.mocked(resolvePlaygroundCredentialEnvironment).mockClear();
     const result = await composeTurnEnvironment({
       client: convex,
       projectId: "project",
       hostId: "cursor",
       bearer: "token",
     });
-    expect(result.environmentId).toBe("chat-env");
+    expect(result).toEqual({ environmentId: "chat-env", harness: "cursor" });
     expect(mutation).toHaveBeenCalledOnce();
-    expect(resolvePlaygroundCredentialEnvironment).not.toHaveBeenCalled();
+    expect(mutation.mock.calls[0]?.[1]).toEqual({
+      projectId: "project",
+      hostId: "cursor",
+      serverSelection: { mode: "none" },
+      purpose: "chat",
+    });
   });
-  it.each([
-    [409, "CONFLICT"],
-    [502, "SERVER_UNREACHABLE"],
-  ] as const)(
-    "classifies credential failures with status %s",
-    async (status, code) => {
-      const { client: convex } = client();
-      vi.mocked(fetchHostRuntimeConfig).mockResolvedValue({
-        ok: true,
-        config: { harness: "cursor" },
-      });
-      vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValue({
-        ok: false,
-        status,
-        message: "Credentials unavailable",
-      });
-      await expect(
-        composeTurnEnvironment({
-          client: convex,
-          projectId: "project",
-          hostId: "cursor",
-          bearer: "token",
-        }),
-      ).rejects.toMatchObject({ status, code });
-    },
-  );
 });
 
-
 it("uses the prepared external account config without fetching it again", async () => {
-  const client = new ConvexHttpClient("https://test.convex.cloud");
-  vi.mocked(fetchHostRuntimeConfig).mockClear();
-  vi.mocked(shouldUseLocalHarness).mockResolvedValue(false);
-  vi.mocked(resolvePlaygroundCredentialEnvironment).mockResolvedValue({
-    ok: true,
-    environmentId: "credential-env",
-  });
+  const { client: convex, mutation } = client();
   const result = await composeTurnEnvironment({
-    client,
+    client: convex,
     projectId: "project",
     hostId: "cursor",
     bearer: "token",
@@ -122,10 +85,80 @@ it("uses the prepared external account config without fetching it again", async 
       },
     },
   });
-  expect(result).toEqual({
-    environmentId: "credential-env",
-    harness: "cursor",
-  });
+  expect(result).toEqual({ environmentId: "chat-env", harness: "cursor" });
   expect(fetchHostRuntimeConfig).not.toHaveBeenCalled();
-  expect(resolvePlaygroundCredentialEnvironment).toHaveBeenCalledOnce();
+  expect(mutation).toHaveBeenCalledOnce();
+});
+
+describe("the environment is ensured while the host is read", () => {
+  it("asks for the environment before the host read answers", async () => {
+    const { client: convex, mutation } = client();
+    let answer!: (value: HostRuntimeConfigResult) => void;
+    vi.mocked(fetchHostRuntimeConfig).mockReturnValue(
+      new Promise<HostRuntimeConfigResult>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const composed = composeTurnEnvironment({
+      client: convex,
+      projectId: "project",
+      hostId: "host",
+      bearer: "token",
+    });
+    await vi.waitFor(() => expect(mutation).toHaveBeenCalledOnce());
+    answer({
+      ok: true,
+      config: {
+        hostId: "host",
+        modelId: "openai/gpt-5",
+        systemPrompt: "",
+        temperature: 0,
+        requireToolApproval: false,
+        hostStyle: "mcpjam",
+        harness: "codex",
+      },
+    });
+    await expect(composed).resolves.toEqual({
+      environmentId: "chat-env",
+      harness: "codex",
+    });
+  });
+
+  it("reports a host it cannot read even when the environment also fails", async () => {
+    const { client: convex, mutation } = client();
+    mutation.mockRejectedValue(new Error("not a member"));
+    vi.mocked(fetchHostRuntimeConfig).mockResolvedValue({
+      ok: false,
+      status: 403,
+      error: "Host not found or access denied",
+    });
+    await expect(
+      composeTurnEnvironment({
+        client: convex,
+        projectId: "project",
+        hostId: "host",
+        bearer: "token",
+      }),
+    ).rejects.toMatchObject({
+      status: 404,
+      details: { reason: "HOST_UNRESOLVED", hostId: "host" },
+    });
+  });
+
+  it("reports the environment's failure once the host was read", async () => {
+    const { client: convex, mutation } = client();
+    mutation.mockRejectedValue(
+      Object.assign(new Error("conflict"), {
+        data: { code: "ENV_RUNTIME_CHANGED", message: "Send again." },
+      }),
+    );
+    await expect(
+      composeTurnEnvironment({
+        client: convex,
+        projectId: "project",
+        hostId: "host",
+        bearer: "token",
+      }),
+    ).rejects.toMatchObject({ status: 409, message: "Send again." });
+  });
 });

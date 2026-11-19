@@ -78,4 +78,34 @@ describe("loadSuiteHostConfig — never hostless", () => {
     const config = await loadSuiteHostConfig(client, "suite-1");
     expect(config.hostStyle).toBe(DEFAULT_HOST_STYLE_V2);
   });
+
+  it("refuses instead when the caller enforces the host's policy", async () => {
+    // The default host carries no XAA policy, so falling back on a failed
+    // read would connect an enterprise host's servers without it.
+    const outage = new Error("convex down");
+    const client = fakeConvexClient((name) => {
+      if (name === "hostConfigsV2:getSuiteConfig") throw outage;
+      throw new Error(`unexpected query: ${name}`);
+    });
+    const refusal = await loadSuiteHostConfig(client, "suite-1", undefined, {
+      failClosed: true,
+    }).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(WebRouteError);
+    expect(refusal).toMatchObject({
+      status: 502,
+      message: expect.stringContaining("authorization policy"),
+      cause: outage,
+    });
+  });
+
+  it("still uses the default host for a suite with no config when failing closed", async () => {
+    const client = fakeConvexClient((name) => {
+      if (name === "hostConfigsV2:getSuiteConfig") return null;
+      throw new Error(`unexpected query: ${name}`);
+    });
+    const config = await loadSuiteHostConfig(client, "suite-1", undefined, {
+      failClosed: true,
+    });
+    expect(config.hostStyle).toBe(DEFAULT_HOST_STYLE_V2);
+  });
 });

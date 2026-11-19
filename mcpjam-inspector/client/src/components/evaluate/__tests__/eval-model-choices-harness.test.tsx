@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { EvalModelChoices } from "../eval-target-matrix";
+import {
+  EvalModelChoices,
+  sharedEffortHarness,
+} from "../eval-model-choices";
 import type { ModelDefinition } from "@/shared/types";
 
 vi.mock("@/hooks/use-host-harness-targets", () => ({
@@ -26,7 +29,7 @@ async function openAddModel(harness: { harnessId: string } | null) {
       disabled={false}
       testId="choices"
       availableModels={MODELS}
-      harness={harness}
+      harnessTargets={[harness]}
     />,
   );
   await userEvent
@@ -61,5 +64,25 @@ describe("EvalModelChoices — harness × model support", () => {
       "aria-disabled",
       "true",
     );
+  });
+});
+
+describe("sharedEffortHarness", () => {
+  it("names the runtime every client shares", () => {
+    expect(
+      sharedEffortHarness([{ harnessId: "codex" }, { harnessId: "codex" }]),
+    ).toBe("codex");
+    expect(sharedEffortHarness([null, undefined])).toBeUndefined();
+    expect(sharedEffortHarness([])).toBeUndefined();
+  });
+
+  it("refuses to pick one when the clients' runtimes differ, in any order", () => {
+    expect(
+      sharedEffortHarness([{ harnessId: "claude-code" }, { harnessId: "codex" }]),
+    ).toBe("mixed");
+    expect(
+      sharedEffortHarness([{ harnessId: "codex" }, { harnessId: "claude-code" }]),
+    ).toBe("mixed");
+    expect(sharedEffortHarness([{ harnessId: "codex" }, null])).toBe("mixed");
   });
 });

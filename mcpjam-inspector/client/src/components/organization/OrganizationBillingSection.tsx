@@ -59,7 +59,14 @@ import type {
 } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
-import { getAnnualDiscountPercent } from "@/lib/billing-entitlements";
+import {
+  canShowSubscriptionNotices,
+  getAnnualDiscountPercent,
+} from "@/lib/billing-entitlements";
+import {
+  getDisplayedCurrentPlan,
+  isStaffSetPlan,
+} from "@/lib/billing-staff-plan";
 import { consumeUrlFlag } from "@/lib/url-flag";
 import { track } from "@/lib/analytics";
 import { navigateToSupport } from "@/lib/support-navigation";
@@ -806,7 +813,6 @@ function FreePlanTeamUpsell({
 
 interface OrganizationBillingSectionProps {
   organizationId: string;
-  showPlanBilling: boolean;
   showPlanComparison?: boolean;
   showCredits: boolean;
   billingStatus: OrganizationBillingStatus | undefined;
@@ -834,7 +840,6 @@ interface OrganizationBillingSectionProps {
 
 export function OrganizationBillingSection({
   organizationId,
-  showPlanBilling,
   showPlanComparison = true,
   showCredits,
   billingStatus,
@@ -886,16 +891,14 @@ export function OrganizationBillingSection({
     if (consumeUrlFlag("plans", "open")) setArrivedForPlans(true);
   }, []);
 
-  // Deferred until the section is actually rendering: `showPlanBilling` can
-  // arrive a render late while the org's billing permissions resolve.
   useEffect(() => {
-    if (!arrivedForPlans || !showPlanBilling) return;
+    if (!arrivedForPlans) return;
     setArrivedForPlans(false);
     plansHeadingRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "start",
     });
-  }, [arrivedForPlans, showPlanBilling]);
+  }, [arrivedForPlans]);
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -913,9 +916,6 @@ export function OrganizationBillingSection({
   }, [billingStatus?.billingInterval, checkoutIntent]);
 
   useEffect(() => {
-    if (!showPlanBilling) {
-      return;
-    }
     if (!checkoutIntent) {
       deepLinkHandledForKeyRef.current = null;
       return;
@@ -1008,10 +1008,11 @@ export function OrganizationBillingSection({
     onCheckoutIntentConsumed,
     organizationId,
     planCatalog,
-    showPlanBilling,
   ]);
 
-  const currentPlan = billingStatus?.plan ?? "free";
+  const currentPlan = getDisplayedCurrentPlan(billingStatus);
+  // A staff plan changes only through MCPJam, so no column offers self-serve.
+  const isStaffPlan = isStaffSetPlan(billingStatus);
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
@@ -1021,7 +1022,6 @@ export function OrganizationBillingSection({
   const deferredTrialBillingCopy = getDeferredTrialBillingCopy(billingStatus);
   const isTrial = billingStatus?.source === "trial";
   const showFreeTeamUpsell =
-    showPlanBilling &&
     !isLoadingBilling &&
     !isTrial &&
     currentPlan === "free" &&
@@ -1047,8 +1047,14 @@ export function OrganizationBillingSection({
     });
   };
 
+  // A staff plan set while the confirmation is open withdraws the offer;
+  // the server would refuse the change anyway (PLAN_SET_BY_MCPJAM).
+  useEffect(() => {
+    if (isStaffPlan) setPendingPlanChange(null);
+  }, [isStaffPlan]);
+
   const handleConfirmPlanChange = async () => {
-    if (!pendingPlanChange) return;
+    if (!pendingPlanChange || isStaffPlan) return;
     const { plan, interval } = pendingPlanChange;
     track("plans_upgrade_confirm_submitted", {
       location: "org_plans",
@@ -1242,14 +1248,12 @@ export function OrganizationBillingSection({
           <PaymentsHistorySection
             organizationId={organizationId}
             canViewHistory={showCredits && canManageCredits}
-            canViewInvoices={
-              !!(showPlanBilling && billingStatus?.canManageBilling)
-            }
+            canViewInvoices={!!billingStatus?.canManageBilling}
           />
         </ErrorBoundary>
       ) : null}
 
-      {showPlanBilling && showPlanComparison ? (
+      {showPlanComparison ? (
         <>
           {checkoutIntent ? (
             <div
@@ -1369,20 +1373,29 @@ export function OrganizationBillingSection({
                                 billingStatus?.stripeCurrentPeriodEnd ??
                                 null;
                               const scheduledCancellationDate =
-                                billingStatus?.stripeCancelAtPeriodEnd
+                                billingStatus &&
+                                canShowSubscriptionNotices(billingStatus) &&
+                                billingStatus.stripeCancelAtPeriodEnd
                                   ? cancellationDateMs != null
                                     ? formatBillingDate(cancellationDateMs)
                                     : ""
                                   : null;
                               const cta = getPlanColumnCta({
-                                contractManaged: (billingStatus?.unlimitedCreditsUntil ?? 0) > Date.now(),
+                                contractManaged:
+                                  isStaffPlan ||
+                                  (billingStatus?.unlimitedCreditsUntil ?? 0) >
+                                    Date.now(),
                                 plan,
                                 currentPlan,
-                                currentCatalogPlanId:
-                                  billingStatus?.catalogPlanId,
+                                // A staff plan holds its tier whichever bundle
+                                // this catalog sells (v1 entries name none).
+                                currentCatalogPlanId: isStaffPlan
+                                  ? entry.catalogPlanId
+                                  : billingStatus?.catalogPlanId,
                                 currentPriceModel: billingStatus?.priceModel,
-                                currentBillingInterval:
-                                  billingStatus?.billingInterval ?? null,
+                                currentBillingInterval: isStaffPlan
+                                  ? null
+                                  : (billingStatus?.billingInterval ?? null),
                                 entry,
                                 billingConfigured,
                                 canManageBilling,

@@ -93,3 +93,15 @@ describe("chat request selection", () => {
       selection: { source: "legacy", modelId: String(model.id), provider: "anthropic" } }).kind).toBe("blocked");
   });
 });
+
+
+it("permits hosted account models only on their own Cursor runtime", () => {
+  const args = {
+    intent: "picked" as const, allowLocal: false,
+    model: { id: "cursor/mini", name: "Mini", provider: "cursor", hosted: false },
+    selection: { source: "legacy" as const, modelId: "cursor/mini" },
+  };
+  expect(chatRequestSelection(args).kind).toBe("blocked");
+  expect(chatRequestSelection({ ...args, harnessId: "cursor" }).kind).toBe("picked");
+  expect(chatRequestSelection({ ...args, harnessId: "claude-code" }).kind).toBe("blocked");
+});

@@ -5,16 +5,19 @@ import { ConnectionAccountsSection } from "../ConnectionAccountsSection";
 const mocks = vi.hoisted(() => ({
   hook: vi.fn(),
   update: vi.fn(),
-  flag: vi.fn(),
+  sharing: vi.fn(),
+  setSharing: vi.fn(),
+  toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-hosted-oauth-connections", () => ({
   useHostedOAuthConnections: mocks.hook,
 }));
-vi.mock("@/hooks/useMultiAccountConnectionsEnabled", () => ({
-  useMultiAccountConnectionsEnabled: mocks.flag,
-}));
 vi.mock("@/lib/apis/web/oauth-connections", () => ({
   updateOAuthConnection: mocks.update,
+}));
+vi.mock("@/hooks/use-sign-in-sharing", () => ({
+  useSignInSharing: mocks.sharing,
 }));
 
 // Radix menus read pointer capture, which jsdom does not implement.
@@ -59,8 +62,16 @@ describe("ConnectionAccountsSection", () => {
   beforeEach(() => {
     installPointerCaptureMocks();
     vi.clearAllMocks();
-    mocks.hook.mockReturnValue({ connections: rows, shared: false });
-    mocks.flag.mockReturnValue(true);
+    mocks.hook.mockReturnValue({
+      connections: rows,
+      shared: false,
+      loaded: true,
+    });
+    mocks.sharing.mockReturnValue({
+      isAdmin: false,
+      canShare: false,
+      setSharing: mocks.setSharing,
+    });
   });
   afterEach(cleanup);
 
@@ -89,6 +100,7 @@ describe("ConnectionAccountsSection", () => {
         },
       ],
       shared: false,
+      loaded: true,
     });
     mount();
     // The address cannot tell them apart, so the caption has to.
@@ -101,10 +113,48 @@ describe("ConnectionAccountsSection", () => {
     mocks.hook.mockReturnValue({
       connections: [{ ...rows[1], needsReauth: true, label: "Side" }],
       shared: false,
+      loaded: true,
     });
     mount();
     expect(screen.getByText("Needs reconnect")).toBeTruthy();
     expect(screen.queryByText("Side")).toBeNull();
+  });
+
+  it("captions a shared or uploaded account with its token's expiry, or says it is unknown", () => {
+    const now = Date.now();
+    mocks.hook.mockReturnValue({
+      connections: [
+        {
+          connectionId: "jwt",
+          isDefault: true,
+          label: "test-automation-1",
+          hostedOnly: true,
+          expiresAt: now + 3_600_000,
+        },
+        {
+          connectionId: "opaque",
+          isDefault: false,
+          label: "test-automation-2",
+          hostedOnly: true,
+        },
+        {
+          connectionId: "old",
+          isDefault: false,
+          label: "test-automation-3",
+          hostedOnly: true,
+          expiresAt: now - 60_000,
+        },
+        // A person's own sign-in renews itself, so no expiry is shown.
+        { connectionId: "mine", isDefault: false, label: "Mine" },
+      ],
+      shared: true,
+      loaded: true,
+    });
+    mount();
+    expect(screen.getByText(/^Default · Expires /)).toBeTruthy();
+    expect(screen.getByText("Expiry unknown")).toBeTruthy();
+    expect(screen.getByText(/^Expired /)).toBeTruthy();
+    expect(screen.getAllByText(/Expir/)).toHaveLength(3);
   });
 
   it("renames from the menu rather than a permanently open field", async () => {
@@ -142,7 +192,11 @@ describe("ConnectionAccountsSection", () => {
     );
     expect(screen.getByRole("menuitem", { name: "Set as default" })).toBeTruthy();
     cleanup();
-    mocks.hook.mockReturnValue({ connections: [rows[0]], shared: false });
+    mocks.hook.mockReturnValue({
+      connections: [rows[0]],
+      shared: false,
+      loaded: true,
+    });
     mount();
     await user.click(
       screen.getByRole("button", { name: "Manage same@example.com: Default" }),
@@ -160,20 +214,283 @@ describe("ConnectionAccountsSection", () => {
     expect(auth).toHaveBeenCalledWith({ kind: "add" });
   });
 
-  it.each([
-    ["a shared server", { connections: rows.slice(0, 1), shared: true }, true],
-    ["the rollout flag", { connections: rows, shared: false }, false],
-  ])(
-    "hides add behind %s while still managing what exists",
-    (_label, state, flag) => {
-      mocks.hook.mockReturnValue(state);
-      mocks.flag.mockReturnValue(flag);
+  it("counts only live accounts toward the limit of eight", () => {
+    const accounts = (count: number, needsReauth = false) =>
+      Array.from({ length: count }, (_, i) => ({
+        connectionId: `${needsReauth ? "stale" : "live"}-${i}`,
+        isDefault: i === 0 && !needsReauth,
+        label: `${needsReauth ? "Stale" : "Live"} ${i}`,
+        ...(needsReauth ? { needsReauth: true } : {}),
+      }));
+    const addButton = () =>
+      screen.getByRole("button", {
+        name: /Connect another account/,
+      }) as HTMLButtonElement;
+
+    mocks.hook.mockReturnValue({
+      connections: [...accounts(7), ...accounts(3, true)],
+      shared: false,
+      loaded: true,
+    });
+    const { unmount } = mount();
+    expect(addButton().disabled).toBe(false);
+    unmount();
+
+    mocks.hook.mockReturnValue({
+      connections: accounts(8),
+      shared: false,
+      loaded: true,
+    });
+    mount();
+    expect(addButton().disabled).toBe(true);
+  });
+
+  it("reconnects an account that needs it in place, by its own id", async () => {
+    const user = userEvent.setup();
+    const auth = vi.fn();
+    mocks.hook.mockReturnValue({
+      connections: [rows[0], { ...rows[1], needsReauth: true }],
+      shared: false,
+      loaded: true,
+    });
+    mount({ onAuthenticate: auth });
+    await user.click(
+      screen.getByRole("button", { name: "Manage same@example.com" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Reconnect" }),
+    );
+    expect(auth).toHaveBeenCalledWith({ kind: "replace", credentialId: "b" });
+  });
+
+  describe("on a server shared with the project", () => {
+    const project = [
+      { connectionId: "p1", isDefault: true, label: "test-automation-1" },
+      {
+        connectionId: "p2",
+        isDefault: false,
+        label: "test-automation-2",
+        needsReauth: true,
+      },
+    ];
+    beforeEach(() => {
+      mocks.hook.mockReturnValue({
+        connections: project,
+        shared: true,
+        loaded: true,
+      });
+    });
+
+    it("shows a member the project accounts read-only", () => {
       mount();
+      expect(screen.getByText("Project accounts")).toBeTruthy();
+      expect(
+        screen.getByText(/^Shared with the project\. Your hosted runs can act/),
+      ).toBeTruthy();
+      // Named by what the admin called them: they carry no profile.
+      expect(screen.getByText("test-automation-1")).toBeTruthy();
+      expect(screen.getByText("Needs reconnect")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /^Manage / })).toBeNull();
       expect(
         screen.queryByRole("button", { name: /Connect another account/ }),
       ).toBeNull();
-      // A de-flagged org must still see and take down what it has.
-      expect(screen.getAllByText("same@example.com").length).toBeGreaterThan(0);
-    },
-  );
+    });
+
+    it("lets an admin manage them, reconnect one in place and connect another", async () => {
+      const user = userEvent.setup();
+      const auth = vi.fn();
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: false,
+        setSharing: mocks.setSharing,
+      });
+      mount({ onAuthenticate: auth });
+      // With the eval flag off there is no share switch, but an admin still
+      // gets Allow local runs, which doesn't wait for that flag.
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/ask a project admin to turn on/)).toBeNull();
+      await user.click(
+        screen.getByRole("button", { name: /Connect another account/ }),
+      );
+      expect(auth).toHaveBeenLastCalledWith({ kind: "add" });
+      await user.click(
+        screen.getByRole("button", { name: "Manage test-automation-2" }),
+      );
+      await user.click(
+        await screen.findByRole("menuitem", { name: "Reconnect" }),
+      );
+      expect(auth).toHaveBeenLastCalledWith({
+        kind: "replace",
+        credentialId: "p2",
+      });
+    });
+
+    it("gives an admin both switches when the eval flag is on", () => {
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount();
+      expect(
+        screen.getByRole("switch", { name: "Shared with the project" }),
+      ).toBeTruthy();
+      expect(
+        screen.getByRole("switch", { name: "Allow local runs" }),
+      ).toBeTruthy();
+    });
+
+    it.each([
+      [true, /^Shared with the project\. Your runs, including your local app's/],
+      [false, /ask a project admin to turn on Allow local runs\.$/],
+    ])(
+      "shows a member no switch, and whether local runs are allowed (%s)",
+      (localDeliveryAllowed, copy) => {
+        mocks.hook.mockReturnValue({
+          connections: project,
+          shared: true,
+          loaded: true,
+          localDeliveryAllowed,
+        });
+        mocks.sharing.mockReturnValue({
+          isAdmin: false,
+          canShare: false,
+          setSharing: mocks.setSharing,
+        });
+        mount();
+        expect(screen.getByText(copy)).toBeTruthy();
+        expect(screen.queryByRole("switch")).toBeNull();
+      },
+    );
+
+    it.each([
+      [
+        true,
+        "No project accounts yet. Connect one so members' runs can use it.",
+      ],
+      [false, "No project accounts yet. Ask a project admin to connect one."],
+    ])("says what to do when there are none (admin: %s)", (isAdmin, copy) => {
+      mocks.hook.mockReturnValue({
+        connections: [],
+        shared: true,
+        loaded: true,
+      });
+      mocks.sharing.mockReturnValue({
+        isAdmin,
+        canShare: false,
+        setSharing: mocks.setSharing,
+      });
+      mount();
+      expect(screen.getByText(copy)).toBeTruthy();
+      expect(
+        screen.queryByRole("button", { name: "Connect an account" }) !== null,
+      ).toBe(isAdmin);
+    });
+  });
+
+  describe("the share control", () => {
+    it.each([
+      ["a member", { isAdmin: false, canShare: false }, true, false],
+      [
+        "an admin who cannot share",
+        { isAdmin: true, canShare: false },
+        true,
+        false,
+      ],
+      [
+        "an admin before the list answers",
+        { isAdmin: true, canShare: true },
+        false,
+        false,
+      ],
+      ["an admin who can share", { isAdmin: true, canShare: true }, true, true],
+    ])("for %s", (_label, role, loaded, shown) => {
+      mocks.hook.mockReturnValue({ connections: rows, shared: false, loaded });
+      mocks.sharing.mockReturnValue({ ...role, setSharing: mocks.setSharing });
+      mount();
+      expect(screen.queryByRole("switch") !== null).toBe(shown);
+    });
+
+    it("says the server is shared once, in the switch, for an admin who has it", () => {
+      mocks.hook.mockReturnValue({
+        connections: rows,
+        shared: true,
+        loaded: true,
+      });
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount();
+      expect(
+        screen.getByRole("switch", { name: "Shared with the project" }),
+      ).toBeChecked();
+      expect(screen.queryByText(/Your hosted runs can act/)).toBeNull();
+    });
+
+    it("shares the sign-in, then reconnects the server on its new accounts", async () => {
+      const user = userEvent.setup();
+      const onSwitch = vi.fn();
+      mocks.setSharing.mockResolvedValue(undefined);
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount({ onSwitch });
+      await user.click(
+        screen.getByRole("switch", { name: "Share sign-in with the project" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Share sign-in" }),
+      );
+      expect(mocks.setSharing).toHaveBeenCalledWith("shared");
+      expect(onSwitch).toHaveBeenCalledOnce();
+    });
+
+    it("reports a failed reconnect on its own, not as a failed sharing change", async () => {
+      const user = userEvent.setup();
+      const onSwitch = vi.fn().mockRejectedValue(new Error("connect failed"));
+      mocks.setSharing.mockResolvedValue(undefined);
+      mocks.sharing.mockReturnValue({
+        isAdmin: true,
+        canShare: true,
+        setSharing: mocks.setSharing,
+      });
+      mount({ onSwitch });
+      await user.click(
+        screen.getByRole("switch", { name: "Share sign-in with the project" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Share sign-in" }),
+      );
+      expect(mocks.toast.error).toHaveBeenCalledWith(
+        "Sharing changed, but the server could not reconnect. Reconnect it to use the new accounts.",
+      );
+      expect(mocks.toast.success).toHaveBeenCalledWith(
+        "Sign-in shared with the project.",
+      );
+    });
+  });
+
+  it("offers to load the accounts again after they failed to load", async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    mocks.hook.mockReturnValue({
+      connections: [],
+      shared: false,
+      loaded: false,
+      error: "Could not load accounts",
+      refetch,
+    });
+    mount();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load accounts",
+    );
+    await user.click(screen.getByRole("button", { name: "Reload accounts" }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
 });

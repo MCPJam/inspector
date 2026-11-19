@@ -42,9 +42,12 @@ import {
 } from "./bridge-reaper.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
+import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /** Resolved adapter identity for cold-start read-ahead. */
+  harnessId?: string;
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
   /**
@@ -81,6 +84,8 @@ export interface E2BHarnessSandboxProviderOptions {
   bridgePort?: number;
   /** Request timeout for read-only sandbox discovery. */
   connectTimeoutMs?: number;
+  /** Attach without the pnpm guard: a box preparation runs it under its fence. */
+  skipPnpmGuard?: boolean;
   /** Per-command exec timeout for `run`. E2B commands default to ~60s — too
    *  short for the harness bootstrap (`pnpm install`) on a larger dep tree.
    *  `spawn` does not use it: a bridge runs with no timeout at all. */
@@ -298,8 +303,13 @@ export function createE2BHarnessSandboxProvider(
   const mergeEnv = (
     env: Record<string, string> | undefined,
   ): Record<string, string> | undefined => {
-    if (!sessionEnv) return env;
-    return { ...sessionEnv, ...(env ?? {}) };
+    // E2B installs its egress proxy CA in the system trust store. Node uses
+    // its bundled roots, so Node-based CLIs need that CA explicitly too.
+    return {
+      NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      ...sessionEnv,
+      ...env,
+    };
   };
 
   // Connect to the host's persistent computer and build a session bound to it.
@@ -353,10 +363,31 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      await sandbox.commands.run(harnessPnpmGuardCommand(), {
-        timeoutMs: commandTimeoutMs,
-        ...(connectSignal ? { signal: connectSignal } : {}),
-      });
+      // Preparation must finish before exposing the session. The read-only
+      // hint and proxy socket cleanup are independent of the package guard.
+      const preparation = await Promise.allSettled([
+        readAheadRuntime(
+          (command, options) => sandbox.commands.run(command, options),
+          { harnessId: opts.harnessId, resuming },
+          connectSignal,
+        ),
+        ...(opts.skipPnpmGuard
+          ? []
+          : [
+              sandbox.commands.run(harnessPnpmGuardCommand(), {
+                timeoutMs: commandTimeoutMs,
+                ...(connectSignal ? { signal: connectSignal } : {}),
+              }),
+            ]),
+        ...(resuming
+          ? [closeModelProxyConnections(sandbox, opts.proxyUrl?.(), connectSignal)]
+          : []),
+      ]);
+      // Do not release the turn while a failed sibling still has socket
+      // cleanup running: it could close the next owner's connections.
+      for (const result of preparation) {
+        if (result.status === "rejected") throw result.reason;
+      }
     } catch (err) {
       if (err instanceof CommandExitError) {
         const output = (err.stderr || err.stdout || "").trim();
@@ -370,13 +401,6 @@ export function createE2BHarnessSandboxProvider(
         );
       }
       throw err;
-    }
-    if (resuming) {
-      await closeModelProxyConnections(
-        sandbox,
-        opts.proxyUrl?.(),
-        connectSignal,
-      );
     }
 
     // Housekeeping, so best-effort: a failure here never blocks the spawn.

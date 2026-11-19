@@ -193,6 +193,11 @@ export interface MCPOAuthReadinessWarning extends Omit<
 export interface OAuthConformanceConfig {
   /** Cancels the whole run, including pending requests. */
   signal?: AbortSignal;
+  /**
+   * @internal set by a host that counts the run itself (the CLI, the
+   * Inspector) and by suites for their inner runs. See `captureConformanceRun`.
+   */
+  __suppressTelemetry?: boolean;
   serverUrl: string;
   protocolVersion: OAuthProtocolVersion;
   registrationStrategy: OAuthRegistrationStrategy;
@@ -410,6 +415,8 @@ export type OAuthConformanceSuiteFlow = Partial<
 export interface OAuthConformanceSuiteConfig {
   /** Human-friendly name for the suite run. */
   name?: string;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
   /** The MCP server URL. Shared across all flows. */
   serverUrl: string;
   /** Shared defaults applied to each flow unless overridden. */

@@ -589,7 +589,25 @@ describe("runSuiteFile — emulated host", () => {
       await import("../src/mcp-client-manager/index.js");
     const { run } = createSuiteFileRunner({
       createLanguageModel: (model) => {
-        const built = scriptedModel(model, byVerb);
+        const discoverySteps: ScriptedStep[] = [
+          {
+            toolCalls: [
+              { toolName: "search_mcp_tools", input: { query: "read note" } },
+            ],
+          },
+          {
+            toolCalls: [
+              { toolName: "load_mcp_tools", input: { names: ["read_note"] } },
+            ],
+          },
+          { toolCalls: [{ toolName: "read_note", input: { id: "7" } }] },
+          { text: "Note 7 says hello." },
+        ];
+        const built = scriptedModel(model, (context) =>
+          context.toolNames.includes("search_mcp_tools")
+            ? (discoverySteps[context.callIndex] ?? { text: "Done." })
+            : byVerb(context)
+        );
         models.push(built);
         return built as never;
       },

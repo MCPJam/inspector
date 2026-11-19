@@ -457,7 +457,7 @@ describe("OrganizationOrgKeysPolicyCard", () => {
     ).toHaveTextContent("Ready");
     expect(
       within(harness).getByText(
-        "Claude Code runs on an Anthropic provider and Codex on an OpenAI provider.",
+        "Claude Code and OpenCode need an Anthropic provider or a custom provider that serves Anthropic Messages. Codex and Copilot CLI need an OpenAI provider or a custom provider that serves Responses.",
       ),
     ).toBeInTheDocument();
     expect(within(harness).queryByText(/Blocked by/)).not.toBeInTheDocument();

@@ -9,9 +9,24 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
   runAssistantTurn: (...args: unknown[]) => runAssistantTurnMock(...args),
 }));
 
+import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
+import { buildLiveEffectiveCapabilities } from "../../environments/effective-capabilities";
+import { resolveTurnSkills } from "../../environments/turn-skills";
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
+import { buildHostedStepHandlers } from "../step-handlers";
 import { logger } from "../../../utils/logger";
+
+/** A run that froze no skills, planned for a harness: it clears the box. */
+const FROZEN_EMPTY_PLAN = resolveTurnSkills({
+  source: {
+    kind: "pins",
+    pins: [],
+    set: buildLiveEffectiveCapabilities({}),
+    harnessSkills: [],
+  },
+  runtime: { kind: "harness", harnessId: "claude-code" },
+});
 
 function baseParams(
   overrides: Partial<DriveHostedEvalTurnParams> = {},
@@ -221,46 +236,35 @@ describe("harness execution options reach the engine", () => {
     expect(options.environmentId).toBeUndefined();
   });
 
-  it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
-    // The one harness field gated on `!== undefined` rather than truthiness,
-    // and deliberately so: an empty array is how `skillsOverride: "exclude"`
-    // says "this arm runs with NO skills". A truthiness regression would drop
-    // it, the harness would fall back to its own project-wide skill fetch, and
-    // the skill-free arm would quietly run with skills — while every other
-    // assertion in this file still passed.
+  it("forwards the plan of an EMPTY frozen set — the A/B arm", async () => {
+    // An empty frozen set is how `skillsOverride: "exclude"` says "this arm
+    // runs with NO skills". The plan says it (`harness.skills` is `[]`, which
+    // clears the box), so dropping the plan would leave the skill-free arm with
+    // whatever skills its box already holds, while every other assertion in
+    // this file still passed.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
+    expect(options.skillPlan?.harness).toMatchObject({
+      mode: "pinned",
+      skills: [],
+    });
   });
 
-  it("delivers the run's pins on the FROZEN channel, not the live-environment one", async () => {
-    // `selectHarnessSkillSource` ranks pinned → environment → live, and only
-    // the top rank promises that nothing live is consulted. Sending a frozen
-    // run's skills as `runtimeSkillsOverride` would work in the happy case and
-    // be wrong in the one that matters: `runtimeSkillsOverride` is documented
-    // as the channel for a turn whose environment re-resolves each time.
+  it("delivers the run's plan, not the older inputs a live environment would send", async () => {
+    // The plan ranks a run's frozen copies above everything and promises that
+    // nothing live is consulted. Sending a frozen run's skills as
+    // `runtimeSkillsOverride` would work in the happy case and be wrong in the
+    // one that matters: that channel is for a turn whose environment
+    // re-resolves each time.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [
-        {
-          name: "deploy",
-          description: "ship it",
-          content: "# Deploy",
-          contentHash: "sha-1",
-        },
-      ],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
-    expect(options.pinnedHarnessSkills).toEqual([
-      {
-        name: "deploy",
-        description: "ship it",
-        content: "# Deploy",
-        contentHash: "sha-1",
-      },
-    ]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
     expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 
@@ -304,7 +308,7 @@ describe("harness execution options reach the engine", () => {
       },
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: {} },
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
       modelVisibleMcpToolResults: { directContent: { image: false } },
       respectToolVisibility: false,
       tasks: { mode: "await" },
@@ -314,7 +318,7 @@ describe("harness execution options reach the engine", () => {
     expect(options.harnessSandboxBinding).toBeUndefined();
     expect(options.harnessMcpProxy).toBeUndefined();
     expect(options.builtInTools).toBeUndefined();
-    expect(options.pinnedHarnessSkills).toBeUndefined();
+    expect(options.skillPlan).toBeUndefined();
     expect(options.modelVisibleMcpToolResults).toBeUndefined();
     expect(options.respectToolVisibility).toBeUndefined();
     expect(options.tasks).toBeUndefined();
@@ -378,6 +382,82 @@ it("carries hosted request payloads into the authored eval turn", async () => {
   runAssistantTurnMock.mockImplementationOnce(async () => ({ messages: [], usage: {}, turnTrace: { spans: [], requestPayloads: [entry] } }) as never);
   await driveHostedEvalTurn(params);
   expect(params.acc.requestPayloads).toEqual([{ ...entry, promptIndex: 3 }]);
+});
+
+describe("the turn's MCP routing record", () => {
+  const route = (reason: string): HarnessMcpAtTurn => ({
+    version: 1,
+    upstream: "mcpjam",
+    delivery: "mcp-endpoint",
+    profile: "client",
+    gaps: [],
+    reasons: [reason],
+    pinnedRuntimeVersion: "1.0.35",
+    plannerVersion: "harness-mcp-plan-v1",
+  });
+
+  /** A completed turn whose trace carries `harnessMcpAtTurn` when given. */
+  function engineCompletesTurn(harnessMcpAtTurn?: HarnessMcpAtTurn) {
+    runAssistantTurnMock.mockImplementationOnce(async (...args: unknown[]) => {
+      const { messages } = args[0] as { messages: unknown[] };
+      return {
+        messages: [...messages, { role: "assistant", content: "Done." }],
+        usage: {},
+        // The engine's own turn counter, not the eval's prompt index.
+        turnTrace: { promptIndex: 0, spans: [], harnessMcpAtTurn },
+      } as never;
+    });
+  }
+
+  function paramsWithRecords(promptIndex: number) {
+    const params = baseParams({ promptIndex });
+    const records = new Map<number, HarnessMcpAtTurn>();
+    params.acc.harnessMcpByPromptIndex = records;
+    return { params, records };
+  }
+
+  it("keeps the record under the eval turn's prompt index", async () => {
+    const { params, records } = paramsWithRecords(3);
+    engineCompletesTurn(route("eval iteration"));
+
+    expect(await driveHostedEvalTurn(params)).toEqual({ kind: "completed" });
+    expect([...records]).toEqual([[3, route("eval iteration")]]);
+  });
+
+  it("keeps nothing for a turn whose trace has no record", async () => {
+    const { params, records } = paramsWithRecords(0);
+    engineCompletesTurn();
+
+    await driveHostedEvalTurn(params);
+    expect(records.size).toBe(0);
+  });
+
+  it.each([true, false])(
+    "preserves the authored prompt's routing evidence across a widget follow-up (authored receipt present: %s)",
+    async (hasReceipt) => {
+      const { params, records } = paramsWithRecords(1);
+      const handlers = buildHostedStepHandlers({
+        ...params,
+        resolvePinnedServerKey: () => undefined,
+        pinnedToolErrors: [],
+      });
+      engineCompletesTurn(hasReceipt ? route("authored") : undefined);
+      await handlers.onPrompt({
+        step: { id: "p1", kind: "prompt", prompt: "Open the widget" },
+        stepIndex: 1,
+        turnOrdinal: 1,
+      });
+      engineCompletesTurn(route("follow-up"));
+      const followUp = await handlers.onFollowUp!({
+        text: "Show more",
+        stepIndex: 2,
+        turnOrdinal: 1,
+      });
+
+      expect(followUp.iterationError).toBeUndefined();
+      expect([...records]).toEqual(hasReceipt ? [[1, route("authored")]] : []);
+    },
+  );
 });
 
 it("adds the turn's reasoning and cached-input tokens onto the iteration usage", async () => {

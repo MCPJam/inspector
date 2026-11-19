@@ -1,3 +1,5 @@
+import turnAuthorization from "./turn-authorization.js";
+import chatPersistence from "./chat-persistence.js";
 import pluginFormAnswers from "./plugin-form-answers.js";
 import pluginInstances from "./plugin-instances.js";
 import oauthConnections from "./oauth-connections.js";
@@ -27,8 +29,10 @@ import tasksWeb from "./tasks.js";
 import eventsWeb from "./events.js";
 import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
+import chatPrepare from "./chat-prepare.js";
 import { onboardingTurnTraceMiddleware } from "../../services/plugin-host/onboarding-trace.js";
 import mcpjamAgent from "./mcpjam-agent.js";
+import { platformAgentGate } from "../../middleware/platform-agent-gate.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
 import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
@@ -49,6 +53,8 @@ import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
+import conformanceShareCard from "./conformance-share-card.js";
+import { hostedServerFeatureRoutes } from "../shared/server-feature-observations.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -62,6 +68,7 @@ import mrtrContinuation from "./mrtr-continuation.js";
 import registryWeb from "./registry.js";
 import browserProfiles from "./browser-profiles.js";
 import clientFlags from "./flags.js";
+import orgGatewayTest from "./org-gateway-test.js";
 import webmcpInspector from "../mcp/webmcp-inspector.js";
 import { HOSTED_MODE } from "../../config.js";
 import { requireServiceCredentialRoute } from "../../middleware/require-service-credential.js";
@@ -104,6 +111,16 @@ web.use(
   // A plugin onboarding turn records its phases; any other passes through.
   onboardingTurnTraceMiddleware,
 );
+// Setting up a chat's computer before its first message is for members only.
+web.use(
+  "/chat/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Setting up a computer"),
+);
+// MCPJAM_PLATFORM_AGENT=off answers every agent route here, ahead of auth.
+web.use("/mcpjam-agent", platformAgentGate);
+web.use("/mcpjam-agent/*", platformAgentGate);
 web.use("/mcpjam-agent", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/mcpjam-agent/widget-content",
@@ -131,7 +148,12 @@ for (const startsWork of [
 }
 web.post("/servers/checks/promote", promoteServerCheck);
 // All hosted checks share ten active slots per verified user across replicas.
-for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+// A canvas refresh connects, captures and probes, so it takes a slot too.
+for (const spendsEgress of [
+  "/servers/doctor",
+  "/servers/validate",
+  "/servers/canvas/refresh",
+]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because
@@ -220,11 +242,22 @@ web.use(
   denyGuests("Browser profiles"),
 );
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Dials an admin-typed gateway URL once Convex confirms the caller's admin
+// role, so the bearer is verified here before anything else runs.
+web.use(
+  "/org-gateway-test",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Gateway tests"),
+  requireVerifiedAuth(),
+);
 web.use(
   "/apps/mcp-apps/widget-content",
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
 );
+web.use("/apps/mcp-apps/view-admissions", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/apps/mcp-apps/view-admissions/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 // MJ-012. The rate limit for signed-in callers on this family.
 //
@@ -284,6 +317,7 @@ web.route("/swarm", swarmGenerate);
 web.route("/evals", evals);
 web.route("/environments", environments);
 web.route("/export", exporter);
+web.route("/org-gateway-test", orgGatewayTest);
 // Voice transcription forwards the CALLER's bearer and has no credential of its
 // own to fall back on. Every surface supplies one: the client attaches a guest
 // or WorkOS bearer to `/api/web/*` on hosted and local alike (see
@@ -291,6 +325,9 @@ web.route("/export", exporter);
 // runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
+web.route("/chat", chatPrepare);
+web.route("/chat-persistence", chatPersistence);
+web.route("/turn-authorization", turnAuthorization);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like
 // /guest-token. `sessionAuthMiddleware` already bypasses /api/web/*. The Claude
 // Code harness (in a cloud sandbox) connects its MCP through here.
@@ -322,6 +359,7 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
+web.route("/server-features", hostedServerFeatureRoutes);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
@@ -365,6 +403,9 @@ web.route("/bench", bench);
 // as `/score`: the token is the credential, and the backend only returns the
 // redacted public artifact.
 web.route("/conformance-shared", conformanceShared);
+// The og:image of a shared run's link. Same no-session contract: crawlers
+// carry no bearer, and the backend answers only for links anyone may open.
+web.route("/conformance-share-card", conformanceShareCard);
 web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this

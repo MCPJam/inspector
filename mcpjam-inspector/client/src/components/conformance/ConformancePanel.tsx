@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
-import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import { OAuthPopupBlockedDialog } from "@/components/conformance/OAuthPopupBlockedDialog";
 import { ConformanceAdvice, suiteAdviceGroups } from "./ConformanceAdvice";
 import { ConformanceVersionNotice } from "./ConformanceVersionNotice";
 import { liveConformanceVersionRefusal } from "./conformance-version-refusal";
+import { SuiteList, sourceVersionOf } from "./conformance-source-version";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { UncheckedAdvice } from "@/components/conformance/UncheckedAdvice";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -19,6 +18,7 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import {
+  notApplicableSubtitle,
   OverallScoreCard,
   SUITE_COPY,
   SuiteRow,
@@ -34,8 +34,9 @@ import {
 import {
   APPS_CATALOG,
   OAUTH_CATALOG,
-  TASKS_CATALOG,
   protocolCatalog,
+  shownTasksCatalog,
+  useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import {
   ConformanceConnectError,
@@ -43,7 +44,6 @@ import {
   ConformancePreRun,
   ConformanceTabPanel,
   NO_SERVERS_MESSAGE,
-  RUN_LABEL,
   type ConformanceView,
 } from "./ConformancePageChrome";
 import { toast } from "@/lib/toast";
@@ -55,6 +55,10 @@ import {
   type SuiteState,
 } from "@/hooks/use-conformance-run";
 import { ConformanceRunHeader } from "./ConformanceRunHeader";
+import {
+  ConformanceRunButton,
+  ConformanceRunRequestContext,
+} from "./conformance-run-request";
 import {
   PersistConformanceRun,
   type ConformancePersistConfig,
@@ -130,6 +134,17 @@ function SuiteSection({
     (state as { waitingForAuth?: boolean }).waitingForAuth,
   );
   const skipped = Boolean((state as { skipped?: boolean }).skipped);
+  // OAuth on a server that answered without a token.
+  const noLogin =
+    unavailable &&
+    (state as { result?: { outcome?: string } }).result?.outcome ===
+      "not-applicable";
+  // Ran, but none of its checks applied to this server.
+  const appliedToNothing =
+    state.status === "done" &&
+    state.verdict === "passed" &&
+    score?.applicable === 0 &&
+    score.notApplicable > 0;
   const autoOpen =
     waitingForAuth ||
     state.status === "error" ||
@@ -140,21 +155,13 @@ function SuiteSection({
     <SuiteRow
       title={title}
       subtitle={
-        unavailable && state.unavailableReason
-          ? state.unavailableReason
-          : description
+        noLogin || appliedToNothing
+          ? notApplicableSubtitle(title, noLogin)
+          : unavailable && state.unavailableReason
+            ? state.unavailableReason
+            : description
       }
-      badge={
-        <SuiteBadge
-          state={state}
-          notApplicable={
-            state.status === "done" &&
-            state.verdict === "passed" &&
-            score?.applicable === 0 &&
-            score.notApplicable > 0
-          }
-        />
-      }
+      badge={<SuiteBadge state={state} notApplicable={appliedToNothing} />}
       score={
         score && score.score !== null
           ? {
@@ -222,9 +229,12 @@ export function ConformanceContent({
   onOpenSettings,
   settingsLoading = false,
   onShowHome,
+  backLabel = "Conformance",
+  onRunFrom,
   serverIconUrl,
   autoStart = false,
   onAutoStart,
+  onConnectingChange,
   initialVersionPin,
   initialResolvedProtocolVersion,
   selection,
@@ -252,13 +262,19 @@ export function ConformanceContent({
   onOpenSettings?: () => void;
   /** The server's logo, when the project or the server provides one. */
   serverIconUrl?: string;
-  /** Return to the server list; the completed run remains in History. */
+  /** Return to where the run started; the completed run remains in History. */
   onShowHome: () => void;
+  /** Names where `onShowHome` goes, on the run's Back button. */
+  backLabel?: string;
+  /** The page's Run was used on this tab: the run's Back returns to it. */
+  onRunFrom?: (view: ConformanceView) => void;
   /** The saved defaults Settings edits have not loaded yet. */
   settingsLoading?: boolean;
   /** Run once on mount: the setup steps just chose this server. */
   autoStart?: boolean;
   onAutoStart?: () => void;
+  /** Whether this run is connecting its server before it starts. */
+  onConnectingChange?: (connecting: boolean) => void;
   initialVersionPin?: ProtocolVersionPin;
   initialResolvedProtocolVersion?: McpProtocolVersion;
   /** What to run, as picked in the setup steps. */
@@ -289,7 +305,6 @@ export function ConformanceContent({
     tasksScore,
     oauthScore,
     pooledScore,
-    oauthNotScored,
     oauthUnscored,
     isRunning,
     openAuthorizationWindow,
@@ -417,6 +432,17 @@ export function ConformanceContent({
   }, [autoStart]);
   const isConnecting =
     connect.status === "connecting" || connect.status === "ready";
+  // The page's server list says which card is starting while this connects.
+  // Cleared on unmount too, so a run dropped mid-connect leaves no card stuck.
+  const reportConnecting = useRef(onConnectingChange);
+  useEffect(() => {
+    reportConnecting.current = onConnectingChange;
+  });
+  useEffect(() => {
+    if (!isConnecting) return;
+    reportConnecting.current?.(true);
+    return () => reportConnecting.current?.(false);
+  }, [isConnecting]);
   const hasStarted =
     started ||
     isRunning ||
@@ -442,43 +468,22 @@ export function ConformanceContent({
   // The Overview of a started run shows the run's own header, not the tabs.
   const liveRun = hasStarted && view === "overview";
 
-  // DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted readiness
-  // run takes minutes, so joining the shared `isRunning` would hold the Run
-  // button and the protocol-version select hostage for its duration — and
-  // readiness produces lanes and coverage rather than passed/failed checks,
-  // so there is no number to pool. Each section owns its own run control and
-  // recovers a run still in flight when it mounts, so it shows before the
-  // suites have run, too.
-  //
-  // Behind `mcpjam-directory-readiness` again while directory submissions are
-  // a later phase: the page ships protocol conformance first. `=== true`, so
-  // a missing flag (or one PostHog has not hydrated yet) keeps them hidden
-  // rather than flashing them for users the flag excludes.
-  const directoryReadinessEnabled =
-    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
-  const readiness = directoryReadinessEnabled ? (
-    <div className="space-y-4">
-      <DirectoryReadinessSection publisher="claude" server={server} />
-      <DirectoryReadinessSection publisher="openai" server={server} />
-      <DirectoryReadinessSection publisher="muse" server={server} />
-    </div>
-  ) : null;
+  const tasksUpdateCheck = useTasksUpdateCheckEnabled();
 
+  const runRequest = {
+    run: () => {
+      // Not Run again: this one is on the page's tabs, so Back returns there.
+      onRunFrom?.(view);
+      (onRequestRun ?? handleRun)();
+    },
+    disabled: isRunning || isConnecting || runDisabled,
+  };
   const runButton = (
-    <Button
-      size="sm"
-      onClick={onRequestRun ?? handleRun}
-      disabled={isRunning || isConnecting || runDisabled}
-    >
-      {isRunning || isConnecting ? (
-        <>
-          <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-          {isConnecting ? "Connecting..." : "Running..."}
-        </>
-      ) : (
-        RUN_LABEL
-      )}
-    </Button>
+    <ConformanceRunButton
+      request={runRequest}
+      running={isRunning}
+      connecting={isConnecting}
+    />
   );
   // `!isConnected` hides the alert in the render before the effect above
   // resets the failure.
@@ -506,15 +511,18 @@ export function ConformanceContent({
         <ConformanceRunHeader
           serverName={server.name}
           startedAt={startedAt}
+          backLabel={backLabel}
           onBack={onShowHome}
           busy={isRunning || isConnecting}
           isConnecting={isConnecting}
           showHistory={showHistory}
-          onShowHistory={() => onViewChange("history")}
           onOpenSettings={onOpenSettings}
           settingsLoading={settingsLoading}
           showShare={Boolean(persist)}
           savedRunId={savedRunId}
+          // A server the project doesn't have is saved as an external target
+          // with no name, and the card and post are public: no name here either.
+          shareServerName={persist?.serverId ? server.name : undefined}
           onRunAgain={onRunAgain ? () => onRunAgain(versionPin) : handleRun}
           runDisabled={runDisabled}
         />
@@ -534,8 +542,10 @@ export function ConformanceContent({
 
       <ConformanceTabPanel view={view}>
         {view === "history" ? (
-          <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-            {history}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+            <ConformanceRunRequestContext.Provider value={runRequest}>
+              {history}
+            </ConformanceRunRequestContext.Provider>
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">
@@ -556,32 +566,28 @@ export function ConformanceContent({
                     ? "This run is waiting for you to sign in."
                     : ""}
                 </p>
-                {oauth.waitingForAuth ? (
+                {oauth.waitingForAuth && !oauth.popupBlocked ? (
                   // At the top of the run, and pinned there while it scrolls:
                   // the run cannot finish until someone signs in, and inside
                   // the OAuth suite at the end of the page this read as a run
-                  // that never stops loading.
+                  // that never stops loading. A blocked window gets the
+                  // OAuthPopupBlockedDialog instead, with the same choices.
                   <div
                     data-testid="conformance-oauth-prompt"
                     className="sticky top-0 z-10 mb-3 space-y-2 rounded-lg border border-border bg-popover px-4 py-3 text-sm shadow-sm"
                   >
                     <div className="flex items-center gap-2 text-muted-foreground">
-                      {oauth.popupBlocked ? (
-                        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                      ) : (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      )}
-                      {oauth.popupBlocked
-                        ? "Your browser blocked the sign-in window. Allow pop-ups for this site, or open the sign-in page."
-                        : "Waiting for browser authorization..."}
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      Waiting for browser authorization...
                     </div>
-                    {/* Always offer a way forward: a blocked popup used to
-                        leave the spinner alone until the session expired. */}
+                    {/* Always offer a way forward: a sign-in window closed
+                        early used to leave the spinner alone until the
+                        session expired. */}
                     <div className="flex gap-2">
                       {oauth.authorizationUrl ? (
                         <Button
                           size="sm"
-                          variant={oauth.popupBlocked ? "default" : "outline"}
+                          variant="outline"
                           onClick={openAuthorizationWindow}
                         >
                           Open sign-in page
@@ -608,7 +614,6 @@ export function ConformanceContent({
                   isRunning={isRunning}
                   progress={runProgress}
                   serverIconUrl={serverIconUrl}
-                  oauthNotScored={oauthNotScored}
                   blockedBySignIn={blockedBySignIn}
                   timedOut={timedOut}
                 />
@@ -636,7 +641,7 @@ export function ConformanceContent({
                   groups={suiteAdviceGroups({ protocol, apps, tasks, oauth })}
                 />
 
-                <div className="mt-3 overflow-hidden rounded-lg border border-border bg-popover">
+                <SuiteList version={sourceVersionOf(snapshot, versionPin)}>
                   <SuiteSection
                     key={`${runVersion}-protocol`}
                     title={SUITE_COPY.protocol.title}
@@ -691,7 +696,7 @@ export function ConformanceContent({
                     description={SUITE_COPY.tasks.description}
                     state={tasks}
                     score={tasksScore}
-                    catalog={TASKS_CATALOG}
+                    catalog={shownTasksCatalog(tasksUpdateCheck)}
                     hasResult={Boolean(tasks.result)}
                   >
                     {tasks.result ? (
@@ -750,13 +755,9 @@ export function ConformanceContent({
                       </div>
                     ) : null}
                   </SuiteSection>
-                </div>
+                </SuiteList>
               </div>
             )}
-
-            {/* The same slot before and after the first run, so starting it
-                keeps the sections mounted and their selections intact. */}
-            {readiness ? <div className="mt-6">{readiness}</div> : null}
           </div>
         )}
       </ConformanceTabPanel>

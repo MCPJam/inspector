@@ -149,6 +149,23 @@ describe("Claude forwarding refresh", () => {
       }),
     ).rejects.toThrow("Invalid forwarding configuration");
     expect(setMcpServers).toHaveBeenCalledOnce();
+    // A newer tool catalog is the one URL change a refresh takes, and the
+    // agent reconnects to the URL that names it.
+    const recataloged = `${servers.server.url}?mcpjam_tools=v2`;
+    await refresh({ server: { ...servers.server, url: recataloged } });
+    expect(setMcpServers).toHaveBeenLastCalledWith({
+      ...prior,
+      server: { ...servers.server, url: recataloged },
+    });
+    await expect(
+      refresh({
+        server: {
+          ...servers.server,
+          url: "https://forward.example/other?mcpjam_tools=v2",
+        },
+      }),
+    ).rejects.toThrow("Invalid forwarding configuration");
+    expect(setMcpServers).toHaveBeenCalledTimes(2);
     vi.stubEnv(
       "COMPUTERS_TERMINAL_TOKEN_SECRET",
       "test-forwarding-seal-key-with-32-characters",

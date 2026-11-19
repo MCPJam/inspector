@@ -17,6 +17,15 @@
  * a new server can stream it to an old client harmlessly.
  */
 
+export const COMPLETED_TURN_RETRY_TTL_MS = 30_000;
+export const MAX_PERSIST_RETRY_HANDLE_CHARS = 720_896;
+export const HOSTED_PERSIST_RETRY_PREFIX = "mjpr1.";
+export function isPersistRetryHandle(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_PERSIST_RETRY_HANDLE_CHARS &&
+    (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ||
+      (value.startsWith(HOSTED_PERSIST_RETRY_PREFIX) && /^mjpr1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(value)));
+}
+
 export const PERSIST_RECEIPT_PART_TYPE = "data-persist-receipt" as const;
 
 /**
@@ -60,6 +69,9 @@ export interface PersistReceiptData {
   currentVersion?: number;
   /** Why the save failed. Present for `failed`. */
   failureKind?: PersistReceiptFailureKind;
+  /** Opaque, short-lived authority to retry only the server-held completed write. */
+  retryHandle?: string;
+  retryProjectId?: string;
 }
 
 export interface PersistReceiptDataPart {
@@ -89,7 +101,7 @@ export function isPersistReceiptDataPart(
   if (!data || typeof data !== "object") {
     return false;
   }
-  const { outcome, chatSessionId, version, currentVersion } = data as Record<
+  const { outcome, chatSessionId, version, currentVersion, retryHandle, retryProjectId, turnId } = data as Record<
     string,
     unknown
   >;
@@ -103,6 +115,7 @@ export function isPersistReceiptDataPart(
     PERSIST_RECEIPT_OUTCOMES.has(outcome as PersistReceiptOutcome) &&
     typeof chatSessionId === "string" &&
     chatSessionId.length > 0 &&
+    (retryHandle === undefined || (outcome === "failed" && isPersistRetryHandle(retryHandle) && typeof turnId === "string" && turnId.length > 0 && typeof retryProjectId === "string" && retryProjectId.length > 0)) &&
     (version === undefined || Number.isFinite(version)) &&
     (currentVersion === undefined || Number.isFinite(currentVersion))
   );

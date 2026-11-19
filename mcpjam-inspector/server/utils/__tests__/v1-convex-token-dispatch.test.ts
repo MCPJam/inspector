@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { setRequestLocal } from "../../middleware/request-local.js";
 
 /**
  * WHICH BEARER a v1 route sends to Convex, decided by `authMethod`.
@@ -71,7 +72,12 @@ afterEach(() => {
 });
 
 /** Every method that must take the DELEGATED path. */
-const DELEGATED = ["workos_api_key", "slack_service", "discord_service"] as const;
+const DELEGATED = [
+  "workos_api_key",
+  "workos_agent",
+  "slack_service",
+  "discord_service",
+] as const;
 
 /**
  * Run both entry points against one seeded request and report which bearer
@@ -139,4 +145,21 @@ describe("v1 Convex bearer dispatch", () => {
     expect(thunk).toBe("caller-jwt");
     expect(mintFetch).not.toHaveBeenCalled();
   });
+});
+
+
+it("uses only the request-owned active resolver and never falls back after it refuses", async () => {
+  let reads = 0;
+  const app = new Hono().get("/", async (c) => {
+    setRequestLocal(c, "turnAuthorizationBearer", async () => {
+      if (++reads > 1) throw new Error("Active turn closed");
+      return "renewed-session-token";
+    });
+    expect(await getConvexBearerForRequest(c)).toBe("renewed-session-token");
+    await expect(getConvexBearerForRequest(c)).rejects.toThrow("Active turn closed");
+    return c.text("done");
+  }).get("/other", async (c) => c.text(await getConvexBearerForRequest(c)));
+  expect((await app.request("/", { headers: { authorization: "Bearer expired-original" } })).status).toBe(200);
+  expect(await (await app.request("/other", { headers: { authorization: "Bearer unrelated-token" } })).text()).toBe("unrelated-token");
+  expect(mintFetch).not.toHaveBeenCalled();
 });

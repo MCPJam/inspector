@@ -26,6 +26,9 @@ export const authHeaderLike = () =>
  */
 export const tokenLike = () => /\bBearer\s+[A-Za-z0-9._~\-+/=]+\b/gi;
 
+/** Credential-bearing protocol offered alongside the public local form protocol. */
+export const localSessionProtocolLike = () => /(?<![A-Za-z0-9])mcpjam-session\.[A-Za-z0-9_-]{24,}(?![A-Za-z0-9_-])/g;
+
 /**
  * `sk-` keys, including segmented ones (`sk-proj-…`, `sk-ant-api03-…`). The
  * 16-character floor on the last segment keeps hyphenated prose out.
@@ -96,6 +99,7 @@ function redactSegment(text: string, replacement: string): string {
   return text
     .replace(authHeaderLike(), `$1${replacement}`)
     .replace(tokenLike(), `Bearer ${replacement}`)
+    .replace(localSessionProtocolLike(), replacement)
     .replace(jwtLike(), replacement)
     .replace(urlBasicAuthLike(), `$1${replacement}@`)
     .replace(skKeyLike(), replacement)

@@ -57,6 +57,7 @@ vi.mock("e2b", () => ({
 }));
 
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
+import { runtimeReadAheadCommand } from "../runtime-read-ahead.js";
 import { logger } from "../../logger.js";
 import {
   createBridgeStderrRedactor,
@@ -84,6 +85,49 @@ afterEach(() => {
 
 const provider = () => createE2BHarnessSandboxProvider({ sandboxId: "sbx_1" });
 
+describe("optional runtime read-ahead", () => {
+  it("does not add a read-ahead call to a resumed session", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
+    await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).resumeSession!({ sessionId: "existing" });
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
+  });
+
+  it("keeps normal commands unchanged with the flag off", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", "0");
+    await createE2BHarnessSandboxProvider({ sandboxId: "sbx_1", harnessId: "codex" }).createSession();
+    expect(mocks.run).toHaveBeenCalledTimes(1);
+    expect(mocks.run).toHaveBeenCalledWith(harnessPnpmGuardCommand(), expect.any(Object));
+  });
+
+  it("overlaps the immutable hint with the guard without delivering session credentials", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("MCPJAM_HARNESS_READ_AHEAD", undefined);
+    let finishHint!: () => void;
+    const hint = new Promise<void>((resolve) => { finishHint = resolve; });
+    mocks.run.mockImplementation(async (command: string) => {
+      if (command === runtimeReadAheadCommand("codex")) await hint;
+      return { stdout: '{"outcome":"cached","bytes":0,"durationMs":1}' };
+    });
+    const delivered = vi.fn();
+    let ready = false;
+    const connecting = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1", harnessId: "codex", sessionEnv: { SECRET: "fixture-only" },
+      onSessionEnvUsed: delivered,
+    }).createSession().then(() => { ready = true; });
+    await vi.waitFor(() => expect(mocks.run).toHaveBeenCalledTimes(2));
+    expect(ready).toBe(false);
+    expect(delivered).not.toHaveBeenCalled();
+    expect(mocks.run).toHaveBeenCalledWith(runtimeReadAheadCommand("codex"), { timeoutMs: 5000 });
+    finishHint();
+    await connecting;
+    expect(ready).toBe(true);
+    expect(delivered).not.toHaveBeenCalled();
+  });
+});
+
 describe("broker-prepared connection", () => {
   it("selects the shortcut only after the caller records broker success", async () => {
     let ready = false;
@@ -107,6 +151,55 @@ describe("broker-prepared connection", () => {
 });
 
 describe("the pnpm guard", () => {
+  it("overlaps resume checks but exposes no session until both finish", async () => {
+    let finishGuard!: () => void;
+    let finishSockets!: () => void;
+    const guard = new Promise<void>((resolve) => { finishGuard = resolve; });
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      await (command.includes("pnpm") ? guard : sockets);
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let ready = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).then(() => { ready = true; });
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    finishGuard();
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    finishSockets();
+    await pending;
+    expect(ready).toBe(true);
+    expect(sandboxState.run).toHaveBeenCalledWith(
+      expect.stringContaining("ss -K"),
+      expect.objectContaining({ user: "root" }),
+    );
+  });
+
+  it("still refuses resume when the package guard fails", async () => {
+    let finishSockets!: () => void;
+    const sockets = new Promise<void>((resolve) => { finishSockets = resolve; });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command.includes("pnpm")) throw new FakeCommandExitError(1, "", "offline");
+      await sockets;
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const p = createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      proxyUrl: () => "https://example.convex.site",
+    });
+    let settled = false;
+    const pending = p.resumeSession!({ sessionId: "session" }).finally(() => { settled = true; });
+    const refusal = expect(pending).rejects.toThrow(/pnpm is missing/);
+    await vi.waitFor(() => expect(sandboxState.run).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+    finishSockets();
+    await refusal;
+  });
+
   it("explains itself when pnpm is missing and installing it fails", async () => {
     // This is the failure that cost a full debugging session: E2B's raw
     // `CommandExitError` carries only "exit status 1", so a turn that died
@@ -172,6 +265,15 @@ describe("the pnpm guard", () => {
     });
   });
 
+  it("leaves the guard to a caller that runs it fenced (a box preparation)", async () => {
+    await createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      skipPnpmGuard: true,
+    }).createSession();
+    expect(sandboxState.connect).toHaveBeenCalledTimes(1);
+    expect(sandboxState.run).not.toHaveBeenCalled();
+  });
+
   it("installs the template's pinned pnpm, never whatever is current", async () => {
     // A custom image or an old template has no pnpm, and the fallback used to
     // be a bare `npm install -g pnpm` — which is how pnpm 11 reached hosted
@@ -201,6 +303,27 @@ describe("abort plumbing", () => {
     expect(sandboxState.run).toHaveBeenCalledWith(
       expect.stringContaining("pnpm"),
       expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
+  it("trusts the E2B proxy CA while preserving explicit certificate configuration", async () => {
+    const session = await provider().createSession();
+    sandboxState.run.mockClear();
+    await session.run({ command: "node client.mjs" });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node client.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/usr/local/share/ca-certificates/e2b-ca.crt",
+      }) }),
+    );
+    await session.run({ command: "node custom.mjs", env: {
+      NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+    } });
+    expect(sandboxState.run).toHaveBeenLastCalledWith(
+      "node custom.mjs",
+      expect.objectContaining({ envs: expect.objectContaining({
+        NODE_EXTRA_CA_CERTS: "/etc/custom-ca.pem",
+      }) }),
     );
   });
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import type { Context } from "hono";
 import {
+  pluginBindingDigest,
   pluginHostBindingDigest,
   pluginServerBindingDigest,
 } from "../bindings";
@@ -694,14 +695,14 @@ describe("fresh request runtime admission", () => {
         ),
       ).resolves.toBe("modern-result");
       await expect(
-        live.runOwnedLegacy(
+        live.runOwnedForm(
           authorization,
           "operation",
           new AbortController().signal,
           run,
         ),
       ).rejects.toMatchObject({ code: "INSTANCE_DENIED" });
-      expect(() => live.handleLegacyForm({})).toThrow("INSTANCE_DENIED");
+      expect(() => live.handleOwnedForm({})).toThrow("INSTANCE_DENIED");
       await live.release();
     });
 
@@ -715,7 +716,7 @@ describe("fresh request runtime admission", () => {
       });
       const run = vi.fn(async () => "original");
       await expect(
-        live.runOwnedLegacy(
+        live.runOwnedForm(
           authorization,
           "operation",
           new AbortController().signal,
@@ -732,7 +733,7 @@ describe("fresh request runtime admission", () => {
         ),
       ).toThrow("CONTINUATION_PROTOCOL_DENIED");
       expect(f.fakeMrtr!.execute).not.toHaveBeenCalled();
-      await expect(live.handleLegacyForm({})).resolves.toMatchObject({
+      await expect(live.handleOwnedForm({})).resolves.toMatchObject({
         tag: expect.stringMatching(/^forms-/),
       });
       await live.release();
@@ -1321,6 +1322,7 @@ describe("a pending form and the client's current capability toggles", () => {
     host = {
       ...config,
       hostConfigId: crypto.randomUUID(),
+      configHash: pluginBindingDigest(capabilities),
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: version,
@@ -1446,7 +1448,7 @@ describe("a pending form and the client's current capability toggles", () => {
         },
         origin,
       );
-      const { source, signal } = pluginFormSources.get(form.token, owner, {
+      const { source, signal } = pluginFormSources.get(form.token, { ...owner, subject: "subject" }, {
         kind: "legacy",
         id: rendezvousId,
         round: 0,
@@ -1629,7 +1631,7 @@ describe("a pending form and the client's current capability toggles", () => {
       },
       requestedSchema: { type: "object", properties: {} },
       expiresAt: Date.now() + 60_000,
-    });
+    }, "subject");
     const live = await runtime(expected);
     await live.resolve("app", new AbortController().signal);
     const ended = live.resumeMrtr(
@@ -1649,7 +1651,7 @@ describe("a pending form and the client's current capability toggles", () => {
     });
     // Its form source closed with it: no later answer can find it.
     expect(() =>
-      pluginFormSources.get(bound.token, owner, {
+      pluginFormSources.get(bound.token, { ...owner, subject: "subject" }, {
         kind: "mrtr",
         id: "continuation",
         round: 1,

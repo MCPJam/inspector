@@ -1,6 +1,6 @@
 /**
  * Environment for the inspector's MCP Events services (contracts C5–C7,
- * `docs/plans/mcp-events-contracts.md`).
+ * `internal-docs/plans/mcp-events-contracts.md`).
  *
  * Every secret here is read at call time, never cached at import, so a test
  * (or a rotated deployment secret) takes effect without a module reload. None

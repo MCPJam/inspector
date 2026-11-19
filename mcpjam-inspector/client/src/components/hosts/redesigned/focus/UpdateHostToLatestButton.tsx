@@ -2,23 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
-  cloneHostTemplateInput,
   hostConfigInputsEqual,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
 import { toast } from "@/lib/toast";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
-import type { ThemeMode } from "@/types/preferences/theme";
+import { addHostTemplateDefaults } from "./host-template-defaults";
 
 interface UpdateHostToLatestButtonProps {
   hostId?: string;
   draft: HostConfigInputV2;
   savedDraft?: HostConfigInputV2;
   hostDisplayName: string;
-  savedHostDisplayName?: string;
-  onHostDisplayNameChange: (value: string) => void;
-  themeMode: ThemeMode;
   onDraftChange: (
     updater: (prev: HostConfigInputV2) => HostConfigInputV2
   ) => void;
@@ -28,60 +24,19 @@ interface UpdateHostToLatestButtonProps {
   ) => Promise<boolean>;
   hostLoaded: boolean;
   saveInFlight: boolean;
-  /**
-   * Keep the client's own model and selection instead of the template's: set
-   * while the organization requires its own keys, whose clients the template's
-   * hosted model would break.
-   */
-  keepModel?: boolean;
 }
 
 const UPDATE_TOAST_ID = "client-update-available";
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function applyCatalogTemplateToDraft(
-  template: unknown,
-  prev: HostConfigInputV2,
-  themeMode: ThemeMode,
-  keepModel: boolean
-): HostConfigInputV2 {
-  const next = cloneHostTemplateInput(template, { themeMode });
-  const { modelSelection: _templateSelection, ...rest } = next;
-  return {
-    ...(keepModel
-      ? {
-          ...rest,
-          modelId: prev.modelId,
-          ...(prev.modelSelection
-            ? { modelSelection: prev.modelSelection }
-            : {}),
-        }
-      : next),
-    serverIds: [...prev.serverIds],
-    optionalServerIds: [...prev.optionalServerIds],
-    serverConnectionOverrides:
-      prev.serverConnectionOverrides === undefined
-        ? undefined
-        : cloneJson(prev.serverConnectionOverrides),
-  };
-}
 
 export function UpdateHostToLatestButton({
   hostId,
   draft,
   savedDraft = draft,
   hostDisplayName,
-  savedHostDisplayName = hostDisplayName,
-  onHostDisplayNameChange,
-  themeMode,
   onDraftChange,
   onSaveLatest,
   hostLoaded,
   saveInFlight,
-  keepModel = false,
 }: UpdateHostToLatestButtonProps) {
   const [isUpdating, setIsUpdating] = useState(false);
   const catalogState = useHostCatalog();
@@ -104,33 +59,21 @@ export function UpdateHostToLatestButton({
   const latestDraft =
     catalogTemplate === undefined
       ? undefined
-      : applyCatalogTemplateToDraft(
-          catalogTemplate,
-          draft,
-          themeMode,
-          keepModel
-        );
+      : addHostTemplateDefaults(catalogTemplate, draft);
   const latestSavedDraft =
     savedCatalogTemplate === undefined
       ? undefined
-      : applyCatalogTemplateToDraft(
-          savedCatalogTemplate,
-          savedDraft,
-          themeMode,
-          keepModel
-        );
+      : addHostTemplateDefaults(savedCatalogTemplate, savedDraft);
   const latestDisplayName = catalogHost?.label;
   const latestSavedDisplayName = savedCatalogHost?.label;
 
   const alreadyCurrent =
     latestDraft !== undefined &&
     latestDisplayName !== undefined &&
-    hostDisplayName === latestDisplayName &&
     hostConfigInputsEqual(draft, latestDraft);
   const savedAlreadyCurrent =
     latestSavedDraft !== undefined &&
     latestSavedDisplayName !== undefined &&
-    savedHostDisplayName === latestSavedDisplayName &&
     hostConfigInputsEqual(savedDraft, latestSavedDraft);
   const updateAvailable =
     catalogState.status === "live" &&
@@ -164,7 +107,7 @@ export function UpdateHostToLatestButton({
       : latestDraft === undefined
       ? "No update available for this host"
       : alreadyCurrent
-      ? "You're up to date"
+      ? "No new defaults to add"
       : "Update to latest";
 
   const handleClick = async () => {
@@ -175,24 +118,18 @@ export function UpdateHostToLatestButton({
     ) {
       return;
     }
-    const nextDraft = applyCatalogTemplateToDraft(
-      catalogTemplate,
-      draft,
-      themeMode,
-      keepModel
-    );
+    const nextDraft = addHostTemplateDefaults(catalogTemplate, draft);
     onDraftChange(() => nextDraft);
-    onHostDisplayNameChange(latestDisplayName);
     setIsUpdating(true);
     let saved = false;
     try {
-      saved = await onSaveLatest(latestDisplayName, nextDraft);
+      saved = await onSaveLatest(hostDisplayName, nextDraft);
     } finally {
       setIsUpdating(false);
     }
     if (saved) {
       toast.dismiss(UPDATE_TOAST_ID);
-      toast.success("Updated to latest");
+      toast.success("Client defaults updated");
     }
   };
 
@@ -226,7 +163,7 @@ export function UpdateHostToLatestButton({
 
     toast.info("Client update available", {
       id: UPDATE_TOAST_ID,
-      description: `${latestDisplayName} has a newer configuration.`,
+      description: `Add new ${latestDisplayName} defaults and keep your saved settings.`,
       duration: 10_000,
       action: {
         label: "Update to latest",

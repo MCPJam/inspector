@@ -8,6 +8,8 @@ import {
   captureEvalReportingFailure,
   captureException,
 } from "../src/sentry";
+import { rebuildSentryEvent } from "../src/internal/telemetry";
+import { readSdkVersion } from "../src/sdk-version";
 
 type MockSentryScope = {
   addBreadcrumb: jest.Mock;
@@ -140,6 +142,18 @@ describe("sdk sentry wrapper", () => {
     expect(module.init).not.toHaveBeenCalled();
     expect(module.NodeClient).toHaveBeenCalledTimes(1);
     expect(client.init).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a release Sentry accepts and the event boundary keeps", async () => {
+    const { module } = createMockSentryModule();
+    __setSentryModuleLoaderForTests(jest.fn().mockResolvedValue(module));
+
+    await captureException(new Error("ignored"));
+
+    // Sentry drops a release containing "/" from the event at ingest.
+    const { release } = module.NodeClient.mock.calls[0][0];
+    expect(release).toBe(`mcpjam-sdk@${readSdkVersion()}`);
+    expect(rebuildSentryEvent({}, { release })).toMatchObject({ release });
   });
 
   it("does not initialize when MCPJAM_TELEMETRY_DISABLED is set", async () => {

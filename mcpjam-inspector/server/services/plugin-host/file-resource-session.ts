@@ -96,8 +96,16 @@ export function createPluginFileResourceSession(options: {
       throw new ResourceGrantError("RESOURCE_DENIED");
     assertLive();
   };
+  let writable = !adapter.supportsConditionalWrite;
   const ports: BoundResourceAdapter = Object.freeze({
     read: adapter.read.bind(adapter),
+    ...(adapter.supportsConditionalWrite
+      ? { supportsConditionalWrite: async (signal: AbortSignal) => {
+          writable = false;
+          writable = await adapter.supportsConditionalWrite!(signal);
+          return writable;
+        } }
+      : {}),
     ...(authorizeWrite && adapter.conditionalWrite
       ? { conditionalWrite: adapter.conditionalWrite.bind(adapter) }
       : {}),
@@ -183,7 +191,7 @@ export function createPluginFileResourceSession(options: {
       });
     },
     capabilities: Object.freeze({
-      write: !!ports.conditionalWrite,
+      get write() { return !!ports.conditionalWrite && writable; },
       subscribe: !!ports.watch,
     }),
     read: (params: unknown, signal?: AbortSignal) => {

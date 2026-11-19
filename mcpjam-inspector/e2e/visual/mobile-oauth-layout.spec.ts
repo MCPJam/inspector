@@ -334,8 +334,10 @@ for (const theme of ["light", "dark"])
           .getByRole("button", { name: "Continue", exact: true })
           .click();
         await page.getByRole("tab", { name: "Raw", exact: true }).click();
+        // Not "503": the fake server's random port can contain it, and the
+        // hidden server URL would match first.
         await expect(
-          page.getByText(/503|Fixture unavailable|Local fixture error/).first(),
+          page.getByText(/Fixture unavailable|Local fixture error/).first(),
         ).toBeVisible();
         await inside(
           page,

@@ -198,6 +198,39 @@ describe("parsePluginBundleFromFiles", () => {
   });
 });
 
+describe("OpenAI-compatible bundle imports", () => {
+  it("accepts Codex manifests with matching folder and ZIP identities without weakening strict parsing", async () => {
+    const files = [
+      textFile(
+        ".codex-plugin/plugin.json",
+        JSON.stringify({
+          name: "cad-fixture",
+          version: "1.0.0",
+          skills: "./skills/",
+        }),
+      ),
+      textFile(
+        "skills/onboarding/SKILL.md",
+        "---\nname: onboarding\ndescription: Set up CAD.\n---\nChoose units.\n",
+      ),
+    ];
+    const zip = await buildPluginZip(files);
+    await expectIssueCode(parsePluginBundleFromZip(zip), "MANIFEST_MISSING");
+    const options = { profile: "openai-compatible" } as const;
+    const folderParsed = await parsePluginBundleFromFiles(files, options);
+    const zipParsed = await parsePluginBundleFromZip(zip, options);
+    expect(zipParsed.interpretation).toMatchObject({
+      profile: "openai-compatible",
+      layout: "codex",
+      manifestPath: ".codex-plugin/plugin.json",
+    });
+    expect(zipParsed.skills).toHaveLength(1);
+    expect(zipParsed.bundleHash).toBe(folderParsed.bundleHash);
+    expect(zipParsed.manifestHash).toBe(folderParsed.manifestHash);
+    expect(zipParsed.executionDigest).toBe(folderParsed.executionDigest);
+  });
+});
+
 describe("folder / ZIP bundle hash parity", () => {
   const files = [
     MANIFEST,

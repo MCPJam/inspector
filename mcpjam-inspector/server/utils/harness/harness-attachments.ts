@@ -3,13 +3,12 @@
  * session's own disk.
  *
  * A harness turn hands its adapter ONE user message (the last one,
- * `_resolvePromptTurnInput`), and no adapter can take a file part: Claude Code
- * throws on any non-text part, the ACP adapter (Cursor) throws on image and
- * file parts, and MCPJam's Codex app-server adapter drops them without a word.
- * So on every harness turn the file parts come OUT of that message before
+ * `_resolvePromptTurnInput`). File parts come OUT of that message before
  * `stream()`, their bytes are written into the session through the sandbox
  * file API, and a text note naming each saved path rides the prompt instead.
- * The agent opens them with its own file tools.
+ * Adapters that declare `promptImageInput` also receive resized image parts
+ * on the prompt (`harness-prompt-images.ts`); the note marks those
+ * `(attached)` so the agent does not open them again with file tools.
  *
  * Where they land:
  *   - hosted (the conversation's throwaway box, or a persistent computer):
@@ -48,6 +47,10 @@ export const HARNESS_ATTACHMENTS_MAX_TOTAL_BYTES = 30 * 1024 * 1024;
 /** Longest cleaned filename kept (the uuid prefix comes on top). */
 const MAX_NAME_LENGTH = 120;
 
+export type HarnessDecodedAttachment =
+  | { bytes: Uint8Array }
+  | { error: string };
+
 export interface HarnessPromptAttachment {
   /** The user's filename, cleaned for display: no path, no control chars. */
   name: string;
@@ -55,6 +58,10 @@ export interface HarnessPromptAttachment {
   fileName: string;
   /** The part's raw `data` (data URL, base64 or bytes), decoded at write. */
   data: unknown;
+  mediaType?: string;
+  sourceType?: "file" | "image";
+  /** Filled by `decodeHarnessAttachments` so save and resize share one decode. */
+  decoded?: HarnessDecodedAttachment;
 }
 
 export type HarnessAttachmentOutcome =
@@ -155,10 +162,19 @@ export function takeHarnessPromptAttachments(messages: ModelMessage[]): {
         record.filename,
         fallbackName(record.mediaType, attachments.length),
       );
+      const sourceType = record.type === "image" ? "image" : "file";
+      const mediaType =
+        typeof record.mediaType === "string" && record.mediaType
+          ? record.mediaType
+          : sourceType === "image"
+            ? "image/png"
+            : undefined;
       attachments.push({
         name,
         fileName: safeHarnessAttachmentName(name),
         data: record.type === "image" ? record.image : record.data,
+        sourceType,
+        ...(mediaType ? { mediaType } : {}),
       });
       continue;
     }
@@ -173,7 +189,7 @@ export function takeHarnessPromptAttachments(messages: ModelMessage[]): {
   return { messages: next, attachments };
 }
 
-type DecodedAttachment = { bytes: Uint8Array } | { error: string };
+type DecodedAttachment = HarnessDecodedAttachment;
 
 const MB = 1024 * 1024;
 
@@ -223,6 +239,13 @@ function decodeDataUrl(url: string, remaining: number): DecodedAttachment {
  * URL is NOT fetched: the server reaching out to a user-supplied address on
  * the user's behalf is a different feature, so it is reported instead.
  */
+export function decodeHarnessAttachmentData(
+  data: unknown,
+  remaining: number,
+): DecodedAttachment {
+  return decodeAttachmentData(data, remaining);
+}
+
 function decodeAttachmentData(
   data: unknown,
   remaining: number,
@@ -265,6 +288,37 @@ function decodeAttachmentData(
   return { error: "it was not readable" };
 }
 
+/**
+ * Decode each attachment once so save and native-image prepare share the
+ * bytes. Per-file and count caps apply here; the 30 MB total is a write
+ * budget in `saveHarnessAttachments`. Charging it at decode would skip a
+ * later file after an earlier one decoded even when that write never
+ * landed, and native-image prepare runs before save.
+ */
+export function decodeHarnessAttachments(
+  attachments: HarnessPromptAttachment[],
+): void {
+  for (const [index, attachment] of attachments.entries()) {
+    if (index >= HARNESS_ATTACHMENTS_MAX_FILES) {
+      attachment.decoded = {
+        error: `over the ${HARNESS_ATTACHMENTS_MAX_FILES}-file limit`,
+      };
+      continue;
+    }
+    attachment.decoded = decodeAttachmentData(
+      attachment.data,
+      HARNESS_ATTACHMENTS_MAX_TOTAL_BYTES,
+    );
+  }
+}
+
+/** Drop decoded buffers once save and native-image prepare have both finished. */
+export function releaseHarnessAttachmentDecodes(
+  attachments: HarnessPromptAttachment[],
+): void {
+  for (const attachment of attachments) attachment.decoded = undefined;
+}
+
 /** A native Windows directory keeps its own separator in the note. */
 function joinAgentPath(dir: string, fileName: string): string {
   return dir.includes("\\") && !dir.includes("/")
@@ -300,12 +354,18 @@ export async function saveHarnessAttachments(args: {
       });
       continue;
     }
-    const decoded = decodeAttachmentData(attachment.data, remaining);
+    const decoded =
+      attachment.decoded ?? decodeAttachmentData(attachment.data, remaining);
     if ("error" in decoded) {
       outcomes.push({ name, error: decoded.error });
       continue;
     }
     const { bytes } = decoded;
+    const limit = overLimit(bytes.byteLength, remaining);
+    if (limit) {
+      outcomes.push({ name, error: limit });
+      continue;
+    }
     try {
       if (args.reserveBytes && !(await args.reserveBytes(bytes.byteLength))) {
         outcomes.push({ name, error: "over this computer's storage quota" });
@@ -371,22 +431,40 @@ export function unsavedHarnessAttachments(
  * verbatim, but it names the agent's file tools rather than `bash`: Claude
  * Code's `Read` opens images and PDFs natively.
  */
+export type HarnessPromptImageNote =
+  | { status: "attached" }
+  | { status: "skipped"; reason: string }
+  | { status: "not-image" };
+
+function outcomeLine(outcome: HarnessAttachmentOutcome): string {
+  return "path" in outcome
+    ? `- ${outcome.name}: ${outcome.path}`
+    : `- ${outcome.name}: couldn't be saved (${outcome.error})`;
+}
+
 export function buildHarnessAttachmentNote(
   outcomes: HarnessAttachmentOutcome[],
+  images?: readonly HarnessPromptImageNote[],
 ): string {
   if (outcomes.length === 0) return "";
+  const anyAttached = images?.some((image) => image.status === "attached");
   const anySaved = outcomes.some((o) => "path" in o);
-  const lines = outcomes.map((o) =>
-    "path" in o
-      ? `- ${o.name}: ${o.path}`
-      : `- ${o.name}: couldn't be saved (${o.error})`,
-  );
-  return [
-    anySaved
+  const header = anyAttached
+    ? "[Attachments uploaded to the computer. Images marked (attached) are already in this message; use your file tools for the rest]"
+    : anySaved
       ? "[Attachments uploaded to the computer: use your file tools to read them]"
-      : "[Attachments the user sent that couldn't be saved to the computer]",
-    ...lines,
-  ].join("\n");
+      : "[Attachments the user sent that couldn't be saved to the computer]";
+  const lines = outcomes.map((outcome, index) => {
+    const image = images?.[index];
+    if (image?.status === "attached") {
+      return `${outcomeLine(outcome)} (attached)`;
+    }
+    if (image?.status === "skipped") {
+      return `${outcomeLine(outcome)} (not attached: ${image.reason})`;
+    }
+    return outcomeLine(outcome);
+  });
+  return [header, ...lines].join("\n");
 }
 
 /**

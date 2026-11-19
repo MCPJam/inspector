@@ -71,6 +71,7 @@ import {
   clearAuthChallengeCards,
   presentAuthChallenge,
 } from "@/lib/auth-challenge-lifecycle";
+import { passthroughChallengeErrorText } from "@/lib/auth-challenge-error";
 import {
   AuthChallengeCards,
   authChallengeConnectMessage,
@@ -741,6 +742,8 @@ export function ToolsTab({
         : {}),
     }).then((presentation) => {
       if (presentation.kind === "notice") setAuthNotice(presentation.message);
+      const refusal = passthroughChallengeErrorText(presentation, signal);
+      if (refusal) setError(refusal);
     });
     return true;
   };
@@ -945,8 +948,15 @@ export function ToolsTab({
         },
       );
 
-      // A 401 sign-in challenge (a 403 above is a step-up instead).
-      presentToolAuthChallenge(response, toolName, replayDescriptor);
+      // A 401 sign-in challenge (a 403 above is a step-up instead). The card
+      // (or the notice explaining why there is none) is the whole message:
+      // hosted answers a sign-in request as 403 UPSTREAM_AUTH_FAILED, which
+      // the describer would render as "Forbidden: you authenticated
+      // successfully" for a user who is signed out.
+      if (presentToolAuthChallenge(response, toolName, replayDescriptor)) {
+        setError("");
+        setNormalizedError(null);
+      }
     }
   };
 

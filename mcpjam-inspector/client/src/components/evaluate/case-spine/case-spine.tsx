@@ -100,6 +100,7 @@ import {
 } from "./case-spine-model";
 import { SuiteRowsDisclosure } from "../case-scorecard/suite-rows-disclosure";
 import { withCaseJudgeSkipped } from "../case-scorecard/case-scorecard-model";
+import { ToolErrorSwitch } from "../tool-error-switch";
 
 export type CaseSpineProps = {
   onDraftValidityChange?: (invalid: boolean) => void;
@@ -133,6 +134,9 @@ export type CaseSpineProps = {
   ) => void;
   suiteJudgeConfig?: EvalJudgeConfig;
   suiteJudgeRubric?: EvalJudgeRubric;
+  /** Whether a tool error fails this case; the switch shows with a handler. */
+  failOnToolError?: boolean;
+  onFailOnToolErrorChange?: (next: boolean) => void;
   capabilities?: SuiteCapabilities | null;
   onOpenSuiteSettings?: () => void;
   evalValidationBorderClass?: string;
@@ -192,6 +196,8 @@ export function CaseSpine({
   recordEntryPrimary = false,
   suiteJudgeConfig,
   suiteJudgeRubric,
+  failOnToolError = true,
+  onFailOnToolErrorChange,
   capabilities,
   evalValidationBorderClass,
   autoFocusPrompt,
@@ -615,7 +621,7 @@ export function CaseSpine({
         >
           <EvalAddDrawer
             allowRouteChecks={card.route.route?.kind !== "locked"}
-            className={`${filled && !compact ? "h-12" : "h-9"} w-full rounded-none border-0 border-solid bg-card text-[13px] font-medium text-secondary-foreground shadow-none`}
+            className={`${filled && !compact ? "h-12" : "h-9"} w-full rounded-none border-0 border-solid bg-card text-[13px] font-medium text-card-foreground shadow-none`}
             triggerLabel="Add assertion or action"
             onPromptFocus={() => addedPromptRef.current?.focus()}
             authorableKinds={authorableKinds}
@@ -1143,7 +1149,7 @@ export function CaseSpine({
               id="spine-expected-outcome-help"
               className="text-sm leading-5 text-secondary-foreground dark:text-muted-foreground"
             >
-              Describe what success looks like. The LLM as a judge checks
+              Describe what success looks like. An AI judge checks
               whether this goal was met.
             </p>
             <Textarea
@@ -1183,6 +1189,12 @@ export function CaseSpine({
                   Skip the judge for this case
                 </Label>
               </div>
+            ) : null}
+            {!readOnly && onFailOnToolErrorChange ? (
+              <ToolErrorSwitch
+                checked={failOnToolError}
+                onCheckedChange={onFailOnToolErrorChange}
+              />
             ) : null}
           </section>
 

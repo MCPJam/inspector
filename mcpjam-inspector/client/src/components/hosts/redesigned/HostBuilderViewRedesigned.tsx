@@ -386,6 +386,7 @@ export function HostBuilderViewRedesigned({
         draft,
         savedSnapshotId,
         isDirty,
+        hostId,
         projectServers: availableServersForCanvas,
         prev: prevHostSnapshot ?? undefined,
         computersEnabled,
@@ -401,6 +402,7 @@ export function HostBuilderViewRedesigned({
     draftConfig,
     savedSnapshotId,
     isDirty,
+    hostId,
     availableServersForCanvas,
     attention,
     prevHostSnapshot,
@@ -751,9 +753,7 @@ export function HostBuilderViewRedesigned({
                     }
                     focusSubKey={focusState.focusSubKey}
                     hostDisplayName={draftName}
-                    savedHostDisplayName={host?.name ?? draftName}
                     onHostDisplayNameChange={setDraftName}
-                    themeMode={themeMode}
                     draft={draftConfig}
                     savedDraft={savedConfig ?? draftConfig}
                     onDraftChange={(updater) =>

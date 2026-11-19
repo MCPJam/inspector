@@ -85,6 +85,21 @@ describe("native discovery admission", () => {
       required: true, harnessId, route: { ...route, ...version, delivery: "host-tools" },
     })).not.toThrow();
   });
+  it("refuses Claude Code 2.1.290 discovery until live HARN-2 requalification", () => {
+    expect(() =>
+      assertNativeDiscovery({
+        required: true,
+        harnessId: "claude-code",
+        route: {
+          ...route,
+          runtimeVersion: "2.1.290",
+          modelId: "anthropic/claude-haiku-4.5",
+          adapterVersion: "tool-search-auto-v1",
+          delivery: "host-tools",
+        },
+      }),
+    ).toThrow("not qualified");
+  });
   it("refuses a missing or emulated route", () => {
     expect(() => assertNativeDiscovery({ required: true })).toThrow(
       "requires a qualified harness",
@@ -110,5 +125,22 @@ describe("conversation discovery requirement", () => {
     expect(() => enforceNativeDiscoverySessionPin(undefined, true)).toThrow(
       "requires a qualified harness",
     );
+  });
+
+  it("names the planner's reasons in the refusal, and only when it has some", () => {
+    const refusal = (reasons?: string[]) => {
+      try {
+        assertNativeDiscovery({ required: true, reasons });
+      } catch (error) {
+        return (error as { details?: unknown }).details;
+      }
+      throw new Error("expected a refusal");
+    };
+    expect(refusal(["forwarding flag off"])).toEqual({
+      reason: "native_discovery_unqualified",
+      reasons: ["forwarding flag off"],
+    });
+    expect(refusal([])).toEqual({ reason: "native_discovery_unqualified" });
+    expect(refusal()).toEqual({ reason: "native_discovery_unqualified" });
   });
 });

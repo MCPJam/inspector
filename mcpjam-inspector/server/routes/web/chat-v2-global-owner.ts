@@ -23,6 +23,7 @@ export function globalOwnerAdmission(
     actorId: chat.actorId,
     projectId: chat.projectId,
     workspaceId: global.workspaceId,
+    ...(chat.getAuthorization ? { getAuthorization: chat.getAuthorization } : {}),
     revalidate: (options?: Parameters<PluginWorkspaceAdmission["revalidate"]>[0]) =>
       chat.revalidate(options),
   });

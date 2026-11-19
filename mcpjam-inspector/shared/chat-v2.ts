@@ -47,6 +47,8 @@ export interface ChatV2Request {
    * deliberately different.
    */
   environmentOverrides?: EnvironmentOverrides;
+  /** Optional automatic plugin additions; never grants permission to execute. */
+  autoContributedPluginServerIds?: string[];
   chatSessionId?: string;
   /** Bind browser discovery and execution to this chatSessionId. */
   browserScope?: "conversation";
@@ -95,15 +97,6 @@ export interface ChatV2Request {
    * hosted web route gets real Ids from a separate request schema.
    */
   selectedServerIds?: string[];
-  /**
-   * Local inspector must own the tool loop for this turn because at least one
-   * selected MCP server is reachable only from this machine (stdio, localhost,
-   * or private IP HTTP). For org BYOK, the server forces the cloud runtime so
-   * the model call is proxied through Convex (`/stream/org`) — the org key
-   * stays in Convex and is never sent to the inspector — while the tool loop
-   * still runs locally against the local MCP connection.
-   */
-  localMcpRuntimeRequired?: boolean;
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
@@ -209,6 +202,8 @@ export interface ChatV2Request {
  * registry).
  */
 export interface AppToolSnapshotEntry {
+  /** Exact bridge generation; older clients omit it and cannot use native app tools. */
+  bridgeId?: string;
   alias: string;
   appName: string;
   appVersion?: string;

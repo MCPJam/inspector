@@ -1,3 +1,4 @@
+import { isMissingInputCheck } from "../../src/conformance-input.js";
 /**
  * The Tasks conformance runner driven END TO END against the raw extension
  * fixture over a real socket — no mocked `withEphemeralClient`, no mocked
@@ -352,18 +353,20 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.discovery.createdTaskId).toBeUndefined();
   });
 
-  it("reports INCOMPLETE, naming the tool, when toolName is not listed by the server", async () => {
-    // A typo must not silently skip six checks either.
+  it("shows an unlisted toolName as a setup gap, naming the tool", async () => {
+    // A typo must not silently skip six checks either: each one says so, and
+    // since the typo is the caller's, it costs the server nothing.
     const fixture = await serve();
     const result = await runAgainst(fixture, { toolName: "task_toool" });
 
-    expect(result.outcome).toBe("incomplete");
-    expect(result.passed).toBe(false);
-    expect(unrunChecks(result)).toHaveLength(11);
-    expect(result.incompleteReason).toContain('"task_toool"');
-    expect(result.incompleteReason).toContain("is not listed by this server");
+    const unrun = unrunChecks(result);
+    expect(unrun).toHaveLength(11);
+    expect(unrun.every(isMissingInputCheck)).toBe(true);
+    const reason = unrun[0]!.error?.message ?? "";
+    expect(reason).toContain('"task_toool"');
+    expect(reason).toContain("is not listed by this server");
     // …and it points at what the server DOES list.
-    expect(result.incompleteReason).toContain(TASK_TOOL_NAME);
+    expect(reason).toContain(TASK_TOOL_NAME);
     // No tools/call was attempted with a name the server never advertised.
     expect(
       fixture.received.filter((entry) => entry.method === "tools/call")

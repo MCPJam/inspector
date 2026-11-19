@@ -32,7 +32,9 @@ import {
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
+  type BrowserCommandSecret,
 } from "../protocol";
+import { isWebOrigin } from "./secret-substitution";
 import type {
   BrowserLedgerActor,
   BrowserLedgerRow,
@@ -46,6 +48,11 @@ import type {
   ViewportInputEvent,
 } from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
+import {
+  parsePreviewGrant,
+  WORKSPACE_PREVIEW_FEATURE,
+  type WorkspacePreviewRelay,
+} from "./workspace-preview";
 import {
   DEFAULT_RECORD_FPS,
   MAX_RECORD_FPS,
@@ -144,13 +151,26 @@ interface CommandRequestBody {
    * Values for the command's `{{secret:NAME}}` placeholders. Outside `command`
    * so no ledger, trace or mirror writer is ever handed them.
    */
-  secrets?: Array<{ name: string; value: string }>;
+  secrets?: BrowserCommandSecret[];
 }
 
 /** How many secrets one command may carry. */
 const MAX_COMMAND_SECRETS = 32;
+/** How many origins one secret may be typed on. */
+const MAX_SECRET_ORIGINS = 8;
 /** The backend's own charset for a secret name. */
 const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/**
+ * A secret's `origins`, keeping only exact web origins. Anything that is not a
+ * list still limits the secret, to no page: dropping it would lift the limit.
+ */
+function readSecretOrigins(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, MAX_SECRET_ORIGINS)
+    .filter((origin): origin is string => typeof origin === "string" && isWebOrigin(origin));
+}
 
 /**
  * Read the `secrets` sibling. Malformed entries are dropped, not refused, so
@@ -158,15 +178,16 @@ const SECRET_NAME = /^[A-Z_][A-Z0-9_]*$/;
  */
 function readCommandSecrets(
   raw: unknown,
-): Array<{ name: string; value: string }> | undefined {
+): BrowserCommandSecret[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const secrets: Array<{ name: string; value: string }> = [];
+  const secrets: BrowserCommandSecret[] = [];
   for (const entry of raw.slice(0, MAX_COMMAND_SECRETS)) {
     if (typeof entry !== "object" || entry === null) continue;
-    const { name, value } = entry as { name?: unknown; value?: unknown };
+    const { name, value, origins } = entry as Record<string, unknown>;
     if (typeof name !== "string" || !SECRET_NAME.test(name)) continue;
     if (typeof value !== "string" || value.length === 0) continue;
-    secrets.push({ name, value });
+    const limit = origins === undefined ? {} : { origins: readSecretOrigins(origins) };
+    secrets.push({ name, value, ...limit });
   }
   return secrets.length > 0 ? secrets : undefined;
 }
@@ -273,6 +294,8 @@ export interface BrowserdHandlerDeps {
   recorder?: Pick<VideoRecorder, "start" | "stop" | "status">;
   /** Export the persistent profile while the queue is drained. */
   profileExport?: () => Promise<Uint8Array>;
+  /** Serves workspace ports on this box's loopback; hosted daemons only. */
+  preview?: Pick<WorkspacePreviewRelay, "grant">;
 }
 
 /**
@@ -307,6 +330,7 @@ export class BrowserdRequestHandler {
   private readonly captureTypedText: boolean;
   private readonly recorder: BrowserdHandlerDeps["recorder"];
   private readonly profileExport: BrowserdHandlerDeps["profileExport"];
+  private readonly preview: BrowserdHandlerDeps["preview"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -360,6 +384,7 @@ export class BrowserdRequestHandler {
     this.features = [
       "sharp-stream-v1",
       ...new Set([...(deps.features ?? []), ...BROWSERD_WEBMCP_FEATURES]),
+      ...(deps.preview ? [WORKSPACE_PREVIEW_FEATURE] : []),
     ];
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
@@ -369,6 +394,7 @@ export class BrowserdRequestHandler {
     this.captureTypedText = deps.captureTypedText === true;
     this.recorder = deps.recorder;
     this.profileExport = deps.profileExport;
+    this.preview = deps.preview;
   }
 
   /**
@@ -720,6 +746,24 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleViewport(req);
+    }
+
+    // A workspace port on this box's loopback, so the page keeps its literal
+    // `http://localhost:<port>` origin. Outside the command queue: it changes
+    // where a later navigation lands, not what the browser shows.
+    if (req.path === "/v1/preview" && this.preview) {
+      if (req.method !== "POST") return { status: 405, headers: { allow: "POST" } };
+      let grant;
+      try {
+        grant = parsePreviewGrant(JSON.parse(req.body || "null"));
+      } catch {
+        grant = undefined;
+      }
+      if (!grant) return { status: 400, body: { error: "invalid_grant" } };
+      const result = await this.preview.grant(grant);
+      return result.ok
+        ? { status: 200, body: { ok: true, port: result.port } }
+        : { status: 409, body: { error: result.error } };
     }
 
     return { status: 404 };

@@ -125,15 +125,12 @@ function FrozenWidgetScreenshot({
   toolName: string;
 }) {
   return (
-    <div className="flex flex-col gap-1.5" data-testid="frozen-widget-replay">
+    <div className="flex flex-col" data-testid="frozen-widget-replay">
       <ArtifactImage
         src={url}
         alt={`${toolName} recorded render`}
         className="w-full rounded-md border border-border/60 bg-background"
       />
-      <span className="text-[11px] text-muted-foreground">
-        Recorded render — this run's captured widget (not re-rendered live)
-      </span>
     </div>
   );
 }
@@ -666,6 +663,7 @@ function LivePartSwitch({
             uiType={uiType}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
           />
@@ -678,8 +676,17 @@ function LivePartSwitch({
     // widget eligibility: a completed run's widget can fail host-caps / server /
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
-    if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
-      const isFrozenWidget = !!renderOverride?.frozenScreenshotUrl;
+    // An eval replay that prefers the live App keeps its picture as a backup
+    // for when the App can't render under the host being viewed. A closed or
+    // torn-down App shows the plain tool card instead.
+    const frozenScreenshotUrl =
+      renderOverride?.frozenScreenshotUrl ||
+      (!shouldRenderWidget && !isWidgetTornDown
+        ? renderOverride?.fallbackScreenshotUrl
+        : null) ||
+      undefined;
+    if (widgetSlotShouldRender(shouldRenderWidget, { frozenScreenshotUrl })) {
+      const isFrozenWidget = !!frozenScreenshotUrl;
       const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
@@ -728,10 +735,14 @@ function LivePartSwitch({
             editVersion={editVersion}
             minimalMode={minimalMode}
             serverId={serverId}
+            resourceServerId={toolServerId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            keepLiveWidgetDiagnostics={!isFrozenWidget}
             recordedWidgetDiagnostics={
-              isFrozenWidget
+              // A live App from an eval run still shows the errors the run
+              // recorded, not only those from this replay.
+              isFrozenWidget || renderOverride?.recordedWidgetErrors
                 ? {
                     resourceUri:
                       renderOverride?.resourceUri ??
@@ -750,9 +761,9 @@ function LivePartSwitch({
             }
             {...approvalProps}
           />
-          {renderOverride?.frozenScreenshotUrl ? (
+          {frozenScreenshotUrl ? (
             <FrozenWidgetScreenshot
-              url={renderOverride.frozenScreenshotUrl}
+              url={frozenScreenshotUrl}
               toolName={toolInfo.toolName}
             />
           ) : (
@@ -851,9 +862,13 @@ function LivePartSwitch({
               resolveHostSupportsWidget={(sid) =>
                 hostSupportsWidgetRendering(resolveHostCaps(sid), { hostStyle })
               }
-              onSendFollowUp={interactive ? onSendFollowUp : undefined}
+              onSendFollowUp={
+                interactive && !renderOverride?.readOnly
+                  ? onSendFollowUp
+                  : undefined
+              }
               onCallTool={
-                interactive
+                interactive && !renderOverride?.readOnly
                   ? (toolName, params) => {
                       const proof = retainedResourceProofFor({toolCallId: toolInfo.toolCallId, toolName: toolInfo.toolName, input: toolInfo.input, output: originalResult}, ("resultProviderMetadata" in toolPart ? toolPart.resultProviderMetadata : undefined) ?? toolPart.callProviderMetadata);
                       const bound = widgetContext ?? proof;
@@ -932,6 +947,7 @@ function LivePartSwitch({
         uiType={uiType}
         minimalMode={minimalMode}
         serverId={serverId}
+        resourceServerId={toolServerId}
         mcpToolResultImageRendering={mcpToolResultImageRendering}
         rawOutput={rawToolOutput}
         {...approvalProps}
