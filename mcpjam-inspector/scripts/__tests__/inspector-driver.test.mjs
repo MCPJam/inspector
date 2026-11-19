@@ -374,3 +374,14 @@ test("npm runs through its JS entry point when one can be found", () => {
     null,
   );
 });
+
+test("a recorded base URL must be a local instance", async () => {
+  const { isLoopbackUrl } = await import(
+    "../lib/inspector-driver-instance.mjs"
+  );
+  assert.equal(isLoopbackUrl("http://localhost:5173"), true);
+  assert.equal(isLoopbackUrl("http://127.0.0.1:6274"), true);
+  assert.equal(isLoopbackUrl("http://localhost.evil.test:5173"), false);
+  assert.equal(isLoopbackUrl("https://app.mcpjam.com"), false);
+  assert.equal(isLoopbackUrl("not a url"), false);
+});

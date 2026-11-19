@@ -14,16 +14,52 @@ import {
   openSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { computeInstancePorts } from "../../bin/runtime-profile.mjs";
 import { findPortConflicts, pickFreeInstance } from "../dev-worktree.mjs";
 import { redactLog, resolveNpmCli } from "./inspector-driver-core.mjs";
 
-export const DRIVER_HOME = join(tmpdir(), "mcpjam-driver");
+/**
+ * Under the home directory, not the system temp directory: the state file
+ * holds the session token and a pid that `stop` kills, and on Linux and macOS
+ * any local user can write to /tmp.
+ */
+export const DRIVER_HOME = join(homedir(), ".mcpjam", "driver");
+
+/** POSIX only: Windows has no uid, and its profile directory is per-user. */
+function assertPrivate(path) {
+  if (typeof process.getuid !== "function") return;
+  const stat = statSync(path);
+  if (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) {
+    throw new Error(
+      `${path} must be owned by you and closed to other users (chmod go-rwx). Refusing to use it.`,
+    );
+  }
+}
+
+/** Creates the driver's directory closed to other users, and checks it is. */
+export function ensureDriverHome() {
+  mkdirSync(DRIVER_HOME, { recursive: true, mode: 0o700 });
+  assertPrivate(DRIVER_HOME);
+  return DRIVER_HOME;
+}
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export function isLoopbackUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    // Not a URL at all.
+    return false;
+  }
+}
 
 /** One state file per inspector checkout, so worktrees never share one. */
 export function statePath(inspectorDir) {
@@ -34,10 +70,25 @@ export function statePath(inspectorDir) {
   return join(DRIVER_HOME, `instance-${id}.json`);
 }
 
+/**
+ * The state decides which process `stop` kills and where the token is sent,
+ * so a file that is not ours, or that names anything but a local instance,
+ * is refused instead of trusted.
+ */
 export function readState(inspectorDir) {
   const path = statePath(inspectorDir);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf8"));
+  assertPrivate(DRIVER_HOME);
+  assertPrivate(path);
+  const state = JSON.parse(readFileSync(path, "utf8"));
+  if (
+    !Number.isInteger(state.pid) ||
+    state.pid <= 1 ||
+    !isLoopbackUrl(state.baseUrl)
+  ) {
+    throw new Error(`${path} is not a driver state file. Delete it and run \`start\`.`);
+  }
+  return state;
 }
 
 export function isAlive(pid) {
@@ -92,9 +143,10 @@ export async function startInstance({
       "Could not find npm-cli.js next to this Node; run the driver through `npm run driver`.",
     );
   }
-  mkdirSync(DRIVER_HOME, { recursive: true });
+  ensureDriverHome();
   const logPath = join(DRIVER_HOME, `instance-${chosen}.log`);
-  const logFd = openSync(logPath, "w");
+  // The dev server prints its access link, so the log is as private as the state.
+  const logFd = openSync(logPath, "w", 0o600);
   const args = [
     "run",
     "dev:worktree",

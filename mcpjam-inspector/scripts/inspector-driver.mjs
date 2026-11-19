@@ -20,7 +20,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -99,11 +99,14 @@ function outputDir(values) {
   const dir = values.out
     ? resolve(values.out)
     : join(
-        tmpdir(),
-        "mcpjam-driver",
+        homedir(),
+        ".mcpjam",
+        "driver",
+        "runs",
         new Date().toISOString().replace(/[:.]/g, "-"),
       );
-  mkdirSync(dir, { recursive: true });
+  // Screenshots can show account data, so the default location is private.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
 }
 
