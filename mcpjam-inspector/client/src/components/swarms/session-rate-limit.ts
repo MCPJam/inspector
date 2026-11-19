@@ -24,6 +24,7 @@ import {
   describeAsSlug,
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
+import { formatCreditRecovery } from "@mcpjam/sdk/contract";
 import { classifyModelIdProvider } from "@/shared/model-provider";
 import { isXaaConnectFailureReason } from "@/shared/xaa-connect-failure";
 import {
@@ -273,6 +274,14 @@ export function describeSwarmAttemptFailure(
     return {
       ...describeAsSlug(limitSlug ?? "provider/mcpjam_limit"),
       oneLine: info.message,
+      // The refusal's own recovery is the one action for this account (upgrade
+      // on Free, buy credits on paid), link included. It replaces the catalog's
+      // generic steps so this card never steers to waiting or BYOK — the same
+      // rule `describeError` applies, done here because `describeAsSlug` has no
+      // error to read the recovery from.
+      ...(info.recovery
+        ? { nextSteps: [formatCreditRecovery(info.recovery)] }
+        : {}),
       rawMessage: rawMessage ?? info.message,
       rawCode: code,
     };

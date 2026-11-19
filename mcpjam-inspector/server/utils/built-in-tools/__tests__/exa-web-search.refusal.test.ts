@@ -132,14 +132,62 @@ describe("exa web search — organization AI key policy refusals", () => {
     expect(await runSearch()).toEqual({ results });
   });
 
-  it("leaves the out-of-credits answer alone", async () => {
+  it("uses plain-neutral copy for a 402 without a recovery (no 'top up', wrong for Free)", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValue(
         json(402, { ok: false, code: "insufficient_credits" }),
       );
-    expect(await runSearch()).toEqual({
-      error: "Out of MCPJam credits. Top up to use web search.",
+    const result = await runSearch();
+    expect(result).toEqual({
+      error:
+        "Out of MCPJam credits for web search. Add credits or upgrade your plan in MCPJam to keep using it.",
     });
+    // A Free account cannot buy credits, so the old "Top up" line is gone.
+    expect(result.error).not.toMatch(/top up/i);
+    expect(result.error).not.toMatch(/BYOK|try again|wait/i);
+  });
+
+  it("renders the refusal's recovery step and link when the 402 carries one", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        ok: false,
+        code: "user_rate_limit",
+        error: "Out of MCPJam credits.",
+        recovery: {
+          version: 1,
+          reason: "out_of_credits",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://app.mcpjam.com/billing",
+        },
+      }),
+    );
+    const result = await runSearch();
+    expect(result.error).toBe(
+      "Out of MCPJam credits. Buy credits to keep going: https://app.mcpjam.com/billing",
+    );
+    expect(result.error).not.toMatch(/BYOK|try again|wait/i);
+  });
+
+  it("upgrades a Free refusal rather than telling it to buy credits", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      json(402, {
+        ok: false,
+        code: "user_rate_limit",
+        error: "Out of MCPJam credits.",
+        recovery: {
+          version: 1,
+          reason: "out_of_credits",
+          action: "upgrade_plan",
+          actor: "caller",
+          plan: "pro",
+          url: "https://app.mcpjam.com/billing",
+        },
+      }),
+    );
+    expect((await runSearch()).error).toBe(
+      "Out of MCPJam credits. Upgrade to Pro to keep going: https://app.mcpjam.com/billing",
+    );
   });
 });

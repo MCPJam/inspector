@@ -27,6 +27,7 @@
  */
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import { upstreamRetryAfter } from "./swarm-agent.js";
+import { creditRecoveryOfRefusal } from "@mcpjam/sdk/contract";
 
 /**
  * Upstream 4xx → the internal code a caller can branch on.
@@ -115,9 +116,17 @@ function retryAfterHeaders(
   retryAfter: string | undefined,
   envelope: UpstreamRefusalEnvelope | undefined,
 ): Record<string, string> | undefined {
+  // A credit refusal whose recovery is not a transient hold carries no wait:
+  // the fix is to upgrade or buy credits, so a `Retry-After` would only send a
+  // client back into the same wall on a timer. Suppress it whatever the body's
+  // numeric field says.
+  const recovery = creditRecoveryOfRefusal(envelope);
+  if (recovery && recovery.action !== "wait") return undefined;
   if (retryAfter) return { "Retry-After": retryAfter };
   const ms = envelope?.retryAfterMs;
-  if (typeof ms === "number" && Number.isFinite(ms) && ms >= 0) {
+  // Only a POSITIVE wait becomes a header: `Retry-After: 0` tells a client to
+  // retry at once, which against a refusal that will refuse again is a hot loop.
+  if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
     return { "Retry-After": String(Math.ceil(ms / 1000)) };
   }
   return undefined;

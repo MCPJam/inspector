@@ -136,6 +136,48 @@ it.each([
   },
 );
 
+describe("describeSwarmAttemptFailure credit recovery", () => {
+  const BILLING_URL = "https://app.mcpjam.com/billing";
+  const refusal = (action: string, extra: Record<string, unknown> = {}) =>
+    `swarm-agent https://x.convex.site/turn failed (429): ${JSON.stringify({
+      ok: false,
+      code: "user_rate_limit",
+      error: "Out of MCPJam credits.",
+      retryAfter: 0,
+      recovery: {
+        version: 1,
+        reason: "out_of_credits",
+        action,
+        actor: "caller",
+        url: BILLING_URL,
+        ...extra,
+      },
+    })}`;
+
+  it("makes the recovery step the only next step, link included, no wait/BYOK", () => {
+    const result = describeSwarmAttemptFailure(
+      refusal("upgrade_plan", { plan: "pro" }),
+      "user_rate_limit",
+      "Anthropic",
+    );
+    expect(result.nextSteps).toEqual([
+      `Upgrade to Pro to keep going: ${BILLING_URL}`,
+    ]);
+    const steps = result.nextSteps.join(" ");
+    expect(steps).not.toMatch(/Wait|BYOK|own key|try again/i);
+  });
+
+  it("tells a paid account to buy credits, link included", () => {
+    expect(
+      describeSwarmAttemptFailure(
+        refusal("buy_credits"),
+        "user_rate_limit",
+        "Anthropic",
+      ).nextSteps,
+    ).toEqual([`Buy credits to keep going: ${BILLING_URL}`]);
+  });
+});
+
 describe("describeSwarmAttemptFailure held credits", () => {
   // What the runner stores for a `holds_committed` refusal: the backend's
   // sentence under the generic code, with the refusal reason gone.
