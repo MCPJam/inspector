@@ -275,12 +275,9 @@ export interface RunAssistantTurnOptions
   hostId?: MCPJamHandlerOptions["hostId"];
 
   /** The turn's skill plan. Pass-through to `runHarnessTurn`, which carries it
-   *  out in place of the three skill inputs below. */
+   *  out. */
   skillPlan?: MCPJamHandlerOptions["skillPlan"];
 
-  /** Pinned harness skills (eval runs, swarm targets). Pass-through to
-   *  `runHarnessTurn`: when set (even empty) it delivers exactly these. */
-  pinnedHarnessSkills?: MCPJamHandlerOptions["pinnedHarnessSkills"];
 
   /**
    * The disposable box this session already owns (B-isolation phase 6).

@@ -71,7 +71,6 @@ import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
-import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import {
   httpStatusOrUndefined,
   type InfraFailureEvidence,
@@ -1070,18 +1069,9 @@ export interface MCPJamHandlerOptions {
    * The turn's skill plan, which a harness turn carries out: what its box
    * writer plans from, its supporting files, its captured MCP-server skills
    * and whether its servers' own skills may be offered. A turn with no plan
-   * leaves the box as it is, unless it pins a run's skills (below).
+   * leaves the box as it is.
    */
   skillPlan?: TurnSkills;
-  /**
-   * Pinned harness skills (eval runs and swarm targets). When set — even
-   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
-   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
-   * the emulated engine receives pinned skills via prepareChatV2's `skills`
-   * plan instead (which it refuses on a harness turn — the two paths are
-   * deliberately disjoint).
-   */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
    * Set for an environment turn; it carries the plugins' server origins and the

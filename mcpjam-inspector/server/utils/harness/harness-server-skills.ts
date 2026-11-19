@@ -20,19 +20,16 @@
 import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { mentionsServerSkill } from "../../../shared/server-skill-banner.js";
-import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   buildLiveEffectiveCapabilities,
   withLiveServerSkills,
   type EffectiveCapabilitySet,
   type RuntimeServerSkill,
 } from "../../services/environments/effective-capabilities.js";
-import { downloadedFileBytes } from "../../services/evals/run-plugin-snapshot.js";
 import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
 import { liveServerSkillRefs } from "../../services/environments/turn-skills.js";
 import { listLiveServerSkills } from "../computers/live-server-skills.js";
 import type { BoxSkillOutcome, BoxSkillsResult } from "./box-skills-writer.js";
-import type { HarnessSkillSource } from "./skill-delivery.js";
 import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
   withHostCommandGate,
@@ -71,19 +68,15 @@ export interface HarnessServerSkills {
 export async function harnessServerSkills(
   adapter: Parameters<typeof takesServerSkillsAsTools>[0],
   args: {
-    mode: HarnessSkillSource["mode"];
     /** A live turn (`HarnessTurnSkills.live`): its servers are connected, so
      *  their own skills are listed beside the captured ones. */
     live: boolean;
-    pinnedHarnessSkills?: readonly PinnedSkillArtifact[];
-    /** An environment turn's set, which holds its captured server skills. */
-    effectiveCapabilities?: EffectiveCapabilitySet;
     /**
-     * The captured server skills the turn's plan holds (`TurnSkills.set`), for
-     * a turn that runs its plan. They replace the two sources above, which each
-     * rebuild the same skills from a run's copies or an environment's set.
+     * The captured server skills the turn's plan holds (`TurnSkills.set`): a
+     * run's frozen copies, or an environment's captured skills. The plan built
+     * them once, with their digests and file bytes.
      */
-    plannedServerSkills?: readonly RuntimeServerSkill[];
+    capturedServerSkills: readonly RuntimeServerSkill[];
     manager: MCPClientManager;
     /** The turn's selected servers, listed on a live turn. */
     serverIds: readonly string[];
@@ -93,11 +86,7 @@ export async function harnessServerSkills(
   },
 ): Promise<HarnessServerSkills | undefined> {
   if (!takesServerSkillsAsTools(adapter)) return undefined;
-  const captured =
-    args.plannedServerSkills ??
-    (args.mode === "pinned"
-      ? (args.pinnedHarnessSkills ?? []).flatMap(capturedServerSkill)
-      : (args.effectiveCapabilities?.serverSkills ?? []));
+  const captured = args.capturedServerSkills;
   // Labelled by server id, as MCPJam's agent is when it has no labels: the id
   // is host-assigned, so a server can't choose the namespace its refs take.
   const live = args.live
@@ -188,42 +177,6 @@ export function withServerSkillTools<T extends Record<string, unknown>>(
   }
   const merged = { ...hostTools, ...tools };
   return gate ? withHostCommandGate(merged, gate) : merged;
-}
-
-/** A run's frozen copy of a skill captured from a server, as the set holds it. */
-function capturedServerSkill(
-  artifact: PinnedSkillArtifact,
-): RuntimeServerSkill[] {
-  const capture = artifact.server;
-  if (!capture) return [];
-  return [
-    {
-      skillId: capture.serverSkillId,
-      ref: capture.ref,
-      name: artifact.name,
-      description: artifact.description,
-      content: artifact.content,
-      aggregateHash: artifact.contentHash,
-      files: (artifact.files ?? []).map((file) => {
-        const bytes = downloadedFileBytes(file);
-        return {
-          path: file.path,
-          size: capture.fileSizes?.[file.path] ?? bytes.byteLength,
-          url: null,
-          read: async () => bytes,
-        };
-      }),
-      serverId: capture.serverId,
-      serverLabel: capture.serverLabel,
-      skillUri: capture.skillUri,
-      versionId: capture.versionId,
-      versionNumber: capture.versionNumber,
-      capturedAt: capture.capturedAt,
-      ...(capture.contentSha256 !== undefined
-        ? { contentSha256: capture.contentSha256 }
-        : {}),
-    },
-  ];
 }
 
 function turnTranscript(

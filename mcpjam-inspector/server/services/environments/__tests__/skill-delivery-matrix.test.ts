@@ -212,9 +212,7 @@ const EVAL: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      box: await harnessBox(engine, skills),
     };
   },
   expected: PINNED,
@@ -238,9 +236,7 @@ const REPLAY: Surface = {
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      box: await harnessBox(engine, skills),
     };
   },
   expected: PINNED,
@@ -259,9 +255,7 @@ const swarm =
     return {
       skills,
       ...(skillsAtTurn ? { skillsAtTurn } : {}),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: [...target.harnessSkills],
-      }),
+      box: await harnessBox(engine, skills),
     };
   };
 
@@ -289,9 +283,7 @@ const EVALUATE_PREVIEW: Surface = {
         source: { kind: "environment", spec, attribution, frozen: true },
         runtime: runtimeOf(engine),
       }),
-      box: await harnessBox(engine, {
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
-      }),
+      box: await harnessBox(engine, skills),
     };
   },
   expected: previewing(EVAL.expected),
@@ -345,7 +337,7 @@ const COMPARE_ENVIRONMENT_PREVIEW: Surface = {
       source: { kind: "environment", spec, attribution },
       runtime: runtimeOf(engine),
     });
-    return { skills, box: await harnessBox(engine, { skillPlan: skills }) };
+    return { skills, box: await harnessBox(engine, skills) };
   },
   expected: liveRows([], false),
 };
@@ -360,7 +352,7 @@ const COMPARE_CLIENT_PREVIEW: Surface = {
       source: { kind: "environment", spec, attribution, liveExtras: {} },
       runtime: runtimeOf(engine),
     });
-    return { skills, box: await harnessBox(engine, { skillPlan: skills }) };
+    return { skills, box: await harnessBox(engine, skills) };
   },
   expected: liveRows(["my-notes"], false),
 };
@@ -376,7 +368,7 @@ async function plannedLiveTurn(
     ...(turn.turnProvenance
       ? { skillsAtTurn: turn.turnProvenance.skillsAtTurn }
       : {}),
-    box: await harnessBox(engine, { skillPlan: turn.skills }),
+    box: await harnessBox(engine, turn.skills),
   };
 }
 

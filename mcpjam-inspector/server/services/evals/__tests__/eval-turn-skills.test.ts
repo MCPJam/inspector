@@ -142,7 +142,6 @@ async function runEval(
     ...(frozen
       ? {
           pinnedSkillSource: frozen.pinnedSkillSource,
-          pinnedHarnessSkills: frozen.pinnedHarnessSkills,
         }
       : {}),
   } as Parameters<typeof runEvalSuiteWithAiSdk>[0]);
@@ -162,14 +161,12 @@ describe("an eval run with frozen skills", () => {
     const options = assistantTurn.mock.calls[0]![0] as {
       harness?: string;
       skillPlan?: TurnSkills;
-      pinnedHarnessSkills?: unknown;
       tools?: Record<string, unknown>;
     };
     expect(options.harness).toBe("claude-code");
     // The turn carries its plan, which prepares the run's frozen copies for the
     // box. Claude Code takes the captured server skill through MCPJam's tools,
     // so only the other two are written to its box.
-    expect(options.pinnedHarnessSkills).toBeUndefined();
     expect(options.skillPlan?.runtime).toEqual({
       kind: "harness",
       harnessId: "claude-code",

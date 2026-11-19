@@ -21,7 +21,6 @@ import type { BoxSkillFile } from "../../utils/harness/materialize-skill-files.j
 import { capabilitySkillFiles } from "../../utils/harness/plugin-delivery.js";
 import type { RuntimeSkill } from "../../utils/harness/runtime-skills.js";
 import { takesServerSkillsAsTools } from "../../utils/harness/skills-descriptor.js";
-import { pinnedArtifactsToRuntimeSkills } from "../../utils/harness/skill-delivery.js";
 import {
   allEffectiveSkills,
   buildLiveEffectiveCapabilities,
@@ -33,6 +32,7 @@ import {
   type RuntimeStandaloneSkill,
 } from "./effective-capabilities.js";
 import {
+  pinnedArtifactsToRuntimeSkills,
   unnamedSkills,
   type HarnessSkillDelivery,
   type HarnessSkillMode,
