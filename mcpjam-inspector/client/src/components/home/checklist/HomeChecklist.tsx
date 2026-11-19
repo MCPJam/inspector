@@ -407,8 +407,8 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
             </Button>
           ) : null}
         </div>
-        <div className="grid min-h-96 md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-          <ol className="space-y-0.5 border-b border-border p-1.5 md:border-r md:border-b-0">
+        <div className="grid min-h-[28rem] md:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
+          <ol className="space-y-1 border-b border-border p-2 md:border-r md:border-b-0">
             {STEP_ORDER.map((step, i) => (
               <ChecklistStepRow
                 key={step}
@@ -422,11 +422,11 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
               />
             ))}
           </ol>
-          <div className="space-y-3 bg-card p-6 dark:bg-muted">
+          <div className="space-y-4 bg-card p-8 dark:bg-muted">
             <p className="text-xs text-muted-foreground">
               Step {shownIndex + 1} of {STEP_ORDER.length}
             </p>
-            <h3 className="text-lg font-semibold text-foreground">
+            <h3 className="text-xl font-semibold text-foreground">
               {steps[shownStep].title}
             </h3>
             {body(shownStep)}
