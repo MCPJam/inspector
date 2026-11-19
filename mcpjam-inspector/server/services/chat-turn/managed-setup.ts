@@ -695,7 +695,7 @@ export async function resolveManagedTurnSetup(args: {
             runtime,
             modelContextTokens: modelDefinition.contextLength,
           }),
-          live: true,
+          environmentSkillCount: 0,
         };
   return {
     value: {
