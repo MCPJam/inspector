@@ -153,6 +153,8 @@ export type SuiteCapabilities = {
       execution: "wired";
     };
   };
+  /** Code evaluators; absent on a backend that cannot store them. */
+  codeEvaluators?: { maxEvaluators: number; maxSourceChars: number };
   /**
    * Scorer-authoring capabilities. Absent on a backend that predates A1 —
    * the Role control then degrades to today's read-only Gate chip.
@@ -336,4 +338,11 @@ export function hasCustomJudgesCapability(
   capabilities: SuiteCapabilities | null | undefined,
 ): boolean {
   return capabilities?.judges?.custom?.execution === "wired";
+}
+
+/** The backend stores code evaluators (evaluator library slice 4). */
+export function hasCodeEvaluatorsCapability(
+  capabilities: SuiteCapabilities | null | undefined,
+): boolean {
+  return capabilities?.codeEvaluators != null;
 }

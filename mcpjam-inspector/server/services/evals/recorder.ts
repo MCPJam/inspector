@@ -1,4 +1,5 @@
 import { asCapacityRouteError } from "../../utils/capacity-route-error.js";
+import { parseCodeEvaluators } from "./code-evaluators/types.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -1068,6 +1069,13 @@ export const startSuiteRunWithRecorder = async ({
     }
   }
 
+  // Frozen on the run like the predicates; a run created before code
+  // evaluators existed has none.
+  const codeEvaluators = parseCodeEvaluators(
+    (response?.configSnapshot as { codeEvaluators?: unknown } | undefined)
+      ?.codeEvaluators,
+  );
+
   const resolvePredicatesForCase = (
     tc: Record<string, any>,
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
@@ -1103,6 +1111,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(codeEvaluators.length ? { codeEvaluators } : {}),
             ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc._id ?? tc.testCaseId,
           },
@@ -1134,6 +1143,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(codeEvaluators.length ? { codeEvaluators } : {}),
             ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc._id,
           };
@@ -1155,6 +1165,7 @@ export const startSuiteRunWithRecorder = async ({
             advancedConfig: tc.advancedConfig,
             matchOptions: tc.matchOptions,
             successPredicates,
+            ...(codeEvaluators.length ? { codeEvaluators } : {}),
             ...(typeof tc.intent === "string" ? { intent: tc.intent } : {}),
             testCaseId: tc.testCaseId ?? tc._id,
           },

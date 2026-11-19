@@ -86,6 +86,10 @@ export {
 import { authoredRequiredRole } from "@mcpjam/sdk/contract";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 import {
+  hostedCodeEvaluatorScoreDefinition,
+  type HostedCodeEvaluatorDefinitionInput,
+} from "./code-evaluator-rows.js";
+import {
   hostedCustomJudgeScoreDefinition,
   type HostedCustomJudgeDefinitionInput,
 } from "./custom-judge-rows.js";
@@ -375,6 +379,8 @@ export type HostedScoreDefinitionInputs = {
   agentActivityFired?: boolean;
   /** One per question the rubric-check pass asked (second pass only). */
   rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
+  /** One per code evaluator the trial ran. */
+  codeEvaluators?: ReadonlyArray<HostedCodeEvaluatorDefinitionInput>;
   /** One per custom judge the job ran (second pass only). */
   customJudges?: ReadonlyArray<HostedCustomJudgeDefinitionInput>;
 };
@@ -412,6 +418,9 @@ export function buildHostedScoreDefinitions(
   }
   for (const question of inputs.rubricChecks ?? []) {
     definitions.push(hostedRubricCheckScoreDefinition(question));
+  }
+  for (const evaluator of inputs.codeEvaluators ?? []) {
+    definitions.push(hostedCodeEvaluatorScoreDefinition(evaluator));
   }
   for (const judge of inputs.customJudges ?? []) {
     definitions.push(hostedCustomJudgeScoreDefinition(judge));

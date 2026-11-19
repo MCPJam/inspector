@@ -20,6 +20,7 @@ const LABELS: Record<ScorecardProvenance, string> = {
   snapshot: "Run snapshot",
   judge: "Judge",
   rubricCheck: "Rubric check",
+  code: "Code",
   // Nobody wrote it: the runner measures this stage on every iteration.
   builtin: BUILT_IN_BADGE,
 };

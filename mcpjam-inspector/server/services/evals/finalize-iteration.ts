@@ -1,4 +1,5 @@
 import { capRequestPayloadsForPersist } from "../../utils/live-chat-trace-stream";
+import type { CodeEvaluatorOutcome } from "./code-evaluators/types.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import type { EvalInfraError } from "@/shared/eval-infra-error";
 import type { ModelMessage } from "ai";
@@ -413,6 +414,7 @@ function buildScoreMetadata(args: {
   mode: GradingEngineMode;
   agentActivity?: AgentActivityAssessment;
   predicateResults?: unknown[];
+  codeEvaluatorResults?: CodeEvaluatorOutcome[];
   evaluation: Record<string, unknown>;
   matchOptions?: Record<string, unknown>;
   isNegativeTest?: boolean;
@@ -433,6 +435,9 @@ function buildScoreMetadata(args: {
   );
   const { scores, evaluationConfig } = buildHostedScoreContract({
     ...(predicateResults.length ? { predicateResults } : {}),
+    ...(args.codeEvaluatorResults?.length
+      ? { codeEvaluatorResults: args.codeEvaluatorResults }
+      : {}),
     evaluation: narrowEvaluation(args.evaluation),
     ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
     ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
@@ -667,6 +672,8 @@ export function buildIterationFinishParams(args: {
   infraError?: EvalInfraError;
   /** Case-level + per-turn predicate results; persisted to metadata.predicates. */
   predicateResults?: unknown[];
+  /** Code evaluator outcomes; persisted to metadata.codeEvaluatorResults. */
+  codeEvaluatorResults?: CodeEvaluatorOutcome[];
   /** Fail-fast skipped steps (PR6); persisted to metadata.skippedSteps. */
   skippedSteps?: unknown[];
   /**
@@ -810,6 +817,7 @@ export function buildIterationFinishParams(args: {
     error,
     errorDetails,
     predicateResults,
+    codeEvaluatorResults,
     skippedSteps,
     stepResults,
     stageCase,
@@ -857,6 +865,7 @@ export function buildIterationFinishParams(args: {
   const { keys: scoreMetadata, derived } = buildScoreMetadata({
     mode: gradingMode,
     predicateResults,
+    ...(codeEvaluatorResults?.length ? { codeEvaluatorResults } : {}),
     evaluation,
     passed,
     stageMetadata,
@@ -1013,6 +1022,7 @@ export function buildIterationFinishParams(args: {
         extractFinalAssistantMessage(messages),
       ),
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
+      ...(codeEvaluatorResults?.length ? { codeEvaluatorResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
       ...(policyBlocks?.length

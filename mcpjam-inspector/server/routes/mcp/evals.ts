@@ -1,5 +1,6 @@
 import { anyUnattendedLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { handleEvalAuthoring } from "../shared/eval-authoring.js";
+import { handleCodeEvaluatorPreview } from "./code-evaluator-preview.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { detachPreparedEvalRun } from "../../services/evals/detached-run.js";
@@ -78,6 +79,7 @@ async function requestRuntimeVenue(request: { convexAuthToken?: string; projectI
 }
 
 evals.post("/authoring-v1", (c) => handleEvalAuthoring(c, true));
+evals.post("/code-evaluator-preview", handleCodeEvaluatorPreview);
 
 evals.post("/run", async (c) => {
   try {
