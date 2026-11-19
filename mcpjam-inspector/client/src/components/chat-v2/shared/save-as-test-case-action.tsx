@@ -13,6 +13,7 @@ import {
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   Select,
   SelectContent,
@@ -98,6 +99,7 @@ export function SaveAsTestCaseAction({
     useState<DestinationMode>("existing");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
   const [newSuiteName, setNewSuiteName] = useState<string>("");
+  const [assertToolCalls, setAssertToolCalls] = useState(false);
   // Picker state for the new-suite branch. Mirrors CreateSuiteDialog and
   // ConvertChatSessionDialog. Gated on `attachmentPickersEnabled`.
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
@@ -198,6 +200,7 @@ export function SaveAsTestCaseAction({
     setOpen(next);
     if (!next) {
       setCaseTitle(seedTitleFromPrompt(promptPreview));
+      setAssertToolCalls(false);
       setSelectedSuiteId("");
       setNewSuiteName("");
       setDestinationMode("existing");
@@ -218,6 +221,7 @@ export function SaveAsTestCaseAction({
         projectId,
         testCaseTitle: caseTitle.trim(),
         updateSuiteEnvironment: true,
+        assertToolCalls,
         ...(destinationMode === "existing"
           ? { destinationSuiteId: selectedSuiteId }
           : {
@@ -438,6 +442,17 @@ export function SaveAsTestCaseAction({
                   ) : null}
                 </DestinationCard>
               </RadioGroup>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="save-as-test-case-assert-tools">
+                Also check each tool call
+              </Label>
+              <Switch
+                id="save-as-test-case-assert-tools"
+                checked={assertToolCalls}
+                onCheckedChange={setAssertToolCalls}
+                disabled={submitting}
+              />
             </div>
           </div>
           <DialogFooter className="border-t border-border/50 px-6 py-4">

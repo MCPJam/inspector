@@ -193,6 +193,7 @@ describe("SaveAsTestCaseAction", () => {
           chatSessionId: "chat-session-1",
           promptIndex: 2,
           destinationSuiteId: "suite-1",
+          assertToolCalls: false,
         }),
       ),
     );
