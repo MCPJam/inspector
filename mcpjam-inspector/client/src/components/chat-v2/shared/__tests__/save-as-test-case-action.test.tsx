@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -36,18 +36,34 @@ vi.mock("@/hooks/useViews", () => ({
   }),
 }));
 
+const projectHosts = vi.hoisted(() => ({
+  value: [{ hostId: "host-first" }] as Array<{ hostId: string }>,
+}));
 vi.mock("@/hooks/useClients", () => ({
-  useHostList: () => ({ hosts: [{ hostId: "host-first" }] }),
+  useHostList: () => ({ hosts: projectHosts.value, isLoading: false }),
 }));
 
 vi.mock("@/components/hosts/server-picker", () => ({
   ServerPicker: () => <div data-testid="server-picker" />,
 }));
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
-  CreateHostDialog: () => null,
+  CreateHostDialog: ({
+    isOpen,
+    onCreated,
+  }: {
+    isOpen: boolean;
+    onCreated: (hostId: string) => void;
+  }) =>
+    isOpen ? (
+      <button type="button" onClick={() => onCreated("host-new")}>
+        Finish creating client
+      </button>
+    ) : null,
 }));
 vi.mock("@/components/hosts/client-multi-select", () => ({
-  ClientMultiSelect: () => <div data-testid="client-multi-select" />,
+  ClientMultiSelect: ({ value }: { value: string[] }) => (
+    <div data-testid="client-multi-select" data-host={value.join(",")} />
+  ),
 }));
 
 vi.mock("@/lib/toast", () => ({ toast: mockToast }));
@@ -128,6 +144,35 @@ async function promoteToExistingSuite() {
 }
 
 describe("SaveAsTestCaseAction", () => {
+  it("creates and attaches a client when the project has none", async () => {
+    projectHosts.value = [];
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    await user.click(screen.getByRole("button", { name: "Create a client" }));
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Finish creating client",
+        hidden: true,
+      }),
+    );
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "host-new",
+    );
+    projectHosts.value = [{ hostId: "host-first" }];
+  });
+
   it("navigates to the case it just created", async () => {
     saveAction.mockResolvedValue({
       suiteId: "suite-1",
