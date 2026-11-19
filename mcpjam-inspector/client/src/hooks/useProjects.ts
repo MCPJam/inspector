@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { indexProjectServersByName } from "@/lib/project-servers-by-name";
 import { getRenderedThemeMode } from "@/lib/theme-utils";
 import type { ProjectVisibility } from "@/state/app-types";
 import type { ProjectClientConfig } from "@/lib/client-config";
@@ -46,6 +47,7 @@ export interface RemoteServer {
   // Shared fields
   timeout?: number;
   clientCapabilities?: Record<string, unknown>;
+  publishedPluginId?: string;
   // OAuth fields
   useOAuth?: boolean;
   oauthScopes?: string[];
@@ -529,8 +531,10 @@ export function useProjectServers({
   // Convert array to record keyed by server name
   const serversRecord = useMemo(() => {
     if (!servers) return {};
-    return Object.fromEntries(servers.map((s) => [s.name, s]));
-  }, [servers]);
+    return Object.fromEntries(
+      indexProjectServersByName(servers, queryProjectId),
+    );
+  }, [servers, queryProjectId]);
 
   return {
     servers,

@@ -535,7 +535,8 @@ describe("the recipes a preparation applies", () => {
     ),
   ) as { recipes: Array<{ harnessId: string; identity: string }> };
 
-  it.each(["claude-code", "codex"] as const)(
+  // Every hosted runtime: cold, plus warm where it may run warm.
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "are the ones the template bakes for %s",
     async (harnessId) => {
       const identities = await Promise.all(

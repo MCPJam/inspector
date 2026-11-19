@@ -1,0 +1,17 @@
+{
+  "name": "mcpjam-opencode-vendor-pack",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/sdk": "1.18.34",
+    "@vscode/ripgrep": "1.18.0"
+  },
+  "optionalDependencies": {
+    "opencode-darwin-arm64": "1.18.34",
+    "opencode-darwin-x64": "1.18.34",
+    "opencode-linux-arm64": "1.18.34",
+    "opencode-linux-x64": "1.18.34",
+    "opencode-windows-x64": "1.18.34"
+  }
+}

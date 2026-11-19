@@ -149,6 +149,7 @@ export function CaseStepsPage({
   const unsaved = !locked && data.dirty;
   const runDisabledReason =
     launchReview.disabledReason ??
+    (data.invalidField ? "Complete the highlighted fields first." : null) ??
     getStepsBlockReason(draft.steps) ??
     runOutOfCreditsReason?.(testCase) ??
     null;
@@ -214,7 +215,8 @@ export function CaseStepsPage({
             suite={caseStepsSuiteFacts(suite, data.capabilities)}
             availableTools={tools}
             projectServers={projectServers}
-            readOnly={locked}
+            // Edits wait for a running save, so what it saves is what follows.
+            readOnly={locked || data.saving}
             openKey={openKey}
             onOpenKeyChange={setOpenKey}
             onOpenSuiteSettings={() =>

@@ -12,6 +12,7 @@ import type { RemoteServer } from "@/hooks/useProjects";
 import { CheckDraftBoundary } from "@/components/evals/checks-section";
 import type { AvailableTool } from "@/components/evals/step-fields";
 import type { EvalJudgeConfig } from "@/components/evals/types";
+import type { PredicateKind } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
@@ -74,6 +75,8 @@ export interface CaseStepsEditorProps {
     defaultMatchOptions?: CaseStepsDraft["matchOptions"];
     /** The deployment grades a check's own role (scorers.checkPolicy). */
     checkPolicy?: boolean;
+    /** Assertion kinds this deployment accepts; the drawers offer only these. */
+    authorableKinds?: readonly PredicateKind[];
   };
   availableTools: AvailableTool[];
   projectServers?: RemoteServer[];
@@ -115,6 +118,7 @@ export function CaseStepsEditor({
   const [pendingRemove, setPendingRemove] = useState<PendingRemove | null>(
     null,
   );
+  const [invalid, setInvalid] = useState(false);
   const edit = (change: DraftEdit) => {
     if (!readOnly) onDraftChange(change);
   };
@@ -175,6 +179,15 @@ export function CaseStepsEditor({
           availableTools={availableTools}
           readOnly={readOnly}
           checkPolicy={suite.checkPolicy === true}
+          moveBlocked={invalid}
+          caseMatching={{
+            value: routeMatching ?? "partial",
+            onChange: (argumentMatching) =>
+              edit((current) => ({
+                ...current,
+                matchOptions: { ...current.matchOptions, argumentMatching },
+              })),
+          }}
           onChange={(next) => edit((current) => updateStep(current, next))}
           onMove={(target) =>
             setSteps((steps) => moveAssertionTo(steps, step.id, target))
@@ -192,7 +205,12 @@ export function CaseStepsEditor({
 
   return (
     <>
-      <CheckDraftBoundary onValidityChange={onDraftValidityChange}>
+      <CheckDraftBoundary
+        onValidityChange={(next) => {
+          setInvalid(next);
+          onDraftValidityChange?.(next);
+        }}
+      >
         <div className="space-y-5" data-testid="case-steps-editor">
           {groups.leading.length > 0 ? (
             <StepSection
@@ -238,7 +256,9 @@ export function CaseStepsEditor({
                 title={copy.title}
                 subtitle={copy.subtitle}
                 headerRight={
-                  !readOnly && groups.steps.length > 1 ? (
+                  !readOnly &&
+                  (groups.steps.length > 1 ||
+                    canRemoveAction(draft.steps, step.id)) ? (
                     <StepMenu label={`step ${n}`} items={menuItems} />
                   ) : null
                 }
@@ -295,6 +315,7 @@ export function CaseStepsEditor({
                           entry.scope === "inline")
                       }
                       className={ADD_SMALL}
+                      authorableKinds={suite.authorableKinds}
                       onSelect={(choice) => {
                         const result = addAssertionAt(
                           step.id,
@@ -322,6 +343,7 @@ export function CaseStepsEditor({
                 triggerLabel="Add actions or assertions"
                 allowRouteChecks
                 className={ADD_WIDE}
+                authorableKinds={suite.authorableKinds}
                 onSelect={(choice) => {
                   const result = addAnything(choice, {
                     lastActionId,
@@ -355,6 +377,7 @@ export function CaseStepsEditor({
             availableTools={availableTools}
             readOnly={readOnly}
             checkPolicy={suite.checkPolicy === true}
+            authorableKinds={suite.authorableKinds}
             openKey={openKey}
             onToggle={toggle}
             onOpen={onOpenKeyChange}

@@ -207,6 +207,46 @@ describe("authenticated thread adapter boundaries", () => {
       toolName: "x",
     });
   });
+  it("resolves a published ID for a saved server and refuses duplicate mappings", async () => {
+    const publishedPluginId = "plugin_parts";
+    const serverIds = ["a", "b"];
+    const request = () => post("deep-link/resolve", {
+      projectId: body.projectId,
+      pluginWorkspace: body.pluginWorkspace,
+      hostId: body.hostId,
+      serverIds,
+      url: `https://chatgpt.com/plugins/${publishedPluginId}/app/cad.browse?path=%2Fparts%2F7`,
+    });
+    const context = {
+      hostConfig: { hostId: body.hostId, hostStyle: "chatgpt" },
+      serverNamesById: { a: "Parts A", b: "Parts B" },
+      serverBindings: new Map(serverIds.map((serverId) => [
+        serverId,
+        { kind: "standalone", serverId },
+      ])),
+    };
+    f.context.mockResolvedValue(context);
+    expect(await (await request()).json()).toMatchObject({
+      code: "PLUGIN_DEEP_LINK_PLUGIN_UNKNOWN",
+    });
+    f.context.mockResolvedValue({
+      ...context,
+      publishedPluginIdsByServerId: { a: publishedPluginId },
+    });
+    expect(await (await request()).json()).toEqual({
+      serverId: "a", toolName: "cad.browse", url: "/parts/7",
+    });
+    f.context.mockResolvedValue({
+      ...context,
+      publishedPluginIdsByServerId: { a: publishedPluginId, b: publishedPluginId },
+    });
+    const ambiguous = await request();
+    expect(ambiguous.status).toBe(409);
+    expect(await ambiguous.json()).toMatchObject({
+      code: "PLUGIN_DEEP_LINK_AMBIGUOUS",
+      candidates: ["Parts A", "Parts B"],
+    });
+  });
   it("renews a retained App through the binding fence and keeps its handle", async () => {
     const token = "a".repeat(43);
     f.renew.mockImplementation(
@@ -1075,6 +1115,53 @@ describe("owned App source receipts", () => {
   const html = "<p>Owned part α</p>";
   const csp = { connectDomains: ["https://parts.example"], resourceDomains: ["https://assets.example"] };
   const manager = { readResource: f.read, getServerConfig: () => ({}) };
+
+  it("opens a global App by its saved published ID and rechecks the mapping", async () => {
+    await withReceiptSigning(async () => {
+      f.catalog.mockResolvedValue({
+        tools: [{
+          ...tool,
+          name: "cad.browse",
+          _meta: {
+            ...tool._meta,
+            "openai/ui": { entrypoints: [{ type: "global" }] },
+          },
+        }],
+        manager,
+        hostRevision: "host-v1",
+        bindingId: "binding",
+        serverIdentity: { kind: "standalone", serverId: body.serverId },
+        publishedPluginId: "plugin_parts",
+        runtime: "chatgpt",
+      });
+      f.read.mockResolvedValue({
+        contents: [{
+          uri: "ui://fixture", mimeType: "text/html;profile=mcp-app",
+          text: html, _meta: { ui: { csp } },
+        }],
+      });
+      f.open.mockResolvedValue({
+        token: "a".repeat(43),
+        instance: {
+          owner: { instanceId: crypto.randomUUID(), generation: 1 },
+          activation: { operationId: crypto.randomUUID() },
+        },
+      });
+      const input = {
+        ...body, threadId: "thread", toolName: "cad.browse", kind: "global",
+        deepLink: "https://chatgpt.com/plugins/plugin_parts/app/cad.browse?path=%2Fparts%2F7",
+      };
+      f.verifyCurrent.mockResolvedValueOnce("plugin_parts");
+      const opened = await request("activation/open", input);
+      expect(opened.status).toBe(200);
+      expect(await opened.json()).toMatchObject({ deepLink: { url: "/parts/7" } });
+
+      f.verifyCurrent.mockResolvedValueOnce(undefined);
+      const cleared = await request("activation/open", input);
+      expect(cleared.status).toBe(400);
+      expect(await cleared.json()).toMatchObject({ code: "PLUGIN_DEEP_LINK_PLUGIN_UNKNOWN" });
+    });
+  });
 
   it("binds activation bytes to the verified actor/project and server-issued operation", async () => {
     await withReceiptSigning(async () => {

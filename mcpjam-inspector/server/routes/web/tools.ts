@@ -90,6 +90,7 @@ tools.post("/list", async (c) =>
     // Hosted direct-ops read the server's live surface — never a cached
     // body — so raw/conformance evidence can't be masked by a stale serve.
     listTools(manager, { ...body, cacheMode: "bypass" }),
+    { observeFeatures: true },
   ),
 );
 
@@ -152,7 +153,7 @@ tools.post("/list-multi", async (c) =>
       }
       return Object.keys(errors).length > 0 ? { results, errors } : { results };
     },
-    { tolerateServerRefusals: true },
+    { tolerateServerRefusals: true, observeFeatures: true },
   ),
 );
 

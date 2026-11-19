@@ -5,6 +5,7 @@ import {
   createTestApp,
   type MockMCPClientManager,
 } from "./helpers/index.js";
+import { WebRouteError, ErrorCode } from "../../web/errors.js";
 import { tunnelRefusal } from "../../../utils/delivered-oauth-credential.js";
 
 const TOKEN = "tok_EFTW41_SECRET_member_token";
@@ -74,6 +75,14 @@ describe("connecting with a backend-delivered OAuth token", () => {
         ? { url: new URL(url), credentialSource: "mcpjam-backend" }
         : undefined,
     );
+
+  it("preserves the personal OAuth sign-in prompt after initial refresh fails", async () => {
+    authorizeReturns({ oauthBoundOrigins: ["https://moved.example.com"] });
+    manager.connectToServer.mockRejectedValue(new WebRouteError(401, ErrorCode.UNAUTHORIZED, "Sign in again to connect.", { oauthRequired: true }));
+    const res = await reconnect();
+    expect(res.status).toBe(401);
+    expect(await res.json()).toMatchObject({ oauthRequired: true });
+  });
 
   it("does not attach the token when a reconnect finds the server moved to another origin", async () => {
     authorizeReturns({});

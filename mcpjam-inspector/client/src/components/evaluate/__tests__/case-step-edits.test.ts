@@ -14,6 +14,7 @@ import {
   type CaseStepsDraft,
 } from "../case-steps/case-step-edits";
 import { matchOptionsForKind } from "../simple-case/simple-case-model";
+import { moveAssertionTo } from "../case-steps/case-steps-model";
 import { check, FIXTURES, prompt, toolAssert } from "./case-steps-fixtures";
 
 const sketch: TestStep[] = [
@@ -70,6 +71,29 @@ const hasToolCalledWith = (steps: TestStep[]) =>
   );
 
 describe("No tools and back", () => {
+  it("puts a tool check that led the case back first", () => {
+    const steps = [toolAssert("t0", "get_me"), prompt("p1")];
+    const parked = chooseNoTool(draft({ steps }));
+    expect(ids(parked.steps)).toEqual(["p1"]);
+    expect(ids(chooseTools(parked).steps)).toEqual(["t0", "p1"]);
+  });
+
+  it("keeps a tool check under its own step when a check before it moved", () => {
+    const steps = [
+      prompt("p1"),
+      check("n1"),
+      toolAssert("t1", "get_me"),
+      prompt("p2"),
+    ];
+    const parked = chooseNoTool(draft({ steps }));
+    const moved = {
+      ...parked,
+      steps: moveAssertionTo(parked.steps, "n1", "p2"),
+    };
+    expect(ids(moved.steps)).toEqual(["p1", "p2", "n1"]);
+    expect(ids(chooseTools(moved).steps)).toEqual(["p1", "t1", "p2", "n1"]);
+  });
+
   it.each([
     ...FIXTURES.filter(([, steps]) => steps.length > 0),
     ...TOOL_FIXTURES,
@@ -314,10 +338,20 @@ describe("adding", () => {
       kind: "regression",
       matchOptions: matchOptionsForKind("regression"),
     });
+    // The suite's defaults are capability, so the case inherits them again.
     const next = setCaseKind(strict, "capability", undefined);
+    expect(next.kind).toBeUndefined();
+    expect(next.matchOptions).toBeUndefined();
+  });
+
+  it("keeps an override the suite's options don't give", () => {
+    const strictSuite = matchOptionsForKind("regression");
+    const next = setCaseKind(draft(), "capability", strictSuite);
     expect(next.kind).toBe("capability");
     expect(next.matchOptions).toEqual(matchOptionsForKind("capability"));
-    expect(next.matchOptions?.toolCallOrder).not.toBe("strict");
+    const back = setCaseKind(next, "regression", strictSuite);
+    expect(back.kind).toBeUndefined();
+    expect(back.matchOptions).toBeUndefined();
   });
 
   it.each<[string, TestStep[]]>([

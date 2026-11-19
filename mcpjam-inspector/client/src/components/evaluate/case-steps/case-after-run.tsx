@@ -5,6 +5,7 @@
 import { useRef } from "react";
 import { Ban, ListOrdered, ShieldCheck } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import type { PredicateKind } from "@mcpjam/sdk/contract";
 import { CheckRow } from "@/components/evals/checks-section";
 import type { AvailableTool } from "@/components/evals/step-fields";
 import { ROUTE_CHECK_LABELS } from "@/components/evals/eval-add-catalog";
@@ -26,7 +27,7 @@ import {
   addAfterRun,
   chooseTools,
   nextCasePredicateIndex,
-  setCaseKind,
+  removeExactOrder,
   setCasePredicates,
   setEnvelopeMode,
   type CaseStepsDraft,
@@ -57,6 +58,7 @@ export function CaseAfterRun({
   availableTools,
   readOnly,
   checkPolicy,
+  authorableKinds,
   openKey,
   onToggle,
   onOpen,
@@ -72,13 +74,15 @@ export function CaseAfterRun({
   readOnly: boolean;
   /** The deployment grades a check's own role; without it, no role control. */
   checkPolicy: boolean;
+  /** Assertion kinds this deployment accepts; the drawer offers only these. */
+  authorableKinds?: readonly PredicateKind[];
   openKey: string | null;
   onToggle: (key: string) => void;
   onOpen: (key: string | null) => void;
   onEdit: (edit: DraftEdit) => void;
   onOpenSuiteSettings: () => void;
 }) {
-  const toolNames = availableTools.map((tool) => tool.name);
+  const toolNames = [...new Set(availableTools.map((tool) => tool.name))];
   const route = section.route;
   const menu = (
     label: string,
@@ -154,11 +158,7 @@ export function CaseAfterRun({
                       route.kind === "noTools"
                         ? chooseTools
                         : (current) =>
-                            setCaseKind(
-                              current,
-                              "capability",
-                              suiteDefaultMatchOptions,
-                            ),
+                            removeExactOrder(current, suiteDefaultMatchOptions),
                     ),
                 },
               ])}
@@ -214,7 +214,9 @@ export function CaseAfterRun({
             );
           })}
           {section.caseRows.map((row) => {
-            const index = row.predicateIndex ?? 0;
+            const index = row.predicateIndex;
+            // Without an index there is no predicate to edit or remove.
+            if (index === undefined) return null;
             const predicate = row.predicate;
             const s = rowSummary(row);
             const key = `case:${index}`;
@@ -283,6 +285,7 @@ export function CaseAfterRun({
             title="Add an after-run assertion"
             description="Graded once, over the finished transcript."
             allowRouteChecks
+            authorableKinds={authorableKinds}
             filter={(entry) => entry.scope === "whole-run"}
             className={ADD_SMALL}
             onSelect={(choice) => {

@@ -108,6 +108,23 @@ describe("playgroundCredentialRefusal", () => {
     ).toBeNull();
     expect(readinessMock).not.toHaveBeenCalled();
   });
+
+  it("refuses a Cursor model the account no longer offers, and lets the auto model through", async () => {
+    readinessMock.mockResolvedValue({
+      ok: true,
+      value: { readiness: "ready", modelAvailable: false },
+    });
+    expect(
+      await playgroundCredentialRefusal({ ...ask, modelId: "cursor/gone" }),
+    ).toBe("Cursor no longer offers this model. Choose another model for this client.");
+    expect(readinessMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ modelId: "cursor/gone" }),
+    );
+    expect(
+      await playgroundCredentialRefusal({ ...ask, modelId: "cursor/auto" }),
+    ).toBeNull();
+    readinessMock.mockReset();
+  });
 });
 
 describe("playgroundHarnessBoxUnavailableReason", () => {

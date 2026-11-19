@@ -30,6 +30,8 @@ import { handleRoute } from "./auth.js";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { logger } from "../../utils/logger.js";
+import { looksLikeConvexId } from "../v1/convex-id-param.js";
 import { createCheckedAddressFetch } from "../../utils/checked-address-fetch.js";
 import { probeGatewayConnection } from "../../utils/gateway-connection-probe.js";
 import { GATEWAY_APIS } from "@/shared/gateway-connection";
@@ -58,6 +60,16 @@ async function assertMayTestGateway(
   c: Context,
   organizationId: string,
 ): Promise<void> {
+  // Convex rejects an id that doesn't parse as `v.id("organizations")` before
+  // the query runs, and production redacts that to the same "Server Error" an
+  // outage produces, so the catch below can't tell them apart. Such an id
+  // names no organization the caller administers: refuse it here with the
+  // same 403, without a query or a report. The warn keeps refusals countable
+  // in case Convex's id format changes.
+  if (!looksLikeConvexId(organizationId)) {
+    logger.warn("[org-gateway-test] rejected a malformed organization id");
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN, GATEWAY_TEST_ADMINS_ONLY);
+  }
   const bearer = await getConvexBearerForRequest(c);
   let allowed: boolean;
   try {

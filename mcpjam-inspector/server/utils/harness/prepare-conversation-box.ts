@@ -1,8 +1,8 @@
 /**
  * Prepare a new hosted chat's computer while its first message is typed.
  *
- * The first Send of a hosted Claude Code or Codex chat creates the
- * conversation's box and installs the agent before the model sees a byte.
+ * The first Send of a hosted harness chat creates the conversation's box and
+ * installs the agent before the model sees a byte, for every runtime alike.
  * This does those two things earlier, and nothing else: it boots the box on
  * the preparation's own route, claims it under the per-box reservation that
  * fences every turn's preparation, attaches, and runs the pnpm guard and the
@@ -47,18 +47,14 @@ import {
   CLAIM_RENEWAL_MS,
   PREPARATION_DEADLINE_MS,
 } from "./preparation-timing.js";
-import { buildBrokerDummyAuth, getHarnessAdapter } from "./registry.js";
+import { hostedWarmAgentEligible } from "./forwarding/runtime-contract.js";
+import {
+  buildBrokerDummyAuth,
+  getHarnessAdapter,
+  type HarnessId,
+} from "./registry.js";
 import { createHarnessSandboxProvider } from "./sandbox-provider-factory.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
-
-const PREPARABLE_HARNESSES = ["claude-code", "codex"] as const;
-export type PreparableHarness = (typeof PREPARABLE_HARNESSES)[number];
-
-export function isPreparableHarness(
-  harnessId: string | undefined,
-): harnessId is PreparableHarness {
-  return PREPARABLE_HARNESSES.some((id) => id === harnessId);
-}
 
 /** Why the backend booted no box; anything else reads as `skipped`. */
 const BACKEND_SKIPS = [
@@ -97,22 +93,31 @@ const NO_PROXY_URL = "http://prepare.invalid";
 
 /**
  * The runtimes whose recipes a hosted turn applies, built as the turn builds
- * them, warm and cold, since which one the Send runs is decided at the Send.
- * A recipe reads none of these arguments (`harness-bake.test.ts` holds every
- * hosted recipe to that), so the box ends up as the baked template has it.
+ * them: cold, and warm where the runtime may run warm, since which one the
+ * Send runs is decided at the Send. A recipe reads none of these arguments
+ * (`harness-bake.test.ts` holds every hosted recipe to that), so the box ends
+ * up as the baked template has it. A runtime on the customer's own account
+ * gets its credential names with empty values, as its turn's placeholders are.
  */
 export function hostedBootstrapRuntimes(
-  harnessId: PreparableHarness,
+  harnessId: HarnessId,
   modelId: string,
 ): HarnessAgentAdapter[] {
   const adapter = getHarnessAdapter(harnessId);
+  const auth =
+    adapter.modelAccess === "external-account"
+      ? Object.fromEntries(
+          (adapter.externalAccountCredentialEnv ?? []).map((name) => [name, ""]),
+        )
+      : buildBrokerDummyAuth(harnessId, NO_PROXY_URL);
   const build = (warmAgent: boolean) =>
     adapter.createHarness({
       modelId,
       warmAgent,
-      auth: buildBrokerDummyAuth(harnessId, NO_PROXY_URL),
+      auth,
       mcpJson: { mcpServers: {} },
     });
+  if (!hostedWarmAgentEligible(adapter)) return [build(false)];
   const warm = withWarmBridgeBootstrap(build(true));
   return [
     build(false),
@@ -123,7 +128,7 @@ export function hostedBootstrapRuntimes(
 }
 
 export async function prepareConversationBox(args: {
-  harnessId: PreparableHarness;
+  harnessId: HarnessId;
   projectId: string;
   chatSessionId: string;
   /** The environment the Send's box would be booted with, if any. */

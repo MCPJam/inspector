@@ -32,6 +32,11 @@ vi.mock("@/hooks/use-playground-hidden-environment", () => ({
 
 vi.mock("@/lib/plugins/plugin-notice-display", () => ({ showPluginNotice: vi.fn() }));
 
+const traceCost = vi.hoisted(() => ({ on: false }));
+vi.mock("@/hooks/useTraceCostEnabled", () => ({
+  useTraceCostEnabled: () => traceCost.on,
+}));
+
 vi.mock("use-stick-to-bottom", () => {
   const StickToBottomComponent = ({
     children,
@@ -782,6 +787,7 @@ describe("MultiModelPlaygroundCard", () => {
 
     afterEach(() => {
       Object.assign(mockUseChatSession, idleSession);
+      traceCost.on = false;
     });
 
     // `useChatSession` rebuilds the live trace envelope on every trace event,
@@ -805,6 +811,7 @@ describe("MultiModelPlaygroundCard", () => {
 
     const streamingCard = (
       onSummaryChange: (summary: MultiModelCardSummary) => void,
+      broadcast: ReturnType<typeof createCompareBroadcast> | null = null,
     ) => (
       <MultiModelPlaygroundCard
         compareId={String(model.id)}
@@ -813,7 +820,10 @@ describe("MultiModelPlaygroundCard", () => {
         model={model}
         comparisonSummaries={[]}
         selectedServers={[]}
-        broadcastRequest={null}
+        broadcastRequest={broadcast?.request ?? null}
+        claimBroadcastDelivery={(request) =>
+          broadcast?.claim(request, "test-lane") ?? false
+        }
         deterministicExecutionRequest={null}
         stopRequestId={0}
         executionConfig={{
@@ -867,6 +877,80 @@ describe("MultiModelPlaygroundCard", () => {
       expect(onSummaryChange).toHaveBeenLastCalledWith(
         expect.objectContaining({ status: "running", tokens: 42 }),
       );
+    });
+
+    it("lifts the latest turn's cost when a call is priced, not on every streamed token", () => {
+      traceCost.on = true;
+      const pricedAtToken = (amounts: number[]): LiveChatTraceEnvelope => ({
+        ...envelopeAtToken(),
+        spans: amounts.map((amountUsd, stepIndex) => ({
+          id: `llm-${stepIndex}`,
+          name: "LLM",
+          category: "llm",
+          startMs: 0,
+          endMs: 10,
+          promptIndex: 0,
+          stepIndex,
+          cost: {
+            calculationVersion: 1,
+            currency: "USD",
+            completeness: "complete",
+            amountUsd,
+            source: "provider_reported",
+          },
+        })),
+      });
+      Object.assign(mockUseChatSession, {
+        messages: [
+          { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ],
+        status: "streaming",
+        isStreaming: true,
+        liveTraceEnvelope: pricedAtToken([0.002]),
+      });
+      const onSummaryChange = vi.fn();
+      const { rerender } = render(streamingCard(onSummaryChange));
+      expect(onSummaryChange).toHaveBeenCalledTimes(1);
+
+      for (let token = 0; token < 100; token++) {
+        Object.assign(mockUseChatSession, {
+          liveTraceEnvelope: pricedAtToken([0.002]),
+        });
+        rerender(streamingCard(onSummaryChange));
+      }
+      expect(onSummaryChange).toHaveBeenCalledTimes(1);
+
+      Object.assign(mockUseChatSession, {
+        liveTraceEnvelope: pricedAtToken([0.002, 0.001]),
+      });
+      rerender(streamingCard(onSummaryChange));
+      expect(onSummaryChange).toHaveBeenCalledTimes(2);
+      expect(onSummaryChange.mock.calls[1]?.[0].cost).toMatchObject({
+        knownSubtotalUsd: 0.003,
+        totalCalls: 2,
+      });
+    });
+
+    it("carries the broadcast its latest prompt answers, and none after a follow-up", () => {
+      mockUseChatSession.messages = [
+        { id: "m-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as never;
+      const onSummaryChange = vi.fn();
+      const broadcast = createCompareBroadcast(
+        { id: 3, text: "hi", prependMessages: [] },
+        ["test-lane"],
+      );
+      render(streamingCard(onSummaryChange, broadcast));
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(onSummaryChange.mock.calls.at(-1)?.[0].broadcastId).toBe(3);
+
+      act(() =>
+        lane.thread.mock.calls.at(-1)![0].sendFollowUpMessage("And hotels?"),
+      );
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(2);
+      expect(
+        onSummaryChange.mock.calls.at(-1)?.[0].broadcastId,
+      ).toBeUndefined();
     });
   });
 
