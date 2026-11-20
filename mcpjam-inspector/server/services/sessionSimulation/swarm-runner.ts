@@ -1326,8 +1326,10 @@ async function runJourneyFanOut(
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
-        // configured session.
-        if (!harnessTargetBlockedReason) {
+        // configured session. A web client never uses one, whatever computer
+        // or image it carries: the vendor's app runs on the vendor's site, and
+        // none of MCPJam's own tools reach it, so no shell notice applies.
+        if (!harnessTargetBlockedReason && !webClientTarget) {
           const intent = sandboxIntentFor(
             target,
             hostedBrowserAvailable,
