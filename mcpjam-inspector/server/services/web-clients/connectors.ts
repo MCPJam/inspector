@@ -22,6 +22,16 @@ export type WebConnector = {
 export type UpstreamTarget = {
   url: string;
   headers: Record<string, string>;
+  /**
+   * The fetch that reaches this server. Hosted, it is the egress-guarded one,
+   * which also attaches stored header credentials on every redirect hop, so a
+   * target without it must never point at a URL a user typed.
+   */
+  fetch?: typeof fetch;
+  /** A fresh access token after the server answered 401, if one exists. */
+  onUnauthorized?: () => Promise<string | undefined>;
+  /** Called once the forwarded exchange has ended, however it ended. */
+  release?: () => Promise<void>;
 };
 
 export interface WebConnectorResolver {
