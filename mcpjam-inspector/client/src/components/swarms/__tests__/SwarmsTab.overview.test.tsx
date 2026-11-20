@@ -18,10 +18,10 @@ import {
   groupRunsIntoSwarmWaves,
   swarmWaveRunStateChipClass,
   swarmWaveRunStateLabel,
-  swarmWaveTitle,
   waveLiveProgress,
   waveRunState,
 } from "../swarm-overview-panel";
+import { describeSwarmIdentity } from "../swarm-run-header";
 
 /**
  * The Swarms OVERVIEW tab — the default landing view.
@@ -584,22 +584,31 @@ describe("groupRunsIntoSwarmWaves", () => {
   });
 });
 
-describe("swarmWaveTitle", () => {
+describe("describeSwarmIdentity", () => {
   it("titles a wave with the name its author gave the swarm", () => {
     const [newest, second] = overview.runs;
     const [wave] = groupRunsIntoSwarmWaves([
       withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
       withGroup({ ...second!, swarmName: "Checkout regression" }, "wave-a"),
     ]);
-    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
+    expect(describeSwarmIdentity(wave!)).toMatchObject({
+      heading: "Asana",
+      title: "Checkout regression",
+    });
   });
 
-  it("falls back to the short route id when no run carries a name", () => {
+  it("falls back to Swarm and a date when server and name are missing", () => {
     // Runs launched outside a swarm, plus every row from a backend that
     // predates the field.
     const [newest] = overview.runs;
-    const [wave] = groupRunsIntoSwarmWaves([withGroup(newest!, "wave-a")]);
-    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup({ ...newest!, serverNames: undefined }, "wave-a"),
+    ]);
+    expect(describeSwarmIdentity(wave!)).toMatchObject({
+      heading: "Swarm",
+      date: expect.any(String),
+      title: undefined,
+    });
   });
 
   it("names a mixed wave after its newest member's swarm", () => {
@@ -610,10 +619,10 @@ describe("swarmWaveTitle", () => {
       withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
       withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
     ]);
-    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
+    expect(describeSwarmIdentity(wave!).title).toBe("Checkout regression");
   });
 
-  it("keeps the id when the newest member is unnamed but an older one is not", () => {
+  it("keeps the server heading when only an older member is named", () => {
     // The case that separates "newest wins" from "first named wins": an ad-hoc
     // wave that reused ONE journey would otherwise be titled after the swarm
     // that journey was authored in.
@@ -622,7 +631,10 @@ describe("swarmWaveTitle", () => {
       withGroup(newest!, "wave-a"),
       withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
     ]);
-    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+    expect(describeSwarmIdentity(wave!)).toMatchObject({
+      heading: "Asana",
+      title: undefined,
+    });
   });
 
   it("treats an empty or whitespace-only name as no name at all", () => {
@@ -633,7 +645,7 @@ describe("swarmWaveTitle", () => {
       const [wave] = groupRunsIntoSwarmWaves([
         withGroup({ ...newest!, swarmName }, "wave-a"),
       ]);
-      expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+      expect(describeSwarmIdentity(wave!).title).toBeUndefined();
     }
   });
 });
@@ -739,10 +751,14 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
     const heading = screen.getByTestId("swarm-run-detail-title");
-    expect(heading.textContent).toBe("Swarm run-2b");
+    expect(heading.textContent).toBe("Asana");
     // The heading truncates, and authored names run to SWARM_NAME_MAX — a
     // clipped one is unreadable without the tooltip.
-    expect(heading.getAttribute("title")).toBe("Swarm run-2b");
+    expect(heading.getAttribute("title")).toBe("Asana");
+    expect(screen.getByText("Clients")).toBeTruthy();
+    expect(screen.getByTitle("Claude, Cursor")).toBeTruthy();
+    expect(screen.getByText("claude-haiku-4.5 +1")).toBeTruthy();
+    expect(screen.getByText("Prod · Claude")).toBeTruthy();
     // BB-202: the tab strip no longer gives way, so the heading is the child
     // that has to shrink.
     expect(heading.className.split(/\s+/)).toContain("truncate");
@@ -757,6 +773,21 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.queryByTestId("swarm-run-detail-view-run")).toBeNull();
     expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
+  });
+
+  it.each([
+    ["Swarm · Nov 18", "Nov 18", false],
+    ["Swarm · Checkout v2", undefined, true],
+  ])("shows the saved title and date for %s consistently with Overview", async (swarmName, date, showName) => {
+    const [newest, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [{ ...newest!, swarmName }, ...rest],
+    };
+    renderTab("run-2b");
+    expect(await screen.findByRole("heading", { name: "Asana" })).toBeTruthy();
+    if (date) expect(screen.getAllByText(date)).toHaveLength(1);
+    expect(Boolean(screen.queryByText(swarmName))).toBe(showName);
   });
 
   it("does not render the retired launch-outcome strip", async () => {

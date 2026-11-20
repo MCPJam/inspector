@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { Button } from "@mcpjam/design-system/button";
@@ -16,7 +16,7 @@ import { SWARM_QUERIES, type SwarmWaveSignals } from "@/lib/swarm-api";
 import type { FindingsPersonaDoc } from "./findings/findings-derivation";
 import { narratedWaveSummary } from "./findings/findings-headline";
 import { SwarmFindingsTab } from "./findings/swarm-findings-tab";
-import { formatWaveModelLabel, WaveClientLogoStrip } from "./swarm-overview-panel";
+import { SwarmRunMetadata } from "./swarm-run-header";
 import type { OverviewWave } from "./swarm-overview-workspace";
 
 const waveSignalsQuery = makeFunctionReference<
@@ -24,15 +24,6 @@ const waveSignalsQuery = makeFunctionReference<
   { projectId: string; swarmRunGroupId: string },
   SwarmWaveSignals | null
 >(SWARM_QUERIES.getWaveSignals);
-
-function Metadata({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-baseline gap-1.5">
-      <dt className="shrink-0">{label}</dt>
-      <dd className="min-w-0 break-words font-medium text-foreground">{children}</dd>
-    </div>
-  );
-}
 
 export function SwarmOverviewReport({
   row,
@@ -67,24 +58,12 @@ export function SwarmOverviewReport({
             Open full swarm
           </Button>
         </div>
-        <dl className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-muted-foreground">
-          <Metadata label="Sessions">
-            <span className="tabular-nums">
-              {row.totals.succeeded}/{row.totals.total} complete
-            </span>
-          </Metadata>
-          {row.clients.length > 0 && (
-            <Metadata label="Clients">
-              <WaveClientLogoStrip targets={row.targets} hostStyleByName={hostStyleByName} />
-            </Metadata>
-          )}
-          {row.targets.length > 0 && (
-            <Metadata label="Model">{formatWaveModelLabel(row.targets)}</Metadata>
-          )}
-          {showEnvironment && row.environments.length > 0 && (
-            <Metadata label="Environment">{row.environments.join(", ")}</Metadata>
-          )}
-        </dl>
+        <SwarmRunMetadata
+          targets={row.targets}
+          environments={showEnvironment ? row.environments : []}
+          hostStyleByName={hostStyleByName}
+          sessions={row.totals}
+        />
       </header>
       <section aria-labelledby="swarm-overview-findings" className="space-y-2">
         <h3 id="swarm-overview-findings" className="px-0.5 text-sm font-semibold">

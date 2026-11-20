@@ -273,26 +273,6 @@ export function groupRunsIntoSwarmWaves(
   return waves.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-/** Short id for display — same length convention as evals `formatRunId`. */
-export function formatSwarmId(swarmId: string): string {
-  return swarmId.substring(0, 8);
-}
-
-/**
- * The name its author gave the swarm, else the ID-first title matching evals
- * (`Run n57bwtsk`): `Swarm` + short route id. Scope (goals / personas) lives in
- * the subtitle, not the title.
- */
-export function swarmWaveTitle(wave: SwarmWave): string {
-  // Read off the anchor, never searched for. The backend resolves the name per
-  // WAVE, but legacy rows fall back to each journey's authoring swarm, so a
-  // wave that reused journeys can hold two names. Taking the first NAMED run
-  // would title such a wave after the reused journey's original swarm, which
-  // is the mislabel this helper exists to avoid.
-  const authored = wave.anchor.swarmName?.trim();
-  return authored || `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
-}
-
 /**
  * Progress of a wave that is STILL GOING, or `null` once every member reached a
  * terminal.

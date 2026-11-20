@@ -26,6 +26,7 @@ import { SwarmsEmptyHero } from "./swarms-empty-hero";
 import type { FindingsPersonaDoc } from "./findings/findings-derivation";
 import { PersonaPixelAvatar } from "./persona-pixel-avatar";
 import { SwarmOverviewReport } from "./swarm-overview-report";
+import { describeSwarmIdentity } from "./swarm-run-header";
 import {
   findingName,
   groupRunsIntoSwarmWaves,
@@ -42,13 +43,6 @@ import {
 const overviewQuery = makeFunctionReference<"query", { projectId: string }, SwarmOverview>(
   SWARM_QUERIES.getSwarmOverview,
 );
-const dateFormat = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-const shortDateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
-const englishShortDate = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01])$/;
 
 type PanelProps = {
   projectId: string | null;
@@ -119,34 +113,22 @@ function OverviewBody({ projectId, personas, hosts, selectedId, onSelectRun, onO
 }
 
 function describeWave(wave: SwarmWave) {
-  const authored = wave.anchor.swarmName?.trim();
-  const savedDate = authored?.match(/^Swarm · (.+)$/)?.[1];
-  const defaultDate =
-    savedDate &&
-    (savedDate === shortDateFormat.format(wave.createdAt) || englishShortDate.test(savedDate))
-      ? savedDate
-      : undefined;
-  const title = defaultDate || authored?.toLowerCase() === "swarm" ? undefined : authored;
-  const date = defaultDate ?? dateFormat.format(wave.createdAt);
-  const servers = [...new Set(wave.runs.flatMap((run) => run.serverNames ?? []))];
+  const { name, formattedDate, ...identity } = describeSwarmIdentity(wave);
   const targets = waveTargets(wave.runs);
   const personas = [...new Set(wave.runs.map((run) => run.personaName))];
   return {
     wave,
     targets,
-    servers,
+    ...identity,
     personas,
     id: swarmWaveRouteId(wave),
-    heading: servers.join(", ") || title || "Swarm",
-    title: servers.length > 0 ? title : undefined,
-    date: title?.includes(date) ? undefined : date,
     clients: waveClientNames(targets),
     environments: waveEnvironmentNames(targets),
     totals: waveSessionTotals(wave.runs),
     words: [
-      title,
-      date,
-      ...servers,
+      name,
+      formattedDate,
+      ...identity.servers,
       ...personas,
       ...wave.runs.flatMap((run) => [run.journeyName, ...run.findings.map(findingName)]),
     ]

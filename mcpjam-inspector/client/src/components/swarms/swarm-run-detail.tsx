@@ -38,6 +38,7 @@ import {
   type SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useRunInsights } from "@/hooks/use-run-insights";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { InsightsWorkbench } from "@/components/shared/usage-insights/InsightsWorkbench";
@@ -45,12 +46,13 @@ import {
   groupRunsIntoSwarmWaves,
   resolveSwarmWave,
   swarmWaveRouteId,
-  swarmWaveTitle,
   swarmWaveRunStateChipClass,
   swarmWaveRunStateLabel,
+  waveEnvironmentNames,
   waveLiveProgress,
   waveRunState,
   waveSessionTotals,
+  waveTargets,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
 import {
@@ -64,6 +66,7 @@ import {
   launchedRunsFromWave,
   resolveSwarmRunDetailTab,
 } from "@/components/swarms/swarm-run-detail-model";
+import { describeSwarmIdentity, SwarmRunMetadata } from "./swarm-run-header";
 
 export interface SwarmRunDetailProps {
   organizationId?: string;
@@ -78,7 +81,11 @@ export interface SwarmRunDetailProps {
     avatarShape?: number;
     avatarPalette?: number;
   }>;
-  hosts?: ReadonlyArray<{ hostId: string; name: string }>;
+  hosts?: ReadonlyArray<{
+    hostId: string;
+    name: string;
+    hostStyle?: string | null;
+  }>;
   /**
    * Relaunch each non-archived journey in the wave. Parent owns the launch
    * coordinator (idempotency / quota). Returns after all launches settle.
@@ -107,6 +114,7 @@ export function SwarmRunDetail({
   const sessionParam = useCurrentSearchParam("session");
   const selParam = useCurrentSearchParam("sel");
   const findingParam = useCurrentSearchParam("finding");
+  const showEnvironment = useProjectEnvironmentsEnabled();
   // Pass both tab and session: a `?session=` deep-link without `tab` must open
   // Sessions. Building `?tab=` alone used to strip session and land on Insights.
   const parsedTab: SwarmDetailTab = parseSwarmDetailTab(
@@ -364,7 +372,11 @@ export function SwarmRunDetail({
     );
   }
 
-  const title = swarmWaveTitle(wave);
+  const { heading, title, date } = describeSwarmIdentity(wave);
+  const targets = waveTargets(wave.runs);
+  const hostStyleByName = new Map(
+    hosts.map((host) => [host.name.trim(), host.hostStyle]),
+  );
   const live = liveProgress;
   const dataRunState = waveRunState(
     wave.runs.map((run) => ({
@@ -426,19 +438,33 @@ export function SwarmRunDetail({
         backLabel="Swarms"
         onBack={() => navigate(routePaths.swarms)}
         backTestId="swarm-run-detail-back"
+        className="px-3 sm:px-8"
+        stackWhenNarrow
         title={
-          <h1
-            className="truncate text-xl font-bold tracking-tight text-foreground"
-            title={title}
-            data-testid="swarm-run-detail-title"
-          >
-            {title}
-            {hasLocalExecution && (
-              <span className="ml-2 rounded bg-muted px-2 py-0.5 align-middle text-xs font-normal text-muted-foreground">
-                {hasHostedExecution ? "Local + cloud" : "Ran locally"}
-              </span>
+          <>
+            <div className="flex flex-wrap items-baseline gap-x-3">
+              <h1
+                className="min-w-0 truncate text-xl font-bold tracking-tight text-foreground"
+                title={heading}
+                data-testid="swarm-run-detail-title"
+              >
+                {heading}
+              </h1>
+              {date && (
+                <span className="text-sm text-foreground/75">{date}</span>
+              )}
+              {hasLocalExecution && (
+                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {hasHostedExecution ? "Local + cloud" : "Ran locally"}
+                </span>
+              )}
+            </div>
+            {title && (
+              <p className="truncate text-sm text-muted-foreground" title={title}>
+                {title}
+              </p>
             )}
-          </h1>
+          </>
         }
         meta={
           live && !cleanupPending ? undefined : (
@@ -523,7 +549,15 @@ export function SwarmRunDetail({
           ariaLabel: "Swarm run view",
           indicatorId: "swarm-run-detail",
         }}
-      />
+      >
+        {targets.length > 0 && (
+          <SwarmRunMetadata
+            targets={targets}
+            environments={showEnvironment ? waveEnvironmentNames(targets) : []}
+            hostStyleByName={hostStyleByName}
+          />
+        )}
+      </DetailPageHeader>
 
       {/* Live only. Settled outcome lives in the header so a finished wave
           does not spend a second row repeating Complete + the session tally. */}
