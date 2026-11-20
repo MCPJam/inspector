@@ -11,7 +11,22 @@
 import type { WebClientVendor, WebConnectorAuth } from "@/shared/web-clients";
 import type { SendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
-import type { RealUiPageModule } from "../../utils/harness/real-ui/page-module.js";
+import type {
+  PendingStep,
+  RealUiFailure,
+  RealUiPageModule,
+  WebAccountIdentity,
+} from "../../utils/harness/real-ui/page-module.js";
+
+/** How a turn ended, for the account's status and for recovery. */
+export type WebTurnOutcome =
+  | { ok: true; webAccountId: string; account: WebAccountIdentity }
+  | {
+      ok: false;
+      webAccountId: string;
+      failure: RealUiFailure;
+      pendingStep?: PendingStep;
+    };
 
 export type ResolvedWebAccount = {
   webAccountId: string;
@@ -40,6 +55,8 @@ export interface WebClientEnvironment {
     webAccountId: string;
     sites: readonly string[];
   }): Promise<{ driver: PageDriver; close(): Promise<void> }>;
+  /** Records how the turn ended on the account, after the browser closed. */
+  onOutcome?(outcome: WebTurnOutcome): Promise<void>;
 }
 
 let configured: WebClientEnvironment | undefined;

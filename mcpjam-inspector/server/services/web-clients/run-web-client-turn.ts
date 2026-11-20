@@ -143,6 +143,7 @@ export async function runWebClientTurn(
   const serverOfConnector = new Map<string, string>();
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
+  let webAccountId: string | undefined;
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
@@ -151,6 +152,7 @@ export async function runWebClientTurn(
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
+    webAccountId = account.webAccountId;
     const connectors: Array<{ name: string; url: string }> = [];
     for (const serverId of input.serverIds) {
       const { connectorId } = await env.ensureConnector({
@@ -186,6 +188,8 @@ export async function runWebClientTurn(
       ...(input.replyTimeoutMs ? { replyTimeoutMs: input.replyTimeoutMs } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
+    await closeAll();
+    await env.onOutcome?.({ ok: true, webAccountId: account.webAccountId, account: page.account });
     return {
       ok: true,
       turnId,
@@ -201,6 +205,15 @@ export async function runWebClientTurn(
       kind: error.failure.kind,
       step: error.failure.step,
     });
+    await closeAll();
+    if (webAccountId) {
+      await env.onOutcome?.({
+        ok: false,
+        webAccountId,
+        failure: error.failure,
+        ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
+      });
+    }
     return {
       ok: false,
       turnId,
@@ -212,9 +225,16 @@ export async function runWebClientTurn(
       toolCalls: wireCalls([]),
     };
   } finally {
-    for (const connectorId of opened) {
+    await closeAll();
+  }
+
+  /** Closes this turn's windows and browser once, whichever way it ended. */
+  async function closeAll() {
+    for (const connectorId of opened.splice(0)) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    await browser?.close();
+    const open = browser;
+    browser = undefined;
+    await open?.close();
   }
 }
