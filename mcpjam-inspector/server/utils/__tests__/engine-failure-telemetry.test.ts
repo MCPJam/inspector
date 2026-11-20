@@ -350,6 +350,33 @@ describe("engine failure telemetry", () => {
     expect(calls[0].capture).toBeUndefined();
   });
 
+  it("does not own a 422 that refuses a model with no private provider", async () => {
+    // INSPECTOR-HONO-T: read by status alone the 422 was `internal/unknown`,
+    // which the internal hop promoted to a page.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "policy_no_zdr_endpoint",
+          error:
+            "openai/gpt-5 has no Gateway or OpenRouter endpoint that satisfies the required zero-retention / no-training policy.",
+          isRetryable: false,
+        }),
+        { status: 422, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const { reporter, calls } = makeReporter();
+
+    await runTurn({ failureReporter: reporter });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].errorCode).toBe("policy_no_zdr_endpoint");
+    expect(calls[0].normalized?.slug).toBe("provider/no_zdr_endpoint");
+    expect(originOf(calls[0].normalized)).toBe("user_config");
+    expect(calls[0].hop).toBe("mcpjam_internal");
+    expect(calls[0].capture).toBeUndefined();
+  });
+
   it("fails the turn on a mid-stream error chunk instead of succeeding", async () => {
     // The second delivery path, and the one HTTP status can never see. The
     // backend's `toUIMessageStreamResponse({onError})` categorizes the failure

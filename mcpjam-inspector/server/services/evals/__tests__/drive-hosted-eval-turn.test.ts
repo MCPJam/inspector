@@ -648,6 +648,58 @@ describe("a failed turn's log line is not a second Sentry capture of an empty st
     warn.mockRestore();
   });
 
+  it("logs a refused model with no private provider as a warning", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    failWith("policy_no_zdr_endpoint");
+
+    await driveHostedEvalTurn(baseParams());
+
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=policy_no_zdr_endpoint"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
+  it("logs a harness turn refused for no private provider as a warning", async () => {
+    const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    // The broker lease refusal: `runHarnessTurn` reports the backend's code
+    // only inside `infra`.
+    runAssistantTurnMock.mockImplementationOnce((async (opts: any) => {
+      opts.onEngineError?.({
+        message: "No private provider for this model",
+        rawText: "No private provider for this model",
+        promptIndex: 0,
+        phase: "setup",
+        infra: {
+          source: "platform_setup",
+          code: "policy_no_zdr_endpoint",
+          httpStatus: 422,
+        },
+      });
+      return {
+        messages: [{ role: "user", content: "hello" }],
+        turnTrace: { spans: [] },
+      } as never;
+    }) as never);
+
+    const outcome = await driveHostedEvalTurn(baseParams());
+
+    expect(outcome).toMatchObject({
+      kind: "failed",
+      errorCode: "policy_no_zdr_endpoint",
+    });
+    expect(error).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("engineError=policy_no_zdr_endpoint"),
+    );
+    error.mockRestore();
+    warn.mockRestore();
+  });
+
   it("keeps every other failed turn on logger.error", async () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => {});
     failWith("provider_error");

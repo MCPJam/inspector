@@ -181,17 +181,18 @@ describe("origin — credential ownership override", () => {
     );
   });
 
-  it.each(["provider/model_retired", "org/model_not_allowed"])(
-    "leaves %s with the user, whose model choice was refused",
-    (slug) => {
-      // The backend refused the requested model before any provider work.
-      // Choosing another model is the fix, so neither pages.
-      const normalized = describeAsSlug(slug);
+  it.each([
+    "provider/model_retired",
+    "org/model_not_allowed",
+    "provider/no_zdr_endpoint",
+  ])("leaves %s with the user, whose model choice was refused", (slug) => {
+    // The backend refused the requested model. Choosing another model is
+    // the fix, so none of them pages.
+    const normalized = describeAsSlug(slug);
 
-      expect(normalized.slug).toBe(slug);
-      expect(originOf(normalized)).toBe("user_config");
-    }
-  );
+    expect(normalized.slug).toBe(slug);
+    expect(originOf(normalized)).toBe("user_config");
+  });
 
   it("leaves account/guest_input_too_large with the guest, whose request was over the cap", () => {
     const normalized = describeAsSlug("account/guest_input_too_large");
