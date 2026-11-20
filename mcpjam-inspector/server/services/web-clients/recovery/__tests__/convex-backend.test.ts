@@ -1,30 +1,29 @@
 /**
- * The reconnect backend over the backend's service functions, against a
- * stubbed deployment: a real Convex client whose fetch answers as
- * `webClientService:read` and `:apply`, the profile-key route and storage
- * would. Checks what goes on the wire and how refusals become outcomes.
+ * The reconnect backend over the process's one backend service client,
+ * against stubs: a `WebClientService` that answers each command as the
+ * backend's `webClientService:read` and `:apply` would (refusals are real
+ * `ConvexError`s), and a fetch that answers as the profile-key route and
+ * storage would. Checks what is sent and how refusals become outcomes.
  */
 import { randomBytes } from "node:crypto";
+import { ConvexError } from "convex/values";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../../utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import type { WebClientService } from "../../backend-connector-resolver.js";
 import { WebBackendRefusal, type PendingStep } from "../backend.js";
 import {
   createConvexLedgerReader,
   createConvexWebReconnectBackend,
+  type ProfileKeyRoute,
 } from "../convex-backend.js";
 import { createWebRecoveryCoordinator } from "../coordinator.js";
 import { openWebProfile } from "../profile-cipher.js";
 import { reconcileWithLedger } from "../reconcile.js";
 
-const ENV = {
-  CONVEX_URL: "https://backend.example.test",
-  CONVEX_HTTP_URL: "https://routes.example.test",
-  INSPECTOR_SERVICE_TOKEN: "fixture-service-token",
-};
 const ACTOR = { actorExternalId: "user_fixture" };
 const PROJECT = "project-1";
 const ACCOUNT = "web-account-1";
@@ -33,57 +32,63 @@ const SEAT = {
   workspaceName: "Test workspace",
 };
 const PROFILE = new TextEncoder().encode("fixture-profile");
+const SERVICE_TOKEN = "fixture-service-token";
 const STEP: PendingStep = {
-  stepId: "step-1",
+  stepId: "send",
   startedAt: "2026-11-20T10:00:00.000Z",
   turnId: "turn-1",
 };
 
-type Answer = unknown | WebBackendRefusal;
-type Call = {
-  to: string;
-  args: Record<string, unknown>;
-  headers: Headers;
-  body?: Uint8Array;
-};
+type Answer = unknown;
 
-/** A deployment that answers each command, route and upload from `answers`. */
-function stubDeployment(answers: Record<string, Answer>) {
-  const calls: Call[] = [];
-  const reply = (status: number, value: unknown) =>
-    new Response(JSON.stringify(value), { status });
-  const fetchImpl: typeof fetch = async (input, init) => {
-    const url = String(input);
-    const headers = new Headers(init?.headers);
-    if (url.startsWith(ENV.CONVEX_URL)) {
-      const { path, args } = JSON.parse(String(init?.body));
-      const sent = args[0] as Record<string, unknown>;
-      const { action } = sent.command as { action: string };
-      calls.push({ to: `${path} ${action}`, args: sent, headers });
-      const answer = answers[action];
-      if (answer instanceof WebBackendRefusal) {
-        const errorData = { code: answer.code, message: answer.message };
-        return reply(560, { status: "error", errorMessage: "", errorData });
+/** The shared service client, answering each action from `answers`. */
+function stubService(answers: Record<string, Answer>) {
+  const calls: Array<{
+    via: "read" | "apply";
+    command: Record<string, unknown>;
+  }> = [];
+  const answer =
+    (via: "read" | "apply") =>
+    async (command: Record<string, unknown>): Promise<unknown> => {
+      calls.push({ via, command });
+      const value = answers[String(command.action)];
+      if (value instanceof WebBackendRefusal) {
+        throw new ConvexError({ code: value.code, message: value.message });
       }
-      return reply(200, { status: "success", value: answer ?? null });
-    }
-    if (url.endsWith("/profile-key")) {
-      calls.push({
-        to: "profile-key",
-        args: JSON.parse(String(init?.body)),
-        headers,
-      });
-      const answer = answers["profile-key"];
-      if (answer instanceof WebBackendRefusal) {
-        return reply(409, { error: { code: answer.code } });
-      }
-      return reply(200, answer);
-    }
-    const body = new Uint8Array(init?.body as ArrayBuffer);
-    calls.push({ to: "upload", args: {}, headers, body });
-    return reply(200, { storageId: "storage-1" });
+      return value ?? null;
+    };
+  const service: WebClientService = {
+    read: answer("read"),
+    apply: answer("apply"),
   };
-  return { calls, fetchImpl, options: { env: ENV, fetchImpl } };
+  return { calls, service };
+}
+
+/** The profile-key route and storage upload, answering from `key`. */
+function stubRoute(key: Answer) {
+  const sent: Array<{ to: string; headers: Headers; body: Uint8Array }> = [];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    const to = String(input).endsWith("/profile-key")
+      ? "profile-key"
+      : "upload";
+    const body = new Uint8Array(
+      typeof init?.body === "string"
+        ? new TextEncoder().encode(init.body)
+        : (init?.body as Uint8Array),
+    );
+    sent.push({ to, headers: new Headers(init?.headers), body });
+    if (to === "upload") return Response.json({ storageId: "storage-1" });
+    if (key instanceof WebBackendRefusal) {
+      return Response.json({ error: { code: key.code } }, { status: 409 });
+    }
+    return Response.json(key);
+  };
+  const route: ProfileKeyRoute = {
+    convexHttpUrl: "https://routes.example.test",
+    serviceToken: SERVICE_TOKEN,
+    fetchImpl,
+  };
+  return { sent, route };
 }
 
 const OPEN_REQUEST = {
@@ -98,6 +103,7 @@ const OPEN_REQUEST = {
 const ACCOUNT_VIEW = {
   webAccountId: ACCOUNT,
   projectId: PROJECT,
+  vendor: "claude",
   status: "needs_sign_in",
   ...SEAT,
   profileVersion: 3,
@@ -115,8 +121,8 @@ function profileKey(dataKey: Buffer, expectedProfileVersion = 3) {
 }
 
 describe("Convex reconnect backend", () => {
-  it("sends each command through the service functions as the actor", async () => {
-    const deployment = stubDeployment({
+  it("sends each command through the shared service as the actor", async () => {
+    const { calls, service } = stubService({
       listWebAccounts: [ACCOUNT_VIEW],
       listWebReconnectRequests: [OPEN_REQUEST],
       reportWebSignInRequired: { requestId: "request-1", shouldNotify: true },
@@ -131,10 +137,21 @@ describe("Convex reconnect backend", () => {
         { runId: "run-2", requestId: "request-1", pendingStep: "not json" },
       ],
     });
-    const backend = createConvexWebReconnectBackend(ACTOR, deployment.options);
+    const backend = createConvexWebReconnectBackend(ACTOR, {
+      service,
+      route: stubRoute(null).route,
+    });
 
+    // Only the fields recovery reads come back.
     expect(await backend.listWebAccounts({ projectId: PROJECT })).toEqual([
-      ACCOUNT_VIEW,
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        vendor: "claude",
+        status: "needs_sign_in",
+        ...SEAT,
+        profileVersion: 3,
+      },
     ]);
     await backend.listWebReconnectRequests({ projectId: PROJECT });
     expect(
@@ -158,24 +175,22 @@ describe("Convex reconnect backend", () => {
       await backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
     ).toEqual([{ runId: "run-1", requestId: "request-1", pendingStep: STEP }]);
 
-    expect(deployment.calls.map((call) => call.to)).toEqual([
-      "webClientService:read listWebAccounts",
-      "webClientService:read listWebReconnectRequests",
-      "webClientService:apply reportWebSignInRequired",
-      "webClientService:apply markWebAccountNeedsSignIn",
-      "webClientService:apply handbackWebReconnect",
-      "webClientService:apply claimResumableWebRuns",
+    expect(
+      calls.map(({ via, command }) => `${via} ${String(command.action)}`),
+    ).toEqual([
+      "read listWebAccounts",
+      "read listWebReconnectRequests",
+      "apply reportWebSignInRequired",
+      "apply markWebAccountNeedsSignIn",
+      "apply handbackWebReconnect",
+      "apply claimResumableWebRuns",
     ]);
-    for (const { to, args, headers } of deployment.calls) {
-      // The service credential is the only authority; no user bearer is sent.
-      expect(args.serviceToken).toBe(ENV.INSPECTOR_SERVICE_TOKEN);
-      expect(headers.get("authorization")).toBeNull();
-      expect(typeof args.requestId).toBe(
-        to.includes(":read") ? "string" : "undefined",
-      );
-      expect(args.command).toMatchObject(ACTOR);
+    for (const { command } of calls) {
+      expect(command).toMatchObject(ACTOR);
+      // Convex refuses an undefined field, so none is sent.
+      expect(Object.values(command)).not.toContain(undefined);
     }
-    expect(deployment.calls[2]?.args.command).toEqual({
+    expect(calls[2]?.command).toEqual({
       action: "reportWebSignInRequired",
       ...ACTOR,
       webAccountId: ACCOUNT,
@@ -187,11 +202,11 @@ describe("Convex reconnect backend", () => {
 
   it("saves a profile as ciphertext under the key the backend issued", async () => {
     const dataKey = randomBytes(32);
-    const deployment = stubDeployment({
-      "profile-key": profileKey(dataKey),
+    const { calls, service } = stubService({
       saveWebAccountProfile: { ok: true, profileVersion: 4 },
     });
-    const backend = createConvexWebReconnectBackend(ACTOR, deployment.options);
+    const { sent, route } = stubRoute(profileKey(dataKey));
+    const backend = createConvexWebReconnectBackend(ACTOR, { service, route });
 
     expect(
       await backend.saveWebAccountProfile({
@@ -201,11 +216,12 @@ describe("Convex reconnect backend", () => {
         savedFromRunId: "run-1",
       }),
     ).toEqual({ ok: true, profileVersion: 4 });
-    const [key, upload, save] = deployment.calls;
-    expect(key?.args).toEqual({ ...ACTOR, webAccountId: ACCOUNT });
-    expect(key?.headers.get("x-inspector-service-token")).toBe(
-      ENV.INSPECTOR_SERVICE_TOKEN,
-    );
+    const [key, upload] = sent;
+    expect(JSON.parse(new TextDecoder().decode(key?.body))).toEqual({
+      ...ACTOR,
+      webAccountId: ACCOUNT,
+    });
+    expect(key?.headers.get("x-inspector-service-token")).toBe(SERVICE_TOKEN);
     const sealed = upload?.body ?? new Uint8Array();
     expect(Buffer.from(sealed).includes(Buffer.from(PROFILE))).toBe(false);
     expect(openWebProfile(sealed, dataKey)).toEqual(Buffer.from(PROFILE));
@@ -213,27 +229,36 @@ describe("Convex reconnect backend", () => {
     tampered[20] = (tampered[20] ?? 0) ^ 1;
     expect(() => openWebProfile(tampered, dataKey)).toThrow();
     expect(() => openWebProfile(sealed, randomBytes(32))).toThrow();
-    expect(save?.args.command).toEqual({
-      action: "saveWebAccountProfile",
-      ...ACTOR,
-      webAccountId: ACCOUNT,
-      expectedProfileVersion: 3,
-      storageId: "storage-1",
-      wrappedKey: "sealed-key",
-      savedFromRunId: "run-1",
-    });
+    expect(calls).toEqual([
+      {
+        via: "apply",
+        command: {
+          action: "saveWebAccountProfile",
+          ...ACTOR,
+          webAccountId: ACCOUNT,
+          expectedProfileVersion: 3,
+          storageId: "storage-1",
+          wrappedKey: "sealed-key",
+          savedFromRunId: "run-1",
+        },
+      },
+    ]);
 
     // A key issued for a newer version means another save landed first.
-    const stale = stubDeployment({ "profile-key": profileKey(dataKey, 4) });
-    const staleBackend = createConvexWebReconnectBackend(ACTOR, stale.options);
+    const stale = stubRoute(profileKey(dataKey, 4));
+    const staleService = stubService({});
     expect(
-      await staleBackend.saveWebAccountProfile({
+      await createConvexWebReconnectBackend(ACTOR, {
+        service: staleService.service,
+        route: stale.route,
+      }).saveWebAccountProfile({
         webAccountId: ACCOUNT,
         expectedProfileVersion: 3,
         profile: PROFILE,
       }),
     ).toEqual({ ok: false, reason: "version_conflict", profileVersion: 4 });
-    expect(stale.calls.map((call) => call.to)).toEqual(["profile-key"]);
+    expect(stale.sent.map((call) => call.to)).toEqual(["profile-key"]);
+    expect(staleService.calls).toEqual([]);
   });
 
   it.each([
@@ -244,18 +269,23 @@ describe("Convex reconnect backend", () => {
   ])(
     "answers a handback refused with %s from %s as %s",
     async (code, refusedBy, outcome) => {
-      const deployment = stubDeployment({
+      const refusal = new WebBackendRefusal(code);
+      const { service } = stubService({
         listWebReconnectRequests: [OPEN_REQUEST],
         listWebAccounts: [ACCOUNT_VIEW],
-        "profile-key": profileKey(randomBytes(32)),
         saveWebAccountProfile: { ok: true, profileVersion: 4 },
         handbackWebReconnect: { status: "resolved", resumableRunIds: [] },
         claimResumableWebRuns: [],
-        [refusedBy]: new WebBackendRefusal(code),
+        ...(refusedBy === "profile-key" ? {} : { [refusedBy]: refusal }),
       });
+      const key =
+        refusedBy === "profile-key" ? refusal : profileKey(randomBytes(32));
       const coordinator = createWebRecoveryCoordinator({
-        backend: createConvexWebReconnectBackend(ACTOR, deployment.options),
-        ledger: createConvexLedgerReader(deployment.options),
+        backend: createConvexWebReconnectBackend(ACTOR, {
+          service,
+          route: stubRoute(key).route,
+        }),
+        ledger: createConvexLedgerReader(service),
         resumeRun: vi.fn(),
       });
 
@@ -263,46 +293,47 @@ describe("Convex reconnect backend", () => {
         await coordinator.handback({
           projectId: PROJECT,
           requestId: "request-1",
-          browser: {
+          browserFor: () => ({
             verifyAccount: async () => SEAT,
             captureProfile: async () => PROFILE,
-          },
+          }),
         }),
       ).toEqual({ status: outcome });
     },
   );
 
   it("passes other refusals and network failures on unchanged", async () => {
-    const forbidden = stubDeployment({
-      listWebReconnectRequests: new WebBackendRefusal("FORBIDDEN"),
-    });
-    const handback = (options: typeof forbidden.options) =>
+    const handback = (service: WebClientService) =>
       createWebRecoveryCoordinator({
-        backend: createConvexWebReconnectBackend(ACTOR, options),
-        ledger: createConvexLedgerReader(options),
+        backend: createConvexWebReconnectBackend(ACTOR, {
+          service,
+          route: stubRoute(null).route,
+        }),
+        ledger: createConvexLedgerReader(service),
         resumeRun: vi.fn(),
       }).handback({
         projectId: PROJECT,
         requestId: "request-1",
-        browser: {
+        browserFor: () => ({
           verifyAccount: async () => SEAT,
           captureProfile: async () => PROFILE,
-        },
+        }),
       });
-    await expect(handback(forbidden.options)).rejects.toMatchObject({
+    const forbidden = stubService({
+      listWebReconnectRequests: new WebBackendRefusal("FORBIDDEN"),
+    });
+    await expect(handback(forbidden.service)).rejects.toMatchObject({
       name: "WebBackendRefusal",
       code: "FORBIDDEN",
     });
     const reset = Object.assign(new Error("socket hang up"), {
       code: "ECONNRESET",
     });
-    const offline = {
-      env: ENV,
-      fetchImpl: vi.fn<typeof fetch>(async () => Promise.reject(reset)),
+    const offline: WebClientService = {
+      read: async () => Promise.reject(reset),
+      apply: async () => Promise.reject(reset),
     };
-    await expect(handback(offline)).rejects.not.toBeInstanceOf(
-      WebBackendRefusal,
-    );
+    await expect(handback(offline)).rejects.toBe(reset);
   });
 
   it("reads the durable ledger through findWebToolCalls", async () => {
@@ -318,8 +349,8 @@ describe("Convex reconnect backend", () => {
       forwardedAt: "2026-11-20T10:00:01.000Z",
       upstreamStatus: 200,
     };
-    const deployment = stubDeployment({ findWebToolCalls: [entry] });
-    const ledger = createConvexLedgerReader(deployment.options);
+    const { calls, service } = stubService({ findWebToolCalls: [entry] });
+    const ledger = createConvexLedgerReader(service);
 
     expect(
       await reconcileWithLedger(ledger, {
@@ -328,13 +359,24 @@ describe("Convex reconnect backend", () => {
         step: STEP,
       }),
     ).toEqual({ status: "reconciled", calls: [entry] });
-    expect(deployment.calls.map((call) => call.args.command)).toEqual([
-      {
-        action: "findWebToolCalls",
-        connectorId: "connector-1",
-        since: STEP.startedAt,
-      },
-      { action: "findWebToolCalls", turnId: "turn-1" },
+    // Without connector ids only the step's own turn is read.
+    expect(
+      await reconcileWithLedger(ledger, { runId: "run-1", step: STEP }),
+    ).toEqual({
+      status: "reconciled",
+      calls: [entry],
+    });
+    expect(calls.map(({ via, command }) => [via, command])).toEqual([
+      [
+        "read",
+        {
+          action: "findWebToolCalls",
+          connectorId: "connector-1",
+          since: STEP.startedAt,
+        },
+      ],
+      ["read", { action: "findWebToolCalls", turnId: "turn-1" }],
+      ["read", { action: "findWebToolCalls", turnId: "turn-1" }],
     ]);
   });
 });

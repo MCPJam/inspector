@@ -15,17 +15,15 @@ import { getInternalBackendConfig } from "../internal-backend.js";
 import { createWebAccountRoutes } from "./account-routes.js";
 import { webClientService } from "./backend-connector-resolver.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
-import { openWebClientHostedBrowser, type WebClientHostedBrowser } from "./hosted-browser.js";
+import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
 import { actorFromBearer, restoreWebProfile } from "./hosted-web-client-runtime.js";
 import { createConvexWebReconnectBackend } from "./recovery/convex-backend.js";
+import { findSignInBrowser, keepSignInBrowser } from "./sign-in-browsers.js";
 import { PageDriverError } from "../../utils/harness/real-ui/page-driver.js";
 import { logger } from "../../utils/logger.js";
 
 const bearerOf = (c: Context) => c.req.header("authorization") ?? "";
-
-/** Sign-in browsers this replica opened, so save-profile finds its own. */
-const signInBrowsers = new Map<string, WebClientHostedBrowser>();
 
 export function createDefaultWebAccountRoutes(): Hono {
   const service = webClientService();
@@ -47,9 +45,8 @@ export function createDefaultWebAccountRoutes(): Hono {
       return webClientsEnabledFor(identity?.kind === "id" ? identity.distinctId : undefined);
     },
     async mayManage({ actor, projectId, webAccountId }) {
-      // The backend has no manage check to ask yet (`mayManageWebAccounts`
-      // is the read it needs). Until it does, the answer is unknown: the
-      // route restores no saved session, and every save checks manage itself.
+      // An older backend has no manage check to ask. Its answer is unknown:
+      // the route restores no saved session, and every save checks manage itself.
       try {
         const answer = (await service.read({
           action: "mayManageWebAccounts",
@@ -85,7 +82,7 @@ export function createDefaultWebAccountRoutes(): Hono {
           vendor,
           ...(profileArchive ? { profileArchive } : {}),
         });
-        signInBrowsers.set(browser.browserSessionId, browser);
+        keepSignInBrowser({ browser, actor, projectId, webAccountId });
         try {
           await browser.driver.navigate(startUrl);
         } catch (error) {
@@ -97,11 +94,11 @@ export function createDefaultWebAccountRoutes(): Hono {
         }
         return { browserSessionId: browser.browserSessionId, chatSessionId: browser.chatSessionId };
       },
-      async driver({ browserSessionId }) {
-        return signInBrowserOf(browserSessionId).driver;
+      async driver(args) {
+        return signInBrowserOf(args).driver;
       },
-      async captureProfile({ browserSessionId }) {
-        return signInBrowserOf(browserSessionId).exportProfile();
+      async captureProfile(args) {
+        return signInBrowserOf(args).exportProfile();
       },
     },
   });
@@ -118,8 +115,8 @@ export function createDefaultWebAccountRoutes(): Hono {
   }
 }
 
-function signInBrowserOf(browserSessionId: string): WebClientHostedBrowser {
-  const browser = signInBrowsers.get(browserSessionId);
+function signInBrowserOf(args: Parameters<typeof findSignInBrowser>[0]) {
+  const browser = findSignInBrowser(args);
   if (!browser) {
     throw new Error("This sign-in browser was started elsewhere or has closed. Start the sign-in again.");
   }

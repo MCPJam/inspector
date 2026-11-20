@@ -1,0 +1,246 @@
+/**
+ * Recovery around one web client turn. A browser that failed is reconnected
+ * and the turn tried again; a sign-in page pauses the run on the account's
+ * reconnect request until a person hands the account back. Before anything
+ * is sent again the ledger is read: a call the server answered is not sent
+ * again, and one it never answered stops the step, since it may have run.
+ *
+ * The turn is tried again under the same turn key, so the send journal keeps
+ * the prompt to one send in this process, and after a restart the ledger
+ * check marks it sent before the turn can send it twice.
+ */
+import { webClientVendorForRuntime } from "../../../../shared/web-clients.js";
+import type { SendJournal } from "../../../utils/harness/real-ui/drive-turn.js";
+import type {
+  NeedsSignInReason,
+  RealUiFailure,
+  RealUiStep,
+} from "../../../utils/harness/real-ui/page-module.js";
+import {
+  runWebClientTurn,
+  type WebClientTurnInput,
+  type WebClientTurnResult,
+} from "../run-web-client-turn.js";
+import type {
+  WebClientEnvironment,
+  WebRunActor,
+} from "../web-client-environment.js";
+import { accountBrowserOver } from "./account-browser.js";
+import type { PendingStep, WebReconnectBackend } from "./backend.js";
+import type { WebActor } from "./convex-backend.js";
+import {
+  createWebRecoveryCoordinator,
+  type RunFailure,
+  type WebRecoveryDeps,
+} from "./coordinator.js";
+import { resumeWebRun, waitForResume } from "./paused-runs.js";
+import type { LedgerReader } from "./reconcile.js";
+
+/** Why a run stopped where recovery could not carry it on by itself. */
+export type WebRunStop =
+  | {
+      kind: "paused_for_person";
+      requestId: string;
+      reason: NeedsSignInReason;
+      /** The step the run resumes from. */
+      step: RealUiStep;
+      /** What the page asked for. */
+      message: string;
+    }
+  | {
+      /** These calls reached the server with no answer: they may have run. */
+      kind: "ambiguous_execution";
+      calls: Array<{ toolName: string; toolUseId?: string }>;
+    };
+
+/** A turn's result, with why recovery stopped it when it did. */
+export type RecoverableWebTurnResult = WebClientTurnResult & {
+  stop?: WebRunStop;
+};
+
+/** Where a handback finds the browser a person signed the account in with. */
+export type HandbackBrowsers = Pick<
+  WebClientEnvironment,
+  "openBrowser" | "pageModule"
+>;
+
+export type WebRecoverySetup = {
+  /**
+   * The reconnect backend, acting for the run's person. Undefined when the
+   * turn names nobody to act as: the turn then runs without recovery.
+   */
+  backendFor(run: {
+    projectId: string;
+    runId: string;
+    actor?: WebRunActor;
+  }): WebReconnectBackend | undefined;
+  ledger: LedgerReader;
+  signInMethodFor?: WebRecoveryDeps["signInMethodFor"];
+  /** How long a paused turn waits for the handback. */
+  maxPauseMs?: number;
+  /** How often a paused turn reads its request, for a handback elsewhere. */
+  pollMs?: number;
+  /**
+   * Where `openBrowser` gives the browser a person signed the account in
+   * with, for a handback: hosted, the sign-in browser the reconnect page
+   * names. Undefined when this server holds no such browser.
+   */
+  handbackEnvironment?(handback: {
+    actor: WebActor;
+    projectId: string;
+    browserSessionId?: string;
+  }): Promise<HandbackBrowsers | undefined>;
+};
+
+let configured: WebRecoverySetup | undefined;
+
+/** Set at startup where web accounts are kept, or by a test. */
+export function setWebRecovery(setup: WebRecoverySetup | undefined): void {
+  configured = setup;
+}
+
+export function webRecovery(): WebRecoverySetup | undefined {
+  return configured;
+}
+
+const MAX_PAUSE_MS = 15 * 60_000;
+const POLL_MS = 5_000;
+const MAX_ATTEMPTS = 3;
+/** Steps after which the prompt may already be in the vendor's chat. */
+const SENT_STEPS: ReadonlySet<string> = new Set([
+  "send",
+  "reply",
+  "read_conversation",
+]);
+
+/** The page's failure as recovery sees it; undefined when the run stops as before. */
+export function runFailureOf(failure: RealUiFailure): RunFailure | undefined {
+  switch (failure.kind) {
+    case "needs_sign_in":
+      return { kind: "needs_sign_in", reason: failure.reason };
+    // The browser failed, not the account: reconnect it and read the ledger.
+    case "driver":
+      return { kind: "browser_crashed" };
+    case "reply_timeout":
+      return { kind: "stream_dropped" };
+    // A changed page, a broken connector, a plan wall or a send that may have
+    // happened are not fixed by reconnecting.
+    default:
+      return undefined;
+  }
+}
+
+/** Records the prompt as possibly sent, so the turn looks for its chat first. */
+async function keepSendRecord(journal: SendJournal, turnKey: string) {
+  if (await journal.read(turnKey)) return;
+  await journal.write(turnKey, {
+    state: "sending",
+    at: new Date().toISOString(),
+  });
+}
+
+export async function runRecoverableWebTurn(
+  input: WebClientTurnInput,
+  setup: WebRecoverySetup | undefined,
+  onPaused?: (
+    paused: Extract<WebRunStop, { kind: "paused_for_person" }>,
+  ) => void,
+): Promise<RecoverableWebTurnResult> {
+  const vendor = webClientVendorForRuntime(input.runtimeId);
+  const { projectId, runId, environment } = input;
+  const backend =
+    setup && vendor
+      ? setup.backendFor({
+          projectId,
+          runId,
+          ...(environment.actor ? { actor: environment.actor } : {}),
+        })
+      : undefined;
+  if (!setup || !vendor || !backend) return runWebClientTurn(input);
+  const coordinator = createWebRecoveryCoordinator({
+    backend,
+    ledger: setup.ledger,
+    resumeRun: resumeWebRun,
+    ...(setup.signInMethodFor
+      ? { signInMethodFor: setup.signInMethodFor }
+      : {}),
+  });
+  const handleFailure = async (
+    failure: RunFailure,
+    pendingStep: PendingStep,
+  ) => {
+    const account = await environment.resolveAccount({ projectId, vendor });
+    const browser = accountBrowserOver(environment, { ...account, vendor });
+    try {
+      return await coordinator.handleStepFailure({
+        failure,
+        projectId,
+        webAccountId: account.webAccountId,
+        runId,
+        pendingStep,
+        browser,
+      });
+    } finally {
+      await browser.close();
+    }
+  };
+  let attempt = input;
+  for (let tried = 1; ; tried += 1) {
+    const result = await runWebClientTurn(attempt);
+    if (result.ok) return result;
+    const failure = runFailureOf(result.failure);
+    if (!failure || tried >= MAX_ATTEMPTS) return result;
+    const step: PendingStep = result.pendingStep ?? {
+      stepId: result.failure.step,
+      startedAt: new Date(result.startedAt).toISOString(),
+      turnId: result.turnId,
+    };
+    const outcome = await handleFailure(failure, step);
+    if (
+      outcome.status === "paused" &&
+      result.failure.kind === "needs_sign_in"
+    ) {
+      const paused = {
+        kind: "paused_for_person",
+        requestId: outcome.requestId,
+        reason: result.failure.reason,
+        step: result.failure.step,
+        message: result.failure.message,
+      } as const;
+      onPaused?.(paused);
+      const resumed = await waitForResume(runId, step, {
+        ...(input.signal ? { signal: input.signal } : {}),
+        timeoutMs: setup.maxPauseMs ?? MAX_PAUSE_MS,
+        pollMs: setup.pollMs ?? POLL_MS,
+        requestStatus: async () =>
+          (await backend.listWebReconnectRequests({ projectId })).find(
+            (request) => request.requestId === outcome.requestId,
+          )?.status,
+      });
+      if (!resumed) return { ...result, stop: paused };
+    }
+    const verdict = await coordinator.reconcileBeforeResend({ runId, step });
+    if (verdict.status === "ambiguous_execution") {
+      const calls = verdict.calls.map(({ toolName, toolUseId }) => ({
+        toolName,
+        ...(toolUseId ? { toolUseId } : {}),
+      }));
+      return { ...result, stop: { kind: "ambiguous_execution", calls } };
+    }
+    if (verdict.status === "reconciled" || SENT_STEPS.has(step.stepId)) {
+      await keepSendRecord(environment.journal, result.turnId);
+    }
+    attempt = { ...input, turnId: result.turnId };
+  }
+}
+
+/** What a person reads when a call may have run and was not sent again. */
+export function ambiguousExecutionMessage(
+  name: string,
+  stop: Extract<WebRunStop, { kind: "ambiguous_execution" }>,
+): string {
+  const tools = [...new Set(stop.calls.map((call) => call.toolName))].join(
+    ", ",
+  );
+  return `A call to ${tools} reached the server, but no answer came back, so it may have run. MCPJam didn't send it again. Open the chat in ${name} to check before you send again.`;
+}
