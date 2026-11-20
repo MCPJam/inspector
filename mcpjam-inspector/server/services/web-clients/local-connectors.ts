@@ -188,7 +188,9 @@ export function createLocalConnectorRoutes(
   app.post("/:connectorId/turn", async (c) => {
     const connectorId = c.req.param("connectorId");
     if (!registry.has(connectorId)) return unknown(c);
-    const parsed = turnRequest.safeParse((await readJson(c)) ?? {});
+    // Never read as `{}`: a cut-off `allowTools` would open a turn that
+    // allows every tool.
+    const parsed = turnRequest.safeParse(await readJson(c));
     if (!parsed.success)
       return c.json({ error: "Send { allowTools?: string[] }." }, 400);
     const allowTools = parsed.data.allowTools;
