@@ -36,7 +36,7 @@ export function NewCaseHeader({
           value={title}
           aria-label="Test case title"
           placeholder="Untitled test case"
-          readOnly={lockedReason !== null}
+          readOnly={saving || lockedReason !== null}
           onChange={(event) => onTitleChange(event.target.value)}
           className="min-w-0 flex-1 basis-[min(100%,12rem)] bg-transparent px-0 py-0 text-base font-semibold tracking-tight placeholder:text-muted-foreground focus:outline-none"
         />

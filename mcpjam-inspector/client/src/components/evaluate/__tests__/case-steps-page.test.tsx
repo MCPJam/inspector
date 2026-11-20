@@ -407,11 +407,52 @@ describe("CaseStepsPage for a New case", () => {
       "Lists them",
     );
     const save = screen.getByRole("button", { name: "Save case" });
+    const title = screen.getByRole("textbox", { name: "Test case title" });
     await user.dblClick(save);
     expect(state.create).toHaveBeenCalledOnce();
     expect(save).toBeDisabled();
+    expect(title).toHaveAttribute("readonly");
     finish("case-new");
     await waitFor(() => expect(save).toBeEnabled());
+    expect(title).not.toHaveAttribute("readonly");
+  });
+
+  it("stays where the user went when the create finishes after they left", async () => {
+    let finish = (_id: string) => {};
+    state.create = vi.fn(
+      () => new Promise<string>((resolve) => (finish = resolve)),
+    );
+    const props = {
+      suiteId: "suite-1",
+      testCaseId: "draft:prompt",
+      projectId: "project-1",
+      readOnly: false,
+      launchReview: { suite, hostNamesById: new Map() },
+      navigation: {
+        toSuiteOverview: vi.fn(),
+        toTestEdit: vi.fn(),
+        toSuiteEdit: vi.fn(),
+      },
+    };
+    const { rerender } = renderWithProviders(<CaseStepsPage {...props} />);
+    const user = userEvent.setup();
+    await user.type(
+      await screen.findByRole("textbox", { name: "What does the user ask?" }),
+      "List my workspaces",
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Expected outcome" }),
+      "Lists them",
+    );
+    await user.click(screen.getByRole("button", { name: "Save case" }));
+    expect(state.create).toHaveBeenCalledOnce();
+    rerender(<CaseStepsPage {...props} testCaseId="case-1" />);
+    finish("case-new");
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "List workspaces" })),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(props.navigation.toTestEdit).not.toHaveBeenCalled();
   });
 
   it.each([

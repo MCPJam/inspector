@@ -5,7 +5,7 @@
  * view's own routes and handlers. A New case (Add manually) opens here too;
  * Save case creates it and opens its page.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -139,6 +139,14 @@ export function CaseStepsPage({
   const [runOpen, setRunOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Where this page is now, so a create that ends after the user moved on stays put.
+  const here = useRef<string | null>(null);
+  useEffect(() => {
+    here.current = `${suiteId}/${testCaseId}`;
+    return () => {
+      here.current = null;
+    };
+  }, [suiteId, testCaseId]);
 
   const openTestCases = () => navigation.toSuiteOverview(suiteId, "test-cases");
   if (data.status === "missing")
@@ -186,8 +194,9 @@ export function CaseStepsPage({
 
   if (isNew || !testCase) {
     const create = async () => {
+      const startedOn = `${suiteId}/${testCaseId}`;
       const result = await data.save();
-      if (result.ok && result.testCaseId)
+      if (result.ok && result.testCaseId && here.current === startedOn)
         navigation.toTestEdit(suiteId, result.testCaseId, { replace: true });
     };
     return (
