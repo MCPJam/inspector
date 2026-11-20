@@ -64,15 +64,39 @@ const token = () =>
     orgId: "org_1",
   });
 
-const post = (body: unknown) =>
+const postAs = (proxyToken: string, body: unknown) =>
   app.request("/api/web/harness-mcp/srv-a", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "X-MCPJam-Proxy-Token": token(),
+      "X-MCPJam-Proxy-Token": proxyToken,
     },
     body: JSON.stringify(body),
   });
+const post = (body: unknown) => postAs(token(), body);
+
+/** An upstream of its own: one listen handle, closed when the relay ends it. */
+function ownUpstream() {
+  let settle: (cause: "local" | "graceful" | "remote") => void = () => {};
+  const handle = {
+    honoredFilter: { toolsListChanged: true },
+    close: vi.fn(async () => settle("local")),
+    closed: new Promise<"local" | "graceful" | "remote">((resolve) => {
+      settle = resolve;
+    }),
+  };
+  const listen = vi.fn(async () => handle);
+  return {
+    handle,
+    manager: {
+      getManagedClient: () => ({ listen }),
+      ensureManagedClient: async () => ({ listen }),
+      addNotificationHandler: vi.fn(),
+      removeNotificationHandler: vi.fn(),
+      disconnectAllServers: vi.fn(async () => undefined),
+    },
+  };
+}
 
 describe("subscriptions/listen with the relay on", () => {
   it("streams the upstream acknowledgment, and the harness's cancel closes the upstream listen", async () => {
@@ -106,6 +130,53 @@ describe("subscriptions/listen with the relay on", () => {
     expect(upstream.handle.close).toHaveBeenCalled();
     await vi.waitFor(() =>
       expect(upstream.manager.disconnectAllServers).toHaveBeenCalled(),
+    );
+  });
+});
+
+describe("two runs' listens", () => {
+  it("stay apart when both clients name theirs alike", async () => {
+    vi.stubEnv("MCPJAM_HARNESS_LISTEN_RELAY", "1");
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      serverId: "srv-a",
+      projectId: "p1",
+      externalId: "user_ext_1",
+      orgId: "org_1",
+    };
+    const runs = [
+      { token: signTestProxyToken(claims, { nowS: now }), up: ownUpstream() },
+      { token: signTestProxyToken(claims, { nowS: now - 1 }), up: ownUpstream() },
+    ];
+    const listen = {
+      jsonrpc: "2.0",
+      id: "listen:0",
+      method: "subscriptions/listen",
+      params: { notifications: { toolsListChanged: true } },
+    };
+    const readers = [];
+    for (const run of runs) {
+      vi.mocked(createAuthorizedManager).mockResolvedValueOnce({
+        manager: run.up.manager,
+      } as never);
+      const res = await postAs(run.token, listen);
+      const reader = res.body!.getReader();
+      await reader.read();
+      readers.push(reader);
+    }
+
+    const cancel = await postAs(runs[0]!.token, {
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: "listen:0" },
+    });
+    expect(cancel.status).toBe(202);
+    expect((await readers[0]!.read()).done).toBe(true);
+    expect(runs[0]!.up.handle.close).toHaveBeenCalled();
+    expect(runs[1]!.up.handle.close).not.toHaveBeenCalled();
+    await readers[1]!.cancel();
+    await vi.waitFor(() =>
+      expect(runs[1]!.up.handle.close).toHaveBeenCalled(),
     );
   });
 });

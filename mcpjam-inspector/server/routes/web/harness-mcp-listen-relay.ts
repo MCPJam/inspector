@@ -16,7 +16,8 @@
  * its id), when the upstream ends the subscription, when the turn it belongs
  * to is no longer authorized (checked live, on every keep-alive), or at the
  * proxy's stream cap. Whichever comes first closes the upstream listen and
- * disconnects the manager, once.
+ * disconnects the manager, once. One caller (a token, on one server) holds at
+ * most `MAX_LISTENS_PER_CALLER` listens on an instance at once.
  *
  * An upstream on a 2025-era connection has no listen: its acknowledgment
  * honors nothing.
@@ -124,18 +125,35 @@ function sse(message: unknown): string {
 }
 
 /** Listens in flight, by the key the harness's cancellation names them with. */
-const relays = new Map<string, () => void>();
+const relays = new Map<string, Set<() => void>>();
+/** Listens in flight per caller: one token, on one server. */
+const openByCaller = new Map<string, number>();
 
-/** End the relayed listen `key` names, if one is open here. */
+/** Listens one caller may hold open on this instance at once. */
+export const MAX_LISTENS_PER_CALLER = 4;
+
+/**
+ * End the relayed listen `key` names, if one is open here. Two clients that
+ * present the same token share keys; a cancellation either could have sent
+ * ends neither, and each listen still ends when its client closes its stream.
+ */
 export function cancelRelayedListen(key: string): boolean {
-  const cancel = relays.get(key);
-  if (!cancel) return false;
-  cancel();
+  const open = relays.get(key);
+  if (!open || open.size === 0) return false;
+  if (open.size === 1) {
+    for (const cancel of open) cancel();
+  } else {
+    logger.debug("[harness-mcp] relayed listen: ambiguous cancellation", {
+      open: open.size,
+    });
+  }
   return true;
 }
 
 export function relayedListenCount(): number {
-  return relays.size;
+  let count = 0;
+  for (const open of relays.values()) count += open.size;
+  return count;
 }
 
 export function relayListenStream(args: {
@@ -144,6 +162,8 @@ export function relayListenStream(args: {
   params: unknown;
   serverId: string;
   manager: MCPClientManager;
+  /** Who holds the listen (one token, on one server), for the cap. */
+  caller: string;
   /** Where a `notifications/cancelled` for `id` finds this listen. */
   cancelKey: string;
   maxMs: number;
@@ -166,6 +186,16 @@ export function relayListenStream(args: {
   let ended = false;
   let controller!: ReadableStreamDefaultController<Uint8Array>;
   const handlers: Array<[string, NotificationHandler]> = [];
+  const cancelThis = () => end("harness-cancelled");
+  // Counted here, with no wait after the check, so the cap holds under load.
+  const full =
+    (openByCaller.get(args.caller) ?? 0) >= MAX_LISTENS_PER_CALLER;
+  if (!full) {
+    openByCaller.set(args.caller, (openByCaller.get(args.caller) ?? 0) + 1);
+    const open = relays.get(args.cancelKey) ?? new Set<() => void>();
+    open.add(cancelThis);
+    relays.set(args.cancelKey, open);
+  }
 
   const write = (chunk: string) => {
     if (ended) return;
@@ -185,7 +215,14 @@ export function relayListenStream(args: {
       ms: Date.now() - startedAt,
       forwarded,
     });
-    relays.delete(args.cancelKey);
+    if (!full) {
+      const open = relays.get(args.cancelKey);
+      open?.delete(cancelThis);
+      if (open?.size === 0) relays.delete(args.cancelKey);
+      const held = (openByCaller.get(args.caller) ?? 1) - 1;
+      if (held > 0) openByCaller.set(args.caller, held);
+      else openByCaller.delete(args.caller);
+    }
     if (keepalive) clearInterval(keepalive);
     if (cap) clearTimeout(cap);
     opening.abort();
@@ -212,8 +249,7 @@ export function relayListenStream(args: {
     result: { _meta: subscription, resultType: "complete" },
   };
 
-  const start = async () => {
-    relays.set(args.cancelKey, () => end("harness-cancelled"));
+  const watchChanges = () => {
     for (const method of methods) {
       const handler: NotificationHandler = (notification) => {
         const params = notification.params ?? {};
@@ -233,9 +269,26 @@ export function relayListenStream(args: {
       handlers.push([method, handler]);
       args.manager.addNotificationHandler(args.serverId, method, handler);
     }
+  };
+
+  const start = async () => {
+    if (full) {
+      end("too-many", {
+        jsonrpc: "2.0",
+        id: args.id,
+        error: {
+          code: -32000,
+          message:
+            "Too many subscriptions are open for this server. Close one, then listen again.",
+        },
+      });
+      return;
+    }
     let honored: ListenFilter = {};
     try {
-      // The manager is new, so its connect may still be running.
+      // The manager is new, so its connect may still be running. The handlers
+      // go on once it is done: one added while it runs is never wired to the
+      // client. The listen opens after them, so nothing it sends is missed.
       const client =
         methods.length > 0
           ? await args.manager.ensureManagedClient(args.serverId, {
@@ -243,6 +296,7 @@ export function relayListenStream(args: {
             })
           : undefined;
       if (ended) return;
+      watchChanges();
       if (client?.listen) {
         handle = await client.listen(filter, { signal: opening.signal });
         if (ended) {
@@ -295,7 +349,19 @@ export function relayListenStream(args: {
   return new ReadableStream<Uint8Array>({
     start(streamController) {
       controller = streamController;
-      void start();
+      start().catch((error: unknown) => {
+        logger.warn("[harness-mcp] relayed listen failed", {
+          error: error instanceof Error ? error.name : "unknown",
+        });
+        end("relay-failed", {
+          jsonrpc: "2.0",
+          id: args.id,
+          error: {
+            code: -32603,
+            message: "The server's subscription could not be opened.",
+          },
+        });
+      });
     },
     cancel() {
       end("harness-closed");

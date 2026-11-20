@@ -4,6 +4,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
+  MAX_LISTENS_PER_CALLER,
   cancelRelayedListen,
   relayListenStream,
   relayableFilter,
@@ -114,22 +115,31 @@ const listenParams = {
   notifications: { toolsListChanged: true, taskIds: ["t1"] },
 };
 
+let callers = 0;
+
+/** A relayed listen under a caller and key of its own, unless `extra` names them. */
 function relay(
   fake: ReturnType<typeof fakeManager>,
   extra: Partial<Parameters<typeof relayListenStream>[0]> = {},
 ) {
   const onEnd = vi.fn();
-  const stream = relayListenStream({
+  const caller = `user|srv|token-${(callers += 1)}`;
+  const args = {
     id: 7,
     params: listenParams,
     serverId: "srv",
     manager: fake.manager,
-    cancelKey: "lane|srv|7",
+    caller,
+    cancelKey: `${caller}|7`,
     maxMs: 60_000,
     onEnd,
     ...extra,
-  });
-  return { onEnd, read: frames(stream) };
+  };
+  return {
+    onEnd,
+    cancelKey: args.cancelKey,
+    read: frames(relayListenStream(args)),
+  };
 }
 
 afterEach(() => {
@@ -201,13 +211,13 @@ describe("relayListenStream", () => {
 
   it("closes it for the harness's notifications/cancelled", async () => {
     const fake = fakeManager();
-    const { read, onEnd } = relay(fake);
+    const { read, onEnd, cancelKey } = relay(fake);
     await read.next();
-    expect(cancelRelayedListen("lane|srv|7")).toBe(true);
+    expect(cancelRelayedListen(cancelKey)).toBe(true);
     expect(await read.next()).toBeUndefined();
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledTimes(1));
     expect(fake.handle.close).toHaveBeenCalled();
-    expect(cancelRelayedListen("lane|srv|7")).toBe(false);
+    expect(cancelRelayedListen(cancelKey)).toBe(false);
   });
 
   it("ends with the empty result when the upstream ends the subscription", async () => {
@@ -275,8 +285,70 @@ describe("relayListenStream", () => {
   });
 });
 
+describe("listens that share a caller", () => {
+  const acknowledged = {
+    method: "notifications/subscriptions/acknowledged",
+  };
+
+  it("ends neither listen a shared key names, and each when its own stream closes", async () => {
+    const a = fakeManager();
+    const b = fakeManager();
+    const shared = { caller: "twin|srv|token", cancelKey: "twin|srv|token|0" };
+    const first = relay(a, shared);
+    const second = relay(b, shared);
+    expect(await first.read.next()).toMatchObject(acknowledged);
+    expect(await second.read.next()).toMatchObject(acknowledged);
+
+    expect(cancelRelayedListen("twin|srv|token|0")).toBe(true);
+    expect(a.handle.close).not.toHaveBeenCalled();
+    expect(b.handle.close).not.toHaveBeenCalled();
+
+    await first.read.cancel();
+    await vi.waitFor(() => expect(first.onEnd).toHaveBeenCalledTimes(1));
+    expect(b.handle.close).not.toHaveBeenCalled();
+    // With one listen left under the key, a cancellation names it alone.
+    expect(cancelRelayedListen("twin|srv|token|0")).toBe(true);
+    await vi.waitFor(() => expect(second.onEnd).toHaveBeenCalledTimes(1));
+    expect(b.handle.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a listen past the caller's cap, and admits one once another closes", async () => {
+    const caller = "busy|srv|token";
+    const open = Array.from({ length: MAX_LISTENS_PER_CALLER }, (_, i) =>
+      relay(fakeManager(), { id: i, caller, cancelKey: `${caller}|${i}` }),
+    );
+    for (const { read } of open) expect(await read.next()).toMatchObject(acknowledged);
+
+    const refused = relay(fakeManager(), {
+      id: 99,
+      caller,
+      cancelKey: `${caller}|99`,
+    });
+    expect(await refused.read.next()).toMatchObject({
+      id: 99,
+      error: { code: -32000 },
+    });
+    expect(await refused.read.next()).toBeUndefined();
+
+    await open[0]!.read.cancel();
+    await vi.waitFor(() => expect(open[0]!.onEnd).toHaveBeenCalled());
+    const admitted = relay(fakeManager(), {
+      id: 100,
+      caller,
+      cancelKey: `${caller}|100`,
+    });
+    expect(await admitted.read.next()).toMatchObject(acknowledged);
+    for (const { read } of [...open.slice(1), admitted]) await read.cancel();
+  });
+});
+
 describe("relayListenStream against a real 2026-07-28 server", () => {
-  async function listenFixture() {
+  /**
+   * With `holdFirstRequest`, the server takes the first request it gets (the
+   * connect's) and answers only on `release()`: the connect is then under
+   * way, past the point where it wires the handlers it already knows.
+   */
+  async function listenFixture(options: { holdFirstRequest?: boolean } = {}) {
     const handler = createMcpHandler(() => {
       const mcp = new McpServer(
         { name: "listen-fixture", version: "1" },
@@ -287,7 +359,25 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
       }));
       return mcp;
     });
-    const server = http.createServer(toNodeHandler(handler));
+    const serve = toNodeHandler(handler);
+    let held = false;
+    let firstSeen!: () => void;
+    const firstRequest = new Promise<void>((resolve) => {
+      firstSeen = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const server = http.createServer((request, response) => {
+      if (options.holdFirstRequest && !held) {
+        held = true;
+        firstSeen();
+        void released.then(() => serve(request, response));
+        return;
+      }
+      void serve(request, response);
+    });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
     );
@@ -297,7 +387,10 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
     return {
       url: `http://127.0.0.1:${address.port}/mcp`,
       handler,
+      firstRequest,
+      release,
       close: async () => {
+        release();
         await handler.close();
         server.closeAllConnections();
         await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -320,6 +413,7 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
           params: { notifications: { toolsListChanged: true } },
           serverId: "fixture",
           manager,
+          caller: "fixture",
           cancelKey: "fixture|harness-listen-1",
           maxMs: 60_000,
           onEnd,
@@ -364,6 +458,7 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
           params: { notifications: { toolsListChanged: true } },
           serverId: "fixture",
           manager,
+          caller: "fixture",
           cancelKey: "fixture|9",
           maxMs: 60_000,
         }),
@@ -371,6 +466,41 @@ describe("relayListenStream against a real 2026-07-28 server", () => {
       expect(await read.next()).toMatchObject({
         method: "notifications/subscriptions/acknowledged",
         params: { notifications: { toolsListChanged: true } },
+      });
+      served.handler.notify.toolsChanged();
+      expect(await read.next()).toMatchObject({
+        method: "notifications/tools/list_changed",
+      });
+      await read.cancel();
+    } finally {
+      await manager.disconnectAllServers();
+      await served.close();
+    }
+  });
+
+  it("forwards changes when the listen arrives with the connect under way", async () => {
+    const served = await listenFixture({ holdFirstRequest: true });
+    // The proxy checks the turn after building the manager, so the listen
+    // usually arrives once the connect is under way, not merely queued.
+    const manager = new MCPClientManager({
+      fixture: { url: served.url, timeout: 5_000 },
+    });
+    try {
+      await served.firstRequest;
+      const read = frames(
+        relayListenStream({
+          id: 10,
+          params: { notifications: { toolsListChanged: true } },
+          serverId: "fixture",
+          manager,
+          caller: "fixture-held",
+          cancelKey: "fixture-held|10",
+          maxMs: 60_000,
+        }),
+      );
+      served.release();
+      expect(await read.next()).toMatchObject({
+        method: "notifications/subscriptions/acknowledged",
       });
       served.handler.notify.toolsChanged();
       expect(await read.next()).toMatchObject({

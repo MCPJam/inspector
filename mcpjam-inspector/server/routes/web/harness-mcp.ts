@@ -18,6 +18,7 @@
  * `application/json`; the optional GET returns a minimal server-stream the
  * client probes then closes; no `Mcp-Session-Id` (stateless).
  */
+import { createHash } from "node:crypto";
 import { Hono } from "hono";
 import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
@@ -340,15 +341,17 @@ async function handle(c: any) {
   }
   const body = validation.body;
   const relayListen = harnessListenRelayEnabled();
-  // The harness's own relayed listens, by its request id, for this caller and
-  // turn.
-  const listenKey = (id: unknown) =>
-    [
-      claims.userId,
-      serverId,
-      session?.laneId ?? JSON.stringify(turn ?? null),
-      String(id),
-    ].join("|");
+  // The harness's own relayed listens, by its request id, for this caller: the
+  // token it presents, so two runs' clients (each naming its first listen
+  // `listen:0`) never share a key unless they share a token.
+  const listenCaller = [
+    claims.userId,
+    serverId,
+    createHash("sha256")
+      .update(presentedToken ?? "")
+      .digest("base64url"),
+  ].join("|");
+  const listenKey = (id: unknown) => `${listenCaller}|${JSON.stringify(id)}`;
   if (relayListen && body.method === "notifications/cancelled") {
     const requestId = (body as { params?: { requestId?: unknown } }).params
       ?.requestId;
@@ -482,6 +485,7 @@ async function handle(c: any) {
           params: (body as { params?: unknown }).params,
           serverId,
           manager,
+          caller: listenCaller,
           cancelKey: listenKey(body.id),
           maxMs: HARNESS_MCP_STREAM_MAX_MS,
           ...(checkTurn
