@@ -170,7 +170,7 @@ function OverviewFilter({
 }) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger aria-label={label} className="w-full min-w-0 bg-card sm:w-auto">
+      <SelectTrigger aria-label={label} className="min-w-0 max-w-full bg-card">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -339,7 +339,7 @@ function RunWorkspace({
             className="h-9 bg-card pl-9"
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2 sm:max-w-[65%]">
           {filters
             .filter((filter) => filter.names.length > 0)
             .map((filter) => (
