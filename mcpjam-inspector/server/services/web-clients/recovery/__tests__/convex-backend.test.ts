@@ -200,6 +200,21 @@ describe("Convex reconnect backend", () => {
     });
   });
 
+  it("passes on the backend's answer that the account was signed in again since the run's restore", async () => {
+    const { calls, service } = stubService({ reportWebSignInRequired: { reloadProfile: true } });
+    const backend = createConvexWebReconnectBackend(ACTOR, { service, route: stubRoute(null).route });
+    expect(
+      await backend.reportWebSignInRequired({
+        webAccountId: ACCOUNT,
+        runId: "run-1",
+        pendingStep: STEP,
+        reason: "signed_out",
+        restoredProfileVersion: 2,
+      }),
+    ).toEqual({ reloadProfile: true });
+    expect(calls[0]?.command).toMatchObject({ action: "reportWebSignInRequired", restoredProfileVersion: 2 });
+  });
+
   it("saves a profile as ciphertext under the key the backend issued", async () => {
     const dataKey = randomBytes(32);
     const { calls, service } = stubService({

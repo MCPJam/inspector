@@ -227,7 +227,11 @@ export function createConvexWebReconnectBackend(
     },
     reportWebSignInRequired: ({ pendingStep: step, ...args }) =>
       apply(
-        z.object({ requestId: z.string(), shouldNotify: z.boolean() }),
+        z.union([
+          z.object({ requestId: z.string(), shouldNotify: z.boolean() }),
+          // Signed in again since the run restored its profile.
+          z.object({ reloadProfile: z.literal(true) }),
+        ]),
         act({
           action: "reportWebSignInRequired",
           ...args,

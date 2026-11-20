@@ -22,8 +22,10 @@ import {
   cssString,
   needsSignIn,
   pageChanged,
+  waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
+  type RealUiStep,
   type StepContext,
 } from "./page-module.js";
 import { list, readVendorJson, record, text } from "./vendor-json.js";
@@ -52,18 +54,8 @@ async function onSite(driver: PageDriver): Promise<URL> {
   return new URL(await driver.url());
 }
 
-async function waitVisible(
-  driver: PageDriver,
-  selector: string,
-  ctx: StepContext,
-  what: string,
-): Promise<void> {
-  await driver.waitFor(async () => (await driver.readText(selector)) !== undefined, {
-    timeoutMs: ctx.timeoutMs,
-    signal: ctx.signal,
-    what,
-  });
-}
+const waitVisible = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
+  waitVisibleUnlessBlocked(driver, selector, ctx, { what, step, challengeSelectors: [CHALLENGE] });
 
 async function organizationId(driver: PageDriver): Promise<string> {
   const orgs = list(await readVendorJson(driver, `${ORIGIN}/api/organizations`));
@@ -109,7 +101,7 @@ async function addConnector(
   await driver.type(`${dialog} >> [placeholder="Name"]`, connector.name);
   await driver.type(`${dialog} >> [placeholder="MCP server URL"]`, connector.url);
   await driver.click(`${dialog} >> ${role("button", "Continue")}`);
-  await waitVisible(driver, `${dialog} >> text=Step 2 of 2`, ctx, "the connector's second step");
+  await waitVisible(driver, `${dialog} >> text=Step 2 of 2`, ctx, "the connector's second step", "connector");
   if ((await driver.readText(`${dialog} >> ${role("button", "Add")}`)) === undefined) {
     // No Add without authorization: someone has to approve MCPJam's sign-in.
     throw needsSignIn("consent", "connector", "Adding the connector needs someone to approve access.");
@@ -136,7 +128,7 @@ export const claudeWebPageModule: RealUiPageModule = {
     if (url.origin !== ORIGIN || /^\/(login|logout|oauth|auth)\b/.test(url.pathname)) {
       throw needsSignIn("signed_out", "sign_in_check", "The Claude account is signed out.");
     }
-    await waitVisible(driver, COMPOSER, ctx, "the chat composer");
+    await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
     const account = record(await readVendorJson(driver, `${ORIGIN}/api/account`));
     const orgs = list(await readVendorJson(driver, `${ORIGIN}/api/organizations`));
     return {
@@ -159,7 +151,7 @@ export const claudeWebPageModule: RealUiPageModule = {
 
   async ensureConnector(driver, connector, ctx, keep = []) {
     await driver.navigate(CONNECTORS);
-    await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list");
+    await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list", "connector");
     await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
     if (await connectorRowVisible(driver, connector.name)) {
       await driver.click(`${PANE} >> ${role("button", `View ${connector.name}`)}`);
@@ -194,7 +186,7 @@ export const claudeWebPageModule: RealUiPageModule = {
       await driver.navigate(CONNECTORS);
       await addConnector(driver, connector, ctx);
     }
-    await waitVisible(driver, `${PANE} >> ${role("button", "Disconnect")}`, ctx, "the connector to connect");
+    await waitVisible(driver, `${PANE} >> ${role("button", "Disconnect")}`, ctx, "the connector to connect", "connector");
     if (!(await pointsAt(driver, connector.url))) {
       throw new RealUiError({
         kind: "connector_failed",
@@ -206,7 +198,7 @@ export const claudeWebPageModule: RealUiPageModule = {
 
   async openNewChat(driver, ctx) {
     await driver.navigate(`${ORIGIN}/new`);
-    await waitVisible(driver, COMPOSER, ctx, "a new chat");
+    await waitVisible(driver, COMPOSER, ctx, "a new chat", "new_chat");
     if ((await driver.readText(USER_MESSAGE)) !== undefined) {
       throw pageChanged("new_chat", "claude.ai did not open an empty chat.");
     }
@@ -216,7 +208,7 @@ export const claudeWebPageModule: RealUiPageModule = {
     const toggle = `role=menuitemcheckbox[name="${cssString(name)}"]`;
     await driver.click('[data-testid="chat-input-attach"]');
     await driver.press("ArrowRight", '[data-testid="add-menu-connectors"]');
-    await waitVisible(driver, toggle, ctx, "the connector in the chat menu");
+    await waitVisible(driver, toggle, ctx, "the connector in the chat menu", "enable_connector");
     if ((await driver.readText(`${toggle}[checked=true]`)) === undefined) {
       await driver.click(toggle);
     }

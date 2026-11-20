@@ -86,13 +86,16 @@ export function matchWebToolCalls(args: {
   return calls;
 }
 
-const callId = (call: WebToolCall, index: number) =>
-  call.toolUseId ?? call.ledgerEntryId ?? `web-call-${index}`;
+// A call with no id of its own is named within its turn: the transcript keeps
+// every turn's calls, and two turns' first calls must not share a name.
+const callId = (call: WebToolCall, index: number, turnId: string) =>
+  call.toolUseId ?? call.ledgerEntryId ?? `web-call-${turnId}-${index}`;
 
 /** The assistant's turn as the transcript stores it. */
 export function webTurnMessages(
   conversation: SavedConversation,
   calls: readonly WebToolCall[],
+  turnId: string,
 ): ModelMessage[] {
   return [
     {
@@ -100,7 +103,7 @@ export function webTurnMessages(
       content: [
         ...calls.map((call, index) => ({
           type: "tool-call" as const,
-          toolCallId: callId(call, index),
+          toolCallId: callId(call, index, turnId),
           toolName: call.toolName,
           input: {},
           // Where the call came from, kept beside it so a reader can tell a
@@ -118,17 +121,28 @@ export function webTurnMessages(
   ];
 }
 
-/** One step span for the turn and one tool span per call. */
+/**
+ * One step span for the turn and one tool span per call. A turn whose page
+ * stopped (`failed`) keeps the calls that reached the server on an errored
+ * step.
+ */
 export function webTurnSpans(args: {
   calls: readonly WebToolCall[];
+  turnId: string;
   startedAt: number;
   endedAt: number;
   promptIndex: number;
   modelId: string;
+  failed?: boolean;
 }): EvalTraceSpan[] {
   const offset = (iso: string | undefined, fallback: number) =>
     iso ? Math.max(0, Date.parse(iso) - args.startedAt) : fallback;
   const total = args.endedAt - args.startedAt;
+  // The turn's, not one call's: while any call is unsettled, a call the wire
+  // never showed may simply not have been seen yet.
+  const evidenceStatus = args.calls.some((call) => call.state === "forwarded")
+    ? "incomplete"
+    : "complete";
   const step: EvalTraceSpan = {
     id: "web-step-0",
     name: "Web client turn",
@@ -137,7 +151,7 @@ export function webTurnSpans(args: {
     endMs: total,
     promptIndex: args.promptIndex,
     stepIndex: 0,
-    status: "ok",
+    status: args.failed ? "error" : "ok",
     modelId: args.modelId,
   };
   return [
@@ -156,14 +170,14 @@ export function webTurnSpans(args: {
         promptIndex: args.promptIndex,
         stepIndex: 0,
         status: failed ? "error" : "ok",
-        toolCallId: callId(call, index),
+        toolCallId: callId(call, index, args.turnId),
         toolName: call.toolName,
         toolOrigin: "mcp",
         ...(call.serverId ? { serverId: call.serverId } : {}),
         outputSource: onWire ? (call.match === "wire-only" ? "reconstructed" : "evidence") : "narration",
         wireCorroborated: onWire,
         ...(call.ledgerEntryId ? { evidenceRequestId: call.ledgerEntryId } : {}),
-        evidenceStatus: call.state === "forwarded" ? "incomplete" : "complete",
+        evidenceStatus,
       };
     }),
   ];
