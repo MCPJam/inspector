@@ -262,8 +262,8 @@ function GitHubStarPrompt({
     >
       <FeatureSpotlightTitle>{promptTitle(request)}</FeatureSpotlightTitle>
       <FeatureSpotlightDescription>
-        MCPJam is open source. If it helped, a star on GitHub helps other MCP
-        developers find it.
+        MCPJam is open source. If this helped, a star on GitHub helps other MCP
+        developers find us.
       </FeatureSpotlightDescription>
       <FeatureSpotlightActions>
         <Button size="sm" asChild>
