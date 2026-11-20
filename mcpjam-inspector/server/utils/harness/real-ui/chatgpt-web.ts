@@ -38,6 +38,7 @@ const USER_MESSAGE = '[data-message-author-role="user"]';
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
 const CHALLENGE = 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]';
+const PLUGINS_PANEL = "role=dialog";
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
 
@@ -106,20 +107,31 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
+    // Plugins, then +, then "Add custom MCP server": the walkthrough's path.
+    // A server already added under this name is reused, never added twice.
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer");
-    await driver.click(PLUS);
-    const existing = role("menuitemcheckbox", connector.name);
+    await openPlusMenuItem(driver, ctx, "Plugins");
+    const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
+    const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
     await driver.waitFor(
       async () =>
         (await driver.readText(existing)) !== undefined ||
-        (await driver.readText(role("menuitem", "Add custom MCP server"))) !== undefined,
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the composer's tools menu" },
+        (await driver.readText(add)) !== undefined,
+      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the plugins list" },
     );
     if ((await driver.readText(existing)) !== undefined) {
+      const shown = (await driver.readText(`${PLUGINS_PANEL} >> text="${cssString(connector.url)}"`)) !== undefined;
       await driver.press("Escape");
-      return;
+      if (shown) return;
+      throw new RealUiError({
+        kind: "connector_failed",
+        step: "connector",
+        message: `ChatGPT has a server named ${connector.name} with a different address. Remove it in ChatGPT, then run again.`,
+      });
     }
+    await driver.click(add);
+    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item");
     await driver.click(role("menuitem", "Add custom MCP server"));
     const dialog = "role=dialog";
     await waitVisible(driver, dialog, ctx, "the add server form");
@@ -128,6 +140,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
     await driver.click(`${dialog} >> role=button[name=/^(Create|Add|Connect)$/]`);
     await driver.waitFor(
       async () => {
+        // MCPJam's own sign-in page asks for consent: a person's step.
         const blocked = await commonBlocker(driver, { challengeSelectors: [CHALLENGE], step: "connector" });
         if (blocked) throw new RealUiError(blocked);
         return (await driver.readText(dialog)) === undefined;
