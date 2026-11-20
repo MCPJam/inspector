@@ -5,6 +5,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { getFunctionName, type FunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
@@ -14,8 +15,6 @@ import type {
   SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import {
-  SWARM_COLUMN_HEADER,
-  filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
   swarmWaveRunStateChipClass,
   swarmWaveRunStateLabel,
@@ -67,6 +66,7 @@ const overview: SwarmOverview = {
     {
       // Same wave as run-2 — landed a few seconds later in the fan-out.
       runId: "run-2b",
+      serverNames: ["Asana"],
       journeyRefId: "journey-2",
       journeyName: "Invoice lookup",
       journeyArchived: false,
@@ -136,6 +136,8 @@ const overview: SwarmOverview = {
     },
     {
       runId: "run-1",
+      serverNames: ["Linear"],
+      swarmName: "Review refund flow",
       journeyRefId: "journey-1",
       journeyName: "Refund flow",
       journeyArchived: false,
@@ -263,8 +265,9 @@ vi.mock("convex/react", () => ({
         problems: [],
       })),
   }),
-  useQuery: (name: string, args: unknown) => {
+  useQuery: (query: string | FunctionReference<"query">, args: unknown) => {
     if (args === "skip") return undefined;
+    const name = typeof query === "string" ? query : getFunctionName(query);
     queryCalls.push({ name, args });
     switch (name) {
       case "personas:listPersonas":
@@ -635,141 +638,58 @@ describe("swarmWaveTitle", () => {
   });
 });
 
-describe("Overview — swarm runs (waves), not bare journeys", () => {
-  it("lists co-launched journeys as ONE Swarm Run titled by short id", async () => {
+describe("Overview — history and report", () => {
+  it("groups co-launched runs and leads with the saved server and date", async () => {
+    const [first, ...otherRuns] = overview.runs;
+    overviewData = { ...overview, runs: [{ ...first!, swarmName: "Swarm · Nov 18" }, ...otherRuns] };
     renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    expect(screen.queryByText("Runs · by client")).toBeNull();
-    expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
-    expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
-    expect(screen.getByText("Model")).toBeTruthy();
-
-    const rows = screen.getAllByTestId("swarm-overview-run");
+    const rows = await screen.findAllByTestId("swarm-overview-run-row");
     expect(rows).toHaveLength(3);
+    const newest = within(rows[0]!);
+    expect(newest.getByText("Asana")).toBeTruthy();
+    expect(newest.getAllByText("Nov 18")).toHaveLength(1);
+    expect(newest.getByText("20 sessions")).toBeTruthy();
+    expect(newest.getByText("Persona One")).toBeTruthy();
+    expect(newest.getByText("Persona Two")).toBeTruthy();
+    expect(newest.getByTitle("Claude, Cursor")).toBeTruthy();
+    expect(newest.queryByText(/Swarm run-2b|2 goals|Completed with issues/)).toBeNull();
+    expect(within(rows[1]!).getByText("Review refund flow")).toBeTruthy();
 
-    // Newest wave: two personas, ID-first title (evals-style), scope in subtitle.
-    expect(rows[0]!.getAttribute("data-wave-id")).toBe("run-2b");
-    expect(rows[0]!.getAttribute("data-journey-count")).toBe("2");
-    expect(within(rows[0]!).getByText("Swarm run-2b")).toBeTruthy();
-    expect(within(rows[0]!).getByText(/2 goals · 2 personas/)).toBeTruthy();
-    // Env is its own flag-gated column; Client is host names only.
-    expect(
-      within(rows[0]!).getByTestId("swarm-overview-run-env").textContent
-    ).toBe("Prod · Claude");
-    // Client column is a logo strip; title keeps the host-name summary.
-    expect(
-      within(rows[0]!).getByTestId("swarm-overview-run-client")
-    ).toHaveAttribute("title", "Claude +1");
-    expect(
-      within(rows[0]!).getByTestId("swarm-overview-run-model").textContent
-    ).toBe("claude-haiku-4.5 +1");
-
-    // Solo older waves also use short route ids, not journey · persona titles.
-    expect(within(rows[1]!).getByText("Swarm run-1")).toBeTruthy();
-    expect(
-      within(rows[1]!).getByTestId("swarm-overview-run-env").textContent
-    ).toBe("—");
-    expect(
-      within(rows[1]!).getByTestId("swarm-overview-run-client")
-    ).toHaveAttribute("title", "Claude");
-    expect(
-      within(rows[1]!).getByTestId("swarm-overview-run-model").textContent
-    ).toBe("claude-haiku-4.5");
-    expect(within(rows[2]!).getByText("Swarm run-old")).toBeTruthy();
-    expect(
-      within(rows[2]!).getByTestId("swarm-overview-run-client")
-    ).toHaveAttribute("title", "—");
+    const report = within(screen.getByTestId("swarm-overview-report"));
+    expect(report.getByRole("heading", { name: "Asana" })).toBeTruthy();
+    expect(report.getByText("20/20 complete")).toBeTruthy();
+    expect(report.getByRole("heading", { name: "Findings" })).toBeTruthy();
+    expect(report.getByRole("heading", { name: "Session flow" })).toBeTruthy();
+    expect(report.queryByText("Choose a persona")).toBeNull();
+    expect(report.queryByText("Server account")).toBeNull();
   });
 
-  it("does not render a score column on the list", async () => {
+  it("narrows by search and restores history when filters are cleared", async () => {
+    renderTab();
+    const search = await screen.findByRole("searchbox", { name: "Search runs" });
+    expect(screen.getByRole("combobox", { name: "All servers" })).toBeTruthy();
+    expect(screen.getByRole("combobox", { name: "All clients" })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "linear" } });
+    expect(screen.getAllByTestId("swarm-overview-run-row")).toHaveLength(1);
+    expect(screen.getByRole("heading", { name: "Linear" })).toBeTruthy();
+    fireEvent.change(search, { target: { value: "does not match" } });
+    expect(screen.getByTestId("swarm-overview-filter-empty")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getAllByTestId("swarm-overview-run-row")).toHaveLength(3);
+  });
+
+  it("selects a legacy run and opens its existing detail route", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
-    expect(screen.queryByTestId("swarm-overview-run-score")).toBeNull();
-    expect(screen.queryByTestId("swarm-overview-sort")).toBeNull();
-    expect(document.querySelector(".lucide-chevron-right")).toBeNull();
+    fireEvent.click(waveRow("run-1"));
+    expect(window.location.pathname).toBe("/swarms");
+    expect(screen.getByRole("heading", { name: "Linear" })).toBeTruthy();
+    expect(screen.getByText("12/15 complete")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Open full swarm" }));
+    expect(window.location.pathname).toBe("/swarms/run-1");
   });
 
-  it("renders the filter toolbar", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-filters");
-    expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
-    expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
-  });
-
-  /**
-   * Asserted on classes rather than pixels because the regression is invisible
-   * to jsdom layout: the filtering headers kept `SelectTrigger`'s
-   * `dark:bg-input/30` (tailwind-merge won't drop it for an unprefixed
-   * `bg-transparent`), so in dark mode Client sat in a form-field box while
-   * the inert Model label stayed flat.
-   */
-  it("gives every column header the same ghost treatment, dark mode included", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-filters");
-
-    const headers = [
-      screen.getByTestId("swarm-overview-env-filter"),
-      screen.getByTestId("swarm-overview-client-filter"),
-      screen.getByTestId("swarm-overview-model-label"),
-    ];
-
-    for (const header of headers) {
-      for (const className of SWARM_COLUMN_HEADER.split(" ")) {
-        expect(header.classList.contains(className)).toBe(true);
-      }
-      expect(
-        [...header.classList].filter((className) =>
-          /(^|:)bg-(?!transparent)/.test(className)
-        )
-      ).toEqual([]);
-    }
-  });
-
-  it("filterAndSortSwarmWaves filters by client / env and sorts by lowest score", () => {
-    const waves = groupRunsIntoSwarmWaves(overview.runs);
-    expect(waves.map((w) => w.waveId)).toEqual(["run-2b", "run-1", "run-old"]);
-
-    const byCursor = filterAndSortSwarmWaves(waves, {
-      clientFilter: "Cursor",
-      envFilter: null,
-      sort: "newest",
-    });
-    expect(byCursor.map((w) => w.waveId)).toEqual(["run-2b"]);
-
-    const byEnv = filterAndSortSwarmWaves(waves, {
-      clientFilter: null,
-      envFilter: "Prod · Claude",
-      sort: "newest",
-    });
-    expect(byEnv.map((w) => w.waveId)).toEqual(["run-2b"]);
-
-    const byScore = filterAndSortSwarmWaves(waves, {
-      clientFilter: null,
-      envFilter: null,
-      sort: "lowest-score",
-    });
-    // 40% then 70%; ungraded run-old last.
-    expect(byScore.map((w) => w.waveId)).toEqual([
-      "run-1",
-      "run-2b",
-      "run-old",
-    ]);
-  });
-});
-
-describe("Overview — navigate to Swarm Run detail", () => {
-  it("navigates to /swarms/{waveId} when a legacy row has no swarmRunGroupId", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    fireEvent.click(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-run-open")
-    );
-    expect(window.location.pathname).toBe("/swarms/run-2b");
-  });
-
-  it("navigates to /swarms/{swarmRunGroupId} when the wave carries one", async () => {
+  it("uses the wave id when opening a grouped run", async () => {
     const [newest, second, ...rest] = overview.runs;
     overviewData = {
       ...overview,
@@ -780,21 +700,8 @@ describe("Overview — navigate to Swarm Run detail", () => {
       ],
     };
     renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-
-    const row = document.querySelector(
-      '[data-swarm-id="wave-nightly"]'
-    ) as HTMLElement;
-    expect(row).toBeTruthy();
-    fireEvent.click(within(row).getByTestId("swarm-overview-run-open"));
+    fireEvent.click(await screen.findByRole("button", { name: "Open full swarm" }));
     expect(window.location.pathname).toBe("/swarms/wave-nightly");
-  });
-
-  it("does not expand findings inline on the list", async () => {
-    renderTab();
-    await screen.findByTestId("swarm-overview-runs");
-    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
-    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 });
 
@@ -1570,49 +1477,13 @@ describe("Swarm run state and navigation", () => {
     expect(window.location.pathname).toBe(`/swarms/${groupId}`);
   });
 
-  it("says Running on the list row, which is now its only liveness signal", async () => {
+  it("labels live runs in history and only shows the completed count for settled runs", async () => {
     overviewData = runningOverview();
     renderTab();
-
-    await screen.findByTestId("swarms-overview-panel");
-    const row = waveRow("run-2b");
-    const pill = within(row).getByTestId("swarm-overview-run-state");
-    expect(pill.getAttribute("data-run-state")).toBe("running");
-    expect(pill.textContent).toBe("Running");
-  });
-
-  // One badge on the row, and only when the outcome is not clean. A settled run
-  // is the expected case and says nothing — which is what leaves the issues
-  // badge as the only thing on a row that has something to report.
-  it("badges nothing on a cleanly settled list row", async () => {
-    renderTab();
-
-    await screen.findByTestId("swarms-overview-panel");
-    expect(
-      within(waveRow("run-2b")).queryByTestId("swarm-overview-run-state")
-    ).toBeNull();
-  });
-
-  it("badges a failed wave as Completed with issues, not Failed", async () => {
-    // What the ask is really about: `failed` used to earn its own red pill, and
-    // "Failed" read as "nothing ran" about a wave that had sessions in it.
-    overviewData = {
-      ...overview,
-      runs: overview.runs.map((run) =>
-        run.runId === "run-2b" || run.runId === "run-2a"
-          ? { ...run, status: "failed" }
-          : run
-      ),
-    };
-    renderTab();
-
-    await screen.findByTestId("swarms-overview-panel");
-    const pill = within(waveRow("run-2b")).getByTestId(
-      "swarm-overview-run-state"
-    );
-    expect(pill.getAttribute("data-run-state")).toBe("issues");
-    expect(pill.textContent).toBe("Completed with issues");
-    expect(pill.className).not.toMatch(/red/);
+    await screen.findByTestId("swarm-overview-runs");
+    expect(within(waveRow("run-2b")).getByText("Running")).toBeTruthy();
+    expect(within(waveRow("run-1")).getByText("12 sessions")).toBeTruthy();
+    expect(within(waveRow("run-1")).queryByText("Completed with issues")).toBeNull();
   });
 
   // The dot, not every round thing on the row — the targets pill is also
