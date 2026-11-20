@@ -1,22 +1,27 @@
 /**
- * The variant contract's hashes: lowercase hex SHA-256 of canonical JSON.
- *
- * Both primitives are the SDK's existing portable ones. `canonicalJson` sorts
- * object keys recursively with the default string sort, keeps arrays in
- * order, drops keys whose value is `undefined` and writes no whitespace.
- * `sha256Hex` goes through `crypto.subtle`, so it runs in Node, Workers and
- * Convex. The backend hand-mirrors both, and the parity vectors pin them.
+ * The variant contract's hashes: lowercase hex SHA-256 through `crypto.subtle`
+ * of canonical JSON (keys sorted, arrays in order, `undefined` dropped, no
+ * whitespace). Both are the SDK's existing portable primitives; the backend
+ * hand-mirrors them, and the parity vectors pin them.
  */
 
 import { canonicalJson } from "../contract/canonical.js";
 import { sha256Hex } from "../host-config/hash.js";
-import type { VariantEdit } from "./types.js";
+import type { VariantEdit, VariantToolHash } from "./types.js";
 
 export { canonicalJson, sha256Hex };
 
-/** One Tool object, exactly as the base returned it. */
-export function computeToolHash(tool: object): Promise<string> {
-  return sha256Hex(canonicalJson(tool));
+/**
+ * One tool's `name`, `title`, `description` and `inputSchema`, the ones it
+ * has. Its `execution`, `outputSchema` and `annotations` are left out: the
+ * server SDK shapes them differently for 2025 and 2026 protocol versions, so
+ * hashing them would report drift whenever the protocol version changed.
+ */
+export function computeToolHash(
+  tool: Readonly<Record<string, unknown>>
+): Promise<string> {
+  const { name, title, description, inputSchema } = tool;
+  return sha256Hex(canonicalJson({ name, title, description, inputSchema }));
 }
 
 /** `baseSurfaceHash`: the tools of every `tools/list` page, concatenated in order. */
@@ -31,12 +36,21 @@ export function computeEditsHash(
   return sha256Hex(canonicalJson(edits));
 }
 
-/** `contentHash`: what makes two variants the same variant. */
+/**
+ * `contentHash`: what makes two variants the same variant, with `toolHashes`
+ * sorted by `tool` in JavaScript's default string order.
+ */
 export function computeContentHash(parts: {
   baseServerId: string;
   baseSurfaceHash: string;
   editsHash: string;
+  toolHashes: readonly VariantToolHash[];
 }): Promise<string> {
   const { baseServerId, baseSurfaceHash, editsHash } = parts;
-  return sha256Hex(canonicalJson({ baseServerId, baseSurfaceHash, editsHash }));
+  const toolHashes = parts.toolHashes
+    .map(({ tool, hash }) => ({ tool, hash }))
+    .sort((a, b) => (a.tool < b.tool ? -1 : a.tool > b.tool ? 1 : 0));
+  return sha256Hex(
+    canonicalJson({ baseServerId, baseSurfaceHash, editsHash, toolHashes })
+  );
 }

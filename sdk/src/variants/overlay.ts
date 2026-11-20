@@ -32,10 +32,22 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The JSON-RPC error a variant answers when it can't serve its edited tools. */
+export function variantDriftError(
+  variantId: string,
+  tools: string[]
+): VariantDriftRpcError {
+  return {
+    code: VARIANT_BASE_DRIFTED_RPC_CODE,
+    message: variantErrorMessages.VARIANT_BASE_DRIFTED(tools),
+    data: { code: "VARIANT_BASE_DRIFTED", tools, variantId },
+  };
+}
+
 /**
- * Returns the overlay for one variant. Call it with each `tools/list` result
- * and the cursor its request carried; it answers `undefined` for a result that
- * isn't a page of tools. It edits the result in place.
+ * Returns the overlay for one variant. Call it with each `tools/list` result,
+ * its `tools` array, and the cursor its request carried. It edits the result
+ * in place.
  */
 export function createToolsPageOverlay(
   variant: Pick<VariantDefinition, "variantId" | "edits" | "toolHashes">
@@ -51,14 +63,14 @@ export function createToolsPageOverlay(
 
   return async (
     result: Record<string, unknown>,
+    tools: unknown[],
     cursor: string | undefined
-  ): Promise<ToolsPageOutcome | undefined> => {
-    if (!Array.isArray(result.tools)) return undefined;
+  ): Promise<ToolsPageOutcome> => {
     const edited: { tool: Record<string, unknown>; value: string }[] = [];
     const changed = new Set<string>();
     // A page whose listing started elsewhere gets the drift check only.
     const seen = cursor === undefined ? new Set<string>() : open.get(cursor);
-    for (const tool of result.tools) {
+    for (const tool of tools) {
       if (!isRecord(tool) || typeof tool.name !== "string") continue;
       const value = values.get(tool.name);
       if (value === undefined) continue;
@@ -81,18 +93,7 @@ export function createToolsPageOverlay(
       }
     }
     if (changed.size > 0) {
-      const tools = [...changed];
-      return {
-        error: {
-          code: VARIANT_BASE_DRIFTED_RPC_CODE,
-          message: variantErrorMessages.VARIANT_BASE_DRIFTED(tools),
-          data: {
-            code: "VARIANT_BASE_DRIFTED",
-            tools,
-            variantId: variant.variantId,
-          },
-        },
-      };
+      return { error: variantDriftError(variant.variantId, [...changed]) };
     }
     for (const { tool, value } of edited) tool.description = value;
     return { result };

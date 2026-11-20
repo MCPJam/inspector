@@ -94,6 +94,7 @@ export async function buildVariantDraft(input: {
       baseServerId: input.baseServerId,
       baseSurfaceHash,
       editsHash,
+      toolHashes,
     }),
     diff: edited.map(({ edit, tool }) => ({
       tool: edit.target,

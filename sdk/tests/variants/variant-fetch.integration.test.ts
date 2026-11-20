@@ -74,8 +74,8 @@ function startBase(showDescription = "Show servers.") {
 }
 
 const managers: MCPClientManager[] = [];
-/** Unpinned, the handshake lands on 2026-07-28 and answers JSON; 2025-11-25 answers SSE. */
-type Era = "2025-11-25" | undefined;
+/** Unpinned, the handshake lands on 2026-07-28 and answers JSON; 2025 eras answer SSE. */
+type Era = "2025-11-25" | "2025-06-18" | undefined;
 
 async function connect(serverId: string, baseFetch: typeof fetch, era?: Era) {
   const manager = new MCPClientManager();
@@ -88,8 +88,11 @@ async function connect(serverId: string, baseFetch: typeof fetch, era?: Era) {
   return manager;
 }
 
-/** Pins `base` through its own connection and drafts the two description edits. */
-async function draftFrom(direct: MCPClientManager) {
+/** Pins `base` through its own connection and drafts the description edits. */
+async function draftFrom(
+  direct: MCPClientManager,
+  descriptions = DESCRIPTIONS
+) {
   const client = direct.getManagedClient("base");
   if (!client) throw new Error("the base server isn't connected");
   const pinned = await pinVariantSurface({
@@ -105,7 +108,7 @@ async function draftFrom(direct: MCPClientManager) {
   return buildVariantDraft({
     baseServerId: "base-server-id",
     tools: pinned.tools,
-    edits: Object.entries(DESCRIPTIONS).map(([target, value]) => ({
+    edits: Object.entries(descriptions).map(([target, value]) => ({
       feature: "tools.description",
       target,
       op: "set",
@@ -226,5 +229,60 @@ describe("a variant served through createVariantFetch", () => {
     expect(call).toMatchObject({
       content: [{ type: "text", text: "servers in p2" }],
     });
+  });
+
+  it("serves a tool pinned over 2026-07-28 to 2025 sessions, which list it with more fields", async () => {
+    const handler = createMcpHandler(() => {
+      const server = new McpServer(
+        { name: "era-base", version: "1.0.0" },
+        { capabilities: { tools: {} } }
+      );
+      server.server.setRequestHandler("tools/list", () => ({
+        tools: [
+          {
+            name: "long_job",
+            description: "Runs a long job.",
+            inputSchema: { type: "object" },
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      }));
+      return server;
+    });
+    const fetchBase: typeof fetch = (input, init) =>
+      handler.fetch(new Request(input, init));
+    const listed = async (era: Era) =>
+      (
+        await (
+          await connect(`base-${era}`, fetchBase, era)
+        ).listTools(`base-${era}`)
+      ).tools[0];
+    // The server SDK drops `execution` from 2026-07-28 listings only.
+    expect((await listed(undefined)).execution).toBeUndefined();
+    expect((await listed("2025-11-25")).execution).toEqual({
+      taskSupport: "optional",
+    });
+
+    const draft = await draftFrom(await connect("base", fetchBase), {
+      long_job: "Runs one long job in the background.",
+    });
+    for (const era of ["2025-11-25", "2025-06-18"] satisfies Era[]) {
+      const viaVariant = await connect(
+        `variant-${era}`,
+        createVariantFetch({
+          baseFetch: fetchBase,
+          variant: {
+            variantId: "variant-1",
+            edits: draft.edits,
+            toolHashes: draft.toolHashes,
+          },
+        }),
+        era
+      );
+      const { tools } = await viaVariant.listTools(`variant-${era}`);
+      expect(tools[0]?.description).toBe(
+        "Runs one long job in the background."
+      );
+    }
   });
 });

@@ -20,8 +20,13 @@
   "sha256": "dcf31fbe7c72c83aa7b2cc746e51aed85560ac5ca30c3285646c53289a87f87b"
  },
  {
+  "name": "toolProjection",
+  "canonical": "{\"description\":\"Show servers — “quoted” ünïcode\",\"inputSchema\":{\"properties\":{\"project\":{\"description\":\"Project name or ID.\",\"type\":\"string\"}},\"required\":[],\"type\":\"object\"},\"name\":\"show_servers\"}",
+  "sha256": "e42957438d57773ac81ae59ec30de179c8dd0a6b2470b0fb8828c6d1f0f8db03"
+ },
+ {
   "name": "contentHash",
-  "canonical": "{\"baseServerId\":\"qx82k5gs2tmhfw1saa8910gydh8jhqee\",\"baseSurfaceHash\":\"dcf31fbe7c72c83aa7b2cc746e51aed85560ac5ca30c3285646c53289a87f87b\",\"editsHash\":\"842f7579e440037bf68f24de8feb6c7d18a24e80d68ad3ec7e1dcd32ed71bf54\"}",
-  "sha256": "741434672e893183216d8c9d49e94970a6d33aba9b093e0dff9862225db76390"
+  "canonical": "{\"baseServerId\":\"qx82k5gs2tmhfw1saa8910gydh8jhqee\",\"baseSurfaceHash\":\"dcf31fbe7c72c83aa7b2cc746e51aed85560ac5ca30c3285646c53289a87f87b\",\"editsHash\":\"842f7579e440037bf68f24de8feb6c7d18a24e80d68ad3ec7e1dcd32ed71bf54\",\"toolHashes\":[{\"hash\":\"e42957438d57773ac81ae59ec30de179c8dd0a6b2470b0fb8828c6d1f0f8db03\",\"tool\":\"show_servers\"}]}",
+  "sha256": "06b0636815d041edefa88485fcdc26b7b662b78361a6a457589e3399953b4798"
  }
 ]

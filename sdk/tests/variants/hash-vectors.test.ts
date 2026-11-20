@@ -32,12 +32,13 @@ function vector(name: string) {
 }
 
 describe("variant hash parity vectors", () => {
-  it("holds the five vectors the contract names", () => {
+  it("holds the six vectors the contract names", () => {
     expect(vectors.map((entry) => entry.name)).toEqual([
       "nested",
       "tool",
       "edits",
       "surface",
+      "toolProjection",
       "contentHash",
     ]);
   });
@@ -60,6 +61,15 @@ describe("variant hash parity vectors", () => {
     expect(canonicalJson(literal)).toBe(vector("nested").canonical);
   });
 
+  it("toolProjection: the tool vector's name, title, description and inputSchema", () => {
+    const { name, title, description, inputSchema } = JSON.parse(
+      vector("tool").canonical
+    ) as VariantTool;
+    expect(canonicalJson({ name, title, description, inputSchema })).toBe(
+      vector("toolProjection").canonical
+    );
+  });
+
   it("each named hash helper reproduces its vector", async () => {
     const tool = JSON.parse(vector("tool").canonical) as VariantTool;
     const edits = JSON.parse(vector("edits").canonical) as VariantEdit[];
@@ -67,7 +77,7 @@ describe("variant hash parity vectors", () => {
       tools: VariantTool[];
     };
 
-    expect(await computeToolHash(tool)).toBe(vector("tool").sha256);
+    expect(await computeToolHash(tool)).toBe(vector("toolProjection").sha256);
     expect(await computeEditsHash(edits)).toBe(vector("edits").sha256);
     expect(await computeSurfaceHash(tools)).toBe(vector("surface").sha256);
     expect(
@@ -75,6 +85,9 @@ describe("variant hash parity vectors", () => {
         baseServerId: BASE_SERVER_ID,
         baseSurfaceHash: vector("surface").sha256,
         editsHash: vector("edits").sha256,
+        toolHashes: [
+          { tool: "show_servers", hash: vector("toolProjection").sha256 },
+        ],
       })
     ).toBe(vector("contentHash").sha256);
   });
@@ -95,7 +108,7 @@ describe("variant hash parity vectors", () => {
     expect(draft.baseSurfaceHash).toBe(vector("surface").sha256);
     expect(draft.contentHash).toBe(vector("contentHash").sha256);
     expect(draft.toolHashes).toEqual([
-      { tool: "show_servers", hash: vector("tool").sha256 },
+      { tool: "show_servers", hash: vector("toolProjection").sha256 },
     ]);
   });
 });

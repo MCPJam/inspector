@@ -95,6 +95,7 @@ describe("buildVariantDraft", () => {
         baseServerId: "base",
         baseSurfaceHash: draft.baseSurfaceHash,
         editsHash: draft.editsHash,
+        toolHashes: draft.toolHashes,
       })
     );
     expect(draft.diff).toEqual([
@@ -133,6 +134,48 @@ describe("buildVariantDraft", () => {
 
     expect(again.contentHash).toBe(first.contentHash);
     expect(elsewhere.contentHash).not.toBe(first.contentHash);
+  });
+
+  it("hashes a tool by its name, title, description and input schema only", async () => {
+    const tool = TOOLS[0];
+    const pinned = await computeToolHash(tool);
+    // The server SDK shapes these differently for 2025 and 2026 protocol versions.
+    const reshaped = {
+      ...tool,
+      annotations: { readOnlyHint: true, title: "Servers" },
+      execution: { taskSupport: "optional" },
+      outputSchema: { type: "object" },
+    };
+    expect(await computeToolHash(reshaped)).toBe(pinned);
+    for (const change of [
+      { name: "show_all_servers" },
+      { title: "Servers" },
+      { description: "Shows every server." },
+      { inputSchema: { type: "object" } },
+    ]) {
+      expect(await computeToolHash({ ...tool, ...change })).not.toBe(pinned);
+    }
+  });
+
+  it("covers the tool hashes in the content hash, whatever their order", async () => {
+    const parts = {
+      baseServerId: "base",
+      baseSurfaceHash: "s",
+      editsHash: "e",
+    };
+    const a = { tool: "a_tool", hash: "1".repeat(64) };
+    const b = { tool: "b_tool", hash: "2".repeat(64) };
+    const sorted = await computeContentHash({ ...parts, toolHashes: [a, b] });
+
+    expect(await computeContentHash({ ...parts, toolHashes: [b, a] })).toBe(
+      sorted
+    );
+    expect(
+      await computeContentHash({
+        ...parts,
+        toolHashes: [a, { ...b, hash: "3".repeat(64) }],
+      })
+    ).not.toBe(sorted);
   });
 
   it("accepts a description of exactly 10,000 characters after trimming", async () => {

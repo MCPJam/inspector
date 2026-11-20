@@ -197,7 +197,7 @@ describe("createVariantFetch", () => {
     const call = {
       jsonrpc: "2.0",
       id: 2,
-      result: { content: [{ type: "text", text: "ok" }], tools: [clone(SHOW)] },
+      result: { content: [{ type: "text", text: "ok" }] },
     };
     const base = fakeBase(json([page(1, [SHOW, LIST]), call]));
     const response = await createVariantFetch({ baseFetch: base, variant })(
@@ -246,40 +246,41 @@ describe("createVariantFetch", () => {
     });
   });
 
-  it("hands back every other response untouched, still streaming", async () => {
+  it("passes every other response through as it came, still streaming", async () => {
     const callStream = manualStream();
-    const callResponse = new Response(callStream.stream, {
-      headers: { "content-type": "text/event-stream" },
-    });
-    const listen = new Response("", {
-      headers: { "content-type": "text/event-stream" },
-    });
+    const sse = { headers: { "content-type": "text/event-stream" } };
+    const result = { jsonrpc: "2.0", id: 5, result: { content: [] } };
     const accepted = new Response(null, { status: 202 });
     const failed = new Response(JSON.stringify(page(4, [SHOW])), {
       status: 500,
       headers: { "content-type": "application/json" },
     });
-    const base = fakeBase(callResponse, listen, accepted, failed);
+    const base = fakeBase(
+      new Response(callStream.stream, sse),
+      new Response(": keep-alive\n\n", sse),
+      json(result),
+      accepted,
+      failed
+    );
     const variantFetch = createVariantFetch({ baseFetch: base, variant });
 
-    const call = await variantFetch(
-      URL_,
-      post(rpc(3, "tools/call", { name: "show_servers" }))
-    );
-    expect(call).toBe(callResponse);
+    const call = await variantFetch(URL_, post(rpc(3, "tools/call")));
     const reader = readerOf(call);
-    callStream.push(new TextEncoder().encode("data: partial\n\n"));
+    const progress = `data: ${JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progress: 1 } })}\n\n`;
+    callStream.push(new TextEncoder().encode(progress));
+    // The event arrives while the base's stream is still open.
     expect(new TextDecoder().decode((await reader.read()).value)).toBe(
-      "data: partial\n\n"
+      progress
     );
     await reader.cancel();
 
-    expect(
-      await variantFetch(URL_, {
-        method: "GET",
-        headers: { accept: "text/event-stream" },
-      })
-    ).toBe(listen);
+    const listen = await variantFetch(URL_, {
+      method: "GET",
+      headers: { accept: "text/event-stream" },
+    });
+    expect(await listen.text()).toBe(": keep-alive\n\n");
+    const answer = await variantFetch(URL_, post(rpc(5, "tools/call")));
+    expect(await answer.text()).toBe(JSON.stringify(result));
     expect(
       await variantFetch(
         URL_,
