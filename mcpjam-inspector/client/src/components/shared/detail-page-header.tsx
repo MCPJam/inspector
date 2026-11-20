@@ -138,9 +138,8 @@ export function DetailPageHeader<T extends string>({
   className?: string;
   testId?: string;
   /**
-   * Below a 48rem header, put the actions on their own line under back and
-   * title. The actions never shrink, so on a phone-width row they would
-   * otherwise cover the back button and the title.
+   * Below a 48rem header, give tabs and actions their own rows so the back
+   * control and title leave them room.
    */
   stackWhenNarrow?: boolean;
 }) {
@@ -160,7 +159,12 @@ export function DetailPageHeader<T extends string>({
             "flex-col items-stretch gap-2 @3xl/detail-header:flex-row @3xl/detail-header:items-center @3xl/detail-header:gap-6",
         )}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-3",
+            stackWhenNarrow && tabs && "flex-wrap @3xl/detail-header:flex-nowrap",
+          )}
+        >
           <DetailBackLink
             label={backLabel}
             onBack={onBack}
@@ -178,7 +182,10 @@ export function DetailPageHeader<T extends string>({
           {tabs ? (
             <>
               <div
-                className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+                className={cn(
+                  "hidden h-4 w-px shrink-0 bg-border/60",
+                  stackWhenNarrow ? "@3xl/detail-header:block" : "sm:block",
+                )}
                 aria-hidden="true"
               />
               <ViewModeSelector
@@ -187,7 +194,10 @@ export function DetailPageHeader<T extends string>({
                 onChange={tabs.onChange}
                 ariaLabel={tabs.ariaLabel}
                 indicatorId={tabs.indicatorId}
-                className={TAB_CLASSNAME}
+                className={cn(
+                  TAB_CLASSNAME,
+                  stackWhenNarrow && "basis-full @3xl/detail-header:basis-auto",
+                )}
               />
             </>
           ) : null}
