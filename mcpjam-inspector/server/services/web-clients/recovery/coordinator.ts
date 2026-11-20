@@ -171,7 +171,9 @@ export function createWebRecoveryCoordinator(
   async function resumeWaiting(webAccountId: string): Promise<ResumedRun[]> {
     const claimed = await backend.claimResumableWebRuns({ webAccountId });
     const started = await Promise.allSettled(
-      claimed.map((run) => deps.resumeRun(run.runId, run.pendingStep)),
+      // Async, so a resumeRun that throws before it returns a promise fails
+      // only its own run: the backend has already claimed all of them.
+      claimed.map(async (run) => deps.resumeRun(run.runId, run.pendingStep)),
     );
     return claimed.map((run, index): ResumedRun => {
       const result = started[index];

@@ -597,6 +597,37 @@ describe("web account recovery", () => {
       classifyRunFailure({ kind: "needs_sign_in", reason: "signed_out" }),
     ).toBe("account");
   });
+
+  it("resumes the other claimed runs when resuming one throws before it starts", async () => {
+    const world = createWorld();
+    const coordinator = startProcess(world);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"]);
+    await startRun(world, coordinator, "run-2", ["sign_in_page"]);
+    const [request] = await requestsOf(world);
+    await world.backend.handbackWebReconnect({
+      requestId: request?.requestId ?? "",
+      verifiedAccountEmail: SEAT.accountEmail,
+    });
+    const started: string[] = [];
+    const sweeper = createWebRecoveryCoordinator({
+      backend: world.backend,
+      ledger: world.ledger,
+      // Not async, so its throw comes before any promise.
+      resumeRun: (runId) => {
+        if (runId === "run-1") throw new Error("resume refused");
+        started.push(runId);
+        return Promise.resolve();
+      },
+    });
+
+    const resumed = await sweeper.resumeWaiting(ACCOUNT);
+
+    expect(resumed.map((run) => [run.runId, run.status])).toEqual([
+      ["run-1", "failed"],
+      ["run-2", "resumed"],
+    ]);
+    expect(started).toEqual(["run-2"]);
+  });
 });
 
 describe("a tool call runs once across recovery", () => {
