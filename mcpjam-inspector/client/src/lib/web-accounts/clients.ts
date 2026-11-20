@@ -49,7 +49,7 @@ export function runAccountOf(accounts: readonly WebAccount[]) {
   return accounts.find((account) => account.isDefault) ?? accounts[0];
 }
 
-/** How the list and the chip name an account. */
+/** How the chip and the suite name an account: its address, else its name. */
 export function webAccountName(account: WebAccount): string {
-  return account.accountEmail || account.label || "Unnamed account";
+  return account.accountEmail || account.label;
 }

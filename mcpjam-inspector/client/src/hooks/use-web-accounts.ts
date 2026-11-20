@@ -54,7 +54,7 @@ export function useSuiteWebAccounts(suiteId: string, projectId: string) {
     shouldQueryProjectId(projectId);
   const accounts = useQuery(webAccountsApi.list, asks ? { projectId } : "skip");
   const selections = useQuery(
-    webAccountsApi.listSuiteSelections,
+    webAccountsApi.mySuiteChoices,
     asks ? { suiteId } : "skip",
   );
   return { accounts: accounts ?? [], selections: selections ?? [] };
