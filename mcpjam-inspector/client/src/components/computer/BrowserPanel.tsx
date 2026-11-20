@@ -31,6 +31,7 @@ import {
 } from "@mcpjam/design-system/dropdown-menu";
 import { Button } from "@mcpjam/design-system/button";
 import { useThrottledInputPing } from "@/components/browser/usePausedPane";
+import type { ViewportSize } from "@/shared/browser-viewport";
 import { BrowserStream } from "./BrowserStream";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
@@ -202,6 +203,14 @@ export function BrowserPanel({
     },
     [getToken],
   );
+
+  const resizeViewport = useCallback(async (size: ViewportSize) => {
+    const response = await authorized("/viewport", {
+      method: "POST",
+      body: JSON.stringify({ ...size, policy: "followPane" }),
+    });
+    if (!response.ok) throw new Error("Browser viewport resize failed");
+  }, [authorized]);
 
   const disconnected = useCallback(() => {
     setHolding(false);
@@ -528,6 +537,7 @@ export function BrowserPanel({
         bootId={session.bootId}
         onSessionGone={disconnected}
         onInput={onInput ?? noteInput}
+        onViewport={resizeViewport}
       />
     </div>
   );
