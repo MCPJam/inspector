@@ -48,7 +48,7 @@ import {
   type ToolCallRequest,
   type TurnWindowStore,
 } from "./turn-windows.js";
-import type { WebClientEnvironment } from "./web-client-environment.js";
+import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
 import { matchWebToolCalls, type WebToolCall } from "./web-client-trace.js";
 
 /** The approval this turn applies, from the turn's policy (`turnApprovalPolicy`). */
@@ -190,7 +190,7 @@ export async function runWebClientTurn(
       ...(input.signal ? { signal: input.signal } : {}),
     });
     await closeAll();
-    await env.onOutcome?.({ ok: true, webAccountId: account.webAccountId, account: page.account });
+    await report({ ok: true, webAccountId: account.webAccountId, account: page.account });
     return {
       ok: true,
       turnId,
@@ -208,7 +208,7 @@ export async function runWebClientTurn(
     });
     await closeAll();
     if (webAccountId) {
-      await env.onOutcome?.({
+      await report({
         ok: false,
         webAccountId,
         failure: error.failure,
@@ -239,5 +239,21 @@ export async function runWebClientTurn(
     const open = browser;
     browser = undefined;
     await open?.close();
+  }
+
+  /**
+   * Records how the turn ended on the account. The turn's result is the
+   * evidence, so a report that fails is logged and never replaces it.
+   */
+  async function report(outcome: WebTurnOutcome) {
+    try {
+      await env.onOutcome?.(outcome);
+    } catch (error) {
+      logger.warn("[web-clients] the turn's outcome could not be recorded on the account", {
+        runtimeId: input.runtimeId,
+        ok: outcome.ok,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
