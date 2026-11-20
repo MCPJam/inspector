@@ -86,7 +86,7 @@ describe("a local web client environment", () => {
   });
 
   it("lets a second turn on the same profile wait for the first browser to close", async () => {
-    const launch = vi.fn(async () => ({ page: { route: async () => {} } as never, close: async () => {} }));
+    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close: async () => {} }));
     const env = environment({ launch, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
