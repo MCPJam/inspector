@@ -285,6 +285,26 @@ describe("relayListenStream", () => {
   });
 });
 
+describe("onChange", () => {
+  it("runs before a change is forwarded, and not for one the listen did not send", async () => {
+    const fake = fakeManager();
+    const order: string[] = [];
+    const { read } = relay(fake, { onChange: () => order.push("change") });
+    expect(await read.next()).toMatchObject({
+      method: "notifications/subscriptions/acknowledged",
+    });
+    fake.emit("notifications/tools/list_changed", {});
+    fake.emit("notifications/tools/list_changed", {
+      _meta: { [SUBSCRIPTION_ID]: "upstream-1" },
+    });
+    expect(await read.next()).toMatchObject({
+      method: "notifications/tools/list_changed",
+    });
+    expect(order).toEqual(["change"]);
+    await read.cancel();
+  });
+});
+
 describe("listens that share a caller", () => {
   const acknowledged = {
     method: "notifications/subscriptions/acknowledged",

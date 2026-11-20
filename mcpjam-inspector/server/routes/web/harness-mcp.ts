@@ -20,6 +20,7 @@
  */
 import { createHash } from "node:crypto";
 import { Hono } from "hono";
+import type { MCPClientManager } from "@mcpjam/sdk";
 import { handleNativeForwarding } from "./harness-forwarding.js";
 import "../../types/hono";
 import {
@@ -66,6 +67,12 @@ import {
   LISTEN_METHOD,
   relayListenStream,
 } from "./harness-mcp-listen-relay.js";
+import {
+  discardTurnManager,
+  harnessMcpTurnCacheEnabled,
+  withTurnManager,
+  type TurnConnection,
+} from "./harness-mcp-turn-cache.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import {
@@ -470,6 +477,19 @@ async function handle(c: any) {
           },
         },
       );
+    // With per-turn reuse on, a turn's requests share one authorized
+    // connection, keyed so nothing crosses a turn. Every request is still
+    // checked against its live turn.
+    const turnKey =
+      harnessMcpTurnCacheEnabled() && (turn || session)
+        ? [
+            claims.userId,
+            claims.projectId,
+            serverId,
+            session?.turnId ?? JSON.stringify(turn),
+            JSON.stringify(sealed?.profile ?? null),
+          ].join("|")
+        : undefined;
     if (relayListen && body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
       // A manager of the stream's own, for as long as the stream lasts.
       const created = await createAuthorized();
@@ -488,6 +508,9 @@ async function handle(c: any) {
           caller: listenCaller,
           cancelKey: listenKey(body.id),
           maxMs: HARNESS_MCP_STREAM_MAX_MS,
+          // The harness lists again on a change; the turn's reused client
+          // would answer from a cache the change made stale.
+          ...(turnKey ? { onChange: () => discardTurnManager(turnKey) } : {}),
           ...(checkTurn
             ? {
                 stillAuthorized: async () => (await checkTurn()) === undefined,
@@ -509,10 +532,24 @@ async function handle(c: any) {
         },
       );
     }
-    const response = await withManager(
-      createAuthorized(),
-      async (manager) => {
-        // Connecting to a slow server can outlive the message that requested it.
+    const onManager = <T>(
+      fn: (manager: MCPClientManager, connection?: TurnConnection) => Promise<T>,
+    ) =>
+      turnKey
+        ? withTurnManager(
+            turnKey,
+            () =>
+              createAuthorized().then((created) =>
+                "manager" in created ? created.manager : created,
+              ),
+            fn,
+          )
+        : withManager(createAuthorized(), fn);
+    const response = await onManager(
+      async (manager, connection) => {
+        // Connecting to a slow server can outlive the message that requested
+        // it, and a request on the turn's reused connection was first checked
+        // before its body arrived. Checked again here, just before it runs.
         const refused = await checkTurn?.();
         if (refused) return refused;
         // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
@@ -573,7 +610,7 @@ async function handle(c: any) {
             return block.response;
           }
         }
-        return handleJsonRpc(serverId, body, manager, "adapter", {
+        const reply = await handleJsonRpc(serverId, body, manager, "adapter", {
           ...(call ? { signal: call.signal } : {}),
           downstreamProtocolVersion: downstreamProtocolVersionOf(body),
           // This request's manager is still connecting: answer the handshake
@@ -635,6 +672,10 @@ async function handle(c: any) {
             );
           },
         });
+        // A failed request may have lost the upstream session; the next one
+        // builds the turn's connection again.
+        if (connection && reply && "error" in reply) connection.discard();
+        return reply;
       },
     );
     if (response instanceof Response) return response;
