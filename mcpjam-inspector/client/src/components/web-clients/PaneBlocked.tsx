@@ -57,7 +57,7 @@ export function PaneBlocked({
         <p>
           {account
             ? `${site} signed this account out, so runs on ${client} can't start. Only a project admin can sign in again.`
-            : `Runs on ${client} need a project account, and only a project admin can add one by signing in to ${site}.`}
+            : `Ask a project admin to sign in to ${site} and add a ${client} account.`}
         </p>
         <p>To use your own account, run MCPJam on your computer.</p>
       </div>

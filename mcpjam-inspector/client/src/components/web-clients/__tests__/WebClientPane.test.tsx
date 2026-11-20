@@ -105,7 +105,7 @@ describe("useWebClientPane", () => {
     expect(blocked).toHaveTextContent(
       "This project has no Claude web account yet",
     );
-    expect(blocked).toHaveTextContent("only a project admin can add one");
+    expect(blocked).toHaveTextContent("Ask a project admin to sign in");
     await userEvent.click(
       screen.getByRole("button", { name: "Copy link for an admin" }),
     );
