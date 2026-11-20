@@ -169,7 +169,7 @@ const FEATURE_NAMES = {
 
 function promptTitle(request: GitHubStarPromptRequest): string {
   if (request.reason === "return_visit")
-    return "Thanks for checking out our debugger!";
+    return "Thanks for checking out our debugger.";
   return `Your ${FEATURE_NAMES[request.trigger]} is complete`;
 }
 
