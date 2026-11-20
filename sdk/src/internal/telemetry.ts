@@ -150,10 +150,22 @@ function exceptions(input: unknown, catalog: TelemetryCatalog) {
   return { values: kept, dropped };
 }
 
+// A Convex function path as the client names it (`module/sub:function`). The
+// client parses it from Convex's own error prefix, so it is our code's name,
+// never user input.
+function convexFunctionTag(value: unknown): string | undefined {
+  return typeof value === "string" &&
+    /^[\w/.-]{1,128}:[\w.-]{1,128}$/.test(value)
+    ? value
+    : undefined;
+}
+
 // Open-domain tags with a bounded shape instead of a finite vocabulary: the
-// HTTP status an XAA authorization server answered with, and its RFC 6749
-// `error` code (section 5.2 charset, kept short).
+// HTTP status an XAA authorization server answered with, its RFC 6749
+// `error` code (section 5.2 charset, kept short), and the Convex function a
+// failed query called.
 const SHAPED_TAGS: Record<string, (value: unknown) => string | undefined> = {
+  convex_function: convexFunctionTag,
   xaa_as_status: (value) =>
     typeof value === "string" && /^[1-5]\d{2}$/.test(value) ? value : undefined,
   xaa_as_error: (value) =>
@@ -223,6 +235,9 @@ export function rebuildSentryEvent<T extends object>(
   const facts = rebuildSentryFacts(extra, options);
   const code = typeof facts.code === "string" ? facts.code : typeof facts.slug === "string" ? facts.slug : undefined;
   const capturedBy = typeof facts.event === "string" ? facts.event : undefined;
+  const convexFunction = convexFunctionTag(
+    telemetryRecord(source.tags).convex_function
+  );
   const last = chain.values.at(-1);
   if (last && code) last.value = code;
   return {
@@ -249,6 +264,9 @@ export function rebuildSentryEvent<T extends object>(
       ...(chain.values.length && !ownedFrames.length && capturedBy
         ? [capturedBy]
         : []),
+      // Every failed Convex query rethrows from the same client frames with a
+      // scrubbed message, so without the function name they form one group.
+      ...(chain.values.length && convexFunction ? [convexFunction] : []),
       ...(code ? [code] : []),
     ],
     extra: {
