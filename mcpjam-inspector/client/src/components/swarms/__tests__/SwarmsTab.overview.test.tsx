@@ -678,6 +678,17 @@ describe("Overview — history and report", () => {
     expect(screen.getAllByTestId("swarm-overview-run-row")).toHaveLength(3);
   });
 
+  it("preserves descriptive names that start with Swarm and contain a digit", async () => {
+    const [first, ...otherRuns] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [{ ...first!, swarmName: "Swarm · Checkout v2" }, ...otherRuns],
+    };
+    renderTab();
+    const report = within(await screen.findByTestId("swarm-overview-report"));
+    expect(report.getByText("Swarm · Checkout v2")).toBeTruthy();
+  });
+
   it("selects a legacy run and opens its existing detail route", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");

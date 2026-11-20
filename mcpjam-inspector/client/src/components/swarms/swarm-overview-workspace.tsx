@@ -47,6 +47,8 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   year: "numeric",
 });
+const shortDateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+const englishShortDate = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (?:[1-9]|[12]\d|3[01])$/;
 
 type PanelProps = {
   projectId: string | null;
@@ -118,7 +120,12 @@ function OverviewBody({ projectId, personas, hosts, selectedId, onSelectRun, onO
 
 function describeWave(wave: SwarmWave) {
   const authored = wave.anchor.swarmName?.trim();
-  const defaultDate = authored?.match(/^Swarm\s*·\s*(.+\d.*)$/i)?.[1];
+  const savedDate = authored?.match(/^Swarm · (.+)$/)?.[1];
+  const defaultDate =
+    savedDate &&
+    (savedDate === shortDateFormat.format(wave.createdAt) || englishShortDate.test(savedDate))
+      ? savedDate
+      : undefined;
   const title = defaultDate || authored?.toLowerCase() === "swarm" ? undefined : authored;
   const date = defaultDate ?? dateFormat.format(wave.createdAt);
   const servers = [...new Set(wave.runs.flatMap((run) => run.serverNames ?? []))];
