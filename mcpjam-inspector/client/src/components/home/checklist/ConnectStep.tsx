@@ -6,6 +6,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { ErrorCard } from "@/components/ui/error-card";
 import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { deriveServerName } from "@/components/onboarding/FirstRunOnboardingOverlay";
+import { EXCALIDRAW_SERVER_CONFIG } from "@/lib/excalidraw-quick-connect";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/state/app-types";
@@ -14,7 +15,12 @@ import type { ServerWithName } from "@/state/app-types";
 export const CONNECT_TYPING_PAUSE_MS = 1000;
 
 export type ConnectAction =
-  "auto_started" | "confirmed" | "denied" | "failed" | "retried";
+  | "auto_started"
+  | "demo_started"
+  | "confirmed"
+  | "denied"
+  | "failed"
+  | "retried";
 
 interface Attempt {
   name: string;
@@ -158,6 +164,22 @@ export function ConnectStep({
     connect(next);
   };
 
+  const startDemo = () => {
+    window.clearTimeout(timer.current);
+    discard(attempt);
+    const { name } = EXCALIDRAW_SERVER_CONFIG;
+    const next = {
+      name,
+      formData: EXCALIDRAW_SERVER_CONFIG,
+      created: !servers[name],
+    };
+    setUrl("");
+    setError(null);
+    setAttempt(next);
+    onTrack("demo_started");
+    connect(next);
+  };
+
   const onChange = (event: ChangeEvent<HTMLInputElement>) => {
     const value = event.target.value;
     setUrl(value);
@@ -266,6 +288,20 @@ export function ConnectStep({
             connect(attempt);
           }}
         />
+      ) : null}
+      {!attempt || status === "failed" || status === "disconnected" ? (
+        <p className="text-sm text-muted-foreground">
+          No server handy?{" "}
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto p-0"
+            onClick={startDemo}
+          >
+            Use the Excalidraw demo server
+          </Button>
+        </p>
       ) : null}
     </>
   );

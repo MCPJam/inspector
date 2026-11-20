@@ -182,4 +182,37 @@ describe("ConnectStep", () => {
       expect.anything(),
     );
   });
+
+  it("connects the Excalidraw demo server", () => {
+    const { props } = setup();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+    );
+    expect(props.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Excalidraw (App)",
+        url: "https://mcp.excalidraw.com/mcp",
+      }),
+      { suppressErrorToast: true, suppressSuccessToast: true },
+    );
+    expect(props.onTrack).toHaveBeenCalledWith("demo_started");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+  });
+
+  it("offers the demo server after a failed connection", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(
+      screen.queryByRole("button", { name: "Use the Excalidraw demo server" }),
+    ).toBeNull();
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("failed") }} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+    );
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+  });
 });
