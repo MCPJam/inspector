@@ -34,7 +34,7 @@ function readResult(
         reason ||
         (typeof entry.error === "string"
           ? entry.error
-          : "The evaluator could not run."),
+          : "The evaluator could not run. Rerun the suite to try again."),
     };
   }
   if (
