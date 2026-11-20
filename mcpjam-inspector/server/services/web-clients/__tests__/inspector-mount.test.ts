@@ -19,6 +19,9 @@ beforeAll(async () => {
   resources = mkdtempSync(join(tmpdir(), "inspector-web-clients-"));
   mkdirSync(join(resources, "client"));
   writeFileSync(join(resources, "client", "index.html"), "<!doctype html><p>app shell</p>");
+  // A local connector registered without a signed-in person answers to the flag file.
+  writeFileSync(join(resources, "flags.json"), JSON.stringify({ "web-clients-enabled": true }));
+  vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", join(resources, "flags.json"));
   vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "false");
   vi.stubEnv("ELECTRON_APP", "true");
   vi.stubEnv("IS_PACKAGED", "true");
