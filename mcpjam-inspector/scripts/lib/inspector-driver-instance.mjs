@@ -86,9 +86,63 @@ export function readState(inspectorDir) {
     state.pid <= 1 ||
     !isLoopbackUrl(state.baseUrl)
   ) {
-    throw new Error(`${path} is not a driver state file. Delete it and run \`start\`.`);
+    throw new Error(
+      `${path} is not a driver state file. Delete it and run \`start\`.`,
+    );
   }
   return state;
+}
+
+/**
+ * When the OS says `pid` started, as an opaque string to compare for
+ * equality, or null when it cannot tell. Paired with the pid it names one
+ * process, where a pid alone may by now belong to anything.
+ */
+export function processStartTime(pid) {
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      // Field 22, starttime; the command name before it may contain spaces.
+      return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  const [command, args] =
+    process.platform === "win32"
+      ? [
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if ($p) { $p.CreationDate.ToUniversalTime().ToString('o') }`,
+          ],
+        ]
+      : ["ps", ["-o", "lstart=", "-p", String(pid)]];
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return (result.status === 0 && result.stdout.trim()) || null;
+}
+
+/**
+ * True only while `state.pid` is still the launcher `start` spawned. The
+ * state file outlives reboots and crashed launchers, and the OS reuses pids.
+ */
+export function isOurProcess(state, startTimeOf = processStartTime) {
+  return (
+    Boolean(state.processStart) && startTimeOf(state.pid) === state.processStart
+  );
+}
+
+function forgetStale(inspectorDir, state, log) {
+  rmSync(statePath(inspectorDir), { force: true });
+  log(
+    `pid ${state.pid} is no longer the launcher \`start\` recorded (it exited, or the OS reused the pid); cleared the record without stopping anything`,
+  );
 }
 
 export function isAlive(pid) {
@@ -127,12 +181,16 @@ export async function startInstance({
   envFile,
   timeoutSeconds = 300,
   log = (line) => process.stdout.write(`${line}\n`),
+  startTimeOf = processStartTime,
 }) {
   const existing = readState(inspectorDir);
-  if (existing && isAlive(existing.pid)) {
-    throw new Error(
-      `This checkout already has a driver instance (pid ${existing.pid}, ${existing.baseUrl}). Run \`stop\` first.`,
-    );
+  if (existing) {
+    if (isOurProcess(existing, startTimeOf)) {
+      throw new Error(
+        `This checkout already has a driver instance (pid ${existing.pid}, ${existing.baseUrl}). Run \`stop\` first.`,
+      );
+    }
+    forgetStale(inspectorDir, existing, log);
   }
   const launcherArgs = { portOverrides: {}, worker };
   const chosen = instance ?? (await pickFreeInstance(launcherArgs));
@@ -176,8 +234,16 @@ export async function startInstance({
   );
   closeSync(logFd);
   child.unref();
+  const processStart = startTimeOf(child.pid);
+  if (!processStart) {
+    killTree(child.pid);
+    throw new Error(
+      `Could not read when pid ${child.pid} started, so \`stop\` could not tell it from a later process with the same pid; stopped it.`,
+    );
+  }
   const state = {
     pid: child.pid,
+    processStart,
     instance: chosen,
     ports,
     baseUrl: `http://localhost:${ports.client}`,
@@ -212,7 +278,7 @@ export async function startInstance({
     }
     await sleep(1_000);
   }
-  await stopInstance({ inspectorDir, log });
+  await stopInstance({ inspectorDir, log, startTimeOf });
   throw new Error(
     `Not ready after ${timeoutSeconds}s; stopped it. A server that crashes under ` +
       "`tsx watch` waits for a file change instead of exiting, so a missing build " +
@@ -238,13 +304,18 @@ function killTree(pid) {
 export async function stopInstance({
   inspectorDir,
   log = (line) => process.stdout.write(`${line}\n`),
+  startTimeOf = processStartTime,
 }) {
   const state = readState(inspectorDir);
   if (!state) {
     log("no driver instance recorded for this checkout");
     return;
   }
-  if (isAlive(state.pid)) killTree(state.pid);
+  if (!isOurProcess(state, startTimeOf)) {
+    forgetStale(inspectorDir, state, log);
+    return;
+  }
+  killTree(state.pid);
   // Only the ports this launch listens on; the worker pair may belong to
   // another instance when this one ran with --no-worker.
   const owned = { client: state.ports.client, server: state.ports.server };

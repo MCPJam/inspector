@@ -341,14 +341,14 @@ async function cmdStart(values) {
 }
 
 async function cmdStatus() {
-  const { readState, isAlive } =
+  const { readState, isOurProcess } =
     await import("./lib/inspector-driver-instance.mjs");
   const state = readState(INSPECTOR_DIR);
   if (!state) {
     process.stdout.write("no driver instance recorded for this checkout\n");
     return 0;
   }
-  const alive = isAlive(state.pid);
+  const alive = isOurProcess(state);
   process.stdout.write(
     `instance ${state.instance} ${alive ? "running" : "NOT running"} pid ${state.pid} ${state.baseUrl} log ${state.logPath}\n`,
   );
