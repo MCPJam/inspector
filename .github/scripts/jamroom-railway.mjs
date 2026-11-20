@@ -194,6 +194,8 @@ export async function railwayJob(job, { railwayToken, githubToken, fetcher = fet
     variables: {
       ...variables, ALLOWED_ORIGINS: origin, WEB_ALLOWED_ORIGINS: origin,
       MCPJAM_ALLOWED_HOSTS: new URL(origin).hostname,
+      // The address a vendor's app or a cloud sandbox dials this Inspector at.
+      MCPJAM_INSPECTOR_PUBLIC_URL: origin,
     },
   } });
   if (!configured.variableCollectionUpsert) throw new Error('Railway did not save preview variables.');
