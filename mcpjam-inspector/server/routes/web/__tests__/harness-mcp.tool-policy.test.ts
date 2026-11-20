@@ -37,6 +37,7 @@ vi.mock("../auth", () => ({
 }));
 
 import { harnessMcp } from "../harness-mcp.js";
+import { resetHarnessMcpTurnCache } from "../harness-mcp-turn-cache.js";
 import { signTestProxyToken } from "../../../utils/harness/__tests__/sign-test-token.js";
 import { sealHarnessProxyToken } from "../../../utils/harness/harness-proxy-policy-seal.js";
 import { HARNESS_POLICY_BLOCK_META_KEY } from "../../../utils/harness/harness-proxy-policy-enforcement.js";
@@ -150,7 +151,7 @@ describe("harness MCP proxy tool policy", () => {
         return new Response(null, { status: body.leaseId === active ? 204 : 403 });
       }));
     });
-    afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+    afterEach(() => { resetHarnessMcpTurnCache(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
     it("refuses an old credential before dispatch, while idle and during a later turn", async () => {
       const previous = credential("first");
@@ -173,6 +174,22 @@ describe("harness MCP proxy tool policy", () => {
       expect(response.status).toBe(401);
       expect(await response.text()).not.toContain("first-turn-only");
       expect(mockManager.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("with per-turn reuse, checks a reused connection's request live once before and once after", async () => {
+      vi.stubEnv("MCPJAM_HARNESS_MCP_TURN_CACHE", "1");
+      const checks = vi.mocked(fetch);
+      const first = credential("first");
+      expect((await call(first, "read_file")).status).toBe(200);
+      // Building the connection: before, after building it, and after the call.
+      expect(checks).toHaveBeenCalledTimes(3);
+      checks.mockClear();
+      expect((await call(first, "read_file")).status).toBe(200);
+      // The connection was already built: before and after the call.
+      expect(checks).toHaveBeenCalledTimes(2);
+      active = "second";
+      expect((await call(first, "read_file")).status).toBe(401);
+      expect(mockManager.executeTool).toHaveBeenCalledTimes(2);
     });
 
     it("refuses dispatch when the authority is unavailable", async () => {

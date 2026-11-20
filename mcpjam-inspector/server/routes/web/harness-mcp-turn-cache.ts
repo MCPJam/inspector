@@ -6,7 +6,9 @@
  * (handshake, lists), each of which would otherwise rebuild an authorized
  * upstream connection. Within one turn the authorized connection is reused by
  * the turn's later requests and disconnected once the turn has been idle for
- * 20 s. Every request still checks its live turn, as without reuse.
+ * 20 s. Every request still checks its live turn, as without reuse; a
+ * request that found the connection already built is told so, since it
+ * waited for nothing after that check.
  *
  * Keys name the user, project, server and turn, so nothing crosses a turn.
  */
@@ -23,6 +25,14 @@ type Entry = {
   manager: Promise<MCPClientManager>;
   users: number;
   idle: ReturnType<typeof setTimeout> | undefined;
+  /** The connection has been built. */
+  ready: boolean;
+};
+
+/** How a request came by its connection. */
+export type TurnConnection = {
+  /** Already built: the request waited for nothing to get it. */
+  reused: boolean;
 };
 
 const managers = new Map<string, Entry>();
@@ -42,11 +52,24 @@ function retire(key: string, entry: Entry): void {
 export async function withTurnManager<T>(
   key: string,
   create: () => Promise<MCPClientManager>,
-  fn: (manager: MCPClientManager) => Promise<T>,
+  fn: (manager: MCPClientManager, connection: TurnConnection) => Promise<T>,
 ): Promise<T> {
   let entry = managers.get(key);
   if (!entry) {
-    entry = { manager: create(), users: 0, idle: undefined };
+    const created: Entry = {
+      manager: create(),
+      users: 0,
+      idle: undefined,
+      ready: false,
+    };
+    // A failed build is dropped below, where it is awaited.
+    created.manager.then(
+      () => {
+        created.ready = true;
+      },
+      () => undefined,
+    );
+    entry = created;
     managers.set(key, entry);
     if (managers.size > MAX_ENTRIES) {
       const [oldestKey, oldest] = managers.entries().next().value as [string, Entry];
@@ -57,6 +80,7 @@ export async function withTurnManager<T>(
     }
   }
   const held = entry;
+  const reused = held.ready;
   if (held.idle) clearTimeout(held.idle);
   held.idle = undefined;
   held.users += 1;
@@ -65,7 +89,7 @@ export async function withTurnManager<T>(
       if (managers.get(key) === held) managers.delete(key);
       throw error;
     });
-    return await fn(manager);
+    return await fn(manager, { reused });
   } finally {
     held.users -= 1;
     if (held.users === 0 && managers.get(key) === held) {

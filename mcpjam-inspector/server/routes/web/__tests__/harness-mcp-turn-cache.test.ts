@@ -56,6 +56,27 @@ describe("withTurnManager", () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 
+  it("says a connection was reused only when it was already built", async () => {
+    let finish!: (manager: MCPClientManager) => void;
+    const create = vi.fn(
+      () =>
+        new Promise<MCPClientManager>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const seen: boolean[] = [];
+    const record = async (_: MCPClientManager, connection: { reused: boolean }) => {
+      seen.push(connection.reused);
+    };
+    const first = withTurnManager("ready", create, record);
+    // Arrives while the connection is still being built: it waited for it.
+    const second = withTurnManager("ready", create, record);
+    finish(fakeManager());
+    await Promise.all([first, second]);
+    await withTurnManager("ready", create, record);
+    expect(seen).toEqual([false, false, true]);
+  });
+
   it("keeps different turns on different connections", async () => {
     const create = vi.fn(async () => fakeManager());
     await withTurnManager("turn-1", create, async () => undefined);

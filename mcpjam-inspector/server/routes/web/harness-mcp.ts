@@ -32,6 +32,7 @@ import {
 import {
   harnessMcpTurnCacheEnabled,
   withTurnManager,
+  type TurnConnection,
 } from "./harness-mcp-turn-cache.js";
 import {
   DISCOVER_METHOD,
@@ -561,10 +562,15 @@ async function handleRequest(
         },
       );
     }
-    const handleOnManager = async (manager: MCPClientManager) => {
+    const handleOnManager = async (
+      manager: MCPClientManager,
+      connection?: TurnConnection,
+    ) => {
       trace?.mark("connect");
       // Connecting to a slow server can outlive the message that requested it.
-      const refused = await recheckTurn?.();
+      // A connection the turn already had took no time to get, so the check
+      // above still stands.
+      const refused = connection?.reused ? undefined : await recheckTurn?.();
       trace?.mark("turn2");
       if (refused) return refused;
       // Enforce `toolPolicy` BEFORE the bridge: a denied call must never
