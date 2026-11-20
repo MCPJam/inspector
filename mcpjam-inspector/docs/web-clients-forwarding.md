@@ -17,7 +17,9 @@ reaches the project's MCP server through the Inspector at `/mcp/<connectorId>`
   and nothing reaches the server. A batch with a refused call is held whole;
 - writes every forwarded call to the ledger (`tool-call-ledger.ts`) before
   sending it and settles it from the answer, inside an SSE stream too: `result`,
-  `error`, or `lost` when the answer never arrived;
+  `error`, or `lost` when the answer never arrived. With the backend configured
+  (hosted), the call is first recorded in the backend's ledger, which recovery
+  reads after a restart, and a call that can't be recorded there is refused;
 - records every frame on the RPC log bus and the shared sink under
   `web-client:<turnId>` (or `web-client:outside-turn:<digest>`: a capability
   connector's id is its credential, so logs name connectors by a digest), and the

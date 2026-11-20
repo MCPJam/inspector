@@ -62,6 +62,7 @@ import {
 import {
   hashPayload,
   webClientToolCallLedger,
+  type DurableToolCallLedger,
   type LedgerState,
   type ToolCallLedger,
 } from "./tool-call-ledger.js";
@@ -75,6 +76,11 @@ export type WebConnectorEndpointDeps = {
   resolver: WebConnectorResolver;
   turns?: TurnWindowStore;
   ledger?: ToolCallLedger;
+  /**
+   * The backend's ledger. When set, a call goes upstream only after it is
+   * recorded there, and is settled there too.
+   */
+  durableLedger?: DurableToolCallLedger;
   /**
    * The MCPJam user an OAuth bearer names, when it was issued for one of
    * `audiences`: the connector's URL, or the `/mcp` family the root metadata
@@ -106,6 +112,8 @@ const COPY = {
     "MCPJam's tool approval did not allow this call, so it was not sent. Change the approval in MCPJam, then send the prompt again.",
   approvalFailed:
     "MCPJam could not check this tool call, so it was not sent. Send the prompt again.",
+  notRecorded:
+    "MCPJam could not record this tool call, so it was not sent. Send the prompt again.",
   noToolName:
     "This tool call names no tool, so it was not sent. Send it again with a tool name.",
   batchHeld:
@@ -440,12 +448,33 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return answerAll(body, () => COPY.noUpstream, REFUSED, 502, frame);
     }
 
-    // Written down before anything is sent: a call lost mid-flight stays on record as uncertain.
-    const pending = new Map<RpcId, string>();
-    for (const call of body.messages.filter(isToolCall)) {
+    type Pending = { entryId: string; durableId?: string };
+    type Outcome = Parameters<ToolCallLedger["settle"]>[1];
+    const warn = (what: string, error: unknown) =>
+      logger.warn(`[web-clients] ${what}`, {
+        connector: connectorTag(connectorId),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    const release = () =>
+      target
+        .release?.()
+        .catch((error: unknown) =>
+          warn("the upstream connection was not released", error),
+        );
+    const settleDurable = (durableId: string | undefined, outcome: Outcome) => {
+      // An unsettled record reads as ambiguous: the safe direction for recovery.
+      if (durableId)
+        deps.durableLedger
+          ?.settle(durableId, outcome)
+          .catch((error: unknown) => warn("a call was not settled durably", error));
+    };
+
+    // Recorded before anything is sent, so a call lost mid-flight stays on
+    // record as uncertain, and recovery after a restart reads the durable copy.
+    const calls = body.messages.filter(isToolCall).map((call) => {
       const params = paramsOf(call);
       const toolUseId = toolUseIdOf(params);
-      const entry = ledger.forwarded({
+      return {
         connectorId,
         turnId: window?.turnId,
         runId: window?.runId,
@@ -453,41 +482,61 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         toolName: String(params.name),
         ...(toolUseId ? { toolUseId } : {}),
         argsHash: hashPayload(params.arguments ?? {}),
+      };
+    });
+    const durableIds: Array<string | undefined> = [];
+    try {
+      for (const call of calls)
+        durableIds.push(await deps.durableLedger?.record(call));
+    } catch (error) {
+      reportRouteFailure("Web connector call could not be recorded", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
       });
-      pending.set(call.id, entry.id);
+      // Recorded but never sent: the record gets the error the vendor gets.
+      for (const durableId of durableIds)
+        settleDurable(durableId, { state: "error" });
+      void release();
+      const callIds = new Set(calls.map((call) => call.jsonrpcId));
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? COPY.notRecorded : COPY.batchHeld),
+        REFUSED,
+        200,
+        frame,
+      );
     }
+    const pending = new Map<RpcId, Pending>();
+    calls.forEach((call, index) => {
+      const durableId = durableIds[index];
+      const entry = ledger.forwarded({ ...call, ...(durableId ? { durableId } : {}) });
+      pending.set(call.jsonrpcId, { entryId: entry.id, durableId });
+    });
     const settle = (
-      entryId: string,
+      call: Pending,
       state: Exclude<LedgerState, "forwarded">,
       upstreamStatus?: number,
       resultHash?: string,
     ) => {
+      const outcome: Outcome = {
+        state,
+        ...(upstreamStatus ? { upstreamStatus } : {}),
+        ...(resultHash ? { resultHash } : {}),
+      };
       try {
-        ledger.settle(entryId, {
-          state,
-          ...(upstreamStatus ? { upstreamStatus } : {}),
-          ...(resultHash ? { resultHash } : {}),
-        });
+        ledger.settle(call.entryId, outcome);
       } catch (error) {
-        logger.warn("[web-clients] a forwarded call could not be settled", {
-          connector: connectorTag(connectorId),
-          message: error instanceof Error ? error.message : String(error),
-        });
+        warn("a forwarded call could not be settled", error);
       }
+      settleDurable(call.durableId, outcome);
     };
     let finished = false;
     const finish = (state: "lost" | "error", upstreamStatus?: number) => {
       if (finished) return;
       finished = true;
-      for (const entryId of pending.values())
-        settle(entryId, state, upstreamStatus);
+      for (const call of pending.values()) settle(call, state, upstreamStatus);
       pending.clear();
-      target.release?.().catch((error: unknown) =>
-        logger.warn("[web-clients] the upstream connection was not released", {
-          connector: connectorTag(connectorId),
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      );
+      void release();
     };
 
     let response: Response;
@@ -521,13 +570,13 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       onMessage: (message) => {
         frame("receive", message);
         const id = answerId(message);
-        const entryId = id === undefined ? undefined : pending.get(id);
-        if (id === undefined || entryId === undefined || !isRecord(message))
+        const call = id === undefined ? undefined : pending.get(id);
+        if (id === undefined || call === undefined || !isRecord(message))
           return;
         pending.delete(id);
         const failed = "error" in message;
         settle(
-          entryId,
+          call,
           failed ? "error" : "result",
           status,
           hashPayload(failed ? message.error : message.result),

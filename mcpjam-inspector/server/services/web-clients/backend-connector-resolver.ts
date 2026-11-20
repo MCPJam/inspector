@@ -1,19 +1,24 @@
 /**
- * Web connectors as the backend keeps them. The one file that knows how the
- * Inspector reaches them: the backend's `resolveWebConnector` and
- * `mayUseWebConnector` behind the service token, and the project server's
- * credential through the acting-as authorization the hosted harness forward
- * proxy uses (`createAuthorizedManager`, never connected: only its config).
+ * Web connectors and their tool-call ledger as the backend keeps them. The
+ * one file that knows how the Inspector reaches them: the backend's
+ * Inspector-service functions (`webClientService:read` and `:apply`, one
+ * Convex round trip behind the service credential), and the project
+ * server's credential through the acting-as authorization the hosted harness
+ * forward proxy uses (`createAuthorizedManager`, never connected: only its
+ * config).
  *
  * It serves OAuth connectors: a capability connector names no user to act
  * as, so it forwards only from a local Inspector's registry.
  */
+import { randomUUID } from "node:crypto";
+import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 import { z } from "zod";
 import { WEB_CLIENT_VENDORS } from "../../../shared/web-clients.js";
 import { createAuthorizedManager } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
-import { getInternalBackendConfig } from "../internal-backend.js";
-import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../service-credential.js";
+import { getServiceCredential } from "../service-credential.js";
 import { resolveConfiguredXaaIssuer } from "../xaa-configured-issuer.js";
 import type {
   UpstreamTarget,
@@ -21,67 +26,132 @@ import type {
   WebConnectorResolver,
 } from "./connectors.js";
 import { connectorTag } from "./forwarding-recorder.js";
+import type { DurableToolCallLedger } from "./tool-call-ledger.js";
 
-/** HTTP routes over `resolveWebConnector` and `mayUseWebConnector` (`convex/webClients.ts`). */
-const RESOLVE_PATH = "/internal/v1/web-clients/connectors/resolve";
-const MAY_USE_PATH = "/internal/v1/web-clients/connectors/may-use";
-const FEATURE = "Claude web and ChatGPT web";
-const LOOKUP_TIMEOUT_MS = 10_000;
+const SERVICE_TIMEOUT_MS = 10_000;
 const UPSTREAM_TIMEOUT_MS = 300_000;
+/** How long an unknown id is answered without asking the backend again. */
+const UNKNOWN_TTL_MS = 30_000;
+const MAX_UNKNOWN = 10_000;
+/** Refusals that say this user may not use the connector, not that the check failed. */
+const NOT_ALLOWED = new Set([
+  "UNKNOWN_ACTOR",
+  "GUEST_NOT_ALLOWED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+]);
 
-const resolveAnswer = z.object({
-  connector: z
-    .object({
-      connectorId: z.string().min(1),
-      projectId: z.string().min(1),
-      organizationId: z.string().min(1).optional(),
-      serverId: z.string().min(1),
-      webAccountId: z.string().min(1).optional(),
-      vendor: z.enum(WEB_CLIENT_VENDORS).optional(),
-      auth: z.enum(["oauth", "capability"]),
-    })
-    .nullable(),
-});
-const mayUseAnswer = z.object({ allowed: z.boolean() });
+/** One read or write through the backend's web-client service functions. */
+export type WebClientService = {
+  read(command: Record<string, unknown>): Promise<unknown>;
+  apply(command: Record<string, unknown>): Promise<unknown>;
+};
 
-async function backend<T>(
-  path: string,
-  body: object,
-  schema: z.ZodType<T>,
-): Promise<T> {
-  const { convexUrl, serviceToken } = getInternalBackendConfig(FEATURE);
-  const response = await fetch(`${convexUrl}${path}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
-  });
-  if (!response.ok)
-    throw new Error(`Web connector lookup failed (${response.status})`);
-  return schema.parse(await response.json());
+/** The backend's functions for this process, or undefined without the service credential. */
+export function webClientService(
+  env: NodeJS.ProcessEnv = process.env,
+): WebClientService | undefined {
+  const serviceToken = getServiceCredential(env);
+  const url = env.CONVEX_URL?.trim();
+  if (!serviceToken || !url) return undefined;
+  let client: ConvexHttpClient;
+  try {
+    // No user bearer is ever set: the service credential is its only authority.
+    client = new ConvexHttpClient(url, {
+      logger: false,
+      fetch: (input, init) =>
+        fetch(input, { ...init, signal: AbortSignal.timeout(SERVICE_TIMEOUT_MS) }),
+    });
+  } catch (error) {
+    // Runs at boot: a bad URL turns web connectors off, not the server.
+    logger.warn("[web-clients] CONVEX_URL is not a deployment URL; backend connectors are off", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+  return {
+    read: (command) =>
+      client.query(makeFunctionReference<"query">("webClientService:read"), {
+        serviceToken,
+        requestId: randomUUID(),
+        command,
+      }),
+    apply: (command) =>
+      client.mutation(
+        makeFunctionReference<"mutation">("webClientService:apply"),
+        { serviceToken, command },
+        { skipQueue: true },
+      ),
+  };
 }
 
-export function createBackendConnectorResolver(): WebConnectorResolver {
+/** The `code` of a backend refusal, or undefined for any other failure. */
+function refusalCode(error: unknown): string | undefined {
+  if (
+    !(error instanceof ConvexError) &&
+    (error as Error | undefined)?.name !== "ConvexError"
+  )
+    return undefined;
+  const code = (error as { data?: { code?: unknown } }).data?.code;
+  return typeof code === "string" ? code : undefined;
+}
+
+const connectorRow = z
+  .object({
+    connectorId: z.string().min(1),
+    projectId: z.string().min(1),
+    organizationId: z.string().min(1).optional(),
+    serverId: z.string().min(1),
+    webAccountId: z.string().min(1),
+    vendor: z.enum(WEB_CLIENT_VENDORS),
+    auth: z.enum(["oauth", "capability"]),
+  })
+  .nullable();
+const recordedCall = z.object({ id: z.string().min(1) });
+
+/** Commands carry no undefined field: Convex refuses one. */
+function defined(fields: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  );
+}
+
+export function createBackendConnectorResolver(
+  service: WebClientService,
+): WebConnectorResolver {
+  const unknownUntil = new Map<string, number>();
   return {
     async resolve(connectorId) {
-      const { connector } = await backend(
-        RESOLVE_PATH,
-        { connectorId },
-        resolveAnswer,
-      );
-      return connector ?? undefined;
+      const now = Date.now();
+      if ((unknownUntil.get(connectorId) ?? 0) > now) return undefined;
+      let row: z.infer<typeof connectorRow>;
+      try {
+        row = connectorRow.parse(
+          await service.read({ action: "resolveWebConnector", connectorId }),
+        );
+      } catch (error) {
+        // An id the backend can't even read (empty, too long) is unknown too.
+        if (refusalCode(error) !== "INVALID_WEB_CLIENT_REQUEST") throw error;
+        row = null;
+      }
+      if (row) return row;
+      if (unknownUntil.size >= MAX_UNKNOWN) unknownUntil.clear();
+      unknownUntil.set(connectorId, now + UNKNOWN_TTL_MS);
+      return undefined;
     },
     /** `userId` is the WorkOS user id the vendor's AuthKit token names. */
     async mayUse(connector, userId) {
-      const { allowed } = await backend(
-        MAY_USE_PATH,
-        { connectorId: connector.connectorId, userId },
-        mayUseAnswer,
-      );
-      return allowed;
+      try {
+        const allowed = await service.read({
+          action: "mayUseWebConnector",
+          connectorId: connector.connectorId,
+          actorExternalId: userId,
+        });
+        return allowed === true;
+      } catch (error) {
+        if (NOT_ALLOWED.has(refusalCode(error) ?? "")) return false;
+        throw error;
+      }
     },
     async upstream(connector: WebConnector, { userId }): Promise<UpstreamTarget> {
       if (!userId || !connector.organizationId)
@@ -145,6 +215,36 @@ export function createBackendConnectorResolver(): WebConnectorResolver {
           : {}),
         release,
       };
+    },
+  };
+}
+
+/** The backend's ledger, which recovery reads after a restart. */
+export function createBackendToolCallLedger(
+  service: WebClientService,
+): DurableToolCallLedger {
+  return {
+    async record(entry) {
+      const recorded = recordedCall.parse(
+        await service.apply(
+          defined({
+            action: "recordWebToolCallForwarded",
+            connectorId: entry.connectorId,
+            turnId: entry.turnId,
+            runId: entry.runId,
+            jsonrpcId: String(entry.jsonrpcId),
+            toolName: entry.toolName,
+            toolUseId: entry.toolUseId,
+            argsHash: entry.argsHash,
+          }),
+        ),
+      );
+      return recorded.id;
+    },
+    async settle(id, outcome) {
+      await service.apply(
+        defined({ action: "settleWebToolCall", id, ...outcome }),
+      );
     },
   };
 }
