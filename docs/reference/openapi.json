@@ -18811,6 +18811,10 @@
           "notes": {
             "type": ["string", "null"]
           },
+          "creditRecovery": {
+            "type": "object",
+            "description": "When MCPJam credits stopped this run: the one next step (`action`, `actor`, `url`), same shape as an iteration's `infraError.recovery`. Omitted on every other run and on deployments that do not record it; fall back to the iterations' `infraError.recovery`."
+          },
           "createdAt": {
             "type": "number",
             "description": "Epoch milliseconds."
