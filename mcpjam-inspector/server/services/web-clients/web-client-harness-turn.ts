@@ -28,15 +28,16 @@ import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
-import type { WebClientTurnInput } from "./run-web-client-turn.js";
+import { runWebClientTurn } from "./run-web-client-turn.js";
+import { webClientEnvironment } from "./web-client-environment.js";
+import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 import {
   ambiguousExecutionMessage,
   runRecoverableWebTurn,
   webRecovery,
+  type RecoverableWebTurnResult,
   type WebRunStop,
 } from "./recovery/turn-recovery.js";
-import { webClientEnvironment } from "./web-client-environment.js";
-import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
 export class WebClientRunError extends Error {
@@ -98,7 +99,7 @@ export async function runWebClientHarnessTurn(
   const run = async (
     onPaused?: (paused: Extract<WebRunStop, { kind: "paused_for_person" }>) => void,
   ): Promise<ChatEngineLoopResult> => {
-    const turn: WebClientTurnInput = {
+    const turn = {
       runtimeId,
       projectId: options.projectId!,
       serverIds: options.selectedServers ?? [],
@@ -111,7 +112,10 @@ export async function runWebClientHarnessTurn(
       environment,
       ...(options.abortSignal ? { signal: options.abortSignal } : {}),
     };
-    const result = await runRecoverableWebTurn(turn, webRecovery(), onPaused);
+    const recovery = webRecovery();
+    const result: RecoverableWebTurnResult = recovery
+      ? await runRecoverableWebTurn(turn, recovery, onPaused)
+      : await runWebClientTurn(turn);
     if (!result.ok) {
       const message =
         result.stop?.kind === "ambiguous_execution"

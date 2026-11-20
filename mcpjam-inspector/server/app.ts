@@ -85,7 +85,6 @@ import {
   createLocalConnectorRoutes,
   mountInspectorWebConnectors,
 } from "./services/web-clients/inspector-endpoint.js";
-import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -139,6 +138,7 @@ import {
 } from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

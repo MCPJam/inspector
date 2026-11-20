@@ -186,7 +186,6 @@ import {
   createLocalConnectorRoutes,
   mountInspectorWebConnectors,
 } from "./services/web-clients/inspector-endpoint.js";
-import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
@@ -249,6 +248,7 @@ import {
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {

@@ -48,6 +48,9 @@ export type WebRunStop =
       calls: Array<{ toolName: string; toolUseId?: string }>;
     };
 
+/** A turn's result, with why recovery stopped it when it did. */
+export type RecoverableWebTurnResult = WebClientTurnResult & { stop?: WebRunStop };
+
 export type WebRecoverySetup = {
   /** The reconnect backend, acting for the run's person. */
   backendFor(run: { projectId: string; runId: string }): WebReconnectBackend;
@@ -112,7 +115,7 @@ export async function runRecoverableWebTurn(
   onPaused?: (
     paused: Extract<WebRunStop, { kind: "paused_for_person" }>,
   ) => void,
-): Promise<WebClientTurnResult & { stop?: WebRunStop }> {
+): Promise<RecoverableWebTurnResult> {
   const vendor = webClientVendorForRuntime(input.runtimeId);
   if (!setup || !vendor) return runWebClientTurn(input);
   const { projectId, runId, environment } = input;
