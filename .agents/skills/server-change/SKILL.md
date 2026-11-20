@@ -5,6 +5,9 @@ description: Rules for changes to the inspector's Hono server (mcpjam-inspector/
 
 # Server change
 
+Read `mcpjam-inspector/server/AGENTS.md` first: the import rules and the check
+behind each one.
+
 ## Logging and errors
 
 Never use `console.*` in `server/`.
@@ -44,6 +47,7 @@ Background: `mcpjam-inspector/docs/server-error-reporting.md`.
 
 ```bash
 npm run test -w @mcpjam/inspector -- server/routes/<area>
+npm run lint -w @mcpjam/inspector
 ```
 
 ## browserd daemon

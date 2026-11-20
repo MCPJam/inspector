@@ -7,6 +7,8 @@ description: Rules for any change to MCPJam's UI (inspector client, design-syste
 
 Read `DESIGN.md` at the repo root first. It is the design system: color
 roles, typography, layout, elevation, shapes and component conventions.
+For the inspector client, `mcpjam-inspector/client/AGENTS.md` has the import
+rules and the check behind each one.
 
 ## Colors
 
@@ -45,7 +47,8 @@ roles, typography, layout, elevation, shapes and component conventions.
 - Component tests live in `client/src/components/<area>/__tests__/`.
 - Use the factories in `client/src/test/factories.ts` (`createServer()`,
   `createTool()`, `createMany()`) and the presets in `client/src/test/mocks/`.
-- Run `npm run typecheck:client -w @mcpjam/inspector` and the matching tests.
+- Run `npm run typecheck:client -w @mcpjam/inspector`,
+  `npm run lint -w @mcpjam/inspector` and the matching tests.
 
 ## Show it
 
