@@ -160,7 +160,7 @@ describe("claude.ai", () => {
         texts: {
           '.dframe-pane-primary [placeholder="Search"]': "",
           "role=dialog": "Upgrade to add more connectors",
-          ".dframe-pane-primary role=button[name=/^View MCPJam/]": `View ${shown}`,
+          ".dframe-pane-primary >> role=button[name=/^View MCPJam/]": `View ${shown}`,
         },
       });
 
@@ -184,7 +184,7 @@ describe("claude.ai", () => {
         claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [connector.name]),
       ).rejects.toMatchObject({ failure: { kind: "plan_limit" } });
       expect(driver.click).toHaveBeenCalledWith(
-        '.dframe-pane-primary role=button[name="More options for MCPJam stale 9a8b7c6d"]',
+        '.dframe-pane-primary >> role=button[name="More options for MCPJam stale 9a8b7c6d"]',
       );
     });
   });
