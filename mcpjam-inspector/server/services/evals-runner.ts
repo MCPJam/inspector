@@ -136,6 +136,8 @@ import {
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import {
+  describeError,
+  originOf,
   platformExecutionBudgetCeilings,
   platformExecutionBudgetDefaults,
   resolveExecutionBudgets,
@@ -6733,6 +6735,9 @@ const runHostedIterationWithBrowser = async (
     await box?.release();
   };
   let prepared: PrepareChatV2Result;
+  // Only `prepareChatV2` talks to the user's servers; every other step in this
+  // try is MCPJam's own backend or control plane.
+  let preparingChat = false;
   try {
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
@@ -6942,6 +6947,7 @@ const runHostedIterationWithBrowser = async (
       browserSandboxBinding,
     );
 
+    preparingChat = true;
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -6979,6 +6985,7 @@ const runHostedIterationWithBrowser = async (
       priorMessages: [],
       ...(builtInTools ? { builtInTools } : {}),
     });
+    preparingChat = false;
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
@@ -7047,7 +7054,20 @@ const runHostedIterationWithBrowser = async (
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     const setupCode = harnessFailureEvidenceOf(error)?.code;
-    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    // The user's server refusing tools/list, or its auth, fails every
+    // iteration of the run. That is theirs to fix and must not page once per
+    // iteration; the row is written `setup_failed` either way. A refused
+    // connection from our own control plane classifies the same way, so the
+    // origin is only trusted for the step that reached the user's servers.
+    const setupFailure = describeError(error);
+    const setupOrigin = preparingChat ? originOf(setupFailure) : undefined;
+    if (setupOrigin === "user_server" || setupOrigin === "user_config") {
+      logger.warn("[evals] iteration setup failed (prepareChatV2)", {
+        slug: setupFailure?.slug,
+      });
+    } else {
+      logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    }
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
         iterationMetadataBase,
