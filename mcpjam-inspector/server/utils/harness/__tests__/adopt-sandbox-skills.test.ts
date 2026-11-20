@@ -46,7 +46,7 @@ describe("adoptSandboxSkills", () => {
       session,
       authHeader: "Bearer test",
       projectId: "proj_1",
-      managedDirNames: new Set(),
+      managedNames: new Set(),
     });
     expect(out.adopted).toEqual([]);
     expect(convexAdoptComputerSkills).not.toHaveBeenCalled();
