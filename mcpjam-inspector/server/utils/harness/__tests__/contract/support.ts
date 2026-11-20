@@ -37,8 +37,9 @@ export const OWN_MODEL: Record<Harness, string> = {
   "copilot-cli": "openai/gpt-5.5",
   cursor: "cursor/auto",
   opencode: "anthropic/claude-haiku-4.5",
-  "claude-web": "anthropic/claude-sonnet-4.5",
-  "chatgpt-web": "openai/gpt-5.5",
+  // The sentinel the catalog's templates carry: the account picks the model.
+  "claude-web": "claude-web/default",
+  "chatgpt-web": "chatgpt-web/default",
 };
 
 /** A model each runtime must refuse. */
