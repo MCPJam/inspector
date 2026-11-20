@@ -130,6 +130,31 @@ describe("rules", () => {
     assert.equal(server["client-timer"], 0);
   });
 
+  it("counts effects and timers only in executable code", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const commented = [
+      "// useEffect(() => {}, []);",
+      "/* setTimeout(run, 0); */",
+      'const a = "useEffect(";',
+      "const b = 'setInterval(run)';",
+      "const c = `requestAnimationFrame(${x})`;",
+    ].join("\n");
+    assert.equal(count(commented, path)["client-effect"], 0);
+    assert.equal(count(commented, path)["client-timer"], 0);
+
+    const uncommented = commented.replace("// useEffect", "useEffect");
+    assert.equal(count(uncommented, path)["client-effect"], 1);
+
+    const inTemplate =
+      "const d = `${setTimeout(run, 0)} ${'x'}`;\nsetInterval(run);";
+    assert.equal(count(inTemplate, path)["client-timer"], 2);
+  });
+
+  it("counts a comment-only catch whose binding holds a dollar sign", () => {
+    const counts = count("try { a(); } catch ($error) { /* ignored */ }");
+    assert.equal(counts["comment-only-catch"], 1);
+  });
+
   it("counts raw console only in the inspector server", () => {
     const text = "console.log('x');\nconsole.error('y');\n";
     assert.equal(
