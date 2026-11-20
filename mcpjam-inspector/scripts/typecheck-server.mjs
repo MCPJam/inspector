@@ -87,6 +87,26 @@ function writeTelemetryCatalogs() {
   });
 }
 
+/**
+ * tsc's report from a failed `execFileSync`. tsc exits 1 or 2 when it reports
+ * errors, and then its output is the result. Any other ending (a signal, an
+ * out-of-memory abort) means it stopped part way, and the errors it printed
+ * before stopping would read as an improvement on the baseline.
+ */
+export function tscReport(error) {
+  if (
+    typeof error?.stdout === "string" &&
+    !error.signal &&
+    (error.status === 1 || error.status === 2)
+  ) {
+    return error.stdout;
+  }
+  throw new Error(
+    `tsc stopped before finishing (${error?.signal ?? `exit ${error?.status}`}), so its error count would be incomplete. If it ran out of memory, run it again with NODE_OPTIONS=--max-old-space-size=8192.`,
+    { cause: error },
+  );
+}
+
 function runTsc() {
   try {
     execFileSync(
@@ -96,9 +116,7 @@ function runTsc() {
     );
     return "";
   } catch (error) {
-    // tsc exits non-zero whenever it reports errors; the output is the result.
-    if (typeof error.stdout !== "string") throw error;
-    return error.stdout;
+    return tscReport(error);
   }
 }
 

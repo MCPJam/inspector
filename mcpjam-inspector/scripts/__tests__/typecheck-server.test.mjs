@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compare, countErrors, globalErrors } from "../typecheck-server.mjs";
+import {
+  compare,
+  countErrors,
+  globalErrors,
+  tscReport,
+} from "../typecheck-server.mjs";
 
 const OUTPUT = [
   "server/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.",
@@ -40,4 +45,19 @@ test("project-level errors are reported, not read as zero file errors", () => {
     "error TS5058: The specified path does not exist: 'nope.json'.",
   ]);
   assert.deepEqual(globalErrors(OUTPUT), []);
+});
+
+test("a tsc that reported errors is a result; one that stopped part way is not", () => {
+  assert.equal(tscReport({ status: 2, signal: null, stdout: OUTPUT }), OUTPUT);
+  assert.equal(tscReport({ status: 1, signal: null, stdout: "x" }), "x");
+  // An out-of-memory abort leaves a short, partial report behind.
+  assert.throws(
+    () => tscReport({ status: 134, signal: null, stdout: OUTPUT }),
+    /stopped before finishing \(exit 134\)/,
+  );
+  assert.throws(
+    () => tscReport({ status: null, signal: "SIGABRT", stdout: OUTPUT }),
+    /stopped before finishing \(SIGABRT\)/,
+  );
+  assert.throws(() => tscReport({ status: 2, signal: null }), /stopped/);
 });
