@@ -5104,15 +5104,17 @@ export function PlaygroundMain({
     composer.setInput("");
     if (isCompareMode) {
       const prompt = autoRunInput as string;
-      void compareAutoRun.send(prompt, modelContextQueue, {
-        gate: async () =>
+      const turn = { text: prompt, widgetModelContext: modelContextQueue };
+      void (async () => {
+        const gated =
           (await ensureSelectedServerReadyForChat()) &&
           (await ensureThreadReadyForSend()) &&
-          (await ensureLocalHarnessReadyForSend()),
-        sequence: broadcastSequence,
-        onDeferred: () => composer.setInput(prompt),
-        onRefused: () => (autoRanRef.current = false),
-      });
+          (await ensureLocalHarnessReadyForSend());
+        if (!gated) return composer.setInput(prompt);
+        const queued = { ...turn, prependMessages: [] };
+        if (!compareAutoRun.send(queued, broadcastSequence))
+          autoRanRef.current = false;
+      })();
       return;
     }
     void handleSendFollowUp(autoRunInput as string).then((sent) => {

@@ -1019,9 +1019,9 @@ export function useServerState({
 
   const oauthCallbackHandledRef = useRef(new Set<string>());
   const opTokenRef = useRef<Map<string, number>>(new Map());
-  // The op token each server was removed at. A connect holding that token
-  // deletes the row its in-flight save creates, which the removal missed.
-  // A later connect for the name clears it: both saves land on one row.
+  // The op token each project's server was removed at. A connect holding that
+  // token deletes the row its in-flight save creates, which the removal missed.
+  // A later connect for it clears that: both saves land on one row.
   const removedAtOpTokenRef = useRef(new Map<string, number>());
   const checkWasConnectedRef = useRef(new Map<string, boolean>());
   useEffect(
@@ -3946,7 +3946,8 @@ export function useServerState({
         select: true,
       });
       const token = nextOpToken(formData.name);
-      removedAtOpTokenRef.current.delete(formData.name);
+      const removalKey = `${effectiveActiveProjectIdRef.current}:${formData.name}`;
+      removedAtOpTokenRef.current.delete(removalKey);
       let hostedServerId: string | undefined;
       let syncedConnectionTarget:
         { projectId: string; serverId: string } | undefined;
@@ -4038,7 +4039,7 @@ export function useServerState({
         if (isStaleOp(formData.name, token)) {
           if (
             synced.ok &&
-            removedAtOpTokenRef.current.get(formData.name) === token
+            removedAtOpTokenRef.current.get(removalKey) === token
           ) {
             void convexDeleteServer({ serverId: synced.serverId }).catch(
               (error: unknown) =>
@@ -5555,7 +5556,7 @@ export function useServerState({
       logger.info("Removing server", { serverName });
       if (options?.removeFromCloud !== false) {
         removedAtOpTokenRef.current.set(
-          serverName,
+          `${effectiveActiveProjectIdRef.current}:${serverName}`,
           opTokenRef.current.get(serverName) ?? 0,
         );
       }
