@@ -62,7 +62,7 @@ describe("RealClientNotice", () => {
     expect(buttons()).toEqual(["Send again"]);
   });
 
-  it("names MCPJam's driver, the step and the build when the page module fails", () => {
+  it("names MCPJam, the step and the build when MCPJam can't drive the page", () => {
     render(
       <RealClientNotice
         vendor="claude"
@@ -77,7 +77,7 @@ describe("RealClientNotice", () => {
     );
     const notice = screen.getByTestId("real-client-notice");
     expect(notice).toHaveTextContent(
-      "MCPJam's Claude web driver couldn't complete “Send message”",
+      "MCPJam couldn't finish the step “Send message” on Claude web",
     );
     expect(notice).toHaveTextContent(
       "This happened on claude.ai build 2026.11.18.",
