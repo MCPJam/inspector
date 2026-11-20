@@ -29,6 +29,8 @@ const TEST_FILE =
   /(?:^|\/)(?:__tests__|__mocks__|tests?|fixtures)\/|\.(?:test|spec)\.tsx?$/;
 const GENERATED_MODULE =
   /Cannot find module '[^']*\.(?:bundled|generated)(?:\.js)?'/;
+/** The exit statuses tsc itself uses when it has printed diagnostics. */
+const TSC_REPORTED = new Set([1, 2, 3, 4]);
 
 export function countErrors(output) {
   const counts = {};
@@ -96,10 +98,34 @@ function runTsc() {
     );
     return "";
   } catch (error) {
-    // tsc exits non-zero whenever it reports errors; the output is the result.
     if (typeof error.stdout !== "string") throw error;
+    const failure = tscFailure(error);
+    if (failure !== null) {
+      console.error(failure);
+      process.exit(1);
+    }
     return error.stdout;
   }
+}
+
+/**
+ * Why a tsc run that exited non-zero left nothing to count, or null when its
+ * stdout is the result. tsc exits 1 to 4 when it prints diagnostics. A crash
+ * prints none, and through `npx` running out of memory is exit 134, not a
+ * signal; counting its empty stdout would report zero errors and pass.
+ */
+export function tscFailure({ status, signal, stdout, stderr }) {
+  const reported =
+    TSC_REPORTED.has(status) &&
+    stdout
+      .split("\n")
+      .some((line) => ERROR_LINE.test(line) || GLOBAL_ERROR.test(line));
+  if (reported) return null;
+  const ended = signal ? `was killed by ${signal}` : `exited with status ${status}`;
+  const next = (stderr ?? "").includes("JavaScript heap out of memory")
+    ? "It ran out of memory: rerun with NODE_OPTIONS=--max-old-space-size=8192."
+    : "Its stderr is above.";
+  return `tsc ${ended} without reporting a diagnostic, so there are no errors to count. ${next}`;
 }
 
 /** Project-level errors that would otherwise read as "no file has errors". */
