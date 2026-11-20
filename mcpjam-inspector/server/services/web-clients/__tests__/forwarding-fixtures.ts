@@ -9,6 +9,7 @@ import type { Hono } from "hono";
 
 export type Received = {
   method: string;
+  url: string;
   headers: IncomingHttpHeaders;
   body: Buffer;
 };
@@ -67,10 +68,12 @@ const sse = (value: unknown) => `event: message\ndata: ${JSON.stringify(value)}\
 
 /**
  * Answers JSON, except `tools/call` for `stream` (SSE with a progress
- * notification first) and `cut` (SSE that ends before the answer).
+ * notification first) and `cut` (SSE that ends before the answer), and
+ * `/redirect/<status>`, which sends any request on to `/mcp`.
  */
 export async function startFixtureServer() {
   const received: Received[] = [];
+  const hooks: { onRedirect?: () => void } = {};
   /** The raw bytes of the last SSE answer, to compare with what the vendor read. */
   let lastStream = "";
   const server = createServer((req, res) => {
@@ -78,9 +81,20 @@ export async function startFixtureServer() {
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       const body = Buffer.concat(chunks);
-      received.push({ method: req.method ?? "", headers: req.headers, body });
+      received.push({
+        method: req.method ?? "",
+        url: req.url ?? "",
+        headers: req.headers,
+        body,
+      });
       for (const [name, value] of Object.entries(UPSTREAM_NOISE))
         res.setHeader(name, value);
+      const redirect = /^\/redirect\/(30[12378])$/.exec(req.url ?? "");
+      if (redirect) {
+        hooks.onRedirect?.();
+        res.writeHead(Number(redirect[1]), { location: "/mcp" }).end();
+        return;
+      }
       if (req.method !== "POST") {
         res.writeHead(405).end();
         return;
@@ -129,7 +143,10 @@ export async function startFixtureServer() {
   const { port } = server.address() as AddressInfo;
   return {
     url: `http://127.0.0.1:${port}/mcp`,
+    redirectUrl: (status: number) =>
+      `http://127.0.0.1:${port}/redirect/${status}`,
     received,
+    hooks,
     lastStream: () => lastStream,
     close: () =>
       new Promise<void>((resolve, reject) =>
