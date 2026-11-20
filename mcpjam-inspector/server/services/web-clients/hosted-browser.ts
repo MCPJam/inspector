@@ -175,7 +175,8 @@ export async function openWebClientHostedBrowser(args: {
     bearer,
     projectId: args.projectId,
     wireUuid: chatSessionId,
-    ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+    // The account's own session, or a blank profile: never the person's.
+    ownProfile: args.profileArchive ? { archive: args.profileArchive } : {},
     signal,
   });
   const transport = sessionBrowserTransport({
