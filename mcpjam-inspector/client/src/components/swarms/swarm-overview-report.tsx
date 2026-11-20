@@ -47,12 +47,12 @@ export function SwarmOverviewReport({
     >
       <header className="mb-5 space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 className="min-w-0 break-words text-xl font-semibold leading-tight">{row.heading}</h2>
-              {row.date && <span className="text-sm text-foreground/75">{row.date}</span>}
-            </div>
-            {row.title && <p className="break-words text-sm text-muted-foreground">{row.title}</p>}
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="min-w-0 break-words text-xl font-semibold leading-tight">{row.heading}</h2>
+            {row.date && <span className="text-sm text-foreground/75">{row.date}</span>}
+            {row.title && (
+              <span className="min-w-0 break-words text-sm text-muted-foreground">{row.title}</span>
+            )}
           </div>
           <Button size="sm" variant="outline" onClick={() => onOpenSwarm(row.id)}>
             Open full swarm

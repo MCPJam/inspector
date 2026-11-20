@@ -690,7 +690,7 @@ describe("Overview — history and report", () => {
     expect(screen.getAllByTestId("swarm-overview-run-row")).toHaveLength(3);
   });
 
-  it("preserves descriptive names that start with Swarm and contain a digit", async () => {
+  it("places a saved descriptive name beside the report's server and date", async () => {
     const [first, ...otherRuns] = overview.runs;
     overviewData = {
       ...overview,
@@ -698,7 +698,15 @@ describe("Overview — history and report", () => {
     };
     renderTab();
     const report = within(await screen.findByTestId("swarm-overview-report"));
-    expect(report.getByText("Swarm · Checkout v2")).toBeTruthy();
+    const date = new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(first!.createdAt);
+    const identity = report.getByRole("heading", { name: "Asana" }).parentElement;
+    expect(identity).toHaveClass("flex-wrap");
+    expect(report.getByText(date).parentElement).toBe(identity);
+    expect(report.getByText("Swarm · Checkout v2").parentElement).toBe(identity);
   });
 
   it("selects a legacy run and opens its existing detail route", async () => {
