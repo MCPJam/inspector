@@ -77,6 +77,10 @@ describe("relayProxyAgent", () => {
     expect(proxyFor("ws://localhost:8787/agent", env)).toBeNull();
     expect(proxyFor("ws://127.0.0.1:8787/agent", env)).toBeNull();
     expect(proxyFor("wss://[::1]:8787/agent", env)).toBeNull();
+    // All of 127.0.0.0/8, in any spelling URL normalizes.
+    expect(proxyFor("ws://127.0.0.2:8787/agent", env)).toBeNull();
+    expect(proxyFor("ws://127.1:8787/agent", env)).toBeNull();
+    expect(proxyFor("ws://128.0.0.1:8787/agent", env)).toBe(`${PROXY}/`);
   });
 
   it("ignores a proxy that is not an http(s) URL rather than misusing it", () => {

@@ -19,14 +19,19 @@ import { HttpsProxyAgent } from "https-proxy-agent";
 import { logger } from "../utils/logger";
 
 /** `[::1]` bracketed, as `URL.hostname` spells it. */
-const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOOPBACK = new Set(["localhost", "[::1]"]);
+/**
+ * All of 127.0.0.0/8 is loopback. `URL.hostname` has already normalized any
+ * IPv4 spelling, such as `127.1`, to four decimal parts.
+ */
+const IPV4_LOOPBACK = /^127(?:\.\d{1,3}){3}$/;
 
 function bypassesProxy(
   host: string,
   port: number,
   noProxy: string | null,
 ): boolean {
-  if (LOOPBACK.has(host)) return true;
+  if (LOOPBACK.has(host) || IPV4_LOOPBACK.test(host)) return true;
   for (const raw of noProxy?.split(/[,\s]/) ?? []) {
     if (!raw) continue;
     if (raw === "*") return true;
@@ -53,10 +58,13 @@ function proxyUrl(value: string): URL | null {
 /**
  * A CONNECT tunnel through the environment's proxy for the relay URL, or
  * `undefined` to connect directly, as the relay did before proxies.
+ * Aborting `signal` destroys the socket to the proxy, which is how a dial
+ * the proxy never answers is given up.
  */
 export function relayProxyAgent(
   relayWsUrl: string,
   env: NodeJS.ProcessEnv = process.env,
+  signal?: AbortSignal,
 ): Agent | undefined {
   // An unparseable URL is left for `ws` to reject with its own error.
   if (!URL.canParse(relayWsUrl)) return undefined;
@@ -78,5 +86,6 @@ export function relayProxyAgent(
     );
     return undefined;
   }
-  return new HttpsProxyAgent(url);
+  // The agent hands `signal` to the socket it opens to the proxy.
+  return new HttpsProxyAgent(url, signal ? { signal } : undefined);
 }

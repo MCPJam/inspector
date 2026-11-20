@@ -34,6 +34,24 @@ const OPENSSL = (() => {
   }
 })();
 
+// `setDefaultCACertificates` arrived in Node 22.19 and 24.5, and the package
+// allows any Node 22. Without it the suite cannot trust its own edge.
+const TLS_TRUST_API =
+  typeof tls.getCACertificates === "function" &&
+  typeof tls.setDefaultCACertificates === "function";
+const CAN_RUN = OPENSSL && TLS_TRUST_API;
+
+// Captured before any test fakes timers, for waiting on real socket events.
+const realSetTimeout = globalThis.setTimeout;
+
+async function until(check: () => boolean, label: string): Promise<void> {
+  const giveUp = Date.now() + 5_000;
+  while (!check()) {
+    if (Date.now() > giveUp) throw new Error(`Timed out waiting: ${label}`);
+    await new Promise((resolve) => realSetTimeout(resolve, 10));
+  }
+}
+
 function mintCertificate(): { cert: string; key: string } {
   const dir = mkdtempSync(join(tmpdir(), "mcpjam-relay-proxy-tls-"));
   try {
@@ -115,6 +133,23 @@ async function startConnectProxy() {
   return { port, connects, close: () => closeServer(server, sockets) };
 }
 
+/** A proxy that accepts the connection and never answers CONNECT. */
+async function startStalledProxy() {
+  const sockets = new Set<Duplex>();
+  const counts = { accepted: 0, closed: 0 };
+  const server = net.createServer((socket) => {
+    counts.accepted += 1;
+    sockets.add(socket);
+    socket.on("close", () => (counts.closed += 1));
+    socket.on("error", () => socket.destroy());
+    // Read and drop the CONNECT request: unread data would hold back the
+    // close this test waits for when the agent hangs up.
+    socket.resume();
+  });
+  const port = await listen(server);
+  return { port, counts, close: () => closeServer(server, sockets) };
+}
+
 /** A TLS relay edge that says hello and records the bearer it was dialed with. */
 async function startTlsEdge(certificate: { cert: string; key: string }) {
   const authorizations: (string | undefined)[] = [];
@@ -137,6 +172,10 @@ async function startTlsEdge(certificate: { cert: string; key: string }) {
   return {
     port,
     authorizations,
+    /** Cuts every agent off, as an edge that drops connections would. */
+    dropAll: () => {
+      for (const client of wss.clients) client.terminate();
+    },
     close: () => {
       wss.close();
       return closeServer(server, sockets);
@@ -168,8 +207,9 @@ function setProxyEnv(httpsProxy: string) {
   vi.stubEnv("HTTPS_PROXY", httpsProxy);
 }
 
-describe.skipIf(!OPENSSL)("relay WebSocket through HTTPS_PROXY", () => {
+describe.skipIf(!CAN_RUN)("relay WebSocket through HTTPS_PROXY", () => {
   let proxy: Awaited<ReturnType<typeof startConnectProxy>>;
+  let stalled: Awaited<ReturnType<typeof startStalledProxy>>;
   let edge: Awaited<ReturnType<typeof startTlsEdge>>;
   let defaultCas: string[];
   const open: RelayConnection[] = [];
@@ -179,10 +219,12 @@ describe.skipIf(!OPENSSL)("relay WebSocket through HTTPS_PROXY", () => {
     defaultCas = tls.getCACertificates("default");
     tls.setDefaultCACertificates([...defaultCas, certificate.cert]);
     proxy = await startConnectProxy();
+    stalled = await startStalledProxy();
     edge = await startTlsEdge(certificate);
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     for (const connection of open.splice(0)) connection.close();
     vi.unstubAllEnvs();
     proxy.connects.length = 0;
@@ -192,6 +234,7 @@ describe.skipIf(!OPENSSL)("relay WebSocket through HTTPS_PROXY", () => {
   afterAll(async () => {
     tls.setDefaultCACertificates(defaultCas);
     await proxy?.close();
+    await stalled?.close();
     await edge?.close();
   });
 
@@ -222,5 +265,30 @@ describe.skipIf(!OPENSSL)("relay WebSocket through HTTPS_PROXY", () => {
     expect(connection.isConnected).toBe(true);
     expect(proxy.connects).toEqual([]);
     expect(edge.authorizations).toEqual(["Bearer connect-token"]);
+  }, 20_000);
+
+  it("gives up on a reconnect the proxy never answers, and dials again", async () => {
+    setProxyEnv(`http://127.0.0.1:${proxy.port}`);
+    const connection = relay(`wss://relay.test:${edge.port}/agent`);
+    open.push(connection);
+    await connection.connect();
+
+    // Only the relay's own timers; sockets keep running in real time.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubEnv("HTTPS_PROXY", `http://127.0.0.1:${stalled.port}`);
+    edge.dropAll();
+    await until(() => !connection.isConnected, "the edge drops the agent");
+    // First reconnect after at most RECONNECT_MIN_MS; it hangs at CONNECT.
+    await vi.advanceTimersByTimeAsync(1_000);
+    await until(() => stalled.counts.accepted === 1, "a dial to the proxy");
+
+    // The proxy recovers. Past the dial deadline the hung attempt is dropped,
+    // and the next one, at most 2 s later after backoff, connects.
+    vi.stubEnv("HTTPS_PROXY", `http://127.0.0.1:${proxy.port}`);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await until(() => stalled.counts.closed === 1, "the hung dial is dropped");
+    await vi.advanceTimersByTimeAsync(2_000);
+    await until(() => connection.isConnected, "the relay reconnects");
+    expect(edge.authorizations).toHaveLength(2);
   }, 20_000);
 });
