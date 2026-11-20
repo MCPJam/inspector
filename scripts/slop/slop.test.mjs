@@ -203,6 +203,16 @@ describe("rules", () => {
       "// Read defensively: older hosts return a bare string.",
     ],
     [
+      "defensive check for a case that cannot happen",
+      "// Defensive check for null; it should never be null here.",
+      "// Defensive check for null",
+    ],
+    [
+      "defensive fallback just in case",
+      "// Defensive fallback just in case the API returns garbage.",
+      "// Defensive: skip if already defined (another runtime ran first).",
+    ],
+    [
       "deliberately swallowed",
       "// Deliberately swallowed, see the docblock.",
       "// Deliberately not swallowed into state: the page shows it.",
