@@ -1,0 +1,80 @@
+/**
+ * Before a step is sent again, after a restart or a lost reply, the ledger
+ * says whether its tool calls already reached the upstream server. Resending a
+ * prompt makes the vendor's model call its tools again, so a call the upstream
+ * answered is taken from the record instead, and a call forwarded with no
+ * answer may have run: the step stops and says so rather than risk running the
+ * tool twice.
+ */
+import type { LedgerEntry, LedgerMatch } from "../tool-call-ledger.js";
+import type { PendingStep } from "./backend.js";
+
+/** The ledger's read side. The durable ledger answers asynchronously. */
+export type LedgerReader = {
+  find(match: LedgerMatch): LedgerEntry[] | Promise<LedgerEntry[]>;
+  forTurn(turnId: string): LedgerEntry[] | Promise<LedgerEntry[]>;
+};
+
+export type ReconcileInput = {
+  runId: string;
+  /** Every connector the run's tool calls go through. */
+  connectorIds: readonly string[];
+  step: PendingStep;
+  /** Narrows the check to one call, when the runtime saw the vendor's tool use. */
+  toolUseId?: string;
+  argsHash?: string;
+};
+
+export type ReconcileOutcome =
+  /** No call reached the upstream since the step started, so sending is safe. */
+  | { status: "send" }
+  /** The upstream answered every call. The step is taken from these records. */
+  | { status: "reconciled"; calls: LedgerEntry[] }
+  /** These calls were forwarded and never answered. They may have run. */
+  | { status: "ambiguous_execution"; calls: LedgerEntry[] };
+
+/** A gateway's error says nothing about whether the server ran the tool. */
+const GATEWAY_STATUSES = new Set([502, 504]);
+
+function upstreamAnswered(entry: LedgerEntry): boolean {
+  if (entry.state === "result") return true;
+  return (
+    entry.state === "error" &&
+    entry.upstreamStatus !== undefined &&
+    !GATEWAY_STATUSES.has(entry.upstreamStatus)
+  );
+}
+
+export async function reconcileWithLedger(
+  ledger: LedgerReader,
+  input: ReconcileInput,
+): Promise<ReconcileOutcome> {
+  const { runId, step, toolUseId, argsHash } = input;
+  const belongsToStep = (entry: LedgerEntry) =>
+    input.connectorIds.includes(entry.connectorId) &&
+    (toolUseId === undefined || entry.toolUseId === toolUseId) &&
+    (argsHash === undefined || entry.argsHash === argsHash) &&
+    // Runs on one account share its connectors. A call with no run might be ours.
+    (entry.runId === undefined || entry.runId === runId);
+  const found = await Promise.all([
+    ...input.connectorIds.map((connectorId) =>
+      ledger.find({ connectorId, since: step.startedAt, toolUseId, argsHash }),
+    ),
+    // The step's own turn too, so clock skew between replicas can't hide a call.
+    ...(step.turnId ? [ledger.forTurn(step.turnId)] : []),
+  ]);
+  const calls = [
+    ...new Map(
+      found
+        .flat()
+        .filter(belongsToStep)
+        .map((entry) => [entry.id, entry]),
+    ).values(),
+  ];
+  if (calls.length === 0) return { status: "send" };
+  const unanswered = calls.filter((entry) => !upstreamAnswered(entry));
+  if (unanswered.length > 0) {
+    return { status: "ambiguous_execution", calls: unanswered };
+  }
+  return { status: "reconciled", calls };
+}
