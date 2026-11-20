@@ -5,6 +5,7 @@ import type { ComparePaneEnvironment } from "@/hooks/use-compare-environment-pan
 import type { EnvironmentPreview } from "@/hooks/use-environment-preview";
 import type { ModelDefinition } from "@/shared/types";
 import { resolveEnvironmentPaneColumn } from "../compare-environment-columns";
+import { resolveComparePaneTheme } from "../compare-pane-theme";
 
 const catalog: ModelDefinition[] = ["openai/gpt-5.5", "openai/gpt-5-mini"].map(
   (id) => ({
@@ -100,6 +101,31 @@ function resolve(
 }
 
 describe("resolveEnvironmentPaneColumn", () => {
+  it("keeps an environment pane on the app theme when its client is an unedited starter", () => {
+    const host = client("h-1");
+    const result = resolve(
+      {},
+      {
+        host: {
+          ...host,
+          isUneditedStarterClient: true,
+          config: { ...host.config, hostContext: { theme: "light" } },
+        },
+      },
+    );
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    const { hostConfig, isUneditedStarterClient } = result.column;
+    expect(
+      resolveComparePaneTheme(
+        "dark",
+        undefined,
+        hostConfig.hostContext,
+        isUneditedStarterClient,
+      ),
+    ).toMatchObject({ choice: "app", theme: "dark" });
+  });
+
   it("shows the environment's model without sending it, on the environment's client", () => {
     const result = resolve({});
     expect(result.status).toBe("ready");
