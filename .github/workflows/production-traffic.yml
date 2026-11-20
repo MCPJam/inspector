@@ -1,8 +1,10 @@
 name: Production traffic
 
-# PT-1's production traffic store, tested against a real ClickHouse: the
+# PT-1's production traffic ingestion, tested against a real ClickHouse: the
 # schema migration under its own identity, the runtime identity's limits,
-# deduplication across merges, outcome ordering and the review counts.
+# deduplication across merges, outcome ordering and the review counts, then
+# the OTLP receiver over HTTP in the registered app, fed JSON by the tests and
+# gzip protobuf by the official OpenTelemetry Python exporter.
 #
 # Path-filtered because it starts a database container: it runs when this
 # code, the lockfile or this workflow changes, and on demand.
@@ -10,6 +12,10 @@ on:
   pull_request:
     paths:
       - "mcpjam-inspector/server/services/production-traffic/**"
+      - "mcpjam-inspector/server/routes/v1/production-traffic*.ts"
+      - "mcpjam-inspector/server/routes/v1/index.ts"
+      - "mcpjam-inspector/server/middleware/v1-body-limit.ts"
+      - "mcpjam-inspector/scripts/production-traffic/**"
       - "mcpjam-inspector/package.json"
       - "package-lock.json"
       - ".github/workflows/production-traffic.yml"
@@ -32,7 +38,7 @@ env:
 
 jobs:
   clickhouse:
-    name: Real ClickHouse store
+    name: Real ClickHouse ingestion
     runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     services:
@@ -78,6 +84,20 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      # The HTTP suite boots the whole app, which imports the SDK's dist and
+      # the bundles the Inspector's pretest step generates.
+      - name: Build the SDK and test bundles
+        run: |
+          npm run build -w @mcpjam/sdk
+          npm run pretest -w @mcpjam/inspector
+
+      - name: Install the OpenTelemetry Python exporter
+        run: |
+          python3 -m venv "$RUNNER_TEMP/otel"
+          "$RUNNER_TEMP/otel/bin/pip" install --quiet \
+            opentelemetry-sdk==1.45.2 \
+            opentelemetry-exporter-otlp-proto-http==1.45.2
+          echo "PRODUCTION_TRAFFIC_TEST_PYTHON=$RUNNER_TEMP/otel/bin/python" >> "$GITHUB_ENV"
       - name: Run the packaged Helm migration twice
         working-directory: mcpjam-inspector
         env:
@@ -93,12 +113,13 @@ jobs:
       - name: ClickHouse version
         run: curl -sS --fail -u "ci_admin:${CLICKHOUSE_ADMIN_PASSWORD}" http://localhost:8123/ --data-binary "SELECT version()"
 
-      - name: Store tests on real ClickHouse
+      - name: Store and receiver tests on real ClickHouse
         working-directory: mcpjam-inspector
         env:
           PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_URL: http://localhost:8123
           PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_ADMIN_USER: ci_admin
           PRODUCTION_TRAFFIC_TEST_CLICKHOUSE_ADMIN_PASSWORD: ${{ env.CLICKHOUSE_ADMIN_PASSWORD }}
-          # Fail rather than skip if the database variables ever go missing.
+          # Fail rather than skip if the database or the exporter goes missing.
           PRODUCTION_TRAFFIC_REQUIRE_CLICKHOUSE: "1"
+          PRODUCTION_TRAFFIC_REQUIRE_PYTHON: "1"
         run: npx vitest run --project server server/services/production-traffic

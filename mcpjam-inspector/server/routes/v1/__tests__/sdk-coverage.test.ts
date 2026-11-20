@@ -677,6 +677,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Share member upsert stays REST-only for now.",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
     "Share member removal stays REST-only for now.",
+  "post /projects/{projectId}/otlp/v1/traces":
+    "OTLP/HTTP trace receiver for an MCP server's OpenTelemetry exporter, authenticated by a producer credential rather than a user; exporters speak OTLP, not this client.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {
