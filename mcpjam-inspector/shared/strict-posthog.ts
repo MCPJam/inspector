@@ -9,6 +9,11 @@ export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
 type Rule = readonly string[] | "count" | "boolean";
+const SIGN_IN_ATTEMPT = {
+  location: ["app", "session-refresh", "promo_redemption"],
+  intent: ["sign_in", "sign_up"],
+  signin_platform: ["web", "desktop", "npx"],
+} as const;
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   extension_launch_completed: {
     location: ["host_workspace"],
@@ -33,6 +38,20 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     // Measures how long the content grant takes, to tune the launch timeout.
     launch_trigger: ["immediate", "grant", "timeout", "hidden"],
     policy_wait_ms: "count",
+  },
+  // Completions and callback failures are sent on the load that returns from
+  // WorkOS, for an actor whose content grant has not arrived yet.
+  signin_started: SIGN_IN_ATTEMPT,
+  signin_completed: SIGN_IN_ATTEMPT,
+  signin_failed: {
+    ...SIGN_IN_ATTEMPT,
+    reason: [
+      "insecure_origin",
+      "start_error",
+      "callback_error",
+      "code_exchange_failed",
+      "abandoned",
+    ],
   },
   send_message: {
     location: ["chat_tab", "ui_playground"],

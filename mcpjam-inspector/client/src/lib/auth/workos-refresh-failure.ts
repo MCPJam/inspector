@@ -88,7 +88,10 @@ export function handleWorkosRefreshFailure({
   // Fire-and-forget, but wrapped: `signIn` is async and a failure to build the
   // authorization URL would otherwise surface as an unhandled rejection inside
   // authkit's callback. The event above already recorded the dead session.
-  void startWorkosAuth(() => signIn(permalinkSignInOptions())).catch((error) => {
+  void startWorkosAuth(() => signIn(permalinkSignInOptions()), {
+    intent: "sign_in",
+    location: "session-refresh",
+  }).catch((error) => {
     reportCaught(error, { source: "workos_refresh_failure_sign_in" });
   });
 }
