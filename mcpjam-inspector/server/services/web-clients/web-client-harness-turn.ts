@@ -7,7 +7,8 @@
  * transcript and persists a turn trace with the forwarded route's receipt. A
  * page that could not be driven throws `WebClientRunError`, which every
  * caller already treats as a failed turn: the run failed, and nothing was
- * learned about the server. A setting the vendor's app can't honor throws
+ * learned about the server. It still carries the calls that reached the
+ * server first. A setting the vendor's app can't honor throws
  * `WebClientTurnRefusedError` before anything runs.
  */
 import {
@@ -54,6 +55,8 @@ export class WebClientRunError extends Error {
     message: string,
     /** Set when recovery paused the run for a person, or found a call that may have run. */
     readonly stop?: WebRunStop,
+    /** The calls that reached the server before the page stopped, on an errored step. */
+    readonly turnTrace?: PersistedTurnTrace,
   ) {
     super(message);
     this.name = "WebClientRunError";
@@ -76,8 +79,11 @@ export function webClientFailureMessage(name: string, failure: RealUiFailure): s
   }
 }
 
+const lastUserMessage = (messages: readonly ModelMessage[]) =>
+  [...messages].reverse().find((message) => message.role === "user");
+
 function lastUserText(messages: readonly ModelMessage[]): string {
-  const last = [...messages].reverse().find((message) => message.role === "user");
+  const last = lastUserMessage(messages);
   if (!last) return "";
   if (typeof last.content === "string") return last.content;
   return last.content
@@ -105,6 +111,7 @@ export class WebClientTurnRefusedError extends Error {
  * asks for approval is refused whole by the gate every runtime passes, never
  * denied call by call. It has no place for a host's system prompt either:
  * typed into the user's message it would change the chat being measured.
+ * Only the message's text is typed, so a file or image would be dropped.
  */
 function refuseUnsupportedSettings(runtimeId: WebClientRuntimeId, options: MCPJamHandlerOptions): void {
   const adapter = getHarnessAdapter(runtimeId);
@@ -119,6 +126,13 @@ function refuseUnsupportedSettings(runtimeId: WebClientRuntimeId, options: MCPJa
     throw new WebClientTurnRefusedError(
       "setting-unsupported",
       `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[runtimeId].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`,
+    );
+  }
+  const latest = lastUserMessage(options.messages);
+  if (latest && typeof latest.content !== "string" && latest.content.some((part) => part.type !== "text")) {
+    throw new WebClientTurnRefusedError(
+      "setting-unsupported",
+      `${adapter.displayName} can only send text to ${HARNESS_DESCRIPTORS[runtimeId].runtimeName}, so it can't take attachments. Remove the attachment or choose another client.`,
     );
   }
 }
@@ -199,6 +213,25 @@ export async function runWebClientHarnessTurn(
       if (error instanceof WebAccountUnavailableError) runContext?.onAccountLost?.(error.message);
       throw error;
     }
+    const traceOf = (failed: boolean): PersistedTurnTrace => ({
+      turnId: result.turnId,
+      promptIndex,
+      startedAt: result.startedAt,
+      endedAt: result.endedAt,
+      spans: webTurnSpans({
+        calls: result.toolCalls,
+        turnId: result.turnId,
+        startedAt: result.startedAt,
+        endedAt: result.endedAt,
+        promptIndex,
+        modelId: options.modelId,
+        failed,
+      }),
+      finishReason: failed ? "error" : "stop",
+      modelId: options.modelId,
+    });
+    // A Stop ends the turn as the person's, whatever the page was doing.
+    if (!result.ok && options.abortSignal?.aborted) return { messageHistory: messages, aborted: true };
     if (!result.ok) {
       const message =
         result.stop?.kind === "ambiguous_execution"
@@ -206,7 +239,8 @@ export async function runWebClientHarnessTurn(
           : webClientFailureMessage(name, result.failure);
       // A signed-out account can't serve the run's later sessions either.
       if (result.failure.kind === "needs_sign_in") runContext?.onAccountLost?.(message);
-      throw new WebClientRunError(result.failure, message, result.stop);
+      // What reached the server stays on the record; the run still failed.
+      throw new WebClientRunError(result.failure, message, result.stop, traceOf(true));
     }
     const adapter = getHarnessAdapter(runtimeId);
     const plan = resolveHarnessMcpPlan({
@@ -236,24 +270,12 @@ export async function runWebClientHarnessTurn(
       requireNativeToolDiscovery: false,
     });
     const turnTrace: PersistedTurnTrace = {
-      turnId: result.turnId,
-      promptIndex,
-      startedAt: result.startedAt,
-      endedAt: result.endedAt,
-      spans: webTurnSpans({
-        calls: result.toolCalls,
-        startedAt: result.startedAt,
-        endedAt: result.endedAt,
-        promptIndex,
-        modelId: options.modelId,
-      }),
-      finishReason: "stop",
-      modelId: options.modelId,
+      ...traceOf(false),
       ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
     };
     const messageHistory = [
       ...messages,
-      ...webTurnMessages(result.page.conversation, result.toolCalls),
+      ...webTurnMessages(result.page.conversation, result.toolCalls, result.turnId),
     ];
     await options.onConversationComplete?.(messageHistory, turnTrace);
     return { messageHistory, turnTrace, aborted: false };
@@ -267,6 +289,7 @@ export async function runWebClientHarnessTurn(
       settled = await run((paused) =>
         writer.write({ type: "data-web-run-paused", data: { ...paused, clientName: name } }),
       );
+      if (settled.aborted) return;
       const reply = settled.messageHistory.at(-1);
       const text =
         reply && Array.isArray(reply.content)

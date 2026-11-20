@@ -12,7 +12,9 @@
  *    run's hosted browser by `openHostedBrowser`. The profile's key and
  *    download URL are handed over and never logged.
  *  - Outcome: a verified run marks the account verified; a sign-in step
- *    marks it as needing sign-in and reports the step so recovery can resume.
+ *    marks it as needing sign-in and reports the step so recovery can resume,
+ *    naming the profile the run restored: an account signed in again since
+ *    is left as it is.
  */
 import { z } from "zod";
 import {
@@ -152,6 +154,8 @@ export type HostedWebClientDeps = {
 export function createHostedWebClientEnvironment(
   deps: HostedWebClientDeps,
 ): WebClientEnvironment {
+  // The profile version each account's browser restored, for its outcome.
+  const restoredVersions = new Map<string, number>();
   return {
     publicBaseUrl: deps.publicBaseUrl,
     actor: deps.actor,
@@ -200,6 +204,7 @@ export function createHostedWebClientEnvironment(
         runId: deps.runId,
         venue: "hosted",
       });
+      restoredVersions.set(webAccountId, profile.profileVersion);
       return deps.openHostedBrowser({ profile, sites });
     },
 
@@ -241,10 +246,13 @@ export function createHostedWebClientEnvironment(
         return;
       }
       if (outcome.failure.kind !== "needs_sign_in") return;
+      const restored = restoredVersions.get(outcome.webAccountId);
+      const version = restored === undefined ? {} : { restoredProfileVersion: restored };
       await deps.service.apply({
         action: "markWebAccountNeedsSignIn",
         webAccountId: outcome.webAccountId,
         reason: outcome.failure.reason,
+        ...version,
         ...deps.actor,
       });
       await deps.service.apply({
@@ -254,6 +262,7 @@ export function createHostedWebClientEnvironment(
         ...(deps.iterationId ? { iterationId: deps.iterationId } : {}),
         pendingStep: JSON.stringify(outcome.pendingStep ?? { stepId: outcome.failure.step }),
         reason: outcome.failure.reason,
+        ...version,
         ...deps.actor,
       });
     },

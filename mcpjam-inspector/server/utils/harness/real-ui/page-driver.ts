@@ -57,10 +57,11 @@ export interface PageDriver {
   /** The first match's text, or `undefined` when nothing matches. */
   readText(selector: string): Promise<string | undefined>;
   /**
-   * The whole page's text as the browser renders it, for a driver that runs
-   * no script in the page (the hosted browser). Bounded by the browser.
+   * The whole page's text as a person would copy it, `<pre>` blocks
+   * verbatim. Only a driver that runs no script needs one: `readText` there
+   * is the page's accessibility tree, which a JSON page doesn't survive.
    */
-  readPageText?(): Promise<string>;
+  pageText?(): Promise<string>;
 }
 
 /** Polls `condition` until it holds; the shared `waitFor` both drivers use. */
