@@ -78,14 +78,29 @@ async function readShownConversation(
   const url = `${ORIGIN}/c/${id}`;
   if ((await driver.url()) !== url) await driver.navigate(url);
   await waitVisible(driver, ASSISTANT, ctx, "the saved reply");
-  const userPrompt = await driver.readText(USER_MESSAGE);
+  const words = (shown: string | undefined) => (shown ? shownWords(shown) || shown.trim() : undefined);
+  const userPrompt = words(await driver.readText(USER_MESSAGE));
   return {
     conversationId: id,
     url,
-    ...(userPrompt ? { userPrompt: userPrompt.trim() } : {}),
-    replyText: ((await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "").trim(),
+    ...(userPrompt ? { userPrompt } : {}),
+    replyText: words(await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "",
     toolCalls: [],
   };
+}
+
+/**
+ * The words a hosted browser's tree names, in order. Each line names its
+ * node as a JSON string (`- text "It said hello."`), so the reply's prose is
+ * those names joined.
+ */
+function shownWords(tree: string): string {
+  const names = tree
+    .split("\n")
+    .map((line) => /"(?:[^"\\]|\\.)*"/.exec(line)?.[0])
+    .filter((quoted): quoted is string => quoted !== undefined)
+    .map((quoted) => String(JSON.parse(quoted)));
+  return names.join(" ").replace(/\s+/g, " ").trim();
 }
 
 async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string) {

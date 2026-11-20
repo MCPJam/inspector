@@ -103,5 +103,9 @@ export function createHostedPageDriver(
       if (!result.ok) return undefined;
       return result.page?.pageContent.a11y?.trim();
     },
+    async readPageText() {
+      const result = await run({ op: "observe", mode: "text" });
+      return result.ok ? (result.page?.pageContent.text ?? "") : "";
+    },
   };
 }
