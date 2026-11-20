@@ -485,6 +485,20 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       };
     });
     const durableIds: Array<string | undefined> = [];
+    // Recorded but never sent: each record gets the error the vendor gets.
+    const refuseCalls = (reason: string) => {
+      for (const durableId of durableIds)
+        settleDurable(durableId, { state: "error" });
+      void release();
+      const callIds = new Set(calls.map((call) => call.jsonrpcId));
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? reason : COPY.batchHeld),
+        REFUSED,
+        200,
+        frame,
+      );
+    };
     try {
       for (const call of calls)
         durableIds.push(await deps.durableLedger?.record(call));
@@ -493,19 +507,13 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         source: SOURCE,
         hop: "mcpjam_internal",
       });
-      // Recorded but never sent: the record gets the error the vendor gets.
-      for (const durableId of durableIds)
-        settleDurable(durableId, { state: "error" });
-      void release();
-      const callIds = new Set(calls.map((call) => call.jsonrpcId));
-      return answerAll(
-        body,
-        (id) => (callIds.has(id) ? COPY.notRecorded : COPY.batchHeld),
-        REFUSED,
-        200,
-        frame,
-      );
+      return refuseCalls(COPY.notRecorded);
     }
+    // The turn may have closed while the upstream was resolved or the calls
+    // were recorded. A recovery that read the ledger after the close may not
+    // have seen these calls and may send its own, so these are not sent.
+    if (calls.length > 0 && turns.active(connectorId)?.turnId !== window?.turnId)
+      return refuseCalls(COPY.noTurn);
     const pending = new Map<RpcId, Pending>();
     calls.forEach((call, index) => {
       const durableId = durableIds[index];
