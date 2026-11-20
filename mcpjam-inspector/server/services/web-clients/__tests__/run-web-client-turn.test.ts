@@ -186,6 +186,35 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
       pendingStep: { stepId: "sign_in_check" },
     });
   });
+
+  it("retries a durable close that failed, and closes the browser either way", async () => {
+    let closes = 0;
+    const close = vi.fn(async (_turnId: string) => {
+      closes += 1;
+      if (closes === 1) throw new Error("backend unavailable");
+    });
+    const browserClosed = vi.fn();
+    const base = environment();
+    const failure = await turn(ALLOW, {
+      ...base,
+      turnGate: { open: async () => {}, close },
+      async openBrowser(args) {
+        const opened = await base.openBrowser(args);
+        return {
+          driver: opened.driver,
+          close: async () => {
+            browserClosed();
+            await opened.close();
+          },
+        };
+      },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ message: "backend unavailable" });
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close.mock.calls[1]).toEqual(close.mock.calls[0]);
+    expect(browserClosed).toHaveBeenCalledTimes(1);
+    expect(windows.active("conn-orders")).toBeUndefined();
+  });
 });
 
 describe("webTurnApprover", () => {

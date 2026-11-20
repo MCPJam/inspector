@@ -229,16 +229,23 @@ export async function runWebClientTurn(
     await closeAll();
   }
 
-  /** Closes this turn's windows and browser once, whichever way it ended. */
+  /**
+   * Closes this turn's windows and browser, whichever way it ended. A durable
+   * close that fails stays pending so the next call retries it, and the
+   * browser closes either way.
+   */
   async function closeAll() {
-    const closing = opened.splice(0);
-    for (const connectorId of closing) {
+    for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    if (closing.length > 0) await env.turnGate?.close(turnId);
     const open = browser;
     browser = undefined;
-    await open?.close();
+    try {
+      if (opened.length > 0) await env.turnGate?.close(turnId);
+      opened.length = 0;
+    } finally {
+      await open?.close();
+    }
   }
 
   /**
