@@ -103,7 +103,7 @@ export function createHostedPageDriver(
         result.error?.message ?? "The browser could not read the page.",
       );
     },
-    async readPageText() {
+    async pageText() {
       const result = await run({ op: "observe", mode: "text" });
       return result.ok ? (result.page?.pageContent.text ?? "") : "";
     },
