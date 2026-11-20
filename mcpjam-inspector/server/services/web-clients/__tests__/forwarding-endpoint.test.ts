@@ -10,7 +10,10 @@ import {
   mountWebConnectorEndpoint,
   type WebConnectorEndpointDeps,
 } from "../forwarding-endpoint.js";
-import type { WebClientRecorder } from "../forwarding-recorder.js";
+import {
+  webClientScope,
+  type WebClientRecorder,
+} from "../forwarding-recorder.js";
 import {
   createInMemoryToolCallLedger,
   hashPayload,
@@ -144,7 +147,7 @@ describe("forwarding endpoint: the turn gate", () => {
     expect(fixture.received).toHaveLength(3);
     expect(ledger.find({ connectorId: CONNECTOR_ID })).toHaveLength(0);
     expect(new Set(frames.map((frame) => frame.scopeId))).toEqual(
-      new Set([`web-client:outside-turn:${CONNECTOR_ID}`]),
+      new Set([webClientScope(CONNECTOR_ID)]),
     );
   });
 

@@ -20,6 +20,7 @@ import type {
   WebConnector,
   WebConnectorResolver,
 } from "./connectors.js";
+import { connectorTag } from "./forwarding-recorder.js";
 
 /** HTTP routes over `resolveWebConnector` and `mayUseWebConnector` (`convex/webClients.ts`). */
 const RESOLVE_PATH = "/internal/v1/web-clients/connectors/resolve";
@@ -101,7 +102,15 @@ export function createBackendConnectorResolver(): WebConnectorResolver {
       );
       const release = () => authorized.manager.disconnectAllServers();
       const config = authorized.authorizedServerConfigs?.[connector.serverId];
-      if (!config || !("url" in config) || !config.url || config.preferSSE) {
+      // Without its egress-guarded fetch a user-typed URL would be dialled
+      // unguarded, so a config that lacks one is not used at all.
+      if (
+        !config ||
+        !("url" in config) ||
+        !config.url ||
+        config.preferSSE ||
+        !config.baseFetch
+      ) {
         await release();
         throw new Error("The project's server has no Streamable HTTP endpoint.");
       }
@@ -114,7 +123,7 @@ export function createBackendConnectorResolver(): WebConnectorResolver {
       return {
         url: String(config.url),
         headers,
-        ...(config.baseFetch ? { fetch: config.baseFetch } : {}),
+        fetch: config.baseFetch,
         ...(refresh
           ? {
               onUnauthorized: async () => {
@@ -126,7 +135,7 @@ export function createBackendConnectorResolver(): WebConnectorResolver {
                   return accessToken;
                 } catch (error) {
                   logger.warn("[web-clients] the server credential could not be refreshed", {
-                    connectorId: connector.connectorId,
+                    connector: connectorTag(connector.connectorId),
                     message: error instanceof Error ? error.message : String(error),
                   });
                   return undefined;

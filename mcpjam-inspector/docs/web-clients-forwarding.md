@@ -19,7 +19,8 @@ reaches the project's MCP server through the Inspector at `/mcp/<connectorId>`
   sending it and settles it from the answer, inside an SSE stream too: `result`,
   `error`, or `lost` when the answer never arrived;
 - records every frame on the RPC log bus and the shared sink under
-  `web-client:<turnId>` (or `web-client:outside-turn:<connectorId>`), and the
+  `web-client:<turnId>` (or `web-client:outside-turn:<digest>`: a capability
+  connector's id is its credential, so logs name connectors by a digest), and the
   client's identity from `initialize` or each request's `_meta` (2026-07-28),
   with its user agent.
 
