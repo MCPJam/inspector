@@ -772,6 +772,36 @@
       "count": 1
     }
   },
+  "server/routes/apps/shared/widget-files.ts": {
+    "no-restricted-syntax": {
+      "count": 1
+    }
+  },
+  "server/routes/slack-link/index.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/surface-link/index.ts": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
+  "server/routes/v1/eval-backtest.ts": {
+    "no-restricted-imports": {
+      "count": 2
+    }
+  },
+  "server/routes/v1/proposed-actions.ts": {
+    "no-restricted-syntax": {
+      "count": 4
+    }
+  },
+  "server/routes/v1/tunnels.ts": {
+    "no-restricted-syntax": {
+      "count": 3
+    }
+  },
   "server/routes/web/api-keys.ts": {
     "no-restricted-syntax": {
       "count": 11
@@ -892,6 +922,11 @@
       "count": 1
     }
   },
+  "server/services/evals/assertion-backtest.ts": {
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
   "server/services/plugins/run-plugin-servers.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -949,6 +984,16 @@
   },
   "server/utils/route-error-report.ts": {
     "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "shared/sentry-build-metadata.ts": {
+    "no-restricted-imports": {
+      "count": 3
+    }
+  },
+  "shared/strict-server-analytics.ts": {
+    "no-restricted-imports": {
       "count": 1
     }
   }
