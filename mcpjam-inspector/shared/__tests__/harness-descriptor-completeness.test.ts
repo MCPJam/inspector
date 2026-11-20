@@ -40,6 +40,8 @@ it("names each runtime as the harness choice shows it", () => {
     cursor: "Cursor CLI",
     "copilot-cli": "GitHub Copilot CLI",
     opencode: "OpenCode",
+    "claude-web": "claude.ai",
+    "chatgpt-web": "chatgpt.com",
   });
 });
 
@@ -79,6 +81,16 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
     if (descriptor.modelAccess === "broker") {
       expect(descriptor.credential).toBeNull();
       expect(descriptor.protocol).not.toBeNull();
+    } else if (descriptor.credential && "kind" in descriptor.credential) {
+      // A web account: the project's signed-in browser profile, no key.
+      expect(descriptor.credential.kind).toBe("web-account");
+      expect(descriptor.credential.sites.length).toBeGreaterThan(0);
+      expect(descriptor.orgKeys).toBe(false);
+      expect(descriptor.protocol).toBeNull();
+      expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
+        orgKeySurfaceRefusal(descriptor.displayName),
+      );
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();
       expect(descriptor.orgKeys).toBe(false);
@@ -96,6 +108,8 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
   });
 
   it("only admits an organization key when that path is qualified", () => {
-    expect(descriptor.orgKeys).toBe(id !== "cursor");
+    expect(descriptor.orgKeys).toBe(
+      id !== "cursor" && id !== "claude-web" && id !== "chatgpt-web",
+    );
   });
 });
