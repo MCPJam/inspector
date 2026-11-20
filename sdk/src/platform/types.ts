@@ -1826,6 +1826,12 @@ export interface PlatformEvalRunGroupCreated {
   failedCount: number;
   targets: PlatformEvalRunGroupEntry[];
   /**
+   * The launch's key: the caller's, or one the server minted. Replaying the
+   * request with it returns the started targets as their existing runs and
+   * launches only the rest. Absent on deployments that predate it.
+   */
+  idempotencyKey?: string;
+  /**
    * @deprecated Mirror of the FIRST started run, so readers written against
    * the single-run receipt keep working. Absent when nothing started. Read
    * `targets` instead — this describes one run out of several.
