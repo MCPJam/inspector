@@ -16,8 +16,8 @@
  *
  * Browser commands use --base-url / MCPJAM_DRIVER_BASE_URL and --token /
  * MCPJAM_SESSION_TOKEN (a token or the whole access link), falling back to
- * the instance `start` recorded. Exit codes: 0 clean, 1 an issue was found,
- * 2 the driver itself could not run.
+ * the instance `start` recorded (its token only ever goes to its own origin).
+ * Exit codes: 0 clean, 1 an issue was found, 2 the driver itself could not run.
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,6 +34,7 @@ import {
   normalizeSteps,
   parseAccessToken,
   parseAllowlist,
+  recordedToken,
   resolveTarget,
   withStartStep,
 } from "./lib/inspector-driver-core.mjs";
@@ -90,7 +91,9 @@ async function connection(values) {
     );
   }
   const rawToken = values.token ?? process.env.MCPJAM_SESSION_TOKEN;
-  const token = rawToken ? parseAccessToken(rawToken) : (state?.token ?? null);
+  const token = rawToken
+    ? parseAccessToken(rawToken)
+    : recordedToken(baseUrl, state);
   if (rawToken && !token) {
     throw new Error("--token is neither an access token nor an access link.");
   }
