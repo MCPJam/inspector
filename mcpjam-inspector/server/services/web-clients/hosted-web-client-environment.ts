@@ -13,9 +13,6 @@
  *  - Outcome: a verified run marks the account verified; a sign-in step
  *    marks it as needing sign-in and reports the step so recovery can resume.
  */
-import { randomUUID } from "node:crypto";
-import { ConvexHttpClient } from "convex/browser";
-import { makeFunctionReference } from "convex/server";
 import { z } from "zod";
 import {
   WEB_CLIENT_DISPLAY_NAMES,
@@ -28,13 +25,8 @@ import {
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 import { needsSignIn } from "../../utils/harness/real-ui/page-module.js";
 import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../service-credential.js";
+import type { WebClientService } from "./backend-connector-resolver.js";
 import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
-
-/** `webClientService:read` / `webClientService:apply`, one command each. */
-export type WebClientService = (
-  kind: "read" | "apply",
-  command: Record<string, unknown>,
-) => Promise<unknown>;
 
 export type WebActor = { actorExternalId: string } | { actorUserId: string };
 
@@ -65,25 +57,6 @@ const profileAnswer = z.object({
   sha256: z.string(),
   savedAt: z.number(),
 });
-
-/** The service functions through Convex, acting only with the service token. */
-export function createConvexWebClientService(options: {
-  convexUrl: string;
-  serviceToken: string;
-}): WebClientService {
-  const client = new ConvexHttpClient(options.convexUrl, { logger: false });
-  return async (kind, command) =>
-    kind === "read"
-      ? client.query(makeFunctionReference<"query">("webClientService:read"), {
-          serviceToken: options.serviceToken,
-          requestId: randomUUID(),
-          command,
-        })
-      : client.mutation(makeFunctionReference<"mutation">("webClientService:apply"), {
-          serviceToken: options.serviceToken,
-          command,
-        });
-}
 
 /** `POST /internal/v1/web-accounts/profile-for-run`. */
 export function createProfileForRunClient(options: {
@@ -127,6 +100,7 @@ export function createProfileForRunClient(options: {
 }
 
 export type HostedWebClientDeps = {
+  /** `webClientService()`: the one backend client this process holds. */
   service: WebClientService;
   actor: WebActor;
   /** `https://<inspector host>`: the vendor's app dials `/mcp/<id>` there. */
@@ -154,7 +128,7 @@ export function createHostedWebClientEnvironment(
     async resolveAccount({ projectId, vendor }) {
       const rows = z
         .array(accountRow)
-        .parse(await deps.service("read", { action: "listWebAccounts", projectId, ...deps.actor }))
+        .parse(await deps.service.read({ action: "listWebAccounts", projectId, ...deps.actor }))
         .filter((row) => row.vendor === vendor);
       const chosen =
         rows.find((row) => row.webAccountId === deps.chosenWebAccountId) ??
@@ -169,7 +143,7 @@ export function createHostedWebClientEnvironment(
 
     async ensureConnector({ projectId, webAccountId, serverId }) {
       const answer = z.object({ connectorId: z.string().min(1) }).parse(
-        await deps.service("apply", {
+        await deps.service.apply({
           action: "ensureWebConnector",
           projectId,
           webAccountId,
@@ -191,10 +165,19 @@ export function createHostedWebClientEnvironment(
       return deps.openHostedBrowser({ profile, sites });
     },
 
+    turnGate: {
+      async open(window) {
+        await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor });
+      },
+      async close(turnId) {
+        await deps.service.apply({ action: "closeWebTurnWindow", turnId, ...deps.actor });
+      },
+    },
+
     async onOutcome(outcome: WebTurnOutcome) {
       if (outcome.ok) {
         if (!outcome.account.email) return;
-        await deps.service("apply", {
+        await deps.service.apply({
           action: "markWebAccountVerified",
           webAccountId: outcome.webAccountId,
           accountEmail: outcome.account.email,
@@ -204,13 +187,13 @@ export function createHostedWebClientEnvironment(
         return;
       }
       if (outcome.failure.kind !== "needs_sign_in") return;
-      await deps.service("apply", {
+      await deps.service.apply({
         action: "markWebAccountNeedsSignIn",
         webAccountId: outcome.webAccountId,
         reason: outcome.failure.reason,
         ...deps.actor,
       });
-      await deps.service("apply", {
+      await deps.service.apply({
         action: "reportWebSignInRequired",
         webAccountId: outcome.webAccountId,
         runId: deps.runId,
