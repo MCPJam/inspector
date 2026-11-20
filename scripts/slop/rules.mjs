@@ -123,10 +123,17 @@ function codeOnly(text) {
 function regexCanStart(code) {
   let end = code.length;
   while (end > 0 && /\s/.test(code[end - 1])) end -= 1;
+  const line = code.slice(code.lastIndexOf("\n", end - 1) + 1, end);
+  // A prefix update cannot take a regex operand, so `++` or `--` here is
+  // postfix and the slash divides. `a+++/re/` is `a++ + /re/`: odd runs end
+  // in a binary operator.
+  const run = /(?:\++|-+)$/.exec(line)?.[0].length ?? 0;
+  if (run > 1) return run % 2 === 1;
   if (end === 0 || "(,=:[!&|?{};+-*%~^".includes(code[end - 1])) return true;
-  return /\b(?:return|typeof|case|in|of|void|yield|await)$/.test(
-    code.slice(Math.max(0, end - 7), end)
-  );
+  // `of` is only a keyword in a for-of head; elsewhere it is an identifier.
+  if (/\bof$/.test(line))
+    return /\bfor\s*(?:await\s*)?\([^;()=]*of$/.test(line);
+  return /\b(?:return|typeof|case|in|void|yield|await)$/.test(line);
 }
 
 /** Index just past the regex literal opening at `start`, or -1 if it does not close on its line. */

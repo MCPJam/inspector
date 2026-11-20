@@ -162,6 +162,27 @@ describe("rules", () => {
     assert.equal(count(afterRegex, path)["client-timer"], 1);
   });
 
+  it("reads a slash after a postfix update as division", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const postfix = "const ratio = n++ / setTimeout(run, 0) / 2;";
+    assert.equal(count(postfix, path)["client-timer"], 1);
+    const decrement = "const ratio = n-- / setTimeout(run, 0) / 2;";
+    assert.equal(count(decrement, path)["client-timer"], 1);
+
+    const plusRegex = "const s = n+++/setTimeout(run)/.source;";
+    assert.equal(count(plusRegex, path)["client-timer"], 0);
+  });
+
+  it("reads a slash after an identifier named of as division", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const identifier =
+      "const of = 2;\nconst ratio = of / setTimeout(run, 0) / 2;";
+    assert.equal(count(identifier, path)["client-timer"], 1);
+
+    const forOf = "for (const m of /setTimeout(run)/g.exec(s) ?? []) use(m);";
+    assert.equal(count(forOf, path)["client-timer"], 0);
+  });
+
   it("counts a comment-only catch whose binding holds a dollar sign", () => {
     const counts = count("try { a(); } catch ($error) { /* ignored */ }");
     assert.equal(counts["comment-only-catch"], 1);
