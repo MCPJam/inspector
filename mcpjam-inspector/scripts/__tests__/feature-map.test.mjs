@@ -268,6 +268,28 @@ test("a URL hit is confident even when a file name outranks it", () => {
   assert.equal(fileOnly.confident, false);
 });
 
+test("several query words in a file name are not confident; in prose they are", () => {
+  const wizard = entry("sign-in", {
+    label: "Sign in",
+    title: "Sign in",
+    routePatterns: ["login"],
+    places: [],
+    purpose: "Finish the authentication wizard to reach your workspace.",
+    roots: ["client/src/components/AuthenticationWizard.tsx"],
+  });
+  const fileOnly = rankSurfaces(
+    [{ ...wizard, purpose: "" }],
+    "authentication wizard",
+  );
+  assert.ok(
+    fileOnly.ranked[0].reasons.some(
+      (r) => r.includes("component") && r.includes("several query words"),
+    ),
+  );
+  assert.equal(fileOnly.confident, false);
+  assert.equal(rankSurfaces([wizard], "authentication wizard").confident, true);
+});
+
 test("ranking is deterministic: equal scores order by id", () => {
   const tied = [entry("b-screen"), entry("a-screen")].map((e) => ({
     ...e,

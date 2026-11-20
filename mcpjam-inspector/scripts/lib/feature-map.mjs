@@ -499,7 +499,9 @@ export function rankSurfaces(entries, phrase) {
       }
       if (!top) continue;
       score += top.value;
-      strong = true;
+      // A file name can belong to a wrapper (BillingUpsellGate renders
+      // Evaluate), so it never makes a result confident, even whole.
+      if (f.field !== "component") strong = true;
       reasons.push(`${f.field} "${top.name}" holds several query words`);
     }
     const reachable = entry.places.length > 0 || entry.inAtlas;
