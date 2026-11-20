@@ -75,7 +75,8 @@ function visit(path: string) {
     </MemoryRouter>,
   );
 }
-const withRequest = "/web-accounts/wa-1/reconnect?request=req-1&project=project-1";
+const withRequest =
+  "/web-accounts/wa-1/reconnect?request=req-1&project=project-1";
 
 describe("WebAccountReconnectPage", () => {
   beforeEach(() => {
@@ -117,7 +118,11 @@ describe("WebAccountReconnectPage", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Finish and resume runs" }),
     );
-    expect(state.handback).toHaveBeenCalledWith("project-1", "req-1");
+    expect(state.handback).toHaveBeenCalledWith(
+      "project-1",
+      "req-1",
+      "session-1",
+    );
     expect(await screen.findByTestId("reconnect-outcome")).toHaveTextContent(
       "claude.ai is signed in again. 2 waiting runs resumed.",
     );
@@ -136,19 +141,22 @@ describe("WebAccountReconnectPage", () => {
       "not_found",
       "This sign-in request no longer exists. Check the account in its client's Browser settings.",
     ],
-  ] as const)("says what to do when the handback is %s", async (status, text) => {
-    state.handback.mockResolvedValue({ status });
-    visit(withRequest);
-    await userEvent.click(
-      screen.getByRole("button", { name: "Take over the browser" }),
-    );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Finish and resume runs" }),
-    );
-    expect(await screen.findByTestId("reconnect-outcome")).toHaveTextContent(
-      text,
-    );
-  });
+  ] as const)(
+    "says what to do when the handback is %s",
+    async (status, text) => {
+      state.handback.mockResolvedValue({ status });
+      visit(withRequest);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Take over the browser" }),
+      );
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Finish and resume runs" }),
+      );
+      expect(await screen.findByTestId("reconnect-outcome")).toHaveTextContent(
+        text,
+      );
+    },
+  );
 
   it("saves the sign-in for the project when no runs wait", async () => {
     state.data["webClientReconnect:listWebReconnectRequests"] = [];
@@ -173,7 +181,11 @@ describe("WebAccountReconnectPage", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Finish and resume runs" }),
     );
-    expect(state.handback).toHaveBeenCalledWith("project-1", "req-1");
+    expect(state.handback).toHaveBeenCalledWith(
+      "project-1",
+      "req-1",
+      "session-1",
+    );
   });
 
   it("tells a member who can finish it and offers a link for an admin", async () => {

@@ -51,10 +51,20 @@ export function saveWebAccountProfile(
   });
 }
 
-/** Hands a signed-in account back, so the runs waiting on it resume. */
-export function handBackWebReconnect(projectId: string, requestId: string) {
-  return webPost<{ projectId: string }, HandbackResult>(
-    `/api/web-clients/reconnect/${encodeURIComponent(requestId)}/handback`,
-    { projectId },
-  );
+/**
+ * Hands a signed-in account back, so the runs waiting on it resume. The
+ * server reads the sign-in browser `browserSessionId` names.
+ */
+export function handBackWebReconnect(
+  projectId: string,
+  requestId: string,
+  browserSessionId: string,
+) {
+  return webPost<
+    { projectId: string; browserSessionId: string },
+    HandbackResult
+  >(`/api/web-clients/reconnect/${encodeURIComponent(requestId)}/handback`, {
+    projectId,
+    browserSessionId,
+  });
 }
