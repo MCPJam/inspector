@@ -360,7 +360,9 @@ export async function fetchWhileTurnOpen(
   fetchUpstream: typeof fetch,
   url: string,
   init: RequestInit,
-  turnOpen: () => boolean,
+  turnOpen: () => boolean = () => true,
+  /** Headers meant for `url`'s server alone, dropped like `authorization`. */
+  credentials: readonly string[] = [],
 ): Promise<Response> {
   let current = url;
   let method = (init.method ?? "GET").toUpperCase();
@@ -404,6 +406,7 @@ export async function fetchWhileTurnOpen(
     if (next.origin !== new URL(current).origin) {
       headers = new Headers(headers);
       for (const name of CROSS_ORIGIN_HEADERS) headers.delete(name);
+      for (const name of credentials) headers.delete(name);
     }
     current = next.href;
   }

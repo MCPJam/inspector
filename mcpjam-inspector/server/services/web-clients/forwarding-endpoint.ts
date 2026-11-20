@@ -390,12 +390,11 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       body: bytes,
       signal: request.signal,
     };
-    // A redirect can arrive after the turn closed, so tool calls follow it
-    // hop by hop.
+    // Redirects are followed hop by hop: a tool call goes on only while its
+    // turn is open, and the server's own headers stay with its origin.
+    const own = Object.keys(target.headers);
     const sendOnce = () =>
-      turnOpen
-        ? fetchWhileTurnOpen(fetchUpstream, target.url, init, turnOpen)
-        : fetchUpstream(target.url, { ...init, redirect: "follow" });
+      fetchWhileTurnOpen(fetchUpstream, target.url, init, turnOpen, own);
     const response = await sendOnce();
     // Only a 401 to the request itself says it never ran. Behind a redirect
     // the server took it first, so sending it again could run a tool twice.
@@ -406,7 +405,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     )
       return response;
     await discardBody(response);
-    const token = await target.onUnauthorized();
+    // A failed refresh leaves the call unsent, as a missing token does.
+    const token = await target.onUnauthorized().catch((error: unknown) => {
+      reportRouteFailure("Web connector token refresh failed", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
+      });
+      return undefined;
+    });
     if (!token) return new Response(null, { status: 401 });
     // The refresh can outlast the turn that approved the call.
     if (turnOpen && !turnOpen()) throw new TurnClosedError(401, false);
