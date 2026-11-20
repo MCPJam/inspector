@@ -19,6 +19,9 @@ import { list, readVendorJson, record, text } from "./vendor-json.js";
 
 export const FIXTURE_PAGE_MODULE_VERSION = "fixture-1";
 
+/** Text as a page renders it: trimmed, with each run of whitespace as one space. */
+const collapse = (value: string) => value.replace(/\s+/g, " ").trim();
+
 export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
   const origin = new URL(baseUrl).origin;
   const visible = async (driver: PageDriver, selector: string, ctx: StepContext, what: string) =>
@@ -96,8 +99,10 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
         async () => {
           const url = new URL(await driver.url());
           if (!url.pathname.startsWith("/chat/")) return false;
-          // The page shows the prompt trimmed; the send happened all the same.
-          if ((await driver.readText('[data-testid="user-message"]')) !== prompt.trim()) return false;
+          // The page shows the prompt as rendered text, trimmed and with runs
+          // of spaces collapsed; the send happened all the same.
+          const shown = await driver.readText('[data-testid="user-message"]');
+          if (shown === undefined || collapse(shown) !== collapse(prompt)) return false;
           conversationUrl = `${url.origin}${url.pathname}`;
           return true;
         },

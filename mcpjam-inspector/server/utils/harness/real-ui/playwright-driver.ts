@@ -10,7 +10,7 @@
  * Playwright routes only the first request of a redirect chain, so an
  * allowed page that redirects elsewhere can't be stopped before it loads.
  * When the page lands off the sites anyway, it goes to a blank page and the
- * driver refuses every command until `navigate` takes it back.
+ * driver refuses every command until a `navigate` lands back on one of them.
  */
 import type { Page } from "playwright";
 import {
@@ -32,12 +32,18 @@ export async function createPlaywrightDriver(
 ): Promise<PageDriver> {
   const sites = options.sites;
   let leftFor: string | undefined;
+  let departures = 0;
   page.on("framenavigated", (frame) => {
     if (frame !== page.mainFrame()) return;
     const landed = frame.url();
-    if (landed === "about:blank" || urlOnSites(landed, sites)) return;
+    // A blank page, or the browser's own page for a failed navigation, shows
+    // nothing from another site.
+    if (landed === "about:blank" || landed.startsWith("chrome-error://") || urlOnSites(landed, sites)) {
+      return;
+    }
     const origin = new URL(landed).origin;
     leftFor = origin;
+    departures += 1;
     void page.goto("about:blank").catch((error: unknown) => {
       // Commands still refuse while the page is off its sites; this only says
       // why it is still showing the other one.
@@ -54,6 +60,11 @@ export async function createPlaywrightDriver(
         `The page was sent to ${leftFor}, outside the sites this browser may open.`,
       );
     }
+  };
+  // Only a document committed on one of the sites lifts the block, so a way
+  // back that fails before it lands leaves the page refused.
+  const liftIfBack = () => {
+    if (leftFor && urlOnSites(page.url(), sites)) leftFor = undefined;
   };
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -80,13 +91,18 @@ export async function createPlaywrightDriver(
     canEvaluate: true,
     async navigate(url) {
       assertOnSites(url, sites);
-      leftFor = undefined;
+      const before = departures;
       try {
         await page.goto(url, { waitUntil: "domcontentloaded" });
       } catch (error) {
-        // Sending the page away interrupts the navigation that left.
-        if (!leftFor) throw error;
+        // Sending the page away interrupts the navigation that left; that
+        // ends as site_blocked below. Any other failure is the caller's.
+        if (departures === before) {
+          liftIfBack();
+          throw error;
+        }
       }
+      liftIfBack();
       stayOnSites();
     },
     async url() {
