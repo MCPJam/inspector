@@ -64,8 +64,21 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
     ) : null,
 }));
 vi.mock("@/components/hosts/client-multi-select", () => ({
-  ClientMultiSelect: ({ value }: { value: string[] }) => (
-    <div data-testid="client-multi-select" data-host={value.join(",")} />
+  ClientMultiSelect: ({
+    value,
+    onChange,
+  }: {
+    value: string[];
+    onChange: (ids: string[]) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="client-multi-select"
+      data-host={value.join(",")}
+      onClick={() => onChange([])}
+    >
+      Clear clients
+    </button>
   ),
 }));
 
@@ -173,6 +186,34 @@ describe("SaveAsTestCaseAction", () => {
 
   beforeEach(() => {
     projectHosts.value = [{ hostId: "host-first" }];
+  });
+
+  it("keeps a cleared client selection empty and disables saving", async () => {
+    const user = userEvent.setup();
+    render(
+      <SaveAsTestCaseAction
+        chatSessionId="chat-session-1"
+        promptIndex={2}
+        promptPreview="draw a dog"
+        projectId="proj-1"
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Save this prompt as a test case" }),
+    );
+    await user.click(screen.getByRole("radio", { name: "New suite" }));
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "host-first",
+    );
+    await user.click(screen.getByRole("button", { name: "Clear clients" }));
+    expect(screen.getByTestId("client-multi-select")).toHaveAttribute(
+      "data-host",
+      "",
+    );
+    expect(
+      screen.getByRole("button", { name: "Save as test case" }),
+    ).toBeDisabled();
   });
 
   it("names a new suite after the prompt's server", async () => {

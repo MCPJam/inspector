@@ -140,6 +140,22 @@ describe("assertionSummary outside a step", () => {
     );
   });
 
+  it.each<[string, Predicate]>([
+    ["widgetRendered", { type: "widgetRendered", toolName: "cart_view" }],
+    [
+      "toolInputMatches",
+      { type: "toolInputMatches", toolName: "search", patterns: ["q="] },
+    ],
+    [
+      "toolResultMatches",
+      { type: "toolResultMatches", toolName: "search", patterns: ["ok"] },
+    ],
+  ])("%s names its tool inside a step too", (_kind, predicate) => {
+    expect(summary(predicate, true).label).toContain(
+      (predicate as { toolName: string }).toolName,
+    );
+  });
+
   it("a blank view check keeps its plain label", () => {
     expect(summary({ type: "widgetRendered" }, false).label).toBe(
       summary({ type: "widgetRendered" }, true).label,

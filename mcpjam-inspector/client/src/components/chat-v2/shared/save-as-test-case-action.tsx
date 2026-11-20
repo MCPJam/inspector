@@ -1,5 +1,5 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlaskConical, Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
@@ -120,6 +120,7 @@ export function SaveAsTestCaseAction({
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
     null,
   );
+  const hostsSeeded = useRef(false);
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
     [],
   );
@@ -171,7 +172,12 @@ export function SaveAsTestCaseAction({
 
   useEffect(() => {
     if (!open || !attachmentPickersEnabled) return;
-    if (hostAttachments.length === 0 && projectHosts.length > 0) {
+    if (
+      !hostsSeeded.current &&
+      hostAttachments.length === 0 &&
+      projectHosts.length > 0
+    ) {
+      hostsSeeded.current = true;
       const suggested = (suggestedHostIds ?? []).filter((hostId) =>
         projectHosts.some((host) => host.hostId === hostId),
       );
@@ -221,6 +227,7 @@ export function SaveAsTestCaseAction({
       setDestinationMode("existing");
       setServerAttachmentId(null);
       setHostAttachments([]);
+      hostsSeeded.current = false;
     }
   };
 
@@ -408,7 +415,7 @@ export function SaveAsTestCaseAction({
                       placeholder="e.g. github-issue-flow"
                     />
                   </div>
-                  {attachmentPickersEnabled && projectId ? (
+                  {attachmentPickersEnabled ? (
                     <div className="grid grid-cols-2 gap-3">
                       <div className="min-w-0 space-y-2">
                         <Label htmlFor="save-as-test-case-clients">
@@ -419,14 +426,15 @@ export function SaveAsTestCaseAction({
                           value={hostAttachments.map(
                             (draft) => draft.namedHostId,
                           )}
-                          onChange={(hostIds) =>
+                          onChange={(hostIds) => {
+                            hostsSeeded.current = true;
                             setHostAttachments(
                               hostIds.map((namedHostId) => ({
                                 namedHostId,
                                 enabledOptionalServerIds: [],
                               })),
-                            )
-                          }
+                            );
+                          }}
                           disabled={submitting}
                           triggerId="save-as-test-case-clients"
                           inModal
@@ -500,23 +508,22 @@ export function SaveAsTestCaseAction({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {projectId ? (
-        <CreateHostDialog
-          isOpen={createHostOpen}
-          onClose={() => setCreateHostOpen(false)}
-          projectId={projectId}
-          onCreated={(hostId: string) =>
-            setHostAttachments((current) =>
-              current.some((draft) => draft.namedHostId === hostId)
-                ? current
-                : [
-                    ...current,
-                    { namedHostId: hostId, enabledOptionalServerIds: [] },
-                  ],
-            )
-          }
-        />
-      ) : null}
+      <CreateHostDialog
+        isOpen={createHostOpen}
+        onClose={() => setCreateHostOpen(false)}
+        projectId={projectId}
+        onCreated={(hostId: string) => {
+          hostsSeeded.current = true;
+          setHostAttachments((current) =>
+            current.some((draft) => draft.namedHostId === hostId)
+              ? current
+              : [
+                  ...current,
+                  { namedHostId: hostId, enabledOptionalServerIds: [] },
+                ],
+          );
+        }}
+      />
     </>
   );
 }

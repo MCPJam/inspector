@@ -1,7 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { PredicateKind } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import type { EvalJudgeConfig } from "@/components/evals/types";
@@ -65,12 +72,20 @@ function Harness({
   initial,
   onChange,
   judgeConfig = judge,
+  authorableKinds,
+  reload,
 }: {
   initial: CaseStepsDraft;
   onChange?: (draft: CaseStepsDraft) => void;
   judgeConfig?: EvalJudgeConfig;
+  authorableKinds?: PredicateKind[];
+  /** A draft replaced from outside, like a generated draft's reload. */
+  reload?: CaseStepsDraft;
 }) {
   const [draft, setDraft] = useState(initial);
+  useEffect(() => {
+    if (reload) setDraft(reload);
+  }, [reload]);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const card = useMemo(
     () =>
@@ -104,6 +119,7 @@ function Harness({
         judgeConfig,
         defaultPredicates: suiteDefaults,
         servers: ["excalidraw"],
+        authorableKinds,
       }}
       availableTools={[]}
       readOnly={false}
@@ -290,6 +306,33 @@ describe("CaseStepsEditor editing", () => {
     );
   });
 
+  it("a reload under the remove dialog closes it without removing anything", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const p2: TestStep = { id: "p2", kind: "prompt", prompt: "And?" };
+    const initial = base({ steps: [p2, ...sketch] });
+    const { rerender } = render(
+      <Harness initial={initial} onChange={onChange} />,
+    );
+    await user.click(screen.getByLabelText("Options for step 2"));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    const added: TestStep = {
+      id: "a3",
+      kind: "assert",
+      assertion: { type: "toolCalledWith", toolName: "export", args: {} },
+    } as TestStep;
+    rerender(
+      <Harness
+        initial={initial}
+        onChange={onChange}
+        reload={base({ steps: [p2, ...sketch, added] })}
+      />,
+    );
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("Move down swaps whole blocks", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -393,5 +436,80 @@ describe("After-run assertions", () => {
     expect(onChange.mock.lastCall![0].judgeConfigOverride).toEqual({
       goalCompletion: { enabled: false },
     });
+  });
+});
+
+describe("CaseStepsEditor review fixes", () => {
+  const call: TestStep = {
+    id: "t1",
+    kind: "toolCall",
+    serverName: "excalidraw",
+    toolName: "create_view",
+    arguments: {},
+  };
+
+  it("offers Remove on a lone step that can be removed", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness initial={base({ steps: [call] })} onChange={onChange} />);
+    await user.click(screen.getByLabelText("Options for step 1"));
+    await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+    expect(onChange.mock.lastCall![0].steps).toEqual([]);
+  });
+
+  it("keeps the menu off a lone prompt, which can't be removed", () => {
+    render(<Harness initial={base({ steps: [sketch[0]!] })} />);
+    expect(screen.queryByLabelText("Options for step 1")).toBeNull();
+  });
+
+  it("offers only the assertion kinds the deployment accepts", async () => {
+    const user = userEvent.setup();
+    render(
+      <Harness
+        initial={base({ steps: [sketch[0]!] })}
+        authorableKinds={["noToolErrors"]}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Add assertion after step 1" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: /^No tool errors/ }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: /^Response contains/ }),
+    ).toBeDisabled();
+  });
+
+  it("a blocking tool check sets the case's argument matching", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const withArgs: TestStep = {
+      id: "a1",
+      kind: "assert",
+      assertion: {
+        type: "toolCalledWith",
+        toolName: "read_me",
+        args: { args: { mode: "quick" } },
+      },
+    };
+    render(
+      <Harness
+        initial={base({ steps: [sketch[0]!, withArgs] })}
+        onChange={onChange}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /read_me/, expanded: false }),
+    );
+    expect(
+      screen.getByText(
+        "Argument matching applies to every blocking tool check in this case.",
+      ),
+    ).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Exact" }));
+    const next = onChange.mock.lastCall![0];
+    expect(next.matchOptions).toEqual({ argumentMatching: "exact" });
+    expect(next.steps[1].assertion.args.argumentMatching).toBeUndefined();
   });
 });
