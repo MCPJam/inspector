@@ -115,7 +115,7 @@ export type NeedsSignInOutcome =
   | { status: "reload_profile" }
   /** The sign-in method signed in: reconcile, then carry on with the step. */
   | { status: "signed_in" }
-  /** A person is needed. The run waits and resumes after handback. */
+  /** Stop this execution: the run waits for a person, or already resumed elsewhere. */
   | { status: "paused"; requestId: string; notified: boolean };
 
 export type ResumedRun = ClaimedRun & {
@@ -230,26 +230,29 @@ export function createWebRecoveryCoordinator(
     return { status: "resumed", runs };
   }
 
+  /** The connection's own sign-in, and whether this run carries on here. */
   async function signInWithoutPerson(
     report: AccountFailureReport & { reason: SignInReason },
     requestId: string,
-  ): Promise<boolean> {
-    const { projectId, webAccountId, reason, browser } = report;
+  ): Promise<"continues_here" | "resumed_elsewhere" | "needs_person"> {
+    const { projectId, webAccountId, reason, browser, runId } = report;
     const method = signInMethodFor({ projectId, webAccountId });
     if (reason === "human_check" || method.id === NO_SIGN_IN_METHOD.id) {
-      return false;
+      return "needs_person";
     }
     try {
       const context = { projectId, webAccountId, reason, browser };
-      if ((await method.signIn(context)) !== "signed_in") return false;
+      if ((await method.signIn(context)) !== "signed_in") return "needs_person";
       const account = await findAccount(projectId, webAccountId);
-      const outcome = await completeSignIn(
-        requestId,
-        account,
-        browser,
-        report.runId,
-      );
-      if (outcome.status === "resumed") return true;
+      const outcome = await completeSignIn(requestId, account, browser, runId);
+      if (outcome.status === "resumed") {
+        // A person's handback during the attempt may have claimed this run
+        // first. Then it resumes there, and this execution must stop.
+        const here = outcome.runs.some(
+          (run) => run.runId === runId && run.status === "continues_here",
+        );
+        return here ? "continues_here" : "resumed_elsewhere";
+      }
       logger.warn("[web-recovery] The sign-in method's session was refused", {
         method: method.id,
         outcome: outcome.status,
@@ -259,7 +262,7 @@ export function createWebRecoveryCoordinator(
         method: method.id,
       });
     }
-    return false;
+    return "needs_person";
   }
 
   async function sendLink(notice: ReconnectNotice): Promise<boolean> {
@@ -307,8 +310,10 @@ export function createWebRecoveryCoordinator(
     // Only the report that opened the request acts on it, so another run or a
     // repeated report never signs in again or sends a second link.
     if (!shouldNotify) return { status: "paused", requestId, notified: false };
-    if (await signInWithoutPerson(report, requestId)) {
-      return { status: "signed_in" };
+    const attempt = await signInWithoutPerson(report, requestId);
+    if (attempt === "continues_here") return { status: "signed_in" };
+    if (attempt === "resumed_elsewhere") {
+      return { status: "paused", requestId, notified: false };
     }
     await backend.markWebAccountNeedsSignIn({ webAccountId, reason });
     const notice = { requestId, projectId, webAccountId, reason };

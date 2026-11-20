@@ -722,10 +722,11 @@ describe("a tool call runs once across recovery", () => {
 });
 
 describe("sign-in method", () => {
-  it("signs in once for every waiting run, without a link, when the method can", async () => {
-    let release = () => {};
+  /** A sign-in method that signs in only when the test releases it. */
+  function gatedSignIn() {
+    let open = () => {};
     const gate = new Promise<void>((resolve) => {
-      release = resolve;
+      open = resolve;
     });
     let signedIn = false;
     const method = {
@@ -736,26 +737,33 @@ describe("sign-in method", () => {
         return "signed_in" as const;
       }),
     };
-    const world = createWorld(method);
-    const coordinator = startProcess(world);
-    const runBrowser = (): AccountBrowser => ({
+    const browser = (): AccountBrowser => ({
       verifyAccount: async () => (signedIn ? SEAT : undefined),
       captureProfile: async () => PROFILE,
     });
+    return { method, browser, release: () => open() };
+  }
+
+  it("signs in once for every waiting run, without a link, when the method can", async () => {
+    const signIn = gatedSignIn();
+    const world = createWorld(signIn.method);
+    const coordinator = startProcess(world);
     const first = startRun(world, coordinator, "run-1", ["sign_in_page"], {
-      browser: runBrowser(),
+      browser: signIn.browser(),
     });
-    await vi.waitFor(() => expect(method.signIn).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(signIn.method.signIn).toHaveBeenCalledTimes(1),
+    );
     // A second run reaches the sign-in page while the method is signing in.
     await startRun(world, coordinator, "run-2", ["sign_in_page"], {
-      browser: runBrowser(),
+      browser: signIn.browser(),
     });
     expect(runOf(world, "run-2").result).toBe("paused");
-    release();
+    signIn.release();
     await first;
     await settle(world);
 
-    expect(method.signIn).toHaveBeenCalledTimes(1);
+    expect(signIn.method.signIn).toHaveBeenCalledTimes(1);
     expect(world.notices).toEqual([]);
     expect(runOf(world, "run-1").log).toEqual([
       "send step-1",
@@ -771,6 +779,42 @@ describe("sign-in method", () => {
       profileVersion: 2,
     });
     expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
+  });
+
+  it("stops the reporting run when a person's handback resumed it first", async () => {
+    const signIn = gatedSignIn();
+    const world = createWorld(signIn.method);
+    const coordinator = startProcess(world);
+    const first = startRun(world, coordinator, "run-1", ["sign_in_page"], {
+      browser: signIn.browser(),
+    });
+    await vi.waitFor(() =>
+      expect(signIn.method.signIn).toHaveBeenCalledTimes(1),
+    );
+    await startRun(world, coordinator, "run-2", ["sign_in_page"]);
+    // A person takes over from run-2's pause panel before the method finishes.
+    const [request] = await requestsOf(world);
+    const handedBack = await coordinator.handback({
+      projectId: PROJECT,
+      requestId: request?.requestId ?? "",
+      browser: browserSignedInAs(SEAT),
+    });
+    expect(handedBack).toMatchObject({ status: "resumed" });
+    signIn.release();
+    await first;
+    await settle(world);
+
+    const count = (runId: string, event: string) =>
+      runOf(world, runId).log.filter((entry) => entry === event).length;
+    // The execution that reported stopped; the resumed one ran the step once.
+    expect(runOf(world, "run-1").log).not.toContain("signed_in");
+    expect(count("run-1", "paused")).toBe(1);
+    expect(count("run-1", "resume step-1")).toBe(1);
+    expect(count("run-1", "tool ran upstream")).toBe(1);
+    expect(runOf(world, "run-2").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
+    expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
+    expect(world.notices).toEqual([]);
+    expect(await accountOf(world)).toMatchObject({ status: "ready" });
   });
 
   it("hands a human check to a person without calling the method", async () => {
@@ -898,7 +942,7 @@ describe("Convex reconnect backend", () => {
       const value = String(input).endsWith("/api/query") ? [] : null;
       return new Response(JSON.stringify({ status: "success", value }));
     };
-    const convex = new ConvexHttpClient("https://fixture.convex.cloud", {
+    const convex = new ConvexHttpClient("https://backend.example.test", {
       fetch,
     });
     convex.setAuth("fixture-bearer");
