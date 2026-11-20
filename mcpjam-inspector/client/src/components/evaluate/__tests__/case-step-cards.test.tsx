@@ -393,6 +393,25 @@ describe("AssertionEditor", () => {
     expect(screen.getAllByRole("option", { name: "get_me" })).toHaveLength(1);
   });
 
+  it("can't move while a field holds text that isn't valid", () => {
+    renderWithProviders(
+      <AssertionEditor
+        step={assertStep({ type: "noToolErrors" })}
+        actionId="p1"
+        actions={actions}
+        availableTools={[]}
+        readOnly={false}
+        checkPolicy
+        moveBlocked
+        onChange={vi.fn()}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Graded after" }),
+    ).toBeDisabled();
+  });
+
   it("reads Before the first step for a leading assertion", () => {
     renderWithProviders(
       <AssertionEditor
@@ -613,6 +632,12 @@ describe("RemoveStepDialog from a real case", () => {
       [p("p1"), a("a"), p("p2")],
       "p1",
       "Its 1 assertion would be graded before the first step.",
+    ],
+    [
+      "the first prompt with an interact after it",
+      [p("p1"), i("i"), a("a"), p("p2")],
+      "p1",
+      "1 later assertion in its turn would be graded before the first prompt.",
     ],
   ])("removing %s", (_name, steps, id, text) => {
     renderWithProviders(

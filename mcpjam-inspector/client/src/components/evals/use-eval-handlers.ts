@@ -380,6 +380,8 @@ export function useEvalHandlers({
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [suiteToDeleteHasUnsavedEdits, setSuiteToDeleteHasUnsavedEdits] =
+    useState(false);
   const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
     null,
   );
@@ -1717,8 +1719,9 @@ export function useEvalHandlers({
 
   // Delete handler - opens confirmation modal
   const handleDelete = useCallback(
-    (suite: EvalSuite) => {
+    (suite: EvalSuite, options?: { hasUnsavedEdits?: boolean }) => {
       if (deletingSuiteId) return;
+      setSuiteToDeleteHasUnsavedEdits(options?.hasUnsavedEdits === true);
       setSuiteToDelete(suite);
     },
     [deletingSuiteId],
@@ -2354,6 +2357,7 @@ export function useEvalHandlers({
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,
+    suiteToDeleteHasUnsavedEdits,
     setSuiteToDelete,
     duplicatingSuiteId,
     deletingRunId,

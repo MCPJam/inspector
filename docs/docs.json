@@ -108,7 +108,7 @@
               {
                 "group": "Use with other tools",
                 "pages": [
-                  "hosted/claude-connector",
+                  "hosted/mcp-server",
                   "inspector/docs-server",
                   "inspector/launch-from-code"
                 ]
@@ -259,6 +259,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/hosted/claude-connector",
+      "destination": "/hosted/mcp-server"
+    },
     {
       "source": "/api-reference/agent-browsers/open-a-cloud-browser-session",
       "destination": "/reference/public-api"

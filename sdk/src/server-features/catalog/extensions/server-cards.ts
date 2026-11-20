@@ -54,10 +54,18 @@ function absentIfComplete(
     : { kind: "absent", basis: [], detail };
 }
 
-/** Present when `key` is true; absent (optional) or unknown (required) when false. */
+/**
+ * Present when `key` is true; absent (optional) or unknown (required) when
+ * false. A field the card only lists is a declaration (`advertised`); a
+ * property MCPJam tested, such as CORS or HTTPS, was probed.
+ */
 function cardField(
   key: CardKey,
-  options: { needsCard: boolean; whenFalse: "absent" | string }
+  options: {
+    needsCard: boolean;
+    whenFalse: "absent" | string;
+    via?: "advertised";
+  }
 ) {
   return (probes: ProbeSurface): FeatureRuleOutcome => {
     const read = cardProbe(probes);
@@ -70,7 +78,8 @@ function cardField(
       return { kind: "not-applicable", reason: NO_CARD };
     }
     const value = probeBoolean(probe.values[key]);
-    if (value === true) return { kind: "present", via: "probed" };
+    if (value === true)
+      return { kind: "present", via: options.via ?? "probed" };
     if (value === undefined)
       return {
         kind: "unknown",
@@ -207,7 +216,7 @@ export const SERVER_CARD_FEATURES: readonly FeatureDefinition[] = [
       return fields.length > 0
         ? {
             kind: "present",
-            via: "probed",
+            via: "advertised",
             count: fields.length,
             detail: fields.join(", "),
           }
@@ -224,7 +233,11 @@ export const SERVER_CARD_FEATURES: readonly FeatureDefinition[] = [
         "Add a remotes entry for each endpoint, with type streamable-http or sse and its url.",
       spec: specAt("server-card-schema"),
     },
-    cardField("remotesListed", { needsCard: true, whenFalse: "absent" })
+    cardField("remotesListed", {
+      needsCard: true,
+      whenFalse: "absent",
+      via: "advertised",
+    })
   ),
   probedCardFeature(
     {
@@ -235,7 +248,11 @@ export const SERVER_CARD_FEATURES: readonly FeatureDefinition[] = [
         "Add a _meta object to the card for metadata outside the standard fields.",
       spec: specAt("server-card-schema"),
     },
-    cardField("hasMeta", { needsCard: true, whenFalse: "absent" })
+    cardField("hasMeta", {
+      needsCard: true,
+      whenFalse: "absent",
+      via: "advertised",
+    })
   ),
   probedCardFeature(
     {

@@ -193,4 +193,38 @@ describe("useCaseStepsDraft", () => {
     });
     expect(toast.error).toHaveBeenCalled();
   });
+
+  it("takes a newer stored case when the draft has no edits, and keeps edits", async () => {
+    const { result, rerender } = renderDraft();
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    state.cases = [storedCase({ title: "Renamed elsewhere" })];
+    rerender();
+    await waitFor(() =>
+      expect(result.current.draft?.title).toBe("Renamed elsewhere"),
+    );
+    expect(result.current.dirty).toBe(false);
+    act(() =>
+      result.current.setDraft((draft) => ({ ...draft, scenario: "Mine" })),
+    );
+    state.cases = [storedCase({ title: "Renamed again" })];
+    rerender();
+    expect(result.current.draft?.scenario).toBe("Mine");
+    expect(result.current.draft?.title).toBe("Renamed elsewhere");
+    expect(result.current.dirty).toBe(true);
+  });
+
+  it("a New case reseeds when the suite changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ suiteId }) => useCaseStepsDraft({ suiteId, testCaseId: null }),
+      { initialProps: { suiteId: "suite-1" } },
+    );
+    await waitFor(() => expect(result.current.draft).not.toBeNull());
+    act(() =>
+      result.current.setDraft((draft) => ({ ...draft, title: "Suite 1 case" })),
+    );
+    rerender({ suiteId: "suite-2" });
+    await waitFor(() =>
+      expect(result.current.draft?.title).not.toBe("Suite 1 case"),
+    );
+  });
 });
