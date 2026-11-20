@@ -153,6 +153,28 @@ describe("client readiness advice", () => {
     );
   });
 
+  // The spec asks for the same order only "when the underlying set of tools
+  // has not changed". The first listing here is always `alpha, beta`.
+  for (const [change, secondListing] of [
+    ["a tool was replaced", ["beta", "gamma"]],
+    ["a tool was added", ["alpha", "beta", "gamma"]],
+    ["a tool was added and the rest moved", ["beta", "alpha", "gamma"]],
+    ["a tool was removed", ["beta"]],
+  ] as const) {
+    it(`gives no order advice when ${change} between the listings`, async () => {
+      mockedOperations.listTools.mockResolvedValue({
+        tools: secondListing.map((name) => tool(name)),
+        nextCursor: undefined,
+      } as never);
+
+      const warnings = await collectClientReadiness(clientContext(), surface());
+
+      expect(
+        warnings.find((item) => item.id === "readiness-tool-order-deterministic")
+      ).toBeUndefined();
+    });
+  }
+
   it("warns when a modern server still advertises superseded functionality", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],

@@ -24,6 +24,7 @@ import {
 
 const MODERN = "2026-07-28" as const;
 const TOOL_NAMES = ["alpha", "beta", "gamma"] as const;
+const ADDED_TOOL = "delta";
 
 const closers: Array<() => Promise<void>> = [];
 
@@ -32,15 +33,22 @@ afterEach(async () => {
 });
 
 /**
- * A server whose `tools/list` carries `ttlMs`, listing three tools either in
- * the same order every time or in the reverse of the order it used last time.
+ * What the second `tools/list` answers, compared with the first:
+ * - `same`: the same tools in the same order.
+ * - `reversed`: the same tools in the reverse order.
+ * - `grown`: the reverse order again, plus a tool the first listing did not have.
+ */
+type SecondListing = "same" | "reversed" | "grown";
+
+/**
+ * A server whose `tools/list` carries `ttlMs` and lists three tools.
  *
- * The server is built per request, so the order is chosen when a listing
+ * The server is built per request, so the listing is chosen when a request
  * arrives. The count already includes the request being answered, so the
- * first listing is in order and the second is reversed.
+ * first listing is always the three tools in order.
  */
 async function serveToolOrderFixture(options: {
-  stableOrder: boolean;
+  secondListing: SecondListing;
 }): Promise<ServedCountingFixture> {
   let fixture: ServedCountingFixture | undefined;
   const handler = createMcpHandler(() => {
@@ -50,9 +58,12 @@ async function serveToolOrderFixture(options: {
         "tools/list": { ttlMs: CACHE_FIXTURE_TTL_MS, cacheScope: "public" },
       },
     });
-    const listingsSeen = fixture?.count("tools/list") ?? 0;
-    const reversed = !options.stableOrder && listingsSeen % 2 === 0;
-    const names = reversed ? [...TOOL_NAMES].reverse() : [...TOOL_NAMES];
+    const isSecondListing = (fixture?.count("tools/list") ?? 0) % 2 === 0;
+    const names: string[] = [...TOOL_NAMES];
+    if (isSecondListing && options.secondListing !== "same") {
+      names.reverse();
+      if (options.secondListing === "grown") names.push(ADDED_TOOL);
+    }
     for (const name of names) {
       server.registerTool(
         name,
@@ -89,7 +100,7 @@ function toolOrderAdvice(result: MCPConformanceResult) {
 
 describe("tool-order advice on a server that sends ttlMs", () => {
   it("warns when the server lists its tools in a different order each time", async () => {
-    const fixture = await serveToolOrderFixture({ stableOrder: false });
+    const fixture = await serveToolOrderFixture({ secondListing: "reversed" });
 
     const result = await runToolOrderAdvice(fixture.url);
 
@@ -104,11 +115,22 @@ describe("tool-order advice on a server that sends ttlMs", () => {
   });
 
   it("stays silent when the order is the same on both listings", async () => {
-    const fixture = await serveToolOrderFixture({ stableOrder: true });
+    const fixture = await serveToolOrderFixture({ secondListing: "same" });
 
     const result = await runToolOrderAdvice(fixture.url);
 
     // Silence means something only because the second listing was real.
+    expect(fixture.count("tools/list")).toBe(2);
+    expect(toolOrderAdvice(result)).toBeUndefined();
+  });
+
+  it("stays silent when the set of tools changed between the listings", async () => {
+    // The spec asks for the same order only "when the underlying set of tools
+    // has not changed". Here a tool appeared, so the new order breaks no rule.
+    const fixture = await serveToolOrderFixture({ secondListing: "grown" });
+
+    const result = await runToolOrderAdvice(fixture.url);
+
     expect(fixture.count("tools/list")).toBe(2);
     expect(toolOrderAdvice(result)).toBeUndefined();
   });
