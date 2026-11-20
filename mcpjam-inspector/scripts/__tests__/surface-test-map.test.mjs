@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   destinationSegments,
   harnessModules,
+  importSpecifiers,
   matchSurface,
   moduleOwners,
   navigatedSurfaces,
@@ -153,13 +154,13 @@ test("harness pages map to the module they load", () => {
 
 test("roots follow router entries through App route functions to imported files", () => {
   const routerSource = `
-import App, { ToolsRoute, HomeRoute } from "./App";
+import App, { ToolsRoute as ToolsPage, HomeRoute } from "./App";
 import { Shell } from "./components/ui/shell";
 const ROUTE_ELEMENTS: Record<string, unknown> = {
   "/": { element: <HomeRoute /> },
-  tools: { element: <Shell><ToolsRoute /></Shell> },
+  tools: { element: <Shell><ToolsPage /></Shell> },
   // A comment naming <NotRendered /> is not an element.
-  "embed/x": { element: <ToolsRoute /> },
+  "embed/x": { element: <ToolsPage /> },
 };`;
   const appSource = `
 import { ToolsTab } from "./components/ToolsTab";
@@ -196,6 +197,21 @@ export function HomeRoute() {
   assert.deepEqual([...roots.get("tools")].sort(), [
     "client/src/components/ToolsTab.tsx",
     "client/src/components/billing/Gate.tsx",
+  ]);
+});
+
+test("imports in comments and type-only imports are not edges", () => {
+  const source = `
+import { ToolsTab } from "./ToolsTab";
+import { type HomeProps, type HomeState } from "./HomeTab";
+import { Gate, type GateProps } from "./Gate";
+vi.mock("./Mocked"); // import { Mocked } from "./Mocked";
+const url = "https://example.com"; import "./after-url";
+`;
+  assert.deepEqual(importSpecifiers(source), [
+    "./ToolsTab",
+    "./Gate",
+    "./after-url",
   ]);
 });
 
