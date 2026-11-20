@@ -8,7 +8,9 @@
  *
  * The usable accounts are frozen when the swarm first needs them: the
  * vendor's accounts in the project that hold a saved session and don't need
- * sign-in, the default first.
+ * sign-in, the default first. A local Inspector's one account per vendor is
+ * this machine's profile, which every swarm in the process shares, so a
+ * session also holds the profile until it is done with the account.
  */
 import { z } from "zod";
 import {
@@ -101,6 +103,44 @@ const accountRow = z.object({
 
 export type SwarmWebSession = { lease: WebAccountLease; run: WebClientRunContext };
 
+/** This machine's profiles, one session at a time across every swarm in the process. */
+const localProfiles = new Map<WebClientVendor, ReturnType<typeof createWebAccountPool>>();
+
+/**
+ * `lease`, holding the vendor's local profile as well. The profile is only
+ * ever released, never lost: a lost account leaves this swarm's pool, and the
+ * next swarm reads the profile afresh.
+ */
+async function holdLocalProfile(
+  vendor: WebClientVendor,
+  lease: WebAccountLease,
+  signal?: AbortSignal,
+): Promise<WebAccountLease> {
+  let profiles = localProfiles.get(vendor);
+  if (!profiles) {
+    profiles = createWebAccountPool([`local:${vendor}`], "");
+    localProfiles.set(vendor, profiles);
+  }
+  let profile: WebAccountLease;
+  try {
+    profile = await profiles.acquire(signal);
+  } catch (error) {
+    lease.release();
+    throw error;
+  }
+  return {
+    webAccountId: lease.webAccountId,
+    lose(reason) {
+      profile.release();
+      lease.lose(reason);
+    },
+    release() {
+      profile.release();
+      lease.release();
+    },
+  };
+}
+
 /** One swarm run's pools, one per vendor its targets use. */
 export function createSwarmWebAccounts(args: {
   projectId: string;
@@ -112,14 +152,14 @@ export function createSwarmWebAccounts(args: {
 }) {
   const pools = new Map<
     WebClientVendor,
-    Promise<{ pool: ReturnType<typeof createWebAccountPool>; actor?: WebActor }>
+    Promise<{ pool: ReturnType<typeof createWebAccountPool>; actor?: WebActor; local?: boolean }>
   >();
 
   async function freeze(vendor: WebClientVendor) {
     const name = WEB_CLIENT_DISPLAY_NAMES[vendor];
     const service = args.service === undefined ? webClientService() : args.service;
     // A local Inspector has one account per vendor: this machine's profile.
-    if (!service) return { pool: createWebAccountPool([`local:${vendor}`], "") };
+    if (!service) return { pool: createWebAccountPool([`local:${vendor}`], ""), local: true };
     const actor = await (args.actorOf ?? actorForRun)(await args.getBearer());
     if (!actor) {
       throw new WebAccountUnavailableError("This swarm has no MCPJam user to act as. Start it again while signed in.");
@@ -156,7 +196,8 @@ export function createSwarmWebAccounts(args: {
         if (pools.get(vendor) === frozen) pools.delete(vendor);
         throw error;
       }
-      const lease = await entry.pool.acquire(signal);
+      const held = await entry.pool.acquire(signal);
+      const lease = entry.local ? await holdLocalProfile(vendor, held, signal) : held;
       return {
         lease,
         run: {
