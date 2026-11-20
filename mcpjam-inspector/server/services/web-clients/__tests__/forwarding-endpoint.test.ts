@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createStaticConnectorResolver,
+  type UpstreamTarget,
   type WebConnector,
 } from "../connectors.js";
 import {
@@ -57,6 +58,9 @@ function setup(
   options: {
     auth?: WebConnector["auth"];
     upstreamUrl?: string;
+    upstream?: Partial<UpstreamTarget>;
+    /** Runs while the endpoint resolves the project's server. */
+    resolving?: () => void;
     deps?: Partial<WebConnectorEndpointDeps>;
     mayUse?: boolean;
   } = {},
@@ -74,15 +78,20 @@ function setup(
       upstream: {
         url: options.upstreamUrl ?? fixture.url,
         headers: { authorization: PROJECT_CREDENTIAL, "x-api-key": "project-key" },
+        ...options.upstream,
       },
     },
   ]);
+  const upstream: typeof base.upstream = async (...args) => {
+    options.resolving?.();
+    return base.upstream(...args);
+  };
   const turns = createInMemoryTurnWindowStore();
   const ledger = createInMemoryToolCallLedger();
   const frames: Parameters<WebClientRecorder["frame"]>[0][] = [];
   const clients: Parameters<WebClientRecorder["client"]>[0][] = [];
   const endpoint = createWebConnectorEndpoint({
-    resolver: { ...base, mayUse: async () => options.mayUse ?? true },
+    resolver: { ...base, upstream, mayUse: async () => options.mayUse ?? true },
     turns,
     ledger,
     recorder: {
@@ -263,6 +272,37 @@ describe("forwarding endpoint: the turn gate", () => {
     expect((await response.json()).error.code).toBe(-32020);
     expect(fixture.received).toHaveLength(0);
   });
+
+  it("refuses a tool call with an argument JSON.parse would round, so approval can't see another value", async () => {
+    const { app, approvals, openTurn } = setup();
+    openTurn();
+    const response = await vendorClient(app, { path: PATH }).post(
+      '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"echo","arguments":{"account":9007199254740993}}}',
+    );
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatchObject({
+      code: -32602,
+      message: expect.stringMatching(/^This tool call has a number too large/),
+    });
+    expect(approvals).toHaveLength(0);
+    expect(fixture.received).toHaveLength(0);
+  });
+
+  it("refuses a request from another site's page before it reaches the server, and takes the vendor's own", async () => {
+    const { app, openTurn } = setup();
+    openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const refused = await vendor.post(vendor.callToolRaw(7, "echo", "o"), {
+      origin: "https://attacker.example",
+    });
+    expect(refused.status).toBe(403);
+    expect(fixture.received).toHaveLength(0);
+    const fromVendor = await vendor.post(vendor.callToolRaw(8, "echo", "o"), {
+      origin: "https://claude.ai",
+    });
+    expect(fromVendor.status).toBe(200);
+    expect(toolCalls()).toHaveLength(1);
+  });
 });
 
 describe("forwarding endpoint: answers", () => {
@@ -291,9 +331,36 @@ describe("forwarding endpoint: answers", () => {
       vendor.callToolRaw(11, "echo", "d"),
     );
     expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({ id: 11, error: { code: -32000 } });
+    // Lost means it may have run, so the vendor is not told to just send it again.
+    expect(await response.json()).toMatchObject({
+      id: 11,
+      error: {
+        code: -32000,
+        message: expect.stringMatching(/^MCPJam could not tell whether/),
+      },
+    });
     expect(down.ledger.forTurn(downWindow.turnId)).toEqual([
       expect.objectContaining({ toolUseId: "toolu_11", state: "lost" }),
+    ]);
+  });
+
+  it("still relays an answer it can't record, and the call ends lost rather than open", async () => {
+    // Nested deeper than the ledger's canonical hash can walk.
+    const answer = `{"jsonrpc":"2.0","id":27,"result":${"[".repeat(20_000)}${"]".repeat(20_000)}}`;
+    const { app, ledger, openTurn } = setup({
+      upstream: {
+        fetch: async () =>
+          new Response(answer, {
+            headers: { "content-type": "application/json" },
+          }),
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(27, "echo", "deep"));
+    expect(await response.text()).toBe(answer);
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ state: "lost", upstreamStatus: 200 }),
     ]);
   });
 
@@ -373,29 +440,197 @@ describe("forwarding endpoint: answers", () => {
       }),
     ]);
 
+    const client = vi.fn(() => {
+      throw new Error("sink down");
+    });
     const broken = setup({
       deps: {
         recorder: {
           frame: () => {
             throw new Error("sink down");
           },
-          client: () => {
-            throw new Error("sink down");
-          },
+          client,
         },
       },
     });
-    const response = await vendorClient(broken.app, { path: PATH }).listTools();
+    const response = await vendorClient(broken.app, {
+      path: PATH,
+    }).initialize();
+    expect(client).toHaveBeenCalledOnce();
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ id: 2, result: {} });
+    expect(await response.json()).toMatchObject({ id: 1, result: {} });
   });
 
   it("answers 404 for an unknown connector or with the flag off, and the server receives nothing", async () => {
     const { app } = setup();
     expect((await vendorClient(app, { path: "/mcp/nope" }).initialize()).status).toBe(404);
+    expect(fixture.received).toHaveLength(0);
     const off = setup({ deps: { isEnabled: async () => false } });
     expect((await vendorClient(off.app, { path: PATH }).initialize()).status).toBe(404);
     expect(fixture.received).toHaveLength(0);
+  });
+});
+
+describe("forwarding endpoint: sending", () => {
+  const refused = () => new Response(null, { status: 401 });
+
+  it("sends a call again with a refreshed credential after the server's own 401", async () => {
+    const sent: Array<string | null> = [];
+    const { app, ledger, openTurn } = setup({
+      upstream: {
+        fetch: async (input, init) => {
+          const credential = new Headers(init?.headers).get("authorization");
+          sent.push(credential);
+          return credential === "Bearer fresh" ? fetch(input, init) : refused();
+        },
+        onUnauthorized: async () => "fresh",
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(20, "echo", "r"));
+    expect(await response.json()).toMatchObject({ id: 20, result: {} });
+    expect(sent).toEqual([PROJECT_CREDENTIAL, "Bearer fresh"]);
+    expect(ledger.forTurn(window.turnId)[0]?.state).toBe("result");
+  });
+
+  it.each([
+    ["fetch followed it", { redirected: { value: true } }],
+    ["a guarded fetch followed it", { url: { value: `${ORIGIN}/status/21` } }],
+  ])(
+    "never sends a call again after a 401 behind a redirect (%s), and records it lost",
+    async (_how, followed: PropertyDescriptorMap) => {
+      const upstreamFetch = vi.fn(async () =>
+        Object.defineProperties(refused(), followed),
+      );
+      const onUnauthorized = vi.fn(async () => "fresh");
+      const { app, ledger, openTurn } = setup({
+        upstream: { fetch: upstreamFetch, onUnauthorized },
+      });
+      const window = openTurn();
+      const vendor = vendorClient(app, { path: PATH });
+      const response = await vendor.post(vendor.callToolRaw(21, "echo", "x"));
+      expect(response.status).toBe(502);
+      expect((await response.json()).error.message).toMatch(
+        /^MCPJam could not tell whether/,
+      );
+      expect(upstreamFetch).toHaveBeenCalledOnce();
+      expect(onUnauthorized).not.toHaveBeenCalled();
+      expect(ledger.forTurn(window.turnId)).toEqual([
+        expect.objectContaining({ state: "lost", upstreamStatus: 401 }),
+      ]);
+    },
+  );
+
+  it("refuses an approved call whose turn ended while the server was resolved, and releases it", async () => {
+    const release = vi.fn(async () => undefined);
+    let endTurn = () => {};
+    const { app, ledger, openTurn, turns } = setup({
+      upstream: { release },
+      resolving: () => endTurn(),
+    });
+    const window = openTurn();
+    endTurn = () => turns.close(window.turnId);
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(22, "echo", "late"));
+    expect((await response.json()).error.message).toMatch(
+      /^No MCPJam run is using this connector/,
+    );
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.find({ connectorId: CONNECTOR_ID })).toHaveLength(0);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("does not send a call again when its turn ended during the credential refresh", async () => {
+    const upstreamFetch = vi.fn(async () => refused());
+    let endTurn = () => {};
+    const { app, ledger, openTurn, turns } = setup({
+      upstream: {
+        fetch: upstreamFetch,
+        onUnauthorized: async () => {
+          endTurn();
+          return "fresh";
+        },
+      },
+    });
+    const window = openTurn();
+    endTurn = () => turns.close(window.turnId);
+    const vendor = vendorClient(app, { path: PATH });
+    expect(
+      (await vendor.post(vendor.callToolRaw(23, "echo", "r"))).status,
+    ).toBe(502);
+    expect(upstreamFetch).toHaveBeenCalledOnce();
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ state: "error", upstreamStatus: 401 }),
+    ]);
+  });
+
+  it("sends nothing, settles what it wrote and releases the server when the ledger fails partway through a batch", async () => {
+    const release = vi.fn(async () => undefined);
+    const ledger = createInMemoryToolCallLedger();
+    let writes = 0;
+    const { app, openTurn } = setup({
+      upstream: { release },
+      deps: {
+        ledger: {
+          ...ledger,
+          forwarded: (entry) => {
+            writes += 1;
+            if (writes === 2) throw new Error("ledger unavailable");
+            return ledger.forwarded(entry);
+          },
+        },
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, {
+      path: PATH,
+      protocolVersion: "2025-03-26",
+    });
+    const batch = `[${vendor.callToolRaw(24, "echo", "a")},${vendor.callToolRaw(25, "echo", "b")}]`;
+    const answers = await (await vendor.post(batch)).json();
+    expect(
+      answers.map(
+        (answer: { error: { message: string } }) => answer.error.message,
+      ),
+    ).toEqual([
+      expect.stringMatching(/^MCPJam could not record this tool call/),
+      expect.stringMatching(/^MCPJam could not record this tool call/),
+    ]);
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ jsonrpcId: 24, state: "error" }),
+    ]);
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it("answers the server's 401 and settles the call even when its body already failed", async () => {
+    const release = vi.fn(async () => undefined);
+    const { app, ledger, openTurn } = setup({
+      upstream: {
+        fetch: async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.error(new Error("connection reset"));
+              },
+            }),
+            { status: 401 },
+          ),
+        release,
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(26, "echo", "e"));
+    expect(response.status).toBe(502);
+    expect((await response.json()).error.message).toMatch(
+      /refused MCPJam's saved credential/,
+    );
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ state: "error", upstreamStatus: 401 }),
+    ]);
+    expect(release).toHaveBeenCalledOnce();
   });
 });
 
