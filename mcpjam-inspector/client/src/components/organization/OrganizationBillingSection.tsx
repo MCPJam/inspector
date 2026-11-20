@@ -61,6 +61,7 @@ import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import {
   canShowSubscriptionNotices,
+  canStartPlanChange,
   canUpgradeOrganizationPlan,
   getAnnualDiscountPercent,
 } from "@/lib/billing-entitlements";
@@ -253,13 +254,13 @@ function getPlanColumnCta(params: {
     ) {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
-    // Mirrors the server: an admin may move to a higher tier, but not
-    // switch an annual plan to monthly or change interval within a tier.
-    const canStart =
-      isHigherTier &&
-      !(currentBillingInterval === "annual" && billingInterval === "monthly")
-        ? canUpgradePlan
-        : canManageBilling;
+    const canStart = canStartPlanChange({
+      isHigherTier,
+      currentInterval: currentBillingInterval,
+      targetInterval: billingInterval,
+      canUpgradePlan,
+      canManageBilling,
+    });
     return {
       label: currentPlan === plan ? "Change plan" : "Upgrade",
       disabled: !billingConfigured || !canStart || isBillingActionPending,
@@ -1041,6 +1042,17 @@ export function OrganizationBillingSection({
   const pendingPlanEntry = pendingPlanChange
     ? planCatalog?.plans[pendingPlanChange.plan]
     : undefined;
+  // The dialog can switch interval, so it re-applies the table's permission.
+  const canConfirmInterval = (interval: BillingInterval) =>
+    pendingPlanChange != null &&
+    canStartPlanChange({
+      isHigherTier:
+        getPlanRank(pendingPlanChange.plan) > getPlanRank(currentPlan),
+      currentInterval: billingStatus?.billingInterval,
+      targetInterval: interval,
+      canUpgradePlan,
+      canManageBilling,
+    });
 
   const requestPlanChange = (
     plan: "pro" | "team",
@@ -1059,6 +1071,7 @@ export function OrganizationBillingSection({
   const handleConfirmPlanChange = async () => {
     if (!pendingPlanChange) return;
     const { plan, interval } = pendingPlanChange;
+    if (!canConfirmInterval(interval)) return;
     track("plans_upgrade_confirm_submitted", {
       location: "org_plans",
       organization_id: organizationId,
@@ -1173,6 +1186,7 @@ export function OrganizationBillingSection({
           entry={pendingPlanEntry}
           currency={planCatalog.currency}
           interval={pendingPlanChange.interval}
+          isIntervalAllowed={canConfirmInterval}
           onIntervalChange={(nextInterval) => {
             setPendingPlanChange({
               plan: pendingPlanChange.plan,

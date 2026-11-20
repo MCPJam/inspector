@@ -301,6 +301,9 @@ export function useUpgradeCheckout({
   // Every action here is an upgrade checkout, which admins may start too, so
   // this reads the upgrade permission rather than owner-only billing control.
   const canManageBilling = canUpgradeOrganizationPlan(billingStatus);
+  // Events report the backend's owner-only flag as `can_manage_billing`, as
+  // `billing_plans_viewed` does, and the upgrade permission on its own key.
+  const ownerCanManageBilling = billingStatus?.canManageBilling ?? false;
 
   const selectInterval = useCallback(
     (nextInterval: BillingInterval) => {
@@ -315,7 +318,8 @@ export function useUpgradeCheckout({
         billing_interval: nextInterval,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
+        can_manage_billing: ownerCanManageBilling,
+        can_upgrade_plan: canManageBilling,
         annual_supported: annualSupported,
         monthly_supported: monthlySupported,
       });
@@ -329,6 +333,7 @@ export function useUpgradeCheckout({
       monthlySupported,
       organizationId,
       origin,
+      ownerCanManageBilling,
       teamEntry?.prices,
     ],
   );
@@ -356,7 +361,8 @@ export function useUpgradeCheckout({
         error_kind: "no_supported_interval",
         current_plan: currentPlan,
         effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
+        can_manage_billing: ownerCanManageBilling,
+        can_upgrade_plan: canManageBilling,
         annual_supported: annualSupported,
         monthly_supported: monthlySupported,
       });
@@ -387,7 +393,8 @@ export function useUpgradeCheckout({
         billing_interval: checkoutInterval,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
+        can_manage_billing: ownerCanManageBilling,
+        can_upgrade_plan: canManageBilling,
         annual_supported: annualSupported,
         monthly_supported: monthlySupported,
       });
@@ -458,7 +465,8 @@ export function useUpgradeCheckout({
         billing_interval: checkoutInterval,
         current_plan: currentPlan,
         effective_plan: effectivePlan,
-        can_manage_billing: canManageBilling,
+        can_manage_billing: ownerCanManageBilling,
+        can_upgrade_plan: canManageBilling,
       });
       return { redirected: false, shouldDismiss: false };
     }
@@ -473,6 +481,7 @@ export function useUpgradeCheckout({
     monthlySupported,
     organizationId,
     origin,
+    ownerCanManageBilling,
     startPlanChange,
     teamEntry,
     targetPlan,

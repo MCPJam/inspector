@@ -587,3 +587,22 @@ export function canUpgradeOrganizationPlan(
     billingStatus?.canUpgradePlan ?? billingStatus?.canManageBilling ?? false
   );
 }
+
+/**
+ * Mirrors the server: an admin may move to a higher tier, but not switch an
+ * annual plan to monthly or change interval within a tier.
+ */
+export function canStartPlanChange(params: {
+  isHigherTier: boolean;
+  currentInterval: BillingInterval | null | undefined;
+  targetInterval: BillingInterval;
+  canUpgradePlan: boolean;
+  canManageBilling: boolean;
+}): boolean {
+  const isAdminChange =
+    params.isHigherTier &&
+    !(
+      params.currentInterval === "annual" && params.targetInterval === "monthly"
+    );
+  return isAdminChange ? params.canUpgradePlan : params.canManageBilling;
+}

@@ -29,6 +29,9 @@ interface PlanChangeConfirmDialogProps {
   currency: string;
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
+  /** Hides intervals the viewer may not buy, such as annual to monthly for an
+   * admin. Every interval the plan sells is allowed when omitted. */
+  isIntervalAllowed?: (interval: BillingInterval) => boolean;
   annualDiscountPct: number | null;
   currentPlanName: string;
   /** Seats Stripe will bill on a per-seat plan. Null when the organization has
@@ -89,6 +92,7 @@ export function PlanChangeConfirmDialog({
   currency,
   interval,
   onIntervalChange,
+  isIntervalAllowed = () => true,
   annualDiscountPct,
   currentPlanName,
   seatQuantity,
@@ -96,8 +100,10 @@ export function PlanChangeConfirmDialog({
   isStarting,
   onConfirm,
 }: PlanChangeConfirmDialogProps) {
-  const options = (["annual", "monthly"] as const).filter((candidate) =>
-    canCheckoutPlanEntry(entry, plan, candidate),
+  const options = (["annual", "monthly"] as const).filter(
+    (candidate) =>
+      canCheckoutPlanEntry(entry, plan, candidate) &&
+      isIntervalAllowed(candidate),
   );
   const chargeLine = formatChargeLine(entry, interval, currency, seatQuantity);
 
@@ -211,7 +217,11 @@ export function PlanChangeConfirmDialog({
           <Button
             type="button"
             onClick={onConfirm}
-            disabled={isStarting || entry.prices[interval] == null}
+            disabled={
+              isStarting ||
+              entry.prices[interval] == null ||
+              !isIntervalAllowed(interval)
+            }
             data-testid="plan-confirm-cta"
           >
             {isStarting

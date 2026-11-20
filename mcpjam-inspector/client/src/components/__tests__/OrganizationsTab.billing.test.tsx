@@ -399,6 +399,40 @@ vi.mock("../organization/OrganizationMemberRow", () => ({
   OrganizationMemberRow: () => <div data-testid="organization-member-row" />,
 }));
 
+/** The Plans admin tests sign in as an admin, not the default owner. */
+function signInAsAdmin() {
+  mockUseOrganizationQueries.mockReturnValue({
+    sortedOrganizations: [
+      {
+        _id: "org-1",
+        name: "Org One",
+        createdBy: "user_1",
+        createdAt: 1,
+        updatedAt: 1,
+        myRole: "admin",
+      },
+    ],
+    isLoading: false,
+  });
+  mockUseOrganizationMembers.mockReturnValue({
+    activeMembers: [
+      {
+        _id: "member-admin",
+        organizationId: "org-1",
+        userId: "user-admin",
+        email: "owner@example.com",
+        role: "admin",
+        isOwner: false,
+        addedBy: "user-owner",
+        addedAt: 1,
+        user: { name: "Admin", email: "owner@example.com", imageUrl: "" },
+      },
+    ],
+    pendingMembers: [],
+    isLoading: false,
+  });
+}
+
 describe("OrganizationsTab billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -720,6 +754,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("lets an admin upgrade from Free", () => {
+    signInAsAdmin();
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -743,6 +778,7 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("lets an admin move up a tier but not down or across cadences", () => {
+    signInAsAdmin();
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -776,7 +812,40 @@ describe("OrganizationsTab billing", () => {
     ).toBeDisabled();
   });
 
+  it("does not let an admin switch an annual upgrade to monthly", () => {
+    signInAsAdmin();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "pro",
+          effectivePlan: "pro",
+          catalogPlanId: "pro",
+          priceModel: "flat",
+          billingInterval: "annual",
+          hasCustomer: true,
+          canManageBilling: false,
+          canUpgradePlan: true,
+          isOwner: false,
+        }),
+        planCatalog: createV2PlanCatalog(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+
+    expect(screen.getByTestId("plan-confirm-interval-annual")).toBeEnabled();
+    expect(
+      screen.queryByTestId("plan-confirm-interval-monthly"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("plan-confirm-cta")).toBeEnabled();
+  });
+
   it("keeps an admin off checkout against a backend without canUpgradePlan", () => {
+    signInAsAdmin();
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
