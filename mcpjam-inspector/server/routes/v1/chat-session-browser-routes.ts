@@ -425,6 +425,11 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
           input.tabId === undefined
             ? undefined
             : z.string().min(1).max(128).parse(input.tabId);
+        // A caller opts in only when it can re-observe after a pane resize.
+        const responsiveViewport = command
+          ? z.boolean().optional().parse(input.responsiveViewport)
+          : undefined;
+        const viewportCapability = responsiveViewport ? { responsiveViewport } : {};
         const claim = await control<{
           claimed: boolean;
           seq: number;
@@ -433,7 +438,7 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
           sessionId: browser.browserSessionId,
           commandId,
           fingerprint: createHash("sha256")
-            .update(JSON.stringify({ command, note, tabId }))
+            .update(JSON.stringify({ command, note, tabId, ...viewportCapability }))
             .digest("hex"),
         });
         if (!claim.claimed)
@@ -511,6 +516,7 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                             sessionId: browser.browserSessionId,
                             actor: { kind: "agent", id: "session-api" },
                             ...(tabId ? { tabId } : {}),
+                            ...viewportCapability,
                             action: {
                               kind: "observe",
                               mode: command!.op === "invoke_page_tool" ? "webmcp_tools" : "url",
@@ -561,6 +567,7 @@ export function registerChatSessionBrowserRoutes(router: Hono) {
                           sessionId: browser.browserSessionId,
                           actor: { kind: "agent", id: "session-api" },
                           ...(tabId ? { tabId } : {}),
+                          ...viewportCapability,
                           action: mapped.action!,
                         },
                         handle.bootId,

@@ -104,6 +104,24 @@ describe("conversation browser commands", () => {
     expect(response.status).toBe(200);
     expect(mocks.send.mock.calls[1][0].action.expectedBinding).toEqual({ bootId: "boot", tabId: "tab", navCounter: 2, frameId: "frame", registrationSeq: 4 });
   });
+  it.each([undefined, false, true])("preserves viewport negotiation for the origin check and action (%s)", async (responsiveViewport) => {
+    mocks.get.mockResolvedValue({
+      ...browser,
+      policy: { mode: "allowlist", originAllowlist: ["https://example.com"] },
+    });
+    const response = await request("command", {
+      commandId: "click",
+      tabId: "test-tab",
+      responsiveViewport,
+      command: { op: "act", verb: "click", target: { ref: "e1" } },
+    });
+    expect(await response.json()).toMatchObject({ ok: true });
+    expect(mocks.send).toHaveBeenCalledTimes(2);
+    for (const [sent] of mocks.send.mock.calls) {
+      expect(sent.tabId).toBe("test-tab");
+      expect(sent.responsiveViewport).toBe(responsiveViewport || undefined);
+    }
+  });
   it.each(["file:///etc/passwd", "data:text/html,hello", "javascript:alert(1)"])("rejects non-web navigation %s before admission", async (url) => {
     expect((await request("command", { commandId: "c1", command: { op: "navigate", url } })).status).toBe(400);
     expect(mocks.control).not.toHaveBeenCalled();

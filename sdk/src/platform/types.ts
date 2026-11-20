@@ -131,7 +131,13 @@ export type PlatformSessionBrowserOperation =
   | "close";
 export interface PlatformSessionBrowserBodies {
   open: PlatformSessionBrowserInput;
-  command: { command: BrowserAgentCommand; commandId?: string; tabId?: string };
+  command: {
+    command: BrowserAgentCommand;
+    commandId?: string;
+    tabId?: string;
+    /** The caller can re-observe the page when the interactive pane resizes. */
+    responsiveViewport?: boolean;
+  };
   note: { text: string; commandId?: string };
   trace: { afterSeq?: number; limit?: number };
   artifact: { commandId: string };
