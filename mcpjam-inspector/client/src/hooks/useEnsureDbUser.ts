@@ -126,15 +126,17 @@ function retryDelayMs(retryIndex: number) {
 async function ensureUserWithRetry(
   ensureUser: EnsureUserMutation,
   args: EnsureUserArgs,
-  shouldContinue: () => boolean
+  shouldContinue: () => boolean,
+  getCampaign: () => string | undefined
 ) {
   for (let attempt = 0; ; attempt++) {
     if (!shouldContinue()) return;
 
     try {
-      await ensureUser(args);
-      if (args.signupCampaign && shouldContinue()) {
-        clearSignupCampaign(args.signupCampaign);
+      const signupCampaign = getCampaign();
+      const id = await ensureUser(signupCampaign ? { ...args, signupCampaign } : args);
+      if (typeof id === "string" && signupCampaign && shouldContinue()) {
+        clearSignupCampaign(signupCampaign);
       }
       return;
     } catch (err) {
@@ -394,11 +396,10 @@ export function useEnsureDbUser() {
         return;
       }
 
-      const signupCampaign = isWorkOsAuth && !getRuntimeDoNotTrack() && posthog?.is_capturing?.()
+      const getCampaign = () => isWorkOsAuth && !getRuntimeDoNotTrack() && posthog?.is_capturing?.()
         ? readSignupCampaign()
         : undefined;
       const ensureArgs: EnsureUserArgs = {
-        ...(signupCampaign ? { signupCampaign } : {}),
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
       };
@@ -410,7 +411,7 @@ export function useEnsureDbUser() {
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
         ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
           return activeEnsureIdentityRef.current === identityKey;
-        });
+        }, getCampaign);
         inFlightEnsureRef.current = {
           identityKey,
           promise: ensurePromise,

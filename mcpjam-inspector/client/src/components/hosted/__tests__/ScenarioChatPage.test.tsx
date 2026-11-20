@@ -67,6 +67,12 @@ const {
   mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
 }));
 
+const dbSetup = vi.hoisted(() => ({ ready: true }));
+vi.mock("@/contexts/db-user-ready-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/contexts/db-user-ready-context")>()),
+  useDbUserReady: () => dbSetup.ready,
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
@@ -583,6 +589,19 @@ describe("ScenarioChatPage", () => {
       "/user-testing/scenario/preview-token?surface=preview",
     );
     expect(readScenarioSession()).toBeNull();
+  });
+
+  it("waits for signed-in account setup before redeeming the tester link", async () => {
+    dbSetup.ready = false;
+    try {
+      const view = render(<ScenarioChatPage pathToken="account-token" />);
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      dbSetup.ready = true;
+      view.rerender(<ScenarioChatPage pathToken="account-token" />);
+      await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+    } finally {
+      dbSetup.ready = true;
+    }
   });
 
   it("clears protected preview data on logout and re-redeems after account changes", async () => {

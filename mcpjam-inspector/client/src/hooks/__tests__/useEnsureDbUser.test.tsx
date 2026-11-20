@@ -733,12 +733,42 @@ describe("useEnsureDbUser", () => {
     const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
     mockState.ensureUser.mockImplementationOnce(async () => {
       cookie.mockReturnValue("mcpjam_signup_campaign=" + current);
+      return "user-row";
     });
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
       expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
       expect(write.mock.calls.some(([value]) => value.includes("Max-Age=0"))).toBe(shouldClear);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["revoked session", "opt-out before retry"])("retains the campaign after %s", async (scenario) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    const capturing = vi.fn(() => true);
+    mockState.posthog = { is_capturing: capturing };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    vi.spyOn(document, "cookie", "get").mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
+    const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+    if (scenario === "revoked session") {
+      mockState.ensureUser.mockResolvedValueOnce(null);
+    } else {
+      mockState.ensureUser.mockImplementationOnce(async () => {
+        capturing.mockReturnValue(false);
+        throw new Error('Documents read from or written to the "users" table changed while this mutation was being run');
+      }).mockResolvedValueOnce("user-row");
+    }
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureUser.mock.calls[0][0]).toEqual({ signupCampaign: "linkedin/fall_launch" });
+      if (scenario === "opt-out before retry") {
+        expect(mockState.ensureUser.mock.calls[1][0]).toEqual({});
+      }
+      expect(write).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

@@ -1,3 +1,4 @@
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { ScenarioSignInGate } from "./ScenarioSignInGate";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
@@ -413,6 +414,7 @@ export function ScenarioChatPage({
     isLoading: isWorkOsLoading,
   } = useInspectorAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const isDbUserReady = useDbUserReady();
   const taskOwnerId = useTaskOwnerId();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
@@ -810,7 +812,7 @@ export function ScenarioChatPage({
   });
 
   useEffect(() => {
-    if (isAuthSettling) {
+    if (isAuthSettling || (workOsUser && !isDbUserReady)) {
       return;
     }
 
@@ -978,6 +980,7 @@ export function ScenarioChatPage({
     };
   }, [
     clearCurrentSession,
+    isDbUserReady,
     isAuthenticated,
     workOsUser?.id,
     isAuthSettling,
