@@ -40,7 +40,10 @@ interface ChatHistoryRailProps {
   requestHeaders?: HeadersInit;
   enabled?: boolean;
   refreshSignal?: number;
-  onSelectThread: (session: ChatHistorySession) => void;
+  onSelectThread: (
+    session: ChatHistorySession,
+    siblings?: readonly ChatHistorySession[],
+  ) => void;
   /** Fired on row pointer-enter so callers can warm caches for the click path. */
   onPrefetchThread?: (session: ChatHistorySession) => void;
   onNewChat: (options?: { shared?: boolean }) => void;
@@ -376,7 +379,7 @@ export function ChatHistoryRail({
                         isStreaming={isStreaming}
                         sharedThreadsEnabled={canUseProjectSharing}
                         hostStyle={hostStyle}
-                        onSelect={onSelectThread}
+                        onSelect={(selected) => onSelectThread(selected, personal)}
                         onPrefetch={onPrefetchThread}
                         onActionComplete={onSessionAction}
                         canConvertToTestCase={canConvertToTestCase}

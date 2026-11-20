@@ -157,7 +157,7 @@ import {
   type ScopeStepUpCancelRequest,
   type ScopeStepUpResumeRequest,
 } from "@/shared/scope-step-up";
-import type { ChatRewind } from "@/shared/chat-v2";
+import type { ChatMultiModelColumn, ChatRewind } from "@/shared/chat-v2";
 import { buildServerNamesById } from "./../routes/web/auth.js";
 import type { CustomProviderConfig } from "./chat-helpers.js";
 import { getSpendClientIp } from "./client-ip.js";
@@ -276,6 +276,8 @@ export interface WebChatTurnPersistContext {
   directVisibility?: "private" | "project";
   /** Direct-chat lineage when this session was created by message edit. */
   rewind?: ChatRewind;
+  /** Direct-chat only: this chat is a column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn;
   /**
    * Optimistic-concurrency baseline for a resumed thread: the session version
    * the client believes it is continuing from. The client has always sent it;
@@ -1507,6 +1509,9 @@ export async function streamChatTurn(
           ? {
               directVisibility: persist.directVisibility,
               ...(persist.rewind ? { rewind: persist.rewind } : {}),
+              ...(persist.multiModel
+                ? { multiModel: persist.multiModel }
+                : {}),
               resumeConfig: {
                 ...(persist.executionTarget
                   ? { executionTarget: persist.executionTarget }

@@ -1,3 +1,4 @@
+import type { ChatMultiModelColumn } from "@/shared/chat-v2";
 import type { RequestedModelSelection } from "@mcpjam/sdk/browser";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
 import type { ResumeExecutionTarget } from "@/shared/execution-target";
@@ -37,6 +38,12 @@ export interface ChatHistorySession {
   /** The last turn's model selection, effort included; absent on older sessions. */
   modelSelection?: RequestedModelSelection | null;
   modelSource?: string;
+  /** Set when this chat is one column of a multi-model session. */
+  multiModel?: ChatMultiModelColumn & { removedAt?: number };
+  /** The saved client a client column ran in. */
+  hostId?: string;
+  /** The environment an environment column ran in. */
+  environmentId?: string;
   messageCount: number;
   version: number;
   startedAt: number;
@@ -320,6 +327,19 @@ export async function getChatHistoryDetail(
   // older link to the same object reads through this one.
   registerArtifactUrls(detail);
   return detail;
+}
+
+/** Every saved column of a multi-model session, removed ones included. */
+export async function getMultiModelSessionGroup(
+  params: { groupId: string; projectId?: string },
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<{ ok: boolean; sessions: ChatHistorySession[] }> {
+  const searchParams = new URLSearchParams({ groupId: params.groupId });
+  if (params.projectId) searchParams.set("projectId", params.projectId);
+  return webGet(
+    `/api/web/chat-history/group?${searchParams.toString()}`,
+    requestOptions,
+  );
 }
 
 export async function chatHistoryAction(
