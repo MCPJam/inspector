@@ -79,16 +79,17 @@ const WORKAROUND =
   /(?<!\bnot (?:an? )?)\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
 
 /**
- * A comment that admits a compromise: a failure tolerated (best-effort, a
- * swallowed error), a guard for a case believed impossible (defensive,
+ * A comment that admits a compromise: a failure tolerated (a swallowed
+ * error), a guard for a case believed impossible (defensive,
  * belt-and-braces), or a shortcut taken on purpose (deliberately loose,
- * lossy or duplicated). The bare words "deliberately", "intentionally",
- * "swallow" and "defensive" mostly explain real decisions or describe input
- * handling here, so each is matched only next to the words that make it a
+ * lossy or duplicated). "Best-effort" is left out: it is the usual name here
+ * for a fallback chosen on purpose. The bare words "deliberately",
+ * "intentionally", "swallow" and "defensive" mostly explain real decisions
+ * or describe input handling here, so each is matched only next to the words that make it a
  * concession.
  */
 const COMPROMISE =
-  /(?<!\bnot (?:a |as )?)\b(?:best[- ]effort|belt[- ]and[- ](?:braces|suspenders))\b|(?<!\bnot (?:a |as )?)\bdefensive(?::|(?:ly)?\s+(?:guard|branch|check|fallback|invariant|default|catch|continue|skip|clamp|re-?check|no-?op|mixed-version)(?:s|es|ed)?\b)|\b(?:deliberately|intentionally|on purpose)\W+(?:swallow(?:s|ed|ing)?|loose|lossy|duplicat(?:e|es|ed|ing)|(?:ignor(?:e|es|ed|ing)|skip(?:s|ped|ping)?)\W+(?:the |any |this |that |its |a )?(?:errors?|failures?|rejections?|exceptions?|throws?))\b|\bswallow(?:s|ed|ing)?\W+(?:on purpose|deliberately|intentionally)\b|^\s*(?:\/\/|\/\*)\s*swallow\b/i;
+  /(?<!\bnot (?:a |as )?)\bbelt[- ]and[- ](?:braces|suspenders)\b|(?<!\bnot (?:a |as )?)\bdefensive(?::|(?:ly)?\s+(?:guard|branch|check|fallback|invariant|default|catch|continue|skip|clamp|re-?check|no-?op|mixed-version)(?:s|es|ed)?\b)|\b(?:deliberately|intentionally|on purpose)\W+(?:swallow(?:s|ed|ing)?|loose|lossy|duplicat(?:e|es|ed|ing)|(?:ignor(?:e|es|ed|ing)|skip(?:s|ped|ping)?)\W+(?:the |any |this |that |its |a )?(?:errors?|failures?|rejections?|exceptions?|throws?))\b|\bswallow(?:s|ed|ing)?\W+(?:on purpose|deliberately|intentionally)\b|^\s*(?:\/\/|\/\*)\s*swallow\b/i;
 
 const WORKAROUND_OR_COMPROMISE = new RegExp(
   `${WORKAROUND.source}|${COMPROMISE.source}`,
@@ -224,7 +225,7 @@ export const RULES = [
   {
     id: "workaround-comment",
     label:
-      "comments that justify a workaround or compromise (hack, wait for React, best-effort, swallowed error, defensive guard)",
+      "comments that justify a workaround or compromise (hack, wait for React, swallowed error, defensive guard)",
     fix: "Fix the cause instead of explaining it: act on the event or state change the code is waiting for, handle or surface the failure instead of swallowing it, and drop a guard for a case the types or callers already rule out. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
     count: (text) =>
       countUnexemptCommentLines(

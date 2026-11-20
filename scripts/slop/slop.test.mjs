@@ -188,11 +188,6 @@ describe("rules", () => {
   // neutral wording it must not.
   const COMPROMISE_CASES = [
     [
-      "best-effort",
-      "// Best-effort: telemetry must not block the save.",
-      "// This is not best-effort: a failed write aborts the run.",
-    ],
-    [
       "belt-and-braces",
       "// Belt and braces: the lister already drops symlinks.",
       "// Digesting first is not belt-and-braces: timingSafeEqual throws.",
