@@ -13,7 +13,11 @@
  * measured. Each turn opens a new chat, so an eval iteration never inherits
  * the last one's conversation.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  decideToolPolicyFromSnapshot,
+  type ToolPolicySnapshot,
+} from "@mcpjam/sdk/contract";
 import {
   SYNTHETIC_SESSION_APPROVAL_DENIAL,
   type TurnApprovalPolicy,
@@ -25,8 +29,15 @@ import {
   type WebClientRuntimeId,
   type WebConnectorAuth,
 } from "@/shared/web-clients";
+import {
+  HARNESS_POLICY_BLOCK_TEXT_PREFIX,
+  type HarnessPolicyBlockRecord,
+} from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { chatgptWebPageModule } from "../../utils/harness/real-ui/chatgpt-web.js";
-import { claudeWebPageModule } from "../../utils/harness/real-ui/claude-web.js";
+import {
+  MCPJAM_CONNECTOR_PREFIX,
+  claudeWebPageModule,
+} from "../../utils/harness/real-ui/claude-web.js";
 import {
   driveRealUiTurn,
   type RealUiTurnResult,
@@ -60,6 +71,12 @@ export type WebTurnApproval = {
   askPerson?: (call: ToolCallRequest) => Promise<ApprovalDecision>;
 };
 
+/** The run's sealed tool policy by server id (`harnessToolPolicy`), and where its refusals go. */
+export type WebTurnToolPolicy = {
+  snapshots: Readonly<Record<string, ToolPolicySnapshot>>;
+  onBlock?: (block: HarnessPolicyBlockRecord) => void;
+};
+
 export type WebClientTurnInput = {
   runtimeId: WebClientRuntimeId;
   projectId: string;
@@ -68,6 +85,7 @@ export type WebClientTurnInput = {
   runId: string;
   turnId?: string;
   approval: WebTurnApproval;
+  toolPolicy?: WebTurnToolPolicy;
   environment: WebClientEnvironment;
   connectorAuth?: WebConnectorAuth;
   signal?: AbortSignal;
@@ -106,11 +124,40 @@ const PAGE_MODULES: Record<WebClientRuntimeId, RealUiPageModule> = {
   "chatgpt-web": chatgptWebPageModule,
 };
 
-/** The turn's approval gate as the forwarding endpoint calls it. */
+/** A call on a connector the turn can't place under a server has no decision. */
+const NO_DECISION: ToolPolicySnapshot = { mode: "default", denied: {}, known: [], unknownTool: "deny" };
+
+/**
+ * The turn's approval gate as the forwarding endpoint calls it. The run's
+ * tool policy decides first, whatever the switch says, by the lookup the
+ * harness proxy makes, and a refusal reads as the proxy's does.
+ */
 export function webTurnApprover(
   approval: WebTurnApproval,
+  policy?: WebTurnToolPolicy & { serverOf: (connectorId: string) => string | undefined },
 ): (call: ToolCallRequest) => Promise<ApprovalDecision> {
   return async (call) => {
+    if (policy) {
+      const serverId = policy.serverOf(call.connectorId);
+      const snapshot =
+        serverId === undefined
+          ? NO_DECISION
+          : Object.hasOwn(policy.snapshots, serverId)
+            ? policy.snapshots[serverId]
+            : undefined;
+      const decided = snapshot && decideToolPolicyFromSnapshot({ snapshot, toolName: call.toolName });
+      if (decided && !decided.allowed) {
+        policy.onBlock?.({
+          toolName: call.toolName,
+          reason: decided.reason,
+          classification: decided.classification,
+          at: Date.now(),
+          ...(call.toolUseId ? { toolCallId: call.toolUseId } : {}),
+          ...(serverId ? { serverId } : {}),
+        });
+        return { allow: false, reason: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decided.reason}` };
+      }
+    }
     // An MCP server's tools sit at the `setting` floor: the switch decides.
     if (!approval.requireToolApproval) return { allow: true };
     if (approval.answer === "deny") {
@@ -124,9 +171,14 @@ export function webTurnApprover(
   };
 }
 
-/** MCPJam's own name for the connector it adds, so it never touches another. */
+/**
+ * MCPJam's own name for the connector it adds, so it never touches another.
+ * The vendors find a connector by name, so a short hash keeps two servers
+ * whose names start alike apart, and the name stays within 31 characters.
+ */
 export function webConnectorName(serverId: string): string {
-  return `MCPJam ${serverId.slice(0, 24)}`;
+  const hash = createHash("sha256").update(serverId).digest("hex").slice(0, 8);
+  return [MCPJAM_CONNECTOR_PREFIX, serverId.slice(0, 15).trim(), hash].filter(Boolean).join(" ");
 }
 
 export async function runWebClientTurn(
@@ -165,7 +217,10 @@ export async function runWebClientTurn(
         url: new URL(webConnectorPath(connectorId), env.publicBaseUrl).href,
       });
     }
-    const approve = webTurnApprover(input.approval);
+    const approve = webTurnApprover(
+      input.approval,
+      input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
+    );
     for (const connectorId of serverOfConnector.keys()) {
       windows.open({ connectorId, runId: input.runId, turnId, approve });
       opened.push(connectorId);

@@ -7,21 +7,27 @@
  * transcript and persists a turn trace with the forwarded route's receipt. A
  * page that could not be driven throws `WebClientRunError`, which every
  * caller already treats as a failed turn: the run failed, and nothing was
- * learned about the server.
+ * learned about the server. A setting the vendor's app can't honor throws
+ * `WebClientTurnRefusedError` before anything runs.
  */
 import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type ModelMessage,
 } from "ai";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { approvalAnswerOf } from "@/shared/tool-approval";
 import {
   WEB_CLIENT_DISPLAY_NAMES,
   webClientVendorForRuntime,
+  type WebClientRuntimeId,
 } from "@/shared/web-clients";
 import type { PersistedTurnTrace } from "../../utils/chat-ingestion.js";
 import { buildHarnessMcpAtTurn } from "../../utils/harness/harness-mcp-receipt.js";
 import { resolveHarnessMcpPlan } from "../../utils/harness/harness-mcp-plan.js";
+import type { HarnessUnavailableKind } from "../../utils/harness/harness-availability.js";
+import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy-policy-enforcement.js";
+import { harnessToolApprovalRefusalReason } from "../../utils/harness/harness-tool-approval.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import type { RealUiFailure } from "../../utils/harness/real-ui/page-module.js";
 import type {
@@ -68,6 +74,43 @@ function lastUserText(messages: readonly ModelMessage[]): string {
     .trim();
 }
 
+/**
+ * A turn refused before its page is driven, for a setting the vendor's app
+ * can't honor. `kind` is the one the preflight refuses the same setting with.
+ */
+export class WebClientTurnRefusedError extends Error {
+  constructor(
+    readonly kind: Extract<HarnessUnavailableKind, "tool-approval" | "setting-unsupported">,
+    message: string,
+  ) {
+    super(message);
+    this.name = "WebClientTurnRefusedError";
+  }
+}
+
+/**
+ * The app runs its own tools where nothing can pause them, so a turn that
+ * asks for approval is refused whole by the gate every runtime passes, never
+ * denied call by call. It has no place for a host's system prompt either:
+ * typed into the user's message it would change the chat being measured.
+ */
+function refuseUnsupportedSettings(runtimeId: WebClientRuntimeId, options: MCPJamHandlerOptions): void {
+  const adapter = getHarnessAdapter(runtimeId);
+  const approvalRefusal = harnessToolApprovalRefusalReason({
+    adapter,
+    mcpClient: "harness",
+    requireToolApproval: options.requireToolApproval === true,
+    hasSelectedMcpServers: (options.selectedServers?.length ?? 0) > 0,
+  });
+  if (approvalRefusal) throw new WebClientTurnRefusedError("tool-approval", approvalRefusal);
+  if (options.systemPrompt?.trim()) {
+    throw new WebClientTurnRefusedError(
+      "setting-unsupported",
+      `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[runtimeId].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`,
+    );
+  }
+}
+
 export async function runWebClientHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
@@ -77,6 +120,7 @@ export async function runWebClientHarnessTurn(
   if (!runtimeId || !vendor || (runtimeId !== "claude-web" && runtimeId !== "chatgpt-web")) {
     throw new Error("This turn is not a web client turn.");
   }
+  refuseUnsupportedSettings(runtimeId, options);
   const name = WEB_CLIENT_DISPLAY_NAMES[vendor];
   const environment = webClientEnvironment();
   if (!environment) {
@@ -98,6 +142,15 @@ export async function runWebClientHarnessTurn(
         requireToolApproval: options.requireToolApproval === true,
         answer: approvalAnswerOf(options.approvalMode),
       },
+      // Accounted where the other runtimes' blocks are (`onHarnessPolicyBlocks`).
+      ...(options.harnessToolPolicy
+        ? {
+            toolPolicy: {
+              snapshots: options.harnessToolPolicy,
+              onBlock: (block: HarnessPolicyBlockRecord) => options.onHarnessPolicyBlocks?.([block]),
+            },
+          }
+        : {}),
       environment,
       ...(options.abortSignal ? { signal: options.abortSignal } : {}),
     });
