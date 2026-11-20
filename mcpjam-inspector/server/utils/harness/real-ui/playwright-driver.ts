@@ -54,8 +54,12 @@ export async function createPlaywrightDriver(
     async url() {
       return page.url();
     },
-    async evaluate(fn, arg) {
-      return page.evaluate(fn, arg);
+    async evaluate<T, A>(fn: (arg: A) => T | Promise<T>, arg: A): Promise<T> {
+      // Page modules pass plain JSON arguments, never element handles, so the
+      // value Playwright hands the function is the argument itself. Widening
+      // the parameter lets Playwright's unboxed argument type through.
+      const pageFunction = fn as (value: unknown) => T | Promise<T>;
+      return page.evaluate(pageFunction, arg);
     },
     waitFor: pollUntil,
     async click(selector) {
