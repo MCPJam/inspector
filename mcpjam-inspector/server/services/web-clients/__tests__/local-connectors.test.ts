@@ -90,6 +90,32 @@ describe("local connector registration", () => {
     expect((await vendor.initialize()).status).toBe(404);
   });
 
+  it("opens no turn for a body that isn't JSON, and a turn that allows every tool for {}", async () => {
+    const { app, control } = setup();
+    const created = await control("", {
+      method: "POST",
+      body: JSON.stringify({ upstreamUrl: fixture.url }),
+    });
+    const { connectorId, path } = await created.json();
+    const vendor = vendorClient(app, { path });
+    // A restrictive request cut off in transit.
+    const cut = await control(`/${connectorId}/turn`, {
+      method: "POST",
+      body: '{"allowTools":["echo"]',
+    });
+    expect(cut.status).toBe(400);
+    fixture.received.length = 0;
+    const refused = await (await vendor.post(vendor.callToolRaw(2, "delete_all", "x"))).json();
+    expect(refused.error.message).toMatch(/^No MCPJam run/);
+    expect(fixture.received).toHaveLength(0);
+
+    const open = await control(`/${connectorId}/turn`, { method: "POST", body: "{}" });
+    expect(open.status).toBe(201);
+    expect(
+      await (await vendor.post(vendor.callToolRaw(3, "delete_all", "y"))).json(),
+    ).toMatchObject({ id: 3, result: { content: [{ text: "echo: y" }] } });
+  });
+
   it("refuses registration with the flag off or a URL that is not http", async () => {
     const off = setup(false);
     const body = JSON.stringify({ upstreamUrl: fixture.url });
