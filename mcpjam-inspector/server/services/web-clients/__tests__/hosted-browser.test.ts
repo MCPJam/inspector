@@ -21,6 +21,7 @@ describe("the session transport", () => {
   const okResponse = {
     status: "ok" as const,
     result: { ok: true, output: { url: "https://chatgpt.com/" } },
+    bootId: "boot-1",
   };
 
   it("maps a page module's command onto the session's daemon", async () => {
@@ -107,14 +108,9 @@ describe("the per-turn hosted environment", () => {
   it("is what each turn reads once set at startup", async () => {
     vi.stubEnv("MCPJAM_INSPECTOR_PUBLIC_URL", "https://inspector.example");
     vi.stubEnv("CONVEX_HTTP_URL", "https://backend.example");
-    vi.stubEnv("MCPJAM_INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-for-tests");
     setWebClientEnvironment(createHostedWebClientEnvironmentFactory({ service }));
-    const environment = await webClientEnvironmentFor(turn).catch((error: unknown) => error);
-    if (environment instanceof Error) {
-      // A deployment without the service credential refuses with the reason.
-      expect(environment.message).toMatch(/credential|token|service/i);
-      return;
-    }
+    const environment = await webClientEnvironmentFor(turn);
     expect(environment?.publicBaseUrl).toBe("https://inspector.example");
   });
 });
