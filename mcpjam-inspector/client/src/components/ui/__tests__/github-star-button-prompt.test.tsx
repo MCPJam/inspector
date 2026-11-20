@@ -14,7 +14,7 @@ import { GitHubStarButton } from "../github-star-button";
 const { track } = vi.hoisted(() => ({ track: vi.fn() }));
 vi.mock("@/lib/analytics", () => ({ track }));
 
-const PASSED = "Your conformance run passed";
+const PASSED = "Your conformance run is complete";
 
 function renderButton(location: "header" | "settings" = "header") {
   return render(
@@ -85,6 +85,24 @@ describe("GitHubStarButton prompt", () => {
     expect(screen.getByText(PASSED)).toBeInTheDocument();
   });
 
+  it("waits while another dialog is open", async () => {
+    const { rerender } = render(
+      <TooltipProvider delayDuration={0}>
+        <GitHubStarButton location="header" prompt />
+        <div data-slot="dialog-content" data-state="open" />
+      </TooltipProvider>,
+    );
+    requestConformance();
+    expect(screen.queryByText(PASSED)).not.toBeInTheDocument();
+    expect(localStorage.getItem(GITHUB_STAR_PROMPT_STORAGE_KEY)).toBeNull();
+    rerender(
+      <TooltipProvider delayDuration={0}>
+        <GitHubStarButton location="header" prompt />
+      </TooltipProvider>,
+    );
+    expect(await screen.findByText(PASSED)).toBeInTheDocument();
+  });
+
   it("closes on Not now and records why", async () => {
     renderButton();
     requestConformance();
@@ -117,7 +135,7 @@ describe("GitHubStarButton prompt", () => {
       requestGitHubStarPrompt({ trigger: "oauth", reason: "return_visit" }),
     );
     expect(
-      await screen.findByText("Back in the OAuth debugger"),
+      await screen.findByText("Thanks for checking out our debugger!"),
     ).toBeInTheDocument();
     expect(track).toHaveBeenCalledWith("github_star_prompt_shown", {
       location: "header",

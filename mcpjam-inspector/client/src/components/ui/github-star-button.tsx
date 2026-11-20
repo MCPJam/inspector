@@ -168,14 +168,30 @@ const FEATURE_NAMES = {
 } as const;
 
 function promptTitle(request: GitHubStarPromptRequest): string {
-  if (request.reason === "return_visit") {
-    return request.trigger === "oauth"
-      ? "Back in the OAuth debugger"
-      : "Back in the XAA debugger";
-  }
-  return request.trigger === "conformance"
-    ? "Your conformance run passed"
-    : `Your ${FEATURE_NAMES[request.trigger]} is complete`;
+  if (request.reason === "return_visit")
+    return "Thanks for checking out our debugger!";
+  return `Your ${FEATURE_NAMES[request.trigger]} is complete`;
+}
+
+const OPEN_DIALOG =
+  '[data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"]';
+
+/** Dialogs outside the announcement queue, such as the OAuth target setup. */
+function useDialogOpen(): boolean {
+  const isOpen = () => document.querySelector(OPEN_DIALOG) !== null;
+  const [open, setOpen] = useState(isOpen);
+  useEffect(() => {
+    const check = () => setOpen(isOpen());
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributeFilter: ["data-state"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  return open;
 }
 
 function GitHubStarPrompt({
@@ -189,6 +205,7 @@ function GitHubStarPrompt({
   isAnchor: (target: EventTarget | null) => boolean;
 }) {
   const shown = useRef(false);
+  const dialogOpen = useDialogOpen();
   // Leaving the page (e.g. browser Back) must not bring the ask back later.
   useEffect(
     () => () => {
@@ -205,7 +222,7 @@ function GitHubStarPrompt({
 
   return (
     <AnnouncementSpotlight
-      eligible
+      eligible={!dialogOpen}
       anchor={anchor}
       side="bottom"
       align="end"

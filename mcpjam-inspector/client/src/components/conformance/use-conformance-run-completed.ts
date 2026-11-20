@@ -5,7 +5,7 @@ import { requestGitHubStarPrompt } from "@/lib/github-star-prompt";
 
 /**
  * Reports each run this page started and saw finish, and asks for a GitHub
- * star after a passing one. A saved run opened later never counts.
+ * star after one that produced a score, passed or failed. A saved run opened later never counts.
  */
 export function useConformanceRunCompleted(
   isRunning: boolean,
@@ -23,8 +23,8 @@ export function useConformanceRunCompleted(
       outcome: score.outcome,
       has_advice: hasAdvice,
     });
-    // A run where nothing applied passes vacuously; it is no success to celebrate.
-    if (score.outcome === "passed" && score.score !== null) {
+    // Incomplete runs and runs where nothing applied have no result to show for.
+    if (score.outcome !== "incomplete" && score.score !== null) {
       requestGitHubStarPrompt({
         trigger: "conformance",
         reason: "completed",

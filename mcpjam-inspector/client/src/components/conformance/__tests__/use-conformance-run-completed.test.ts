@@ -64,17 +64,23 @@ describe("useConformanceRunCompleted", () => {
     });
   });
 
-  it.each(["failed", "incomplete"] as const)(
-    "reports a %s run without asking for a star",
-    (outcome) => {
-      runThenFinish(score(outcome));
-      expect(track).toHaveBeenCalledWith(
-        "conformance_run_completed",
-        expect.objectContaining({ outcome }),
-      );
-      expect(requestGitHubStarPrompt).not.toHaveBeenCalled();
-    },
-  );
+  it("asks for a star after a failed run that produced a score", () => {
+    runThenFinish(score("failed"));
+    expect(requestGitHubStarPrompt).toHaveBeenCalledWith({
+      trigger: "conformance",
+      reason: "completed",
+      hasAdvice: false,
+    });
+  });
+
+  it("reports an incomplete run without asking for a star", () => {
+    runThenFinish(score("incomplete"));
+    expect(track).toHaveBeenCalledWith(
+      "conformance_run_completed",
+      expect.objectContaining({ outcome: "incomplete" }),
+    );
+    expect(requestGitHubStarPrompt).not.toHaveBeenCalled();
+  });
 
   it("does not ask for a star when nothing was applicable", () => {
     runThenFinish({ ...score("passed"), score: null, applicable: 0 });
