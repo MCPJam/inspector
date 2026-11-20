@@ -853,7 +853,7 @@ export interface UseChatSessionReturn {
     > &
       Pick<
         Parameters<UseChatSessionReturn["sendMessage"]>[0],
-        "pluginMentions" | "extraParts" | "widgetModelContext"
+        "pluginMentions" | "extraParts" | "widgetModelContext" | "isCurrent"
       > & {
         /** Attached prompt and skill messages, copied in after the transcript. */
         prependMessages?: UIMessage[];
@@ -6197,6 +6197,7 @@ export function useChatSession(
           pluginMentions: options.pluginMentions,
           extraParts: options.extraParts,
           widgetModelContext: options.widgetModelContext,
+          isCurrent: options.isCurrent,
         });
       } catch {
         options.onDispatchRefused?.();

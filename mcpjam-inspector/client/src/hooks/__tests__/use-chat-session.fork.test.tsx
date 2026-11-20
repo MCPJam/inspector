@@ -1388,6 +1388,31 @@ describe("useChatSession fork preservation", () => {
     expect(onDispatchRefused).toHaveBeenCalledTimes(1);
   });
 
+  it("holds a column branch's send when the caller's check fails at dispatch", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: { projectId: "project-1", selectedServerIds: [] },
+      }),
+    );
+    act(() => {
+      result.current.setMessages([
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hello" }] },
+      ] as UIMessage[]);
+    });
+    const onDispatchRefused = vi.fn();
+
+    const outcome = await result.current.branchFromThread({
+      text: "follow up",
+      isCurrent: () => false,
+      onDispatchRefused,
+    });
+
+    expect(outcome).toBeNull();
+    expect(mockState.sendMessage).not.toHaveBeenCalled();
+    expect(onDispatchRefused).toHaveBeenCalledTimes(1);
+  });
+
   it("is a no-op when the target message is no longer in the thread", async () => {
     const { result } = renderHook(() =>
       useChatSession({
