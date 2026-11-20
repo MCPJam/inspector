@@ -150,4 +150,35 @@ describe("NotificationsPanelContent", () => {
     expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
     expect(window.location.pathname).toBe("/access-requests/req_1");
   });
+
+  it("opens the access request page from the keyboard", () => {
+    const markAsRead = vi.fn();
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead,
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    renderWith([
+      notification({
+        _id: "n-access",
+        type: "project_access_requested",
+        entityId: "req_1",
+        entityName: "Payments",
+        actorName: "Ada",
+      }),
+      notification({ _id: "n-org", type: "organization_added" }),
+    ]);
+
+    // Only the row that opens a page is a link; the others stay plain rows.
+    const link = screen.getByRole("link", {
+      name: /Ada asked for access to project "Payments"/,
+    });
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(link).toHaveAttribute("tabindex", "0");
+    link.focus();
+    fireEvent.keyDown(link, { key: "Enter" });
+    expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
+    expect(window.location.pathname).toBe("/access-requests/req_1");
+  });
 });

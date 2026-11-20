@@ -42,7 +42,7 @@ export function outcomeOfDecision(
     billing: false,
     title: "Access granted",
     body: result.addedToOrg
-      ? `${who} is now a member of your organization and can edit ${project}.`
+      ? `${who} joined your organization as a guest and can edit ${project}.`
       : `${who} can now edit ${project}.`,
   };
 }

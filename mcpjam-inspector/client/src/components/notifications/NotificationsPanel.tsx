@@ -6,6 +6,7 @@ import {
   Inbox,
   Wallet,
 } from "lucide-react";
+import type { KeyboardEvent } from "react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PopoverContent } from "@mcpjam/design-system/popover";
@@ -116,6 +117,18 @@ function NotificationItem({
         !notification.isRead && "bg-muted/30"
       )}
       onClick={handleClick}
+      // A row that opens a page is a link for keyboard and screen readers too.
+      {...(path
+        ? {
+            role: "link",
+            tabIndex: 0,
+            onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              handleClick();
+            },
+          }
+        : {})}
     >
       <div
         className={cn(

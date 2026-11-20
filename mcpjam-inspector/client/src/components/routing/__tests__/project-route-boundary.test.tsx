@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -20,6 +21,10 @@ const authState = vi.hoisted(() => ({
   signIn: vi.fn(),
 }));
 vi.mock("@workos-inc/authkit-react", () => ({ useAuth: () => authState }));
+const dbUser = vi.hoisted(() => ({ ready: true }));
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => dbUser.ready,
+}));
 
 const requestAccess = vi.hoisted(() => vi.fn());
 vi.mock("convex/react", () => ({ useMutation: () => requestAccess }));
@@ -64,6 +69,7 @@ describe("ProjectRouteBoundary", () => {
     authState.user = null;
     authState.isLoading = false;
     authState.signIn.mockReset();
+    dbUser.ready = true;
     requestAccess.mockReset();
     localStorage.clear();
     sessionStorage.clear();
@@ -185,6 +191,43 @@ describe("ProjectRouteBoundary", () => {
       );
       renderBoundary(inaccessible("not-a-member"));
       expect(screen.getByRole("button", { name: "Ask for access" })).toBeEnabled();
+    });
+
+    it("waits for the account to finish setting up before asking", () => {
+      // A colleague who just signed up from the link has a WorkOS user before
+      // the Convex user row exists; a request then would fail.
+      authState.user = { id: "user_1" };
+      dbUser.ready = false;
+      renderBoundary(inaccessible("not-a-member"));
+      const button = screen.getByRole("button", { name: "Ask for access" });
+      expect(button).toBeDisabled();
+      fireEvent.click(button);
+      expect(requestAccess).not.toHaveBeenCalled();
+    });
+
+    it("offers a new request when the window ends while the screen is open", () => {
+      vi.useFakeTimers();
+      try {
+        authState.user = { id: "user_1" };
+        localStorage.setItem(
+          "mcpjam-project-access-requests",
+          JSON.stringify({
+            [`user_1:${A}`]: Date.now() - (24 * 60 * 60 * 1000 - 60_000),
+          }),
+        );
+        renderBoundary(inaccessible("not-a-member"));
+        expect(
+          screen.getByRole("button", { name: "Request sent" }),
+        ).toBeDisabled();
+        act(() => {
+          vi.advanceTimersByTime(60_001);
+        });
+        expect(
+          screen.getByRole("button", { name: "Ask for access" }),
+        ).toBeEnabled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("looks the same whatever the reason the project did not resolve", () => {

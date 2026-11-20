@@ -124,7 +124,7 @@ describe("AccessRequestPage", () => {
     expect(await screen.findByText("Access granted")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Ada Lovelace is now a member of your organization and can edit Payments.",
+        "Ada Lovelace joined your organization as a guest and can edit Payments.",
       ),
     ).toBeInTheDocument();
   });

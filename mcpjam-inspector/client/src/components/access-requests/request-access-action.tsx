@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { GuestSignInButton } from "@/components/auth/GuestSignInMessage";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { convexErrMessage } from "@/lib/convex-error";
 import { toast } from "@/lib/toast";
@@ -37,15 +38,17 @@ function readSent(): Record<string, number> {
   }
 }
 
-function rememberSent(key: string): void {
+function rememberSent(key: string): number {
+  const now = Date.now();
   try {
     window.localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ ...readSent(), [key]: Date.now() }),
+      JSON.stringify({ ...readSent(), [key]: now }),
     );
   } catch {
     // Blocked storage only loses the reload memory; the request already went.
   }
+  return now;
 }
 
 /**
@@ -55,6 +58,7 @@ function rememberSent(key: string): void {
  */
 export function RequestAccessAction({ projectId }: { projectId: string }) {
   const { user, isLoading } = useInspectorAuth();
+  const ready = useDbUserReady();
   if (isLoading) return null;
   if (!user) {
     return (
@@ -63,6 +67,15 @@ export function RequestAccessAction({ projectId }: { projectId: string }) {
         label="Sign in to ask for access"
         location="project_route_inaccessible"
       />
+    );
+  }
+  // Until the Convex user row exists the request would fail with "User not
+  // found", which a colleague who just signed up from this link would hit.
+  if (!ready) {
+    return (
+      <Button type="button" size="sm" disabled>
+        Ask for access
+      </Button>
     );
   }
   return (
@@ -82,15 +95,27 @@ function SignedInRequestButton({
   storageKey: string;
 }) {
   const requestAccess = useMutation(requestProjectAccessRef);
-  const [sent, setSent] = useState(() => storageKey in readSent());
+  const [sentAt, setSentAt] = useState<number | null>(
+    () => readSent()[storageKey] ?? null,
+  );
   const [sending, setSending] = useState(false);
+  const sent = sentAt !== null;
+
+  // The window can end while this screen stays open; offer a new request then.
+  useEffect(() => {
+    if (sentAt === null) return;
+    const timer = window.setTimeout(
+      () => setSentAt(null),
+      sentAt + REQUEST_WINDOW_MS - Date.now(),
+    );
+    return () => window.clearTimeout(timer);
+  }, [sentAt]);
 
   const send = async () => {
     setSending(true);
     try {
       await requestAccess({ projectId });
-      rememberSent(storageKey);
-      setSent(true);
+      setSentAt(rememberSent(storageKey));
     } catch (error) {
       toast.error(
         convexErrMessage(error, "Could not send the request. Try again."),

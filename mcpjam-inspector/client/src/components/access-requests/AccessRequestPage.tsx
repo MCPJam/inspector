@@ -158,7 +158,7 @@ function AccessRequestReview({ request }: { request: AccessRequest }) {
             <p className="text-sm">
               {request.requesterInOrganization
                 ? `Approving gives ${who} editor access to this project.`
-                : `Approving adds ${who} to your organization as a member, with editor access to this project.`}
+                : `Approving adds ${who} to your organization as a guest, with editor access to this project only.`}
             </p>
             {refusal ? (
               <OutcomeNotice
