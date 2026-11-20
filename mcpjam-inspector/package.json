@@ -66,6 +66,7 @@
     "dev:server:tsx": "cross-env ENVIRONMENT=dev NODE_ENV=development ALLOW_LOCAL_DEV_SERVICE_TOKEN=true tsx watch --tsconfig server/tsconfig.json --include 'evals-cli/src/**/*.ts' --exclude 'evals-cli/dist/**' --exclude 'evals-cli/node_modules/**' server/index.ts",
     "build:production-traffic-migration": "esbuild server/services/production-traffic/migrate-cli.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/production-traffic/migrate.mjs",
     "production-traffic:migrate": "tsx --tsconfig server/tsconfig.json server/services/production-traffic/migrate-cli.ts",
+    "production-traffic:smoke": "node scripts/production-traffic/smoke.mjs",
     "dev:client": "vite --config client/vite.config.ts",
     "dev:client:clean": "rm -rf node_modules/.vite && FORCE_OPTIMIZE=true vite --config client/vite.config.ts",
     "build": "npm run clean && npm run build:sdk && npm run bundle:sandbox-proxies && npm run bundle:browser-harness && npm run bundle:plugin-shim && npm run bundle:codex-appserver-bridge && npm run bundle:copilot-cli-bridge && npm run bundle:local-harness-layer && npm run build:lib && npm run build:client && npm run build:server",
