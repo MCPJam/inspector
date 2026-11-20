@@ -15,6 +15,7 @@ import {
 import {
   joinTrialResults,
   rubricCheckTrialRows,
+  summarizeTrialScorecard,
 } from "../case-scorecard/trial-results";
 import { withRubricCheckRows } from "../case-scorecard/trial-scorecard";
 import { resultGlyph } from "../case-scorecard/trial-scorecard-row";
@@ -68,6 +69,74 @@ function iteration(): EvalIteration {
 }
 
 describe("rubricCheckTrialRows", () => {
+  const questions = [
+    {
+      key: "c:cites",
+      label: "Cites a source as originally asked",
+      status: "scored",
+      passed: false,
+      value: 0.1,
+      passThreshold: 0.5,
+      rationale: "No",
+      evidence: ["No source link"],
+    },
+    {
+      key: "c:uncertain",
+      label: "Names the file",
+      status: "scored",
+      passed: true,
+      value: 0.51,
+      passThreshold: 0.5,
+    },
+    { key: "q:skipped", label: "Tone", status: "skipped" },
+    { key: "q:error", label: "Format", status: "error", error: "no_answer" },
+    {
+      key: "c:incomplete",
+      label: "No recorded verdict",
+      status: "scored",
+      value: 0,
+    },
+  ];
+
+  it("shows saved advisory findings without scores or evaluationConfig", () => {
+    const trial = {
+      ...iteration(),
+      metadata: { rubricChecksVerdict: { questions } },
+    };
+    const rows = rubricCheckTrialRows(trial);
+    expect(rows.map((row) => row.result.state)).toEqual([
+      "failed",
+      "uncertain",
+      "skipped",
+      "error",
+    ]);
+    expect(rows[0]).toMatchObject({
+      label: "Cites a source as originally asked",
+      role: "advisory",
+      result: { source: "modelVerdict", threshold: 0.5, reason: "No" },
+      evidence: { scoreEvidence: ["No source link"] },
+    });
+    expect(summarizeTrialScorecard([{ rows }])).toMatchObject({
+      advisory: 1,
+      required: { counted: 0, passed: 0 },
+    });
+  });
+
+  it("prefers joined scores and fills only missing grader rows", () => {
+    const trial = iteration();
+    const rows = rubricCheckTrialRows({
+      ...trial,
+      metadata: { ...trial.metadata, rubricChecksVerdict: { questions } },
+    });
+    const citesRows = rows.filter((row) => row.rubricCheck?.key === "c:cites");
+    expect(citesRows).toHaveLength(1);
+    expect(citesRows[0]?.result).toMatchObject({
+      state: "passed",
+      source: "scoreRow",
+    });
+    expect(rows.some((row) => row.rubricCheck?.key === "q:skipped")).toBe(true);
+  });
+
   it("lists what the trial was asked, in the backend's order", () => {
     const rows = rubricCheckTrialRows(iteration());
     expect(rows.map((row) => row.label)).toEqual([
