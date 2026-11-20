@@ -1,0 +1,233 @@
+/**
+ * The hosted web client environment: the backend keeps the project's web
+ * accounts, their connectors and their saved browser profiles, and the run
+ * acts as its person through the Inspector service token.
+ *
+ *  - Account: the suite's or run's choice, else the vendor's default
+ *    (`isDefault`), else the vendor's only account.
+ *  - Connector: `ensureWebConnector` with `oauth` auth; the vendor's app adds
+ *    it as `https://<inspector host>/mcp/<connectorId>`.
+ *  - Browser: the saved profile from `profile-for-run`, restored into the
+ *    run's hosted browser by `openHostedBrowser`. The profile's key and
+ *    download URL are handed over and never logged.
+ *  - Outcome: a verified run marks the account verified; a sign-in step
+ *    marks it as needing sign-in and reports the step so recovery can resume.
+ */
+import { randomUUID } from "node:crypto";
+import { ConvexHttpClient } from "convex/browser";
+import { makeFunctionReference } from "convex/server";
+import { z } from "zod";
+import {
+  WEB_CLIENT_DISPLAY_NAMES,
+  type WebClientVendor,
+} from "@/shared/web-clients";
+import {
+  createMemorySendJournal,
+  type SendJournal,
+} from "../../utils/harness/real-ui/drive-turn.js";
+import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
+import { needsSignIn } from "../../utils/harness/real-ui/page-module.js";
+import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../service-credential.js";
+import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
+
+/** `webClientService:read` / `webClientService:apply`, one command each. */
+export type WebClientService = (
+  kind: "read" | "apply",
+  command: Record<string, unknown>,
+) => Promise<unknown>;
+
+export type WebActor = { actorExternalId: string } | { actorUserId: string };
+
+/** What `profile-for-run` hands a run. Secret: never log any of it. */
+export type ProfileForRun = {
+  webAccountId: string;
+  profileVersion: number;
+  downloadUrl: string;
+  dataKey: string;
+  sizeBytes: number;
+  sha256: string;
+  savedAt: number;
+};
+
+const accountRow = z.object({
+  webAccountId: z.string(),
+  vendor: z.string(),
+  isDefault: z.boolean().optional(),
+  accountEmail: z.string().optional(),
+  hasProfile: z.boolean().optional(),
+});
+const profileAnswer = z.object({
+  webAccountId: z.string(),
+  profileVersion: z.number(),
+  downloadUrl: z.string().url(),
+  dataKey: z.string().min(1),
+  sizeBytes: z.number(),
+  sha256: z.string(),
+  savedAt: z.number(),
+});
+
+/** The service functions through Convex, acting only with the service token. */
+export function createConvexWebClientService(options: {
+  convexUrl: string;
+  serviceToken: string;
+}): WebClientService {
+  const client = new ConvexHttpClient(options.convexUrl, { logger: false });
+  return async (kind, command) =>
+    kind === "read"
+      ? client.query(makeFunctionReference<"query">("webClientService:read"), {
+          serviceToken: options.serviceToken,
+          requestId: randomUUID(),
+          command,
+        })
+      : client.mutation(makeFunctionReference<"mutation">("webClientService:apply"), {
+          serviceToken: options.serviceToken,
+          command,
+        });
+}
+
+/** `POST /internal/v1/web-accounts/profile-for-run`. */
+export function createProfileForRunClient(options: {
+  convexHttpUrl: string;
+  serviceToken: string;
+  fetchImpl?: typeof fetch;
+}) {
+  return async (args: {
+    actor: WebActor;
+    webAccountId: string;
+    runId: string;
+    venue: "hosted" | "local";
+  }): Promise<ProfileForRun> => {
+    const response = await (options.fetchImpl ?? fetch)(
+      new URL("/internal/v1/web-accounts/profile-for-run", options.convexHttpUrl),
+      {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          "content-type": "application/json",
+          [INSPECTOR_SERVICE_TOKEN_HEADER]: options.serviceToken,
+        },
+        body: JSON.stringify({
+          ...args.actor,
+          webAccountId: args.webAccountId,
+          runId: args.runId,
+          venue: args.venue,
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!response.ok) {
+      throw needsSignIn(
+        "signed_out",
+        "sign_in_check",
+        "The saved browser session for this account could not be loaded.",
+      );
+    }
+    return profileAnswer.parse(await response.json());
+  };
+}
+
+export type HostedWebClientDeps = {
+  service: WebClientService;
+  actor: WebActor;
+  /** `https://<inspector host>`: the vendor's app dials `/mcp/<id>` there. */
+  publicBaseUrl: string;
+  runId: string;
+  iterationId?: string;
+  /** The suite's or run's chosen account, when it chose one. */
+  chosenWebAccountId?: string;
+  profileForRun: ReturnType<typeof createProfileForRunClient>;
+  /** Restores the profile into the run's hosted browser and drives it. */
+  openHostedBrowser(args: {
+    profile: ProfileForRun;
+    sites: readonly string[];
+  }): Promise<{ driver: PageDriver; close(): Promise<void> }>;
+  journal?: SendJournal;
+};
+
+export function createHostedWebClientEnvironment(
+  deps: HostedWebClientDeps,
+): WebClientEnvironment {
+  return {
+    publicBaseUrl: deps.publicBaseUrl,
+    journal: deps.journal ?? createMemorySendJournal(),
+
+    async resolveAccount({ projectId, vendor }) {
+      const rows = z
+        .array(accountRow)
+        .parse(await deps.service("read", { action: "listWebAccounts", projectId, ...deps.actor }))
+        .filter((row) => row.vendor === vendor);
+      const chosen =
+        rows.find((row) => row.webAccountId === deps.chosenWebAccountId) ??
+        rows.find((row) => row.isDefault) ??
+        (rows.length === 1 ? rows[0] : undefined);
+      if (!chosen) throw noAccount(vendor);
+      return {
+        webAccountId: chosen.webAccountId,
+        ...(chosen.accountEmail ? { accountEmail: chosen.accountEmail } : {}),
+      };
+    },
+
+    async ensureConnector({ projectId, webAccountId, serverId }) {
+      const answer = z.object({ connectorId: z.string().min(1) }).parse(
+        await deps.service("apply", {
+          action: "ensureWebConnector",
+          projectId,
+          webAccountId,
+          serverId,
+          auth: "oauth",
+          ...deps.actor,
+        }),
+      );
+      return { connectorId: answer.connectorId };
+    },
+
+    async openBrowser({ webAccountId, sites }) {
+      const profile = await deps.profileForRun({
+        actor: deps.actor,
+        webAccountId,
+        runId: deps.runId,
+        venue: "hosted",
+      });
+      return deps.openHostedBrowser({ profile, sites });
+    },
+
+    async onOutcome(outcome: WebTurnOutcome) {
+      if (outcome.ok) {
+        if (!outcome.account.email) return;
+        await deps.service("apply", {
+          action: "markWebAccountVerified",
+          webAccountId: outcome.webAccountId,
+          accountEmail: outcome.account.email,
+          ...(outcome.account.workspace ? { workspaceName: outcome.account.workspace } : {}),
+          ...deps.actor,
+        });
+        return;
+      }
+      if (outcome.failure.kind !== "needs_sign_in") return;
+      await deps.service("apply", {
+        action: "markWebAccountNeedsSignIn",
+        webAccountId: outcome.webAccountId,
+        reason: outcome.failure.reason,
+        ...deps.actor,
+      });
+      await deps.service("apply", {
+        action: "reportWebSignInRequired",
+        webAccountId: outcome.webAccountId,
+        runId: deps.runId,
+        ...(deps.iterationId ? { iterationId: deps.iterationId } : {}),
+        pendingStep: JSON.stringify(outcome.pendingStep ?? { stepId: outcome.failure.step }),
+        reason: outcome.failure.reason,
+        ...deps.actor,
+      });
+    },
+  };
+}
+
+function noAccount(vendor: WebClientVendor) {
+  const name = WEB_CLIENT_DISPLAY_NAMES[vendor];
+  return needsSignIn(
+    "signed_out",
+    "sign_in_check",
+    `No ${name} account is saved for this project. Ask an admin to sign one in from the client's Browser settings.`,
+  );
+}
