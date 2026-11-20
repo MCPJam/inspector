@@ -26,8 +26,8 @@ vi.mock("@/lib/web-accounts/routes", () => ({
 }));
 // The hosted browser body has its own suite; here it only names its session.
 vi.mock("../WebSignInBrowser", () => ({
-  WebSignInBrowser: ({ browserSessionId }: { browserSessionId: string }) => (
-    <div data-testid="sign-in-browser">{browserSessionId}</div>
+  WebSignInBrowser: ({ chatSessionId }: { chatSessionId: string }) => (
+    <div data-testid="sign-in-browser">{chatSessionId}</div>
   ),
 }));
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard: mocks.copy }));
@@ -83,7 +83,10 @@ describe("useWebClientPane", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.create.mockResolvedValue({ webAccountId: "wa-new" });
-    mocks.signIn.mockResolvedValue({ browserSessionId: "session-1" });
+    mocks.signIn.mockResolvedValue({
+      browserSessionId: "session-1",
+      chatSessionId: "chat-1",
+    });
   });
   afterEach(cleanup);
 
@@ -154,8 +157,9 @@ describe("useWebClientPane", () => {
       label: "Claude web account",
     });
     expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-new");
+    // The pane attaches by the browser's chat; saving names the browser.
     expect(await screen.findByTestId("sign-in-browser")).toHaveTextContent(
-      "session-1",
+      "chat-1",
     );
     expect(screen.getByTestId("save-web-account-bar")).toBeInTheDocument();
   });

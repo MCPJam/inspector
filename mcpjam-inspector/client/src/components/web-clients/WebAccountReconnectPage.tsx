@@ -107,7 +107,11 @@ function Reconnect({
     args,
   );
   const role = useCanManageProjectClients({ isAuthenticated, projectId });
-  const [browserSessionId, setBrowserSessionId] = useState<string>();
+  const [signIn, setSignIn] = useState<{
+    browserSessionId: string;
+    chatSessionId: string;
+  }>();
+  const browserSessionId = signIn?.browserSessionId;
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
 
@@ -154,7 +158,10 @@ function Reconnect({
   const takeOver = () =>
     run(async () => {
       const started = await startWebAccountSignIn(projectId, webAccountId);
-      setBrowserSessionId(started.browserSessionId);
+      setSignIn({
+        browserSessionId: started.browserSessionId,
+        chatSessionId: started.chatSessionId ?? started.browserSessionId,
+      });
     }, `Couldn't open a browser to sign in to ${site}. Try again.`);
   const finish = (handback: string) =>
     run(async () => {
@@ -279,7 +286,7 @@ function Reconnect({
           <div className="flex h-[520px] flex-col">
             <WebSignInBrowser
               projectId={projectId}
-              browserSessionId={browserSessionId}
+              chatSessionId={signIn?.chatSessionId ?? browserSessionId}
             />
           </div>
         </div>

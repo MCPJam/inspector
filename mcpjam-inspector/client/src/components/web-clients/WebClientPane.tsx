@@ -91,6 +91,7 @@ export function useWebClientPane({
     hostId: string;
     webAccountId: string;
     browserSessionId: string;
+    chatSessionId: string;
   } | null>(null);
   const [starting, setStarting] = useState(false);
   if (!vendor || !hostId || !projectId) return null;
@@ -116,11 +117,13 @@ export function useWebClientPane({
             label: newWebAccountLabel(vendor, accounts),
           })
         ).webAccountId;
-      const { browserSessionId } = await startWebAccountSignIn(
-        projectId,
+      const started = await startWebAccountSignIn(projectId, webAccountId);
+      setSignIn({
+        hostId,
         webAccountId,
-      );
-      setSignIn({ hostId, webAccountId, browserSessionId });
+        browserSessionId: started.browserSessionId,
+        chatSessionId: started.chatSessionId ?? started.browserSessionId,
+      });
     } catch (failure) {
       const fallback = `Couldn't open a browser to sign in to ${site}. Try again.`;
       const refusal = describeConvexFailure(failure, fallback);
@@ -135,7 +138,7 @@ export function useWebClientPane({
     blocker = (
       <WebSignInBrowser
         projectId={projectId}
-        browserSessionId={active.browserSessionId}
+        chatSessionId={active.chatSessionId}
       />
     );
   else if (local || (account && !signedOut)) blocker = null;
