@@ -76,15 +76,17 @@ export async function pollUntil(
       throw new PageDriverError("timeout", `Timed out waiting for ${what}.`);
     }
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, intervalMs);
-      signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        },
-        { once: true },
-      );
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      // A caller's signal can outlive many waits, so each sleep removes the
+      // listener it added.
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, intervalMs);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 }

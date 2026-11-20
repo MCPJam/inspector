@@ -15,7 +15,8 @@
  *     seals, uploads and saves the profile (compare-and-set on its version)
  *     and marks the account verified. Answers `{ok:true, accountEmail,
  *     workspaceName?}` or `{ok:false, reason}` with `not_signed_in`,
- *     `wrong_account` or `version_conflict`.
+ *     `wrong_account` or `version_conflict`. A browser this replica doesn't
+ *     hold for the person, project and account answers 409.
  *
  * Admins only, acting as the signed-in user: the backend checks the actor's
  * project role on every call these make.
@@ -62,13 +63,32 @@ export interface SignInBrowser {
     sites: readonly string[];
     startUrl: string;
   }): Promise<{ browserSessionId: string; chatSessionId?: string }>;
-  driver(args: { actor: WebActor; projectId: string; browserSessionId: string }): Promise<PageDriver>;
+  /** The browser this person started for this account; refused otherwise. */
+  driver(args: {
+    actor: WebActor;
+    projectId: string;
+    webAccountId: string;
+    browserSessionId: string;
+  }): Promise<PageDriver>;
   /** The browser's profile as an archive. Never logged or kept. */
   captureProfile(args: {
     actor: WebActor;
     projectId: string;
+    webAccountId: string;
     browserSessionId: string;
   }): Promise<Uint8Array>;
+}
+
+/**
+ * No sign-in browser here for this person, project and account: it was
+ * opened on another replica, it closed, or it was opened for someone else.
+ * The same answer for each, so an id never says whose browser it is.
+ */
+export class SignInBrowserNotFoundError extends Error {
+  constructor() {
+    super("This sign-in browser was started elsewhere or has closed. Start the sign-in again.");
+    this.name = "SignInBrowserNotFoundError";
+  }
 }
 
 export type WebAccountRouteDeps = {
@@ -171,7 +191,13 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     if ((await deps.mayManage({ actor, projectId, webAccountId })) === false) return forbidden(c);
     const row = await accountOf(actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
-    const driver = await deps.browser.driver({ actor, projectId, browserSessionId });
+    let driver: PageDriver;
+    try {
+      driver = await deps.browser.driver({ actor, projectId, webAccountId, browserSessionId });
+    } catch (error) {
+      if (error instanceof SignInBrowserNotFoundError) return c.json({ error: error.message }, 409);
+      throw error;
+    }
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -188,7 +214,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const saved = await deps.saveProfile(actor, {
       webAccountId,
       expectedProfileVersion: row.profileVersion ?? 0,
-      profile: await deps.browser.captureProfile({ actor, projectId, browserSessionId }),
+      profile: await deps.browser.captureProfile({ actor, projectId, webAccountId, browserSessionId }),
     });
     if (!saved.ok) return c.json({ ok: false, reason: saved.reason });
     await deps.service.apply({
