@@ -280,7 +280,7 @@ function sseEvents(onData: (data: string) => void): (text: string) => void {
       start = i + 1;
     }
     if (!longLine) line += text.slice(start);
-    if (line.length > MAX_OBSERVED_CHARS) {
+    if (line.length > MAX_OBSERVED_CHARS + "data: ".length) {
       longLine = true;
       longData = line.startsWith("data:");
       line = "";
