@@ -160,7 +160,7 @@ function Reconnect({
     run(async () => {
       const result = await handBackWebReconnect(projectId, handback);
       setOutcome(handbackOutcome(result, site, account.accountEmail));
-    }, "Couldn't hand the account back. Try again.");
+    }, "Couldn't resume the waiting runs. Try again.");
 
   const rows: Array<[string, string]> = [
     [
