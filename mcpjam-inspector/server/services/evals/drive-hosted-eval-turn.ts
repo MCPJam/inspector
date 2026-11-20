@@ -78,6 +78,7 @@ import type { ToolPolicyGate } from "./tool-policy-gate";
 import type { UsageTotals } from "./types";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { harnessFailureEvidenceOf } from "../../utils/harness/harness-provider-error.js";
+import { WebClientRunError } from "../web-clients/web-client-harness-turn.js";
 
 type ToolCall = {
   toolName: string;
@@ -673,6 +674,9 @@ export async function driveHostedEvalTurn(
     }
 
     acc.capturedSpans.push(...traceCtx.recordedSpans);
+    // A web client run that stopped on its page still names the calls that
+    // reached the server first.
+    if (error instanceof WebClientRunError) acc.capturedSpans.push(...(error.turnTrace?.spans ?? []));
     let iterationError: string;
     let iterationErrorDetails: string | undefined;
     if (error instanceof Error) {
