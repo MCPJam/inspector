@@ -23,7 +23,10 @@ import {
   clearPendingTopup,
   stashPendingTopup,
 } from "../useCreditTopup";
-import { useCreditTopupReturnFlow } from "../useCreditTopupReturnFlow";
+import {
+  useCreditTopupReturnFlow,
+  useCreditTopupReturnFlowBilling,
+} from "../useCreditTopupReturnFlow";
 
 const STASH_KEY = "mcpjam.topup.pending";
 
@@ -243,6 +246,16 @@ describe("useCreditTopupReturnFlow", () => {
         chat_session_matched: false,
         resend_executed: false,
       },
+    );
+  });
+
+  it("on the billing page, tells someone an agent sent to go back to it", () => {
+    setLocationSearch("?topup=success&session_id=cs_1");
+    renderHook(() =>
+      useCreditTopupReturnFlowBilling({ organizationId: "org-1" }),
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      "Credits added. If an agent sent you here, go back and tell it to continue.",
     );
   });
 });
