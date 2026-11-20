@@ -1,35 +1,28 @@
 ---
 title: "Home"
 sidebarTitle: "Home dashboard"
-description: "Org-scoped dashboard with activity stats, recommended servers, and quick-start clients"
+description: "Your organization's dashboard: activity stats, what's new, and one-click recommended servers and clients."
 icon: "house"
 ---
 
-The Home dashboard is the default landing page for authenticated users with an active organization. It gives you a snapshot of your org's activity and lets you connect recommended MCP servers or spin up sandbox clients without leaving the page.
+Home is the first page you see in the hosted app at [app.mcpjam.com](https://app.mcpjam.com) when you're signed in with an active organization. It opens at `/home` (also `/`).
 
-<Note>
-The Home dashboard is available in the hosted app at [app.mcpjam.com](https://app.mcpjam.com) and requires you to be signed in with an active organization.
-</Note>
+What you see depends on your account:
 
-## Overview
+- **You're not in an organization yet:** Home shows **Welcome to MCPJam** and a **Get started** button. Select it to join or create an organization; then Home shows the dashboard below.
+- **You're in an organization:** Home greets you by first name and shows the dashboard below.
 
-When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you don't have an active organization yet, the page shows a **Get started** prompt that takes you to the Organizations page.
+## What's on Home
 
-<Note>
-If you are signing in for the first time, MCPJam shows a **Welcome** overlay on Home that guides you through connecting your first server. Once you complete onboarding and open the Playground, subsequent logins land on Home as normal.
-</Note>
+- **Greeting** with your first name.
+- **Stats** for your organization (below).
+- **Ask MCPJam**: ask a question or start a task with [Ask MCPJam](#mcpjam-agent-panel). It's hidden when your organization has turned Ask MCPJam off.
+- **What's new**: recent releases.
+- **Recommended servers** and **Recommended clients**, side by side.
 
-With an organization selected, the dashboard shows:
+## Stats
 
-- **Greeting**: a time-aware greeting with your first name.
-- **Org stats strip**: live counts for teammates, projects, servers, eval suites, tool executions (last 30 days), and messages sent (last 30 days).
-- **MCPJam Agent composer**: a text input to start or resume an agent conversation directly from the home page.
-- **What's new**: a compact list of recent platform releases and changes, with per-item dismiss and a "Clear all" action.
-- **Recommended servers** and **Recommended clients**: displayed side by side in a two-column grid.
-
-## Org stats strip
-
-The stats strip appears directly below the greeting and shows six metrics for your organization:
+Six counts for your organization, below the greeting:
 
 | Stat | Description |
 |------|-------------|
@@ -40,7 +33,17 @@ The stats strip appears directly below the greeting and shows six metrics for yo
 | Tool executions · 30d | Tool calls made in the last 30 days |
 | Messages · 30d | Messages sent in the last 30 days |
 
-Click **projects** or **servers** to jump to the Connect tab. Click **eval suites** to jump to the Evals tab. The 30-day metrics refresh automatically in the background.
+Select **projects** or **servers** to open Connect, or **eval suites** to open Evaluate. 
+
+## What's new
+
+Recent platform updates, above the recommended servers and clients.
+
+- **Hover** a row to open a popover with a muted looping video preview (or a YouTube thumbnail if no preview clip is available).
+- **Click** a row to open a panel with the full video, a "Watch on YouTube" link, an optional Docs link, and the full release description. Click **Got it** or press **Escape** to close.
+- **Dismiss** a single update with the **✕** button that appears on hover.
+- **Clear all** dismisses every pending update at once.
+- If there are more than three updates, a **View more** button expands the list inline.
 
 ## Recommended servers
 
@@ -61,16 +64,6 @@ To create a client:
 1. Make sure you have an active project selected.
 2. Click the template you want.
 3. MCPJam creates the client on your active project and opens it in the Clients tab.
-
-## What's new
-
-The **What's new** section appears above the recommended servers and clients grid and lists recent platform updates.
-
-- **Hover** a row to open a popover with a muted looping video preview (or a YouTube thumbnail if no preview clip is available).
-- **Click** a row to open a panel with the full video, a "Watch on YouTube" link, an optional Docs link, and the full release description. Click **Got it** or press **Escape** to close.
-- **Dismiss** a single update with the **✕** button that appears on hover.
-- **Clear all** dismisses every pending update at once.
-- If there are more than three updates, a **View more** button expands the list inline.
 
 ## MCPJam Agent panel
 
@@ -149,8 +142,13 @@ The MCPJam Agent panel is available to all signed-in users.
 
 Notifications are accessible from the sidebar. Click **Notifications** next to the **Support** entry at the bottom of the sidebar to open the notifications panel. Unread notifications show a badge count that is visible in both expanded and collapsed sidebar states.
 
-## What's next
+## Related
 
-- [Projects](/inspector/projects): create and manage projects for your servers
-- [Clients](/inspector/clients): configure and test MCP clients
-- [Servers](/inspector/connecting-servers): connect your own MCP servers
+- [Ask MCPJam](#mcpjam-agent-panel): the agent panel available on every page.
+- [Projects](/inspector/projects) · [Clients](/inspector/clients) · [Connect a server](/inspector/connecting-servers)
+
+**Looking for a section that moved?**
+
+- <span id="overview"></span>Overview: renamed, [see it here](#what’s-on-home)
+- <span id="org-stats-strip"></span>Org stats strip: renamed, [see it here](#stats)
+- <span id="whats-next"></span>What's next: renamed, [see it here](#related)

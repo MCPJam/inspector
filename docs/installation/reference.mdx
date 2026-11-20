@@ -210,7 +210,7 @@ Keep access links private: they grant control of the local Inspector and its con
 
 <AccordionGroup>
   <Accordion title="Does MCPJam need a database?" icon="database">
-    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx`; none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
+    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx`; none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are stored by MCPJam; the Terminal and Desktop apps store config locally on disk.
   </Accordion>
   <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
     All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
@@ -231,7 +231,7 @@ Keep access links private: they grant control of the local Inspector and its con
 
     - **OAuth credentials** from `mcpjam oauth login`: `~/.mcpjam/config.json`. Override per command with `--credentials-out`. See [CLI OAuth login](/cli/oauth-login).
     - **Eval results**: uploaded to your MCPJam project when `MCPJAM_API_KEY` is set to an MCPJam API key (`sk_…`). See [Saving Results](/sdk/concepts/saving-results).
-    - **Inspector UI changes** (server config, client edits): persisted via the **Save** button in the project view.
+    - **Inspector UI changes** (server config, client edits): saved with the **Save** button in the project view.
   </Accordion>
   <Accordion title="How do I sign out of the hosted app?" icon="log-out">
     Open the **account menu** at the bottom of the sidebar and pick **Sign out**. You'll be returned to the public app as a guest. See [Hosted App → Signing out](/hosted/overview#signing-out).
