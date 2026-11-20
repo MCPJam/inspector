@@ -77,6 +77,14 @@ describe("the hosted environment's backend calls", () => {
     expect(
       await environment(service, { chosenWebAccountId: "acct-other" }).resolveAccount({ projectId: "p", vendor: "claude" }),
     ).toEqual({ webAccountId: "acct-other" });
+    // A chosen account that is gone, or is another vendor's, stops the run: it never moves to the default.
+    for (const chosenWebAccountId of ["acct-removed", "acct-gpt"]) {
+      await expect(
+        environment(service, { chosenWebAccountId }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      ).rejects.toMatchObject({
+        failure: { kind: "needs_sign_in", message: expect.stringContaining("chosen for this run is not saved") },
+      });
+    }
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",

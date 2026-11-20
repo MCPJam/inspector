@@ -151,10 +151,18 @@ export function createHostedWebClientEnvironment(
         .array(accountRow)
         .parse(await deps.service.read({ action: "listWebAccounts", projectId, ...deps.actor }))
         .filter((row) => row.vendor === vendor);
-      const chosen =
-        rows.find((row) => row.webAccountId === deps.chosenWebAccountId) ??
-        rows.find((row) => row.isDefault) ??
-        (rows.length === 1 ? rows[0] : undefined);
+      // The account a suite or run chose, or none: falling back would restore
+      // another account's profile and add connectors to it.
+      const chosen = deps.chosenWebAccountId
+        ? rows.find((row) => row.webAccountId === deps.chosenWebAccountId)
+        : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
+      if (!chosen && deps.chosenWebAccountId) {
+        throw needsSignIn(
+          "signed_out",
+          "sign_in_check",
+          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} account chosen for this run is not saved for this project. Choose another account, then run again.`,
+        );
+      }
       if (!chosen) throw noAccount(vendor);
       return {
         webAccountId: chosen.webAccountId,
