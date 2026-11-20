@@ -1,30 +1,23 @@
 /**
  * The reconnect backend over the backend's Inspector-service functions,
- * `webClientService:read` and `:apply`, called as `plugin-host/service-store`
- * calls its stores: a Convex client with no user bearer, the service
- * credential as an argument, and each command acting for one person, whom the
- * backend holds to the same permissions as in the app. A profile save takes a
- * data key from a service-token route, encrypts the profile here and uploads
- * only the ciphertext. Refusals throw `WebBackendRefusal`s with the backend's
- * codes.
+ * through the process's one `webClientService()` client: no user bearer, the
+ * service credential as authority, and each command acting for one person,
+ * whom the backend holds to the same permissions as in the app. A profile
+ * save takes a data key from a service-token route, encrypts the profile here
+ * and uploads only the ciphertext. Refusals throw `WebBackendRefusal`s with
+ * the backend's codes.
  */
-import { randomUUID } from "node:crypto";
-import { ConvexHttpClient } from "convex/browser";
-import { makeFunctionReference } from "convex/server";
+import { z } from "zod";
+import { WEB_CLIENT_VENDORS } from "../../../../shared/web-clients.js";
 import { logger } from "../../../utils/logger.js";
-import {
-  getServiceCredential,
-  INSPECTOR_SERVICE_TOKEN_HEADER,
-} from "../../service-credential.js";
+import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../../service-credential.js";
+import type { WebClientService } from "../backend-connector-resolver.js";
 import type { LedgerEntry, LedgerMatch } from "../tool-call-ledger.js";
 import {
   WebBackendRefusal,
   type ClaimedRun,
   type PendingStep,
-  type SaveProfileResult,
-  type WebAccountRecord,
   type WebReconnectBackend,
-  type WebReconnectRequest,
 } from "./backend.js";
 import { sealWebProfile } from "./profile-cipher.js";
 import type { LedgerReader } from "./reconcile.js";
@@ -32,18 +25,79 @@ import type { LedgerReader } from "./reconcile.js";
 /** The person a command acts for: a WorkOS id or a backend user id. */
 export type WebActor = { actorExternalId: string } | { actorUserId: string };
 
-export type WebServiceOptions = {
-  env?: NodeJS.ProcessEnv;
+/** The service-token route that issues a profile's data key. */
+export type ProfileKeyRoute = {
+  convexHttpUrl: string;
+  serviceToken: string;
   fetchImpl?: typeof fetch;
 };
 
 type Command = { action: string } & Record<string, unknown>;
-type ReadArgs = { serviceToken: string; requestId: string; command: Command };
-type ApplyArgs = { serviceToken: string; command: Command };
 
-const SERVICE_TIMEOUT_MS = 15_000;
-/** A profile archive can be large, so its upload gets longer. */
+/** A profile archive can be large, so its upload gets longer than a call. */
+const ROUTE_TIMEOUT_MS = 15_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
+
+const account = z.object({
+  webAccountId: z.string(),
+  projectId: z.string(),
+  vendor: z.enum(WEB_CLIENT_VENDORS).optional(),
+  status: z.enum(["ready", "needs_sign_in", "checking"]),
+  accountEmail: z.string().optional(),
+  workspaceName: z.string().optional(),
+  profileVersion: z.number(),
+});
+const request = z.object({
+  requestId: z.string(),
+  webAccountId: z.string(),
+  status: z.enum(["open", "resolved", "cancelled"]),
+  reason: z.string(),
+  openedAt: z.number(),
+  notifiedAt: z.number().optional(),
+  notificationCount: z.number(),
+  resolvedAt: z.number().optional(),
+  waitingRunCount: z.number(),
+});
+const pendingStep = z.object({
+  stepId: z.string(),
+  startedAt: z.string(),
+  turnId: z.string().optional(),
+});
+const claimed = z.object({
+  runId: z.string(),
+  iterationId: z.string().optional(),
+  requestId: z.string(),
+  pendingStep: z.string(),
+});
+const saved = z.union([
+  z.object({ ok: z.literal(true), profileVersion: z.number() }),
+  z.object({
+    ok: z.literal(false),
+    reason: z.literal("version_conflict"),
+    profileVersion: z.number(),
+  }),
+]);
+const profileKey = z.object({
+  expectedProfileVersion: z.number(),
+  dataKey: z.string().min(1),
+  wrappedKey: z.string().min(1),
+  uploadUrl: z.string().url(),
+});
+const ledgerEntry = z.object({
+  id: z.string(),
+  connectorId: z.string(),
+  turnId: z.string().optional(),
+  runId: z.string().optional(),
+  jsonrpcId: z.string(),
+  toolName: z.string(),
+  toolUseId: z.string().optional(),
+  argsHash: z.string(),
+  state: z.enum(["forwarded", "result", "error", "lost"]),
+  forwardedAt: z.string(),
+  settledAt: z.string().optional(),
+  upstreamStatus: z.number().optional(),
+  resultHash: z.string().optional(),
+});
 
 /** A Convex function's refusal, or a route's `{ error: { code } }` body. */
 function refusalOf(error: unknown): WebBackendRefusal | undefined {
@@ -63,145 +117,115 @@ function refusalOf(error: unknown): WebBackendRefusal | undefined {
   );
 }
 
-function webClientService(options: WebServiceOptions) {
-  const env = options.env ?? process.env;
-  const serviceToken = getServiceCredential(env);
-  const convexUrl = env.CONVEX_URL?.trim();
-  const httpUrl = env.CONVEX_HTTP_URL?.trim();
-  if (!serviceToken || !convexUrl || !httpUrl) {
-    throw new Error(
-      "Web accounts need the service credential, CONVEX_URL and CONVEX_HTTP_URL.",
-    );
-  }
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const timed =
-    (ms: number): typeof fetch =>
-    (input, init) =>
-      fetchImpl(input, {
-        ...init,
-        redirect: "error",
-        signal: AbortSignal.timeout(ms),
-      });
-  // No user bearer is set: the service credential is the only authority.
-  const client = new ConvexHttpClient(convexUrl, {
-    logger: false,
-    fetch: timed(SERVICE_TIMEOUT_MS),
-  });
+/** Commands carry no undefined field: Convex refuses one. */
+function defined(command: Command): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(command).filter(([, value]) => value !== undefined),
+  );
+}
+
+function refusing(service: WebClientService) {
   const refused = (error: unknown): never => {
     throw refusalOf(error) ?? error;
   };
   return {
-    read: <T>(command: Command) =>
-      client
-        .query(
-          makeFunctionReference<"query", ReadArgs, T>("webClientService:read"),
-          {
-            serviceToken,
-            requestId: randomUUID(),
-            command,
-          },
-        )
-        .catch(refused),
-    apply: <T>(command: Command) =>
-      client
-        .mutation(
-          makeFunctionReference<"mutation", ApplyArgs, T>(
-            "webClientService:apply",
-          ),
-          { serviceToken, command },
-          { skipQueue: true },
-        )
-        .catch(refused),
-    /** A service-token route; it answers refusals with the same codes. */
-    async post(path: string, body: Record<string, unknown>) {
-      const reply = await timed(SERVICE_TIMEOUT_MS)(new URL(path, httpUrl), {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          [INSPECTOR_SERVICE_TOKEN_HEADER]: serviceToken,
-        },
-        body: JSON.stringify(body),
-      });
-      const data: unknown = await reply.json();
-      if (!reply.ok) throw refusalOf(data) ?? new Error(`HTTP ${reply.status}`);
-      return (data ?? {}) as Record<string, unknown>;
-    },
-    async upload(uploadUrl: string, sealed: Uint8Array) {
-      const reply = await timed(UPLOAD_TIMEOUT_MS)(uploadUrl, {
-        method: "POST",
-        headers: { "content-type": "application/octet-stream" },
-        body: new Uint8Array(sealed),
-      });
-      const { storageId } = ((await reply.json()) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      if (!reply.ok || typeof storageId !== "string") {
-        throw new Error("The encrypted profile was not uploaded.");
-      }
-      return storageId;
-    },
+    read: <T>(schema: z.ZodType<T>, command: Command) =>
+      service
+        .read(defined(command))
+        .then((value) => schema.parse(value), refused),
+    apply: <T>(schema: z.ZodType<T>, command: Command) =>
+      service
+        .apply(defined(command))
+        .then((value) => schema.parse(value), refused),
   };
 }
 
-/** A claimed run's step as the runtime wrote it, or undefined if unreadable. */
-function pendingStepOf(text: string): PendingStep | undefined {
-  let value: unknown;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    // Unreadable JSON is reported by the caller, with the run it belongs to.
-    return undefined;
+async function postJson(
+  route: ProfileKeyRoute,
+  path: string,
+  body: Record<string, unknown>,
+): Promise<unknown> {
+  const reply = await (route.fetchImpl ?? fetch)(
+    new URL(path, route.convexHttpUrl),
+    {
+      method: "POST",
+      redirect: "error",
+      headers: {
+        "content-type": "application/json",
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: route.serviceToken,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
+    },
+  );
+  const data: unknown = await reply.json();
+  if (!reply.ok) throw refusalOf(data) ?? new Error(`HTTP ${reply.status}`);
+  return data;
+}
+
+async function upload(
+  route: ProfileKeyRoute,
+  uploadUrl: string,
+  sealed: Uint8Array,
+): Promise<string> {
+  const reply = await (route.fetchImpl ?? fetch)(uploadUrl, {
+    method: "POST",
+    redirect: "error",
+    headers: { "content-type": "application/octet-stream" },
+    body: new Uint8Array(sealed),
+    signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+  });
+  const answer = z
+    .object({ storageId: z.string() })
+    .safeParse(await reply.json());
+  if (!reply.ok || !answer.success) {
+    throw new Error("The encrypted profile was not uploaded.");
   }
-  if (typeof value !== "object" || value === null) return undefined;
-  if (!("stepId" in value) || typeof value.stepId !== "string") return;
-  if (!("startedAt" in value) || typeof value.startedAt !== "string") return;
-  const turnId = "turnId" in value ? value.turnId : undefined;
-  return {
-    stepId: value.stepId,
-    startedAt: value.startedAt,
-    ...(typeof turnId === "string" ? { turnId } : {}),
-  };
+  return answer.data.storageId;
 }
 
 export function createConvexWebReconnectBackend(
+  service: WebClientService,
   actor: WebActor,
-  options: WebServiceOptions = {},
+  route: ProfileKeyRoute,
 ): WebReconnectBackend {
-  const service = webClientService(options);
+  const { read, apply } = refusing(service);
   const act = (command: Command): Command => ({ ...actor, ...command });
   return {
     listWebAccounts: (args) =>
-      service.read<WebAccountRecord[]>(
-        act({ action: "listWebAccounts", ...args }),
-      ),
+      read(z.array(account), act({ action: "listWebAccounts", ...args })),
     listWebReconnectRequests: (args) =>
-      service.read<WebReconnectRequest[]>(
+      read(
+        z.array(request),
         act({ action: "listWebReconnectRequests", ...args }),
       ),
     async markWebAccountNeedsSignIn(args) {
-      await service.apply(
+      await apply(
+        z.unknown(),
         act({ action: "markWebAccountNeedsSignIn", ...args }),
       );
     },
-    reportWebSignInRequired: ({ pendingStep, ...args }) =>
-      service.apply<{ requestId: string; shouldNotify: boolean }>(
+    reportWebSignInRequired: ({ pendingStep: step, ...args }) =>
+      apply(
+        z.object({ requestId: z.string(), shouldNotify: z.boolean() }),
         act({
           action: "reportWebSignInRequired",
           ...args,
-          pendingStep: JSON.stringify(pendingStep),
+          pendingStep: JSON.stringify(step),
         }),
       ),
     handbackWebReconnect: (args) =>
-      service.apply<{ resumableRunIds: string[] }>(
+      apply(
+        z.object({ resumableRunIds: z.array(z.string()) }),
         act({ action: "handbackWebReconnect", ...args }),
       ),
     async claimResumableWebRuns(args) {
-      const runs = await service.apply<
-        Array<Omit<ClaimedRun, "pendingStep"> & { pendingStep: string }>
-      >(act({ action: "claimResumableWebRuns", ...args }));
-      return runs.flatMap(({ pendingStep, ...run }) => {
-        const step = pendingStepOf(pendingStep);
+      const runs = await apply(
+        z.array(claimed),
+        act({ action: "claimResumableWebRuns", ...args }),
+      );
+      return runs.flatMap((run): ClaimedRun[] => {
+        const step = readPendingStep(run.pendingStep);
         if (step) return [{ ...run, pendingStep: step }];
         // A claimed run is never handed out again, so a person must send it again.
         logger.error(
@@ -215,51 +239,58 @@ export function createConvexWebReconnectBackend(
       });
     },
     async saveWebAccountProfile({ profile, savedFromRunId, ...args }) {
-      const key = await service.post("/internal/v1/web-accounts/profile-key", {
-        ...actor,
-        webAccountId: args.webAccountId,
-      });
-      const { expectedProfileVersion, dataKey, wrappedKey, uploadUrl } = key;
-      if (
-        typeof expectedProfileVersion !== "number" ||
-        typeof dataKey !== "string" ||
-        typeof wrappedKey !== "string" ||
-        typeof uploadUrl !== "string"
-      ) {
-        throw new Error("The backend's profile key answer is malformed.");
-      }
+      const key = profileKey.parse(
+        await postJson(route, "/internal/v1/web-accounts/profile-key", {
+          ...actor,
+          webAccountId: args.webAccountId,
+        }),
+      );
       // The key opens only for the version after the one it was issued at.
-      if (expectedProfileVersion !== args.expectedProfileVersion) {
-        const profileVersion = expectedProfileVersion;
+      if (key.expectedProfileVersion !== args.expectedProfileVersion) {
+        const profileVersion = key.expectedProfileVersion;
         return { ok: false, reason: "version_conflict", profileVersion };
       }
-      const keyBytes = Buffer.from(dataKey, "base64");
+      const keyBytes = Buffer.from(key.dataKey, "base64");
       let sealed: Buffer;
       try {
         sealed = sealWebProfile(profile, keyBytes);
       } finally {
         keyBytes.fill(0);
       }
-      const storageId = await service.upload(uploadUrl, sealed);
-      return service.apply<SaveProfileResult>(
+      const storageId = await upload(route, key.uploadUrl, sealed);
+      return apply(
+        saved,
         act({
           action: "saveWebAccountProfile",
           ...args,
           storageId,
-          wrappedKey,
-          ...(savedFromRunId ? { savedFromRunId } : {}),
+          wrappedKey: key.wrappedKey,
+          savedFromRunId,
         }),
       );
     },
   };
 }
 
+/** A claimed run's step as the runtime wrote it, or undefined if unreadable. */
+function readPendingStep(text: string): PendingStep | undefined {
+  try {
+    const step = pendingStep.safeParse(JSON.parse(text));
+    return step.success ? step.data : undefined;
+  } catch {
+    // Unreadable JSON is reported by the caller, with the run it belongs to.
+    return undefined;
+  }
+}
+
 /** The durable ledger's read side, for `reconcileBeforeResend`. */
 export function createConvexLedgerReader(
-  options: WebServiceOptions = {},
+  service: WebClientService,
 ): LedgerReader {
-  const service = webClientService(options);
-  const find = (match: LedgerMatch | { turnId: string }) =>
-    service.read<LedgerEntry[]>({ action: "findWebToolCalls", ...match });
+  const { read } = refusing(service);
+  const find = (
+    match: LedgerMatch | { turnId: string },
+  ): Promise<LedgerEntry[]> =>
+    read(z.array(ledgerEntry), { action: "findWebToolCalls", ...match });
   return { find, forTurn: (turnId) => find({ turnId }) };
 }

@@ -17,8 +17,11 @@ export type LedgerReader = {
 
 export type ReconcileInput = {
   runId: string;
-  /** Every connector the run's tool calls go through. */
-  connectorIds: readonly string[];
+  /**
+   * Every connector the run's tool calls go through. Without them, only the
+   * step's own turn is read, which is exact when the step has a turn id.
+   */
+  connectorIds?: readonly string[];
   step: PendingStep;
   /** Narrows the check to one call, when the runtime saw the vendor's tool use. */
   toolUseId?: string;
@@ -49,15 +52,15 @@ export async function reconcileWithLedger(
   ledger: LedgerReader,
   input: ReconcileInput,
 ): Promise<ReconcileOutcome> {
-  const { runId, step, toolUseId, argsHash } = input;
+  const { runId, step, toolUseId, argsHash, connectorIds } = input;
   const belongsToStep = (entry: LedgerEntry) =>
-    input.connectorIds.includes(entry.connectorId) &&
+    (connectorIds === undefined || connectorIds.includes(entry.connectorId)) &&
     (toolUseId === undefined || entry.toolUseId === toolUseId) &&
     (argsHash === undefined || entry.argsHash === argsHash) &&
     // Runs on one account share its connectors. A call with no run might be ours.
     (entry.runId === undefined || entry.runId === runId);
   const found = await Promise.all([
-    ...input.connectorIds.map((connectorId) =>
+    ...(connectorIds ?? []).map((connectorId) =>
       ledger.find({ connectorId, since: step.startedAt, toolUseId, argsHash }),
     ),
     // The step's own turn too, so clock skew between replicas can't hide a call.

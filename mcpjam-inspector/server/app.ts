@@ -85,6 +85,7 @@ import {
   createLocalConnectorRoutes,
   mountInspectorWebConnectors,
 } from "./services/web-clients/inspector-endpoint.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -372,6 +373,9 @@ export async function createHonoApp() {
     // Mirror of server/index.ts — both entries share mountHostedOpenRoutes.
     mountHostedOpenRoutes(app);
   }
+  // A person hands a web account back after signing it in, and its paused
+  // runs resume. Hosted only in effect: it needs the backend's service credential.
+  app.route("/api/web-clients/reconnect", createWebReconnectRoutes());
   // Construct after loadInspectorEnv() so hosted confidential CIMD observes
   // Inspector dotenv configuration and malformed configured keys fail startup.
   app.route("/api/web/xaa", createXaaWebRouter());

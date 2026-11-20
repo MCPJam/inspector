@@ -119,6 +119,12 @@ export type HandbackOutcome =
   | { status: "wrong_identity"; expected?: WebIdentity; observed?: WebIdentity }
   | { status: "resumed"; runs: ResumedRun[] };
 
+export type HandbackInput = {
+  projectId: string;
+  requestId: string;
+  browserFor(account: WebAccountRecord): AccountBrowser;
+};
+
 export interface WebRecoveryCoordinator {
   /** Every failed step comes here, so a browser failure never reaches the account. */
   handleStepFailure(
@@ -127,12 +133,11 @@ export interface WebRecoveryCoordinator {
   reportNeedsSignIn(
     report: AccountFailureReport & { reason: SignInReason },
   ): Promise<NeedsSignInOutcome>;
-  /** A person signed in, in `browser`, for the request their link names. */
-  handback(input: {
-    projectId: string;
-    requestId: string;
-    browser: AccountBrowser;
-  }): Promise<HandbackOutcome>;
+  /**
+   * A person signed in for the request their link names; `browserFor` gives
+   * the browser they used, once the request is known to be open.
+   */
+  handback(input: HandbackInput): Promise<HandbackOutcome>;
   /** Resumes each run whose request was handed back and not yet resumed. */
   resumeWaiting(webAccountId: string): Promise<ResumedRun[]>;
   reconcileBeforeResend(input: ReconcileInput): Promise<ReconcileOutcome>;
@@ -288,11 +293,7 @@ export function createWebRecoveryCoordinator(
     return { status: "paused", requestId };
   }
 
-  async function handback(input: {
-    projectId: string;
-    requestId: string;
-    browser: AccountBrowser;
-  }): Promise<HandbackOutcome> {
+  async function handback(input: HandbackInput): Promise<HandbackOutcome> {
     const { projectId, requestId } = input;
     const requests = await backend.listWebReconnectRequests({ projectId });
     const request = requests.find((one) => one.requestId === requestId);
@@ -300,7 +301,10 @@ export function createWebRecoveryCoordinator(
     if (request.status === "cancelled") return { status: "cancelled" };
     if (request.status === "open") {
       const account = await findAccount(projectId, request.webAccountId);
-      const session = await saveVerifiedSession(account, input.browser);
+      const session = await saveVerifiedSession(
+        account,
+        input.browserFor(account),
+      );
       if (session.status === "wrong_identity") {
         logger.warn("[web-recovery] Handback refused for another seat", {
           requestId,

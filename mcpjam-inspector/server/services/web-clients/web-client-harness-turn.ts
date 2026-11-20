@@ -28,7 +28,13 @@ import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
-import { runWebClientTurn } from "./run-web-client-turn.js";
+import type { WebClientTurnInput } from "./run-web-client-turn.js";
+import {
+  ambiguousExecutionMessage,
+  runRecoverableWebTurn,
+  webRecovery,
+  type WebRunStop,
+} from "./recovery/turn-recovery.js";
 import { webClientEnvironment } from "./web-client-environment.js";
 import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 
@@ -38,6 +44,8 @@ export class WebClientRunError extends Error {
   constructor(
     readonly failure: RealUiFailure,
     message: string,
+    /** Set when recovery paused the run for a person, or found a call that may have run. */
+    readonly stop?: WebRunStop,
   ) {
     super(message);
     this.name = "WebClientRunError";
@@ -45,7 +53,10 @@ export class WebClientRunError extends Error {
 }
 
 /** What a person reads when the run stopped, and what fixes it. */
-export function webClientFailureMessage(name: string, failure: RealUiFailure): string {
+export function webClientFailureMessage(
+  name: string,
+  failure: RealUiFailure,
+): string {
   switch (failure.kind) {
     case "needs_sign_in":
       return `${name} needs sign-in. ${failure.message} Sign in again, then send again.`;
@@ -59,7 +70,9 @@ export function webClientFailureMessage(name: string, failure: RealUiFailure): s
 }
 
 function lastUserText(messages: readonly ModelMessage[]): string {
-  const last = [...messages].reverse().find((message) => message.role === "user");
+  const last = [...messages]
+    .reverse()
+    .find((message) => message.role === "user");
   if (!last) return "";
   if (typeof last.content === "string") return last.content;
   return last.content
@@ -74,35 +87,59 @@ export async function runWebClientHarnessTurn(
 ): Promise<ChatEngineLoopResult> {
   const runtimeId = options.harness;
   const vendor = webClientVendorForRuntime(runtimeId);
-  if (!runtimeId || !vendor || (runtimeId !== "claude-web" && runtimeId !== "chatgpt-web")) {
+  if (
+    !runtimeId ||
+    !vendor ||
+    (runtimeId !== "claude-web" && runtimeId !== "chatgpt-web")
+  ) {
     throw new Error("This turn is not a web client turn.");
   }
   const name = WEB_CLIENT_DISPLAY_NAMES[vendor];
   const environment = webClientEnvironment();
   if (!environment) {
-    throw new Error(`${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`);
+    throw new Error(
+      `${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`,
+    );
   }
   if (!options.projectId) {
-    throw new Error(`${name} runs on a project's web account. Open a project, then send again.`);
+    throw new Error(
+      `${name} runs on a project's web account. Open a project, then send again.`,
+    );
   }
   const messages = options.messages;
-  const promptIndex = Math.max(0, messages.filter((m) => m.role === "user").length - 1);
-  const run = async (): Promise<ChatEngineLoopResult> => {
-    const result = await runWebClientTurn({
+  const promptIndex = Math.max(
+    0,
+    messages.filter((m) => m.role === "user").length - 1,
+  );
+  const run = async (
+    onPaused?: (
+      paused: Extract<WebRunStop, { kind: "paused_for_person" }>,
+    ) => void,
+  ): Promise<ChatEngineLoopResult> => {
+    const turn: WebClientTurnInput = {
       runtimeId,
       projectId: options.projectId!,
       serverIds: options.selectedServers ?? [],
       prompt: lastUserText(messages),
-      runId: options.evalIterationId ?? options.chatSessionId ?? options.journeyRunId ?? "playground",
+      runId:
+        options.evalIterationId ??
+        options.chatSessionId ??
+        options.journeyRunId ??
+        "playground",
       approval: {
         requireToolApproval: options.requireToolApproval === true,
         answer: approvalAnswerOf(options.approvalMode),
       },
       environment,
       ...(options.abortSignal ? { signal: options.abortSignal } : {}),
-    });
+    };
+    const result = await runRecoverableWebTurn(turn, webRecovery(), onPaused);
     if (!result.ok) {
-      throw new WebClientRunError(result.failure, webClientFailureMessage(name, result.failure));
+      const message =
+        result.stop?.kind === "ambiguous_execution"
+          ? ambiguousExecutionMessage(name, result.stop)
+          : webClientFailureMessage(name, result.failure);
+      throw new WebClientRunError(result.failure, message, result.stop);
     }
     const adapter = getHarnessAdapter(runtimeId);
     const plan = resolveHarnessMcpPlan({
@@ -156,20 +193,32 @@ export async function runWebClientHarnessTurn(
   };
 
   if (streamSink === "none") return run();
-  let settled: ChatEngineLoopResult = { messageHistory: messages, aborted: false };
+  let settled: ChatEngineLoopResult = {
+    messageHistory: messages,
+    aborted: false,
+  };
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
-      settled = await run();
+      // The pause panel's data: who can finish signing in, and the request.
+      settled = await run((paused) =>
+        writer.write({
+          type: "data-web-run-paused",
+          data: { ...paused, clientName: name },
+        }),
+      );
       const reply = settled.messageHistory.at(-1);
       const text =
         reply && Array.isArray(reply.content)
-          ? reply.content.map((part) => (part.type === "text" ? part.text : "")).join("")
+          ? reply.content
+              .map((part) => (part.type === "text" ? part.text : ""))
+              .join("")
           : "";
       writer.write({ type: "text-start", id: "web-reply" });
       writer.write({ type: "text-delta", id: "web-reply", delta: text });
       writer.write({ type: "text-end", id: "web-reply" });
     },
-    onError: (error) => (error instanceof Error ? error.message : String(error)),
+    onError: (error) =>
+      error instanceof Error ? error.message : String(error),
   });
   return {
     get messageHistory() {

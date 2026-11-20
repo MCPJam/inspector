@@ -4,7 +4,10 @@
  * runs waiting on it. It lives in the backend so that a restarted process, or
  * another replica, resumes from what was recorded rather than from memory.
  */
-import type { WebAccountStatus } from "../../../../shared/web-clients.js";
+import type {
+  WebAccountStatus,
+  WebClientVendor,
+} from "../../../../shared/web-clients.js";
 
 /** What the vendor's page asked for when it stopped the run. */
 export type SignInReason =
@@ -34,6 +37,7 @@ export type WebIdentity = { accountEmail: string; workspaceName?: string };
 export type WebAccountRecord = {
   webAccountId: string;
   projectId: string;
+  vendor?: WebClientVendor;
   status: WebAccountStatus;
   accountEmail?: string;
   workspaceName?: string;
