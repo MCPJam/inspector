@@ -700,6 +700,18 @@ describe("Overview — history and report", () => {
     expect(window.location.pathname).toBe("/swarms/run-1");
   });
 
+  it("selects a run from the history sheet and closes the sheet", async () => {
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: "Run history" }));
+    const sheet = await screen.findByRole("dialog", { name: "Run history" });
+    fireEvent.click(within(sheet).getByRole("button", { name: /Linear/ }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Run history" })).toBeNull();
+    });
+    expect(screen.getByRole("heading", { name: "Linear" })).toBeTruthy();
+  });
+
   it("uses the wave id when opening a grouped run", async () => {
     const [newest, second, ...rest] = overview.runs;
     overviewData = {
