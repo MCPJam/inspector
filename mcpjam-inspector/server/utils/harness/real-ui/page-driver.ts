@@ -57,8 +57,8 @@ export interface PageDriver {
   /** The first match's text, or `undefined` when nothing matches. */
   readText(selector: string): Promise<string | undefined>;
   /**
-   * The whole page's text as the browser renders it, where `readText` reads
-   * names rather than prose (the hosted browser). Bounded by the browser.
+   * The whole page's text as the browser renders it, for a driver that runs
+   * no script in the page (the hosted browser). Bounded by the browser.
    */
   readPageText?(): Promise<string>;
 }
@@ -76,15 +76,17 @@ export async function pollUntil(
       throw new PageDriverError("timeout", `Timed out waiting for ${what}.`);
     }
     await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, intervalMs);
-      signal?.addEventListener(
-        "abort",
-        () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        },
-        { once: true },
-      );
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal?.reason);
+      };
+      // A caller's signal can outlive many waits, so each sleep removes the
+      // listener it added.
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, intervalMs);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
 }

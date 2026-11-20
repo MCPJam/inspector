@@ -163,7 +163,7 @@ export function webTurnSpans(args: {
         outputSource: onWire ? (call.match === "wire-only" ? "reconstructed" : "evidence") : "narration",
         wireCorroborated: onWire,
         ...(call.ledgerEntryId ? { evidenceRequestId: call.ledgerEntryId } : {}),
-        evidenceStatus: "complete",
+        evidenceStatus: call.state === "forwarded" ? "incomplete" : "complete",
       };
     }),
   ];

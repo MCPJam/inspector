@@ -181,6 +181,6 @@ export function vendorClient(
     listTools: () => post({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
     /** Raw text, so the test can check the bytes the server received. */
     callToolRaw: (id: number, name: string, message: string) =>
-      `{"jsonrpc":"2.0", "id":${id},"method":"tools/call","params":{"name":"${name}","arguments":{"message":"${message}"},"_meta":{"progressToken":${id},"claudecode/toolUseId":"toolu_${id}"}}}`,
+      `{"jsonrpc":"2.0", "id":${id},"method":"tools/call","params":{"name":${JSON.stringify(name)},"arguments":{"message":${JSON.stringify(message)}},"_meta":{"progressToken":${id},"claudecode/toolUseId":"toolu_${id}"}}}`,
   };
 }

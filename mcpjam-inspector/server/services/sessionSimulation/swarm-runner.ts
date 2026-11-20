@@ -883,6 +883,10 @@ async function runJourneyFanOut(
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
+    // Whether this runner's claim on `sessionIdx` applied. Until it has, the
+    // attempt may be another runner's, so the catch's sweep leaves alone any
+    // attempt whose claim doesn't apply.
+    let claimedSessionIdx = false;
     let targetSponsorshipRejected = false;
     // A pure property read, so it lives OUT here where both the per-target
     // admission block and the per-attempt binding check can see it — and
@@ -1173,6 +1177,7 @@ async function runJourneyFanOut(
       }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
+        claimedSessionIdx = false;
         // Run-level stop (shutdown/cancel/deadline) halts THIS target too.
         if (stopScheduling()) return;
         // Funding-scoped stop: a spend cap skips this target's credit-funded
@@ -1297,6 +1302,7 @@ async function runJourneyFanOut(
           );
           continue;
         }
+        claimedSessionIdx = true;
 
         const attemptStartedAt = Date.now();
         logEvent("attempt.start", {
@@ -1343,8 +1349,10 @@ async function runJourneyFanOut(
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
-        // configured session.
-        if (!harnessTargetBlockedReason) {
+        // configured session. A web client never uses one, whatever computer
+        // or image it carries: the vendor's app runs on the vendor's site, and
+        // none of MCPJam's own tools reach it, so no shell notice applies.
+        if (!harnessTargetBlockedReason && !webClientTarget) {
           const intent = sandboxIntentFor(
             target,
             hostedBrowserAvailable,
@@ -2324,6 +2332,11 @@ async function runJourneyFanOut(
         sessionsPerTarget,
         failureCode,
         failureMessage,
+        // Before this runner's claim (waiting for a web account, say), an
+        // attempt whose claim doesn't apply is another runner's, with its own
+        // terminal. After it, the in-flight attempt is this runner's, and its
+        // re-claim doesn't apply either.
+        !claimedSessionIdx,
       );
       // Capacity leaves them for the run-level finalize. A sponsorship refusal
       // closes only this target, preserving healthy targets. Other failures close this target's

@@ -122,6 +122,13 @@ export const BROWSERD_WEBMCP_FEATURES = [
   "navigation-stop",
   /** A callback stop can remain armed between commands on the same tab. */
   "navigation-stop-persistent",
+  /**
+   * `observe {mode:"text"}` takes a `rootSelector` and reads that element's
+   * text, and a `rootSelector` may use Playwright's selector syntax. Without
+   * it the server must not send a scoped text read: an old daemon ignores
+   * `rootSelector` there and answers with the whole page's text.
+   */
+  "element-text",
 ] as const;
 
 /**
@@ -477,8 +484,9 @@ export type BrowserAction =
       /** `network` only: read this one exchange in full, not the tail. */
       requestId?: string;
       /**
-       * `a11y` only: scope the tree to the element this CSS selector matches,
-       * instead of the whole page.
+       * `a11y` and `text`: scope to the element this selector matches, instead
+       * of the whole page. CSS, or Playwright's syntax as act targets take it
+       * (`role=`, `text=`, `>>` chains, `nth=`); `text` reads its `innerText`.
        */
       rootSelector?: string;
       /**
