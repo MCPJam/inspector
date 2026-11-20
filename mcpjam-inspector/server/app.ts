@@ -85,6 +85,7 @@ import {
   createLocalConnectorRoutes,
   mountInspectorWebConnectors,
 } from "./services/web-clients/inspector-endpoint.js";
+import { mountWebClientRuntime } from "./services/web-clients/runtime-mount.js";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -359,6 +360,7 @@ export async function createHonoApp() {
   app.use("/api/web/*", webBodyLimit());
 
   // API Routes
+  mountWebClientRuntime(app, { hosted: HOSTED_MODE });
   if (!HOSTED_MODE) {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
