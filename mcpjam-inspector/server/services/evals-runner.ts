@@ -6361,6 +6361,8 @@ const runHostedIterationWithBrowser = async (
 
   // A web client's turns act as the run's owner on the accounts it froze.
   let webClientRun: WebClientRunContext | undefined;
+  /** Set when a web client's run could not be read; the iteration stops on it. */
+  let webClientRunUnread: string | undefined;
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -6412,6 +6414,17 @@ const runHostedIterationWithBrowser = async (
           },
           iterationId: undefined,
         };
+      }
+      // Without the run's row a web client's turn would act as this
+      // request's bearer on the project's default account, not as the run's
+      // owner on the accounts the run froze, so it never starts.
+      if (isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))) {
+        logger.warn("[evals] a web client iteration could not read its run", {
+          runId,
+          error: errorMessage,
+        });
+        webClientRunUnread =
+          "This run's web accounts couldn't be read, so this iteration stopped before any turn. Run it again.";
       }
     }
   }
@@ -6752,6 +6765,9 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
+    // First, so the failed read records as this iteration's setup failure
+    // before anything is provisioned and before any turn reaches the vendor.
+    if (webClientRunUnread) throw new Error(webClientRunUnread);
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
       resolvedExecution.harness,
