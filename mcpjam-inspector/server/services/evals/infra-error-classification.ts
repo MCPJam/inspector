@@ -40,7 +40,10 @@ import {
   type HarnessProxyRefusalReason,
 } from "@/shared/harness-proxy-refusal-reasons";
 import { accountLimitCode } from "@/shared/swarm-attempt-error";
-import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
+import type {
+  InfraFailureEvidence,
+  ModelEndpointOwnership,
+} from "../../utils/infra-failure-evidence.js";
 import { classifyRetry } from "../../utils/run-supervisor/retry.js";
 
 type Row = {
@@ -142,10 +145,30 @@ const BACKEND_CODE_TABLE: Readonly<Record<string, Row>> = {
   },
 };
 
-/** An upstream status read as a provider failure, or `undefined`. */
-function upstreamStatusRow(status: number | undefined): Row | undefined {
+/**
+ * An upstream status read as a provider failure, or `undefined`.
+ *
+ * A 402 is the account paying for the call refusing it (OpenRouter's "would
+ * exceed your available credits given your current in-flight requests"): on
+ * our platform endpoint that account is MCPJam's, so it is our provider
+ * failing, retried once in-flight holds settle; on a customer's key it is
+ * their own account limit. The server under test never saw the call.
+ */
+function upstreamStatusRow(
+  status: number | undefined,
+  endpoint?: ModelEndpointOwnership,
+): Row | undefined {
   if (status === 429)
     return { class: "rate_limited", layer: MODEL, retryable: true };
+  if (status === 402) {
+    if (endpoint === "platform") {
+      return { class: "provider_unavailable", layer: MODEL, retryable: true };
+    }
+    if (endpoint === "byok_hosted") {
+      return { class: "account_limit", layer: MODEL, retryable: false };
+    }
+    return undefined;
+  }
   if (status !== undefined && status >= 500) {
     return { class: "provider_unavailable", layer: MODEL, retryable: true };
   }
@@ -155,6 +178,7 @@ function upstreamStatusRow(status: number | undefined): Row | undefined {
 function classifyBackendModel(
   code: string | undefined,
   status: number | undefined,
+  endpoint?: ModelEndpointOwnership,
 ): Row | undefined {
   if (!code) return undefined;
   const row = BACKEND_CODE_TABLE[code];
@@ -168,7 +192,7 @@ function classifyBackendModel(
     case "provider_overloaded":
     case "streaming_error":
     case "provider_error":
-      return upstreamStatusRow(status);
+      return upstreamStatusRow(status, endpoint);
     // Thrown only for a failure the backend already judged provider-side
     // (network, 5xx, 401/403/404/408/429) under a no-fallback selection.
     case "fallback_prohibited":
@@ -179,7 +203,7 @@ function classifyBackendModel(
         return { class: "configuration", layer: MODEL, retryable: false };
       }
       return (
-        upstreamStatusRow(status) ?? {
+        upstreamStatusRow(status, endpoint) ?? {
           class: "provider_unavailable",
           layer: MODEL,
           retryable: true,
@@ -323,11 +347,15 @@ function classifyHarnessRuntime(
   return upstreamStatusRow(status);
 }
 
-function classifyProviderCall(status: number | undefined): Row | undefined {
+function classifyProviderCall(
+  status: number | undefined,
+  endpoint?: ModelEndpointOwnership,
+): Row | undefined {
   if (status === 401 || status === 403) {
     return { class: "auth", layer: MODEL, retryable: false };
   }
   if (status === undefined) return undefined;
+  if (status === 402) return upstreamStatusRow(status, endpoint);
   switch (classifyRetry({ statusCode: status }).class) {
     case "rate_limited":
       return { class: "rate_limited", layer: MODEL, retryable: true };
@@ -392,13 +420,15 @@ export function classifyEvalInfraError(
   let row: Row | undefined;
   switch (evidence.source) {
     case "backend_model":
-      row = ourEndpoint ? classifyBackendModel(code, httpStatus) : undefined;
+      row = ourEndpoint
+        ? classifyBackendModel(code, httpStatus, endpoint)
+        : undefined;
       break;
     case "harness_runtime":
       row = ourEndpoint ? classifyHarnessRuntime(code, httpStatus) : undefined;
       break;
     case "provider_call":
-      row = ourEndpoint ? classifyProviderCall(httpStatus) : undefined;
+      row = ourEndpoint ? classifyProviderCall(httpStatus, endpoint) : undefined;
       break;
     case "sandbox_setup":
       row = classifySetup("sandbox", code, httpStatus);

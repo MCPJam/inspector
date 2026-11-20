@@ -791,3 +791,70 @@ describe("resolveIterationInfraError", () => {
     ).toBeUndefined();
   });
 });
+
+describe("classifyEvalInfraError — a provider that will not take payment (402)", () => {
+  // OpenRouter answers 402 when the account paying for the call is short,
+  // including "This request would exceed your available credits given your
+  // current in-flight requests". The server under test never sees the call.
+  it("is our provider account on our platform endpoint: provider_unavailable, retried", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "platform",
+        code: "provider_error",
+        httpStatus: 402,
+      }),
+    ).toEqual({
+      class: "provider_unavailable",
+      layer: "model",
+      retryable: true,
+      code: "provider_error",
+      httpStatus: 402,
+    });
+  });
+
+  it("is the customer's own provider account on their key: account_limit, not retried", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "backend_model",
+        endpoint: "byok_hosted",
+        code: "provider_error",
+        httpStatus: 402,
+      }),
+    ).toMatchObject({ class: "account_limit", layer: "model", retryable: false });
+    expect(
+      classifyEvalInfraError({
+        source: "provider_call",
+        endpoint: "byok_hosted",
+        httpStatus: 402,
+      }),
+    ).toMatchObject({ class: "account_limit", layer: "model", retryable: false });
+  });
+
+  it("reaches the run as the hosted turn records it, with the endpoint the runner stamps", () => {
+    // What the stream handler attached on Jamroom: no endpoint of its own.
+    expect(
+      resolveIterationInfraError(
+        {
+          iterationError: "This request would exceed your available credits",
+          errorInfra: {
+            source: "backend_model",
+            code: "provider_error",
+            httpStatus: 402,
+          },
+        },
+        "platform",
+      ),
+    ).toMatchObject({ class: "provider_unavailable", httpStatus: 402 });
+  });
+
+  it("stays unclassified on a customer-controlled endpoint", () => {
+    expect(
+      classifyEvalInfraError({
+        source: "provider_call",
+        endpoint: "customer_hosted",
+        httpStatus: 402,
+      }),
+    ).toBeUndefined();
+  });
+});
