@@ -53,3 +53,33 @@ export function runAccountOf(accounts: readonly WebAccount[]) {
 export function webAccountName(account: WebAccount): string {
   return account.accountEmail || account.label;
 }
+
+/**
+ * A name for a new account before anyone has signed in, unused among the
+ * client's accounts, since the backend refuses a second account by one name.
+ */
+export function newWebAccountLabel(
+  vendor: WebClientVendor,
+  accounts: readonly WebAccount[],
+): string {
+  const taken = new Set(accounts.map(({ label }) => label.toLowerCase()));
+  const base = `${webClientName(vendor)} account`;
+  let label = base;
+  for (let n = 2; taken.has(label.toLowerCase()); n += 1)
+    label = `${base} ${n}`;
+  return label;
+}
+
+/** The page an admin signs an account in again on; the backend's email links here. */
+export function webAccountReconnectPath(
+  webAccountId: string,
+  projectId: string,
+  requestId?: string,
+): string {
+  const query = new URLSearchParams(
+    requestId
+      ? { request: requestId, project: projectId }
+      : { project: projectId },
+  );
+  return `/web-accounts/${encodeURIComponent(webAccountId)}/reconnect?${query}`;
+}

@@ -1,10 +1,19 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { KeyRound } from "lucide-react";
+import { useMutation } from "convex/react";
+import { KeyRound, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
+import { describeConvexFailure } from "@/lib/convex-error";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
+import { webAccountsApi } from "@/lib/web-accounts/api";
+import {
+  saveWebAccountProfile,
+  startWebAccountSignIn,
+} from "@/lib/web-accounts/routes";
 import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import {
+  newWebAccountLabel,
   runAccountOf,
   webAccountName,
   webClientName,
@@ -15,6 +24,7 @@ import type { WebClientVendor } from "@/shared/web-clients";
 import { PaneBlocked } from "./PaneBlocked";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebAccountChip } from "./WebAccountChip";
+import { WebSignInBrowser } from "./WebSignInBrowser";
 
 /**
  * The web client a signed-in person is previewing in the playground, while
@@ -56,38 +66,76 @@ export interface WebClientPaneParts {
 /**
  * The browser pane's parts for Claude web and ChatGPT web, where the
  * vendor's own page is the client; `null` for any other client. The browser
- * body stays out until a run can use it: with a usable account, on this
- * computer, or once an admin starts signing in. Until then nothing attaches
- * to a hosted browser, so picking the client costs nothing; runs start the
- * browser on the first send.
+ * body stays out until a run can use it: with a usable account, or on this
+ * computer. Until then nothing attaches to a hosted browser, so picking the
+ * client costs nothing; runs start the browser on the first send, and an
+ * admin who starts signing in gets a browser of the sign-in's own.
  */
 export function useWebClientPane({
   projectId,
   hostId,
   vendor,
   local,
-  pendingSignIn,
 }: {
   projectId: string | null;
   hostId: string | null;
   vendor: WebClientVendor | undefined;
   /** This computer's browser, where people sign in with their own account. */
   local: boolean;
-  /** An admin's verified sign-in that isn't saved for the project yet. */
-  pendingSignIn?: { accountEmail: string; onSave: () => Promise<void> };
 }): WebClientPaneParts | null {
   const { accounts, loaded, isAdmin } = useWebAccounts(projectId, vendor);
+  const createAccount = useMutation(webAccountsApi.create);
   // Per client, so switching clients doesn't carry a sign-in over.
-  const [signingInFor, setSigningInFor] = useState<string | null>(null);
-  if (!vendor || !hostId) return null;
+  const [signIn, setSignIn] = useState<{
+    hostId: string;
+    webAccountId: string;
+    browserSessionId: string;
+  } | null>(null);
+  const [starting, setStarting] = useState(false);
+  if (!vendor || !hostId || !projectId) return null;
   const account = runAccountOf(accounts);
   const signedOut = account?.status === "needs_sign_in";
-  const signingIn = signingInFor === hostId && !local;
+  const active = signIn?.hostId === hostId && !local ? signIn : null;
   const site = webClientSite(vendor);
   const client = webClientName(vendor);
 
+  // The sign-in route signs in a named account, so a project's first one is
+  // made, needing sign-in, before its browser starts.
+  const startSignIn = async () => {
+    setStarting(true);
+    try {
+      const webAccountId =
+        account?.webAccountId ??
+        (
+          await createAccount({
+            projectId,
+            vendor,
+            label: newWebAccountLabel(vendor, accounts),
+          })
+        ).webAccountId;
+      const { browserSessionId } = await startWebAccountSignIn(
+        projectId,
+        webAccountId,
+      );
+      setSignIn({ hostId, webAccountId, browserSessionId });
+    } catch (failure) {
+      const fallback = `Couldn't open a browser to sign in to ${site}. Try again.`;
+      const refusal = describeConvexFailure(failure, fallback);
+      toast.error(refusal.refusal ? refusal.message : fallback);
+    } finally {
+      setStarting(false);
+    }
+  };
+
   let blocker: ReactNode = null;
-  if (local || signingIn || (account && !signedOut)) blocker = null;
+  if (active)
+    blocker = (
+      <WebSignInBrowser
+        projectId={projectId}
+        browserSessionId={active.browserSessionId}
+      />
+    );
+  else if (local || (account && !signedOut)) blocker = null;
   else if (!loaded)
     blocker = (
       <p role="status" className="p-4 text-sm text-muted-foreground">
@@ -114,7 +162,13 @@ export function useWebClientPane({
             ? `${site} signed this account out, so runs on ${client} can't start. Sign in again here, then save it for the project.`
             : `Sign in here, then save the account for the project. Nothing is saved until you choose to.`}
         </p>
-        <Button type="button" size="sm" onClick={() => setSigningInFor(hostId)}>
+        <Button
+          type="button"
+          size="sm"
+          disabled={starting}
+          onClick={() => void startSignIn()}
+        >
+          {starting ? <Loader2 className="animate-spin" aria-hidden /> : null}
           {account ? "Sign in again" : "Start signing in"}
         </Button>
       </div>
@@ -134,17 +188,20 @@ export function useWebClientPane({
         />
       </div>
     ),
-    banner: pendingSignIn ? (
+    banner: active ? (
       <SaveWebAccountBar
         vendor={vendor}
-        accountEmail={pendingSignIn.accountEmail}
-        onSave={pendingSignIn.onSave}
+        expectedEmail={account?.accountEmail}
+        onSave={async () => {
+          const result = await saveWebAccountProfile(
+            projectId,
+            active.webAccountId,
+            active.browserSessionId,
+          );
+          if (result.ok) setSignIn(null);
+          return result;
+        }}
       />
-    ) : signingIn ? (
-      <p className="shrink-0 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-        Sign in to {site} in the browser below, then save the account for the
-        project.
-      </p>
     ) : null,
     blocker,
   };
