@@ -1,6 +1,10 @@
 vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
   BrowserRuntimeControls: () => null,
 }));
+// Web clients' pane parts read Convex; their own suite covers them.
+vi.mock("@/components/web-clients/WebClientPane", () => ({
+  useWebClientPane: () => null,
+}));
 /**
  * The browser panel, in its new home beside chat.
  *

@@ -49,6 +49,7 @@ import {
   MIN_BROWSER_PANEL_SIZE,
   useBrowserWorkspaceStore,
 } from "@/stores/browser-workspace-store";
+import { useWebClientPaneOpening } from "@/components/web-clients/WebClientPane";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -339,18 +340,28 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // TRI-STATE, kept as one: `undefined` is "PostHog has not answered", which
   // is not the same as "no" and must not close a panel on its own.
   const workspaceState = useBrowserWorkspaceEnabledState();
+  // Claude web and ChatGPT web are a vendor's page, so the pane is the client.
+  const webClientVendor = useWebClientPaneOpening({
+    hostConfig: effectiveHostConfig,
+    hostId: previewedHostId,
+    conversationId,
+    signedIn: isConvexAuthenticated,
+  });
+  const webClientPane = webClientVendor !== undefined;
   const canBrowseResolved =
-    workspaceState !== undefined && browsersEnabled !== undefined;
+    webClientPane ||
+    (workspaceState !== undefined && browsersEnabled !== undefined);
   const canBrowse =
-    workspaceState === true &&
-    browsersEnabled === true &&
-    browserPanelAvailable({
-      sessionHasBrowser,
-      hostHasBrowser: !!browserToolIds?.includes("browser"),
-      selectedEngine: browserEngine.selectedEngine,
-      isAuthenticated: isConvexAuthenticated,
-      localBrowserRunning,
-    });
+    webClientPane ||
+    (workspaceState === true &&
+      browsersEnabled === true &&
+      browserPanelAvailable({
+        sessionHasBrowser,
+        hostHasBrowser: !!browserToolIds?.includes("browser"),
+        selectedEngine: browserEngine.selectedEngine,
+        isAuthenticated: isConvexAuthenticated,
+        localBrowserRunning,
+      }));
   const showBrowser = browserOpen && canBrowse;
 
   // The browser takes its room from the Sessions rail, ONCE. Doing it on every
@@ -479,14 +490,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       !railShouldOpenForBrowse({
         conversationId,
         revealConversationId: browseRevealId,
-        workspacePanelVisible: workspaceState === true,
+        // A web client's pane shows even with the workspace flag off.
+        workspacePanelVisible: workspaceState === true || webClientPane,
       })
     ) {
       return;
     }
     pendingRailReveal.current = true;
     setIsRightRailVisible(true);
-  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+  }, [
+    browseRevealSeq,
+    browseRevealId,
+    conversationId,
+    workspaceState,
+    webClientPane,
+  ]);
 
   useEffect(() => {
     if (!isRightRailVisible || !pendingRailReveal.current) return;
@@ -672,6 +690,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   // metered box awake.
                   visible={showBrowser}
                   onClose={closeBrowser}
+                  webClientVendor={webClientVendor}
                 />
               </ResizablePanel>
             </>
