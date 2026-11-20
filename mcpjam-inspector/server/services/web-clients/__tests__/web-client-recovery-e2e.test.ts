@@ -10,6 +10,8 @@
  *    for a password before the reply is read. The run pauses, its send record
  *    is lost, a person hands the account back, and the turn resumes. The
  *    ledger keeps it from sending the prompt again: the server got one call.
+ *  - The same loss in an eval iteration, which has no stream: it waits in
+ *    place, and runs on after the handback with still one call.
  *  - An ambiguous call: the server takes the call and never answers, and the
  *    reply times out. The ledger shows a call with no answer, so the step
  *    stops and says it may have run: still one call.
@@ -19,7 +21,15 @@ import type { AddressInfo } from "node:net";
 import { serve, type ServerType } from "@hono/node-server";
 import { chromium, type Browser } from "playwright";
 import { MCPClientManager } from "@mcpjam/sdk";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   startFixtureVendor,
   type FixtureVendor,
@@ -253,6 +263,28 @@ describe(
       await browser.close();
     });
 
+    /** A person signed the account in again: hand it back as they would. */
+    async function handBack(requestId: string) {
+      let handbackBrowser: ReturnType<typeof accountBrowserOver> | undefined;
+      try {
+        return await createWebRecoveryCoordinator({
+          backend,
+          ledger: webClientToolCallLedger,
+          resumeRun: resumeWebRun,
+        }).handback({
+          projectId: PROJECT,
+          requestId,
+          browserFor: (account) =>
+            (handbackBrowser = accountBrowserOver(environment, {
+              webAccountId: account.webAccountId,
+              vendor: "claude",
+            })),
+        });
+      } finally {
+        await handbackBrowser?.close();
+      }
+    }
+
     const turnOptions = (prompt: string, run: Record<string, string>) => ({
       messages: [{ role: "user" as const, content: prompt }],
       modelId: "anthropic/claude-sonnet-4.5",
@@ -313,21 +345,7 @@ describe(
 
       // The send record does not survive the pause; only the ledger knows.
       journal = createMemorySendJournal();
-      let handbackBrowser: ReturnType<typeof accountBrowserOver> | undefined;
-      const handback = await createWebRecoveryCoordinator({
-        backend,
-        ledger: webClientToolCallLedger,
-        resumeRun: resumeWebRun,
-      }).handback({
-        projectId: PROJECT,
-        requestId: paused.data.requestId,
-        browserFor: (account) =>
-          (handbackBrowser = accountBrowserOver(environment, {
-            webAccountId: account.webAccountId,
-            vendor: "claude",
-          })),
-      });
-      await handbackBrowser?.close();
+      const handback = await handBack(paused.data.requestId);
       expect(handback).toMatchObject({
         status: "resumed",
         runs: [
@@ -350,6 +368,55 @@ describe(
         expect.objectContaining({ status: "ready", profileVersion: 2 }),
       ]);
       await reader.cancel();
+    });
+
+    it("holds a paused eval iteration in place and runs it on after the handback, with one call", async () => {
+      interruption.passwordAfterCall = true;
+      const settled = runHarnessTurn(
+        turnOptions("lost eval reply", {
+          evalIterationId: "iteration-recovery-2",
+          sourceType: "eval",
+        }),
+        "none",
+      ).then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+
+      // An eval iteration streams nothing: its open request shows the pause.
+      const request = await vi.waitFor(
+        async () => {
+          const [open] = await backend.listWebReconnectRequests({
+            projectId: PROJECT,
+          });
+          if (open?.status !== "open") throw new Error("not paused yet");
+          return open;
+        },
+        { timeout: 60_000, interval: 100 },
+      );
+      expect(upstream.toolCalls()).toHaveLength(1);
+
+      journal = createMemorySendJournal();
+      expect(await handBack(request.requestId)).toMatchObject({
+        status: "resumed",
+        runs: [
+          expect.objectContaining({
+            runId: "iteration-recovery-2",
+            status: "resumed",
+          }),
+        ],
+      });
+
+      const outcome = await settled;
+      if ("error" in outcome) throw outcome.error;
+      expect(outcome.result.messageHistory.at(-1)).toMatchObject({
+        role: "assistant",
+        content: expect.arrayContaining([
+          { type: "text", text: "echo said: echo: lost eval reply" },
+        ]),
+      });
+      expect(upstream.toolCalls()).toHaveLength(1);
+      expect(vendor.sends).toEqual(["lost eval reply"]);
     });
 
     it("stops an eval iteration as ambiguous when the server never answered, without calling it again", async () => {
