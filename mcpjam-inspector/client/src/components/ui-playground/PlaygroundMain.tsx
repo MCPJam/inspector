@@ -377,6 +377,7 @@ import {
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
+import { useCompareAutoRun } from "./use-compare-auto-run";
 import {
   chatHistoryAction,
   getChatHistoryState,
@@ -617,6 +618,8 @@ interface PlaygroundMainProps {
    * Used by the eval preview to "run on open" when the case renders a widget.
    */
   autoRunInput?: string;
+  /** Fires once this mount commits to the `autoRunInput` send. */
+  onAutoRunStarted?: () => void;
   /** Fires once the `autoRunInput` prompt is actually sent. */
   onAutoRunSent?: () => void;
   /**
@@ -735,6 +738,7 @@ export function PlaygroundMain({
   hideWelcomeHero = false,
   hideCenterHeaderChrome = false,
   autoRunInput,
+  onAutoRunStarted,
   onAutoRunSent,
   runPreviewRequest,
   onMessagesChange,
@@ -5057,9 +5061,7 @@ export function PlaygroundMain({
   // empty. `handleSendFollowUp` ensures the server is connected first. The ref
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
-  // Declared further down; read through a ref so the effect can broadcast.
-  const queueBroadcastRef = useRef<typeof queueBroadcastRequest>(() => false);
-  const autoRunBroadcastIdRef = useRef<number | null>(null);
+  const compareAutoRun = useCompareAutoRun(onAutoRunSent);
   useEffect(() => {
     if (
       !shouldAutoRunPreview({
@@ -5073,9 +5075,8 @@ export function PlaygroundMain({
     ) {
       return;
     }
-    // Comparison cards set up after the page does; wait for every one.
-    // Wait out model settings loading too: a send now would be refused. And a
-    // new project's comparison clients arrive after load, switching modes.
+    // Wait for every comparison card and for model settings: a send is refused.
+    // A new project's comparison clients also arrive after load, switching modes.
     if (
       submitBlocked ||
       clientInit.settling ||
@@ -5083,6 +5084,7 @@ export function PlaygroundMain({
     )
       return;
     autoRanRef.current = true;
+    onAutoRunStarted?.();
     // The prompt is auto-sent, so clear it out of the composer. The composer is
     // otherwise seeded with the same `initialInput` (so it mirrors the eval
     // editor's left-pane prompt); leaving the sent text behind would both look
@@ -5100,23 +5102,17 @@ export function PlaygroundMain({
     // be there. `autoRanRef` is already set, so the only send that can follow
     // is the user's own.
     composer.setInput("");
-    // Comparison lanes take a broadcast, the way a starter chip sends there.
     if (isCompareMode) {
       const prompt = autoRunInput as string;
-      void (async () => {
-        const gated =
+      void compareAutoRun.send(prompt, modelContextQueue, {
+        gate: async () =>
           (await ensureSelectedServerReadyForChat()) &&
           (await ensureThreadReadyForSend()) &&
-          (await ensureLocalHarnessReadyForSend());
-        if (!gated) return composer.setInput(prompt);
-        const sent = queueBroadcastRef.current({
-          text: prompt,
-          prependMessages: [],
-          widgetModelContext: modelContextQueue,
-        });
-        if (sent) autoRunBroadcastIdRef.current = broadcastSequence.current;
-        else autoRanRef.current = false;
-      })();
+          (await ensureLocalHarnessReadyForSend()),
+        sequence: broadcastSequence,
+        onDeferred: () => composer.setInput(prompt),
+        onRefused: () => (autoRanRef.current = false),
+      });
       return;
     }
     void handleSendFollowUp(autoRunInput as string).then((sent) => {
@@ -5139,6 +5135,7 @@ export function PlaygroundMain({
     ensureThreadReadyForSend,
     ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
+    onAutoRunStarted,
     onAutoRunSent,
   ]);
 
@@ -5517,16 +5514,7 @@ export function PlaygroundMain({
     );
     return true;
   };
-  queueBroadcastRef.current = queueBroadcastRequest;
-  // The auto-run counts as sent once a card takes it, not when it is queued.
-  const claimBroadcast = (request: BroadcastChatTurnRequest, recipient: string) => {
-    const claimed = broadcastRequest?.claim(request, recipient) ?? false;
-    if (claimed && request.id === autoRunBroadcastIdRef.current) {
-      autoRunBroadcastIdRef.current = null;
-      onAutoRunSent?.();
-    }
-    return claimed;
-  };
+  compareAutoRun.queueRef.current = queueBroadcastRequest;
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -7599,7 +7587,11 @@ export function PlaygroundMain({
                           }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
-                            claimBroadcast(request, broadcastRecipient("host", column.compareId))
+                              compareAutoRun.claim(
+                                broadcastRequest,
+                                request,
+                                broadcastRecipient("host", column.compareId),
+                              )
                           }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -7743,7 +7735,11 @@ export function PlaygroundMain({
                             selectedServers={selectedServers}
                             broadcastRequest={broadcastRequest?.request ?? null}
                             claimBroadcastDelivery={(request) =>
-                              claimBroadcast(request, broadcastRecipient("model", compareId))
+                              compareAutoRun.claim(
+                                broadcastRequest,
+                                request,
+                                broadcastRecipient("model", compareId),
+                              )
                             }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest

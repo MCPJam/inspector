@@ -1,6 +1,7 @@
 /**
- * Home's first Playground prompt, sent on open. Kept until sent (Playground can
- * mount twice while loading) and ignored after a few minutes.
+ * Home's first Playground prompt, sent on open. Kept until a Playground mount
+ * tries to send it (one can unmount while loading) and ignored after a few
+ * minutes.
  */
 const KEY = "mcpjam.home-checklist.playground-autorun";
 const MAX_AGE_MS = 5 * 60_000;

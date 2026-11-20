@@ -1021,6 +1021,7 @@ export function useServerState({
   const opTokenRef = useRef<Map<string, number>>(new Map());
   // The op token each server was removed at. A connect holding that token
   // deletes the row its in-flight save creates, which the removal missed.
+  // A later connect for the name clears it: both saves land on one row.
   const removedAtOpTokenRef = useRef(new Map<string, number>());
   const checkWasConnectedRef = useRef(new Map<string, boolean>());
   useEffect(
@@ -3945,6 +3946,7 @@ export function useServerState({
         select: true,
       });
       const token = nextOpToken(formData.name);
+      removedAtOpTokenRef.current.delete(formData.name);
       let hostedServerId: string | undefined;
       let syncedConnectionTarget:
         { projectId: string; serverId: string } | undefined;
