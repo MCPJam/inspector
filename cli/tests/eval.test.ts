@@ -6625,7 +6625,7 @@ test("eval run exits non-zero and names each failure on a partial fan-out", asyn
   }
 });
 
-test("eval run --wait exits 6 and prints a resume per credit-refused target", async () => {
+test("eval run --wait exits 6 and replays the group for its credit-refused target", async () => {
   const fixture = await startEvalFixture({
     suiteDetail: {
       hosts: [
@@ -6676,7 +6676,7 @@ test("eval run --wait exits 6 and prints a resume per credit-refused target", as
     );
     assert.match(
       run.stdout,
-      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --client host-chatgpt --wait --idempotency-key k1:host-chatgpt --resume\n/
+      /Resume: mcpjam cloud eval run --suite suite-1 --project proj-alpha --all-targets --wait --idempotency-key k1 --resume\n/
     );
   } finally {
     process.exitCode = 0;
@@ -7553,7 +7553,12 @@ test("eval run --compose-model variadic launches one group without attaching", a
     assert.equal(run.result.exitCode, 0);
     assert.equal(fixture.composeBodies.length, 2);
     assert.equal(fixture.attachBodies.length, 0);
-    assert.deepEqual(fixture.groupBodies.at(-1), {
+    // A keyless fan-out is given a key, so a refused target's replay dedupes.
+    const { idempotencyKey, ...groupBody } = fixture.groupBodies.at(-1) as {
+      idempotencyKey?: unknown;
+    };
+    assert.match(String(idempotencyKey), /^[0-9a-f-]{36}$/);
+    assert.deepEqual(groupBody, {
       suiteId: "suite-1",
       ephemeralEnvironment: true,
       targets: [

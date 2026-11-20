@@ -10,8 +10,10 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import {
+  creditRecoveryOfRefusal,
   declareEvalSuiteFileValidity,
   formatSuiteFileFindings,
+  isCreditBlock,
   loadEvalSuiteFile,
   type ResolvedEvalSuiteFileCase,
   type SuiteFileLoadFailure,
@@ -1269,20 +1271,28 @@ export async function executeEvalRunFromFile(
     );
   } catch (error) {
     const normalized = normalizeCliError(error);
+    // The suite is already written, so a resume names it by id rather than
+    // reading the file (or consumed stdin) again.
+    const launch = { idempotencyKey, suiteId: synced.suite.id };
     const details =
       normalized.details &&
       typeof normalized.details === "object" &&
       !Array.isArray(normalized.details)
-        ? { ...normalized.details, idempotencyKey }
+        ? { ...normalized.details, ...launch }
         : {
-            idempotencyKey,
+            ...launch,
             ...(normalized.details !== undefined
               ? { cause: normalized.details }
               : {}),
           };
+    // A credit block prints its own one step and resume command; retry advice
+    // beside it would be a second action.
+    const retryAdvice = isCreditBlock(creditRecoveryOfRefusal(details))
+      ? ""
+      : `\nRetry this launch with --idempotency-key ${idempotencyKey}.`;
     throw new CliError(
       normalized.code,
-      `${normalized.message}\nRetry this launch with --idempotency-key ${idempotencyKey}.`,
+      `${normalized.message}${retryAdvice}`,
       normalized.exitCode,
       details
     );

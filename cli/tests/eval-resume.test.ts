@@ -11,7 +11,9 @@ import {
   buildResumeCommand,
   creditRecoveryOfCliError,
   idempotencyKeyOfErrorDetails,
+  resumeReadsStdin,
   shellQuoteArg,
+  suiteIdOfErrorDetails,
 } from "../src/lib/eval-resume.js";
 
 function recovery(overrides: Partial<CreditRecovery> = {}): CreditRecovery {
@@ -80,57 +82,59 @@ test("buildResumeCommand: stopped run uses --resume-from and drops the key", () 
   assert.ok(!command.includes("--idempotency-key"));
 });
 
-test("buildResumeCommand: stopped run drops --case and --all-targets", () => {
-  // The server picks a resume's cases (it refuses caseIds beside a resume),
-  // and a resume reruns one run, so neither selector may be re-emitted.
+test("buildResumeCommand: stopped run names no target, case or fan-out", () => {
+  // The server picks a resume's cases (it refuses caseIds beside a resume)
+  // and runs it on the source run's own target, so no selector is re-emitted.
   const command = buildResumeCommand(
     {
       suite: "s1",
       project: "p1",
       case: ["checkout", "refund"],
       environment: ["env_1"],
+      client: ["host_1"],
+      server: ["srv_1"],
       allTargets: true,
       iterations: 3,
+      wait: true,
     },
-    { sourceRunId: "run_9" },
+    { sourceRunId: "run_9", suiteId: "s1" },
   );
   assert.equal(
     command,
-    "mcpjam cloud eval run --suite s1 --project p1 --environment env_1 --iterations 3 --resume --resume-from run_9",
+    "mcpjam cloud eval run --suite s1 --project p1 --iterations 3 --wait --resume --resume-from run_9",
   );
-  for (const flag of ["--case", "--all-targets"]) {
-    assert.ok(!command.includes(flag), `${flag} must be dropped`);
-  }
 });
 
-test("buildResumeCommand: stopped run resumes on the source run's suite and environment", () => {
-  // A suite with several environments refuses a launch that names none, so
-  // the resume names the one the stopped run actually ran on.
+test("buildResumeCommand: stopped composed run resumes on its suite by id", () => {
+  // A composed environment is not attached, so naming it would be refused;
+  // the resume names only the suite and the backend inherits the target.
   const command = buildResumeCommand(
     {
       file: "-",
       project: "p1",
-      environment: ["staging"],
+      composeClient: "claude",
       composeModel: ["gpt-5"],
     },
-    {
-      sourceRunId: "run_9",
-      source: { suiteId: "suite_7", environmentId: "env_42" },
-    },
+    { sourceRunId: "run_9", suiteId: "suite_7" },
   );
   assert.equal(
     command,
-    "mcpjam cloud eval run --suite suite_7 --project p1 --environment env_42 --resume --resume-from run_9",
+    "mcpjam cloud eval run --suite suite_7 --project p1 --resume --resume-from run_9",
   );
 });
 
-test("buildResumeCommand: stopped run on an attached host resumes on that host", () => {
+test("buildResumeCommand: a refused --file - launch names its suite by id", () => {
   const command = buildResumeCommand(
-    { suite: "s1", project: "p1" },
-    { sourceRunId: "run_9", source: { suiteId: "s1", hostId: "host_3" } },
+    { file: "-", project: "p1", case: ["c1"] },
+    { idempotencyKey: "k1", suiteId: "suite_7" },
   );
-  assert.ok(command.includes("--client host_3"));
-  assert.ok(!command.includes("--environment"));
+  assert.equal(
+    command,
+    "mcpjam cloud eval run --suite suite_7 --project p1 --case c1 --idempotency-key k1 --resume",
+  );
+  assert.equal(resumeReadsStdin({ file: "-" }, "suite_7"), false);
+  assert.equal(resumeReadsStdin({ file: "-" }, undefined), true);
+  assert.equal(resumeReadsStdin({ file: "a.yaml" }, undefined), false);
 });
 
 test("buildResumeCommand: --host folds into --client, repetitions into --iterations", () => {
@@ -186,6 +190,11 @@ test("creditRecoveryOfCliError: undefined for an ordinary error", () => {
     undefined,
   );
   assert.equal(creditRecoveryOfCliError(new Error("boom")), undefined);
+});
+
+test("suiteIdOfErrorDetails: extracts the written suite, else undefined", () => {
+  assert.equal(suiteIdOfErrorDetails({ suiteId: "suite_7" }), "suite_7");
+  assert.equal(suiteIdOfErrorDetails({}), undefined);
 });
 
 test("idempotencyKeyOfErrorDetails: extracts a string key, else undefined", () => {

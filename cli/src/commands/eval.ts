@@ -194,15 +194,12 @@ import {
   EVAL_RUN_BLOCKED_EXIT_CODE,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
-import {
-  buildResumeCommand,
-  creditRecoveryOfCliError,
-  idempotencyKeyOfErrorDetails,
-} from "../lib/eval-resume.js";
+import { creditRecoveryOfCliError } from "../lib/eval-resume.js";
 import {
   creditBlocksJsonFields,
   launchCreditExitCode,
   readRunCreditStops,
+  refusedLaunchCreditBlock,
   refusedTargetCreditBlocks,
   stoppedRunCreditBlock,
   writeCreditBlocks,
@@ -3980,28 +3977,20 @@ export function registerEvalCommands(program: Command): void {
               ? creditRecoveryOfCliError(error)
               : undefined;
           if (error instanceof CliError && isCreditBlock(launchRecovery)) {
-            const detailKey = idempotencyKeyOfErrorDetails(error.details);
-            const resumeCommand = buildResumeCommand(options, {
-              idempotencyKey: detailKey,
-            });
+            const block = refusedLaunchCreditBlock(
+              error.details,
+              launchRecovery,
+              options,
+            );
             if (globalOptions.format === "human") {
               process.stderr.write(`${error.message}\n`);
-              writeCreditBlocks(
-                "human",
-                [{ target: "", recovery: launchRecovery, resumeCommand }],
-                resumed,
-                process.stderr,
-              );
+              writeCreditBlocks("human", [block], resumed, process.stderr);
             } else {
               writeResult(
                 {
                   error: { code: error.code, message: error.message },
                   creditRecovery: launchRecovery,
-                  ...creditBlocksJsonFields(
-                    [{ target: "", recovery: launchRecovery, resumeCommand }],
-                    resumed,
-                    true,
-                  ),
+                  ...creditBlocksJsonFields([block], resumed, true),
                 },
                 globalOptions.format,
               );

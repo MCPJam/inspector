@@ -2,7 +2,6 @@ import {
   type CreditRecovery,
   creditRecoveryOfRefusal,
 } from "@mcpjam/sdk/contract";
-import type { EvalResumeSource } from "@mcpjam/sdk";
 
 /**
  * When MCPJam credits refuse a launch or stop a run partway, the one step the
@@ -63,6 +62,13 @@ export interface EvalRunLaunchOptions {
   out?: string;
 }
 
+/** A non-empty string field of a launch error's `details`, or `undefined`. */
+function detailString(details: unknown, field: string): string | undefined {
+  if (!details || typeof details !== "object") return undefined;
+  const value = (details as Record<string, unknown>)[field];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /**
  * The idempotency key a launch error carried in its `details` (the file path
  * mints one and records it there), or `undefined`. Lets a refused-launch resume
@@ -71,9 +77,28 @@ export interface EvalRunLaunchOptions {
 export function idempotencyKeyOfErrorDetails(
   details: unknown,
 ): string | undefined {
-  if (!details || typeof details !== "object") return undefined;
-  const key = (details as { idempotencyKey?: unknown }).idempotencyKey;
-  return typeof key === "string" && key.length > 0 ? key : undefined;
+  return detailString(details, "idempotencyKey");
+}
+
+/**
+ * The suite a refused `--file` launch had already written before credits
+ * refused it, from the error's `details`, so its resume names the suite by id
+ * instead of reading the file (or consumed stdin) again.
+ */
+export function suiteIdOfErrorDetails(details: unknown): string | undefined {
+  return detailString(details, "suiteId");
+}
+
+/**
+ * True when the resume command still reads the suite from stdin: a refused
+ * `--file -` launch whose suite id is unknown. The caller says the input must
+ * be piped again, because the first launch consumed it.
+ */
+export function resumeReadsStdin(
+  options: Pick<EvalRunLaunchOptions, "file">,
+  suiteId: string | undefined,
+): boolean {
+  return options.file === "-" && suiteId === undefined;
 }
 
 /** A plain token needs no quoting; anything else is single-quoted, safely. */
@@ -88,11 +113,17 @@ export function shellQuoteArg(arg: string): string {
  * The `mcpjam cloud eval run …` to run after the user tops up credits.
  *
  * A refused launch created no run, so resuming is the same launch again with
- * the same `--idempotency-key` (reusing it is safe — no run was created for it)
- * plus `--resume`. A run that stopped partway is resumed with `--resume
- * --resume-from <runId>`, which runs only the source run's unfinished cases;
- * the key is dropped there because reusing it would return the stopped run
- * instead of starting the resume.
+ * the same `--idempotency-key` plus `--resume`, every selector and compose
+ * flag included. For a fan-out the server derives each target's run key from
+ * that group key, so targets that started come back as their existing runs
+ * and only the refused ones launch. A refused `--file -` launch names its
+ * suite by id when it is known, because stdin was consumed.
+ *
+ * A run that stopped partway is resumed on its suite with `--resume
+ * --resume-from <runId>` and no target: the backend runs it on the source
+ * run's own target, which a selector may not be able to name (a composed or
+ * since-detached environment). The key is dropped there because reusing it
+ * would return the stopped run instead of starting the resume.
  *
  * Secrets never appear: `--api-key`, `--api-header` and `--api-url` are not
  * reconstructed. Arguments are quoted so a value with spaces or JSON survives a
@@ -103,7 +134,7 @@ export function buildResumeCommand(
   resume: {
     sourceRunId?: string;
     idempotencyKey?: string;
-    source?: EvalResumeSource;
+    suiteId?: string;
   } = {},
 ): string {
   const argv: string[] = ["mcpjam", "cloud", "eval", "run"];
@@ -113,16 +144,19 @@ export function buildResumeCommand(
   };
 
   const stoppedResume = resume.sourceRunId !== undefined;
-  const source = stoppedResume ? resume.source : undefined;
 
   // A stopped run already belongs to a suite, so its resume names that suite
   // by id: re-sending `--file` would re-upsert the cases first, and `--file -`
   // would wait on stdin that was consumed by the first launch.
-  if (source?.suiteId) push("--suite", source.suiteId);
+  const bySuiteId =
+    resume.suiteId !== undefined && (stoppedResume || options.file === "-");
+  if (bySuiteId) push("--suite", resume.suiteId!);
   else if (options.file) push("--file", options.file);
   else if (options.suite) push("--suite", options.suite);
   if (options.project) push("--project", options.project);
 
+  // The server picks a stopped run's cases and target itself, and refuses
+  // `--case` beside a resume, so a stopped resume names neither.
   if (!stoppedResume) {
     pushEach("--server", options.server);
     pushEach("--environment", options.environment);
@@ -130,18 +164,6 @@ export function buildResumeCommand(
     pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
     if (options.allTargets) push("--all-targets");
     pushEach("--case", options.case);
-  } else if (source?.environmentId) {
-    // The server picks a resume's cases and refuses `--case` beside it, but it
-    // still needs the target: a suite with several environments or hosts
-    // refuses a launch that names none. The source run's own target is the
-    // one to resume on, even if the suite's attachments changed since.
-    push("--environment", source.environmentId);
-  } else if (source?.hostId) {
-    push("--client", source.hostId);
-  } else {
-    pushEach("--server", options.server);
-    pushEach("--environment", options.environment);
-    pushEach("--client", [...(options.client ?? []), ...(options.host ?? [])]);
   }
 
   const iterations = options.iterations ?? options.repetitions;

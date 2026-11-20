@@ -1,12 +1,11 @@
 import {
   creditRecoveryOfIterations,
   formatCreditRecovery,
-  incompleteCasesOfIterations,
+  incompleteCasesOfRun,
   isCreditBlock,
   parseCreditRecovery,
   readEvalRunCreditRecovery,
   readEvalRunIncompleteCases,
-  resumeIdempotencyKeyForTarget,
   resumeSourceOfRun,
   type CreditRecovery,
   type IncompleteEvalCases,
@@ -19,6 +18,9 @@ import type {
 } from "@mcpjam/sdk/platform";
 import {
   buildResumeCommand,
+  idempotencyKeyOfErrorDetails,
+  resumeReadsStdin,
+  suiteIdOfErrorDetails,
   type EvalRunLaunchOptions,
 } from "./eval-resume.js";
 import { EVAL_RUN_BLOCKED_EXIT_CODE, worstOf } from "./eval-run-exit-code.js";
@@ -26,8 +28,8 @@ import { EVAL_RUN_BLOCKED_EXIT_CODE, worstOf } from "./eval-run-exit-code.js";
 /**
  * One target of an `eval run` that MCPJam credits blocked with a step a person
  * must take: refused before its run existed, or stopped partway. Each carries
- * its own resume command, so a fan-out where two targets were blocked prints
- * two commands and the agent never has to invent one.
+ * the command that resumes it, so the agent never has to invent one. The
+ * refused targets of one fan-out share one command, the replay of that launch.
  */
 export interface CreditBlock {
   /** The target in the caller's words, for a fan-out's per-target lines. */
@@ -38,6 +40,8 @@ export interface CreditBlock {
   resumeCommand: string;
   /** The cases the resume will run, for a stopped run. */
   incompleteCases?: IncompleteEvalCases;
+  /** The resume reads the suite file from stdin, which must be piped again. */
+  pipeAgain?: true;
 }
 
 /** A run's credit stop, read from the run record or its trials. */
@@ -47,67 +51,87 @@ export interface RunCreditStop {
   incompleteCases?: IncompleteEvalCases;
 }
 
-/** The launch knobs a per-target re-launch must not repeat. */
-const PER_TARGET_DROPPED: Partial<EvalRunLaunchOptions> = {
-  file: undefined,
-  server: undefined,
-  environment: undefined,
-  client: undefined,
-  host: undefined,
-  allTargets: undefined,
-  composeClient: undefined,
-  composeHost: undefined,
-  composeComputer: undefined,
-  composeModel: undefined,
-  composeModelSelection: undefined,
-  withClientDefault: undefined,
-  saveTargets: undefined,
-  composeServer: undefined,
-  composeServerGroup: undefined,
-  composeSkill: undefined,
-  composeSecret: undefined,
-};
+/** True when the launch named its targets with flags rather than its file. */
+function namesTargets(options: EvalRunLaunchOptions): boolean {
+  return Boolean(
+    options.server?.length ||
+      options.environment?.length ||
+      options.client?.length ||
+      options.host?.length ||
+      options.allTargets ||
+      options.composeClient ||
+      options.composeHost,
+  );
+}
 
 /**
- * The refused targets of a launch receipt that a person must unblock. Each
- * resume re-launches that one target on the suite by id (a `--file` launch
- * already upserted it, and `--file -` would wait on consumed stdin), with a
- * per-target key so a second run of the command starts nothing new.
+ * The refused targets of a launch receipt that a person must unblock. They
+ * share ONE resume: the same launch replayed under the same group key, which
+ * the server turns into the same per-target run keys, so the targets that
+ * started return their existing runs and only the refused ones launch. A
+ * `--file -` launch replays on its suite by id (stdin was consumed), naming
+ * the receipt's targets when the file, not a flag, had chosen them.
  */
 export function refusedTargetCreditBlocks(
   result: RunEvalSuiteResult,
   options: EvalRunLaunchOptions,
 ): CreditBlock[] {
-  const groupKey = options.idempotencyKey ?? result.idempotencyKey;
-  return result.targets.flatMap((target) => {
+  const refused = result.targets.flatMap((target) => {
     if (target.status !== "failed") return [];
     const recovery = parseCreditRecovery(target.error.recovery);
-    if (!isCreditBlock(recovery)) return [];
-    const environmentId = target.environment?.id;
-    const hostId = target.host?.id;
-    const targetId = environmentId ?? hostId ?? "";
-    const resumeCommand = buildResumeCommand({
-      ...options,
-      ...PER_TARGET_DROPPED,
-      suite: result.suite.id,
-      ...(environmentId ? { environment: [environmentId] } : {}),
-      ...(!environmentId && hostId ? { client: [hostId] } : {}),
-      idempotencyKey: groupKey
-        ? resumeIdempotencyKeyForTarget(groupKey, targetId)
-        : undefined,
-    });
+    return isCreditBlock(recovery) ? [{ target, recovery }] : [];
+  });
+  if (refused.length === 0) return [];
+  const fileChoseTargets = options.file === "-" && !namesTargets(options);
+  const replay: EvalRunLaunchOptions = fileChoseTargets
+    ? {
+        ...options,
+        environment: result.targets.flatMap((target) =>
+          !target.host && target.environment ? [target.environment.id] : [],
+        ),
+        client: result.targets.flatMap((target) =>
+          target.host ? [target.host.id] : [],
+        ),
+      }
+    : options;
+  const resumeCommand = buildResumeCommand(replay, {
+    idempotencyKey: options.idempotencyKey ?? result.idempotencyKey,
+    suiteId: result.suite.id,
+  });
+  return refused.map(({ target, recovery }) => {
+    const targetId = target.environment?.id ?? target.host?.id ?? "";
     const name = target.host?.name || target.environment?.name;
-    return [
-      {
-        target: name ? `${name} (${targetId})` : targetId,
-        recovery,
-        resumeCommand,
-      },
-    ];
+    return {
+      target: name ? `${name} (${targetId})` : targetId,
+      recovery,
+      resumeCommand,
+    };
   });
 }
 
-/** A stopped run's block, resumed with `--resume-from` on its own target. */
+/**
+ * The block of a single launch credits refused before it created a run: the
+ * same launch replayed with the key and, for a `--file` launch, the suite the
+ * thrown error's `details` recorded.
+ */
+export function refusedLaunchCreditBlock(
+  details: unknown,
+  recovery: CreditRecovery,
+  options: EvalRunLaunchOptions,
+): CreditBlock {
+  const suiteId = suiteIdOfErrorDetails(details);
+  return {
+    target: "",
+    recovery,
+    resumeCommand: buildResumeCommand(options, {
+      idempotencyKey: idempotencyKeyOfErrorDetails(details),
+      suiteId,
+    }),
+    ...(resumeReadsStdin(options, suiteId) ? { pipeAgain: true as const } : {}),
+  };
+}
+
+/** A stopped run's block, resumed with `--resume-from` on its own suite. */
 export function stoppedRunCreditBlock(
   stop: RunCreditStop,
   options: EvalRunLaunchOptions,
@@ -120,7 +144,7 @@ export function stoppedRunCreditBlock(
     recovery: stop.recovery,
     resumeCommand: buildResumeCommand(options, {
       sourceRunId: run.id,
-      source: resumeSourceOfRun(run),
+      ...resumeSourceOfRun(run),
     }),
     ...(stop.incompleteCases ? { incompleteCases: stop.incompleteCases } : {}),
   };
@@ -158,8 +182,8 @@ export async function readRunCreditStops(
       if (!recovery) return undefined;
       if (!isCreditBlock(recovery)) return { run, recovery };
       const incompleteCases = trials
-        ? incompleteCasesOfIterations(trials.iterations, !trials.complete)
-        : await readEvalRunIncompleteCases(client, signal, projectId, run.id);
+        ? incompleteCasesOfRun(run, trials.iterations, !trials.complete)
+        : await readEvalRunIncompleteCases(client, signal, projectId, run);
       return { run, recovery, ...(incompleteCases ? { incompleteCases } : {}) };
     }),
   );
@@ -180,11 +204,11 @@ function incompleteCasesLine(cases: IncompleteEvalCases): string | undefined {
 
 /**
  * The human lines for credit blocks. Each distinct step is printed once (a
- * fan-out refused for one reason says it once), then one `Resume:` command
- * per blocked target, named by target when there are several, and what each
- * stopped run left unfinished. Under `--resume` the user already said they
- * took the step, so it prints `Still blocked:` and no command: the CLI never
- * retries on its own.
+ * fan-out refused for one reason says it once), then each distinct `Resume:`
+ * command once, named by the targets it resumes when there are several, and
+ * what each stopped run left unfinished. Under `--resume` the user already
+ * said they took the step, so it prints `Still blocked:` and no command: the
+ * CLI never retries on its own.
  */
 export function writeCreditBlocks(
   format: string,
@@ -201,10 +225,23 @@ export function writeCreditBlocks(
       `${resumed ? "Still blocked" : "Recovery"}: ${sentence}\n`,
     );
   }
+  const targetsByCommand = new Map<string, string[]>();
   for (const block of blocks) {
-    if (!resumed) {
-      const label = blocks.length > 1 ? ` ${block.target}` : "";
+    const targets = targetsByCommand.get(block.resumeCommand) ?? [];
+    targetsByCommand.set(block.resumeCommand, [...targets, block.target]);
+  }
+  const printed = new Set<string>();
+  for (const block of blocks) {
+    if (!resumed && !printed.has(block.resumeCommand)) {
+      printed.add(block.resumeCommand);
+      const targets = targetsByCommand.get(block.resumeCommand)!;
+      const label = targetsByCommand.size > 1 ? ` ${targets.join(", ")}` : "";
       destination.write(`Resume${label}: ${block.resumeCommand}\n`);
+      if (block.pipeAgain) {
+        destination.write(
+          "Pipe the same suite file to it again: the first launch read stdin.\n",
+        );
+      }
     }
     const incomplete = block.incompleteCases
       ? incompleteCasesLine(block.incompleteCases)
@@ -219,6 +256,7 @@ function creditBlockJson(block: CreditBlock, resumed: boolean) {
     ...(resumed
       ? { stillBlocked: true as const }
       : { resumeCommand: block.resumeCommand }),
+    ...(block.pipeAgain && !resumed ? { resumeReadsStdin: true as const } : {}),
     ...(block.incompleteCases
       ? { incompleteCases: block.incompleteCases }
       : {}),
@@ -248,16 +286,17 @@ export function creditBlocksJsonFields(
 }
 
 /**
- * The exit code of a launch that did not wait: 1 when a target failed for a
- * reason other than a credit block (a partial launch is not a success), 6
- * when every failure is a block a person must clear, 0 otherwise.
+ * The exit code of a launch that did not wait. Without a credit block, a
+ * target that failed for any reason exits 1 (a partial launch is not a
+ * success). With one, each other failure is classified first, as the `--wait`
+ * path does: no run exists, so it is a setup failure (4), never a verdict, and
+ * the block a person must clear (6) outranks it. 0 when nothing failed.
  */
 export function launchCreditExitCode(
   result: Pick<RunEvalSuiteResult, "failedCount">,
   refusedBlocks: readonly CreditBlock[],
 ): number {
-  return worstOf([
-    result.failedCount > refusedBlocks.length ? 1 : 0,
-    refusedBlocks.length > 0 ? EVAL_RUN_BLOCKED_EXIT_CODE : 0,
-  ]);
+  const otherFailures = result.failedCount > refusedBlocks.length;
+  if (refusedBlocks.length === 0) return otherFailures ? 1 : 0;
+  return worstOf([otherFailures ? 4 : 0, EVAL_RUN_BLOCKED_EXIT_CODE]);
 }

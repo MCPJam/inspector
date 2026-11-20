@@ -11,6 +11,7 @@ import {
   creditBlocksJsonFields,
   launchCreditExitCode,
   readRunCreditStops,
+  refusedLaunchCreditBlock,
   refusedTargetCreditBlocks,
   stoppedRunCreditBlock,
   writeCreditBlocks,
@@ -64,7 +65,7 @@ function capture(): { text: () => string; write: (chunk: string) => boolean } {
   };
 }
 
-test("a refused target re-launches alone, by suite id, with its own key", () => {
+test("refused targets share one replay of the launch under its group key", () => {
   const blocks = refusedTargetCreditBlocks(
     receipt(
       [
@@ -88,8 +89,70 @@ test("a refused target re-launches alone, by suite id, with its own key", () => 
   assert.equal(blocks[0]!.target, "Prod (env_prod)");
   assert.equal(
     blocks[0]!.resumeCommand,
-    "mcpjam cloud eval run --suite s1 --environment env_prod --iterations 2 --wait --idempotency-key k1:env_prod --resume",
+    "mcpjam cloud eval run --file suite.json --all-targets --iterations 2 --wait --idempotency-key k1 --resume",
   );
+});
+
+test("a --file - fan-out replays on its suite with the receipt's targets", () => {
+  const blocks = refusedTargetCreditBlocks(
+    receipt(
+      [
+        {
+          status: "started",
+          runId: "run_1",
+          runStatus: "running",
+          host: { id: "h1", name: "Claude" },
+        },
+        {
+          status: "failed",
+          host: { id: "h2", name: "GPT" },
+          error: { code: "FORBIDDEN", message: "Out", recovery: RECOVERY },
+        },
+        {
+          status: "failed",
+          host: { id: "h3", name: "Gemini" },
+          error: { code: "FORBIDDEN", message: "Out", recovery: RECOVERY },
+        },
+      ],
+      { idempotencyKey: "minted" },
+    ),
+    { file: "-" },
+  );
+  assert.equal(blocks.length, 2);
+  const command =
+    "mcpjam cloud eval run --suite s1 --client h1 --client h2 --client h3 --idempotency-key minted --resume";
+  assert.deepEqual(
+    blocks.map((block) => block.resumeCommand),
+    [command, command],
+  );
+  const out = capture();
+  writeCreditBlocks("human", blocks, false, out);
+  assert.equal(
+    out.text(),
+    [
+      "Recovery: Upgrade to Pro to keep going: https://app.mcpjam.com/billing",
+      `Resume: ${command}`,
+      "",
+    ].join("\n"),
+  );
+});
+
+test("a refused solo --file - launch names its suite, or says to pipe again", () => {
+  const known = refusedLaunchCreditBlock(
+    { idempotencyKey: "k1", suiteId: "suite_7" },
+    RECOVERY,
+    { file: "-" },
+  );
+  assert.equal(
+    known.resumeCommand,
+    "mcpjam cloud eval run --suite suite_7 --idempotency-key k1 --resume",
+  );
+  assert.equal(known.pipeAgain, undefined);
+  const unknown = refusedLaunchCreditBlock({}, RECOVERY, { file: "-" });
+  assert.equal(unknown.pipeAgain, true);
+  const out = capture();
+  writeCreditBlocks("human", [unknown], false, out);
+  assert.match(out.text(), /Pipe the same suite file to it again/);
 });
 
 test("a refused target with a wait, or another failure, is not a block", () => {
@@ -143,7 +206,7 @@ test("one step printed once, then a labelled resume per blocked target", () => {
     [
       "Recovery: Upgrade to Pro to keep going: https://app.mcpjam.com/billing",
       "Resume Staging (env_stg): mcpjam cloud eval run --suite s1 --environment env_stg --resume",
-      "Resume Prod (run run_2): mcpjam cloud eval run --suite s1 --environment env_prod --resume --resume-from run_2",
+      "Resume Prod (run run_2): mcpjam cloud eval run --suite s1 --resume --resume-from run_2",
       'Incomplete (the resume reruns these): "Refund flow", "Login"',
       "",
     ].join("\n"),
@@ -185,14 +248,16 @@ test("JSON: a solo block stays top-level, a fan-out lists every target", () => {
   assert.deepEqual(creditBlocksJsonFields([], false, false), {});
 });
 
-test("a launch that did not wait exits 6 for blocks alone, 1 for any other failure", () => {
+test("a launch that did not wait: a block outranks a setup failure beside it", () => {
   const block: CreditBlock = {
     target: "t",
     recovery: RECOVERY,
     resumeCommand: "c",
   };
   assert.equal(launchCreditExitCode({ failedCount: 1 }, [block]), 6);
-  assert.equal(launchCreditExitCode({ failedCount: 2 }, [block]), 1);
+  // The other target failed to launch: a setup failure (4), not a verdict.
+  assert.equal(launchCreditExitCode({ failedCount: 2 }, [block]), 6);
+  assert.equal(launchCreditExitCode({ failedCount: 1 }, []), 1);
   assert.equal(launchCreditExitCode({ failedCount: 0 }, []), 0);
 });
 
