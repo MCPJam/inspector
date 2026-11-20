@@ -108,20 +108,25 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
     ) : null,
 }));
 
-vi.mock("@/components/hosts/HostPicker", () => ({
-  HostPicker: ({
+vi.mock("@/components/hosts/client-multi-select", () => ({
+  ClientMultiSelect: ({
     value,
+    onChange,
     triggerId,
   }: {
-    value: string | null;
+    value: string[];
+    onChange: (next: string[]) => void;
     triggerId?: string;
   }) => (
     <button
       type="button"
       id={triggerId}
       data-testid="client-picker"
-      data-host={value ?? ""}
-    />
+      data-host={value.join(",")}
+      onClick={() => onChange([])}
+    >
+      Clear clients
+    </button>
   ),
 }));
 
@@ -459,6 +464,31 @@ describe("ConvertSessionDialogCore", () => {
     );
   });
 
+  it("keeps the list empty when a client created inline is then cleared", async () => {
+    mocks.hosts = [];
+    const { rerender } = renderCore();
+    fireEvent.click(screen.getByTestId("promote-create-client"));
+    fireEvent.click(screen.getByTestId("create-host-dialog"));
+    mocks.hosts = [{ hostId: "host-created" }];
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("client-picker"));
+
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
+    );
+  });
+
   it("does not offer to create a client while the host list is still loading", () => {
     // An empty array mid-flight is not a project without clients, and
     // offering Create there invites a duplicate on first render.
@@ -769,7 +799,23 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
   });
 
-  it("names Client and Server through their labels, not just their values", () => {
+  it("keeps the client list empty after the user clears it", async () => {
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).not.toBe(""),
+    );
+    fireEvent.click(screen.getByTestId("client-picker"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe(""),
+    );
+  });
+
+  it("names Clients and Server through their labels, not just their values", () => {
     // Without a trigger id the accessible name is only the selected value —
     // "Claude", never "Client". `getByLabelText` fails unless the label is
     // really bound to the control.
