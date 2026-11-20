@@ -203,6 +203,8 @@ export function PlaygroundBrowserPanel({
             mintToken={mintHostedBrowserToken}
             hostId={hostId}
             active={visible}
+            // A web client's browser runs on the project's account.
+            allowProfileSave={!webClient}
           />
         )}
       </div>

@@ -3,7 +3,7 @@ vi.mock("@/components/browser/BrowserRuntimeControls", () => ({
 }));
 // Web clients' pane parts read Convex; their own suite covers them.
 vi.mock("@/components/web-clients/WebClientPane", () => ({
-  useWebClientPane: () => null,
+  useWebClientPane: () => webClientState.parts,
 }));
 /**
  * The browser panel, in its new home beside chat.
@@ -14,7 +14,11 @@ vi.mock("@/components/web-clients/WebClientPane", () => ({
  * a pane nobody is looking at stops claiming somebody is.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+
+const webClientState: {
+  parts: { chip: null; banner: null; blocker: null } | null;
+} = { parts: null };
 
 const engineState = {
   engine: "local" as "local" | "cloud",
@@ -80,16 +84,19 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
     active,
     sessionId,
     mintToken,
+    allowProfileSave = true,
   }: {
     active?: boolean;
     sessionId?: string;
     mintToken?: (args: { projectId: string }) => Promise<{ token: string }>;
+    allowProfileSave?: boolean;
   }) => (
     <div
       data-testid="browser-pane"
       data-engine="hosted"
       data-active={String(active)}
       data-session={sessionId ?? ""}
+      data-profile-save={String(allowProfileSave)}
       onClick={() => {
         void mintToken?.({ projectId: "proj-1" }).then((t) => {
           document
@@ -121,6 +128,7 @@ function renderPanel(visible = true) {
 }
 
 beforeEach(() => {
+  webClientState.parts = null;
   engineState.engine = "local";
   engineState.selectedEngine = "local";
   engineState.granted = true;
@@ -298,6 +306,24 @@ describe("the browser a chat owns", () => {
     expect(screen.getByTestId("browser-pane")).toHaveAttribute(
       "data-session",
       "chat-1",
+    );
+  });
+
+  it("never offers to save a web client's browser as the person's profile", () => {
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderPanel();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-profile-save",
+      "true",
+    );
+    cleanup();
+    // The browser runs on the project's Claude or ChatGPT account.
+    webClientState.parts = { chip: null, banner: null, blocker: null };
+    renderPanel();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-profile-save",
+      "false",
     );
   });
 
