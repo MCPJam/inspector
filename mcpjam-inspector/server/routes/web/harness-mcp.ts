@@ -58,6 +58,13 @@ import {
   isRpcLogSinkConfigured,
 } from "../../utils/harness/harness-rpc-log-sink";
 import { logger } from "../../utils/logger";
+import {
+  cancelRelayedListen,
+  harnessListenRelayEnabled,
+  isJsonRpcId,
+  LISTEN_METHOD,
+  relayListenStream,
+} from "./harness-mcp-listen-relay.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { HOSTED_MODE } from "../../config.js";
 import {
@@ -332,6 +339,23 @@ async function handle(c: any) {
     return c.json(validation.response, validation.status as 400);
   }
   const body = validation.body;
+  const relayListen = harnessListenRelayEnabled();
+  // The harness's own relayed listens, by its request id, for this caller and
+  // turn.
+  const listenKey = (id: unknown) =>
+    [
+      claims.userId,
+      serverId,
+      session?.laneId ?? JSON.stringify(turn ?? null),
+      String(id),
+    ].join("|");
+  if (relayListen && body.method === "notifications/cancelled") {
+    const requestId = (body as { params?: { requestId?: unknown } }).params
+      ?.requestId;
+    if (isJsonRpcId(requestId) && cancelRelayedListen(listenKey(requestId))) {
+      return c.body("Accepted", 202);
+    }
+  }
   // A session client cancels with a separate request; it stops the call only
   // where that call runs.
   const cancelled = session ? cancelledRequestId(body) : undefined;
@@ -357,7 +381,7 @@ async function handle(c: any) {
   };
 
   try {
-    const response = await withManager(
+    const createAuthorized = () =>
       createAuthorizedManager(
         caller,
         "", // bearer ignored on the workos_api_key path
@@ -442,7 +466,47 @@ async function handle(c: any) {
             }
           },
         },
-      ),
+      );
+    if (relayListen && body.method === LISTEN_METHOD && isJsonRpcId(body.id)) {
+      // A manager of the stream's own, for as long as the stream lasts.
+      const created = await createAuthorized();
+      const manager = "manager" in created ? created.manager : created;
+      const refused = await checkTurn?.();
+      if (refused) {
+        await manager.disconnectAllServers();
+        return refused;
+      }
+      return c.body(
+        relayListenStream({
+          id: body.id,
+          params: (body as { params?: unknown }).params,
+          serverId,
+          manager,
+          cancelKey: listenKey(body.id),
+          maxMs: HARNESS_MCP_STREAM_MAX_MS,
+          ...(checkTurn
+            ? {
+                stillAuthorized: async () => (await checkTurn()) === undefined,
+              }
+            : {}),
+          onEnd: () =>
+            void manager.disconnectAllServers().catch((error: unknown) =>
+              logger.debug("[harness-mcp] relayed listen: disconnect failed", {
+                error: error instanceof Error ? error.name : "unknown",
+              }),
+            ),
+        }),
+        200,
+        {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      );
+    }
+    const response = await withManager(
+      createAuthorized(),
       async (manager) => {
         // Connecting to a slow server can outlive the message that requested it.
         const refused = await checkTurn?.();
@@ -508,6 +572,11 @@ async function handle(c: any) {
         return handleJsonRpc(serverId, body, manager, "adapter", {
           ...(call ? { signal: call.signal } : {}),
           downstreamProtocolVersion: downstreamProtocolVersionOf(body),
+          // This request's manager is still connecting: answer the handshake
+          // from the server's real connection, not a stand-in. Only with the
+          // listen relay, since a 2026-07-28 handshake without it leads to the
+          // listen stall.
+          awaitConnect: relayListen,
           // Inert unless this token carries an authorized eval scope AND the
           // harness named a turn — so playground traffic and capture-off runs
           // pay nothing and behave identically.
