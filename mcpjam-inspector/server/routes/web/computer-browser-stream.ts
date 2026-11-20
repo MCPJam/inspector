@@ -563,7 +563,7 @@ export function createComputerBrowserStreamWsHandler(
           shutdown(CLOSE_UNAVAILABLE, "The browser stream failed.");
         });
         upstream.onClose(() =>
-          shutdown(CLOSE_GONE, "The browser stream ended."),
+          shutdown(1001, "The browser stream ended."),
         );
 
         // Stashed for `onMessage` below, which has no closure over these.
