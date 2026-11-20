@@ -17,8 +17,6 @@
  *   schema reads the same under draft-07 and 2020-12. A schema that uses a
  *   keyword whose meaning differs between them keeps it.
  */
-import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
-
 export const DEFAULT_MCP_DIALECT =
   "https://json-schema.org/draft/2020-12/schema";
 
@@ -70,26 +68,4 @@ export function omitImpliedDialect<T extends Record<string, unknown>>(
   if (json.$schema !== DEFAULT_MCP_DIALECT) return json;
   const { $schema: _implied, ...rest } = json;
   return usesDialectSensitiveKeyword(rest) ? json : (rest as T);
-}
-
-/**
- * `schema` with an input JSON Schema that leaves out the implied dialect.
- * Validation and the output conversion are the schema's own. Typed as `S`
- * because the SDK reads a tool's schema only through `~standard`, which is
- * all this keeps.
- */
-export function withImpliedDialect<S extends StandardSchemaWithJSON>(
-  schema: S
-): S {
-  const standard = schema["~standard"];
-  return {
-    "~standard": {
-      ...standard,
-      jsonSchema: {
-        input: (options) =>
-          omitImpliedDialect(standard.jsonSchema.input(options)),
-        output: (options) => standard.jsonSchema.output(options),
-      },
-    },
-  } as S;
 }

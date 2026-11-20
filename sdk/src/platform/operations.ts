@@ -3934,7 +3934,8 @@ const composeRunTargetInput = z
       .describe(
         "Client (name or ID) the composed stack runs as." +
           DEPRECATED_HOST_SELECTOR_SUFFIX
-      ),
+      )
+      .meta({ deprecated: true }),
     serverGroup: z
       .string()
       .trim()
@@ -4176,14 +4177,16 @@ const runEvalSuiteInput = z
       .optional()
       .describe(
         EVAL_CLIENT_SELECTOR_DESCRIPTION + DEPRECATED_HOST_SELECTOR_SUFFIX
-      ),
+      )
+      .meta({ deprecated: true }),
     hosts: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe(
         EVAL_CLIENTS_SELECTOR_DESCRIPTION + DEPRECATED_HOSTS_SELECTOR_SUFFIX
-      ),
+      )
+      .meta({ deprecated: true }),
     allAttached: z
       .boolean()
       .optional()
@@ -4851,7 +4854,8 @@ const runEvalCaseInput = z
       .describe(
         "One client ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that client's configuration. Mutually exclusive with `environment` and `servers`." +
           DEPRECATED_HOST_SELECTOR_SUFFIX
-      ),
+      )
+      .meta({ deprecated: true }),
     compose: composeRunTargetInput.optional(),
     iterations: RUN_KNOB_FIELDS.iterations,
     repetitions: RUN_KNOB_FIELDS.repetitions,
@@ -5207,7 +5211,8 @@ const evalCaseInput = z.object({
     .optional()
     .describe(
       "DEPRECATED spelling of `checks`, which means exactly this. Per-case check gate (advanced)."
-    ),
+    )
+    .meta({ deprecated: true }),
   model: z
     .string()
     .trim()
@@ -5843,7 +5848,8 @@ const updateEvalSuiteInput = z
       .optional()
       .describe(
         "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
-      ),
+      )
+      .meta({ deprecated: true }),
     settings: z
       .strictObject({
         minimumAccuracy: z.number().min(0).max(100).optional(),
@@ -12971,7 +12977,8 @@ const goalRunsInput = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe("Goal id, from list_goals." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+    .describe("Goal id, from list_goals." + DEPRECATED_GOAL_SELECTOR_SUFFIX)
+    .meta({ deprecated: true }),
   cursor: z
     .string()
     .trim()
@@ -13150,7 +13157,8 @@ const launchGoalRunInput = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe("Goal id to launch." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+    .describe("Goal id to launch." + DEPRECATED_GOAL_SELECTOR_SUFFIX)
+    .meta({ deprecated: true }),
   idempotencyKey: z
     .string()
     .trim()
@@ -13274,7 +13282,8 @@ const goalSelectorInput = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe("Goal id." + DEPRECATED_GOAL_SELECTOR_SUFFIX),
+    .describe("Goal id." + DEPRECATED_GOAL_SELECTOR_SUFFIX)
+    .meta({ deprecated: true }),
 });
 
 export type GetGoalInput = z.infer<typeof goalSelectorInput>;
@@ -16184,7 +16193,8 @@ const swarmRunSelectorInput = z.object({
     .trim()
     .min(1)
     .optional()
-    .describe("Swarm run id." + DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX),
+    .describe("Swarm run id." + DEPRECATED_SWARM_RUN_SELECTOR_SUFFIX)
+    .meta({ deprecated: true }),
 });
 
 export type GetSwarmRunInsightsInput = z.infer<typeof swarmRunSelectorInput>;
@@ -16567,7 +16577,8 @@ const studySelectorInput = z.object({
     .describe(
       "Study id (the `id` from list_studies / publish_study)." +
         DEPRECATED_STUDY_SELECTOR_SUFFIX
-    ),
+    )
+    .meta({ deprecated: true }),
 });
 
 export type ListStudiesResult = {

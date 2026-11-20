@@ -26,7 +26,7 @@ import {
   RESOURCE_MIME_TYPE,
   RESOURCE_URI_META_KEY,
 } from "../shared/platform-widgets.js";
-import { withImpliedDialect } from "./impliedDialect.js";
+import { withListedInputSchema } from "./listedInputSchema.js";
 
 type ToolConfig<
   OutputArgs extends StandardSchemaWithJSON,
@@ -82,7 +82,7 @@ export function createSessionToolRegistrar(
       ui?: ToolUiConfig<InputArgs>
     ): RegisteredTool {
       const listed = config.inputSchema
-        ? { ...config, inputSchema: withImpliedDialect(config.inputSchema) }
+        ? { ...config, inputSchema: withListedInputSchema(config.inputSchema) }
         : config;
       if (!ui) {
         return server.registerTool(name, listed, callback);

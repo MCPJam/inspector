@@ -4,8 +4,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import {
   DEFAULT_MCP_DIALECT,
   omitImpliedDialect,
-  withImpliedDialect,
 } from "../src/tools/impliedDialect.js";
+import { withListedInputSchema } from "../src/tools/listedInputSchema.js";
 import { createSessionToolRegistrar } from "../src/tools/sessionToolRegistrar.js";
 
 const target = { target: "draft-2020-12" } as const;
@@ -57,11 +57,11 @@ describe("omitImpliedDialect", () => {
   });
 });
 
-describe("withImpliedDialect", () => {
+describe("withListedInputSchema", () => {
   const schema = z.object({ project: z.string().min(1).optional() });
 
   it("lists the input schema without the implied dialect", () => {
-    const listed = withImpliedDialect(schema)["~standard"].jsonSchema.input(target);
+    const listed = withListedInputSchema(schema)["~standard"].jsonSchema.input(target);
     expect(listed).not.toHaveProperty("$schema");
     expect(listed).toMatchObject({
       type: "object",
@@ -70,7 +70,7 @@ describe("withImpliedDialect", () => {
   });
 
   it("validates exactly as the schema it wraps", async () => {
-    const wrapped = withImpliedDialect(schema)["~standard"];
+    const wrapped = withListedInputSchema(schema)["~standard"];
     expect(await wrapped.validate({ project: "demo" })).toEqual({
       value: { project: "demo" },
     });
