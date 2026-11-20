@@ -628,6 +628,50 @@ describe("web account recovery", () => {
     ]);
     expect(started).toEqual(["run-2"]);
   });
+
+  it("keeps the account ready when a wrong seat's check ends after a valid handback", async () => {
+    const world = createWorld();
+    const coordinator = startProcess(world);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"]);
+    const [request] = await requestsOf(world);
+    const requestId = request?.requestId ?? "";
+    let finishCheck = () => {};
+    const checking = new Promise<void>((resolve) => {
+      finishCheck = resolve;
+    });
+    const slowIntruder = {
+      verifyAccount: vi.fn(async () => {
+        await checking;
+        return OTHER_SEAT;
+      }),
+      captureProfile: vi.fn(async () => PROFILE),
+    };
+
+    const refused = coordinator.handback({
+      projectId: PROJECT,
+      requestId,
+      browser: slowIntruder,
+    });
+    await vi.waitFor(() =>
+      expect(slowIntruder.verifyAccount).toHaveBeenCalled(),
+    );
+    const accepted = await coordinator.handback({
+      projectId: PROJECT,
+      requestId,
+      browser: browserSignedInAs(SEAT),
+    });
+    finishCheck();
+    expect(await refused).toMatchObject({ status: "wrong_identity" });
+    await settle(world);
+
+    expect(accepted).toMatchObject({ status: "resumed" });
+    expect(slowIntruder.captureProfile).not.toHaveBeenCalled();
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      profileVersion: 2,
+    });
+    expect(runOf(world, "run-1").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
+  });
 });
 
 describe("a tool call runs once across recovery", () => {

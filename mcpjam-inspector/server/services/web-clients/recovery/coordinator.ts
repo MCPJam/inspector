@@ -307,10 +307,17 @@ export function createWebRecoveryCoordinator(
         logger.warn("[web-recovery] Handback refused for another seat", {
           requestId,
         });
-        await backend.markWebAccountNeedsSignIn({
-          webAccountId: account.webAccountId,
-          reason: "wrong_account",
-        });
+        // Checking this browser can outlast a valid handback of the same
+        // request, and the account that one made ready stays ready.
+        const still = (
+          await backend.listWebReconnectRequests({ projectId })
+        ).find((one) => one.requestId === requestId);
+        if (still?.status === "open") {
+          await backend.markWebAccountNeedsSignIn({
+            webAccountId: account.webAccountId,
+            reason: "wrong_account",
+          });
+        }
       }
       if (session.status !== "saved") return session;
       const { accountEmail, workspaceName } = session.identity;
