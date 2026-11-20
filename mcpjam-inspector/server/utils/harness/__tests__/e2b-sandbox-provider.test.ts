@@ -56,6 +56,7 @@ vi.mock("e2b", () => ({
   SandboxNotFoundError: mocks.FakeSandboxNotFoundError,
 }));
 
+import { BOX_MEMORY_COMMAND } from "../box-memory.js";
 import { reapHarnessBridgesCommand } from "../bridge-reaper.js";
 import { runtimeReadAheadCommand } from "../runtime-read-ahead.js";
 import { logger } from "../../logger.js";
@@ -635,6 +636,76 @@ describe("exec result normalization", () => {
       stdout: "out",
       stderr: "err",
     });
+  });
+
+  it("says why E2B stopped a command it reports as exit -1", async () => {
+    const session = await provider().createSession();
+    const killed = new FakeCommandExitError(-1, "Downloading", "");
+    Object.assign(killed, { error: "signal: killed" });
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command === BOX_MEMORY_COMMAND) {
+        return { stdout: "MemTotal: 484444 kB\noom_kill 1\n" };
+      }
+      throw killed;
+    });
+
+    const result = await session.run({ command: "pnpm install" });
+    expect(result).toMatchObject({ exitCode: -1, stdout: "Downloading" });
+    expect(result.stderr).toMatch(
+      /killed this command \(signal: killed\).*likely ran out of memory.*473 MiB/s,
+    );
+  });
+});
+
+describe("box memory", () => {
+  const opencode = () =>
+    createE2BHarnessSandboxProvider({
+      sandboxId: "sbx_1",
+      harnessId: "opencode",
+    });
+
+  it("refuses OpenCode on a box under 1 GiB without starting the pnpm guard", async () => {
+    // The guard installs pnpm when it is missing, for up to its timeout: the
+    // refusal must not wait on it.
+    sandboxState.run.mockImplementation(async (command: string) => {
+      if (command === BOX_MEMORY_COMMAND) {
+        return { stdout: "MemTotal: 484444 kB\n" };
+      }
+      if (command === harnessPnpmGuardCommand()) {
+        return new Promise(() => {});
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const failure = await Promise.resolve(opencode().createSession()).catch(
+      (error: unknown) => error,
+    );
+    expect(harnessFailureEvidenceOf(failure)).toEqual({
+      source: "sandbox_setup",
+      code: "box_memory_too_small",
+    });
+    expect(sandboxState.run).not.toHaveBeenCalledWith(
+      harnessPnpmGuardCommand(),
+      expect.anything(),
+    );
+  });
+
+  it("starts OpenCode on a 1 GiB box, and never checks on resume", async () => {
+    sandboxState.run.mockImplementation(async (command: string) => ({
+      exitCode: 0,
+      stdout: command === BOX_MEMORY_COMMAND ? "MemTotal: 999424 kB\n" : "",
+      stderr: "",
+    }));
+    const p = opencode();
+    await p.createSession();
+    expect(sandboxState.run).toHaveBeenCalledWith(BOX_MEMORY_COMMAND, {
+      timeoutMs: 5000,
+    });
+    sandboxState.run.mockClear();
+    await p.resumeSession!({ sessionId: "session" });
+    expect(sandboxState.run).not.toHaveBeenCalledWith(
+      BOX_MEMORY_COMMAND,
+      expect.anything(),
+    );
   });
 });
 
