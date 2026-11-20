@@ -461,9 +461,6 @@ vi.mock("../components/LearningTab", () => ({
 vi.mock("../components/TasksTab", () => ({
   TasksTab: () => <div />,
 }));
-vi.mock("../components/ChatTabV2", () => ({
-  ChatTabV2: () => <div />,
-}));
 vi.mock("../components/EvalsTab", () => ({
   EvalsTab: () => <div data-testid="evals-tab">Evals Tab</div>,
 }));

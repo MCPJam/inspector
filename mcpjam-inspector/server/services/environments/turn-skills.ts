@@ -23,6 +23,10 @@ import { effectiveHarnessId } from "../../../shared/harness-descriptors.js";
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { skillCatalogOmissions } from "../../utils/computers/effective-skill-tools.js";
 import {
+  unnamedSkills,
+  type HarnessSkillDelivery,
+} from "./harness-skill-delivery.js";
+import {
   boxVerdicts,
   pinnedBox,
   sourcePlan,
@@ -124,6 +128,12 @@ export interface TurnSkills {
   /** How MCPJam's agent serves the plan; null on a harness turn, whose box
    *  gets the skills and whose server skills come as `serverSkillsVia` says. */
   agent: AgentSkillTools | null;
+  /**
+   * What a harness turn executes of this plan: the box writer's input, its
+   * supporting files and whether the turn is live. The runner carries this out
+   * rather than choosing a source of its own. Absent on MCPJam's agent turns.
+   */
+  harness?: HarnessSkillDelivery;
 }
 
 /** What happened to a plan once its turn ran. A skill that failed to arrive is
@@ -194,6 +204,16 @@ export function resolveTurnSkills({
       excluded: [],
       serverSkillsVia: "none",
       agent: null,
+      ...(runtime.kind === "harness"
+        ? {
+            // A run that froze no skills delivers none, which clears its box;
+            // a turn with no source leaves the box as it is.
+            harness:
+              source.kind === "none"
+                ? unnamedSkills()
+                : { mode: "pinned", skills: [], files: [], live: false },
+          }
+        : {}),
     };
   }
   const listedAs = refsBySkillId(source.set);
@@ -246,8 +266,26 @@ export function planWithLiveServerSkills(
   modelContextTokens?: number,
 ): TurnSkills {
   const set = withLiveServerSkills(plan.set, live);
+  return {
+    ...plan,
+    set,
+    delivered: [...plan.delivered, ...liveServerSkillRefs(set, modelContextTokens)],
+  };
+}
+
+/**
+ * The connected servers' own skills a set holds once they have joined it, as
+ * the refs a plan names: the skills MCPJam will load, with the ones the
+ * prompt's skill list leaves out marked. Both engines count a live turn's
+ * server skills from this, so the agent's plan and a harness's report cannot
+ * disagree about them.
+ */
+export function liveServerSkillRefs(
+  set: EffectiveCapabilitySet,
+  modelContextTokens?: number,
+): SkillRef[] {
   const omitted = new Set(skillCatalogOmissions(set, modelContextTokens));
-  const served = (set.liveServerSkills?.skills ?? []).flatMap(
+  return (set.liveServerSkills?.skills ?? []).flatMap(
     ({ skillUri, ref, name, unloadable }): SkillRef[] =>
       unloadable
         ? []
@@ -257,7 +295,6 @@ export function planWithLiveServerSkills(
               : { skillId: skillUri, ref, name },
           ],
   );
-  return { ...plan, set, delivered: [...plan.delivered, ...served] };
 }
 
 /**
@@ -348,13 +385,17 @@ function planBox(
   refs: SkillRef[],
   box: BoxInput,
 ): TurnSkills {
-  const { reasonFor, serverSkillsVia } = boxVerdicts(runtime.harnessId, box);
+  const { reasonFor, serverSkillsVia, delivery } = boxVerdicts(
+    runtime.harnessId,
+    box,
+  );
   return {
     runtime,
     set,
     agent: null,
     ...partition(refs, reasonFor),
     serverSkillsVia,
+    harness: delivery,
   };
 }
 

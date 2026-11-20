@@ -22,7 +22,7 @@ function removalText(plan: DeleteActionPlan) {
   return [
     plan.movedChecks && `Its ${plural(plan.movedChecks, "assertion")}${own}`,
     plan.movedFollowers &&
-      `${plural(plan.movedFollowers, "later assertion")} in its turn${to ? ` will move to step ${to}'s turn.` : lost}`,
+      `${plural(plan.movedFollowers, "later assertion")} in its turn${to ? ` will move to step ${to}'s turn.` : " would be graded before the first prompt."}`,
   ]
     .filter(Boolean)
     .join(" ");

@@ -100,6 +100,13 @@ export interface OrganizationBillingStatus {
   topUpEligible?: boolean;
   plan: OrganizationPlan;
   effectivePlan: OrganizationPlan;
+  /**
+   * Set only for a plan MCPJam staff gave the org outside Stripe; `plan` stays
+   * the stored plan and `effectivePlan` is the staff tier. `expiresAt` is an
+   * exclusive end (midnight UTC after the last day), null for no end date.
+   * Older backends omit it, which reads the same as null.
+   */
+  staffPlan?: { expiresAt: number | null } | null;
   source: "free" | "subscription" | "trial" | "simulation";
   billingInterval: BillingInterval | null;
   billingConfigured: boolean;

@@ -13,7 +13,10 @@ import {
   fakeSkillBox,
   type FakeSkillBox,
 } from "../../../test/support/fake-skill-box";
-import { writeTurnToBox } from "../../../test/support/skill-delivery";
+import {
+  frozenPlan,
+  writeTurnToBox,
+} from "../../../test/support/skill-delivery";
 import {
   planBoxSkills,
   writeBoxSkills,
@@ -58,7 +61,8 @@ const runTurn = (
   harnessId: string,
   box: FakeSkillBox,
   ...artifacts: PinnedSkillArtifact[]
-) => writeTurnToBox(harnessId, { pinnedHarnessSkills: artifacts }, box);
+) =>
+  writeTurnToBox(harnessId, frozenPlan(harnessId, artifacts), box);
 
 /** The adapter's own turn-time write, as `harnessId`'s adapter makes it. */
 async function adapterWrite(
