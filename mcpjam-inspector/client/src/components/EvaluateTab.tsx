@@ -52,6 +52,7 @@ import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
 import {
   environmentTargetLabel,
   formatRunId,
@@ -1337,6 +1338,10 @@ function EvaluateTabContent({
       : null;
   const runBreadcrumbLabel =
     runBreadcrumbNumber != null ? `Run #${runBreadcrumbNumber}` : "Run";
+  // Behind the steps editor's flag, a case's suite crumb lands on its list.
+  const caseCrumbOpensTestCases =
+    useTestCaseStepsEditorEnabled() === true &&
+    (route.type === "test-edit" || route.type === "test-detail");
   const isNestedDetail =
     route.type === "test-edit" ||
     route.type === "test-detail" ||
@@ -1657,6 +1662,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateSettingsDelete
           onGeneratingChange={setGeneratingCases}
           onResultCrumbsChange={setResultCrumbs}
           evalRunsDisabledReason={evalRunsDisabledReason}
@@ -1773,7 +1779,14 @@ function EvaluateTabContent({
                     ? {
                         label: suiteBreadcrumbLabel,
                         onClick: () =>
-                          playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                          caseCrumbOpensTestCases
+                            ? playgroundNavigation.toSuiteOverview(
+                                selectedSuiteId,
+                                "test-cases",
+                              )
+                            : playgroundNavigation.toSuiteOverview(
+                                selectedSuiteId,
+                              ),
                       }
                     : undefined
             }
@@ -1896,6 +1909,7 @@ function EvaluateTabContent({
 
         <ConfirmationDialogs
           suiteToDelete={handlers.suiteToDelete}
+          suiteToDeleteHasUnsavedEdits={handlers.suiteToDeleteHasUnsavedEdits}
           setSuiteToDelete={handlers.setSuiteToDelete}
           deletingSuiteId={handlers.deletingSuiteId}
           onConfirmDeleteSuite={handlers.confirmDelete}

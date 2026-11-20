@@ -40,11 +40,18 @@ import {
   isBridgeSpawn,
   reapHarnessBridgesCommand,
 } from "./bridge-reaper.js";
+import {
+  assertBoxMemoryForHarness,
+  stderrWithStopReason,
+} from "./box-memory.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
+import { readAheadRuntime } from "./runtime-read-ahead.js";
 import { HarnessInfraSetupError } from "./harness-provider-error.js";
 
 export interface E2BHarnessSandboxProviderOptions {
+  /** Resolved adapter identity for cold-start read-ahead. */
+  harnessId?: string;
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
   /**
@@ -344,6 +351,10 @@ export function createE2BHarnessSandboxProvider(
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
     const ports: number[] = [bridgePort];
+    const runInBox = (
+      command: string,
+      options: { timeoutMs: number; signal?: AbortSignal },
+    ) => sandbox.commands.run(command, options);
 
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
@@ -360,9 +371,24 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
-      // Both checks must finish before exposing the session. Socket cleanup
-      // targets only the model proxy and is independent of the package guard.
+      // On its own, before the guard: a box too small for the harness fails
+      // here at once, not after the guard's install (up to its timeout).
+      // Only a harness with a floor sends a command.
+      if (!resuming) {
+        await assertBoxMemoryForHarness(
+          runInBox,
+          opts.harnessId,
+          connectSignal,
+        );
+      }
+      // Preparation must finish before exposing the session. The read-only
+      // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
+        readAheadRuntime(
+          runInBox,
+          { harnessId: opts.harnessId, resuming },
+          connectSignal,
+        ),
         ...(opts.skipPnpmGuard
           ? []
           : [
@@ -508,7 +534,15 @@ export function createE2BHarnessSandboxProvider(
             return {
               exitCode: err.exitCode,
               stdout: err.stdout,
-              stderr: err.stderr,
+              stderr: await stderrWithStopReason(
+                {
+                  exitCode: err.exitCode,
+                  error: err.error,
+                  stderr: err.stderr,
+                },
+                runInBox,
+                abortSignal,
+              ),
             };
           }
           throw err;

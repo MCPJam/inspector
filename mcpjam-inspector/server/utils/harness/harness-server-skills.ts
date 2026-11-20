@@ -20,19 +20,16 @@
 import type { ModelMessage } from "ai";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { mentionsServerSkill } from "../../../shared/server-skill-banner.js";
-import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import {
   buildLiveEffectiveCapabilities,
   withLiveServerSkills,
   type EffectiveCapabilitySet,
   type RuntimeServerSkill,
 } from "../../services/environments/effective-capabilities.js";
-import { downloadedFileBytes } from "../../services/evals/run-plugin-snapshot.js";
 import { getEffectiveSkillToolsAndPrompt } from "../computers/effective-skill-tools.js";
+import { liveServerSkillRefs } from "../../services/environments/turn-skills.js";
 import { listLiveServerSkills } from "../computers/live-server-skills.js";
 import type { BoxSkillOutcome, BoxSkillsResult } from "./box-skills-writer.js";
-import type { HarnessRuntimeAdapter } from "./registry.js";
-import type { HarnessSkillSource } from "./skill-delivery.js";
 import { takesServerSkillsAsTools } from "./skills-descriptor.js";
 import {
   withHostCommandGate,
@@ -53,6 +50,9 @@ export interface HarnessServerSkills {
   promptSection: string;
   /** The captured skills the tools serve, for the turn's delivery report. */
   served: BoxSkillOutcome[];
+  /** Counts for the connected servers' own skills on a live turn, which
+   *  the turn's plan cannot name. */
+  liveDelivery?: NonNullable<BoxSkillsResult["liveDelivery"]>;
   transcript: ServerSkillTranscript;
   /** The runtime's commands go to MCPJam's gate: the turn offers server
    *  skills, or its conversation already holds one. */
@@ -60,48 +60,23 @@ export interface HarnessServerSkills {
 }
 
 /**
- * Whether a turn serves server skills through MCPJam's skill tools: its
- * runtime takes them that way, and the gate can hold its commands, the
- * runtime's own and MCPJam's host tools. A local eval or swarm runs
- * `allow-all`, where no command asks, so it serves none.
- */
-export function servesServerSkills(
-  adapter: Pick<
-    HarnessRuntimeAdapter,
-    | "supportsSkills"
-    | "skills"
-    | "supportsNativeToolApproval"
-    | "supportsHostExecutedToolApproval"
-    | "hostToolApprovalAtRuntime"
-  >,
-  turn: { localUnattended: boolean },
-): boolean {
-  return (
-    takesServerSkillsAsTools(adapter) &&
-    adapter.supportsNativeToolApproval &&
-    adapter.supportsHostExecutedToolApproval &&
-    !adapter.hostToolApprovalAtRuntime &&
-    !turn.localUnattended
-  );
-}
-
-/**
  * The server skills a harness turn serves, from the source its skills come
  * from (`selectHarnessSkillSource`): a run's captured copies, an
  * environment's captured skills, and on a live turn the connected servers'.
- * Undefined for a turn that serves none (`servesServerSkills`).
+ * Undefined for a turn that serves none (`takesServerSkillsAsTools`).
  */
 export async function harnessServerSkills(
-  adapter: Parameters<typeof servesServerSkills>[0],
+  adapter: Parameters<typeof takesServerSkillsAsTools>[0],
   args: {
-    localUnattended: boolean;
-    mode: HarnessSkillSource["mode"];
     /** A live turn (`HarnessTurnSkills.live`): its servers are connected, so
      *  their own skills are listed beside the captured ones. */
     live: boolean;
-    pinnedHarnessSkills?: readonly PinnedSkillArtifact[];
-    /** An environment turn's set, which holds its captured server skills. */
-    effectiveCapabilities?: EffectiveCapabilitySet;
+    /**
+     * The captured server skills the turn's plan holds (`TurnSkills.set`): a
+     * run's frozen copies, or an environment's captured skills. The plan built
+     * them once, with their digests and file bytes.
+     */
+    capturedServerSkills: readonly RuntimeServerSkill[];
     manager: MCPClientManager;
     /** The turn's selected servers, listed on a live turn. */
     serverIds: readonly string[];
@@ -110,11 +85,8 @@ export async function harnessServerSkills(
     signal?: AbortSignal;
   },
 ): Promise<HarnessServerSkills | undefined> {
-  if (!servesServerSkills(adapter, args)) return undefined;
-  const captured =
-    args.mode === "pinned"
-      ? (args.pinnedHarnessSkills ?? []).flatMap(capturedServerSkill)
-      : (args.effectiveCapabilities?.serverSkills ?? []);
+  if (!takesServerSkillsAsTools(adapter)) return undefined;
+  const captured = args.capturedServerSkills;
   // Labelled by server id, as MCPJam's agent is when it has no labels: the id
   // is host-assigned, so a server can't choose the namespace its refs take.
   const live = args.live
@@ -128,14 +100,16 @@ export async function harnessServerSkills(
     : undefined;
   const set: EffectiveCapabilitySet = {
     ...buildLiveEffectiveCapabilities({}),
-    serverSkills: captured,
+    serverSkills: [...captured],
   };
   const transcript = turnTranscript(args.messages);
+  const effective = live ? withLiveServerSkills(set, live) : set;
   const { tools, systemPromptSection } = getEffectiveSkillToolsAndPrompt(
-    live ? withLiveServerSkills(set, live) : set,
+    effective,
     args.signal ? { signal: args.signal } : {},
   );
   const offered = Object.keys(tools).length > 0;
+  const liveRefs = liveServerSkillRefs(effective);
   return {
     tools: offered ? servedThroughTranscript(tools, transcript) : {},
     promptSection:
@@ -145,6 +119,17 @@ export async function harnessServerSkills(
     served: offered
       ? captured.map(({ skillId, name }) => ({ skillId, name }))
       : [],
+    ...(live && offered
+      ? {
+          liveDelivery: {
+            delivered: liveRefs.length,
+            collisions:
+              live.skills.length - (effective.liveServerSkills?.skills.length ?? 0),
+            omittedFromCatalog: liveRefs.filter((ref) => ref.omittedFromCatalog)
+              .length,
+          },
+        }
+      : {}),
     transcript,
     gated: offered || transcript.inUse(),
   };
@@ -155,9 +140,12 @@ export function withServedSkills(
   written: BoxSkillsResult,
   serverSkills: HarnessServerSkills | undefined,
 ): BoxSkillsResult {
-  return serverSkills?.served.length
-    ? { ...written, servedByTools: serverSkills.served }
-    : written;
+  if (!serverSkills?.served.length && !serverSkills?.liveDelivery) return written;
+  return {
+    ...written,
+    ...(serverSkills.served.length ? { servedByTools: serverSkills.served } : {}),
+    ...(serverSkills.liveDelivery ? { liveDelivery: serverSkills.liveDelivery } : {}),
+  };
 }
 
 /**
@@ -189,42 +177,6 @@ export function withServerSkillTools<T extends Record<string, unknown>>(
   }
   const merged = { ...hostTools, ...tools };
   return gate ? withHostCommandGate(merged, gate) : merged;
-}
-
-/** A run's frozen copy of a skill captured from a server, as the set holds it. */
-function capturedServerSkill(
-  artifact: PinnedSkillArtifact,
-): RuntimeServerSkill[] {
-  const capture = artifact.server;
-  if (!capture) return [];
-  return [
-    {
-      skillId: capture.serverSkillId,
-      ref: capture.ref,
-      name: artifact.name,
-      description: artifact.description,
-      content: artifact.content,
-      aggregateHash: artifact.contentHash,
-      files: (artifact.files ?? []).map((file) => {
-        const bytes = downloadedFileBytes(file);
-        return {
-          path: file.path,
-          size: capture.fileSizes?.[file.path] ?? bytes.byteLength,
-          url: null,
-          read: async () => bytes,
-        };
-      }),
-      serverId: capture.serverId,
-      serverLabel: capture.serverLabel,
-      skillUri: capture.skillUri,
-      versionId: capture.versionId,
-      versionNumber: capture.versionNumber,
-      capturedAt: capture.capturedAt,
-      ...(capture.contentSha256 !== undefined
-        ? { contentSha256: capture.contentSha256 }
-        : {}),
-    },
-  ];
 }
 
 function turnTranscript(

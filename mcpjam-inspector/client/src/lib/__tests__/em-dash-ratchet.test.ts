@@ -46,7 +46,6 @@ const LEGACY_EM_DASH_COPY = new Map<string, number>([
   ["components/chat-v2/chat-input/skills/skills-popover-section.tsx", 1],
   ["components/chat-v2/history/convert-session-dialog-core.tsx", 1],
   ["components/chat-v2/shared/chat-helpers.ts", 1],
-  ["components/chat-v2/shared/save-as-test-case-action.tsx", 2],
   ["components/chat-v2/thread/csp-workbench/BlockedRequestCard.tsx", 3],
   ["components/chat-v2/thread/csp-workbench/classify.ts", 2],
   ["components/chat-v2/thread/csp-workbench/OriginCard.tsx", 3],
