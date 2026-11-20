@@ -4,27 +4,29 @@ import { useMintConversationBrowserToken } from "@/hooks/useProjectComputer";
 
 /**
  * The hosted browser a sign-in route started, attached the way the
- * playground's pane attaches a chat's browser: by its session id. The person
- * signs in by taking it over, like any page that needs a person.
+ * playground's pane attaches a chat's browser: by the chat it belongs to,
+ * which the browser token names. The person signs in by taking it over,
+ * like any page that needs a person.
  */
 export function WebSignInBrowser({
   projectId,
-  browserSessionId,
+  chatSessionId,
 }: {
   projectId: string;
-  browserSessionId: string;
+  /** The chat the sign-in browser belongs to. */
+  chatSessionId: string;
 }) {
   const mint = useMintConversationBrowserToken();
   const mintToken = useCallback(
     ({ projectId: tokenProjectId }: { projectId: string }) =>
-      mint({ projectId: tokenProjectId, conversationId: browserSessionId }),
-    [mint, browserSessionId],
+      mint({ projectId: tokenProjectId, conversationId: chatSessionId }),
+    [mint, chatSessionId],
   );
   return (
     <HostedBrowserBody
-      key={browserSessionId}
+      key={chatSessionId}
       projectId={projectId}
-      sessionId={browserSessionId}
+      sessionId={chatSessionId}
       mintToken={mintToken}
       allowProfileSave={false}
     />
