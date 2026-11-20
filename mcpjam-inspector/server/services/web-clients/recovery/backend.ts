@@ -103,6 +103,11 @@ export interface WebReconnectBackend {
    * opening one when there is none. The report that opens it gets
    * `shouldNotify: true`, and the backend sends that request's one notice. A
    * run that reports again keeps its first place and step.
+   *
+   * When the account is ready on a newer profile than the one the run
+   * restored, it was signed in again after the run read it: the report
+   * changes nothing and answers `reloadProfile`. The backend's mutation does
+   * not compare versions yet, so there a late report still opens a request.
    */
   reportWebSignInRequired(args: {
     webAccountId: string;
@@ -110,7 +115,10 @@ export interface WebReconnectBackend {
     iterationId?: string;
     pendingStep: PendingStep;
     reason: SignInReason;
-  }): Promise<{ requestId: string; shouldNotify: boolean }>;
+    restoredProfileVersion?: number;
+  }): Promise<
+    { requestId: string; shouldNotify: boolean } | { reloadProfile: true }
+  >;
   /**
    * Marks the account ready and the request's runs resumable. Idempotent.
    * Refuses another seat or a cancelled request (`CONFLICT`).

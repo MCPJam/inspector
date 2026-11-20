@@ -672,6 +672,47 @@ describe("web account recovery", () => {
     });
     expect(runOf(world, "run-1").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
   });
+
+  it("reloads without a second link when a handback lands between a run's read and its report", async () => {
+    const world = createWorld();
+    const coordinator = startProcess(world);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"]);
+    const [request] = await requestsOf(world);
+    // run-2 read the account as waiting for a person; the person hands it
+    // back before run-2's report arrives.
+    const late: WebReconnectBackend = {
+      ...world.backend,
+      reportWebSignInRequired: async (args) => {
+        await coordinator.handback({
+          projectId: PROJECT,
+          requestId: request?.requestId ?? "",
+          browser: browserSignedInAs(SEAT),
+        });
+        return world.backend.reportWebSignInRequired(args);
+      },
+    };
+    const lateProcess = startProcess(world, late);
+    await startRun(world, lateProcess, "run-2", ["sign_in_page"], {
+      restoredProfileVersion: 1,
+    });
+    await settle(world);
+
+    expect(runOf(world, "run-2").log).toEqual([
+      "send step-1",
+      "signed_out page",
+      "reload_profile",
+      "reconcile: send",
+      "send step-1",
+      "tool ran upstream",
+    ]);
+    expect(world.notices).toHaveLength(1);
+    expect(await requestsOf(world)).toHaveLength(1);
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      profileVersion: 2,
+    });
+    expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
+  });
 });
 
 describe("a tool call runs once across recovery", () => {
@@ -936,13 +977,16 @@ describe("in-memory reconnect backend", () => {
       stepId,
       startedAt: "2026-11-20T10:00:00.000Z",
     });
-    const report = (runId: string, stepId: string) =>
-      backend.reportWebSignInRequired({
+    const report = async (runId: string, stepId: string) => {
+      const reported = await backend.reportWebSignInRequired({
         webAccountId: ACCOUNT,
         runId,
         pendingStep: step(stepId),
         reason: "signed_out",
       });
+      if (!("requestId" in reported)) throw new Error("No request opened.");
+      return reported;
+    };
     const reports = [
       await report("run-1", "step-1"),
       await report("run-1", "step-2"),

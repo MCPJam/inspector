@@ -280,14 +280,19 @@ export function createWebRecoveryCoordinator(
       if (signedIn === "here") return { status: "signed_in" };
       if (signedIn === "elsewhere") return { status: "reload_profile" };
     }
-    const { requestId } = await backend.reportWebSignInRequired({
+    const reported = await backend.reportWebSignInRequired({
       webAccountId,
       runId,
       ...(iterationId ? { iterationId } : {}),
       pendingStep: report.pendingStep,
       reason,
+      ...(report.restoredProfileVersion !== undefined
+        ? { restoredProfileVersion: report.restoredProfileVersion }
+        : {}),
     });
-    return { status: "paused", requestId };
+    // A handback can land between the read above and this report.
+    if ("reloadProfile" in reported) return { status: "reload_profile" };
+    return { status: "paused", requestId: reported.requestId };
   }
 
   async function handback(input: {
