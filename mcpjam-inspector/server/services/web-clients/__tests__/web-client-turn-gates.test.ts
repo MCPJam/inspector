@@ -199,6 +199,76 @@ describe("settings the vendor's app can't honor", { timeout: 90_000 }, () => {
     });
     expect(vendor.sends).toEqual([]);
   });
+
+  it("refuses a message with an attachment, rather than sending its text alone", async () => {
+    const failure = await runHarnessTurn(
+      options({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is in this picture?" },
+              { type: "image", image: "data:image/png;base64,iVBORw0KGgo=" },
+            ],
+          },
+        ],
+      }),
+      "none",
+    ).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WebClientTurnRefusedError);
+    expect(failure).toMatchObject({
+      kind: "setting-unsupported",
+      message:
+        "Claude web can only send text to claude.ai, so it can't take attachments. Remove the attachment or choose another client.",
+    });
+    expect(vendor.sends).toEqual([]);
+  });
+});
+
+describe("a page that stops after a call reached the server", { timeout: 90_000 }, () => {
+  it("fails the run and keeps the call on the turn's trace, on an errored step", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    setWebClientEnvironment({
+      ...environment,
+      pageModule: {
+        ...fixture,
+        async readConversation() {
+          throw new Error("The saved chat could not be read.");
+        },
+      },
+    });
+    const failure = await runHarnessTurn(options(), "none").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WebClientRunError);
+    expect(toolCalls()).toHaveLength(1);
+    const { failure: stopped, turnTrace } = failure as WebClientRunError;
+    expect(stopped).toMatchObject({ kind: "driver", step: "read_conversation" });
+    expect(turnTrace).toMatchObject({ promptIndex: 0, finishReason: "error" });
+    expect(turnTrace?.spans.map((span) => [span.category, span.status, span.toolName, span.serverId])).toEqual([
+      ["step", "error", undefined, undefined],
+      ["tool", "ok", "echo", "orders"],
+    ]);
+    expect(turnTrace?.spans[1]).toMatchObject({ wireCorroborated: true, evidenceStatus: "complete" });
+  });
+});
+
+describe("a Stop while the reply is coming", { timeout: 90_000 }, () => {
+  it("ends the turn as aborted, not as a failed run", async () => {
+    const stop = new AbortController();
+    const fixture = createFixtureWebPageModule(vendor.url);
+    setWebClientEnvironment({
+      ...environment,
+      pageModule: {
+        ...fixture,
+        async replySignals() {
+          stop.abort();
+          return { finished: false, signals: [] };
+        },
+      },
+    });
+    const result = await runHarnessTurn(options({ abortSignal: stop.signal }), "none");
+    expect(result).toMatchObject({ aborted: true });
+    expect(result.messageHistory).toEqual(options().messages);
+  });
 });
 
 describe("a failure that quotes the turn's connector", { timeout: 90_000 }, () => {

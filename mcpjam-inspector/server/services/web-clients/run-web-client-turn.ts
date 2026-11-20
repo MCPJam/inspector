@@ -315,14 +315,19 @@ export async function runWebClientTurn(
       kind: error.failure.kind,
       step: error.failure.step,
     });
-    await closeAll();
-    if (webAccountId) {
-      await report({
-        ok: false,
-        webAccountId,
-        failure: error.failure,
-        ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
-      });
+    try {
+      await closeAll();
+    } finally {
+      // A durable close that fails is retried below; the account still
+      // hears how the turn ended.
+      if (webAccountId) {
+        await report({
+          ok: false,
+          webAccountId,
+          failure: error.failure,
+          ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
+        });
+      }
     }
     return {
       ok: false,
