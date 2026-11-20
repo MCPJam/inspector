@@ -245,13 +245,14 @@ cases:
           type: responseContains
           needle: selection
       # The glossary names the stage `userValue` and titles it "User value";
-      # an answer may use either. Not "user-value": the prompt says
-      # "user-value chain", and echoing it names no stage.
+      # an answer may use either, or write it "UserValue" (Sonnet 5.5 does).
+      # Not "user-value": the prompt says "user-value chain", and echoing it
+      # names no stage.
       - id: a4
         kind: assert
         assertion:
           type: responseMatches
-          pattern: "userValue|User [Vv]alue"
+          pattern: "[Uu]ser ?[Vv]alue"
 
   # ----------------------------------------------------------- negatives
   # The first is `isNegativeTest`, which tells the runner that NOT acting at
