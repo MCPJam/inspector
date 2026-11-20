@@ -136,6 +136,23 @@ describe("client readiness advice", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("asks the server for the repeat listing instead of the cached one", async () => {
+    // A cached repeat listing is the first listing again, and a list compared
+    // with itself never differs: the advice could not warn at all.
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    await collectClientReadiness(clientContext(), surface());
+
+    expect(mockedOperations.listTools).toHaveBeenCalledTimes(1);
+    expect(mockedOperations.listTools).toHaveBeenCalledWith(
+      expect.anything(),
+      { serverId: "server-1", signal: undefined, cacheMode: "bypass" }
+    );
+  });
+
   it("warns when a modern server still advertises superseded functionality", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],
