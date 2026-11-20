@@ -29,7 +29,7 @@ import {
 export function createLocalConnectorRegistry() {
   const entries = new Map<
     string,
-    { connector: WebConnector; upstream: UpstreamTarget }
+    { connector: WebConnector; upstream: UpstreamTarget; flagSubject?: string }
   >();
   const resolver: WebConnectorResolver = {
     async resolve(connectorId) {
@@ -47,11 +47,23 @@ export function createLocalConnectorRegistry() {
   return {
     resolver,
     has: (connectorId: string) => entries.has(connectorId),
-    register(input: {
-      upstreamUrl: string;
-      headers?: Record<string, string>;
-      serverId?: string;
-    }): WebConnector {
+    /**
+     * `web-clients-enabled` as it is now for whoever registered the
+     * connector, so turning the flag off stops one already registered.
+     */
+    async enabled(connectorId: string): Promise<boolean> {
+      const entry = entries.get(connectorId);
+      return entry !== undefined && (await webClientsEnabledFor(entry.flagSubject));
+    },
+    register(
+      input: {
+        upstreamUrl: string;
+        headers?: Record<string, string>;
+        serverId?: string;
+      },
+      /** The signed-in person whose flag allowed it; without one, the flag file's. */
+      flagSubject?: string,
+    ): WebConnector {
       const connector: WebConnector = {
         connectorId: randomBytes(24).toString("base64url"),
         projectId: "local",
@@ -62,6 +74,7 @@ export function createLocalConnectorRegistry() {
       entries.set(connector.connectorId, {
         connector,
         upstream: { url: input.upstreamUrl, headers: input.headers ?? {} },
+        ...(flagSubject ? { flagSubject } : {}),
       });
       return connector;
     },
@@ -106,13 +119,16 @@ async function readJson(c: Context): Promise<unknown> {
   }
 }
 
-/** The flag for the signed-in person when the request names one, else the flag file. */
-async function flagOn(c: Context): Promise<boolean> {
+/** The signed-in person a request names, whose flag applies to it. */
+async function flagSubject(c: Context): Promise<string | undefined> {
   const token = /^Bearer\s+(\S+)/i.exec(c.req.header("authorization") ?? "")?.[1];
   const identity = token ? await verifiedFlagSubject(token) : undefined;
-  return webClientsEnabledFor(
-    identity?.kind === "id" ? identity.distinctId : undefined,
-  );
+  return identity?.kind === "id" ? identity.distinctId : undefined;
+}
+
+/** The flag for the signed-in person when the request names one, else the flag file. */
+async function flagOn(c: Context): Promise<boolean> {
+  return webClientsEnabledFor(await flagSubject(c));
 }
 
 /**
@@ -154,7 +170,7 @@ export function createLocalConnectorRoutes(
         { error: "Send { upstreamUrl, headers?, serverId? } with an http or https URL." },
         400,
       );
-    const connector = registry.register(parsed.data);
+    const connector = registry.register(parsed.data, await flagSubject(c));
     return c.json(
       {
         connectorId: connector.connectorId,
