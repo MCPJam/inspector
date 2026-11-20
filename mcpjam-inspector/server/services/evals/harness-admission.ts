@@ -254,9 +254,10 @@ export function resolveEvalCaseModelDefinition(args: {
   const caseModel = { modelDefinition: args.caseModel, externalAccount: false };
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return caseModel;
-  if (getHarnessAdapter(harness).modelAccess !== "external-account") {
-    return caseModel;
-  }
+  const adapter = getHarnessAdapter(harness);
+  if (adapter.modelAccess !== "external-account") return caseModel;
+  // A web client's case runs on the project's web account, not MCPJam's key.
+  if (adapter.webAccount) return { ...caseModel, externalAccount: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
   const hostModelId =
     typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";

@@ -52,7 +52,7 @@ function turn(driver: Awaited<ReturnType<typeof signedInDriver>>, journal = crea
   return driveRealUiTurn({
     module: createFixtureWebPageModule(vendor.url),
     driver,
-    connector: { name: "MCPJam fixture", url: upstream.url },
+    connectors: [{ name: "MCPJam fixture", url: upstream.url }],
     prompt: "say hello",
     journal,
     turnKey: "turn-1",
@@ -69,7 +69,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const result = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver,
-      connector: { name: "MCPJam fixture", url: upstream.url },
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
       prompt: "say hello",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
@@ -138,7 +138,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const failure = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver: await signedInDriver(),
-      connector: { name: "MCPJam fixture", url: upstream.url },
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
       prompt: "say hello",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
