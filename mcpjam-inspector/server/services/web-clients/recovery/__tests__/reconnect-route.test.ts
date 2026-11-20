@@ -38,7 +38,10 @@ import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fi
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
 import type { WebClientService } from "../../backend-connector-resolver.js";
 import type { WebClientEnvironment } from "../../web-client-environment.js";
-import { createWebReconnectRoutes } from "../reconnect-route.js";
+import {
+  createWebReconnectRoutes,
+  type WebReconnectRouteDeps,
+} from "../reconnect-route.js";
 
 const SEAT = { email: "seat@example.com", workspace: "Test workspace" };
 const ACCOUNT_VIEW = {
@@ -127,7 +130,7 @@ function deps(answers: Record<string, unknown>) {
       serviceToken: "fixture-service-token",
       fetchImpl,
     },
-    environment: () => environment,
+    environmentFor: async () => environment,
     enabledFor: async (userId: string) => userId !== "user_flag_off",
   };
 }
@@ -153,10 +156,11 @@ async function post(
   answers: Record<string, unknown>,
   headers: Record<string, string> = { "x-test-user": "user_admin" },
   body: unknown = { projectId: "project-1" },
+  override: Partial<WebReconnectRouteDeps> = {},
 ) {
   const app = new Hono().route(
     "/api/web-clients/reconnect",
-    createWebReconnectRoutes(deps(answers)),
+    createWebReconnectRoutes({ ...deps(answers), ...override }),
   );
   const response = await app.request(
     "/api/web-clients/reconnect/request-1/handback",
@@ -241,6 +245,17 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     expect((await post(OPEN, undefined, { project: "project-1" })).status).toBe(
       400,
     );
+    expect(commands).toEqual([]);
+  });
+
+  it("says so when this server has no browser to hand the account back from", async () => {
+    const environmentFor = vi.fn(async () => undefined);
+    const answered = await post(OPEN, undefined, undefined, { environmentFor });
+    expect(answered.status).toBe(503);
+    expect(environmentFor).toHaveBeenCalledWith({
+      actor: { actorExternalId: "user_admin" },
+      projectId: "project-1",
+    });
     expect(commands).toEqual([]);
   });
 

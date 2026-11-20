@@ -10,8 +10,12 @@
 import { z } from "zod";
 import { WEB_CLIENT_VENDORS } from "../../../../shared/web-clients.js";
 import { logger } from "../../../utils/logger.js";
+import { getInternalBackendConfig } from "../../internal-backend.js";
 import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../../service-credential.js";
-import type { WebClientService } from "../backend-connector-resolver.js";
+import {
+  webClientService,
+  type WebClientService,
+} from "../backend-connector-resolver.js";
 import type { LedgerEntry, LedgerMatch } from "../tool-call-ledger.js";
 import {
   WebBackendRefusal,
@@ -184,12 +188,28 @@ async function upload(
   return answer.data.storageId;
 }
 
+/** This process's backend client; pass the one already held where there is one. */
+function processService(): WebClientService {
+  const service = webClientService();
+  if (!service) {
+    throw new Error(
+      "Web accounts need MCPJam's hosted backend and its service credential.",
+    );
+  }
+  return service;
+}
+
+/** The profile-key route on this process's backend. */
+function processProfileKeyRoute(): ProfileKeyRoute {
+  const { convexUrl, serviceToken } = getInternalBackendConfig("Web accounts");
+  return { convexHttpUrl: convexUrl, serviceToken };
+}
+
 export function createConvexWebReconnectBackend(
-  service: WebClientService,
   actor: WebActor,
-  route: ProfileKeyRoute,
+  deps: { service?: WebClientService; route?: ProfileKeyRoute } = {},
 ): WebReconnectBackend {
-  const { read, apply } = refusing(service);
+  const { read, apply } = refusing(deps.service ?? processService());
   const act = (command: Command): Command => ({ ...actor, ...command });
   return {
     listWebAccounts: (args) =>
@@ -239,6 +259,7 @@ export function createConvexWebReconnectBackend(
       });
     },
     async saveWebAccountProfile({ profile, savedFromRunId, ...args }) {
+      const route = deps.route ?? processProfileKeyRoute();
       const key = profileKey.parse(
         await postJson(route, "/internal/v1/web-accounts/profile-key", {
           ...actor,
@@ -285,7 +306,7 @@ function readPendingStep(text: string): PendingStep | undefined {
 
 /** The durable ledger's read side, for `reconcileBeforeResend`. */
 export function createConvexLedgerReader(
-  service: WebClientService,
+  service: WebClientService = processService(),
 ): LedgerReader {
   const { read } = refusing(service);
   const find = (

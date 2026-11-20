@@ -137,11 +137,10 @@ describe("Convex reconnect backend", () => {
         { runId: "run-2", requestId: "request-1", pendingStep: "not json" },
       ],
     });
-    const backend = createConvexWebReconnectBackend(
+    const backend = createConvexWebReconnectBackend(ACTOR, {
       service,
-      ACTOR,
-      stubRoute(null).route,
-    );
+      route: stubRoute(null).route,
+    });
 
     // Only the fields recovery reads come back.
     expect(await backend.listWebAccounts({ projectId: PROJECT })).toEqual([
@@ -207,7 +206,7 @@ describe("Convex reconnect backend", () => {
       saveWebAccountProfile: { ok: true, profileVersion: 4 },
     });
     const { sent, route } = stubRoute(profileKey(dataKey));
-    const backend = createConvexWebReconnectBackend(service, ACTOR, route);
+    const backend = createConvexWebReconnectBackend(ACTOR, { service, route });
 
     expect(
       await backend.saveWebAccountProfile({
@@ -249,11 +248,10 @@ describe("Convex reconnect backend", () => {
     const stale = stubRoute(profileKey(dataKey, 4));
     const staleService = stubService({});
     expect(
-      await createConvexWebReconnectBackend(
-        staleService.service,
-        ACTOR,
-        stale.route,
-      ).saveWebAccountProfile({
+      await createConvexWebReconnectBackend(ACTOR, {
+        service: staleService.service,
+        route: stale.route,
+      }).saveWebAccountProfile({
         webAccountId: ACCOUNT,
         expectedProfileVersion: 3,
         profile: PROFILE,
@@ -283,11 +281,10 @@ describe("Convex reconnect backend", () => {
       const key =
         refusedBy === "profile-key" ? refusal : profileKey(randomBytes(32));
       const coordinator = createWebRecoveryCoordinator({
-        backend: createConvexWebReconnectBackend(
+        backend: createConvexWebReconnectBackend(ACTOR, {
           service,
-          ACTOR,
-          stubRoute(key).route,
-        ),
+          route: stubRoute(key).route,
+        }),
         ledger: createConvexLedgerReader(service),
         resumeRun: vi.fn(),
       });
@@ -308,11 +305,10 @@ describe("Convex reconnect backend", () => {
   it("passes other refusals and network failures on unchanged", async () => {
     const handback = (service: WebClientService) =>
       createWebRecoveryCoordinator({
-        backend: createConvexWebReconnectBackend(
+        backend: createConvexWebReconnectBackend(ACTOR, {
           service,
-          ACTOR,
-          stubRoute(null).route,
-        ),
+          route: stubRoute(null).route,
+        }),
         ledger: createConvexLedgerReader(service),
         resumeRun: vi.fn(),
       }).handback({

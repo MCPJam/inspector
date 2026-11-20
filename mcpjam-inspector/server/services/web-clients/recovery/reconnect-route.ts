@@ -19,23 +19,26 @@ import {
   type WebClientService,
 } from "../backend-connector-resolver.js";
 import { webClientsEnabledFor } from "../endpoint-auth.js";
-import {
-  webClientEnvironment,
-  type WebClientEnvironment,
-} from "../web-client-environment.js";
+import type { WebClientEnvironment } from "../web-client-environment.js";
 import { accountBrowserOver } from "./account-browser.js";
 import {
   createConvexLedgerReader,
   createConvexWebReconnectBackend,
   type ProfileKeyRoute,
+  type WebActor,
 } from "./convex-backend.js";
 import { createWebRecoveryCoordinator } from "./coordinator.js";
 import { resumeWebRun } from "./paused-runs.js";
+import { webRecovery } from "./turn-recovery.js";
 
 export type WebReconnectRouteDeps = {
   service: WebClientService;
   profileKeyRoute: ProfileKeyRoute;
-  environment(): WebClientEnvironment | undefined;
+  /** Where the person's signed-in browser is: the recovery setup's, by default. */
+  environmentFor(handback: {
+    actor: WebActor;
+    projectId: string;
+  }): Promise<WebClientEnvironment | undefined>;
   enabledFor(userId: string): Promise<boolean>;
 };
 
@@ -48,7 +51,8 @@ function processDeps(): WebReconnectRouteDeps | undefined {
   return {
     service,
     profileKeyRoute: { convexHttpUrl, serviceToken },
-    environment: webClientEnvironment,
+    environmentFor: async (handback) =>
+      webRecovery()?.handbackEnvironment?.(handback),
     enabledFor: webClientsEnabledFor,
   };
 }
@@ -79,21 +83,33 @@ export function createWebReconnectRoutes(
         400,
       );
     }
-    const environment = deps?.environment();
-    if (!deps || !environment || !(await deps.enabledFor(userId))) {
+    const actor = { actorExternalId: userId };
+    if (!deps || !(await deps.enabledFor(userId))) {
       return c.json(
         { error: "Web accounts aren't available on this server." },
         404,
       );
     }
+    const environment = await deps.environmentFor({
+      actor,
+      projectId: body.data.projectId,
+    });
+    if (!environment) {
+      return c.json(
+        {
+          error:
+            "This server can't open a signed-in browser for web accounts yet.",
+        },
+        503,
+      );
+    }
     let browser: ReturnType<typeof accountBrowserOver> | undefined;
     try {
       const coordinator = createWebRecoveryCoordinator({
-        backend: createConvexWebReconnectBackend(
-          deps.service,
-          { actorExternalId: userId },
-          deps.profileKeyRoute,
-        ),
+        backend: createConvexWebReconnectBackend(actor, {
+          service: deps.service,
+          route: deps.profileKeyRoute,
+        }),
         ledger: createConvexLedgerReader(deps.service),
         resumeRun: resumeWebRun,
       });

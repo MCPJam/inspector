@@ -21,8 +21,10 @@ import {
   type WebClientTurnInput,
   type WebClientTurnResult,
 } from "../run-web-client-turn.js";
+import type { WebClientEnvironment } from "../web-client-environment.js";
 import { accountBrowserOver } from "./account-browser.js";
 import type { PendingStep, WebReconnectBackend } from "./backend.js";
+import type { WebActor } from "./convex-backend.js";
 import {
   createWebRecoveryCoordinator,
   type RunFailure,
@@ -49,7 +51,9 @@ export type WebRunStop =
     };
 
 /** A turn's result, with why recovery stopped it when it did. */
-export type RecoverableWebTurnResult = WebClientTurnResult & { stop?: WebRunStop };
+export type RecoverableWebTurnResult = WebClientTurnResult & {
+  stop?: WebRunStop;
+};
 
 export type WebRecoverySetup = {
   /** The reconnect backend, acting for the run's person. */
@@ -60,6 +64,14 @@ export type WebRecoverySetup = {
   maxPauseMs?: number;
   /** How often a paused turn reads its request, for a handback elsewhere. */
   pollMs?: number;
+  /**
+   * The environment whose `openBrowser` gives the browser a person signed the
+   * account in with, for a handback. Hosted, their sign-in browser.
+   */
+  handbackEnvironment?(handback: {
+    actor: WebActor;
+    projectId: string;
+  }): Promise<WebClientEnvironment | undefined>;
 };
 
 let configured: WebRecoverySetup | undefined;
