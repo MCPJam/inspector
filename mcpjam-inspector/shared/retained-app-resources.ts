@@ -62,27 +62,47 @@ export function readRetainedResourceSource(result: unknown) {
     ? envelope.data._meta[RETAINED_RESOURCE_SOURCE]
     : undefined;
 }
+/** The host could not bind this App to the account that produced it. */
+export const RETAINED_RESOURCE_REFUSED = "mcpjam/retainedResourceRefused";
+export function isRetainedResourceRefused(result: unknown): boolean {
+  const envelope = z
+    .object({ _meta: z.object({ [RETAINED_RESOURCE_REFUSED]: z.literal(true) }) })
+    .safeParse(result);
+  return envelope.success;
+}
+/** Only the host marks a result; a server's own copy of either key is dropped. */
 export function withRetainedResourceSource(
   result: unknown,
   source?: z.infer<typeof retainedResourceSourceSchema>,
+  refused = false,
 ) {
   const parsed = z
     .object({ _meta: z.record(z.string(), z.unknown()).optional() })
     .passthrough()
     .safeParse(result);
+  const meta = parsed.success ? (parsed.data._meta ?? {}) : {};
   if (
     !parsed.success ||
     (!source &&
-      !Object.hasOwn(parsed.data._meta ?? {}, RETAINED_RESOURCE_SOURCE))
+      !refused &&
+      !Object.hasOwn(meta, RETAINED_RESOURCE_SOURCE) &&
+      !Object.hasOwn(meta, RETAINED_RESOURCE_REFUSED))
   )
     return result;
-  const { [RETAINED_RESOURCE_SOURCE]: _untrusted, ...meta } =
-    parsed.data._meta ?? {};
+  const {
+    [RETAINED_RESOURCE_SOURCE]: _untrustedSource,
+    [RETAINED_RESOURCE_REFUSED]: _untrustedRefusal,
+    ...rest
+  } = meta;
   return {
     ...parsed.data,
     _meta: {
-      ...meta,
-      ...(source ? { [RETAINED_RESOURCE_SOURCE]: source } : {}),
+      ...rest,
+      ...(source
+        ? { [RETAINED_RESOURCE_SOURCE]: source }
+        : refused
+          ? { [RETAINED_RESOURCE_REFUSED]: true }
+          : {}),
     },
   };
 }

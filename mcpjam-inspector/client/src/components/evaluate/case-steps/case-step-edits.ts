@@ -184,10 +184,10 @@ export function setEnvelopeMode(
   draft: CaseStepsDraft,
   mode: "extend" | "replace",
 ): CaseStepsDraft {
-  return {
-    ...draft,
-    predicates: { mode, list: draft.predicates?.list ?? [] },
-  };
+  // An inherit envelope's list is inactive, so switching starts empty.
+  const own =
+    draft.predicates?.mode === "inherit" ? undefined : draft.predicates;
+  return { ...draft, predicates: { mode, list: own?.list ?? [] } };
 }
 
 /** Insert an assertion after a step's last assertion and open it. */
@@ -247,8 +247,10 @@ export function addAfterRun(
         next = setCaseKind(next, "regression", suiteDefaultMatchOptions);
         if (readSimpleCase(next.steps).tools.length > 0) return next;
         const first = actionRows(next.steps).actions[0];
+        // With no step to follow, a leading check would lock the route.
+        if (!first) return { ...next, toolsChoice: "tools" };
         return insertAssertion(
-          first?.step.id ?? null,
+          first.step.id,
           blankPredicate("toolCalledWith"),
         ).edit({ ...next, toolsChoice: "tools" });
       },

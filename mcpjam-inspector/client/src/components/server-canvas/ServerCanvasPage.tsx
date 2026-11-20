@@ -42,6 +42,11 @@ import { overviewCapabilities } from "./overview-capabilities";
 import { useServerCanvasRefresh } from "./server-canvas-refresh";
 import { useServerCanvasUrlState } from "./server-canvas-url";
 import { useServerFeatureEvidence } from "./use-server-feature-evidence";
+import {
+  CANVAS_CHECK_SUITES,
+  CANVAS_SETUP_OFFERED,
+  configuredSetup,
+} from "./setup-state";
 
 export interface ServerCanvasPageProps
   extends Omit<
@@ -105,9 +110,18 @@ export function ServerCanvasPage({
   useOAuthResumeMarker(server.name);
 
   const [contextHash, setContextHash] = useState<string | undefined>();
+  const { registrationMode, oauthFlowProfile, useXaa, authMethod } = server;
+  const configured = useMemo(
+    () =>
+      configuredSetup({ registrationMode, oauthFlowProfile, useXaa, authMethod }),
+    [registrationMode, oauthFlowProfile, useXaa, authMethod],
+  );
   const evidence = useServerFeatureEvidence(projectId, hostedServerId, {
     connected: connection.isConnected,
     contextHash,
+    configured,
+    setupOffered: CANVAS_SETUP_OFFERED,
+    checksOffered: CANVAS_CHECK_SUITES,
   });
   const { selected, evaluation } = evidence;
   const refresh = useServerCanvasRefresh({
@@ -147,7 +161,12 @@ export function ServerCanvasPage({
     if (action === "connect" || action === "reconnect") connect();
     else if (action === "run-checks") runChecks();
     else if (action === "use-in-playground") navigate(routePaths.playground);
-    else url.setTab("configuration");
+    else if (action === "refresh") refresh.refresh();
+    else {
+      url.setTab("configuration");
+      // The protocol version override sits in the collapsed advanced settings.
+      if (action === "upgrade-version") controller.form.state.setShowConfiguration(true);
+    }
   };
 
   const context = selected.input.context;

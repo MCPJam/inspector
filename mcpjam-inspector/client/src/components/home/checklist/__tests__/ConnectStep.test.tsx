@@ -59,7 +59,7 @@ describe("ConnectStep", () => {
       { suppressErrorToast: true, suppressSuccessToast: true },
     );
     expect(props.onTrack).toHaveBeenCalledWith("auto_started");
-    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Acme");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith(["Acme"]);
   });
 
   it("explains an incomplete URL and sends nothing", () => {
@@ -147,7 +147,8 @@ describe("ConnectStep", () => {
     );
     view.unmount();
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
-    expect(props.onAttemptChange).toHaveBeenLastCalledWith(null);
+    // Still not counted while its removal is in flight.
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith(["Acme"]);
   });
 
   it("keeps a confirmed server when the step closes", () => {
@@ -201,7 +202,9 @@ describe("ConnectStep", () => {
       { suppressErrorToast: true, suppressSuccessToast: true },
     );
     expect(props.onTrack).toHaveBeenCalledWith("demo_started");
-    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith([
+      "Excalidraw (App)",
+    ]);
   });
 
   it("offers the demo server after a failed connection", () => {
@@ -218,11 +221,19 @@ describe("ConnectStep", () => {
       screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
     );
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
-    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
-    // Home must know the demo is unconfirmed before its server can appear.
+    // Home must know the demo is unconfirmed before its server can appear,
+    // and must not count the failed server until its removal lands.
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith([
+      "Excalidraw (App)",
+      "Acme",
+    ]);
     const reported = props.onAttemptChange.mock.invocationCallOrder.at(-1)!;
     const connected = props.onConnect.mock.invocationCallOrder.at(-1)!;
     expect(reported).toBeLessThan(connected);
+    view.rerender(<ConnectStep {...props} servers={{}} />);
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith([
+      "Excalidraw (App)",
+    ]);
   });
 
   it("retries a failed demo connection without removing it", () => {

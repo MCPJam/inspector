@@ -259,6 +259,7 @@ script.recorded = () =>
 function manager() {
   const value = {
     getServerConfig: vi.fn(() => ({ url: "https://server.test/mcp", timeout: 300_000 })),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",

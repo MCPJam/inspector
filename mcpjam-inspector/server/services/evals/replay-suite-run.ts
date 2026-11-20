@@ -339,7 +339,6 @@ export async function prepareSuiteReplayFromRun(
                 "Replaying this run does not carry its Project Environment through to the runner. Update the backend and retry." }),
           ...(replayToolPolicy ? { toolPolicy: replayToolPolicy } : {}),
           pinnedSkillSource: frozenSkills.pinnedSkillSource,
-          pinnedHarnessSkills: frozenSkills.pinnedHarnessSkills,
         });
       },
       cleanup: () => replayManager.disconnectAllServers(),
