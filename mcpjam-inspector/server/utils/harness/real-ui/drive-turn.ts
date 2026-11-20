@@ -107,7 +107,12 @@ export async function driveRealUiTurn(
     const journaled = await input.journal.read(input.turnKey);
     if (journaled) {
       enter("send");
-      const found = await module.findSent(driver, input.prompt, ctx);
+      // A sent entry names its own chat. Another turn may have sent the same
+      // prompt since, so the newest chat holding it can be someone else's.
+      const found =
+        journaled.state === "sent" && journaled.conversationUrl
+          ? { conversationUrl: journaled.conversationUrl }
+          : await module.findSent(driver, input.prompt, ctx);
       if (!found) {
         throw new RealUiError({
           kind: "send_ambiguous",
