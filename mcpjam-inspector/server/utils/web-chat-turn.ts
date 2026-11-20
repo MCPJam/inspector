@@ -110,7 +110,6 @@ import {
 } from "./harness/runtime-secrets.js";
 import { createSecretScrubber } from "./secrets/secret-scrubber.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
-import { type RuntimeSkill } from "./harness/runtime-skills.js";
 import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
 import { getHarnessAdapter } from "./harness/registry.js";
 import {
@@ -130,6 +129,7 @@ import {
 import type { TurnSkillProvenance } from "../services/environments/runtime.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "./export-helpers.js";
 import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
+import { HarnessToolNameCollisionError } from "./harness/harness-tool-names.js";
 import { asAiRefusalRouteError } from "./ai-refusal-route-error.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
@@ -343,27 +343,12 @@ export interface WebChatTurnPersistContext {
    */
   captureToolSnapshot?: boolean;
   /**
-   * This turn's skills, HARNESS side: what its box writer writes. Forwarded
-   * verbatim to `handleMCPJamFreeChatModel` → `runHarnessTurn`, where presence
-   * (even empty) is authoritative; absent, the box keeps the skills it has.
-   *
-   * It lives on the persist context rather than the prepare inputs because the
-   * harness path is reached through the persist/stream half of this helper —
-   * the same place `harness` and `executionScope` already travel.
-   */
-  runtimeSkillsOverride?: RuntimeSkill[];
-  /**
-   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). Paired with
-   * `runtimeSkillsOverride`: the flat list is what the adapter writes to disk,
-   * this is what the Computer delivery path needs on top of it — the resolved
-   * per-skill supporting files (including plugin ones) and the pinned plugin
-   * versions that make a resumed sandbox with stale plugin material
-   * ineligible.
+   * The same turn's `EffectiveCapabilitySet`, HARNESS side (INS-7). It carries
+   * the pinned plugin versions that make a resumed sandbox with stale plugin
+   * material ineligible, and the plugins' server origins. The turn's skills
+   * reach the harness through the plan (`prepare.skills`), not through this.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /** A client's or a study's turn, whose connected servers may offer their
-   *  own skills (`MCPJamHandlerOptions.liveTurn`). */
-  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved, if any — the GRANT BOUNDARY for
    * project secrets.
@@ -418,9 +403,9 @@ export interface WebChatTurnPersistContext {
    * `{environmentAtTurn, skillsAtTurn}` from `turnSkillProvenance`, computed
    * from the turn's skill plan so it reflects what actually ran.
    *
-   * Separate from `runtimeSkillsOverride` and `effectiveCapabilities` on
-   * purpose: those decide what reaches the model, this only decides what gets
-   * written down. Delivery is byte-identical whether this is present or not.
+   * Separate from the skill plan on purpose: the plan decides what reaches the
+   * model, this only decides what gets written down. Delivery is byte-identical
+   * whether this is present or not.
    */
   turnProvenance?: TurnSkillProvenance;
   setupEnvironment?: ResolvedEnvironmentRuntime;
@@ -551,8 +536,8 @@ export interface WebChatTurnPrepareInputs {
   /**
    * The turn's skill plan (`resolveTurnSkills`), made for the engine that runs
    * it. MCPJam's agent gets the tools it describes; a harness plan gives the
-   * agent none, since the box gets the skills
-   * (`WebChatTurnPersistContext.runtimeSkillsOverride`). Absent: a live plan
+   * agent none, since the box gets the skills (a harness turn carries the same
+   * plan out, `MCPJamHandlerOptions.skillPlan`). Absent: a live plan
    * with none of its own, so MCPJam's agent gets only the connected servers'
    * own skills, as MCPJam's docs agent does.
    */
@@ -897,7 +882,6 @@ export async function streamChatTurn(
       ...(prepare.toolCallCancellation !== undefined
         ? { toolCallCancellation: prepare.toolCallCancellation }
         : {}),
-      customProviders: prepare.customProviders,
       // Nothing has been streamed yet, so a hung MCP server would otherwise
       // hold the request past the edge's first-byte limit (a Cloudflare 524).
       toolListingTimeoutMs: WEB_CHAT_TOOL_LISTING_TIMEOUT_MS,
@@ -937,9 +921,8 @@ export async function streamChatTurn(
           }),
     });
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    if (msg.includes("Invalid tool name(s) for Anthropic")) {
-      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, msg);
+    if (error instanceof HarnessToolNameCollisionError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
     }
     throw error;
   }
@@ -2048,18 +2031,15 @@ export async function streamChatTurn(
       ? { harnessSandboxBinding: persist.scenarioBox.binding }
       : {}),
     ...(persist.scenarioParticipant ? { scenarioParticipant: true } : {}),
-    // Presence is semantic (even an empty array): it is the turn's whole set,
-    // and absent leaves the box's skills as they are.
-    ...(persist.runtimeSkillsOverride !== undefined
-      ? { runtimeSkillsOverride: persist.runtimeSkillsOverride }
-      : {}),
+    // The turn's skill plan, which the harness carries out: its box's skills, a
+    // live turn's servers' own, and "leave the box as it is" for a turn that
+    // read none.
+    ...(persist.harness && plannedSkills ? { skillPlan: plannedSkills } : {}),
     ...(persist.effectiveCapabilities
       ? { effectiveCapabilities: persist.effectiveCapabilities }
       : {}),
-    ...(persist.liveTurn ? { liveTurn: true } : {}),
     ...(persist.environmentId ? { environmentId: persist.environmentId } : {}),
-    // Presence is semantic, exactly like `runtimeSkillsOverride`: supplied
-    // (even empty) means "this turn's secrets are already resolved".
+    // Presence is semantic: supplied (even empty) means "this turn's secrets are already resolved".
     //
     // ABSENT MEANS NO SECRETS ARE DELIVERED — it does not mean somebody else
     // fetches them. `run-harness-turn` takes the list from its caller and never

@@ -64,6 +64,14 @@ export default defineConfig({
           execArgv,
         },
       },
+      {
+        extends: "./lib/vitest.config.ts",
+        test: {
+          name: "lib",
+          root: "./lib",
+          execArgv,
+        },
+      },
     ],
   },
 });

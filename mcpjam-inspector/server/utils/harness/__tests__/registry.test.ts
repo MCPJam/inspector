@@ -1767,6 +1767,12 @@ it("keeps every declared forwarding contract aligned with its qualified runtime 
       "passThroughOnly",
     );
   expect(cursor).not.toHaveProperty("correlationKey");
+  // Every other contract names where its runtime stamps a call's id, which a
+  // session envelope carries to the forwarder.
+  expect(getHarnessAdapter("claude-code").forwardingRuntime?.correlationKey).toBe(
+    "claudecode/toolUseId",
+  );
+  expect(getHarnessAdapter("codex").forwardingRuntime?.correlationKey).toBe("callId");
   const runtime = { harnessId: "cursor" } as never;
   expect(cursor?.refresh(runtime, {}, "digest")).toBe(runtime);
   expect(getHarnessAdapter("opencode").forwardingRuntime).toBeUndefined();

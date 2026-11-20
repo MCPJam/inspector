@@ -44,6 +44,7 @@ export interface InitializationInfo {
 
 export interface ServerWithName {
   name: string;
+  publishedPluginId?: string;
   config: MCPServerConfig;
   oauthTokens?: OauthTokens;
   oauthFlowProfile?: OAuthTestProfile;

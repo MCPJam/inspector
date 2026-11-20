@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi } from "vitest";
 import {
   FileLink,
-  FileOpenWith,
   ToolResourceAttachments,
   WorkspaceFileActionsProvider,
 } from "../file-actions";
@@ -30,13 +29,10 @@ const reference = { serverId: "saved-id", resourceUri: "file:///part.stl" };
 describe("file viewers open from the file itself", () => {
   it("does nothing without a qualified workspace or for an ordinary server name", () => {
     const f = fixture();
-    const view = render(<FileOpenWith reference={reference} />);
+    const view = render(<FileLink reference={reference} label="part.stl" />);
     expect(screen.queryByRole("button")).toBeNull();
     view.rerender(
       <WorkspaceFileActionsProvider value={f.value}>
-        <FileOpenWith
-          reference={{ ...reference, serverId: "server-name" }}
-        />
         <FileLink
           reference={{ ...reference, serverId: "server-name" }}
           label="part.stl"
@@ -73,10 +69,10 @@ describe("file viewers open from the file itself", () => {
     const user = userEvent.setup();
     render(
       <WorkspaceFileActionsProvider value={f.value}>
-        <FileOpenWith reference={reference} />
+        <FileLink reference={reference} label="part.stl" />
       </WorkspaceFileActionsProvider>,
     );
-    await user.click(screen.getByRole("button", { name: "Open" }));
+    await user.click(screen.getByRole("button", { name: "part.stl" }));
     expect(await screen.findByText("Open with…")).toBeInTheDocument();
     expect(f.open).not.toHaveBeenCalled();
     await user.click(screen.getByRole("menuitem", { name: "Mesh Viewer" }));

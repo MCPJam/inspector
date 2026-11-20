@@ -59,6 +59,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import {
@@ -68,6 +69,7 @@ import {
 } from "../../utils/delivered-oauth-credential.js";
 import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "../../../shared/credential-export-setting.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -1779,6 +1781,13 @@ export async function createAuthorizedManager(
      * its plugins' servers, so a server the member chose still fails it.
      */
     tolerateServerRefusals?: boolean | readonly string[];
+    /**
+     * Record the server features this manager's traffic uses as observed use
+     * on the server canvas. Only for a user's own interactive session (chat,
+     * and the Inspector's own tool, resource and prompt calls); evals, checks,
+     * bench, simulations and other automated runs are MCPJam's own traffic.
+     */
+    observeFeatures?: boolean;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById =
@@ -2134,7 +2143,7 @@ export async function createAuthorizedManager(
           hostedOnly
             ? (auth.oauthUnavailableMessage ??
                 `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`)
-            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they can't be used from here. ${CREDENTIAL_EXPORT_SETTING_HINT}`,
           {
             exportDenied: true,
             policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
@@ -2982,10 +2991,21 @@ export async function createAuthorizedManager(
       ];
     }),
   );
-  const manager = new MCPClientManager(observedConfigs, {
+  const manager: MCPClientManager = new MCPClientManager(observedConfigs, {
     ...(options?.lazyConnect ? { lazyConnect: true } : {}),
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
+    // Observed server features, filed under each connection's own context.
+    ...(options?.observeFeatures
+      ? {
+          featureObserver: hostedFeatureObserver(
+            projectId,
+            bearerToken,
+            () => manager,
+            authorizedUserId,
+          ),
+        }
+      : {}),
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     extensionRequestHandlers: options?.extensionRequestHandlers,
@@ -3339,6 +3359,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     connectionIdSetsForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<ConnectionIdSets | undefined>;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
   },
 ): Promise<T> {
   const { manager, body, refusedServers } = await createManualHostedConnection(
@@ -3433,6 +3455,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     ) => Promise<ConnectionIdSets | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
   },
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -3636,6 +3660,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       ...(options?.tolerateServerRefusals
         ? { tolerateServerRefusals: true }
         : {}),
+      ...(options?.observeFeatures ? { observeFeatures: true } : {}),
     },
   );
 
@@ -3772,6 +3797,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
     /** See `createManualHostedConnection`'s option of the same name. */
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
@@ -3838,6 +3865,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
+        observeFeatures: options?.observeFeatures,
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,

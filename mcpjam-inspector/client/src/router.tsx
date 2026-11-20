@@ -283,6 +283,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/api-keys": { element: <OrganizationsRoute /> },
   "organizations/:orgId/plans": { element: <OrganizationsRoute /> },
   "organizations/:orgId/data-management": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/security": { element: <OrganizationsRoute /> },
   "organizations/:orgId/audit-log": { element: <OrganizationsRoute /> },
   "organizations/:orgId/integrations": { element: <OrganizationsRoute /> },
   organizations: { element: <OrganizationsRoute /> },

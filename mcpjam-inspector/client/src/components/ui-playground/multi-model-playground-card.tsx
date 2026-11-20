@@ -286,6 +286,12 @@ interface MultiModelPlaygroundCardProps {
   compareEnterMessages?: UIMessage[];
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (compareId: string, messages: UIMessage[]) => void;
+  /** Called with this card's own session once a turn stops streaming. */
+  onTurnSettled?: (
+    compareId: string,
+    chatSessionId: string,
+    messages: UIMessage[],
+  ) => void;
   /**
    * Optional per-column host snapshot. Consolidates what Phase 3 had as
    * five separate optional props with `*Set` discriminator booleans
@@ -386,6 +392,7 @@ export function MultiModelPlaygroundCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
+  onTurnSettled,
   hostSnapshot,
   hostCapsResolver,
   modelPicked = false,
@@ -857,6 +864,19 @@ export function MultiModelPlaygroundCard({
     if (compareKind === "host" && !messages.length && compareEnterMessages.length) return;
     onTranscriptSync?.(compareId, messages);
   }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
+
+  useEffect(() => {
+    if (isStreaming || messages.length === 0) return;
+    onTurnSettled?.(compareId, chatSessionId, messages);
+  }, [isStreaming, messages, compareId, chatSessionId, onTurnSettled]);
+
+  // An empty transcript tells the parent this lane's session is gone.
+  const onTurnSettledRef = useRef(onTurnSettled);
+  onTurnSettledRef.current = onTurnSettled;
+  useEffect(
+    () => () => onTurnSettledRef.current?.(compareId, chatSessionId, []),
+    [compareId, chatSessionId],
+  );
 
   useEffect(() => {
     // A restored column loads its own history instead of any seed.

@@ -32,8 +32,8 @@ import type { HarnessProxyServerInput } from "./mcp-config.js";
 import { toolCatalogFingerprint } from "./codex-appserver/shared/turn-fingerprint.js";
 import { logger } from "../logger.js";
 
-/** The proxy URL parameter carrying a server's tool-catalog version. */
-export const HARNESS_TOOL_CATALOG_QUERY = "mcpjam_tools";
+import { HARNESS_TOOL_CATALOG_QUERY } from "./harness-proxy-limits.js";
+export { HARNESS_TOOL_CATALOG_QUERY };
 
 /**
  * A short version of the tools MCPJam's client lists on `serverId`. A lane's

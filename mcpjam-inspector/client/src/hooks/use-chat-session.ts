@@ -151,6 +151,7 @@ import {
   noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
+import type { ModelSelectorHarnessScope } from "@/components/chat-v2/chat-input/model-selector";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -775,6 +776,12 @@ export interface UseChatSessionReturn {
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     pluginMessage?: PluginMessageIntent;
     isCurrent?: () => boolean;
+    /**
+     * Prompt and skill turns for this send. Written into the thread only
+     * after the dispatch-time admission check, so a refused send does not
+     * leave them behind for the next try to append again.
+     */
+    prependMessages?: UIMessage[];
 
     pluginMentions?: PluginMentionSelection[];
     /** Items an App's editable draft left in the composer, sent as-is. */
@@ -858,6 +865,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The client `availableModels` is locked for, for the model picker. */
+  modelHarnessScope: ModelSelectorHarnessScope;
   /** The authorized catalog before this session's harness filter. */
   catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
@@ -3311,6 +3320,19 @@ export function useChatSession(
       ),
     [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
+  // The same target, for the picker: `availableModels` is already locked for
+  // it, and passing it on keeps the picker honest if a caller mixes in rows.
+  const modelHarnessScope = useMemo<ModelSelectorHarnessScope>(
+    () => ({
+      targets: [
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ],
+      purpose: "chat",
+    }),
+    [harnessId, harnessRuntimeVersion],
+  );
 
   // Compatibility ids can name several providers; keep their hint in state so
   // a same-id provider change still resolves the intended row.
@@ -5513,6 +5535,7 @@ export function useChatSession(
       metadata?: Record<string, unknown>;
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
+      prependMessages?: UIMessage[];
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
@@ -5525,6 +5548,7 @@ export function useChatSession(
         widgetModelContext,
         pluginMessage,
         isCurrent,
+        prependMessages,
         pluginMentions,
         extraParts,
       } = options;
@@ -5680,6 +5704,12 @@ export function useChatSession(
             resolvedHostedServersRef.current = null;
             return false;
           }
+          // History for this request, written only once the send is admitted.
+          // The session, target, and preparation checks above already ran.
+          // Appending grows the thread, so this does not fork the session.
+          if (prependMessages?.length) {
+            setMessages((prev) => [...prev, ...prependMessages]);
+          }
           savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
@@ -5782,6 +5812,7 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      setMessages,
       savedClientSendGuard,
       sendPreparationGuard,
       hostedEnsureServerIds,
@@ -7004,6 +7035,7 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     // The authorized catalog before this session's harness filter, so another
     // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
     catalogModels: composedModels,

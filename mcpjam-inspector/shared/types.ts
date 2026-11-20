@@ -1119,6 +1119,8 @@ export type ServerFormAuthType = "auto" | "oauth" | "bearer" | "none" | "xaa";
 export interface ServerFormData {
   name: string;
   type: "stdio" | "http";
+  /** Omit to preserve the saved mapping. Null clears it. */
+  publishedPluginId?: string | null;
   command?: string;
   args?: string[];
   url?: string;

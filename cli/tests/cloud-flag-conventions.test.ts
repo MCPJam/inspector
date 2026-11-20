@@ -25,6 +25,7 @@ const CLOUD_COMMAND_FILES = [
   "environments.ts",
   "clients.ts",
   "eval.ts",
+  "eval-insights.ts",
   "feedback.ts",
   "goals.ts",
   "images.ts",

@@ -327,6 +327,11 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  evaluate_tour_completed: { source: "client" },
+  evaluate_tour_handoff_ended: { source: "client" },
+  evaluate_tour_opened: { source: "client" },
+  evaluate_tour_skipped: { source: "client" },
+  evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
@@ -447,6 +452,10 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
+  playground_repeat_tip_shown: { source: "client" },
+  playground_repeat_tip_clicked: { source: "client" },
+  playground_repeat_tip_dismissed: { source: "client" },
+  playground_test_case_saved: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },
@@ -598,6 +607,14 @@ export const ANALYTICS_EVENTS = {
   ui_tool_native_published: { source: "client" },
   ui_tool_native_registration_failed: { source: "client" },
   ui_tool_native_call_completed: { source: "client" },
+
+  // --- Header: "Onboard your agent to MCPJam" popover ---
+  // Props: location ("header"). `onboard_agent_command_copied` adds command
+  // (install | login) and copied (false when the clipboard refused);
+  // `onboard_agent_link_clicked` adds link (reference).
+  onboard_agent_opened: { source: "client" },
+  onboard_agent_command_copied: { source: "client" },
+  onboard_agent_link_clicked: { source: "client" },
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
