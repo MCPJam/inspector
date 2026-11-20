@@ -22,6 +22,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { lintChanged } from "./lint-stop.mjs";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
@@ -272,7 +273,9 @@ function runStop(input) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "Stop") return runStop(input);
+  if (input.hook_event_name === "Stop") {
+    return Math.max(runStop(input), lintChanged(input));
+  }
   if (input.hook_event_name === "UserPromptSubmit") {
     return runPromptSubmit(input);
   }
