@@ -77,6 +77,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
 import { ClientSupportPill } from "@/components/compat/ClientSupportPill";
+import { CheckConformanceButton } from "./CheckConformanceButton";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -922,6 +923,9 @@ export function ServerConnectionCard({
                       : undefined
                   }
                 />
+              )}
+              {isConnected && (
+                <CheckConformanceButton serverName={server.name} />
               )}
 
               {showTunnelActions && (

@@ -62,6 +62,8 @@ export const ANALYTICS_EVENTS = {
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  /** "Check conformance" on a Connect server card, which starts a run on it. */
+  check_conformance_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
