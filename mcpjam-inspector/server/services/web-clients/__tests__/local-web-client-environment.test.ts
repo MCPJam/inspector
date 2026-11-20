@@ -70,7 +70,7 @@ describe("a local web client environment", () => {
 
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {
     const close = vi.fn(async () => {});
-    const launch = vi.fn(async () => ({ page: { route: async () => {} } as never, close }));
+    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close }));
     const env = environment({ launch, profileWaitMs: 60, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const browser = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
@@ -86,7 +86,7 @@ describe("a local web client environment", () => {
   });
 
   it("lets a second turn on the same profile wait for the first browser to close", async () => {
-    const launch = vi.fn(async () => ({ page: { route: async () => {} } as never, close: async () => {} }));
+    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close: async () => {} }));
     const env = environment({ launch, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });

@@ -113,6 +113,39 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toHaveLength(1);
   });
 
+  it("continues in its own sent chat, not a newer chat another turn sent with the same prompt", async () => {
+    const journal = createMemorySendJournal();
+    const first = await turn(await signedInDriver(), journal);
+    // Another turn (its own journal) sends the same prompt in a newer chat.
+    const other = await turn(await signedInDriver());
+    expect(other.conversation.url).not.toBe(first.conversation.url);
+    const again = await turn(await signedInDriver(), journal);
+    expect(again.resumed).toBe(true);
+    expect(again.conversation.url).toBe(first.conversation.url);
+    expect(vendor.sends).toHaveLength(2);
+  });
+
+  it("replaces a connector whose URL only starts with the one it needs", async () => {
+    vendor.connectors.set("MCPJam fixture", `${upstream.url}-old`);
+    await turn(await signedInDriver());
+    expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
+  });
+
+  it("confirms a send whose prompt the page shows trimmed", async () => {
+    const result = await driveRealUiTurn({
+      module: createFixtureWebPageModule(vendor.url),
+      driver: await signedInDriver(),
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
+      prompt: "say hello ",
+      journal: createMemorySendJournal(),
+      turnKey: "turn-1",
+      stepTimeoutMs: 10_000,
+      replyTimeoutMs: 20_000,
+    });
+    expect(result.resumed).toBe(false);
+    expect(vendor.sends).toEqual(["say hello "]);
+  });
+
   it("stops as send_ambiguous when the journal says sending and no chat holds the prompt", async () => {
     const journal = createMemorySendJournal();
     await journal.write("turn-1", { state: "sending", at: new Date().toISOString() });
@@ -183,5 +216,17 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     // The navigation is aborted, so the tab never reaches the other site.
     expect(page.url().startsWith(upstream.url)).toBe(false);
     expect(new URL(page.url()).origin).not.toBe(new URL(upstream.url).origin);
+  });
+
+  it("leaves a site that redirects elsewhere, and acts on nothing until it navigates back", async () => {
+    const page = await context.newPage();
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
+    const away = `${vendor.url}/redirect?to=${encodeURIComponent(`${upstream.url}/`)}`;
+    await expect(driver.navigate(away)).rejects.toMatchObject({ code: "site_blocked" });
+    await expect.poll(() => page.url()).toBe("about:blank");
+    await expect(driver.readText("body")).rejects.toMatchObject({ code: "site_blocked" });
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
   });
 });
