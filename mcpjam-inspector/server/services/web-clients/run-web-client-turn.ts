@@ -43,6 +43,7 @@ import {
   type ToolCallLedger,
 } from "./tool-call-ledger.js";
 import {
+  TurnWindowConflictError,
   webClientTurnWindows,
   type ApprovalDecision,
   type ToolCallRequest,
@@ -77,7 +78,41 @@ export type WebClientTurnInput = {
   pageModule?: RealUiPageModule;
   stepTimeoutMs?: number;
   replyTimeoutMs?: number;
+  /** How long the turn waits for a connector another turn is using. */
+  connectorWaitMs?: number;
+  connectorPollMs?: number;
 };
+
+/**
+ * One turn at a time per connector: the endpoint attributes each call to the
+ * connector's open turn. Runs that share an account and a server (compared
+ * runs, Playground panes) take turns rather than failing the later one.
+ */
+const CONNECTOR_WAIT_MS = 10 * 60_000;
+const CONNECTOR_POLL_MS = 2_000;
+
+/** Another turn holds the connector, here or on another replica. */
+function connectorBusy(error: unknown): boolean {
+  return (
+    error instanceof TurnWindowConflictError ||
+    (error instanceof RealUiError && error.failure.kind === "turn_running")
+  );
+}
+
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
 
 export type WebClientTurnResult =
   | {
@@ -167,12 +202,7 @@ export async function runWebClientTurn(
         url: new URL(webConnectorPath(connectorId), env.publicBaseUrl).href,
       });
     }
-    const approve = webTurnApprover(input.approval);
-    for (const connectorId of serverOfConnector.keys()) {
-      windows.open({ connectorId, runId: input.runId, turnId, approve });
-      opened.push(connectorId);
-      await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
-    }
+    await openWindows(webTurnApprover(input.approval));
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
       sites: module.sites.length ? module.sites : WEB_CLIENT_SITES[vendor],
@@ -229,13 +259,49 @@ export async function runWebClientTurn(
     await closeAll();
   }
 
-  /** Closes this turn's windows and browser once, whichever way it ended. */
-  async function closeAll() {
+  /**
+   * Opens the turn's window on every connector, or none: while another turn
+   * holds one, this turn lets go of all it took, waits, and tries again.
+   * Taking them in one order, and never holding one while waiting, means two
+   * turns can't each wait on the other.
+   */
+  async function openWindows(approve: ReturnType<typeof webTurnApprover>) {
+    const deadline = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
+    const connectorIds = [...serverOfConnector.keys()].sort();
+    for (;;) {
+      try {
+        for (const connectorId of connectorIds) {
+          windows.open({ connectorId, runId: input.runId, turnId, approve });
+          opened.push(connectorId);
+          await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
+        }
+        return;
+      } catch (error) {
+        if (!connectorBusy(error)) throw error;
+        await closeWindows();
+        if (Date.now() >= deadline || input.signal?.aborted) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: "Another run is still using this connector.",
+          });
+        }
+        await pause(input.connectorPollMs ?? CONNECTOR_POLL_MS, input.signal);
+      }
+    }
+  }
+
+  async function closeWindows() {
     const closing = opened.splice(0);
     for (const connectorId of closing) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
     if (closing.length > 0) await env.turnGate?.close(turnId);
+  }
+
+  /** Closes this turn's windows and browser once, whichever way it ended. */
+  async function closeAll() {
+    await closeWindows();
     const open = browser;
     browser = undefined;
     await open?.close();
