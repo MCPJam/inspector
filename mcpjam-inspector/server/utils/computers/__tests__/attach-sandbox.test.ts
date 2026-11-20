@@ -109,6 +109,18 @@ describe("broker-prepared attachment with MCPJAM_HARNESS_PARALLEL_ATTACH=1", () 
     responseBody = { ...data, state: "paused" };
     await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toMatchObject({ code: "sandbox_asleep" });
   });
+
+  it("stops polling the policy service once the box read has failed", async () => {
+    responseStatus = 404;
+    control.status.mockResolvedValue({
+      ok: true,
+      value: { ok: false, reason: "egress_busy", deadline: Date.now() + 5_000 },
+    });
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
+    const polls = control.status.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(control.status).toHaveBeenCalledTimes(polls);
+  });
 });
 
 describe("controlled sandbox attachment", () => {
