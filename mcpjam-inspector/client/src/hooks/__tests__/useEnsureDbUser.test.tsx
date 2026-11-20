@@ -1,3 +1,4 @@
+import { readSignupCampaign } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -705,44 +706,36 @@ describe("useEnsureDbUser", () => {
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
   });
 
-  it("forwards Maya's shared campaign cookie on sign-in when capture is enabled", async () => {
-    mockState.auth.user = { id: "workos-user-1" };
-    mockState.actorKey = "workos-user-1";
-    mockState.posthog = { is_capturing: () => true, get_property: vi.fn(), get_distinct_id: vi.fn() };
-    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
-    const cookie = vi.spyOn(document, "cookie", "get").mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
-    try {
-      renderHook(() => useEnsureDbUser());
-      await waitFor(() => expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" }));
-    } finally {
-      cookie.mockRestore();
-      vi.unstubAllGlobals();
-    }
-  });
+  function websiteVisit(expiresAt: number, label = "linkedin/fall_launch") {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      status: 200, json: async () => ({ expiresAt, label }),
+    })));
+  }
 
-  it.each([
-    ["linkedin%2Ffall_launch", true, false],
-    ["linkedin%2Fwinter_launch", false, false],
-    ["linkedin%2Ffall_launch", true, true],
-    ["linkedin%2Fwinter_launch", false, true],
-  ] as const)("clears only the campaign sent by the successful request (%s)", async (current, shouldClear, optOut) => {
+  it.each([false, true])("acknowledges only the visit passed to the mutation (opt-out during signup: %s)", async (optOut) => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.posthog = { is_capturing: () => true };
     vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
-    const cookie = vi.spyOn(document, "cookie", "get")
-      .mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
-    const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+    const expiresAt = Date.now() + 900_000;
+    websiteVisit(expiresAt);
+    let receipt = "";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => receipt);
+    vi.spyOn(document, "cookie", "set").mockImplementation((value) => { receipt = value.split(";")[0]; });
     mockState.ensureUser.mockImplementationOnce(async () => {
       if (optOut) localStorage.setItem("mcpjam-analytics-consent", "denied");
-      cookie.mockReturnValue("mcpjam_signup_campaign=" + current);
+      websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
       return "user-row";
     });
     try {
       const { result } = renderHook(() => useEnsureDbUser());
       await waitFor(() => expect(result.current.isUserReady).toBe(true));
       expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
-      expect(write.mock.calls.some(([value]) => value.includes("Max-Age=0"))).toBe(shouldClear);
+      expect(receipt).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
+      localStorage.removeItem("mcpjam-analytics-consent");
+      expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
+      websiteVisit(expiresAt);
+      expect(await readSignupCampaign(() => true)).toBeUndefined();
     } finally {
       localStorage.removeItem("mcpjam-analytics-consent");
       vi.unstubAllGlobals();
@@ -755,7 +748,7 @@ describe("useEnsureDbUser", () => {
     const capturing = vi.fn(() => true);
     mockState.posthog = { is_capturing: capturing };
     vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
-    vi.spyOn(document, "cookie", "get").mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
+    websiteVisit(Date.now() + 900_000);
     const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
     if (scenario === "revoked session") {
       mockState.ensureUser.mockResolvedValueOnce(null);

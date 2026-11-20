@@ -1,4 +1,4 @@
-import { readSignupCampaign, clearSignupCampaign } from "@/lib/signup-campaign";
+import { readSignupCampaign, acknowledgeSignupCampaign, type SignupCampaign } from "@/lib/signup-campaign";
 import { getRuntimeDoNotTrack } from "@/lib/runtime-config";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
@@ -127,16 +127,17 @@ async function ensureUserWithRetry(
   ensureUser: EnsureUserMutation,
   args: EnsureUserArgs,
   shouldContinue: () => boolean,
-  getCampaign: () => string | undefined
+  getCampaign: () => Promise<SignupCampaign | undefined>
 ) {
   for (let attempt = 0; ; attempt++) {
     if (!shouldContinue()) return;
 
     try {
-      const signupCampaign = getCampaign();
-      const id = await ensureUser(signupCampaign ? { ...args, signupCampaign } : args);
+      const signupCampaign = await getCampaign();
+      if (!shouldContinue()) return;
+      const id = await ensureUser(signupCampaign ? { ...args, signupCampaign: signupCampaign.label } : args);
       if (typeof id === "string" && signupCampaign && shouldContinue()) {
-        clearSignupCampaign(signupCampaign);
+        acknowledgeSignupCampaign(signupCampaign);
       }
       return;
     } catch (err) {
@@ -398,9 +399,9 @@ export function useEnsureDbUser() {
         return;
       }
 
-      const getCampaign = () => isWorkOsAuth && !getRuntimeDoNotTrack() && posthog?.is_capturing?.()
-        ? readSignupCampaign()
-        : undefined;
+      const getCampaign = () => readSignupCampaign(
+        () => isWorkOsAuth && !getRuntimeDoNotTrack() && !!posthog?.is_capturing?.()
+      );
       const ensureArgs: EnsureUserArgs = {
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
