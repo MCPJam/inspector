@@ -46,7 +46,7 @@ import { createXaaWebRouter } from "./routes/web/xaa.js";
 import workosAuthkitRoutes from "./routes/workos-authkit.js";
 import { resolveWorkosApiBaseUrl } from "./services/workos-api-base.js";
 import { resolveTrustedClientIpHeader } from "./utils/client-ip.js";
-import { loadFeatureFlagFileAtBoot } from "./utils/feature-flag-source.js";
+import { loadFeatureFlagsAtBoot } from "./utils/feature-flag-source.js";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { initElicitationCallback } from "./routes/mcp/elicitation.js";
 import { rpcLogBus } from "./services/rpc-log-bus.js";
@@ -482,9 +482,8 @@ export async function createHonoApp() {
   // name fails here rather than in every request that asks for a client
   // address. Unset, this is a no-op.
   resolveTrustedClientIpHeader(process.env);
-  // And `MCPJAM_FEATURE_FLAGS_FILE`: a missing or malformed file is reported
-  // on stderr now, not at the first flag evaluation. Unset, this is a no-op.
-  loadFeatureFlagFileAtBoot();
+  // Report invalid static flags now, not at the first flag evaluation.
+  loadFeatureFlagsAtBoot();
 
   // Mounted in every runtime, hosted included — see the mirror of this mount
   // in server/index.ts for why the gate had to go.

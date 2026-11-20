@@ -33,7 +33,6 @@ import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
 import { cn } from "@/lib/utils";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
-import { Badge } from "@mcpjam/design-system/badge";
 import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
@@ -48,6 +47,7 @@ import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
+import { ScorerRowBadges } from "./evaluator-library/scorer-row-badges";
 import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
 import {
   libraryModelRows,
@@ -64,7 +64,6 @@ import {
   type ScorerUiRole,
 } from "./suite-scorer-table-model";
 import { RoleChip, RoleSegmentGroup } from "./scorer-role-control";
-import { BUILT_IN_BADGE } from "./runner-checks";
 import { groupGradersByStage, judgeMode } from "./suite-grading-model";
 import { rolesForPredicateKind } from "@/shared/predicate-kinds";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
@@ -510,10 +509,11 @@ export function SuiteScorerTable({
                     }
                     onRemoveEvaluator={library?.remove}
                     onUpdateEvaluator={library?.update}
-                    renderRow={(row) => (
+                    renderRow={(row, isDefault) => (
                       <ScorerRow
                         key={row.id}
                         row={row}
+                        isDefault={isDefault}
                         rule={
                           row.predicateIndex !== undefined
                             ? rules[row.predicateIndex]
@@ -661,6 +661,7 @@ function rowOpensEditor(row: ScorerTableRow): boolean {
 
 function ScorerRow({
   row,
+  isDefault,
   rule,
   scope,
   onDisabledReason,
@@ -676,6 +677,7 @@ function ScorerRow({
   facts,
 }: {
   row: ScorerTableRow;
+  isDefault: boolean;
   rule: EffectiveRule | undefined;
   scope: ScorerTableScope["kind"];
   onDisabledReason: string | undefined;
@@ -785,13 +787,7 @@ function ScorerRow({
                 </span>
               ) : null}
             </div>
-            {row.kind === "observed" ? (
-              // A runner check decides nothing, so it wears no role: it is on
-              // for every iteration and reports the stage analysis.
-              <Badge variant="outline">{BUILT_IN_BADGE}</Badge>
-            ) : row.kind === "match" ? (
-              <Badge variant="outline">Required</Badge>
-            ) : null}
+            <ScorerRowBadges kind={row.kind} isDefault={isDefault} />
           </div>
           {sourceLine ? (
             <span className="block text-xs text-muted-foreground">

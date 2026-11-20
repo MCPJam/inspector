@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logger } from "../logger.js";
 import {
-  loadFeatureFlagFileAtBoot,
+  loadFeatureFlagsAtBoot,
   resolveFeatureFlagSource,
   rolloutAnswerWithoutPostHog,
 } from "../feature-flag-source.js";
@@ -22,6 +22,8 @@ function flagFile(contents: string): string {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "flag-source-"));
   vi.stubEnv("DO_NOT_TRACK", "");
+  vi.stubEnv("ENVIRONMENT", "");
+  vi.stubEnv("MCPJAM_FEATURE_FLAGS", undefined);
   vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", "");
 });
 
@@ -172,7 +174,47 @@ describe("a broken flag file", () => {
   });
 });
 
-describe("loadFeatureFlagFileAtBoot", () => {
+describe("inline preview flags", () => {
+  beforeEach(() => {
+    vi.stubEnv("ENVIRONMENT", "preview");
+    vi.stubEnv("DO_NOT_TRACK", "1");
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", '{"sample":true}');
+  });
+
+  it("answers from the preview settings without telemetry", () => {
+    expect(resolveFeatureFlagSource()).toEqual({
+      kind: "preview",
+      answers: { sample: true },
+    });
+    expect(rolloutAnswerWithoutPostHog("sample")).toBe(true);
+    expect(rolloutAnswerWithoutPostHog("missing")).toBe(false);
+  });
+
+  it("keeps the flag file authoritative", () => {
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", flagFile('{"sample":false}'));
+    expect(rolloutAnswerWithoutPostHog("sample")).toBe(false);
+  });
+
+  it("ignores inline answers outside telemetry-disabled previews", () => {
+    vi.stubEnv("DO_NOT_TRACK", "0");
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
+    vi.stubEnv("ENVIRONMENT", "prod");
+    vi.stubEnv("DO_NOT_TRACK", "1");
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "off" });
+  });
+
+  it("fails closed without logging the preview setting's value", () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.stubEnv("MCPJAM_FEATURE_FLAGS", "{ invalid-preview-input");
+    loadFeatureFlagsAtBoot();
+    expect(resolveFeatureFlagSource()).toEqual({ kind: "preview", answers: {} });
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(
+      "[flags] MCPJAM_FEATURE_FLAGS is not valid JSON, so every feature flag is off. Fix the preview setting and restart.\n",
+    );
+  });
+});
+
+describe("loadFeatureFlagsAtBoot", () => {
   it("prints a broken file's problems on stderr once, at boot", () => {
     const stderr = vi
       .spyOn(process.stderr, "write")
@@ -180,7 +222,7 @@ describe("loadFeatureFlagFileAtBoot", () => {
     const error = vi.spyOn(logger, "error").mockImplementation(() => undefined);
     vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", flagFile("{ not json"));
 
-    loadFeatureFlagFileAtBoot();
+    loadFeatureFlagsAtBoot();
     expect(stderr).toHaveBeenCalledTimes(1);
     expect(stderr).toHaveBeenCalledWith(
       "[flags] MCPJAM_FEATURE_FLAGS_FILE is not valid JSON, so every feature flag is off. Fix the file and restart.\n",
@@ -199,7 +241,7 @@ describe("loadFeatureFlagFileAtBoot", () => {
     const path = flagFile(JSON.stringify({ "evaluate-enabled": true }));
     vi.stubEnv("MCPJAM_FEATURE_FLAGS_FILE", path);
 
-    loadFeatureFlagFileAtBoot();
+    loadFeatureFlagsAtBoot();
     writeFileSync(path, JSON.stringify({ "evaluate-enabled": false }));
     expect(rolloutAnswerWithoutPostHog("evaluate-enabled")).toBe(true);
     expect(stderr).not.toHaveBeenCalled();
@@ -210,7 +252,7 @@ describe("loadFeatureFlagFileAtBoot", () => {
       .spyOn(process.stderr, "write")
       .mockImplementation(() => true);
 
-    loadFeatureFlagFileAtBoot();
+    loadFeatureFlagsAtBoot();
     expect(stderr).not.toHaveBeenCalled();
     expect(resolveFeatureFlagSource()).toEqual({ kind: "posthog" });
   });
