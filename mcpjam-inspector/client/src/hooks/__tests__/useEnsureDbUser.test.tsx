@@ -916,6 +916,8 @@ describe("useEnsureDbUser", () => {
       });
     }
 
+    expect(result.current.setupFailed).toBe(true);
+
     // Budget spent: setup is genuinely finished and failed, so the error
     // screen is now the right thing to show.
     expect(mockState.ensureUser).toHaveBeenCalledTimes(4);

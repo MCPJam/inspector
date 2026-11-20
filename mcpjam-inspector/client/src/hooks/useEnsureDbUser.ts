@@ -201,6 +201,7 @@ export function useEnsureDbUser() {
     identityKey: string;
     promise: Promise<void>;
   } | null>(null);
+  const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
   const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
     null
@@ -295,6 +296,7 @@ export function useEnsureDbUser() {
     }
 
     activeEnsureIdentityRef.current = identityKey;
+    setFailedIdentity(null);
     setIsEnsuringUser(true);
     let cancelled = false;
 
@@ -438,6 +440,7 @@ export function useEnsureDbUser() {
           // so dropping it here flashes "Could not finish setup" in the gap
           // between attempts, for a session that goes on to recover.
           if (!scheduleRecovery()) {
+            setFailedIdentity(identityKey);
             setIsEnsuringUser(false);
             // Setup failed for good, so the cleanup after ready never runs;
             // an incidental cookie left here is what sign-out falls back to.
@@ -513,5 +516,7 @@ export function useEnsureDbUser() {
 
   // `hasIdentity` lets the load-stall report tell an actor that never
   // resolved from a user record that is still being set up.
-  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null };
+  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null,
+    setupFailed: identityKey !== null && failedIdentity === identityKey,
+  };
 }
