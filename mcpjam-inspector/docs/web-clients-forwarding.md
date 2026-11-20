@@ -68,8 +68,8 @@ can reach, so a person or an agent can point Claude web or ChatGPT web at it.
    allowlist and its session token.
 
 4. Tool calls are refused until a turn window is open. The runtime opens one per
-   turn; driving the vendor app by hand, open one yourself. It approves every
-   call, or only the tools in `allowTools`:
+   turn; driving the vendor app by hand, open one yourself. It approves only
+   the tools in `allowTools`, or every call when the body is `{}`:
 
    ```sh
    curl -s -X POST http://localhost:6274/api/web-clients/local-connectors/<connectorId>/turn \

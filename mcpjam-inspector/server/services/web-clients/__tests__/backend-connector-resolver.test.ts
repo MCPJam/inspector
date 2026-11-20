@@ -70,6 +70,15 @@ describe("backend connector resolver", () => {
     expect(service.read).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps no unknown id longer than a connector id, so anonymous callers can't fill the cache with long ones", async () => {
+    const { service } = stubService({ read: () => null });
+    const resolver = createBackendConnectorResolver(service);
+    const long = "x".repeat(4096);
+    expect(await resolver.resolve(long)).toBeUndefined();
+    expect(await resolver.resolve(long)).toBeUndefined();
+    expect(service.read).toHaveBeenCalledTimes(2);
+  });
+
   it("reads an id the backend refuses to parse as unknown, and any other failure as a failure", async () => {
     const invalid = createBackendConnectorResolver(
       stubService({
@@ -232,7 +241,7 @@ describe("durable ledger write-through", () => {
     });
     fixture.received.length = 0;
     const vendor = vendorClient(app, { path: `/mcp/${connector.connectorId}` });
-    return { ...stub, ledger, window, vendor };
+    return { ...stub, ledger, turns, window, vendor };
   }
   const callsReceived = () =>
     fixture.received.filter((request) =>
@@ -290,6 +299,66 @@ describe("durable ledger write-through", () => {
     });
     expect(fixture.received).toHaveLength(0);
     expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+  });
+
+  it("holds a batch whose second call can't be recorded, and settles the first call's record as an error", async () => {
+    let records = 0;
+    const { applied, ledger, window, vendor } = setup((command) => {
+      if (command.action !== "recordWebToolCallForwarded") return { settled: true };
+      records += 1;
+      if (records === 2) throw new Error("backend down");
+      return { id: "ledger_3", state: "forwarded" };
+    });
+    const batch = `[${vendor.callToolRaw(6, "echo", "g")},${vendor.callToolRaw(7, "echo", "h")},{"jsonrpc":"2.0","id":8,"method":"tools/list"}]`;
+    const answers = await (await vendor.post(batch)).json();
+    const refused = (id: number, message: string) => ({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32000, message },
+    });
+    const notRecorded =
+      "MCPJam could not record this tool call, so it was not sent. Send the prompt again.";
+    expect(answers).toEqual([
+      refused(6, notRecorded),
+      refused(7, notRecorded),
+      refused(
+        8,
+        "This request was not sent because a tool call in the same batch was refused. Send it again on its own.",
+      ),
+    ]);
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(applied.filter((command) => command.action === "settleWebToolCall")).toStrictEqual([
+        { action: "settleWebToolCall", id: "ledger_3", state: "error" },
+      ]),
+    );
+  });
+
+  it("refuses a call whose turn closed while it was recorded, and settles its record as an error", async () => {
+    let closeTurn = () => {};
+    const { applied, ledger, turns, window, vendor } = setup((command) => {
+      if (command.action !== "recordWebToolCallForwarded") return { settled: true };
+      // The run ends its turn while the record is being written.
+      closeTurn();
+      return { id: "ledger_4", state: "forwarded" };
+    });
+    closeTurn = () => turns.close(window.turnId);
+    const answer = await (await vendor.post(vendor.callToolRaw(9, "echo", "i"))).json();
+    expect(answer).toEqual({
+      jsonrpc: "2.0",
+      id: 9,
+      error: {
+        code: -32000,
+        message:
+          "No MCPJam run is using this connector, so the tool call was not sent. Start a run in MCPJam, then send the prompt again.",
+      },
+    });
+    expect(fixture.received).toHaveLength(0);
+    expect(ledger.forTurn(window.turnId)).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(applied[1]).toStrictEqual({ action: "settleWebToolCall", id: "ledger_4", state: "error" }),
+    );
   });
 
   it("answers the vendor even when the durable settle fails", async () => {
