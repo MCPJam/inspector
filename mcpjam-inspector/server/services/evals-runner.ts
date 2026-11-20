@@ -18,6 +18,7 @@ import { modelWorkloadFor } from "../utils/model-workload.js";
 import { listBaseServers } from "../utils/mcp-connections.js";
 import type { LiveChatTraceRequestPayloadEntry } from "@/shared/live-chat-trace";
 import { isCreditExhaustion } from "../../shared/credit-exhaustion.js";
+import { NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE } from "../../shared/native-harness-trial.js";
 import { providerErrorDetails } from "./evals/provider-error-details.js";
 import { redactSecretShapes } from "../../shared/secret-shape-redaction.js";
 import { EVAL_SANDBOX_CAPACITY_POLICY } from "../utils/run-supervisor/capacity-retry.js";
@@ -699,12 +700,20 @@ export type RunEvalSuiteOptions = {
   benchmarkWriteGuard?: BenchmarkWriteGuard;
 };
 
+const CREDITS_EXHAUSTED_NOTE =
+  "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.";
+
+/** Shared across a run's cases: once set, their untouched iterations are skipped with `note`. */
+type RunStop = { exhausted: boolean; note?: string };
+
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
   policyBlockCount?: number;
   creditsExhausted?: boolean;
+  /** The setup refusal, when the organization's native harness trial is used up. */
+  nativeHarnessTrialRefusal?: string;
   /**
    * OUR infrastructure failed this trial. The run summary leaves it out of
    * `total`/`passed`/`failed`, as the backend's legacy header does.
@@ -3143,7 +3152,7 @@ const executeTestCase = async (params: {
   abortSignal?: AbortSignal;
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
-  creditStop?: { exhausted: boolean };
+  creditStop?: RunStop;
   compareRunId?: string;
   /**
    * See {@link RunEvalSuiteOptions.committedQuickRunIterationIds}. When set,
@@ -3318,6 +3327,18 @@ const executeTestCase = async (params: {
           event: "evals.credits_exhausted",
           iterationId: startedIterationId,
         });
+      }
+      // The trial is per organization: every later iteration would be refused.
+      if (outcome.nativeHarnessTrialRefusal && !creditStop.exhausted) {
+        creditStop.exhausted = true;
+        creditStop.note = `${outcome.nativeHarnessTrialRefusal} Completed results are saved; remaining iterations were skipped.`;
+        logger.info(
+          "[evals] native harness trial used up; remaining iterations skipped",
+          {
+            event: "evals.native_harness_trial_exhausted",
+            iterationId: startedIterationId,
+          },
+        );
       }
       return outcome;
     };
@@ -3750,8 +3771,7 @@ const executeTestCase = async (params: {
           result: "failed",
           actualToolCalls: [],
           tokensUsed: 0,
-          error:
-            "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
+          error: creditStop.note ?? CREDITS_EXHAUSTED_NOTE,
         });
       }
       continue;
@@ -4352,7 +4372,7 @@ export const runEvalSuiteWithAiSdk = async ({
         modelIdentifiers,
       });
     }
-    const creditStop = { exhausted: false };
+    const creditStop: RunStop = { exhausted: false };
     const runOne = (test: (typeof tests)[number]) =>
       runTestCase({
         test,
@@ -4682,10 +4702,7 @@ export const runEvalSuiteWithAiSdk = async ({
       await recorder.finalize({
         status: creditStop.exhausted ? "failed" : "completed",
         ...(creditStop.exhausted
-          ? {
-              notes:
-                "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Add credits on an eligible paid plan, upgrade from Free, or retry after your allowance renews.",
-            }
+          ? { notes: creditStop.note ?? CREDITS_EXHAUSTED_NOTE }
           : {}),
         summary: {
           total: summary.total,
@@ -7047,7 +7064,16 @@ const runHostedIterationWithBrowser = async (
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     const setupCode = harnessFailureEvidenceOf(error)?.code;
-    logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    // A used-up trial is the plan's answer, not a fault: it stays out of Sentry.
+    const trialRefused = setupCode === NATIVE_HARNESS_TRIAL_EXHAUSTED_CODE;
+    if (trialRefused) {
+      logger.info(
+        "[evals] iteration setup refused: native harness trial used up",
+        { code: setupCode },
+      );
+    } else {
+      logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    }
     if (toolDescriptionOverride) {
       stampDescriptionExperiment(
         iterationMetadataBase,
@@ -7101,6 +7127,7 @@ const runHostedIterationWithBrowser = async (
     failedEvaluation.passed = false;
     return {
       creditsExhausted: isCreditExhaustion(error),
+      ...(trialRefused ? { nativeHarnessTrialRefusal: errorMessage } : {}),
       evaluation: failedEvaluation,
       iterationId,
       ...(toolPolicyGate?.blocks.length
