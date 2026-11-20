@@ -41,6 +41,7 @@ import {
   webClientsEnabledFor,
 } from "./endpoint-auth.js";
 import {
+  connectorTag,
   webClientRecorder,
   webClientScope,
   type WebClientRecorder,
@@ -346,7 +347,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       });
     } catch (error) {
       logger.warn("[web-clients] the tool approval check failed", {
-        connectorId,
+        connector: connectorTag(connectorId),
         message: error instanceof Error ? error.message : String(error),
       });
       return COPY.approvalFailed;
@@ -469,7 +470,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         });
       } catch (error) {
         logger.warn("[web-clients] a forwarded call could not be settled", {
-          connectorId,
+          connector: connectorTag(connectorId),
           message: error instanceof Error ? error.message : String(error),
         });
       }
@@ -483,7 +484,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       pending.clear();
       target.release?.().catch((error: unknown) =>
         logger.warn("[web-clients] the upstream connection was not released", {
-          connectorId,
+          connector: connectorTag(connectorId),
           message: error instanceof Error ? error.message : String(error),
         }),
       );
