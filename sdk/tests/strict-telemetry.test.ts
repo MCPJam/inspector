@@ -277,3 +277,35 @@ describe("XAA mint refusal tags", () => {
     ).toEqual({ xaa_failure: "authorization_server_unknown" });
   });
 });
+
+describe("dependency error classes", () => {
+  // Built-ins and undici classes our code never declares used to read
+  // `UnknownError` and share one group (INSPECTOR-HONO-X). They are listed by
+  // exact name, so each keeps its own type and group.
+  const thrown = (type: unknown) =>
+    rebuildSentryEvent({ exception: { values: [{ type }] } });
+
+  it("keeps a listed built-in or undici class as its own type and group", () => {
+    for (const type of [
+      "AggregateError",
+      "SocketError",
+      "ConnectTimeoutError",
+    ]) {
+      const event = thrown(type);
+      expect(event.exception).toEqual({ values: [{ type, value: type }] });
+      expect(event.fingerprint).toEqual(["{{ default }}", type]);
+    }
+  });
+
+  it("still reads an unlisted name, however identifier-like, as UnknownError", () => {
+    for (const type of [
+      "PRIVATE_SENTINEL_customer_content",
+      "SocketErrors",
+      42,
+    ]) {
+      expect(thrown(type).exception).toEqual({
+        values: [{ type: "UnknownError", value: "UnknownError" }],
+      });
+    }
+  });
+});
