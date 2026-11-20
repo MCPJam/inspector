@@ -94,6 +94,10 @@ vi.mock("posthog-js", () => ({
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => mocks.evaluateFlag.enabled,
 }));
+const stepsEditorFlag = vi.hoisted(() => ({ enabled: false }));
+vi.mock("@/hooks/use-test-case-steps-editor-enabled", () => ({
+  useTestCaseStepsEditorEnabled: () => stepsEditorFlag.enabled,
+}));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: () => "light",
@@ -1026,6 +1030,31 @@ describe("EvaluateTab", () => {
     expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith({
       type: "list",
     });
+  });
+
+  it("opens the suite's test cases from a case's crumb behind eval-test-case-steps-editor", async () => {
+    stepsEditorFlag.enabled = true;
+    mocks.route.current = {
+      type: "test-edit",
+      suiteId: "suite-a",
+      testId: "tc-1",
+    };
+    mocks.useEvalQueries.mockImplementation(
+      ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
+        makeQueryState(selectedSuiteId),
+    );
+    try {
+      render(<EvaluateTab projectId="ws-1" />);
+      await userEvent
+        .setup()
+        .click(screen.getByRole("button", { name: "Suite suite-a" }));
+      expect(mocks.toSuiteOverview).toHaveBeenCalledWith(
+        "suite-a",
+        "test-cases",
+      );
+    } finally {
+      stepsEditorFlag.enabled = false;
+    }
   });
 
   it("redirects invalid suite routes back to the eval list", async () => {

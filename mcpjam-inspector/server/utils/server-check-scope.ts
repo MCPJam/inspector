@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
-// Only the four hosted check routes enter this scope. Other MCP work keeps its
+// Only the five hosted check routes enter this scope: doctor and validate on
+// /api/web and /api/v1, and the web canvas refresh. Other MCP work keeps its
 // existing transport lifecycle and timeouts.
 export const serverCheckScope = new AsyncLocalStorage<AbortSignal>();
 

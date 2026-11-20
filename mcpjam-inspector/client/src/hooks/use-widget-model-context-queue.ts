@@ -13,10 +13,22 @@ import {
 export function useWidgetModelContextQueue() {
   const [queue, setQueueState] = useState<WidgetModelContextEntry[]>([]);
   const current = useRef(queue);
-  const setQueue = useCallback((next: WidgetModelContextEntry[]) => {
-    current.current = next;
-    setQueueState(next);
-  }, []);
+  const setQueue = useCallback(
+    (
+      next:
+        | WidgetModelContextEntry[]
+        | ((
+            current: WidgetModelContextEntry[],
+          ) => WidgetModelContextEntry[]),
+    ) => {
+      // An updater reads the ref, not the render that started an in-flight
+      // send. That send's snapshot is already on the wire.
+      const resolved = typeof next === "function" ? next(current.current) : next;
+      current.current = resolved;
+      setQueueState(resolved);
+    },
+    [],
+  );
   const update = useCallback(
     (toolCallId: string, context: WidgetModelContextUpdate["context"]) =>
       setQueue(

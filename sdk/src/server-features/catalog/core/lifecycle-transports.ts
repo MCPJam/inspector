@@ -218,7 +218,7 @@ export const LIFECYCLE_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "One server answers both initialize and 2026-07-28 requests, so old and new clients can connect.",
     howTo:
-      "Keep initialize next to server/discover while your clients migrate. Run checks on 2025-11-25 and on 2026-07-28 to test both.",
+      "Keep initialize next to server/discover while your clients migrate.",
     owner: "server",
     spec: coreSpec("2026-07-28", VERSIONING, BACKWARD_COMPATIBILITY),
     stage: "stable",

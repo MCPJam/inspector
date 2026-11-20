@@ -1,8 +1,8 @@
-import { useEffect } from "react";
-import { toast } from "sonner";
+import { useEffect, useState } from "react";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { hasStoredThemePreference } from "@/lib/theme-utils";
 import { DarkDefaultNudgeCard } from "./DarkDefaultNudgeCard";
+import { AnnouncementToast } from "./announcement-popups";
 
 export const DARK_DEFAULT_NUDGE_KEY = "darkDefaultNudgeSeen";
 const TOAST_ID = "dark-default-nudge";
@@ -29,32 +29,37 @@ function markNudgeSeen(): boolean {
   }
 }
 
+function DarkDefaultToast({ dismiss }: { dismiss: () => void }) {
+  const navigate = useAppNavigate();
+  return (
+    <DarkDefaultNudgeCard
+      onDismiss={dismiss}
+      onOpenSettings={() => {
+        dismiss();
+        navigate("/settings/appearance");
+      }}
+    />
+  );
+}
+
 /**
  * Tells people who never picked a theme that dark is now the default, once
- * per device. Renders nothing; mount it after `<Toaster />`.
+ * per device.
  */
 export function DarkDefaultNudge({ enabled = true }: { enabled?: boolean }) {
-  const navigate = useAppNavigate();
+  const [eligible, setEligible] = useState(false);
 
   useEffect(() => {
-    if (!enabled) {
-      toast.dismiss(TOAST_ID);
-      return;
-    }
-    if (!shouldShowNudge() || !markNudgeSeen()) return;
-    toast.custom(
-      (id) => (
-        <DarkDefaultNudgeCard
-          onDismiss={() => toast.dismiss(id)}
-          onOpenSettings={() => {
-            toast.dismiss(id);
-            navigate("/settings/appearance");
-          }}
-        />
-      ),
-      { id: TOAST_ID, duration: 20_000 },
-    );
-  }, [enabled, navigate]);
+    setEligible(enabled && shouldShowNudge());
+  }, [enabled]);
 
-  return null;
+  return (
+    <AnnouncementToast
+      eligible={enabled && eligible}
+      id={TOAST_ID}
+      duration={20_000}
+      beforeShow={() => shouldShowNudge() && markNudgeSeen()}
+      render={(dismiss) => <DarkDefaultToast dismiss={dismiss} />}
+    />
+  );
 }

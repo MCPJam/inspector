@@ -188,7 +188,7 @@ function options(overrides: Record<string, unknown> = {}) {
     authHeader: "Bearer test",
     projectId: "project-1",
     chatSessionId: "chat-1",
-    mcpClientManager: { getServerConfig: vi.fn() },
+    mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({})) },
     selectedServers: [],
     requireToolApproval: false,
     sourceType: "direct",
@@ -281,6 +281,7 @@ describe("runHarnessTurn activity", () => {
           respectToolVisibility: false,
           mcpClientManager: {
             getServerConfig: () => ({ url: "https://mcp.example/mcp", clientCapabilities: {} }),
+            getAllToolAnnotations: () => ({}),
             getInitializationInfo: () => ({ transport: "streamable-http", protocolVersion: "2025-11-25", clientCapabilities: {} }),
           },
           harnessMcpProxy: { plane: "web-authorized", mode: "relay" },

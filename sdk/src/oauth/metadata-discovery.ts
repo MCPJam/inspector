@@ -85,7 +85,7 @@ function removeCredentialHeaders(
  * local dev can host its authorization server on another loopback port while a
  * public server can never reach the user's.
  */
-function assertMetadataDestinationAllowed(
+export function assertMetadataDestinationAllowed(
   candidate: string,
   serverUrl: string,
   allowPrivateNetwork = false

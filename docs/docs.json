@@ -49,7 +49,7 @@
           "getting-started",
           "installation",
           "hosted/overview",
-          "hosted/claude-connector",
+          "hosted/mcp-server",
           "hosted/sso",
           "hosted/network",
           "troubleshooting/common-errors",
@@ -79,6 +79,7 @@
             "pages": [
               "inspector/playground",
               "inspector/evals",
+              "inspector/eval-test-users",
               "inspector/view-origins",
               "inspector/host-templates"
             ]
@@ -240,6 +241,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/hosted/claude-connector",
+      "destination": "/hosted/mcp-server"
+    },
     {
       "source": "/api-reference/agent-browsers/open-a-cloud-browser-session",
       "destination": "/reference/public-api"

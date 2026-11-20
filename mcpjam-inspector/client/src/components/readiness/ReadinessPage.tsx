@@ -397,7 +397,7 @@ export function ReadinessPage({
         counts={counts}
         packageAction={openUpload && (
           <Button type="button" size="sm" variant="outline" onClick={openUpload}>
-            Upload ZIP
+            Upload ZIP or folder
           </Button>
         )}
         server={
@@ -412,7 +412,7 @@ export function ReadinessPage({
           switching ? "Switching server…" : !view || !flow
             ? "Not checked yet"
             : needsVersion
-              ? view.pluginId ? "Choose a ZIP version to run checks." : "Choose a plugin ZIP to run checks."
+              ? view.pluginId ? "Choose a package version to run checks." : "Choose a plugin package to run checks."
               : runStatus(run)
         }
         provenance={runProvenance(run, flow?.version)}

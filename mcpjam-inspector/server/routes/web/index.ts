@@ -54,6 +54,7 @@ import conformanceWeb from "./conformance.js";
 import conformanceShared from "./conformance-shared.js";
 import sharedResources from "./shared-resources.js";
 import conformanceShareCard from "./conformance-share-card.js";
+import { hostedServerFeatureRoutes } from "../shared/server-feature-observations.js";
 import score from "./score.js";
 import bench from "./bench.js";
 import apiKeys from "./api-keys.js";
@@ -147,7 +148,12 @@ for (const startsWork of [
 }
 web.post("/servers/checks/promote", promoteServerCheck);
 // All hosted checks share ten active slots per verified user across replicas.
-for (const spendsEgress of ["/servers/doctor", "/servers/validate"]) {
+// A canvas refresh connects, captures and probes, so it takes a slot too.
+for (const spendsEgress of [
+  "/servers/doctor",
+  "/servers/validate",
+  "/servers/canvas/refresh",
+]) {
   web.use(spendsEgress, mcpEgressRateLimitMiddleware);
 }
 // Connector Bench. Listed path-by-path rather than as `/bench/*` because
@@ -353,6 +359,7 @@ web.route("/server-connections", serverConnectionsWeb);
 web.route("/guest-token", guestToken);
 web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
+web.route("/server-features", hostedServerFeatureRoutes);
 web.route("/mrtr", mrtrContinuation);
 web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in

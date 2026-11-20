@@ -72,12 +72,14 @@ export function normalizeAdvancedConfig(
  * The `advancedConfig` an update sends. A save keeps, and a run falls back to,
  * the stored `advancedConfig` when none is sent, and `updateTestCase` stores
  * `null` as is. So clearing the case's last advanced setting sends `{}`.
+ * `stored` may be the raw row value: a config that normalizes to nothing,
+ * such as `{ system: "" }`, has nothing to clear.
  */
 export function advancedConfigForUpdate(
   next: Record<string, unknown> | undefined,
   stored: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  return next ?? (stored ? {} : undefined);
+  return next ?? (normalizeAdvancedConfig(stored) ? {} : undefined);
 }
 
 export function buildCaseSavePayload(
@@ -123,7 +125,8 @@ export function buildCaseSavePayload(
     predicates: normalizedPredicates,
     suppressedSuiteStandardCheckIds: form.suppressedSuiteStandardCheckIds ?? [],
     // Omitted when undefined: `createTestCase` admits no `null` for this
-    // field, and `handleSave` supplies the null-clear on the update path.
+    // field. Updates send the null-clear: `buildCaseUpdatePayload` here, and
+    // `test-template-editor.tsx`'s own update calls.
     ...(form.judgeConfigOverride !== undefined
       ? { judgeConfigOverride: form.judgeConfigOverride }
       : {}),
@@ -132,6 +135,31 @@ export function buildCaseSavePayload(
 }
 
 export type CaseSavePayload = ReturnType<typeof buildCaseSavePayload>;
+
+/**
+ * What `updateTestCase` takes for a saved case. The backend keeps a field it
+ * is not sent, so each override the form cleared goes as `null`, and a cleared
+ * advanced config as `{}`.
+ */
+export function buildCaseUpdatePayload(
+  form: CaseSaveForm,
+  opts: {
+    isNegativeTest: boolean;
+    storedAdvancedConfig: Record<string, unknown> | undefined;
+  },
+) {
+  const payload = buildCaseSavePayload(form, opts);
+  return {
+    ...payload,
+    matchOptions: payload.matchOptions ?? null,
+    predicates: payload.predicates ?? null,
+    judgeConfigOverride: payload.judgeConfigOverride ?? null,
+    advancedConfig: advancedConfigForUpdate(
+      payload.advancedConfig,
+      opts.storedAdvancedConfig,
+    ),
+  };
+}
 
 /**
  * In-memory shape for an unsaved ("draft") case, so the editor can render it
