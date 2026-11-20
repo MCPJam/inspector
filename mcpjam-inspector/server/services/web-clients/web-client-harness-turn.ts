@@ -30,6 +30,7 @@ import type {
 } from "../../utils/mcpjam-stream-handler.js";
 import { runWebClientTurn } from "./run-web-client-turn.js";
 import { webClientEnvironmentFor } from "./web-client-environment.js";
+import { rotateRunAccounts } from "./web-client-run.js";
 import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
@@ -84,6 +85,7 @@ export async function runWebClientHarnessTurn(
     throw new Error(`${name} runs on a project's web account. Open a project, then send again.`);
   }
   const runId = options.evalIterationId ?? options.chatSessionId ?? options.journeyRunId ?? "playground";
+  const evalRun = options.webClientRun;
   const environment = await webClientEnvironmentFor({
     runtimeId,
     projectId: options.projectId,
@@ -91,7 +93,10 @@ export async function runWebClientHarnessTurn(
     ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
     ...(options.chatSessionId ? { chatSessionId: options.chatSessionId } : {}),
     ...(options.authHeader ? { bearer: options.authHeader } : {}),
-    ...(options.webClientActor ? { actor: options.webClientActor } : {}),
+    ...(evalRun?.actor ? { actor: evalRun.actor } : {}),
+    ...(evalRun?.webAccountIds
+      ? { runWebAccountIds: rotateRunAccounts(evalRun.runId, evalRun.webAccountIds) }
+      : {}),
   });
   if (!environment) {
     throw new Error(`${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`);

@@ -1,5 +1,6 @@
 import { localHarnessIdOf, shouldUseLocalHarness } from "../../utils/harness/local/run-resources.js";
 import { webClientVendorForRuntime } from "@/shared/web-clients";
+import { recordEvalRunWebAccounts } from "../../services/web-clients/web-client-run.js";
 import { localHarnessCapabilities } from "../../services/evals/runner-capabilities.js";
 import { casesAssertingWidgetRender, failRunBeforeExecution } from "../../services/evals/harness-admission.js";
 import { singleCaseHarnessBoxRefusal } from "../../services/evals/needs-ephemeral-sandbox.js";
@@ -3009,13 +3010,16 @@ export async function prepareEvalRun(
       { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness },
     );
   }
-  // A web client's run records which web account it ran on, before any turn.
+  // A web client's run freezes the web accounts it runs on, before any turn.
   const webVendor = webClientVendorForRuntime(harnessAdmission.harness);
-  if (webVendor) {
-    await convexClient.mutation("webClientSuites:recordWebAccountsAtRun" as never, {
-      runId,
-      vendor: webVendor,
-    } as never);
+  const webAccounts = webVendor
+    ? await recordEvalRunWebAccounts({ convexClient, runId, vendor: webVendor })
+    : undefined;
+  if (webAccounts && !webAccounts.ok) {
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason: webAccounts.reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, webAccounts.reason, {
+      reason: "WEB_ACCOUNTS_UNAVAILABLE",
+    });
   }
   // A NATIVE-delivery harness makes its MCP calls out of process, so the policy
   // is enforced at the MCP proxy the generated `.mcp.json` points at — sealed

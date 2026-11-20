@@ -1,0 +1,93 @@
+/**
+ * What a web client's eval turn takes from its run: the owner to act as, the
+ * accounts frozen at start and their rotation, and a refused freeze as the
+ * run's reason to stop. Evidence: fixture.
+ */
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
+import { actorForRun } from "../hosted-web-client-runtime";
+import {
+  recordEvalRunWebAccounts,
+  rotateRunAccounts,
+  webClientRunOfEvalRun,
+} from "../web-client-run";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
+describe("an eval run's web client context", () => {
+  const run = {
+    createdBy: "user-owner",
+    webAccountsAtRun: [
+      { webAccountId: "acct-claude", vendor: "claude", label: "Team", profileVersion: 2 },
+      { webAccountId: "acct-gpt-1", vendor: "chatgpt", label: "Plus", profileVersion: 1 },
+      { webAccountId: "acct-gpt-2", vendor: "chatgpt", label: "Free", profileVersion: 1 },
+    ],
+  };
+
+  it("acts as the run's owner on the accounts it froze for its vendor", () => {
+    expect(webClientRunOfEvalRun({ harness: "chatgpt-web", runId: "run-1", run })).toEqual({
+      runId: "run-1",
+      actor: { actorUserId: "user-owner" },
+      webAccountIds: ["acct-gpt-1", "acct-gpt-2"],
+    });
+  });
+
+  it("is nothing for another runtime or a quick run, and no frozen list for an older run", () => {
+    expect(webClientRunOfEvalRun({ harness: "claude-code", runId: "run-1", run })).toBeUndefined();
+    expect(webClientRunOfEvalRun({ harness: "claude-web", runId: null, run })).toBeUndefined();
+    expect(
+      webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: { createdBy: "user-owner" } }),
+    ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" } });
+  });
+
+  it("moves each turn of a run one account on, and keeps runs apart", () => {
+    const ids = ["a", "b", "c"];
+    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["a", "b", "c"]);
+    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["b", "c", "a"]);
+    expect(rotateRunAccounts("other-run", ids)).toEqual(["a", "b", "c"]);
+    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["c", "a", "b"]);
+    expect(rotateRunAccounts("rotation-run", ["only"])).toEqual(["only"]);
+  });
+});
+
+describe("freezing the run's web accounts", () => {
+  it("records them for the run's vendor", async () => {
+    const mutation = vi.fn(async () => []);
+    expect(await recordEvalRunWebAccounts({ convexClient: { mutation }, runId: "run-1", vendor: "chatgpt" })).toEqual({
+      ok: true,
+    });
+    expect(mutation).toHaveBeenCalledWith("webClientSuites:recordWebAccountsAtRun", {
+      runId: "run-1",
+      vendor: "chatgpt",
+    });
+  });
+
+  it("stops the run with the backend's own words, or says to run again", async () => {
+    const refused = vi.fn(async () => {
+      throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
+    });
+    expect(
+      await recordEvalRunWebAccounts({ convexClient: { mutation: refused }, runId: "run-1", vendor: "claude" }),
+    ).toEqual({ ok: false, reason: "Web clients are off for this project." });
+    const lost = vi.fn(async () => {
+      throw new Error("fetch failed");
+    });
+    expect(await recordEvalRunWebAccounts({ convexClient: { mutation: lost }, runId: "run-1", vendor: "claude" })).toEqual({
+      ok: false,
+      reason: expect.stringContaining("Run it again."),
+    });
+  });
+});
+
+describe("the person a run's bearer names", () => {
+  it("asks the backend about a delegated run session and refuses guests", async () => {
+    vi.stubEnv("WORKOS_CLIENT_ID", "client_test");
+    const whoIs = vi.fn(async () => ({ _id: "user-owner", isAnonymous: false }));
+    expect(await actorForRun("Bearer delegated-run-token", whoIs)).toEqual({ actorUserId: "user-owner" });
+    expect(whoIs).toHaveBeenCalledWith("delegated-run-token");
+    expect(await actorForRun("Bearer guest-token", async () => ({ _id: "guest-1", isAnonymous: true }))).toBeUndefined();
+    expect(await actorForRun("Bearer unknown-token", async () => null)).toBeUndefined();
+  });
+});

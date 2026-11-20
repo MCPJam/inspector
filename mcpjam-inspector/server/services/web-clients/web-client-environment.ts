@@ -78,7 +78,8 @@ export type WebTurnContext = {
   bearer?: string;
   /** The run's owner, for a run started with nobody signed in. */
   actor?: { actorExternalId: string } | { actorUserId: string };
-  chosenWebAccountId?: string;
+  /** The run's frozen accounts, in the order this turn tries them. */
+  runWebAccountIds?: readonly string[];
 };
 
 /** Hosted runs build their environment per turn: who to act as, which chat. */
