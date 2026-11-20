@@ -93,6 +93,7 @@ export async function runWebClientHarnessTurn(
     ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
     ...(options.chatSessionId ? { chatSessionId: options.chatSessionId } : {}),
     ...(options.authHeader ? { bearer: options.authHeader } : {}),
+    mcpClientManager: options.mcpClientManager,
     ...(evalRun?.actor ? { actor: evalRun.actor } : {}),
     ...(evalRun?.webAccountIds
       ? {
