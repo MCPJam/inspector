@@ -69,11 +69,12 @@ const sse = (value: unknown) => `event: message\ndata: ${JSON.stringify(value)}\
 /**
  * Answers JSON, except `tools/call` for `stream` (SSE with a progress
  * notification first) and `cut` (SSE that ends before the answer), and
- * `/redirect/<status>`, which sends any request on to `/mcp`.
+ * `/redirect/<status>`, which sends any request on to `/mcp` (or to
+ * `hooks.redirectTo`).
  */
 export async function startFixtureServer() {
   const received: Received[] = [];
-  const hooks: { onRedirect?: () => void } = {};
+  const hooks: { onRedirect?: () => void; redirectTo?: string } = {};
   /** The raw bytes of the last SSE answer, to compare with what the vendor read. */
   let lastStream = "";
   const server = createServer((req, res) => {
@@ -92,7 +93,11 @@ export async function startFixtureServer() {
       const redirect = /^\/redirect\/(30[12378])$/.exec(req.url ?? "");
       if (redirect) {
         hooks.onRedirect?.();
-        res.writeHead(Number(redirect[1]), { location: "/mcp" }).end();
+        res
+          .writeHead(Number(redirect[1]), {
+            location: hooks.redirectTo ?? "/mcp",
+          })
+          .end();
         return;
       }
       if (req.method !== "POST") {
