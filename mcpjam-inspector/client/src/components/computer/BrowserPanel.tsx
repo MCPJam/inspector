@@ -209,7 +209,9 @@ export function BrowserPanel({
       method: "POST",
       body: JSON.stringify({ ...size, policy: "followPane" }),
     });
-    if (!response.ok) throw new Error("Browser viewport resize failed");
+    if (!response.ok) {
+      throw new Error("Could not fit the browser to the panel. Resize the panel to try again.");
+    }
   }, [authorized]);
 
   const disconnected = useCallback(() => {
