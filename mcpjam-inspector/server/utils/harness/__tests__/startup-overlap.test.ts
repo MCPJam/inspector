@@ -15,27 +15,27 @@ afterEach(() => {
 describe("bridgeReapSchedule", () => {
   it("reaps before every bridge spawn with the switch off", async () => {
     const reap = vi.fn(async () => {});
-    const reaps = bridgeReapSchedule({ reap, firstTurnOnNewBox: () => true });
+    const reaps = bridgeReapSchedule({ reap, unusedBox: () => true });
     await reaps.beforeSpawn(STATE);
     await reaps.beforeSpawn(STATE);
     expect(reap).toHaveBeenCalledTimes(2);
     expect(reap).toHaveBeenCalledWith(STATE, undefined);
   });
 
-  it("skips only the first spawn's reap on a conversation's first turn on its new box", async () => {
+  it("skips only the first spawn's reap on a box no turn has used", async () => {
     vi.stubEnv("MCPJAM_HARNESS_SKIP_FIRST_REAP", "1");
     const reap = vi.fn(async () => {});
-    const reaps = bridgeReapSchedule({ reap, firstTurnOnNewBox: () => true });
+    const reaps = bridgeReapSchedule({ reap, unusedBox: () => true });
     await reaps.beforeSpawn(STATE);
     expect(reap).not.toHaveBeenCalled();
     await reaps.beforeSpawn(STATE);
     expect(reap).toHaveBeenCalledTimes(1);
   });
 
-  it("still reaps on a box that is not the conversation's new one", async () => {
+  it("still reaps on a box a turn has used", async () => {
     vi.stubEnv("MCPJAM_HARNESS_SKIP_FIRST_REAP", "1");
     const reap = vi.fn(async () => {});
-    await bridgeReapSchedule({ reap, firstTurnOnNewBox: () => false }).beforeSpawn(STATE);
+    await bridgeReapSchedule({ reap, unusedBox: () => false }).beforeSpawn(STATE);
     await bridgeReapSchedule({ reap }).beforeSpawn(STATE);
     expect(reap).toHaveBeenCalledTimes(2);
   });

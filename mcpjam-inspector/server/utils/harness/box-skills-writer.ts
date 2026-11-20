@@ -183,6 +183,11 @@ export async function writeBoxSkills(args: {
   readFiles(): Promise<BoxSkillFiles>;
   /** The computer row whose upload quota downloads count against. */
   computerId?: string;
+  /**
+   * A hosted box, where the seed switch gives a missing adapter manifest its
+   * empty one. A local session's command translator refuses the seed command.
+   */
+  hostedBox?: boolean;
   signal?: AbortSignal;
 }): Promise<BoxSkillsResult> {
   const { session, descriptor, plan, signal } = args;
@@ -205,7 +210,8 @@ export async function writeBoxSkills(args: {
   }
   const skillsBase = boxSkillsFolder(descriptor, args.home);
   if (plan.deliver.length === 0) {
-    await clearSkillsFolder(session, skillsBase, signal, seedSkillsManifestEnabled());
+    const seed = args.hostedBox === true && seedSkillsManifestEnabled();
+    await clearSkillsFolder(session, skillsBase, signal, seed);
     return result;
   }
   if (signal?.aborted) return result;

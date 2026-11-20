@@ -60,11 +60,11 @@ export interface E2BHarnessSandboxProviderOptions {
   /** Internal acknowledgement for this turn's box, never taken from request data. */
   connectionPreparedByBroker?: () => boolean;
   /**
-   * True for a conversation's first turn on the box provisioned for it: no
-   * bridge can be running there, so with `MCPJAM_HARNESS_SKIP_FIRST_REAP` its
-   * first bridge spawn skips the reap.
+   * True when no turn has used this box yet: no bridge can be running there,
+   * so with `MCPJAM_HARNESS_SKIP_FIRST_REAP` the first bridge spawn skips the
+   * reap.
    */
-  firstTurnOnNewBox?: () => boolean;
+  unusedBox?: () => boolean;
   /**
    * Fired the first time `sessionEnv` is actually merged into a command's
    * environment — i.e. when the box really receives the values, not when the
@@ -462,9 +462,7 @@ export function createE2BHarnessSandboxProvider(
     };
     const bridgeReaps = bridgeReapSchedule({
       reap: reapBridges,
-      ...(opts.firstTurnOnNewBox
-        ? { firstTurnOnNewBox: opts.firstTurnOnNewBox }
-        : {}),
+      ...(opts.unusedBox ? { unusedBox: opts.unusedBox } : {}),
     });
 
     const session: HarnessV1NetworkSandboxSession = {

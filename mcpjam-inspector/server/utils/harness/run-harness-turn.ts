@@ -2700,9 +2700,9 @@ export async function runHarnessTurn(
               harnessId: harnessAdapter.id,
               sandboxId: sandboxId!,
               connectionPreparedByBroker: () => connectionPreparedByBroker,
-              // The same test as the stale-bake watch below: a lane's first
-              // turn runs on the box just provisioned for its conversation.
-              firstTurnOnNewBox: () => Boolean(harnessSandboxBinding) && continuity?.stateVersion === 0,
+              // Not a lane's first turn alone: an earlier attempt that never
+              // committed may have left its bridge on the same box.
+              unusedBox: () => harnessSandboxBinding?.unused === true,
               defaultWorkingDirectory,
               proxyUrl: () => auth.ANTHROPIC_BASE_URL ?? auth.OPENAI_BASE_URL,
               // The materialized secrets, as a session-wide env bag on every `run`
@@ -3252,6 +3252,7 @@ export async function runHarnessTurn(
               ...(uploadQuotaComputerId
                 ? { computerId: uploadQuotaComputerId }
                 : {}),
+              ...(localPrepared === null ? { hostedBox: true } : {}),
               ...(abortSignal ? { signal: abortSignal } : {}),
             }).catch((error: unknown) => {
               boxSkillsWritten = failedBoxSkills(boxSkills, error);

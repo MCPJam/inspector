@@ -97,20 +97,20 @@ export function sandboxHomeLookup(args: {
 
 /**
  * When a session's bridge spawns stop the box's other bridges. With
- * `MCPJAM_HARNESS_SKIP_FIRST_REAP`, a conversation's first turn on the box
- * provisioned for it, where no bridge can be running, skips its first spawn's
- * reap. Later spawns, and every other session, reap as before.
+ * `MCPJAM_HARNESS_SKIP_FIRST_REAP`, a turn on a box no turn has used, where no
+ * bridge can be running, skips its first spawn's reap. Later spawns, and every
+ * other session, reap as before.
  */
 export function bridgeReapSchedule(args: {
   reap: (stateDir: string, signal?: AbortSignal) => Promise<void>;
-  firstTurnOnNewBox?: () => boolean;
+  unusedBox?: () => boolean;
 }): { beforeSpawn(stateDir: string, signal?: AbortSignal): Promise<void> } {
   let spawned = false;
   return {
     async beforeSpawn(stateDir, signal) {
       const first = !spawned;
       spawned = true;
-      if (first && skipFirstTurnReap() && args.firstTurnOnNewBox?.() === true)
+      if (first && skipFirstTurnReap() && args.unusedBox?.() === true)
         return;
       await args.reap(stateDir, signal);
     },
