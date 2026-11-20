@@ -77,31 +77,53 @@ export function ConnectStep({
   onReconnect: (name: string) => Promise<unknown>;
   onConfirmed: (name: string) => void;
   onTrack: (action: ConnectAction, extra?: { error_slug?: string }) => void;
-  /** The unconfirmed server, so the step isn't checked before Confirm. */
-  onAttemptChange: (name: string | null) => void;
+  /**
+   * Servers not to count as connected: the unconfirmed attempt, and earlier
+   * attempts whose removal hasn't landed yet.
+   */
+  onAttemptChange: (names: string[]) => void;
 }) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttemptState] = useState<Attempt | null>(null);
   // Read by the unmount cleanup, which outlives the last render's state.
   const attemptRef = useRef<Attempt | null>(null);
-  // Reported in the same update that adds the server, so Home never counts an
-  // unconfirmed attempt as connected for a render.
-  const setAttempt = (next: Attempt | null) => {
-    attemptRef.current = next;
-    setAttemptState(next);
-    onAttemptChange(next?.name ?? null);
-  };
+  const removing = useRef(new Set<string>());
   const timer = useRef<number | undefined>(undefined);
   const latest = useRef({ onRemove, onAttemptChange, onTrack });
   latest.current = { onRemove, onAttemptChange, onTrack };
+  const report = () => {
+    const current = attemptRef.current?.name;
+    const pending = [...removing.current].filter((name) => name !== current);
+    latest.current.onAttemptChange(current ? [current, ...pending] : pending);
+  };
+  // Reported in the same update that adds the server, so Home never counts an
+  // unconfirmed attempt as connected for a render.
+  const setAttempt = (next: Attempt | null) => {
+    if (next) removing.current.delete(next.name);
+    attemptRef.current = next;
+    setAttemptState(next);
+    report();
+  };
+  useEffect(() => {
+    let landed = false;
+    for (const name of removing.current) {
+      if (servers[name]) continue;
+      removing.current.delete(name);
+      landed = true;
+    }
+    if (landed) report();
+  }, [servers]);
   useEffect(
     () => () => {
       window.clearTimeout(timer.current);
       const current = attemptRef.current;
-      if (!current) return;
-      if (current.created) void latest.current.onRemove(current.name);
-      latest.current.onAttemptChange(null);
+      if (current?.created) {
+        removing.current.add(current.name);
+        void latest.current.onRemove(current.name);
+      }
+      attemptRef.current = null;
+      report();
     },
     [],
   );
@@ -122,7 +144,9 @@ export function ConnectStep({
   }, [status, attempt, errorSlug]);
 
   const discard = (current: Attempt | null) => {
-    if (current?.created) void onRemove(current.name);
+    if (!current?.created) return;
+    removing.current.add(current.name);
+    void onRemove(current.name);
   };
 
   const connect = (target: Attempt) => {

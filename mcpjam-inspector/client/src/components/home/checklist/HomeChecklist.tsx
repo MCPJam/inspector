@@ -84,9 +84,9 @@ export function HomeChecklist({
       : null;
   const { progress, update } = useChecklistProgress(progressKey);
 
-  const [provisional, setProvisional] = useState<string | null>(null);
+  const [provisional, setProvisional] = useState<string[]>([]);
   const confirmedServers = Object.keys(projectServers).filter(
-    (name) => name !== provisional,
+    (name) => !provisional.includes(name),
   );
   const selected: string | undefined = ctx.appState?.selectedServer;
   const serverName =
