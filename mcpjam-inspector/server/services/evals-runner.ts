@@ -6926,8 +6926,15 @@ const runHostedIterationWithBrowser = async (
     // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
     // falls through to `resolveHarnessSandbox`, the acting member's computer.
     // Every path above boots one or throws; this is the last check before the
-    // first turn, so a future gap fails here instead of running there.
-    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+    // first turn, so a future gap fails here instead of running there. A web
+    // client has no box and no such fallback: `runHarnessTurn` hands its turn
+    // to the vendor's page before it resolves any sandbox.
+    if (
+      resolvedExecution.harness &&
+      !isWebClientRuntimeId(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      !evalBox
+    ) {
       throw new Error(
         "This eval runs on a harness but no disposable computer was " +
           "provisioned for it, so it was refused rather than run on a " +
