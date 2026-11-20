@@ -66,6 +66,15 @@ describe("playgroundHarnessBoxReason", () => {
     ).toBe("credential");
   });
 
+  it("never gives a web client a box, though it is on an external account", () => {
+    for (const harnessId of ["claude-web", "chatgpt-web"]) {
+      expect(playgroundHarnessBoxReason(turn({ harnessId }))).toBeNull();
+      expect(
+        playgroundHarnessBoxReason(turn({ harnessId, comparePane: true })),
+      ).toBeNull();
+    }
+  });
+
   it("never applies to a turn with no harness, a local target, or a scenario", () => {
     for (const overrides of [
       { harnessId: undefined, comparePane: true },
