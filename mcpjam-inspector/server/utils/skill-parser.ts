@@ -196,7 +196,9 @@ export function parseSkillFile(
   skillPath: string,
 ): Skill | null {
   try {
-    const parsed = matter(fileContent);
+    // An options object skips gray-matter's cache, which keeps a failed parse
+    // as empty data: the next scan would drop the file as missing its name.
+    const parsed = matter(fileContent, {});
 
     const frontmatter = parsed.data as Partial<SkillFrontmatter>;
 
@@ -236,8 +238,13 @@ export function parseSkillFile(
       content: parsed.content.trim(),
       path: skillPath,
     };
-  } catch (error) {
-    logger.error(`Error parsing skill file at ${skillPath}:`, error);
+  } catch {
+    // `generateSkillFileContent` writes valid frontmatter, so only a SKILL.md
+    // edited by hand or by another tool throws here: a warning like the
+    // validation failures above, not a Sentry capture. A literal message,
+    // because the telemetry catalog only keeps literal `logger` messages; a
+    // templated one reaches Axiom as an anonymous `log.unknown` row.
+    logger.warn("[skills] SKILL.md frontmatter could not be parsed");
     return null;
   }
 }
@@ -261,10 +268,9 @@ export function generateSkillFileContent(
   description: string,
   content: string,
 ): string {
-  const frontmatter = `---
-name: ${name}
-description: ${description}
----`;
-
-  return `${frontmatter}\n\n${content}`;
+  // Quotes a description that YAML would misread, such as "Fetches: weather".
+  // A string first argument is parsed as a document of its own, which strips a
+  // body that opens with `---` and merges its keys into the frontmatter; the
+  // `{ content }` form keeps the body as written.
+  return matter.stringify({ content }, { name, description });
 }
