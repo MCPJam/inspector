@@ -196,6 +196,8 @@ describe("harness MCP proxy tool policy", () => {
       classification: "destructive",
     });
     expect(data.result.content[0].text).toContain("blocked by tool policy");
+    // A 2026-07-28 client refuses a result without it; earlier ones ignore it.
+    expect(data.result.resultType).toBe("complete");
     expect(mockManager.executeTool).not.toHaveBeenCalled();
   });
 

@@ -5,6 +5,7 @@ import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js"
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 import { bridgeInitializeResult } from "./bridge-initialize.js";
+import { encodeModernResult, isModernRequest } from "./bridge-modern-result.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -316,7 +317,15 @@ export async function handleJsonRpc(
     return null;
   }
 
-  const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
+  const modernClient = isModernRequest(params, options.downstreamProtocolVersion);
+  const respond = (payload: any) => ({
+    jsonrpc: "2.0",
+    id,
+    ...payload,
+    ...(modernClient && "result" in payload
+      ? { result: encodeModernResult(method, payload.result) }
+      : {}),
+  });
 
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
