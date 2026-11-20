@@ -123,6 +123,13 @@ describe("claude.ai", () => {
     expect(await claudeWebPageModule.blocker(walled)).toMatchObject({ kind: "plan_limit" });
   });
 
+  it("stops waiting for a control at a password prompt, as the account's sign-in, not a changed page", async () => {
+    const driver = cannedDriver({ url: "https://claude.ai/new", texts: { 'input[type="password"]': "" } });
+    await expect(claudeWebPageModule.openNewChat(driver, { timeoutMs: 1_000 })).rejects.toMatchObject({
+      failure: { kind: "needs_sign_in", reason: "password", step: "new_chat" },
+    });
+  });
+
   it("answers the app's approval with Always allow where it is offered", async () => {
     const driver = cannedDriver({
       url: "https://claude.ai/chat/x",
@@ -244,6 +251,13 @@ describe("chatgpt.com", () => {
     // The chat list needs the session's token, so an earlier send stays ambiguous.
     expect(await chatgptWebPageModule.findSent(driver, "say hello", { timeoutMs: 1_000 })).toBeUndefined();
   });
+
+  it("stops waiting for a control at a human check, as the account's sign-in, not a changed page", async () => {
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]': "" } });
+    await expect(chatgptWebPageModule.openNewChat(driver, { timeoutMs: 1_000 })).rejects.toMatchObject({
+      failure: { kind: "needs_sign_in", reason: "human_check", step: "new_chat" },
+    });
+  });
 });
 
 describe("chatgpt.com's connector step", () => {
@@ -331,6 +345,40 @@ describe("the hosted driver", () => {
     expect(await driver.readText("role=dialog")).toBeUndefined();
     // A read that failed is never taken for an element that isn't there.
     await expect(driver.readText("main")).rejects.toMatchObject({ code: "failed" });
+  });
+
+  it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {
+    const send = vi.fn(async (command: { op: string; mode?: string }) =>
+      command.op === "observe" && command.mode === "url"
+        ? executed({ url: "https://claude.ai/new" })
+        : command.op === "observe"
+          ? executed({ text: 'Pretty-print\n\n```\n{"email_address":"runner@example.com","tags":["a"]}\n```' })
+          : executed(),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    expect(await readVendorJson(driver, "https://claude.ai/api/account")).toEqual({
+      email_address: "runner@example.com",
+      tags: ["a"],
+    });
+    expect(send.mock.calls.map(([command]) => command)).toEqual([
+      { op: "observe", mode: "url" },
+      { op: "navigate", url: "https://claude.ai/api/account", observeAfter: "none" },
+      { op: "observe", mode: "text" },
+      { op: "navigate", url: "https://claude.ai/new", observeAfter: "none" },
+    ]);
+  });
+
+  it("goes back to the page it was on when the site's JSON can't be read", async () => {
+    const send = vi.fn(async (command: { op: string; mode?: string }) =>
+      command.op === "observe" && command.mode === "url"
+        ? executed({ url: "https://claude.ai/new" })
+        : command.op === "observe"
+          ? executed({ text: "Not found" })
+          : executed(),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    await expect(readVendorJson(driver, "https://claude.ai/api/account")).rejects.toMatchObject({ code: "failed" });
+    expect(send.mock.calls.at(-1)?.[0]).toEqual({ op: "navigate", url: "https://claude.ai/new", observeAfter: "none" });
   });
 
   it("refuses other sites and never retries a command whose outcome is unknown", async () => {

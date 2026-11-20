@@ -270,6 +270,27 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     });
   });
 
+  it("records the sign-in a run stopped on even when its durable close fails", async () => {
+    vendor.challenge = true;
+    const outcomes: unknown[] = [];
+    let closes = 0;
+    const failure = await turn(ALLOW, {
+      ...environment(),
+      turnGate: {
+        open: async () => {},
+        close: async () => {
+          closes += 1;
+          if (closes === 1) throw new Error("backend unavailable");
+        },
+      },
+      onOutcome: async (outcome) => void outcomes.push(outcome),
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ message: "backend unavailable" });
+    expect(outcomes).toEqual([
+      expect.objectContaining({ ok: false, failure: expect.objectContaining({ kind: "needs_sign_in" }) }),
+    ]);
+  });
+
   it("retries a durable close that failed, and closes the browser either way", async () => {
     let closes = 0;
     const close = vi.fn(async (_turnId: string) => {
