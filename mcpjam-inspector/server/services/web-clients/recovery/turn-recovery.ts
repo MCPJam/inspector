@@ -171,6 +171,8 @@ export async function runRecoverableWebTurn(
   ) => {
     const account = await environment.resolveAccount({ projectId, vendor });
     const browser = accountBrowserOver(environment, { ...account, vendor });
+    // The profile this run restored: signed in again since, it reloads instead.
+    const restored = environment.restoredProfileVersion?.(account.webAccountId);
     try {
       return await coordinator.handleStepFailure({
         failure,
@@ -180,6 +182,7 @@ export async function runRecoverableWebTurn(
         ...(input.iterationId ? { iterationId: input.iterationId } : {}),
         pendingStep,
         browser,
+        ...(restored !== undefined ? { restoredProfileVersion: restored } : {}),
       });
     } finally {
       await browser.close();
