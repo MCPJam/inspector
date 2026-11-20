@@ -441,30 +441,21 @@ export function SwarmRunDetail({
         className="px-3 sm:px-8"
         stackWhenNarrow
         title={
-          <>
-            <div className="flex flex-wrap items-baseline gap-x-3">
-              <h1
-                className="min-w-0 truncate text-xl font-bold tracking-tight text-foreground"
-                title={heading}
-                data-testid="swarm-run-detail-title"
-              >
-                {heading}
-              </h1>
-              {date && (
-                <span className="text-sm text-foreground/75">{date}</span>
-              )}
-              {hasLocalExecution && (
-                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                  {hasHostedExecution ? "Local + cloud" : "Ran locally"}
-                </span>
-              )}
-            </div>
-            {title && (
-              <p className="truncate text-sm text-muted-foreground" title={title}>
-                {title}
-              </p>
+          <div className="flex flex-wrap items-baseline gap-x-3">
+            <h1
+              className="min-w-0 truncate text-xl font-bold tracking-tight text-foreground"
+              title={heading}
+              data-testid="swarm-run-detail-title"
+            >
+              {heading}
+            </h1>
+            {date && <span className="text-sm text-foreground/75">{date}</span>}
+            {hasLocalExecution && (
+              <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                {hasHostedExecution ? "Local + cloud" : "Ran locally"}
+              </span>
             )}
-          </>
+          </div>
         }
         meta={
           live && !cleanupPending ? undefined : (
@@ -550,8 +541,9 @@ export function SwarmRunDetail({
           indicatorId: "swarm-run-detail",
         }}
       >
-        {targets.length > 0 && (
+        {(title || targets.length > 0) && (
           <SwarmRunMetadata
+            name={title}
             targets={targets}
             environments={showEnvironment ? waveEnvironmentNames(targets) : []}
             hostStyleByName={hostStyleByName}

@@ -778,7 +778,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
   it.each([
     ["Swarm · Nov 18", "Nov 18", false],
     ["Swarm · Checkout v2", undefined, true],
-  ])("shows the saved title and date for %s consistently with Overview", async (swarmName, date, showName) => {
+  ])("shows the name field for %s only when it is descriptive", async (swarmName, date, showName) => {
     const [newest, ...rest] = overview.runs;
     overviewData = {
       ...overview,
@@ -787,7 +787,14 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     renderTab("run-2b");
     expect(await screen.findByRole("heading", { name: "Asana" })).toBeTruthy();
     if (date) expect(screen.getAllByText(date)).toHaveLength(1);
-    expect(Boolean(screen.queryByText(swarmName))).toBe(showName);
+    if (showName) {
+      const metadata = screen.getByText("Clients").closest("dl");
+      expect(screen.getByText(swarmName).closest("dl")).toBe(metadata);
+      expect(screen.getByText("Name").closest("dl")).toBe(metadata);
+    } else {
+      expect(screen.queryByText("Name")).toBeNull();
+      expect(screen.queryByText(swarmName)).toBeNull();
+    }
   });
 
   it("does not render the retired launch-outcome strip", async () => {

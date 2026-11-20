@@ -52,11 +52,13 @@ function Metadata({ label, children }: { label: string; children: ReactNode }) {
 }
 
 export function SwarmRunMetadata({
+  name,
   targets,
   environments,
   hostStyleByName,
   sessions,
 }: {
+  name?: string;
   targets: readonly SwarmOverviewTarget[];
   environments: readonly string[];
   hostStyleByName: ReadonlyMap<string, string | null | undefined>;
@@ -64,6 +66,7 @@ export function SwarmRunMetadata({
 }) {
   return (
     <dl className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-muted-foreground">
+      {name && <Metadata label="Name">{name}</Metadata>}
       {sessions && (
         <Metadata label="Sessions">
           <span className="tabular-nums">
