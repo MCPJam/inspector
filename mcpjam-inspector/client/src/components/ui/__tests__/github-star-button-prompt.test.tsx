@@ -135,7 +135,7 @@ describe("GitHubStarButton prompt", () => {
       requestGitHubStarPrompt({ trigger: "oauth", reason: "return_visit" }),
     );
     expect(
-      await screen.findByText("Thanks for checking out our debugger."),
+      await screen.findByText("Enjoying the OAuth debugger?"),
     ).toBeInTheDocument();
     expect(track).toHaveBeenCalledWith("github_star_prompt_shown", {
       location: "header",
