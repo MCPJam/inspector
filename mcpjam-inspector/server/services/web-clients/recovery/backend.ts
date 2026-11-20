@@ -110,8 +110,8 @@ export interface WebReconnectBackend {
    *
    * When the account is ready on a newer profile than the one the run
    * restored, it was signed in again after the run read it: the report
-   * changes nothing and answers `reloadProfile`. The backend's mutation does
-   * not compare versions yet, so there a late report still opens a request.
+   * changes nothing and answers `reloadProfile`. The backend compares in the
+   * same mutation that writes, so a handback that lands first wins.
    */
   reportWebSignInRequired(args: {
     webAccountId: string;
