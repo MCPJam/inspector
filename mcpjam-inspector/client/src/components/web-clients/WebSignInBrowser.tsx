@@ -26,6 +26,7 @@ export function WebSignInBrowser({
       projectId={projectId}
       sessionId={browserSessionId}
       mintToken={mintToken}
+      allowProfileSave={false}
     />
   );
 }
