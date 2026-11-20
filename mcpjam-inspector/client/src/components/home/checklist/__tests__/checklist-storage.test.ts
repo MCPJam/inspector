@@ -33,10 +33,7 @@ describe("checklist progress", () => {
 
 describe("Playground autorun handoff", () => {
   it("stays until cleared, so a remount still sees it", () => {
-    writeHomeChecklistAutorun({
-      prompt: "What can this server do?",
-      progressKey: "k",
-    });
+    writeHomeChecklistAutorun({ prompt: "What can this server do?", progressKey: "k" });
     expect(readHomeChecklistAutorun()).toEqual({
       prompt: "What can this server do?",
       progressKey: "k",
@@ -49,10 +46,7 @@ describe("Playground autorun handoff", () => {
   it("ignores a prompt left unsent for too long", () => {
     vi.useFakeTimers();
     try {
-      writeHomeChecklistAutorun({
-        prompt: "What can this server do?",
-        progressKey: "k",
-      });
+      writeHomeChecklistAutorun({ prompt: "What can this server do?", progressKey: "k" });
       vi.advanceTimersByTime(6 * 60_000);
       expect(readHomeChecklistAutorun()).toBeNull();
     } finally {

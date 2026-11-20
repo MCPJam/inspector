@@ -78,10 +78,7 @@ describe("computeChecklistSignals", () => {
   it("opens the user's unrun suite and only counts their finished run", () => {
     const unrun = computeChecklistSignals({
       ...base,
-      suites: [
-        suite("teammate", { status: "completed", createdBy: "teammate" }),
-        suite("me", null),
-      ],
+      suites: [suite("teammate", { status: "completed", createdBy: "teammate" }), suite("me", null)],
     });
     expect(unrun.done.create_eval).toBe(false);
     expect(unrun.eval.suiteId).toBe("suite-me");
