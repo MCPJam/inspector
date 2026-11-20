@@ -133,6 +133,7 @@ export function createHostedWebClientEnvironment(
 ): WebClientEnvironment {
   return {
     publicBaseUrl: deps.publicBaseUrl,
+    actor: deps.actor,
     journal: deps.journal ?? createMemorySendJournal(),
 
     async resolveAccount({ projectId, vendor }) {

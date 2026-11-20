@@ -62,11 +62,18 @@ export interface SignInBrowser {
     sites: readonly string[];
     startUrl: string;
   }): Promise<{ browserSessionId: string; chatSessionId?: string }>;
-  driver(args: { actor: WebActor; projectId: string; browserSessionId: string }): Promise<PageDriver>;
+  /** The browser this person started for this account; refused otherwise. */
+  driver(args: {
+    actor: WebActor;
+    projectId: string;
+    webAccountId: string;
+    browserSessionId: string;
+  }): Promise<PageDriver>;
   /** The browser's profile as an archive. Never logged or kept. */
   captureProfile(args: {
     actor: WebActor;
     projectId: string;
+    webAccountId: string;
     browserSessionId: string;
   }): Promise<Uint8Array>;
 }
@@ -171,7 +178,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     if ((await deps.mayManage({ actor, projectId, webAccountId })) === false) return forbidden(c);
     const row = await accountOf(actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
-    const driver = await deps.browser.driver({ actor, projectId, browserSessionId });
+    const driver = await deps.browser.driver({ actor, projectId, webAccountId, browserSessionId });
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -188,7 +195,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const saved = await deps.saveProfile(actor, {
       webAccountId,
       expectedProfileVersion: row.profileVersion ?? 0,
-      profile: await deps.browser.captureProfile({ actor, projectId, browserSessionId }),
+      profile: await deps.browser.captureProfile({ actor, projectId, webAccountId, browserSessionId }),
     });
     if (!saved.ok) return c.json({ ok: false, reason: saved.reason });
     await deps.service.apply({

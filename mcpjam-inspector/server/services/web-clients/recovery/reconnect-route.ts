@@ -1,9 +1,10 @@
 /**
- * `POST /api/web-clients/reconnect/:requestId/handback { projectId }`: a
- * signed-in person finished signing a web account in again, in the browser
- * this server holds for it. Acting as them, recovery checks the browser shows
- * the account's own seat and workspace, saves its profile, and resumes the
- * runs that waited. The backend decides who may hand an account back.
+ * `POST /api/web-clients/reconnect/:requestId/handback
+ *   { projectId, browserSessionId? }`: a signed-in person finished signing a
+ * web account in again, in the sign-in browser this server holds for it (the
+ * one `browserSessionId` names). Acting as them, recovery checks the browser
+ * shows the account's own seat and workspace, saves its profile, and resumes
+ * the runs that waited. The backend decides who may hand an account back.
  *
  * Answers `{ status: "resumed", resumedRuns }`, or `{ status }` with
  * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`.
@@ -19,7 +20,6 @@ import {
   type WebClientService,
 } from "../backend-connector-resolver.js";
 import { webClientsEnabledFor } from "../endpoint-auth.js";
-import type { WebClientEnvironment } from "../web-client-environment.js";
 import { accountBrowserOver } from "./account-browser.js";
 import {
   createConvexLedgerReader,
@@ -29,7 +29,7 @@ import {
 } from "./convex-backend.js";
 import { createWebRecoveryCoordinator } from "./coordinator.js";
 import { resumeWebRun } from "./paused-runs.js";
-import { webRecovery } from "./turn-recovery.js";
+import { webRecovery, type HandbackBrowsers } from "./turn-recovery.js";
 
 export type WebReconnectRouteDeps = {
   service: WebClientService;
@@ -38,7 +38,8 @@ export type WebReconnectRouteDeps = {
   environmentFor(handback: {
     actor: WebActor;
     projectId: string;
-  }): Promise<WebClientEnvironment | undefined>;
+    browserSessionId?: string;
+  }): Promise<HandbackBrowsers | undefined>;
   enabledFor(userId: string): Promise<boolean>;
 };
 
@@ -57,7 +58,11 @@ function processDeps(): WebReconnectRouteDeps | undefined {
   };
 }
 
-const handbackBody = z.object({ projectId: z.string().min(1).max(512) });
+const handbackBody = z.object({
+  projectId: z.string().min(1).max(512),
+  /** The sign-in browser the person signed in with, from the sign-in route. */
+  browserSessionId: z.string().min(1).max(256).optional(),
+});
 
 export function createWebReconnectRoutes(
   deps: WebReconnectRouteDeps | undefined = processDeps(),
@@ -93,14 +98,17 @@ export function createWebReconnectRoutes(
     const environment = await deps.environmentFor({
       actor,
       projectId: body.data.projectId,
+      ...(body.data.browserSessionId
+        ? { browserSessionId: body.data.browserSessionId }
+        : {}),
     });
     if (!environment) {
       return c.json(
         {
           error:
-            "This server can't open a signed-in browser for web accounts yet.",
+            "The browser you signed in with isn't open here anymore. Take over the browser again, sign in, then finish.",
         },
-        503,
+        409,
       );
     }
     let browser: ReturnType<typeof accountBrowserOver> | undefined;
