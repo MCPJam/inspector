@@ -570,6 +570,29 @@ describe("forwarding endpoint: sending", () => {
     ]);
   });
 
+  it("leaves a call unsent, not unknown, when the credential refresh fails", async () => {
+    const upstreamFetch = vi.fn(async () => refused());
+    const { app, ledger, openTurn } = setup({
+      upstream: {
+        fetch: upstreamFetch,
+        onUnauthorized: async () => {
+          throw new Error("The token endpoint did not answer.");
+        },
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(24, "echo", "r"));
+    expect(response.status).toBe(502);
+    expect((await response.json()).error.message).toMatch(
+      /^This project's MCP server refused MCPJam's saved credential/,
+    );
+    expect(upstreamFetch).toHaveBeenCalledOnce();
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ state: "error", upstreamStatus: 401 }),
+    ]);
+  });
+
   /** The hosted transport, which follows a redirect itself unless asked not to. */
   const hostedFetch = () =>
     createStreamingPinnedFetch({ hosted: true, allowLoopback: true });
@@ -618,6 +641,28 @@ describe("forwarding endpoint: sending", () => {
     ]);
     expect(fixture.received[1]?.headers.authorization).toBe(PROJECT_CREDENTIAL);
     expect(ledger.forTurn(window.turnId)[0]?.state).toBe("result");
+  });
+
+  it("keeps the server's own headers from another origin a redirect sends a request to", async () => {
+    const other = await startFixtureServer();
+    const { app } = setup({
+      upstreamUrl: fixture.redirectUrl(307),
+      upstream: { fetch: hostedFetch() },
+    });
+    fixture.hooks.redirectTo = other.url;
+    try {
+      const vendor = vendorClient(app, { path: PATH });
+      const response = await vendor.listTools();
+      expect(await response.json()).toMatchObject({ id: 2, result: {} });
+      expect(other.received).toHaveLength(1);
+      const { headers } = other.received[0]!;
+      expect(headers["x-api-key"]).toBeUndefined();
+      expect(headers.authorization).toBeUndefined();
+      expect(headers["content-type"]).toBe("application/json");
+    } finally {
+      fixture.hooks.redirectTo = undefined;
+      await other.close();
+    }
   });
 
   it("settles a call from the server's answer when the ledger refused it the first time", async () => {
