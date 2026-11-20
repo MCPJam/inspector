@@ -74,11 +74,22 @@ it("holds on 5 of 5 when the last step completes, then remembers it", () => {
     window.dispatchEvent(new Event("mcpjam:home-checklist-progress"));
   });
   expect(screen.getByText("5 of 5 set up")).toBeVisible();
+  expect(screen.getByText("You're all set.")).toBeVisible();
   act(() => vi.advanceTimersByTime(1000));
   expect(onFinished).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(600));
   expect(onFinished).toHaveBeenCalled();
   expect(stored().finished).toBe(true);
+});
+
+it("grows the bar from the count Home last showed", () => {
+  vi.useFakeTimers();
+  window.localStorage.setItem(key, JSON.stringify({ shown: 2 }));
+  render(<HomeChecklist onFinished={vi.fn()} />);
+  expect(screen.getByText("2 of 5 set up")).toBeVisible();
+  act(() => vi.advanceTimersByTime(200));
+  expect(screen.getByText("3 of 5 set up")).toBeVisible();
+  expect(stored().shown).toBe(3);
 });
 
 const completedSteps = () =>

@@ -3,6 +3,11 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ServerWithName } from "@/state/app-types";
 import { CONNECT_TYPING_PAUSE_MS, ConnectStep } from "../ConnectStep";
 
+// Status swaps render in place, so each step's content is there at once.
+vi.mock("framer-motion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("framer-motion")>()),
+  useReducedMotion: () => true,
+}));
 vi.mock("@/components/ui/error-card", () => ({
   ErrorCard: ({ onRetry }: { onRetry?: () => void }) => (
     <button type="button" onClick={onRetry}>
@@ -181,5 +186,62 @@ describe("ConnectStep", () => {
       expect.objectContaining({ url: "http://localhost:3001/mcp" }),
       expect.anything(),
     );
+  });
+
+  it("connects the Excalidraw demo server", () => {
+    const { props } = setup();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+    );
+    expect(props.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Excalidraw (App)",
+        url: "https://mcp.excalidraw.com/mcp",
+      }),
+      { suppressErrorToast: true, suppressSuccessToast: true },
+    );
+    expect(props.onTrack).toHaveBeenCalledWith("demo_started");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+  });
+
+  it("offers the demo server after a failed connection", () => {
+    const { props, view } = setup();
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    expect(
+      screen.queryByRole("button", { name: "Use the Excalidraw demo server" }),
+    ).toBeNull();
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("failed") }} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+    );
+    expect(props.onRemove).toHaveBeenCalledWith("Acme");
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+  });
+
+  it("retries a failed demo connection without removing it", () => {
+    const { props, view } = setup();
+    const demo = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+      );
+    demo();
+    view.rerender(
+      <ConnectStep
+        {...props}
+        servers={{
+          "Excalidraw (App)": {
+            ...server("failed"),
+            name: "Excalidraw (App)",
+          } as ServerWithName,
+        }}
+      />,
+    );
+    demo();
+    expect(props.onRemove).not.toHaveBeenCalled();
+    expect(props.onConnect).toHaveBeenCalledTimes(2);
+    expect(props.onTrack).toHaveBeenLastCalledWith("retried");
   });
 });
