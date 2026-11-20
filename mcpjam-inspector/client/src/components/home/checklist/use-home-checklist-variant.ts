@@ -18,5 +18,6 @@ export function normalizeHomeChecklistVariant(
  */
 export function useHomeChecklistVariant(): HomeChecklistVariant {
   const raw = useFeatureFlagVariantKey(HOME_CHECKLIST_FLAG);
-  return useLockedFlagVariant(raw, normalizeHomeChecklistVariant) ?? "control";
+  useLockedFlagVariant(raw, normalizeHomeChecklistVariant);
+  return "treatment";
 }
