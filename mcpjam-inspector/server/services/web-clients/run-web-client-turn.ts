@@ -181,6 +181,27 @@ export function webConnectorName(serverId: string): string {
   return [MCPJAM_CONNECTOR_PREFIX, serverId.slice(0, 15).trim(), hash].filter(Boolean).join(" ");
 }
 
+/**
+ * Takes the turn's connector URLs and ids out of a failure. A capability
+ * connector's id is its credential, and a browser error quotes the value it
+ * was typing. In place, so a caller that branches on the error's type still
+ * can, and in the stack too, which loggers print.
+ */
+function redactConnectors(error: unknown, connectorIds: Iterable<string>, publicBaseUrl: string): void {
+  if (!(error instanceof Error)) return;
+  const marks: Array<[secret: string, mark: string]> = [];
+  for (const id of connectorIds) {
+    const path = webConnectorPath(id);
+    if (URL.canParse(path, publicBaseUrl)) marks.push([new URL(path, publicBaseUrl).href, "[connector URL]"]);
+    marks.push([encodeURIComponent(id), "[connector id]"], [id, "[connector id]"]);
+  }
+  const redact = (text: string) =>
+    marks.reduce((out, [secret, mark]) => (secret ? out.split(secret).join(mark) : out), text);
+  error.message = redact(error.message);
+  if (typeof error.stack === "string") error.stack = redact(error.stack);
+  if (error instanceof RealUiError) error.failure.message = redact(error.failure.message);
+}
+
 export async function runWebClientTurn(
   input: WebClientTurnInput,
 ): Promise<WebClientTurnResult> {
@@ -250,6 +271,7 @@ export async function runWebClientTurn(
       toolCalls: wireCalls(page.conversation.toolCalls),
     };
   } catch (error) {
+    redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
     if (!(error instanceof RealUiError)) throw error;
     logger.warn("[web-clients] turn stopped", {
       runtimeId: input.runtimeId,

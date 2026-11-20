@@ -2,7 +2,8 @@
  * What a web client turn refuses, and where. A tool the run's tool policy
  * denies is refused at the real forwarding endpoint whatever the approval
  * switch says; a setting the vendor's app can't honor stops the turn before
- * its page is driven. And the connector names the vendors find connectors by.
+ * its page is driven; a failure never carries a connector's credential out.
+ * And the connector names the vendors find connectors by.
  *
  * Evidence: fixture (local test doubles), no live vendor.
  */
@@ -27,7 +28,7 @@ import { webConnectorName, webTurnApprover } from "../run-web-client-turn";
 import { webClientToolCallLedger } from "../tool-call-ledger";
 import { webClientTurnWindows } from "../turn-windows";
 import { setWebClientEnvironment, type WebClientEnvironment } from "../web-client-environment";
-import { WebClientTurnRefusedError } from "../web-client-harness-turn";
+import { WebClientRunError, WebClientTurnRefusedError } from "../web-client-harness-turn";
 
 const CONNECTOR_ID = "conn-gates-orders";
 const DENY_ECHO: ToolPolicySnapshot = {
@@ -197,6 +198,49 @@ describe("settings the vendor's app can't honor", { timeout: 90_000 }, () => {
         "Claude web uses claude.ai's own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.",
     });
     expect(vendor.sends).toEqual([]);
+  });
+});
+
+describe("a failure that quotes the turn's connector", { timeout: 90_000 }, () => {
+  it("surfaces neither the connector's URL nor its id, and keeps the step and the rest", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    let typed = "";
+    setWebClientEnvironment({
+      ...environment,
+      pageModule: {
+        ...fixture,
+        async ensureConnector(_driver, connector) {
+          typed = connector.url;
+          // Playwright's fill timeout quotes the value it was filling.
+          throw new Error(`locator.fill: Timeout 1000ms exceeded.\nCall log:\n  - fill("${connector.url}")`);
+        },
+      },
+    });
+    const failure = await runHarnessTurn(options(), "none").catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(WebClientRunError);
+    const { message, failure: stopped } = failure as WebClientRunError;
+    expect(typed).toContain(CONNECTOR_ID);
+    expect(stopped).toMatchObject({ kind: "driver", step: "connector" });
+    for (const text of [message, stopped.message]) {
+      expect(text).toContain('Timeout 1000ms exceeded.\nCall log:\n  - fill("[connector URL]")');
+      expect(text).not.toContain(typed);
+      expect(text).not.toContain(CONNECTOR_ID);
+    }
+  });
+
+  it("takes the connector's id out of an error it passes on, stack included", async () => {
+    setWebClientEnvironment({
+      ...environment,
+      async openBrowser() {
+        const error = new Error(`No browser for connector ${CONNECTOR_ID}.`);
+        // A stack read once keeps the message it was read with.
+        void error.stack;
+        throw error;
+      },
+    });
+    const failure = await runHarnessTurn(options(), "none").catch((error: unknown) => error);
+    expect((failure as Error).message).toBe("No browser for connector [connector id].");
+    expect((failure as Error).stack).not.toContain(CONNECTOR_ID);
   });
 });
 
