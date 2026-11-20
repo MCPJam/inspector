@@ -1,0 +1,122 @@
+---
+title: "Servers reference"
+sidebarTitle: "Reference"
+description: "Manage connections, read server info and revision history, use several OAuth accounts on one server, and share a local server through a tunnel."
+icon: "plug"
+hideFooterPagination: true
+---
+
+Look up a server feature here. To add a server, see [Connect a server](/inspector/connecting-servers).
+
+## Manage connections
+
+You can connect to multiple MCP servers simultaneously. In the sidebar, select **Connect**, then **Servers**.
+
+<Frame>
+  <img
+    className="block"
+    src="/images/connection/multiple.png"
+    alt="Several servers in the server list, each with a toggle"
+    width="300"
+  />
+</Frame>
+
+- Toggle MCP servers to enable or temporarily deactivate a server.
+- Open the ⋯ menu to reconnect, edit or disconnect a server.
+- Select **View server info** to open a detailed modal showing server metadata, protocol version, capabilities, and instructions.
+
+### Server info
+
+View server details in a dedicated modal dialog:
+
+- **Server metadata**: Name, title, version, protocol version, and transport type
+- **Capabilities**: Tools, prompts, and resources supported by the server
+- **Instructions**: Server-provided instructions for AI assistants
+- **Raw capabilities**: Full JSON of server and client capabilities (with copy button)
+- **OpenAI Apps SDK**: For servers using the OpenAI Apps SDK, view widget metadata in a separate tab
+
+### Server cards
+
+Each connected server card displays:
+
+- **Server icon and version**: If provided by the server, the icon and version number appear in the card header
+- **Connection status**: Real-time indicator showing connected, connecting, or failed status with retry count
+- **Transport type**: Shows whether the server uses STDIO or Streamable HTTP
+
+Select **Show details** to expand additional server information:
+
+- **Server capabilities**: Lists available features (Tools, Prompts, Resources)
+- **MCP protocol version**: The protocol version the server implements
+- **Instructions**: Server-provided instructions for AI assistants
+- **Documentation link**: Direct link to the server's documentation if available
+
+## Revision history
+
+The **History** tab in the server detail modal shows a timeline of every revision recorded for that server. Each row displays the revision number, a tool-count delta relative to the previous revision, and a timestamp.
+
+Click any revision row to expand it. The expanded panel shows:
+
+- **Diff view** (default for revisions 2 and later): lists tools added, removed, or changed compared to the previous revision. A changed tool opens to a git-style diff of each field that changed: description lines with the changed words highlighted, and schemas and annotations as JSON. Server info changes show their old and new values, such as the version and the instructions.
+- **Snapshot view**: lists all tools captured at that revision, with each tool's name and description.
+
+A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
+
+The same revisions can be read without opening the Inspector, so a script or an agent can check what changed. The [API](/reference/public-api#endpoints) lists them at `GET /projects/{projectId}/servers/{serverId}/revisions`, with each revision and its diff under that path. The [CLI](/cli/reference#cloud-projects-servers-revisions) has `cloud projects servers revisions`, `revision` and `revision-diff`, and the hosted MCP server and Playground chat have the `list_server_revisions`, `get_server_revision` and `diff_server_revisions` tools. These read stored revisions and never connect to the server, so they work for stdio servers too.
+
+## Several OAuth accounts
+
+Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.
+
+Each row shows the account's email address (or name) on the first line, and a caption on the second line: the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
+
+Open the row menu (⋯) to act on an account:
+
+- **Rename**: opens an inline field to give the account a name. The name appears in chat when the model picks an account.
+- **Use in chat**: promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
+- **Reconnect**: re-runs the OAuth flow for that row, replacing only that credential.
+- **Remove**: deletes the credential. If the removed row was the default, the next available account becomes the default.
+
+To add another account, click **Connect another account** at the bottom of the list. Up to 8 accounts per server.
+
+When two or more accounts are live, chat exposes a required `link_id` selector so you (or the model) can choose which credential each tool call uses. The selector is named to match what ChatGPT injects, so servers have one reserved argument name to avoid rather than one per host. If a tool's own schema already declares `link_id`, chat exposes per-account variants of that tool instead of merging them. Changing the default mid-conversation does not redirect tool calls that are already in flight.
+
+Rerunning a tool call from the trace view is disabled for calls that ran on a specific account, because rerun resolves a server rather than a connection and would replay through the default credential instead.
+
+## OpenAI app metadata
+
+Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
+
+- **Info tab**: Standard server information and capabilities
+- **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
+
+## Tunnels
+
+Expose your local MCP servers over HTTPS for remote access. This lets you share your servers with external clients and applications without deploying them.
+
+Each tunnel is scoped to a single server and secured at the network edge: the tunnel URL contains a secret key (`?k=…`) that is enforced before any traffic reaches your machine. Requests without the correct key are rejected with a 401 at the edge.
+
+### Create a tunnel
+
+1. In the sidebar, select **Connect**, then **Servers**.
+2. Click **Create Tunnel** on the server card you want to expose.
+3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
+
+The tunnel URL is stable. The base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
+
+### Rotate the secret
+
+Click the **Rotate** button (refresh icon) on the tunnel pill to issue a new secret key. The base domain does not change, but the old URL stops working immediately. Use this if you shared the URL with someone who should no longer have access.
+
+### Recent requests
+
+Click the **log icon** on the tunnel pill to open the recent-requests panel. It shows the last 20 JSON-RPC method calls that arrived through the tunnel, refreshing every 4 seconds. The panel closes automatically when you close the tunnel.
+
+### Close a tunnel
+
+Click the **close (×) button** on the tunnel pill to stop remote access. The tunnel closes immediately and all remote connections are terminated. The domain is reserved so a future tunnel for the same server reuses it.
+
+<Warning>
+  Anyone with the full tunnel URL, including its secret key, can access this
+  server. Share it carefully, rotate it if it leaks, and close the tunnel when
+  you are done.
+</Warning>
