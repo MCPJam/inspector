@@ -139,12 +139,16 @@ async function keepSendRecord(journal: SendJournal, turnKey: string) {
   });
 }
 
+/** The surface may keep its stream alive until this particular wait settles. */
+export type WebTurnPauseListener = (
+  pause: Extract<WebRunStop, { kind: "paused_for_person" }>,
+  turnId: string,
+) => (() => void) | void;
+
 export async function runRecoverableWebTurn(
   input: WebClientTurnInput,
   setup: WebRecoverySetup | undefined,
-  onPaused?: (
-    paused: Extract<WebRunStop, { kind: "paused_for_person" }>,
-  ) => void,
+  onPaused?: WebTurnPauseListener,
 ): Promise<RecoverableWebTurnResult> {
   const vendor = webClientVendorForRuntime(input.runtimeId);
   const { projectId, runId, environment } = input;
@@ -208,7 +212,7 @@ export async function runRecoverableWebTurn(
         step: result.failure.step,
         message: result.failure.message,
       } as const;
-      onPaused?.(paused);
+      const endPause = onPaused?.(paused, result.turnId);
       const resumed = await waitForResume(runId, step, {
         ...(input.signal ? { signal: input.signal } : {}),
         timeoutMs: setup.maxPauseMs ?? MAX_PAUSE_MS,
@@ -217,7 +221,7 @@ export async function runRecoverableWebTurn(
           (await backend.listWebReconnectRequests({ projectId })).find(
             (request) => request.requestId === outcome.requestId,
           )?.status,
-      });
+      }).finally(() => endPause?.());
       if (!resumed) return { ...result, stop: paused };
     }
     const verdict = await coordinator.reconcileBeforeResend({ runId, step });
