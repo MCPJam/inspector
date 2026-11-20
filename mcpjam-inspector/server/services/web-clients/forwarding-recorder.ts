@@ -8,6 +8,7 @@
  * Observation only: the endpoint calls these inside its own guard, and
  * nothing here may fail or slow the forwarded request.
  */
+import { createHash } from "node:crypto";
 import { redactForTelemetry } from "@mcpjam/sdk";
 import { probeSerializedSize } from "../../../shared/rpc-log-truncation.js";
 import { enqueueHarnessRpcLog } from "../../utils/harness/harness-rpc-log-sink.js";
@@ -37,11 +38,19 @@ export interface WebClientRecorder {
   client(identity: WebClientIdentity): void;
 }
 
+/**
+ * A capability connector's id is its credential, so logs and the shared
+ * sink name a connector by this digest, never by its id.
+ */
+export function connectorTag(connectorId: string): string {
+  return createHash("sha256").update(connectorId).digest("hex").slice(0, 16);
+}
+
 /** A turn's frames are filed under its id; calls outside any turn under the connector. */
 export function webClientScope(connectorId: string, turnId?: string): string {
   return turnId
     ? `web-client:${turnId}`
-    : `web-client:outside-turn:${connectorId}`;
+    : `web-client:outside-turn:${connectorTag(connectorId)}`;
 }
 
 const FRAME_LIMIT_BYTES = 1024 * 1024;
@@ -107,7 +116,7 @@ export function createWebClientRecorder() {
       });
       if (identities.length > MAX_IDENTITIES) identities.shift();
       logger.info("[web-clients] vendor client identified", {
-        connectorId: safe.connectorId,
+        connector: connectorTag(safe.connectorId),
         scopeId: safe.scopeId,
         source: safe.source,
         client: clientName(safe.clientInfo),
