@@ -102,27 +102,49 @@ function checkMessage(value: unknown): RpcMessage {
   return message;
 }
 
-/** Long enough that JSON.parse may round it: 16 digits, or an exponent of 100 or more. */
-const LONG_NUMBER = /\d{16}|[eE]\+?\d{3}/;
+/**
+ * A number JSON.parse may read as another value: one with an exponent, or
+ * more digits than a double holds (16 in a row, or 17 with a decimal point).
+ * Every other literal has at most 15 significant digits and reads exactly.
+ */
+const MAYBE_ROUNDED = /\d{16}|[\d.]{17}|\d[eE][+-]?\d/;
 
-/** Whether JSON.parse reads this number literal as another value. */
+/** A number literal's exact value, written one way: sign, significant digits, power of ten. */
+function exactDecimal(literal: string): string {
+  const parts = /^(-?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(literal);
+  if (!parts) return literal;
+  const [, sign, whole = "", fraction = "", exponent = "0"] = parts;
+  const digits = `${whole}${fraction}`.replace(/^0+/, "");
+  const significant = digits.replace(/0+$/, "");
+  if (!significant) return "0";
+  const power =
+    BigInt(exponent.replace("+", "")) -
+    BigInt(fraction.length) +
+    BigInt(digits.length - significant.length);
+  return `${sign}${significant}e${power}`;
+}
+
+/**
+ * Whether JSON.parse reads this number literal as another value: past exact
+ * double precision, written with more digits than a double holds, or out of
+ * its range. The value parsed is compared as JavaScript writes it, so 0.1
+ * reads as written while 9007199254740993.0 does not.
+ */
 function rounds(source: string): boolean {
   const value = Number(source);
-  if (!Number.isFinite(value)) return true;
   return (
-    /^-?\d+$/.test(source) &&
-    !Number.isSafeInteger(value) &&
-    BigInt(source) !== BigInt(value)
+    !Number.isFinite(value) ||
+    exactDecimal(source) !== exactDecimal(String(value))
   );
 }
 
 /**
  * Whether a tool call's arguments hold a number JSON.parse rounds. The gate
  * would approve and hash the rounded value, while a server that reads
- * integers exactly runs the one in the bytes.
+ * numbers exactly runs the one in the bytes.
  */
 function roundsToolArguments(text: string): boolean {
-  if (!LONG_NUMBER.test(text)) return false;
+  if (!MAYBE_ROUNDED.test(text)) return false;
   // Every object or array with a rounded number somewhere inside it.
   const rounded = new WeakSet<object>();
   const value: unknown = JSON.parse(
@@ -186,8 +208,11 @@ export function parseRpcBody(bytes: Uint8Array, headers: Headers): RpcBody {
     throw new NativeWireError("rounded_number");
   if (batch) {
     // One header can't say which message of a batch it describes.
-    if (headers.has("mcp-method") || headers.has("mcp-name"))
-      throw new NativeWireError("header_mismatch");
+    let mirrored = headers.has("mcp-method") || headers.has("mcp-name");
+    headers.forEach((_value, name) => {
+      if (name.startsWith("mcp-param-")) mirrored = true;
+    });
+    if (mirrored) throw new NativeWireError("header_mismatch");
   } else {
     const values: Record<string, string> = {};
     headers.forEach((headerValue, name) => {
@@ -215,13 +240,17 @@ function sseEvents(onData: (data: string) => void): (text: string) => void {
   let line = "";
   /** The line in flight outgrew the limit: its text is dropped, but it is not blank. */
   let longLine = false;
+  /** That line is event data, not a comment or another field, which change nothing. */
+  let longData = false;
   let data: string | undefined;
   let oversized = false;
   let afterCR = false;
   const endLine = () => {
     if (longLine) {
-      oversized = true;
-      data = undefined;
+      if (longData) {
+        oversized = true;
+        data = undefined;
+      }
     } else if (line === "") {
       if (data && !oversized) onData(data);
       data = undefined;
@@ -253,6 +282,7 @@ function sseEvents(onData: (data: string) => void): (text: string) => void {
     if (!longLine) line += text.slice(start);
     if (line.length > MAX_OBSERVED_CHARS) {
       longLine = true;
+      longData = line.startsWith("data:");
       line = "";
     }
   };
@@ -285,6 +315,97 @@ export async function discardBody(response: Response): Promise<void> {
     await response.body?.cancel();
   } catch {
     // A body that already failed has nothing left to release.
+  }
+}
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+/** Fetch's own limit. */
+const MAX_REDIRECTS = 20;
+/** What fetch drops from a request that a redirect sends to another origin. */
+const CROSS_ORIGIN_HEADERS = [
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "cookie2",
+];
+/** What fetch drops with the body when a redirect turns a request into a GET. */
+const BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-type",
+];
+
+/** A tool call kept from the server because the turn that approved it had closed. */
+export class TurnClosedError extends Error {
+  constructor(
+    readonly upstreamStatus: number,
+    /** The server took the call first and sent it elsewhere, so it may have run. */
+    readonly afterRedirect: boolean,
+  ) {
+    super("The turn that approved this tool call closed before it was sent.");
+    this.name = "TurnClosedError";
+  }
+}
+
+/**
+ * Fetch's redirect handling one hop at a time, so a request that carries a
+ * tool call is sent on to a redirect's target only while `turnOpen` says the
+ * turn that approved it is still open; otherwise it throws TurnClosedError.
+ * Each hop goes through `fetchUpstream` with `redirect: "manual"`, so a
+ * guarded fetch still checks every address it dials.
+ */
+export async function fetchWhileTurnOpen(
+  fetchUpstream: typeof fetch,
+  url: string,
+  init: RequestInit,
+  turnOpen: () => boolean,
+): Promise<Response> {
+  let current = url;
+  let method = (init.method ?? "GET").toUpperCase();
+  let body = init.body;
+  let headers = new Headers(init.headers);
+  for (let hop = 0; ; hop++) {
+    const response = await fetchUpstream(current, {
+      ...init,
+      method,
+      body,
+      headers,
+      redirect: "manual",
+    });
+    const location = response.headers.get("location");
+    if (!REDIRECT_STATUSES.has(response.status) || location === null) {
+      // What tells the caller the server took the request first.
+      if (hop > 0)
+        Object.defineProperty(response, "redirected", { value: true });
+      return response;
+    }
+    await discardBody(response);
+    if (hop === MAX_REDIRECTS)
+      throw new Error(`Too many redirects (more than ${MAX_REDIRECTS}).`);
+    const next = new URL(location, current);
+    if (next.protocol !== "http:" && next.protocol !== "https:")
+      throw new Error(
+        "The server redirected the request to a URL that isn't HTTP.",
+      );
+    if (
+      (response.status === 303 && method !== "GET" && method !== "HEAD") ||
+      ((response.status === 301 || response.status === 302) &&
+        method === "POST")
+    ) {
+      method = "GET";
+      body = undefined;
+      headers = new Headers(headers);
+      for (const name of BODY_HEADERS) headers.delete(name);
+    } else if (body !== undefined && body !== null && !turnOpen()) {
+      throw new TurnClosedError(response.status, true);
+    }
+    if (next.origin !== new URL(current).origin) {
+      headers = new Headers(headers);
+      for (const name of CROSS_ORIGIN_HEADERS) headers.delete(name);
+    }
+    current = next.href;
   }
 }
 
