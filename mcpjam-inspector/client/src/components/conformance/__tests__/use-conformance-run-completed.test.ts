@@ -56,6 +56,7 @@ describe("useConformanceRunCompleted", () => {
       run_source: "ui",
       outcome: "passed",
       has_advice: true,
+      scored: true,
     });
     expect(requestGitHubStarPrompt).toHaveBeenCalledWith({
       trigger: "conformance",

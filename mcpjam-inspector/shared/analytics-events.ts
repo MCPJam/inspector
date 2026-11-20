@@ -438,6 +438,7 @@ export const ANALYTICS_EVENTS = {
    */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
+  oauth_flow_completed: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
   ollama_running: { source: "client" },

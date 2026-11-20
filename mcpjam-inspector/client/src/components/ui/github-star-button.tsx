@@ -178,12 +178,26 @@ function promptTitle(request: GitHubStarPromptRequest): string {
 const OPEN_DIALOG =
   '[data-slot="dialog-content"][data-state="open"], [data-slot="alert-dialog-content"][data-state="open"]';
 
-/** Dialogs outside the announcement queue, such as the OAuth target setup. */
+const DIALOG_SETTLE_MS = 500;
+
+/**
+ * Dialogs outside the announcement queue, such as the OAuth target setup.
+ * Starts blocked, because a dialog opened by the same navigation can mount
+ * just after the prompt is requested.
+ */
 function useDialogOpen(): boolean {
-  const isOpen = () => document.querySelector(OPEN_DIALOG) !== null;
-  const [open, setOpen] = useState(isOpen);
+  const [open, setOpen] = useState(true);
   useEffect(() => {
-    const check = () => setOpen(isOpen());
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      if (document.querySelector(OPEN_DIALOG) !== null) {
+        clearTimeout(settle);
+        settle = undefined;
+        setOpen(true);
+      } else if (settle === undefined) {
+        settle = setTimeout(() => setOpen(false), DIALOG_SETTLE_MS);
+      }
+    };
     check();
     const observer = new MutationObserver(check);
     observer.observe(document.body, {
@@ -191,7 +205,10 @@ function useDialogOpen(): boolean {
       childList: true,
       attributeFilter: ["data-state"],
     });
-    return () => observer.disconnect();
+    return () => {
+      clearTimeout(settle);
+      observer.disconnect();
+    };
   }, []);
   return open;
 }

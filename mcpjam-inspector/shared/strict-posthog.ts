@@ -72,6 +72,7 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     run_source: ["ui"],
     outcome: ["passed", "failed", "incomplete"],
     has_advice: "boolean",
+    scored: "boolean",
   },
   github_star_prompt_shown: GITHUB_STAR_PROMPT,
   github_star_prompt_clicked: {

@@ -22,6 +22,7 @@ export function useConformanceRunCompleted(
       run_source: "ui",
       outcome: score.outcome,
       has_advice: hasAdvice,
+      scored: score.score !== null,
     });
     // Incomplete runs and runs where nothing applied have no result to show for.
     if (score.outcome !== "incomplete" && score.score !== null) {

@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -237,6 +238,9 @@ describe("OAuthFlowTab", () => {
       -1,
     )?.[0];
     act(() => config?.updateState({ currentStep: "complete" }));
+    expect(track).toHaveBeenCalledWith("oauth_flow_completed", {
+      location: "oauth_flow_tab",
+    });
     expect(starPrompt.requestGitHubStarPrompt).toHaveBeenCalledWith({
       trigger: "oauth",
       reason: "completed",

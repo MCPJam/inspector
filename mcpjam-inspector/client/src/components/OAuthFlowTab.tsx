@@ -1013,6 +1013,7 @@ export const OAuthFlowTab = ({
       oauthFlowState.currentStep === "complete";
     previousStep.current = oauthFlowState.currentStep;
     if (finished) {
+      track("oauth_flow_completed", { location: "oauth_flow_tab" });
       requestGitHubStarPrompt({ trigger: "oauth", reason: "completed" });
     }
   }, [oauthFlowState.currentStep]);
