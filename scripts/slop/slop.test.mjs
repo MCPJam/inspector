@@ -149,6 +149,17 @@ describe("rules", () => {
     const inTemplate =
       "const d = `${setTimeout(run, 0)} ${'x'}`;\nsetInterval(run);";
     assert.equal(count(inTemplate, path)["client-timer"], 2);
+
+    const afterComment = "void/* scheduled cleanup */setTimeout(run, 0);";
+    assert.equal(count(afterComment, path)["client-timer"], 1);
+
+    const afterRegex = [
+      "const tick = /`/;",
+      "const quote = x.replace(/'/g, '');",
+      "const ratio = a / b / c;",
+      "setTimeout(run, 0);",
+    ].join("\n");
+    assert.equal(count(afterRegex, path)["client-timer"], 1);
   });
 
   it("counts a comment-only catch whose binding holds a dollar sign", () => {
