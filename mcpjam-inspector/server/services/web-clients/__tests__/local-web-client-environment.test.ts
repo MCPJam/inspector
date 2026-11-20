@@ -4,6 +4,7 @@
  * tunnel URL the vendor's app can reach, and startup only with the flag on.
  * Evidence: fixture (no browser is launched).
  */
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import { createLocalConnectorRegistry } from "../local-connectors";
@@ -98,9 +99,32 @@ describe("a local web client environment", () => {
     expect(launch).toHaveBeenCalledTimes(2);
   });
 
+  it("closes a browser it couldn't drive before freeing its profile", async () => {
+    const sites = ["https://chatgpt.com"];
+    // While the browser closes, another turn asks for the same profile.
+    let closing = false;
+    let openedWhileClosing: unknown;
+    const close = vi.fn(async () => {
+      if (closing) return;
+      closing = true;
+      openedWhileClosing = await env.openBrowser({ webAccountId: "local:chatgpt", sites }).catch((error: unknown) => error);
+    });
+    const page = {
+      route: async () => {
+        throw new Error("The page could not be routed.");
+      },
+      on: () => {},
+    };
+    // A turn that finds the profile in use stops at once rather than waiting.
+    const env = environment({ launch: vi.fn(async () => ({ page: page as never, close })), profileWaitMs: 0 });
+    await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("The page could not be routed.");
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(openedWhileClosing).toMatchObject({ failure: { kind: "turn_running" } });
+  });
+
   it("keeps profiles outside any checkout, under the folder the person chose", () => {
     vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", "/home/someone/web-profiles");
-    expect(localWebClientProfileDir("claude")).toBe("/home/someone/web-profiles/claude-profile");
+    expect(localWebClientProfileDir("claude")).toBe(join("/home/someone/web-profiles", "claude-profile"));
   });
 });
 
