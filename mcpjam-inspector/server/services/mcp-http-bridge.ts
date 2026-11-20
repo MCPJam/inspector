@@ -517,6 +517,11 @@ export async function handleJsonRpc(
               ...(metadata === undefined ? {} : { metadata }), },
           );
 
+          // Both modes answer with the call-tool result as it came back
+          // (adapter mode for compatibility). Built before the evidence so the
+          // record is what the harness receives, fields a 2026-07-28 client
+          // gets included.
+          const response = respond({ result: exec });
           if (evidence) {
             // Awaited BEFORE the result goes back, so a turn that ends
             // normally cannot have settlement still in flight. Failure here
@@ -526,15 +531,10 @@ export async function handleJsonRpc(
             await settleToolCallEvidence(evidence, {
               serverId: targetServerId,
               toolName,
-              outcome: { kind: "result", result: exec },
+              outcome: { kind: "result", result: response.result },
             });
           }
-
-          if (mode === "manager") {
-            return respond({ result: exec });
-          }
-          // adapter mode returns raw call-tool result for compatibility
-          return respond({ result: exec });
+          return response;
         } catch (e: any) {
           try {
             await options.onToolCallError?.({
@@ -576,6 +576,7 @@ export async function handleJsonRpc(
               ],
               isError: true,
             };
+            const response = respond({ result });
             if (evidence && evidenceStarted) {
               // What the harness sees in manager mode IS a CallToolResult
               // with `isError: true`, so that is what the evidence records —
@@ -583,10 +584,10 @@ export async function handleJsonRpc(
               await settleToolCallEvidence(evidence, {
                 serverId: targetServerId,
                 toolName: observedToolName ?? "",
-                outcome: { kind: "result", result },
+                outcome: { kind: "result", result: response.result },
               });
             }
-            return respond({ result });
+            return response;
           }
           const errorEnvelope = {
             code: -32000,
