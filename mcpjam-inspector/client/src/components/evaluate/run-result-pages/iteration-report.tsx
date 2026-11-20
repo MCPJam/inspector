@@ -7,6 +7,7 @@ import { hostSnapshotFromStyle } from "@/lib/host-snapshot";
 import type { IterationTab } from "@/lib/eval-route-types";
 import { runClientIdentity } from "../../evals/helpers";
 import { computeIterationResult } from "../../evals/pass-criteria";
+import { resolveIterationJudge } from "../../evals/goal-completion-presentation";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import { IterationDetails } from "../../evals/iteration-details";
 import type { TraceDetailPlacement } from "../../evals/use-trace-detail-direction";
@@ -50,6 +51,7 @@ export function IterationReport({
 }) {
   const result = computeIterationResult(iteration);
   const fullRun = useSelectedRun(target.run.suiteId, target.run._id).run;
+  const judgeCase = resolveIterationJudge(iteration, fullRun ? [fullRun] : []);
   const authored = authoredForTrial({
     trial: { kind: "persisted", iteration, source: "route" },
     draft: { steps: [], toolsChoice: "unset" },
@@ -90,6 +92,7 @@ export function IterationReport({
                 <IterationReportScorecard
                   authored={authored}
                   iteration={iteration}
+                  judgeCase={judgeCase}
                   steps={authored.steps}
                   chain={decisionChain}
                   chainDisplay={diagnostic?.chain ? "settled" : chainDisplay}
