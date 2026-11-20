@@ -56,7 +56,11 @@ export type RealUiFailure =
         | "send_ambiguous"
         | "reply_timeout"
         /** The browser could not do what the module asked. */
-        | "driver";
+        | "driver"
+        /** Another turn is running on this connector. */
+        | "turn_running"
+        /** The backend no longer knows the run's connector. */
+        | "connector_not_found";
       step: RealUiStep;
       message: string;
     };

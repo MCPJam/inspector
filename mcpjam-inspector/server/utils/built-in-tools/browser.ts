@@ -2911,6 +2911,9 @@ export async function ensureHostedConversationSession(args: {
   ownerKind: BrowserSessionOwnerKind;
   hostId?: string;
   browserProfileId?: string;
+  /** A profile archive to boot a fresh browser with, when no saved profile id
+   *  names one (a web account's restored session). */
+  profileArchive?: Uint8Array;
   target?: {
     kind: "sandbox";
     sandboxRowId: string;
@@ -2947,7 +2950,9 @@ export async function ensureHostedConversationSession(args: {
           bearer: args.bearer,
           ...(args.signal ? { signal: args.signal } : {}),
         })
-      : null;
+      : !logical.lastBootId
+        ? (args.profileArchive ?? null)
+        : null;
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";

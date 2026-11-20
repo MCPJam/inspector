@@ -1050,6 +1050,8 @@ export interface MCPJamHandlerOptions {
     sessionIdx?: number;
   };
   authHeader?: string;
+  /** Web clients: the run's owner to act as when nobody is signed in. */
+  webClientActor?: { actorExternalId: string } | { actorUserId: string };
   scenarioId?: string;
   accessVersion?: number;
   projectId?: string;

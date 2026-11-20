@@ -29,7 +29,7 @@ import type {
   MCPJamHandlerOptions,
 } from "../../utils/mcpjam-stream-handler.js";
 import { runWebClientTurn } from "./run-web-client-turn.js";
-import { webClientEnvironment } from "./web-client-environment.js";
+import { webClientEnvironmentFor } from "./web-client-environment.js";
 import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
@@ -53,6 +53,8 @@ export function webClientFailureMessage(name: string, failure: RealUiFailure): s
       return `${failure.message} The server was not graded.`;
     case "send_ambiguous":
       return `${failure.message} Open the chat in ${name} to see whether it ran.`;
+    case "turn_running":
+      return `${failure.message} Wait for it to finish, then send again.`;
     default:
       return `${name} stopped before the reply finished. ${failure.message} The server was not graded; retry the run.`;
   }
@@ -78,12 +80,21 @@ export async function runWebClientHarnessTurn(
     throw new Error("This turn is not a web client turn.");
   }
   const name = WEB_CLIENT_DISPLAY_NAMES[vendor];
-  const environment = webClientEnvironment();
-  if (!environment) {
-    throw new Error(`${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`);
-  }
   if (!options.projectId) {
     throw new Error(`${name} runs on a project's web account. Open a project, then send again.`);
+  }
+  const runId = options.evalIterationId ?? options.chatSessionId ?? options.journeyRunId ?? "playground";
+  const environment = await webClientEnvironmentFor({
+    runtimeId,
+    projectId: options.projectId,
+    runId,
+    ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
+    ...(options.chatSessionId ? { chatSessionId: options.chatSessionId } : {}),
+    ...(options.authHeader ? { bearer: options.authHeader } : {}),
+    ...(options.webClientActor ? { actor: options.webClientActor } : {}),
+  });
+  if (!environment) {
+    throw new Error(`${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`);
   }
   const messages = options.messages;
   const promptIndex = Math.max(0, messages.filter((m) => m.role === "user").length - 1);
@@ -93,7 +104,7 @@ export async function runWebClientHarnessTurn(
       projectId: options.projectId!,
       serverIds: options.selectedServers ?? [],
       prompt: lastUserText(messages),
-      runId: options.evalIterationId ?? options.chatSessionId ?? options.journeyRunId ?? "playground",
+      runId,
       approval: {
         requireToolApproval: options.requireToolApproval === true,
         answer: approvalAnswerOf(options.approvalMode),

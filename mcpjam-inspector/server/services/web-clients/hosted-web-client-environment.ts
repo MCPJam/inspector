@@ -23,7 +23,7 @@ import {
   type SendJournal,
 } from "../../utils/harness/real-ui/drive-turn.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
-import { needsSignIn } from "../../utils/harness/real-ui/page-module.js";
+import { RealUiError, needsSignIn } from "../../utils/harness/real-ui/page-module.js";
 import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../service-credential.js";
 import type { WebClientService } from "./backend-connector-resolver.js";
 import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
@@ -48,6 +48,10 @@ const accountRow = z.object({
   accountEmail: z.string().optional(),
   hasProfile: z.boolean().optional(),
 });
+const openAnswer = z.union([
+  z.object({ ok: z.literal(true) }).passthrough(),
+  z.object({ ok: z.literal(false), reason: z.enum(["turn_running", "connector_not_found"]) }).passthrough(),
+]);
 const profileAnswer = z.object({
   webAccountId: z.string(),
   profileVersion: z.number(),
@@ -167,7 +171,23 @@ export function createHostedWebClientEnvironment(
 
     turnGate: {
       async open(window) {
-        await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor });
+        const answer = openAnswer.safeParse(
+          await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor }),
+        );
+        if (!answer.success || answer.data.ok) return;
+        throw new RealUiError(
+          answer.data.reason === "turn_running"
+            ? {
+                kind: "turn_running",
+                step: "connector",
+                message: "Another run is already using this connector.",
+              }
+            : {
+                kind: "connector_not_found",
+                step: "connector",
+                message: "The run's connector is gone. Run again to add it back.",
+              },
+        );
       },
       async close(turnId) {
         await deps.service.apply({ action: "closeWebTurnWindow", turnId, ...deps.actor });

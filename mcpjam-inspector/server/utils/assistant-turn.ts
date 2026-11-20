@@ -287,6 +287,8 @@ export interface RunAssistantTurnOptions
    * personal path unchanged.
    */
   harnessSandboxBinding?: MCPJamHandlerOptions["harnessSandboxBinding"];
+  /** Web clients: the run's owner, when nobody signed in started it. */
+  webClientActor?: MCPJamHandlerOptions["webClientActor"];
 
   /**
    * MCPJam's SERVER-EXECUTED built-ins (`web_search`, …) for the harness path.
@@ -538,6 +540,7 @@ function buildHandlerOptions(
     ...harnessSkillOptions(opts),
     // The attempt's own disposable box. Absent ⇒ the harness reserves the
     // personal computer, exactly as before.
+    ...(opts.webClientActor ? { webClientActor: opts.webClientActor } : {}),
     ...(opts.harnessSandboxBinding
       ? { harnessSandboxBinding: opts.harnessSandboxBinding }
       : {}),
