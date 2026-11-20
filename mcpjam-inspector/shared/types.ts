@@ -540,7 +540,7 @@ export enum Model {
  * Each OpenAI / Anthropic / Google row here has a reviewed canonical ↔ native
  * row in its adapter's table (pinned by the adapter contract tests).
  */
-export const SUPPORTED_MODELS_REVIEWED_AT = "2026-11-19";
+export const SUPPORTED_MODELS_REVIEWED_AT = "2026-09-25";
 
 // SUPPORTED_MODELS now holds only BYOK entries (the user brings their own key):
 // bare provider ids and "azure/…" ids. Hosted ("free") models are no longer
