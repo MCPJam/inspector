@@ -250,6 +250,24 @@ test("prose alone is never confident; unknown words match nothing", () => {
   assert.equal(none.confident, false);
 });
 
+test("a URL hit is confident even when a file name outranks it", () => {
+  const auth = entry("sign-in", {
+    label: "Sign in",
+    title: "Sign in",
+    routePatterns: ["auth"],
+    places: [],
+    roots: ["client/src/components/AuthenticationPanel.tsx"],
+  });
+  const { ranked, confident } = rankSurfaces([auth], "authentication");
+  assert.ok(ranked[0].reasons[0].includes("component"));
+  assert.ok(confident);
+  const fileOnly = rankSurfaces(
+    [{ ...auth, routePatterns: ["login"] }],
+    "authentication",
+  );
+  assert.equal(fileOnly.confident, false);
+});
+
 test("ranking is deterministic: equal scores order by id", () => {
   const tied = [entry("b-screen"), entry("a-screen")].map((e) => ({
     ...e,

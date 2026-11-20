@@ -472,7 +472,8 @@ export function rankSurfaces(entries, phrase) {
           .filter((h) => PROSE_FIELDS.has(h.field.field))
           .reduce((sum, h) => sum + h.value, 0) * ECHO_SHARE;
       score += (best.value + echo) * idf.get(q);
-      if (best.field.weight >= STRONG_WEIGHT) strong = true;
+      // A heavier field can lose `best` to an exact file-name hit and still count.
+      if (hits.some((h) => h.field.weight >= STRONG_WEIGHT)) strong = true;
       reasons.push(
         `"${q}" ~ ${best.field.field}${best.word === q ? "" : ` "${best.word}"`}`,
       );
