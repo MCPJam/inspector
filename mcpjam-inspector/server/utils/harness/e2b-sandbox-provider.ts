@@ -40,6 +40,10 @@ import {
   isBridgeSpawn,
   reapHarnessBridgesCommand,
 } from "./bridge-reaper.js";
+import {
+  assertBoxMemoryForHarness,
+  stderrWithStopReason,
+} from "./box-memory.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import { closeModelProxyConnections } from "./model-proxy-connections.js";
 import { readAheadRuntime } from "./runtime-read-ahead.js";
@@ -347,6 +351,10 @@ export function createE2BHarnessSandboxProvider(
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
     const ports: number[] = [bridgePort];
+    const runInBox = (
+      command: string,
+      options: { timeoutMs: number; signal?: AbortSignal },
+    ) => sandbox.commands.run(command, options);
 
     // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
     // pnpm is baked into the computer template (mcpjam-backend
@@ -367,10 +375,20 @@ export function createE2BHarnessSandboxProvider(
       // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
         readAheadRuntime(
-          (command, options) => sandbox.commands.run(command, options),
+          runInBox,
           { harnessId: opts.harnessId, resuming },
           connectSignal,
         ),
+        // Before the guard, so a box too small for the harness says so first.
+        ...(resuming
+          ? []
+          : [
+              assertBoxMemoryForHarness(
+                runInBox,
+                opts.harnessId,
+                connectSignal,
+              ),
+            ]),
         ...(opts.skipPnpmGuard
           ? []
           : [
@@ -516,7 +534,15 @@ export function createE2BHarnessSandboxProvider(
             return {
               exitCode: err.exitCode,
               stdout: err.stdout,
-              stderr: err.stderr,
+              stderr: await stderrWithStopReason(
+                {
+                  exitCode: err.exitCode,
+                  error: err.error,
+                  stderr: err.stderr,
+                },
+                runInBox,
+                abortSignal,
+              ),
             };
           }
           throw err;
