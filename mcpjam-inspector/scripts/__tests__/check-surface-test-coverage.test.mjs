@@ -1,11 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkFeatureMap } from "../check-surface-test-coverage.mjs";
+import {
+  buildFeatureMap,
+  checkFeatureMap,
+} from "../check-surface-test-coverage.mjs";
 
 const INSPECTOR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = join(INSPECTOR, "scripts", "check-surface-test-coverage.mjs");
@@ -63,6 +72,44 @@ test("check fails when the derivation finds nothing to join", () => {
     problems,
     /unknown surface tag: e2e\/x\.spec\.ts: @surface nope/,
   );
+});
+
+test("a spec gets harness credit for navigating to it, not for naming it", () => {
+  const files = {
+    "shared/app-surfaces.ts": `export const APP_SURFACES = [
+  { id: "oauth", canonicalPath: "/oauth", routePatterns: ["oauth"] },
+] as const satisfies readonly AppSurfaceManifest[];`,
+    "client/src/router.tsx": `import { OAuthTab } from "./components/OAuthTab";
+const ROUTE_ELEMENTS = {
+  oauth: { element: <OAuthTab /> },
+};
+const routes = [
+  {
+    path: "__e2e/oauth-debugger",
+    lazy: async () => {
+      const { Harness } = await import("./components/e2e/Harness");
+      return { Component: Harness };
+    },
+  },
+];`,
+    "client/src/App.tsx": "export {};",
+    "client/src/components/OAuthTab.tsx": "export function OAuthTab() {}",
+    "client/src/components/e2e/Harness.tsx": `import { OAuthTab } from "../OAuthTab";`,
+    "e2e/navigates.spec.ts": `await page.goto("/__e2e/oauth-debugger");`,
+    "e2e/names.spec.ts": `const harnessPath = "/__e2e/oauth-debugger";
+await page.goto("/");`,
+  };
+  const dir = mkdtempSync(join(tmpdir(), "mcpjam-surface-harness-"));
+  try {
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    const [oauth] = buildFeatureMap(dir).surfaces;
+    assert.deepEqual(oauth.e2e, ["e2e/navigates.spec.ts"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("the real tree passes --check, and --update-baseline only removes entries", () => {

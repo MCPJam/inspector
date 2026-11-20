@@ -52,13 +52,12 @@ import {
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
-  destinationSegments,
   harnessModules,
   importSpecifiers,
   moduleOwners,
   navigatedSurfaces,
+  navigationTargets,
   parseSurfaces,
-  scanSource,
   surfaceRoots,
   surfaceTags,
 } from "./lib/surface-test-map.mjs";
@@ -172,9 +171,8 @@ export function buildFeatureMap(root) {
     }
   };
   const linkHarnesses = (source, into) => {
-    for (const literal of scanSource(source).literals) {
-      const segments = destinationSegments(literal.value);
-      const specifier = segments && harnesses.get(segments.join("/"));
+    for (const segments of navigationTargets(source)) {
+      const specifier = harnesses.get(segments.join("/"));
       const harness = specifier && res("client/src/router.tsx", specifier);
       if (harness) linkImports(harness, read(harness), into);
     }
