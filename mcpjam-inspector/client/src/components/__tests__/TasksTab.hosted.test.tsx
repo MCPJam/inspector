@@ -194,6 +194,8 @@ describe("TasksTab (hosted mode)", () => {
 
     await waitFor(() => expect(mockGetTasksBatch).toHaveBeenCalled());
     expect(mockUseTaskElicitation).toHaveBeenCalled();
-    expect(mockUseTaskElicitation).not.toHaveBeenCalledWith(true);
+    for (const [enabled] of mockUseTaskElicitation.mock.calls) {
+      expect(enabled).toBe(false);
+    }
   });
 });
