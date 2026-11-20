@@ -70,7 +70,7 @@
     "concurrently": "^10.0.5",
     "@changesets/changelog-github": "^1.0.1",
     "vite": "^7.3.6",
-    "vitest": "^4.1.11"
+    "vitest": "^5.1.0"
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.2"

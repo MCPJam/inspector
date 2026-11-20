@@ -291,7 +291,7 @@
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.2",
-    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
     "@types/node": "^26",
@@ -302,7 +302,7 @@
     "@typescript-eslint/parser": "^8.70.1",
     "@vitejs/plugin-react": "^6.1.1",
     "@vitejs/plugin-react-electron": "npm:@vitejs/plugin-react@^5.2.0",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.1.0",
     "@workos/emulate": "0.13.1",
     "autoprefixer": "^10.6.1",
     "chromatic": "18.12.0",
@@ -311,7 +311,7 @@
     "es-module-lexer": "1.7.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.11.0",
-    "jsdom": "^27.4.0",
+    "jsdom": "^31.0.1",
     "node-abi": "^4.35.0",
     "png-to-ico": "^3.0.2",
     "prettier": "^3.9.8",
@@ -325,7 +325,7 @@
     "typescript": "^5",
     "vite": "^8.3.0",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^4.1.11"
+    "vitest": "^5.1.0"
   },
   "overrides": {
     "tmp": "0.2.5",
