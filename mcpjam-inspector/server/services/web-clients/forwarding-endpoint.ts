@@ -51,12 +51,14 @@ import {
   answerId,
   bodyKind,
   discardBody,
+  fetchWhileTurnOpen,
   followedRedirect,
   isRecord,
   isRequest,
   observeBody,
   parseRpcBody,
   readBodyBytes,
+  TurnClosedError,
   type RpcBody,
   type RpcId,
   type RpcMessage,
@@ -120,7 +122,7 @@ const COPY = {
   unknownOutcome:
     "MCPJam could not tell whether this project's MCP server ran this tool call. Check what the tool did before you send the prompt again.",
   roundedNumber:
-    "This tool call has a number too large for MCPJam to check exactly, so it was not sent. Send the number as a string instead.",
+    "This tool call has a number MCPJam can't check exactly, so it was not sent. Send the number as a string instead.",
   noToolName:
     "This tool call names no tool, so it was not sent. Send it again with a tool name.",
   batchHeld:
@@ -378,11 +380,12 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       : COPY.noTurn;
   };
 
+  /** `turnOpen` is set when the request carries tool calls, which go only under their turn. */
   const send = async (
     target: UpstreamTarget,
     request: Request,
     bytes: Uint8Array<ArrayBuffer> | undefined,
-    mayResend: () => boolean,
+    turnOpen: (() => boolean) | undefined,
   ): Promise<Response> => {
     const fetchUpstream = target.fetch ?? deps.fetchUpstream ?? fetch;
     // The vendor's `authorization` is never among the headers passed on.
@@ -392,9 +395,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       headers,
       body: bytes,
       signal: request.signal,
-      redirect: "follow",
     };
-    const response = await fetchUpstream(target.url, init);
+    // A redirect can arrive after the turn closed, so tool calls follow it
+    // hop by hop.
+    const sendOnce = () =>
+      turnOpen
+        ? fetchWhileTurnOpen(fetchUpstream, target.url, init, turnOpen)
+        : fetchUpstream(target.url, { ...init, redirect: "follow" });
+    const response = await sendOnce();
     // Only a 401 to the request itself says it never ran. Behind a redirect
     // the server took it first, so sending it again could run a tool twice.
     if (
@@ -405,10 +413,11 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return response;
     await discardBody(response);
     const token = await target.onUnauthorized();
+    if (!token) return new Response(null, { status: 401 });
     // The refresh can outlast the turn that approved the call.
-    if (!token || !mayResend()) return new Response(null, { status: 401 });
+    if (turnOpen && !turnOpen()) throw new TurnClosedError(401, false);
     headers.set("authorization", `Bearer ${token}`);
-    return fetchUpstream(target.url, init);
+    return sendOnce();
   };
 
   const forward = async (args: {
@@ -468,8 +477,18 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return answerAll(body, () => COPY.noUpstream, REFUSED, 502, frame);
     }
 
-    type Pending = { entryId: string; durableId?: string };
     type Outcome = Parameters<ToolCallLedger["settle"]>[1];
+    const outcomeOf = (
+      state: Exclude<LedgerState, "forwarded">,
+      upstreamStatus?: number,
+      resultHash?: string,
+    ): Outcome => ({
+      state,
+      ...(upstreamStatus ? { upstreamStatus } : {}),
+      ...(resultHash ? { resultHash } : {}),
+    });
+    /** A call sent on and not settled yet, with the answer seen for it if the ledger refused that. */
+    type Pending = { entryId: string; durableId?: string; seen?: Outcome };
     const warn = (what: string, error: unknown) =>
       logger.warn(`[web-clients] ${what}`, {
         connector: connectorTag(connectorId),
@@ -489,29 +508,27 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
           .catch((error: unknown) => warn("a call was not settled durably", error));
     };
     const pending = new Map<RpcId, Pending>();
-    const settle = (
-      call: Pending,
-      state: Exclude<LedgerState, "forwarded">,
-      upstreamStatus?: number,
-      resultHash?: string,
-    ) => {
-      const outcome: Outcome = {
-        state,
-        ...(upstreamStatus ? { upstreamStatus } : {}),
-        ...(resultHash ? { resultHash } : {}),
-      };
+    /** Whether the ledger here took the outcome. */
+    const settle = (call: Pending, outcome: Outcome): boolean => {
+      let recorded = true;
       try {
         ledger.settle(call.entryId, outcome);
       } catch (error) {
+        recorded = false;
         warn("a forwarded call could not be settled", error);
       }
+      // The durable copy keeps its first outcome, so it is sent only that one.
       settleDurable(call.durableId, outcome);
+      call.durableId = undefined;
+      return recorded;
     };
     let finished = false;
     const finish = (state: "lost" | "error", upstreamStatus?: number) => {
       if (finished) return;
       finished = true;
-      for (const call of pending.values()) settle(call, state, upstreamStatus);
+      // An answer the ledger refused earlier is offered again before "lost".
+      for (const call of pending.values())
+        settle(call, call.seen ?? outcomeOf(state, upstreamStatus));
       pending.clear();
       void release();
     };
@@ -587,8 +604,30 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
 
     let response: Response;
     try {
-      response = await send(target, request, args.bytes, approvedTurnOpen);
+      response = await send(
+        target,
+        request,
+        args.bytes,
+        calls.length > 0 ? approvedTurnOpen : undefined,
+      );
     } catch (error) {
+      if (error instanceof TurnClosedError) {
+        // Behind a redirect the server took the call first, so it may have run.
+        const unsure = error.afterRedirect;
+        finish(unsure ? "lost" : "error", error.upstreamStatus);
+        return answerAll(
+          body,
+          (id) =>
+            !callIds.has(id)
+              ? COPY.batchHeld
+              : unsure
+                ? COPY.unknownOutcome
+                : COPY.noTurn,
+          REFUSED,
+          200,
+          frame,
+        );
+      }
       finish("lost");
       reportRouteFailure("Web connector upstream did not answer", error, {
         source: SOURCE,
@@ -637,14 +676,13 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         if (id === undefined || call === undefined || !isRecord(message))
           return;
         const failed = "error" in message;
-        settle(
-          call,
+        call.seen ??= outcomeOf(
           failed ? "error" : "result",
           status,
           hashPayload(failed ? message.error : message.result),
         );
-        // Only once settled: an answer that can't be recorded leaves it to end lost.
-        pending.delete(id);
+        // Only once the ledger took it: the exchange's end offers it again.
+        if (settle(call, call.seen)) pending.delete(id);
       },
       onEnd: () => finish("lost", status),
     });
