@@ -15,10 +15,10 @@ export async function readVendorJson(
 ): Promise<unknown> {
   if (driver.canEvaluate) {
     const result = await driver.evaluate(
-      async (args: { url: string; headers: Record<string, string> }) => {
-        const response = await fetch(args.url, {
+      async (args) => {
+        const response = await fetch(String(args.url), {
           credentials: "include",
-          headers: args.headers,
+          headers: typeof args.headers === "object" ? args.headers : {},
         });
         return { status: response.status, text: await response.text() };
       },

@@ -5,6 +5,7 @@ import { readTasksPolicy } from "@mcpjam/sdk";
 import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabilities.js";
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { appliedToolApproval } from "@/shared/tool-approval";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -881,7 +882,10 @@ async function runJourneyFanOut(
     // outside the fail-closed guard below, which is only for things that can
     // throw.
     const localHarness = runsLocally(opts, (target.agentLoop ?? target.harness));
-    const harnessNeedsBox = (target.agentLoop ?? target.harness) !== undefined && !localHarness;
+    // A web client drives the vendor's website: no box, the same preflight.
+    const webClientTarget = isWebClientRuntimeId(target.agentLoop ?? target.harness);
+    const harnessNeedsBox =
+      (target.agentLoop ?? target.harness) !== undefined && !localHarness && !webClientTarget;
     // A target on the org's vendor key (Cursor) runs on the customer's own
     // vendor account. Read without throwing on a harness this build lacks.
     const externalAccount =
@@ -1091,7 +1095,11 @@ async function runJourneyFanOut(
                 ...(modelSelection ? { selection: modelSelection } : {}),
               });
         const harnessName = harnessDisplayName((target.agentLoop ?? target.harness) ?? "");
-        harnessTargetBlockedReason = !harnessNeedsBox
+        harnessTargetBlockedReason = webClientTarget
+          ? harnessAvailability && !harnessAvailability.ok
+            ? harnessAvailability.reason
+            : undefined
+          : !harnessNeedsBox
           ? undefined
           : !targetWantsHarnessBox(target)
           ? `The ${harnessName} client needs a computer. Attach a computer to this client to continue.`
@@ -1520,7 +1528,9 @@ async function runJourneyFanOut(
         // A harness with no binding must never be handed to the shared core:
         // `runHarnessTurn` would fall back to reserving the launcher's shared
         // personal computer.
-        const harnessBlockedReason = !harnessNeedsBox
+        const harnessBlockedReason = webClientTarget
+          ? harnessTargetBlockedReason
+          : !harnessNeedsBox
           ? undefined
             : (harnessTargetBlockedReason ??
             (attemptSandbox
