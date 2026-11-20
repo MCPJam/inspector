@@ -32,12 +32,23 @@ const ONBOARDING_DONE = {
   }),
 };
 
-export async function openContext({ baseUrl, token, theme, fresh, headed }) {
+export const VIEWPORT = { width: 1440, height: 900 };
+
+/** `videoDir` records every page at full viewport size, for `record`. */
+export async function openContext({
+  baseUrl,
+  token,
+  theme,
+  fresh,
+  headed,
+  videoDir,
+}) {
   // Imported here so `surfaces`, `start` and `stop` work without Playwright.
   const { chromium } = await import("@playwright/test");
   const browser = await chromium.launch({ headless: !headed });
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 900 },
+    viewport: VIEWPORT,
+    ...(videoDir ? { recordVideo: { dir: videoDir, size: VIEWPORT } } : {}),
   });
   const origin = new URL(baseUrl).origin;
   const force = {

@@ -13,28 +13,43 @@
  *   node scripts/inspector-driver.mjs open <surface|/path|url> [--theme light|dark]
  *   node scripts/inspector-driver.mjs run <steps.json|inline-json> [--start <surface>]
  *   node scripts/inspector-driver.mjs sweep [--only a,b] [--skip a,b]
+ *   node scripts/inspector-driver.mjs record <steps.json|inline-json> [--start <surface>]
+ *                                            [--theme light|dark] [--out <dir>]
+ *   node scripts/inspector-driver.mjs compare <dir with before/ and after/>
+ *
+ * `record` runs the steps once per theme with video and writes evidence.md
+ * for the PR body; `compare` pairs two records into one before/after
+ * evidence.md. See .agents/skills/pr-evidence/SKILL.md.
  *
  * Browser commands use --base-url / MCPJAM_DRIVER_BASE_URL and --token /
  * MCPJAM_SESSION_TOKEN (a token or the whole access link), falling back to
- * the instance `start` recorded. Exit codes: 0 clean, 1 an issue was found,
+ * the instance `start` recorded. --checkout <dir> points start, status,
+ * stop and the browser commands at another checkout's instance, for example
+ * a worktree of the base ref. Exit codes: 0 clean, 1 an issue was found,
  * 2 the driver itself could not run.
  */
 
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  EVIDENCE_THEMES,
   artifactSlug,
   classifyIssues,
+  describeStep,
   displayPath,
+  formatComparison,
+  formatEvidence,
   formatPageReport,
   formatSweepLine,
   normalizeSteps,
   parseAccessToken,
   parseAllowlist,
   resolveTarget,
+  resultLine,
   withStartStep,
 } from "./lib/inspector-driver-core.mjs";
 
@@ -63,8 +78,40 @@ const OPTIONS = {
   worker: { type: "boolean" },
   "skip-prepare": { type: "boolean" },
   "env-file": { type: "string" },
+  checkout: { type: "string" },
   help: { type: "boolean", short: "h" },
 };
+
+/** The inspector package of this checkout, or of the one --checkout names. */
+function inspectorDir(values) {
+  if (!values.checkout) return INSPECTOR_DIR;
+  const root = resolve(values.checkout);
+  const nested = join(root, "mcpjam-inspector");
+  const dir = existsSync(join(nested, "package.json")) ? nested : root;
+  if (!existsSync(join(dir, "package.json"))) {
+    throw new Error(`--checkout ${root} is not an inspector checkout.`);
+  }
+  return dir;
+}
+
+/**
+ * The commit an instance serves, read from its checkout. Uncommitted changes
+ * are flagged because a screenshot of them matches no commit a reviewer can
+ * check out.
+ */
+function commitOf(dir) {
+  const git = (...args) =>
+    spawnSync("git", ["-C", dir, ...args], { encoding: "utf8" });
+  const head = git("rev-parse", "HEAD");
+  if (head.status !== 0) {
+    throw new Error(`git rev-parse HEAD failed in ${dir}: ${head.stderr}`);
+  }
+  const status = git("status", "--porcelain");
+  if (status.status !== 0) {
+    throw new Error(`git status failed in ${dir}: ${status.stderr}`);
+  }
+  return { sha: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
+}
 
 async function loadSurfaces() {
   const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
@@ -81,9 +128,9 @@ function positiveInt(value, name, fallback) {
 
 async function connection(values) {
   const { readState } = await import("./lib/inspector-driver-instance.mjs");
-  const state = readState(INSPECTOR_DIR);
-  const baseUrl =
-    values["base-url"] ?? process.env.MCPJAM_DRIVER_BASE_URL ?? state?.baseUrl;
+  const state = readState(inspectorDir(values));
+  const givenUrl = values["base-url"] ?? process.env.MCPJAM_DRIVER_BASE_URL;
+  const baseUrl = givenUrl ?? state?.baseUrl;
   if (!baseUrl) {
     throw new Error(
       "No instance to drive: run `start`, or pass --base-url (or MCPJAM_DRIVER_BASE_URL).",
@@ -94,7 +141,8 @@ async function connection(values) {
   if (rawToken && !token) {
     throw new Error("--token is neither an access token nor an access link.");
   }
-  return { baseUrl, token };
+  // Only an instance `start` recorded has a known checkout behind it.
+  return { baseUrl, token, fromState: !givenUrl };
 }
 
 function outputDir(values) {
@@ -133,7 +181,7 @@ function writeReport(outDir, slug, report) {
   return path;
 }
 
-async function withPage(values, fn) {
+async function withPage(values, fn, { video = false } = {}) {
   checkTheme(values.theme);
   const { baseUrl, token } = await connection(values);
   const surfaces = await loadSurfaces();
@@ -146,6 +194,7 @@ async function withPage(values, fn) {
     theme: values.theme,
     fresh: values.fresh,
     headed: values.headed,
+    videoDir: video ? outDir : undefined,
   });
   try {
     return await fn({
@@ -226,54 +275,161 @@ function readSteps(arg) {
   return normalizeSteps(JSON.parse(text));
 }
 
-async function cmdRun(values, arg) {
-  if (!arg) throw new Error("run needs a steps file or inline JSON");
+/**
+ * Run the steps on a fresh page and capture where they ended. The page stays
+ * open so `record` can close it and keep its video. `prefix` keeps step
+ * screenshots from two themes in one folder apart.
+ */
+async function drive({ ctx, values, steps, slug, prefix = "" }) {
+  const { surfaces, baseUrl, rules, outDir, session, browserLib } = ctx;
+  const stepTimeoutMs =
+    positiveInt(values["step-timeout"], "step-timeout", 10) * 1_000;
+  const loadTimeoutMs = positiveInt(values.timeout, "timeout", 30) * 1_000;
+  const resolveUrl = (target) => resolveTarget(target, surfaces, baseUrl).url;
+  const page = await session.context.newPage();
+  const events = browserLib.recordEvents(page);
+  const started = Date.now();
+  const shots = {};
+  const shoot = async (name) => {
+    const key = artifactSlug(`${prefix}${name}`);
+    const path = join(outDir, `${key}.png`);
+    await page.screenshot({ path });
+    shots[key] = path;
+  };
+  const results = await browserLib.runSteps({
+    page,
+    steps,
+    events,
+    resolveUrl,
+    stepTimeoutMs,
+    loadTimeoutMs,
+    shoot,
+  });
+  const artifacts = {
+    ...shots,
+    ...(await browserLib.captureArtifacts(page, outDir, slug)),
+  };
+  const report = {
+    label: `RUN ${steps.length} steps`,
+    finalUrl: page.url(),
+    title: await page.title(),
+    seconds: (Date.now() - started) / 1_000,
+    steps: results,
+    classified: classifyIssues(events, rules),
+    artifacts,
+  };
+  report.artifacts.report = writeReport(outDir, slug, report);
+  return { report, page, stepShots: Object.values(shots) };
+}
+
+function readRunSteps(values, arg, command) {
+  if (!arg) throw new Error(`${command} needs a steps file or inline JSON`);
   const { start, steps } = readSteps(arg);
-  const all = withStartStep(steps, values.start ?? start);
+  return withStartStep(steps, values.start ?? start);
+}
+
+async function cmdRun(values, arg) {
+  const steps = readRunSteps(values, arg, "run");
   return withPage(values, async (ctx) => {
-    const { surfaces, baseUrl, rules, outDir, session, browserLib } = ctx;
-    const stepTimeoutMs =
-      positiveInt(values["step-timeout"], "step-timeout", 10) * 1_000;
-    const loadTimeoutMs = positiveInt(values.timeout, "timeout", 30) * 1_000;
-    const resolveUrl = (target) => resolveTarget(target, surfaces, baseUrl).url;
-    const page = await session.context.newPage();
-    const events = browserLib.recordEvents(page);
-    const started = Date.now();
-    const shots = {};
-    const shoot = async (name) => {
-      const path = join(outDir, `${artifactSlug(name)}.png`);
-      await page.screenshot({ path });
-      shots[artifactSlug(name)] = path;
-    };
-    const results = await browserLib.runSteps({
-      page,
-      steps: all,
-      events,
-      resolveUrl,
-      stepTimeoutMs,
-      loadTimeoutMs,
-      shoot,
-    });
     const slug = artifactSlug(
       `run-final${values.theme ? `-${values.theme}` : ""}`,
     );
-    const artifacts = {
-      ...shots,
-      ...(await browserLib.captureArtifacts(page, outDir, slug)),
-    };
-    const report = {
-      label: `RUN ${all.length} steps`,
-      finalUrl: page.url(),
-      title: await page.title(),
-      seconds: (Date.now() - started) / 1_000,
-      steps: results,
-      classified: classifyIssues(events, rules),
-      artifacts,
-    };
-    report.artifacts.report = writeReport(outDir, slug, report);
+    const { report } = await drive({ ctx, values, steps, slug });
     process.stdout.write(`${formatPageReport(report)}\n`);
     return report.classified.issues.length > 0 ? 1 : 0;
   });
+}
+
+/** One themed run with video, as the entry `evidence.json` keeps for it. */
+async function recordTheme(values, steps, theme) {
+  return withPage(
+    { ...values, theme },
+    async (ctx) => {
+      const { report, page, stepShots } = await drive({
+        ctx,
+        values,
+        steps,
+        slug: `${theme}-final`,
+        prefix: `${theme}-`,
+      });
+      const video = page.video();
+      // Playwright finishes writing a video only once its page is closed.
+      await page.close();
+      report.artifacts.video = join(ctx.outDir, `${theme}.webm`);
+      await video.saveAs(report.artifacts.video);
+      await video.delete();
+      process.stdout.write(`${formatPageReport(report)}\n`);
+      const { classified, artifacts } = report;
+      return {
+        theme,
+        ok: classified.issues.length === 0,
+        result: resultLine(classified),
+        issues: classified.issues,
+        warnings: classified.warnings,
+        artifacts: {
+          screenshot: basename(artifacts.shot),
+          video: basename(artifacts.video),
+          aria: basename(artifacts.aria),
+          report: basename(artifacts.report),
+          steps: stepShots.map((path) => basename(path)),
+        },
+      };
+    },
+    { video: true },
+  );
+}
+
+async function cmdRecord(values, arg) {
+  const steps = readRunSteps(values, arg, "record");
+  checkTheme(values.theme);
+  const { fromState } = await connection(values);
+  // Read before the run, so a commit made while it runs is not credited.
+  const commit = fromState ? commitOf(inspectorDir(values)) : null;
+  const outDir = outputDir(values);
+  const capturedAt = new Date().toISOString();
+  const runs = [];
+  for (const theme of values.theme ? [values.theme] : EVIDENCE_THEMES) {
+    runs.push(await recordTheme({ ...values, out: outDir }, steps, theme));
+  }
+  const { VIEWPORT } = await import("./lib/inspector-driver-browser.mjs");
+  const evidence = {
+    capturedAt,
+    commit,
+    viewport: `${VIEWPORT.width}x${VIEWPORT.height}`,
+    steps: steps.map(describeStep),
+    runs,
+  };
+  writeFileSync(
+    join(outDir, "evidence.json"),
+    JSON.stringify(evidence, null, 2),
+  );
+  const markdown = join(outDir, "evidence.md");
+  writeFileSync(markdown, formatEvidence(evidence));
+  process.stdout.write(`EVIDENCE ${markdown}\n`);
+  return runs.every((run) => run.ok) ? 0 : 1;
+}
+
+function readEvidence(dir, side) {
+  const path = join(dir, side, "evidence.json");
+  if (!existsSync(path)) {
+    throw new Error(
+      `No ${path}. Run \`record <steps> --out ${join(dir, side)}\` first.`,
+    );
+  }
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+async function cmdCompare(arg) {
+  if (!arg)
+    throw new Error("compare needs the folder holding before/ and after/");
+  const dir = resolve(arg);
+  const markdown = join(dir, "evidence.md");
+  writeFileSync(
+    markdown,
+    formatComparison(readEvidence(dir, "before"), readEvidence(dir, "after")),
+  );
+  process.stdout.write(`EVIDENCE ${markdown}\n`);
+  return 0;
 }
 
 function idList(value) {
@@ -329,7 +485,7 @@ async function cmdStart(values) {
     throw new Error("--instance must be a non-negative integer");
   }
   const state = await startInstance({
-    inspectorDir: INSPECTOR_DIR,
+    inspectorDir: inspectorDir(values),
     instance,
     worker: values.worker,
     prepare: !values["skip-prepare"],
@@ -340,10 +496,10 @@ async function cmdStart(values) {
   return 0;
 }
 
-async function cmdStatus() {
+async function cmdStatus(values) {
   const { readState, isAlive } =
     await import("./lib/inspector-driver-instance.mjs");
-  const state = readState(INSPECTOR_DIR);
+  const state = readState(inspectorDir(values));
   if (!state) {
     process.stdout.write("no driver instance recorded for this checkout\n");
     return 0;
@@ -355,9 +511,9 @@ async function cmdStatus() {
   return alive ? 0 : 1;
 }
 
-async function cmdStop() {
+async function cmdStop(values) {
   const { stopInstance } = await import("./lib/inspector-driver-instance.mjs");
-  await stopInstance({ inspectorDir: INSPECTOR_DIR });
+  await stopInstance({ inspectorDir: inspectorDir(values) });
   return 0;
 }
 
@@ -385,15 +541,19 @@ async function main(argv) {
     case "start":
       return cmdStart(values);
     case "status":
-      return cmdStatus();
+      return cmdStatus(values);
     case "stop":
-      return cmdStop();
+      return cmdStop(values);
     case "open":
       return cmdOpen(values, arg);
     case "run":
       return cmdRun(values, arg);
     case "sweep":
       return cmdSweep(values);
+    case "record":
+      return cmdRecord(values, arg);
+    case "compare":
+      return cmdCompare(arg);
     default:
       throw new Error(`Unknown command "${command}"`);
   }

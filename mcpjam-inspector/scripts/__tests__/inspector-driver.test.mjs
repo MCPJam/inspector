@@ -4,9 +4,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   artifactSlug,
+  assertComparable,
   classifyIssues,
   displayPath,
   findAllowRule,
+  formatComparison,
+  formatEvidence,
   formatPageReport,
   formatSweepLine,
   isFailingKind,
@@ -352,6 +355,112 @@ test("paths shorten the project id and slugs are file-safe", () => {
   assert.equal(artifactSlug("///"), "page");
 });
 
+function themedRun(theme, overrides = {}) {
+  return {
+    theme,
+    ok: true,
+    result: "RESULT ok issues=0 warnings=0 allowed=1",
+    issues: [],
+    warnings: [],
+    artifacts: {
+      screenshot: `${theme}-final.png`,
+      video: `${theme}.webm`,
+      aria: `${theme}-final.aria.yml`,
+      report: `${theme}-final.json`,
+      steps: [],
+    },
+    ...overrides,
+  };
+}
+
+function evidenceOf(overrides = {}) {
+  return {
+    capturedAt: "2026-11-20T10:00:00.000Z",
+    commit: { sha: "abc123", dirty: false },
+    viewport: "1440x900",
+    steps: ["goto servers", "click testid=add"],
+    runs: [themedRun("light"), themedRun("dark")],
+    ...overrides,
+  };
+}
+
+test("evidence names the commit, viewport, steps and every artifact", () => {
+  const text = formatEvidence(evidenceOf());
+  assert.match(text, /^## Screenshots and recordings$/m);
+  assert.match(text, /^Commit: `abc123`$/m);
+  assert.match(text, /headless Chromium at 1440x900/);
+  assert.match(
+    text,
+    /^\| dark \| \[attach dark-final\.png\] \| \[attach dark\.webm\] \|$/m,
+  );
+  assert.match(text, /^1\. goto servers\n2\. click testid=add$/m);
+  assert.match(text, /^- light: RESULT ok issues=0/m);
+  for (const name of [
+    "light.webm",
+    "dark-final.aria.yml",
+    "light-final.json",
+  ]) {
+    assert.match(
+      text,
+      new RegExp(`^- \`${name.replace(/\./g, "\\.")}\`: `, "m"),
+    );
+  }
+});
+
+test("evidence says not captured instead of leaving a gap", () => {
+  const text = formatEvidence(
+    evidenceOf({ commit: null, runs: [themedRun("dark")] }),
+  );
+  assert.match(text, /^Commit: not captured\. /m);
+  assert.match(text, /^\| light \| not captured \| not captured \|$/m);
+  assert.match(text, /^- light: not captured$/m);
+});
+
+test("evidence flags uncommitted changes and lists each finding", () => {
+  const text = formatEvidence(
+    evidenceOf({
+      commit: { sha: "abc123", dirty: true },
+      runs: [
+        themedRun("light", {
+          ok: false,
+          result: "RESULT fail issues=1 warnings=0 allowed=0",
+          issues: [{ kind: "http-500", text: "GET /api/x", count: 2 }],
+        }),
+      ],
+    }),
+  );
+  assert.match(text, /`abc123` plus uncommitted changes\. Not a reviewable/);
+  assert.match(text, /^ {2}- ISSUE {3}http-500 {8}GET \/api\/x \(x2\)$/m);
+});
+
+test("a before/after pair puts each side's file in its own column", () => {
+  const before = evidenceOf({ commit: { sha: "base1", dirty: false } });
+  const text = formatComparison(before, evidenceOf());
+  assert.match(
+    text,
+    /^\| light \| \[attach before\/light-final\.png\] \| \[attach after\/light-final\.png\] \|$/m,
+  );
+  assert.match(
+    text,
+    /^\| dark \| \[attach before\/dark\.webm\] \| \[attach after\/dark\.webm\] \|$/m,
+  );
+  assert.match(text, /^Before\. Commit: `base1`/m);
+  assert.match(text, /^After\. Commit: `abc123`/m);
+  assert.match(text, /^- after, dark: RESULT ok/m);
+  assert.match(text, /^- `before\/light\.webm`: recording/m);
+});
+
+test("a before/after pair refuses runs with different steps or viewports", () => {
+  assert.throws(
+    () => assertComparable(evidenceOf(), evidenceOf({ steps: ["goto hosts"] })),
+    /not the same run \(the steps differ\)/,
+  );
+  assert.throws(
+    () => formatComparison(evidenceOf({ viewport: "800x600" }), evidenceOf()),
+    /viewport 800x600 vs 1440x900/,
+  );
+});
+
 test("npm runs through its JS entry point when one can be found", () => {
   assert.equal(
     resolveNpmCli({
@@ -376,9 +485,8 @@ test("npm runs through its JS entry point when one can be found", () => {
 });
 
 test("a recorded base URL must be a local instance", async () => {
-  const { isLoopbackUrl } = await import(
-    "../lib/inspector-driver-instance.mjs"
-  );
+  const { isLoopbackUrl } =
+    await import("../lib/inspector-driver-instance.mjs");
   assert.equal(isLoopbackUrl("http://localhost:5173"), true);
   assert.equal(isLoopbackUrl("http://127.0.0.1:6274"), true);
   assert.equal(isLoopbackUrl("http://localhost.evil.test:5173"), false);
