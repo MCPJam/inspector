@@ -189,6 +189,13 @@ function GitHubStarPrompt({
   isAnchor: (target: EventTarget | null) => boolean;
 }) {
   const shown = useRef(false);
+  // Leaving the page (e.g. browser Back) must not bring the ask back later.
+  useEffect(
+    () => () => {
+      if (shown.current) closeGitHubStarPrompt();
+    },
+    [],
+  );
   const dismiss = (closeReason: "not_now" | "dismiss") => {
     trackPrompt("github_star_prompt_dismissed", request, {
       close_reason: closeReason,
@@ -214,6 +221,8 @@ function GitHubStarPrompt({
       onInteractOutside={(event) => {
         if (isAnchor(event.target)) event.preventDefault();
       }}
+      // Focus stays on the page when this opens, so tabbing must not close it.
+      onFocusOutside={(event) => event.preventDefault()}
     >
       <FeatureSpotlightTitle>{promptTitle(request)}</FeatureSpotlightTitle>
       <FeatureSpotlightDescription>

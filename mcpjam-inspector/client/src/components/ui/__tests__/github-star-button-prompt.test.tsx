@@ -63,6 +63,28 @@ describe("GitHubStarButton prompt", () => {
     });
   });
 
+  it("does not come back after the header unmounts and remounts", async () => {
+    const { unmount } = renderButton();
+    requestConformance();
+    expect(await screen.findByText(PASSED)).toBeInTheDocument();
+    unmount();
+    renderButton();
+    expect(screen.queryByText(PASSED)).not.toBeInTheDocument();
+  });
+
+  it("stays open when focus moves to another page control", async () => {
+    render(
+      <TooltipProvider delayDuration={0}>
+        <GitHubStarButton location="header" prompt />
+        <button type="button">Elsewhere</button>
+      </TooltipProvider>,
+    );
+    requestConformance();
+    expect(await screen.findByText(PASSED)).toBeInTheDocument();
+    act(() => screen.getByRole("button", { name: "Elsewhere" }).focus());
+    expect(screen.getByText(PASSED)).toBeInTheDocument();
+  });
+
   it("closes on Not now and records why", async () => {
     renderButton();
     requestConformance();
