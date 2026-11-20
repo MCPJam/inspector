@@ -12,6 +12,17 @@ vi.mock("@/lib/app-navigation", () => ({
   routePaths: { hosts: "/clients" },
 }));
 const mockResolveHostLogo = vi.hoisted(() => vi.fn());
+const flags = vi.hoisted(() => ({ webClients: false }));
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "web-clients-enabled" ? flags.webClients : undefined,
+}));
+// The runtime ids land with the web runtime; the picker only asks which rows
+// are web clients.
+vi.mock("@/lib/web-accounts/clients", () => ({
+  webClientVendorOfHost: ({ hostId }: { hostId: string }) =>
+    hostId === "host-web" ? "claude" : undefined,
+}));
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: ({ isOpen }: { isOpen: boolean }) =>
@@ -670,4 +681,45 @@ it("opens closed after unmounting closed", async () => {
   expect(
     screen.queryByPlaceholderText("Search clients"),
   ).not.toBeInTheDocument();
+});
+
+describe("ClientSelector web clients", () => {
+  const withWebClient: HostListItem[] = [
+    ...hosts.slice(0, 2),
+    { ...hosts[1], hostId: "host-web", name: "Claude web" },
+  ];
+  const open = async () => {
+    render(
+      <ClientSelector
+        hosts={withWebClient}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={vi.fn()}
+        onSelectedHostIdsChange={vi.fn()}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByTestId("client-selector-trigger"));
+  };
+
+  beforeEach(() => {
+    mockResolveHostLogo.mockReturnValue("/mcp.svg");
+  });
+
+  it("lists Claude web while its flag is on", async () => {
+    flags.webClients = true;
+    await open();
+    expect(screen.getByTestId("client-row-host-web")).toHaveTextContent(
+      "Claude web",
+    );
+  });
+
+  it("leaves Claude web out while its flag is off", async () => {
+    flags.webClients = false;
+    await open();
+    expect(screen.queryByTestId("client-row-host-web")).toBeNull();
+    expect(screen.getByTestId("client-row-host-1")).toBeInTheDocument();
+  });
 });
