@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from "react";
 // The package's single export; it ships no types, so the shape this file
 // relies on is declared in `types/novnc.d.ts`.
 import RFB from "@novnc/novnc";
+import { Button } from "@mcpjam/design-system/button";
 
 interface BrowserStreamProps {
   /** Mints a fresh ~60s browser token. Called per connect, never cached. */
@@ -27,6 +28,8 @@ interface BrowserStreamProps {
   viewOnly: boolean;
   /** The current boot; a change means a relaunched daemon and a new stream. */
   bootId: string;
+  onSessionGone: () => void;
+  onInput: () => void;
 }
 
 /** Close codes the server sends. 4401 is recoverable — mint a new token. */
@@ -100,6 +103,8 @@ export function BrowserStream({
   mintToken,
   viewOnly,
   bootId,
+  onSessionGone,
+  onInput,
 }: BrowserStreamProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rfbRef = useRef<RFB | null>(null);
@@ -164,6 +169,10 @@ export function BrowserStream({
       socket.binaryType = "arraybuffer";
       socket.addEventListener("close", (event) => {
         if (disposed) return;
+        if (event.code === CLOSE_GONE) {
+          onSessionGone();
+          return;
+        }
         const outcome = streamCloseOutcome(event);
         if (outcome.retry && consecutiveRef.current < MAX_RECONNECTS) {
           consecutiveRef.current += 1;
@@ -218,7 +227,7 @@ export function BrowserStream({
     // `bootId` is a dependency on purpose: a relaunched daemon means a new
     // stream with new credentials, and the old socket is pointed at a VNC
     // server that no longer exists.
-  }, [mintToken, bootId, attempt]);
+  }, [mintToken, bootId, attempt, onSessionGone]);
 
   // Applied without reconnecting: the lease can change hands many times during
   // one view, and tearing the stream down to reflect that would blank the
@@ -229,12 +238,26 @@ export function BrowserStream({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={containerRef} className="h-full w-full" />
+      <div
+        ref={containerRef}
+        className="h-full w-full"
+        onKeyDownCapture={viewOnly ? undefined : onInput}
+        onPointerDownCapture={viewOnly ? undefined : onInput}
+        onWheelCapture={viewOnly ? undefined : onInput}
+      />
       {status !== "live" ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-background/80 text-xs text-muted-foreground">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/80 text-xs text-muted-foreground">
           {status === "connecting"
             ? "Connecting to the browser…"
             : (detail ?? "The connection to the browser dropped.")}
+          {status === "lost" && (
+            <Button variant="outline" size="sm" onClick={() => {
+              consecutiveRef.current = 0;
+              setAttempt((n) => n + 1);
+            }}>
+              Reconnect stream
+            </Button>
+          )}
         </div>
       ) : null}
     </div>
