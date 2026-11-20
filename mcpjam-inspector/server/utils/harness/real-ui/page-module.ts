@@ -211,6 +211,28 @@ export async function commonBlocker(
   return undefined;
 }
 
+/**
+ * Waits for `selector` to show. A sign-in, human check or code prompt in its
+ * way stops the wait at once as `needs_sign_in`: the account needs a person,
+ * and the page did not change.
+ */
+export async function waitVisibleUnlessBlocked(
+  driver: PageDriver,
+  selector: string,
+  ctx: StepContext,
+  wait: { what: string; step: RealUiStep; challengeSelectors: readonly string[] },
+): Promise<void> {
+  await driver.waitFor(
+    async () => {
+      if ((await driver.readText(selector)) !== undefined) return true;
+      const blocked = await commonBlocker(driver, { challengeSelectors: wait.challengeSelectors, step: wait.step });
+      if (blocked) throw new RealUiError(blocked);
+      return false;
+    },
+    { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: wait.what },
+  );
+}
+
 /** Escapes text for use inside a CSS attribute selector's quotes. */
 export function cssString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
