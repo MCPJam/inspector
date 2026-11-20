@@ -11,6 +11,7 @@ import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   webAccountAsConnection,
+  webAccountReconnectPath,
   webClientSite,
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
@@ -70,7 +71,15 @@ export function WebAccountsSettings({
             />
           ) : null
         }
-        onAuthenticate={() => {
+        onAuthenticate={(intent) => {
+          // Signing in again opens that account's own page; a new account
+          // starts in the playground's pane, in the browser runs use.
+          if (intent.kind === "replace") {
+            navigateApp(
+              webAccountReconnectPath(intent.credentialId, projectId),
+            );
+            return;
+          }
           savePreviewedHostId(projectId, hostId);
           navigateApp(routePaths.playground);
         }}

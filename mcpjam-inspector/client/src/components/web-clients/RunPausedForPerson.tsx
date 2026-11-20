@@ -1,5 +1,6 @@
 import { Hand, MousePointer2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { navigateApp } from "@/lib/app-navigation";
 import { webClientSite } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
 
@@ -15,7 +16,7 @@ export function RunPausedForPerson({
   vendor,
   ask,
   canFinish,
-  onTakeOver,
+  takeOverPath,
   onCopyLink,
   onStop,
 }: {
@@ -23,7 +24,8 @@ export function RunPausedForPerson({
   ask: PersonAsk;
   /** Anyone in the project can finish a check; only an admin can sign in. */
   canFinish: boolean;
-  onTakeOver: () => void;
+  /** The account's reconnect page, where the person takes over its browser. */
+  takeOverPath: string;
   onCopyLink: () => void;
   onStop: () => void;
 }) {
@@ -69,7 +71,11 @@ export function RunPausedForPerson({
       </dl>
       <div className="flex flex-wrap items-center gap-2">
         {canFinish ? (
-          <Button type="button" size="sm" onClick={onTakeOver}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => navigateApp(takeOverPath)}
+          >
             <MousePointer2 aria-hidden />
             Take over
           </Button>
