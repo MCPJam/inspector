@@ -156,6 +156,69 @@ function countCommentLines(text, regex) {
   return count;
 }
 
+/**
+ * A comment that justifies a workaround instead of fixing its cause: a named
+ * hack, a wait for React or the browser to catch up, a deferral by a frame or
+ * tick, or a cause nobody understood.
+ */
+const WORKAROUND =
+  /(?<!\bnot (?:an? )?)\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
+
+/**
+ * A comment that admits a compromise: a failure tolerated (a swallowed
+ * error), a guard for a case believed impossible (belt-and-braces, or a
+ * defensive guard beside `NOT_EXPECTED`), or a shortcut taken on purpose
+ * (deliberately loose, lossy or duplicated). "Best-effort" is left out: it is
+ * the usual name here for a fallback chosen on purpose. The bare words
+ * "deliberately", "intentionally" and "swallow" mostly explain real decisions
+ * or describe input handling here, so each is matched only next to the words
+ * that make it a concession.
+ */
+const COMPROMISE =
+  /(?<!\bnot (?:a |as )?)\bbelt[- ]and[- ](?:braces|suspenders)\b|\b(?:deliberately|intentionally|on purpose)\W+(?:swallow(?:s|ed|ing)?|loose|lossy|duplicat(?:e|es|ed|ing)|(?:ignor(?:e|es|ed|ing)|skip(?:s|ped|ping)?)\W+(?:the |any |this |that |its |a )?(?:errors?|failures?|rejections?|exceptions?|throws?))\b|\bswallow(?:s|ed|ing)?\W+(?:on purpose|deliberately|intentionally)\b|^\s*(?:\/\/|\/\*)\s*swallow\b/i;
+
+const DEFENSIVE =
+  /(?<!\bnot (?:a |as )?)\bdefensive(?::|(?:ly)?\s+(?:guard|branch|check|fallback|invariant|default|catch|continue|skip|clamp|re-?check|no-?op|mixed-version)(?:s|es|ed)?\b)/;
+
+/**
+ * A claim that the guarded case does not happen. "Defensive check for null"
+ * only says what a check does; the same line saying null cannot get there is
+ * what makes the guard a concession instead of handling a real input.
+ */
+const NOT_EXPECTED =
+  /\bshould(?:n't|\s+not|\s+never)\b|\bnever\s+(?:happens?|throws?|occurs?|reach(?:es|ed)?)\b|\b(?:can(?:'t|not)|won't)\s+happen\b|\b(?:unreachable|impossible|unexpected|in practice)\b|\bjust\s+in\s+case\b|\b(?:already|should be)\s+(?:guarded|covered|handled|checked|validated|filtered|rejected|caught|ruled out)\b|\b(?:types?|callers?|schemas?|validators?)\s+(?:already\s+)?(?:reject|rule out|prevent|guarantee|exclude)/;
+
+const WORKAROUND_OR_COMPROMISE = new RegExp(
+  `${WORKAROUND.source}|${COMPROMISE.source}|(?:${DEFENSIVE.source}).*(?:${NOT_EXPECTED.source})|(?:${NOT_EXPECTED.source}).*(?:${DEFENSIVE.source})`,
+  "i",
+);
+
+/**
+ * A third-party bug tracker link. A workaround forced by someone else's bug
+ * cannot be fixed here, and the link is how a reader knows when to remove it.
+ * Our own issues do not count: those are ours to fix.
+ */
+const UPSTREAM_ISSUE =
+  /https?:\/\/(?:github\.com\/(?!mcpjam\/)[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+|(?:crbug\.com|bugs\.[\w.-]+|bugzilla\.[\w.-]+)\/)/i;
+
+/** Like `countCommentLines`, but a comment block that links `exempt` counts 0. */
+function countUnexemptCommentLines(text, regex, exempt) {
+  let count = 0;
+  let block = 0;
+  let exempted = false;
+  for (const line of text.split("\n")) {
+    if (!COMMENT_LINE.test(line)) {
+      if (!exempted) count += block;
+      block = 0;
+      exempted = false;
+      continue;
+    }
+    if (exempt.test(line)) exempted = true;
+    if (regex.test(line)) block += 1;
+  }
+  return exempted ? count : count + block;
+}
+
 /** Strings of user-facing copy in a UI file that match `regex`. */
 function countCopy(text, regex) {
   return extractUiStrings(text).filter((item) => regex.test(item.text)).length;
@@ -256,6 +319,18 @@ export const RULES = [
     id: "history-comment",
     label: "comments citing a PR number or a date",
     count: (text) => countCommentLines(stripProtocolVersions(text), HISTORY),
+  },
+  {
+    id: "workaround-comment",
+    label:
+      "comments that justify a workaround or compromise (hack, wait for React, swallowed error, defensive guard)",
+    fix: "Fix the cause instead of explaining it: act on the event or state change the code is waiting for, handle or surface the failure instead of swallowing it, and drop a guard for a case the types or callers already rule out. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
+    count: (text) =>
+      countUnexemptCommentLines(
+        text,
+        WORKAROUND_OR_COMPROMISE,
+        UPSTREAM_ISSUE,
+      ),
   },
   // Copy rules read only the strings a user sees (ui-strings.mjs), so a dash
   // or a sales word in a comment or an identifier does not count.
