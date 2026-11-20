@@ -4,8 +4,12 @@
  * server for the vendor's OAuth token, and `web-clients-enabled` from the same
  * flag source and person properties as the other server rollouts.
  */
-import { WEB_CLIENTS_FEATURE_FLAG } from "../../../shared/web-clients.js";
+import {
+  WEB_CLIENT_SITES,
+  WEB_CLIENTS_FEATURE_FLAG,
+} from "../../../shared/web-clients.js";
 import { HOSTED_MODE } from "../../config.js";
+import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
 import { serverRolloutAnswer } from "../../utils/analytics.js";
 import { rolloutAnswerWithoutPostHog } from "../../utils/feature-flag-source.js";
 import {
@@ -15,6 +19,20 @@ import {
   resolveWorkosClientId,
   verifyAuthKitResourceToken,
 } from "../authkit-jwt.js";
+
+const VENDOR_ORIGINS = new Set(Object.values(WEB_CLIENT_SITES).flat());
+
+/**
+ * Whether a request with this `Origin` may use a connector. DNS rebinding and
+ * cross-site requests come from a browser page, which names its origin. The
+ * vendors' MCP clients run on their servers and name none; a vendor's own
+ * site, or a page the Inspector already trusts, may.
+ */
+export function connectorOriginAllowed(origin: string | undefined): boolean {
+  return (
+    !origin || VENDOR_ORIGINS.has(origin) || isAllowedRequestOrigin(origin)
+  );
+}
 
 /** The AuthKit issuer this Inspector already trusts, when it knows one. */
 export function authkitAuthorizationServers(): string[] {
