@@ -30,6 +30,7 @@ export type PendingStep = {
 
 export type WebIdentity = { accountEmail: string; workspaceName?: string };
 
+/** The fields recovery reads from the backend's view of a web account. */
 export type WebAccountRecord = {
   webAccountId: string;
   projectId: string;
@@ -40,23 +41,17 @@ export type WebAccountRecord = {
   profileVersion: number;
 };
 
-export type WaitingRun = {
-  runId: string;
-  iterationId?: string;
-  pendingStep: PendingStep;
-  /** Set when a coordinator claimed the run to resume it. */
-  claimedAt?: string;
-};
-
+/** A reconnect request, as the backend lists it. Times are epoch ms. */
 export type WebReconnectRequest = {
   requestId: string;
-  projectId: string;
   webAccountId: string;
-  reason: SignInReason;
-  status: "open" | "handed_back";
-  openedAt: string;
-  notifiedAt?: string;
-  runs: WaitingRun[];
+  status: "open" | "resolved" | "cancelled";
+  reason: string;
+  openedAt: number;
+  notifiedAt?: number;
+  notificationCount: number;
+  resolvedAt?: number;
+  waitingRunCount: number;
 };
 
 export type ClaimedRun = {
@@ -67,38 +62,47 @@ export type ClaimedRun = {
 };
 
 export type SaveProfileResult =
-  | { status: "saved"; profileVersion: number }
+  | { ok: true; profileVersion: number }
   /** Another verified sign-in saved first. Its profile stays. */
-  | { status: "conflict"; profileVersion: number };
+  | { ok: false; reason: "version_conflict"; profileVersion: number };
 
-export type HandbackResult = {
-  status:
-    "handed_back" | "already_handed_back" | "wrong_identity" | "not_found";
-};
+/** A refusal with the backend's code, such as `NOT_FOUND` or `CONFLICT`. */
+export class WebBackendRefusal extends Error {
+  constructor(
+    readonly code: string,
+    message?: string,
+  ) {
+    super(message ?? code);
+    this.name = "WebBackendRefusal";
+  }
+}
 
-/** The backend functions recovery calls, under the names the backend exports. */
+/**
+ * The backend functions recovery calls, under the names the backend exports.
+ * Refusals throw a `WebBackendRefusal`.
+ */
 export interface WebReconnectBackend {
   listWebAccounts(args: { projectId: string }): Promise<WebAccountRecord[]>;
-  markWebAccountVerified(
-    args: { webAccountId: string } & WebIdentity,
-  ): Promise<void>;
   markWebAccountNeedsSignIn(args: {
     webAccountId: string;
     reason: SignInReason;
   }): Promise<void>;
   /**
-   * Compare-and-set on `profileVersion`. `profile` is the runtime's serialized
-   * browser profile; the backend encrypts it before storing it.
+   * Compare-and-set on `profileVersion`. `profile` is the browser's profile
+   * archive; only its ciphertext leaves this server. A run saving back names
+   * itself in `savedFromRunId`; without one, only an admin may save.
    */
   saveWebAccountProfile(args: {
     webAccountId: string;
     expectedProfileVersion: number;
-    profile: string;
+    profile: Uint8Array;
+    savedFromRunId?: string;
   }): Promise<SaveProfileResult>;
   /**
-   * Adds the run to the account's open request, opening one when there is
-   * none. `shouldNotify` is true exactly once per request: for the report that
-   * opened it. A run that reports again keeps one place, at its latest step.
+   * Marks the account Needs sign-in and adds the run to its open request,
+   * opening one when there is none. The report that opens it gets
+   * `shouldNotify: true`, and the backend sends that request's one notice. A
+   * run that reports again keeps its first place and step.
    */
   reportWebSignInRequired(args: {
     webAccountId: string;
@@ -107,16 +111,18 @@ export interface WebReconnectBackend {
     pendingStep: PendingStep;
     reason: SignInReason;
   }): Promise<{ requestId: string; shouldNotify: boolean }>;
-  markWebReconnectNotified(args: { requestId: string }): Promise<void>;
-  /** Idempotent. Refuses an identity that is not the account's. */
+  /**
+   * Marks the account ready and the request's runs resumable. Idempotent.
+   * Refuses another seat or a cancelled request (`CONFLICT`).
+   */
   handbackWebReconnect(args: {
     requestId: string;
     verifiedAccountEmail: string;
     verifiedWorkspace?: string;
-  }): Promise<HandbackResult>;
-  /** Atomic: each run waiting on a handed-back request is returned once, ever. */
+  }): Promise<{ resumableRunIds: string[] }>;
+  /** Atomic: each resumable run is returned once, ever. */
   claimResumableWebRuns(args: { webAccountId: string }): Promise<ClaimedRun[]>;
-  /** Open and handed-back requests, so a repeated handback still finds its own. */
+  /** Recent requests of every status, so a repeated handback finds its own. */
   listWebReconnectRequests(args: {
     projectId: string;
   }): Promise<WebReconnectRequest[]>;

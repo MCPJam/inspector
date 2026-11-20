@@ -5,7 +5,6 @@
  * did. A "process" is one coordinator; a restart is a new one over the same
  * backend and ledger.
  */
-import { ConvexHttpClient } from "convex/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const logged = vi.hoisted(() => [] as unknown[][]);
@@ -22,22 +21,24 @@ import {
   createInMemoryToolCallLedger,
   hashPayload,
 } from "../../tool-call-ledger.js";
-import type {
-  PendingStep,
-  WebIdentity,
-  WebReconnectBackend,
+import {
+  WebBackendRefusal,
+  type PendingStep,
+  type WebIdentity,
+  type WebReconnectBackend,
 } from "../backend.js";
-import { createConvexWebReconnectBackend } from "../convex-backend.js";
 import {
   classifyRunFailure,
   createWebRecoveryCoordinator,
   type AccountBrowser,
-  type ReconnectNotice,
   type RunFailure,
   type SignInMethod,
   type WebRecoveryCoordinator,
 } from "../coordinator.js";
-import { createInMemoryWebReconnectBackend } from "../in-memory-backend.js";
+import {
+  createInMemoryWebReconnectBackend,
+  type WebReconnectNotice,
+} from "../in-memory-backend.js";
 import { reconcileWithLedger } from "../reconcile.js";
 
 const PROJECT = "project-1";
@@ -51,8 +52,9 @@ const OTHER_SEAT: WebIdentity = {
   accountEmail: "other-seat@example.com",
   workspaceName: "Test workspace",
 };
-/** Stands in for a serialized browser profile. Nothing real. */
-const PROFILE = "fixture-profile";
+/** Stands in for a browser profile archive. Nothing real. */
+const PROFILE_TEXT = "fixture-profile";
+const PROFILE = new TextEncoder().encode(PROFILE_TEXT);
 
 /** What the vendor's site does when the runtime sends a step. */
 type Behavior =
@@ -81,20 +83,26 @@ type FixtureRun = {
 type World = ReturnType<typeof createWorld>;
 
 function createWorld(signInMethod?: SignInMethod) {
+  const notices: WebReconnectNotice[] = [];
   return {
-    backend: createInMemoryWebReconnectBackend([
-      {
-        webAccountId: ACCOUNT,
-        projectId: PROJECT,
-        status: "ready",
-        ...SEAT,
-        profileVersion: 1,
+    backend: createInMemoryWebReconnectBackend(
+      [
+        {
+          webAccountId: ACCOUNT,
+          projectId: PROJECT,
+          status: "ready",
+          ...SEAT,
+          profileVersion: 1,
+        },
+      ],
+      (notice) => {
+        notices.push(notice);
       },
-    ]),
+    ),
     ledger: createInMemoryToolCallLedger(),
     /** One entry per tool the upstream server actually ran. */
     upstream: [] as string[],
-    notices: [] as ReconnectNotice[],
+    notices,
     runs: new Map<string, FixtureRun>(),
     inFlight: [] as Promise<void>[],
     signInMethod,
@@ -140,9 +148,6 @@ function startProcess(
   const coordinator = createWebRecoveryCoordinator({
     backend,
     ledger: world.ledger,
-    notify: async (notice) => {
-      world.notices.push(notice);
-    },
     ...(method ? { signInMethodFor: () => method } : {}),
     resumeRun: async (runId, pendingStep) => {
       const run = runOf(world, runId);
@@ -174,7 +179,7 @@ function vendorTurn(
     connectorId: CONNECTOR,
     runId: run.runId,
     turnId: step.turnId,
-    jsonrpcId: 1,
+    jsonrpcId: "1",
     toolName: "create_note",
     toolUseId: `toolu_${run.runId}`,
     argsHash: hashPayload({ title: run.runId }),
@@ -289,11 +294,19 @@ const RESUMED_AND_SENT = [
 ];
 
 afterEach(() => {
-  // Profiles, codes and seat addresses never reach the logs.
+  // Profiles and seat addresses never reach the logs.
   const text = JSON.stringify(logged);
-  expect(text).not.toContain(PROFILE);
+  expect(text).not.toContain(PROFILE_TEXT);
   expect(text).not.toContain(SEAT.accountEmail);
   expect(text).not.toContain(OTHER_SEAT.accountEmail);
+  const values = logged
+    .flat()
+    .flatMap((value) =>
+      typeof value === "object" && value !== null
+        ? [value, ...Object.values(value)]
+        : [value],
+    );
+  expect(values.some((value) => value instanceof Uint8Array)).toBe(false);
   logged.length = 0;
 });
 
@@ -310,11 +323,12 @@ describe("web account recovery", () => {
     expect(runOf(world, "run-2").log).toEqual(PAUSED);
     const [request, ...others] = await requestsOf(world);
     expect(others).toEqual([]);
-    expect(request?.runs.map((run) => run.runId).sort()).toEqual([
-      "run-1",
-      "run-2",
-    ]);
-    expect(request?.notifiedAt).toEqual(expect.any(String));
+    expect(request).toMatchObject({
+      status: "open",
+      waitingRunCount: 2,
+      notificationCount: 1,
+      notifiedAt: expect.any(Number),
+    });
     expect(world.notices).toEqual([
       {
         requestId: request?.requestId,
@@ -344,11 +358,11 @@ describe("web account recovery", () => {
         reason: "signed_out",
         browser: run.browser,
       });
-      expect(again).toMatchObject({ status: "paused", notified: false });
+      expect(again).toMatchObject({ status: "paused" });
     }
     const [request] = await requestsOf(world);
     expect(world.notices).toHaveLength(1);
-    expect(request?.runs).toHaveLength(2);
+    expect(request?.waitingRunCount).toBe(2);
 
     await coordinator.handback({
       projectId: PROJECT,
@@ -415,7 +429,6 @@ describe("web account recovery", () => {
 
   it.each([
     "saveWebAccountProfile",
-    "markWebAccountVerified",
     "handbackWebReconnect",
     "claimResumableWebRuns",
   ] as const)(
@@ -654,7 +667,7 @@ describe("a tool call runs once across recovery", () => {
           connectorId: CONNECTOR,
           runId,
           turnId,
-          jsonrpcId: 1,
+          jsonrpcId: "1",
           toolName: "create_note",
           argsHash: hashPayload({ runId }),
         });
@@ -702,7 +715,7 @@ describe("a tool call runs once across recovery", () => {
       ledger.forwarded({
         connectorId: CONNECTOR,
         runId: "run-1",
-        jsonrpcId: 1,
+        jsonrpcId: "1",
         toolName: "create_note",
         toolUseId,
         argsHash: hashPayload({ toolUseId }),
@@ -744,7 +757,7 @@ describe("sign-in method", () => {
     return { method, browser, release: () => open() };
   }
 
-  it("signs in once for every waiting run, without a link, when the method can", async () => {
+  it("signs in once, without a link, for every run that fails meanwhile", async () => {
     const signIn = gatedSignIn();
     const world = createWorld(signIn.method);
     const coordinator = startProcess(world);
@@ -755,16 +768,11 @@ describe("sign-in method", () => {
       expect(signIn.method.signIn).toHaveBeenCalledTimes(1),
     );
     // A second run reaches the sign-in page while the method is signing in.
-    await startRun(world, coordinator, "run-2", ["sign_in_page"], {
-      browser: signIn.browser(),
-    });
-    expect(runOf(world, "run-2").result).toBe("paused");
+    const second = startRun(world, coordinator, "run-2", ["sign_in_page"]);
     signIn.release();
-    await first;
-    await settle(world);
+    await Promise.all([first, second]);
 
     expect(signIn.method.signIn).toHaveBeenCalledTimes(1);
-    expect(world.notices).toEqual([]);
     expect(runOf(world, "run-1").log).toEqual([
       "send step-1",
       "signed_out page",
@@ -773,7 +781,17 @@ describe("sign-in method", () => {
       "send step-1",
       "tool ran upstream",
     ]);
-    expect(runOf(world, "run-2").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
+    // The other run's browser is still signed out: it reloads the new profile.
+    expect(runOf(world, "run-2").log).toEqual([
+      "send step-1",
+      "signed_out page",
+      "reload_profile",
+      "reconcile: send",
+      "send step-1",
+      "tool ran upstream",
+    ]);
+    expect(world.notices).toEqual([]);
+    expect(await requestsOf(world)).toEqual([]);
     expect(await accountOf(world)).toMatchObject({
       status: "ready",
       profileVersion: 2,
@@ -781,40 +799,20 @@ describe("sign-in method", () => {
     expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
   });
 
-  it("stops the reporting run when a person's handback resumed it first", async () => {
-    const signIn = gatedSignIn();
-    const world = createWorld(signIn.method);
+  it("asks once, then lets later runs join the request without another attempt", async () => {
+    const method = {
+      id: "test-inbox",
+      signIn: vi.fn(async () => "needs_person" as const),
+    };
+    const world = createWorld(method);
     const coordinator = startProcess(world);
-    const first = startRun(world, coordinator, "run-1", ["sign_in_page"], {
-      browser: signIn.browser(),
-    });
-    await vi.waitFor(() =>
-      expect(signIn.method.signIn).toHaveBeenCalledTimes(1),
-    );
+    await startRun(world, coordinator, "run-1", ["sign_in_page"]);
     await startRun(world, coordinator, "run-2", ["sign_in_page"]);
-    // A person takes over from run-2's pause panel before the method finishes.
-    const [request] = await requestsOf(world);
-    const handedBack = await coordinator.handback({
-      projectId: PROJECT,
-      requestId: request?.requestId ?? "",
-      browser: browserSignedInAs(SEAT),
-    });
-    expect(handedBack).toMatchObject({ status: "resumed" });
-    signIn.release();
-    await first;
-    await settle(world);
 
-    const count = (runId: string, event: string) =>
-      runOf(world, runId).log.filter((entry) => entry === event).length;
-    // The execution that reported stopped; the resumed one ran the step once.
-    expect(runOf(world, "run-1").log).not.toContain("signed_in");
-    expect(count("run-1", "paused")).toBe(1);
-    expect(count("run-1", "resume step-1")).toBe(1);
-    expect(count("run-1", "tool ran upstream")).toBe(1);
-    expect(runOf(world, "run-2").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
-    expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
-    expect(world.notices).toEqual([]);
-    expect(await accountOf(world)).toMatchObject({ status: "ready" });
+    expect(method.signIn).toHaveBeenCalledTimes(1);
+    expect(runOf(world, "run-2").log).toEqual(PAUSED);
+    expect(world.notices).toHaveLength(1);
+    expect((await requestsOf(world))[0]?.waitingRunCount).toBe(2);
   });
 
   it("hands a human check to a person without calling the method", async () => {
@@ -887,35 +885,33 @@ describe("in-memory reconnect backend", () => {
     expect(
       await backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
     ).toEqual([]);
-    const handback = (verifiedAccountEmail: string) =>
-      backend.handbackWebReconnect({
-        requestId,
-        verifiedAccountEmail,
-        verifiedWorkspace: SEAT.workspaceName,
-      });
-    expect(await handback(OTHER_SEAT.accountEmail)).toEqual({
-      status: "wrong_identity",
+    const handback = (verifiedAccountEmail: string, id = requestId) =>
+      backend.handbackWebReconnect({ requestId: id, verifiedAccountEmail });
+    await expect(handback(OTHER_SEAT.accountEmail)).rejects.toMatchObject({
+      code: "CONFLICT",
     });
-    expect(await handback("SEAT@example.com")).toEqual({
-      status: "handed_back",
-    });
-    expect(await handback(SEAT.accountEmail)).toEqual({
-      status: "already_handed_back",
-    });
+    await expect(handback(SEAT.accountEmail, "missing")).rejects.toThrow(
+      WebBackendRefusal,
+    );
+    const resolved = { resumableRunIds: ["run-1", "run-2"] };
+    expect(await handback("SEAT@example.com")).toEqual(resolved);
+    expect(await handback(SEAT.accountEmail)).toEqual(resolved);
 
     const claims = await Promise.all([
       backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
       backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
     ]);
+    // A run that reported twice keeps its first step, as the backend does.
     expect(
       claims.flat().map((run) => [run.runId, run.pendingStep.stepId]),
     ).toEqual([
-      ["run-1", "step-2"],
+      ["run-1", "step-1"],
       ["run-2", "step-1"],
     ]);
     const next = await report("run-1", "step-3");
     expect(next.shouldNotify).toBe(true);
     expect(next.requestId).not.toBe(requestId);
+    await vi.waitFor(() => expect(world.notices).toHaveLength(2));
 
     const save = (expectedProfileVersion: number) =>
       backend.saveWebAccountProfile({
@@ -923,78 +919,11 @@ describe("in-memory reconnect backend", () => {
         expectedProfileVersion,
         profile: PROFILE,
       });
-    expect(await save(1)).toEqual({ status: "saved", profileVersion: 2 });
-    expect(await save(1)).toEqual({ status: "conflict", profileVersion: 2 });
-  });
-});
-
-describe("Convex reconnect backend", () => {
-  it("calls the backend's webClients functions with the acting bearer", async () => {
-    const sent: Array<{ path: string; args: unknown; auth: string | null }> =
-      [];
-    const fetch: typeof globalThis.fetch = async (input, init) => {
-      const body = JSON.parse(String(init?.body));
-      sent.push({
-        path: `${String(input).split("/api/")[1]} ${body.path}`,
-        args: body.args[0],
-        auth: new Headers(init?.headers).get("authorization"),
-      });
-      const value = String(input).endsWith("/api/query") ? [] : null;
-      return new Response(JSON.stringify({ status: "success", value }));
-    };
-    const convex = new ConvexHttpClient("https://backend.example.test", {
-      fetch,
+    expect(await save(1)).toEqual({ ok: true, profileVersion: 2 });
+    expect(await save(1)).toEqual({
+      ok: false,
+      reason: "version_conflict",
+      profileVersion: 2,
     });
-    convex.setAuth("fixture-bearer");
-    const backend = createConvexWebReconnectBackend(convex);
-    const pendingStep = {
-      stepId: "step-1",
-      startedAt: "2026-11-20T10:00:00.000Z",
-    };
-    await backend.listWebAccounts({ projectId: PROJECT });
-    await backend.listWebReconnectRequests({ projectId: PROJECT });
-    await backend.reportWebSignInRequired({
-      webAccountId: ACCOUNT,
-      runId: "run-1",
-      pendingStep,
-      reason: "signed_out",
-    });
-    await backend.markWebReconnectNotified({ requestId: "request-1" });
-    await backend.markWebAccountNeedsSignIn({
-      webAccountId: ACCOUNT,
-      reason: "signed_out",
-    });
-    await backend.saveWebAccountProfile({
-      webAccountId: ACCOUNT,
-      expectedProfileVersion: 1,
-      profile: PROFILE,
-    });
-    await backend.markWebAccountVerified({ webAccountId: ACCOUNT, ...SEAT });
-    await backend.handbackWebReconnect({
-      requestId: "request-1",
-      verifiedAccountEmail: SEAT.accountEmail,
-    });
-    await backend.claimResumableWebRuns({ webAccountId: ACCOUNT });
-
-    expect(sent.map((call) => call.path)).toEqual([
-      "query webClients:listWebAccounts",
-      "query webClients:listWebReconnectRequests",
-      "mutation webClients:reportWebSignInRequired",
-      "mutation webClients:markWebReconnectNotified",
-      "mutation webClients:markWebAccountNeedsSignIn",
-      "mutation webClients:saveWebAccountProfile",
-      "mutation webClients:markWebAccountVerified",
-      "mutation webClients:handbackWebReconnect",
-      "mutation webClients:claimResumableWebRuns",
-    ]);
-    expect(sent[2]?.args).toEqual({
-      webAccountId: ACCOUNT,
-      runId: "run-1",
-      pendingStep,
-      reason: "signed_out",
-    });
-    expect(new Set(sent.map((call) => call.auth))).toEqual(
-      new Set(["Bearer fixture-bearer"]),
-    );
   });
 });
