@@ -22,6 +22,7 @@
 import http from "node:http";
 import { WebSocket } from "ws";
 import { logger } from "../utils/logger";
+import { relayProxyAgent } from "./relay-proxy-agent";
 
 export const RELAY_SUBPROTOCOL = "mcpjam-tunnel.v1";
 
@@ -172,6 +173,8 @@ export class RelayConnection {
     if (this.closedByUs || this.permanent) return;
     const ws = new WebSocket(this.options.relayWsUrl, RELAY_SUBPROTOCOL, {
       headers: { Authorization: `Bearer ${this.options.connectToken}` },
+      // Through HTTPS_PROXY when one is set; undefined dials directly.
+      agent: relayProxyAgent(this.options.relayWsUrl),
     });
     this.ws = ws;
 
