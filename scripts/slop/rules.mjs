@@ -73,13 +73,27 @@ function countCommentLines(text, regex) {
 /**
  * A comment that justifies a workaround instead of fixing its cause: a named
  * hack, a wait for React or the browser to catch up, a deferral by a frame or
- * tick, or a cause nobody understood. Chosen from the words that, in this
- * repo's comments, almost only appear in that sense; "deliberately",
- * "best-effort" and "defensive" mostly explain real decisions, so they are not
- * here.
+ * tick, or a cause nobody understood.
  */
 const WORKAROUND =
   /(?<!\bnot (?:an? )?)\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
+
+/**
+ * A comment that admits a compromise: a failure tolerated (best-effort, a
+ * swallowed error), a guard for a case believed impossible (defensive,
+ * belt-and-braces), or a shortcut taken on purpose (deliberately loose,
+ * lossy or duplicated). The bare words "deliberately", "intentionally",
+ * "swallow" and "defensive" mostly explain real decisions or describe input
+ * handling here, so each is matched only next to the words that make it a
+ * concession.
+ */
+const COMPROMISE =
+  /(?<!\bnot (?:a |as )?)\b(?:best[- ]effort|belt[- ]and[- ](?:braces|suspenders))\b|(?<!\bnot (?:a |as )?)\bdefensive(?::|(?:ly)?\s+(?:guard|branch|check|fallback|invariant|default|catch|continue|skip|clamp|re-?check|no-?op|mixed-version)(?:s|es|ed)?\b)|\b(?:deliberately|intentionally|on purpose)\W+(?:swallow(?:s|ed|ing)?|loose|lossy|duplicat(?:e|es|ed|ing)|(?:ignor(?:e|es|ed|ing)|skip(?:s|ped|ping)?)\W+(?:the |any |this |that |its |a )?(?:errors?|failures?|rejections?|exceptions?|throws?))\b|\bswallow(?:s|ed|ing)?\W+(?:on purpose|deliberately|intentionally)\b|^\s*(?:\/\/|\/\*)\s*swallow\b/i;
+
+const WORKAROUND_OR_COMPROMISE = new RegExp(
+  `${WORKAROUND.source}|${COMPROMISE.source}`,
+  "i",
+);
 
 /**
  * A third-party bug tracker link. A workaround forced by someone else's bug
@@ -210,10 +224,14 @@ export const RULES = [
   {
     id: "workaround-comment",
     label:
-      "comments that justify a workaround (hack, wait for React, next frame)",
-    fix: "Fix the cause: act on the event or state change the code is waiting for, or fix the ordering. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
+      "comments that justify a workaround or compromise (hack, wait for React, best-effort, swallowed error, defensive guard)",
+    fix: "Fix the cause instead of explaining it: act on the event or state change the code is waiting for, handle or surface the failure instead of swallowing it, and drop a guard for a case the types or callers already rule out. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
     count: (text) =>
-      countUnexemptCommentLines(text, WORKAROUND, UPSTREAM_ISSUE),
+      countUnexemptCommentLines(
+        text,
+        WORKAROUND_OR_COMPROMISE,
+        UPSTREAM_ISSUE,
+      ),
   },
   // Copy rules read only the strings a user sees (ui-strings.mjs), so a dash
   // or a sales word in a comment or an identifier does not count.
