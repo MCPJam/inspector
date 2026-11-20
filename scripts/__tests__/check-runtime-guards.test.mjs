@@ -167,6 +167,16 @@ test("cloud-default-literals allows comment lines and the listed files", () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test("--root without a directory fails", () => {
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, "platform-runtime-safety", "--root"],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--root needs a directory/);
+});
+
 test("without --root the script scans this repository", () => {
   const result = run("platform-runtime-safety");
   assert.equal(result.status, 0, result.stderr);

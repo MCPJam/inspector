@@ -32,8 +32,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootFlag = process.argv.indexOf("--root");
+// A bare `--root` must not fall back to scanning this repository: that would
+// report on a tree the caller did not ask about.
+if (rootFlag !== -1 && !process.argv[rootFlag + 1]) {
+  console.error("check-runtime-guards: --root needs a directory.");
+  process.exit(1);
+}
 const repoRoot =
-  rootFlag !== -1 && process.argv[rootFlag + 1]
+  rootFlag !== -1
     ? path.resolve(process.argv[rootFlag + 1])
     : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
