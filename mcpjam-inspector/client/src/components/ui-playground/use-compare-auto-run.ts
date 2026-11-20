@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 import type { CompareBroadcastDelivery } from "./compare-broadcast";
 
@@ -10,11 +10,11 @@ export function useCompareAutoRun(onSent?: () => void) {
   const queueRef = useRef<(turn: Turn) => boolean>(() => false);
   const pendingIdRef = useRef<number | null>(null);
   // False when no lane can take it yet; the caller retries.
-  const send = (turn: Turn, sequence: { current: number }) => {
+  const send = useCallback((turn: Turn, sequence: { current: number }) => {
     if (!queueRef.current(turn)) return false;
     pendingIdRef.current = sequence.current;
     return true;
-  };
+  }, []);
   const claim = (
     delivery: CompareBroadcastDelivery | null,
     request: BroadcastChatTurnRequest,
