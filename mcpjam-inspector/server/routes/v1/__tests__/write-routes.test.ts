@@ -89,6 +89,8 @@ vi.mock("convex/browser", () => ({
 import { ConvexHttpClient } from "convex/browser";
 import v1Routes from "../index.js";
 import { convexReadFetch } from "../convex-read-errors.js";
+import { createConvexClient } from "../convex-client.js";
+import { createConvexClients } from "../../shared/evals.js";
 import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 import {
   __resetHostedModelCatalogForTests,
@@ -3155,6 +3157,20 @@ describe("v1 write routes", () => {
       );
     });
 
+    it.each([
+      ["createConvexClient", () => createConvexClient("tok")],
+      ["createConvexClients", () => createConvexClients("tok").convexClient],
+    ])("%s reads through convexReadFetch too", (_factory, create) => {
+      // The shared factories serve most v1 routes and the eval run writes;
+      // their failures reach Sentry through the same strict boundary.
+      create();
+      expect(ConvexHttpClient).toHaveBeenCalledTimes(1);
+      expect(ConvexHttpClient).toHaveBeenCalledWith(
+        "https://convex.example.com",
+        { fetch: convexReadFetch },
+      );
+    });
+
     it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
       // The omission case is pinned by the exact-match assertion above: a run
       // whose snapshot predates the field must not acquire `executionEngine`,
@@ -3173,6 +3189,110 @@ describe("v1 write routes", () => {
       expect((await res.json()) as any).toMatchObject({
         id: "run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         executionEngine: "harness:claude-code",
+      });
+    });
+
+    /**
+     * The accounts a run used. The backend has already removed every email
+     * this caller may not see, so the route forwards what it was given: an
+     * email the backend kept, and none where it removed one.
+     */
+    describe("accounts", () => {
+      // Fake values only.
+      const PROJECT_ACCOUNT = {
+        serverId: "srvasanaxxxxxxxxxxxxxxxxxxxxxxxx",
+        kind: "shared",
+        connectionId: "connsharedxxxxxxxxxxxxxxxxxxxxxx",
+        name: "QA bot",
+        tokenStoredBy: "Ana Ruiz",
+        tokenStoredAt: 1763372820000,
+        tokenUploaded: true,
+        identity: {
+          source: "token",
+          subject: "qa-bot",
+          issuer: "https://auth.example.com",
+          email: "qa-bot@example.com",
+          emailSource: "token",
+        },
+      };
+      // A teammate's personal account, read by someone else: the backend
+      // kept the name and subject and removed the email.
+      const PERSONAL_ACCOUNT = {
+        serverId: "srvlinearxxxxxxxxxxxxxxxxxxxxxxx",
+        kind: "account",
+        connectionId: "connpersonalxxxxxxxxxxxxxxxxxxxx",
+        name: "test-automation-1",
+        profileId: "profile-123",
+        tokenExpiresAt: 1763376420000,
+        identity: { source: "profile", name: "Test Automation", subject: "profile-123" },
+      };
+
+      it("returns each account on a run read, with an email only where the backend kept one", async () => {
+        convexQueryMock.mockResolvedValueOnce({
+          ...RUN_DOC,
+          accountsAtRun: [PROJECT_ACCOUNT, PERSONAL_ACCOUNT],
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-runs/run1xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        );
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { accounts?: unknown[] };
+        expect(body.accounts).toEqual([
+          {
+            serverId: "srvasanaxxxxxxxxxxxxxxxxxxxxxxxx",
+            accountId: "connsharedxxxxxxxxxxxxxxxxxxxxxx",
+            name: "QA bot",
+            kind: "project",
+            tokenUploaded: true,
+            tokenStoredBy: "Ana Ruiz",
+            tokenStoredAt: 1763372820000,
+            identity: {
+              source: "token",
+              subject: "qa-bot",
+              issuer: "https://auth.example.com",
+              email: "qa-bot@example.com",
+              emailSource: "token",
+            },
+          },
+          {
+            serverId: "srvlinearxxxxxxxxxxxxxxxxxxxxxxx",
+            accountId: "connpersonalxxxxxxxxxxxxxxxxxxxx",
+            name: "test-automation-1",
+            kind: "personal",
+            tokenExpiresAt: 1763376420000,
+            identity: {
+              source: "profile",
+              name: "Test Automation",
+              subject: "profile-123",
+            },
+          },
+        ]);
+        expect(JSON.stringify(body.accounts?.[1])).not.toContain("@");
+      });
+
+      it("lists accounts per run, and omits them on a run that recorded none", async () => {
+        mockConvexQueries({
+          "testSuites:listTestSuiteRuns": () => [
+            { ...RUN_DOC, accountsAtRun: [PERSONAL_ACCOUNT] },
+            { ...RUN_DOC, _id: "run2xxxxxxxxxxxxxxxxxxxxxxxxxxxx" },
+          ],
+        });
+        const res = await request(
+          makeApp(),
+          "GET",
+          "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-suites/suite1xxxxxxxxxxxxxxxxxxxxxxxxxx/runs"
+        );
+        expect(res.status).toBe(200);
+        const { items } = (await res.json()) as {
+          items: Array<{ id: string; accounts?: Array<{ name: string }> }>;
+        };
+        expect(items[0]?.accounts?.map((account) => account.name)).toEqual([
+          "test-automation-1",
+        ]);
+        expect(items[1]?.id).toBe("run2xxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+        expect(items[1]).not.toHaveProperty("accounts");
       });
     });
 

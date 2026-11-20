@@ -20,7 +20,7 @@ import { BeforeAfter, Panel } from "./_support/layout";
  * what you do — see the access example below.
  */
 const meta = {
-  title: "Error Patterns/1. Full-page error",
+  title: "Components/Error Patterns/1. Full-page error",
   parameters: {
     layout: "padded",
     docs: {

@@ -15,6 +15,7 @@ import {
   ScrollText,
   LockKeyhole,
   Settings2,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -33,6 +34,7 @@ const settingsIcons: Record<string, LucideIcon> = {
   "org-integrations": Plug,
   "org-billing": DollarSign,
   "org-audit-log": ScrollText,
+  "org-security": ShieldCheck,
   "org-data-management": Database,
   "project-general": Settings2,
   "project-members": Users,

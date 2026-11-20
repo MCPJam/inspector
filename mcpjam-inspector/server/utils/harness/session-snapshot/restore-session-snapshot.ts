@@ -25,13 +25,12 @@ import {
   writeSessionFiles,
   type SnapshotFileSession,
 } from "./snapshot-bundle.js";
+import { harnessConversationState } from "../registry.js";
 import { sessionFileSpec } from "./session-files.js";
 
 /** The backend's own ceiling on a stored snapshot, plus room for headers. */
 const MAX_DOWNLOAD_BYTES = 16 * 1024 * 1024 + 64 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 30_000;
-/** Runtimes whose files this knows how to place; the backend decides which it serves. */
-const RESTORABLE = new Set(["claude-code", "codex"]);
 
 /** What the model is told on the first prompt of a restored session. */
 export const SESSION_RESTORED_NOTE =
@@ -110,7 +109,9 @@ export function startSessionSnapshotRestore(args: {
     state.awaitingApproval ||
     stateVersion === undefined ||
     !sandboxId ||
-    !RESTORABLE.has(owner.harnessId) ||
+    // Only a runtime that declares its conversation files can have them
+    // placed; the backend decides which it serves.
+    !harnessConversationState(owner.harnessId) ||
     getHarnessResumeEligibility({
       state,
       computerId: args.computerId,
@@ -161,6 +162,7 @@ export function startSessionSnapshotRestore(args: {
       const home = await boxHome(session, turnSignal);
       const spec = sessionFileSpec({
         harnessId: owner.harnessId,
+        conversationState: harnessConversationState(owner.harnessId),
         harnessSessionId: state.harnessSessionId,
         resumeState: state.resumeState,
         home,

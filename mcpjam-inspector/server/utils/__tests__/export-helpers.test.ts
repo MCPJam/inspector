@@ -3,6 +3,7 @@ import {
   buildServerToolSnapshotDebug,
   exportConnectedServerToolSnapshotForEvalAuthoring,
   exportServer,
+  exportSingleServerForInspection,
   renderServerToolSnapshotSection,
   SERVER_TOOL_SNAPSHOT_VERSION,
 } from "../export-helpers.js";
@@ -522,5 +523,91 @@ describe("buildServerToolSnapshotDebug", () => {
       fallbackReason: "tool_snapshot_partial_capture",
       fullSnapshot: snapshot,
     });
+  });
+});
+
+describe("exportSingleServerForInspection", () => {
+  // The shape `MCPClientManager.getInitializationInfo` returns: the
+  // initialize result's serverInfo arrives as `serverVersion` and its
+  // capabilities as `serverCapabilities`.
+  const initializationInfo = {
+    protocolVersion: "2025-11-25",
+    transport: "streamable-http",
+    serverVersion: { name: " excalidraw ", version: "1.4.0", title: "Excalidraw" },
+    serverCapabilities: {
+      tools: { listChanged: true },
+      resources: { subscribe: false },
+      experimental: { $internal: true, kept: {} },
+    },
+    instructions: "Draw diagrams.",
+    clientCapabilities: { sampling: {} },
+  };
+
+  it("records serverInfo and capabilities from the live connection", async () => {
+    const getInitializationInfo = vi.fn().mockReturnValue(initializationInfo);
+    const manager = createMockManager({
+      listTools: vi.fn().mockResolvedValue({
+        tools: [{ name: "draw", inputSchema: { type: "object" } }],
+      }),
+      getInitializationInfo,
+    });
+
+    const snapshot = await exportSingleServerForInspection(
+      manager,
+      "Excalidraw",
+      "server_123",
+    );
+
+    expect(getInitializationInfo).toHaveBeenCalledWith("Excalidraw");
+    expect(snapshot.version).toBe(SERVER_TOOL_SNAPSHOT_VERSION);
+    expect(snapshot.servers).toEqual([
+      {
+        serverId: "server_123",
+        tools: [{ name: "draw", inputSchema: { type: "object" } }],
+        initialize: {
+          protocolVersion: "2025-11-25",
+          serverInfo: { name: "excalidraw", version: "1.4.0" },
+          capabilities: {
+            tools: { listChanged: true },
+            resources: { subscribe: false },
+            experimental: { kept: {} },
+          },
+          instructions: "Draw diagrams.",
+        },
+      },
+    ]);
+  });
+
+  it("omits initialize when the manager has no initialization info", async () => {
+    const manager = createMockManager({
+      getInitializationInfo: vi.fn().mockReturnValue(undefined),
+    });
+
+    const snapshot = await exportSingleServerForInspection(
+      manager,
+      "Excalidraw",
+      "server_123",
+    );
+
+    expect(snapshot.servers[0]).toEqual({ serverId: "server_123", tools: [] });
+  });
+
+  it("keeps the eval-authoring snapshot on the same initialize fields", async () => {
+    const manager = createMockManager({
+      getInitializationInfo: vi.fn().mockReturnValue(initializationInfo),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["srv"],
+    );
+
+    expect(snapshot.servers[0].initialize?.serverInfo).toEqual({
+      name: "excalidraw",
+      version: "1.4.0",
+    });
+    expect(snapshot.servers[0].initialize?.capabilities).toHaveProperty(
+      "tools",
+    );
   });
 });

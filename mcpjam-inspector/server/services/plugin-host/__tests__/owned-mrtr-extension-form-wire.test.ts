@@ -28,6 +28,10 @@ import {
   ownedMrtrFormCapabilities,
   ownedPluginFormSchema,
 } from "../owned-mrtr";
+import {
+  selectLocalMrtrSchema,
+  validateLocalMrtrAnswer,
+} from "../../../routes/mcp/local-mrtr-forms.js";
 
 const referenceSchema = {
   type: "object" as const,
@@ -152,6 +156,39 @@ async function suspendFirstRound(manager: MCPClientManager) {
 }
 
 describe("OpenAI extended forms over MRTR", () => {
+  it.each(["decline", "cancel"] as const)("delivers %s without requiring accepted form content", async (action) => {
+    const served = await serve();
+    const manager = await connect(served.url, ownedMrtrFormCapabilities({}));
+    const state = await suspendFirstRound(manager);
+    const leg = await resumeInputRequiredOperation(
+      manager.getManagedClient("server")!, state, { form: { action } }, ownedValidation,
+    );
+    expect(leg.status).toBe("complete");
+    expect(served.calls).toHaveLength(2);
+    expect(served.calls[1]!.params.inputResponses).toEqual({ form: { action } });
+  });
+
+  it("resumes a manual extended form on a fresh connection with both form claims", async () => {
+    const served = await serve();
+    const first = await connect(served.url, ownedMrtrFormCapabilities({}));
+    const state = await suspendFirstRound(first);
+    await first.disconnectAllServers();
+    const resumed = await connect(served.url, ownedMrtrFormCapabilities({}));
+    const answer = { action: "accept" as const, content: { refs: ["fixture://parts/bolt"] } };
+    const leg = await resumeInputRequiredOperation(resumed.getManagedClient("server")!, state, { form: answer }, {
+      selectFormSchema: selectLocalMrtrSchema,
+      validateContent: validateLocalMrtrAnswer,
+    });
+    expect(leg.status).toBe("complete");
+    expect(served.calls).toHaveLength(2);
+    expect(served.calls[1]!.params.inputResponses).toEqual({ form: answer });
+    expect(served.calls[1]!.params._meta).toMatchObject({
+      "io.modelcontextprotocol/clientCapabilities": {
+        elicitation: { form: {} }, extensions: { "openai/elicitation": { form: {} } },
+      },
+    });
+  });
+
   it("shows the _meta schema, validates a URI-array answer against it, and retries with the spec's invariants", async () => {
     const served = await serve();
     const manager = await connect(served.url, ownedMrtrFormCapabilities({}));

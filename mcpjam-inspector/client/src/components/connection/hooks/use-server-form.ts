@@ -27,6 +27,7 @@ import {
   type PendingCredentialClear,
 } from "@/lib/credential-origin";
 import { parseCommandInput } from "@/lib/command-input";
+import { isStandalonePublishedPluginId } from "@/shared/plugin-deep-link";
 import {
   getRedactedConfigFlag,
   isAuthorizationHeader,
@@ -57,6 +58,7 @@ function quoteCommandToken(token: string): string {
 
 interface InitialFormValues {
   name: string;
+  publishedPluginId: string;
   type: "stdio" | "http";
   url: string;
   commandInput: string;
@@ -136,6 +138,7 @@ export function useServerForm(
   },
 ) {
   const [name, setName] = useState("");
+  const [publishedPluginId, setPublishedPluginId] = useState("");
   const [type, setType] = useState<"stdio" | "http">("http");
   const [commandInput, setCommandInput] = useState("");
   const [url, setUrl] = useState("");
@@ -369,6 +372,7 @@ export function useServerForm(
         (config.capabilities as Record<string, unknown> | undefined);
 
       setName(server.name);
+      setPublishedPluginId(server.publishedPluginId ?? "");
       setType(serverType);
       setUrl(serverUrl);
       setSavedUrl(serverUrl || null);
@@ -481,12 +485,14 @@ export function useServerForm(
       setShowConfiguration(
         headersArray.length > 0 ||
           timeoutValue.trim() !== "" ||
+          Boolean(server.publishedPluginId) ||
           clientCapabilitiesOverrideValue != null,
       );
 
       // Capture initial values for change detection (deep copy arrays to avoid aliasing)
       initialValues.current = {
         name: server.name,
+        publishedPluginId: server.publishedPluginId ?? "",
         type: serverType,
         url: serverUrl,
         commandInput: fullCommand,
@@ -547,6 +553,10 @@ export function useServerForm(
   const validateForm = (): string | null => {
     if (!name || name.trim() === "") {
       return "Enter a server name.";
+    }
+    const pluginId = publishedPluginId.trim();
+    if (pluginId && !isStandalonePublishedPluginId(pluginId)) {
+      return "Enter a published plugin ID, such as plugin_abc123.";
     }
 
     if (type === "stdio") {
@@ -769,6 +779,12 @@ export function useServerForm(
         ? parseCapabilitiesOverride(clientCapabilitiesOverrideText)
         : undefined;
 
+    const pluginId = publishedPluginId.trim();
+    const pluginIdEdit =
+      pluginId !== (initialValues.current?.publishedPluginId ?? "")
+        ? { publishedPluginId: pluginId || null }
+        : {};
+
     // Handle stdio-specific data
     if (type === "stdio") {
       const { command, args } = parseCommandInput(commandInput);
@@ -787,6 +803,7 @@ export function useServerForm(
       return {
         name: name.trim(),
         type: "stdio",
+        ...pluginIdEdit,
         command: command.trim(),
         args,
         ...(includeEnv ? { env } : {}),
@@ -882,6 +899,7 @@ export function useServerForm(
     return {
       name: name.trim(),
       type: "http",
+      ...pluginIdEdit,
       url: url.trim(),
       headers: explicitHeaders,
       ...(secretPatch ? { secretPatch } : {}),
@@ -948,6 +966,7 @@ export function useServerForm(
 
   const resetForm = () => {
     setName("");
+    setPublishedPluginId("");
     setType("http");
     setCommandInput("");
     setUrl("");
@@ -998,6 +1017,7 @@ export function useServerForm(
     const iv = initialValues.current;
     return (
       name !== iv.name ||
+      publishedPluginId.trim() !== iv.publishedPluginId ||
       type !== iv.type ||
       url !== iv.url ||
       commandInput !== iv.commandInput ||
@@ -1099,6 +1119,8 @@ export function useServerForm(
 
     // Form data
     name,
+    publishedPluginId,
+    setPublishedPluginId,
     setName,
     type,
     setType,

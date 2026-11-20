@@ -1486,7 +1486,7 @@ describe("resolveComposerEnvironments — a client on the organization's Cursor 
     ).rejects.toMatchObject({
       code: "CLIENT_UNSUPPORTED",
       message:
-        "Cursor CLI runs only in the Playground, evals and swarms. " +
+        "Cursor CLI runs only in the Playground, evals, swarms and the API. " +
         "Choose a different client for this study.",
     });
     expect(ensure).not.toHaveBeenCalled();

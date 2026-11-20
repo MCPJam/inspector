@@ -64,6 +64,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      - name: Check canonical error rules
+        run: npm run errors:check && node --test scripts/__tests__/error-rules.test.mjs
+
       - name: Verify Docker workspace dependency manifests
         run: node --test .github/scripts/docker-workspaces.test.mjs
 
@@ -88,7 +91,8 @@ jobs:
             .github/scripts/release-evidence.test.mjs \
             .github/scripts/daily-release.test.mjs \
             .github/scripts/local-harness-bot-pr.test.mjs \
-            .github/scripts/check-workos-loopback.test.mjs
+            .github/scripts/check-workos-loopback.test.mjs \
+            .github/scripts/retry-worker-crash.test.mjs
 
       # Same node_modules cache as test.yml's jobs — the rationale lives on the
       # `test` job there. Different key prefix: this job runs on a bare

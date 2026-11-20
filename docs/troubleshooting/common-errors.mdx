@@ -142,14 +142,14 @@ If you see this error and did not intentionally change the server's URL, check t
 
 If a connection fails with a message like:
 
-> "my-server" uses saved credentials that your organization keeps inside MCPJam-hosted connections. Connect it from MCPJam in the browser, or ask an organization admin to change the credential export policy.
+> "my-server" uses saved credentials that your organization keeps inside MCPJam-hosted connections. Connect it from MCPJam in the browser. Ask an organization admin to turn on Allow credential export in Organization settings under Security.
 
-This means your organization has a credential export policy that prevents saved credentials from being used outside MCPJam-hosted connections. Re-authorizing will not help; the policy applies to the credential itself, not to your session.
+This means your organization has turned off **Allow credential export**, so only MCPJam-hosted connections can use its saved credentials. Local apps, the CLI, sandboxes and browser reveals are refused. Re-authorizing will not help; the setting applies to the credential itself, not to your session. Refusals from other places are worded differently but end with the same sentence about **Allow credential export**.
 
 **Solutions:**
 
 - **Connect from MCPJam in the browser**: open the server from [app.mcpjam.com](https://app.mcpjam.com) instead of a local inspector or CLI.
-- **Ask an organization admin to change the policy**: an admin can update the credential export policy in the organization settings to allow credentials to be used from outside hosted connections.
+- **Ask an organization admin to turn on Allow credential export**: organization owners and admins change it under **Organization settings → Security**. Members can open that page to see how it is set.
 
 ### Getting 401 Unauthorized errors
 

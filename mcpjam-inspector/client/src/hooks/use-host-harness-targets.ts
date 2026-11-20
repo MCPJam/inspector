@@ -2,8 +2,8 @@
  * The harness each host runs, for the model pickers that must disable the
  * models a harness cannot run (`lib/harness-model-locks.ts`).
  *
- * The host LIST query does not carry `harness`, so this reads each host's
- * config — one subscription per host, over the handful of hosts a picker shows.
+ * Reads each host's detail (its `runtime`) — one subscription per host, over
+ * the handful of hosts a picker shows, for callers that hold only ids.
  * An unanswered or failed read (including an id that is not a real host, such
  * as a catalog slug) is `undefined` ("not known yet"), which the lock
  * helpers treat like an emulated host: nothing is disabled on a guess, and the
@@ -14,7 +14,10 @@ import { useConvex, useQueries } from "convex/react";
 import { makeFunctionReference } from "convex/server";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { HostDetail } from "@/hooks/useClients";
-import type { HarnessModelTarget } from "@/lib/harness-model-locks";
+import {
+  harnessTargetOfHost,
+  type HarnessModelTarget,
+} from "@/lib/harness-model-locks";
 
 const getHostQuery = makeFunctionReference<
   "query",
@@ -47,8 +50,7 @@ export function useHostHarnessTargets(
     for (const hostId of key ? key.split(",") : []) {
       const result = results[hostId] as HostDetail | null | Error | undefined;
       if (!result || result instanceof Error) continue;
-      const harness = result.config?.harness;
-      byHost[hostId] = harness ? { harnessId: harness } : null;
+      byHost[hostId] = harnessTargetOfHost(result);
     }
     return byHost;
   }, [key, results]);
@@ -68,8 +70,7 @@ export function useHostHarnessLoader(): (
     async (hostId: string) => {
       try {
         const host = await convex.query(getHostQuery, { hostId });
-        const harness = host?.config?.harness;
-        return harness ? { harnessId: harness } : null;
+        return host ? harnessTargetOfHost(host) : null;
       } catch {
         return null;
       }

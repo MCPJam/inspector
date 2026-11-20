@@ -405,6 +405,14 @@ export function EditServerFormContent({
           requestTimeout={formState.requestTimeout}
           onRequestTimeoutChange={formState.setRequestTimeout}
           inheritedRequestTimeout={formState.inheritedRequestTimeout}
+          publishedPluginId={
+            projectId && hostedServerId
+              ? {
+                  value: formState.publishedPluginId,
+                  onChange: formState.setPublishedPluginId,
+                }
+              : undefined
+          }
           clientCapabilitiesOverrideEnabled={
             formState.clientCapabilitiesOverrideEnabled
           }

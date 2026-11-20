@@ -208,6 +208,7 @@ describe("ChatInput", () => {
     stop: vi.fn(),
     currentModel: defaultModel,
     availableModels: [defaultModel],
+    harnessScope: "not-client-run" as const,
     onModelChange: vi.fn(),
     systemPrompt: "You are a helpful assistant.",
     onSystemPromptChange: vi.fn(),

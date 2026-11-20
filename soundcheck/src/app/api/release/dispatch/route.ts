@@ -299,8 +299,8 @@ export async function POST(request: Request) {
   const message = failed.length
     ? `${successLabel} dispatched. ${failedLabel} failed — check Soundcheck server logs.`
     : parsed.action === "start"
-      ? `${successLabel} dispatched. The release starts in about two minutes; follow it under Release progress.`
-      : `${successLabel} dispatched. The progress tile will pick it up within ~10s.`;
+      ? `${successLabel} dispatched. The release starts in about two minutes.`
+      : `${successLabel} dispatched. The card picks it up within about 10 seconds.`;
 
   return NextResponse.json({
     ok: true,

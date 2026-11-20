@@ -1,0 +1,934 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`metadata discovery against recorded responses > 'challenge pointer, authorization serv…' 1`] = `
+{
+  "browserAuth": {
+    "requests": [
+      "GET https://pointer.example.com/meta/prm.json",
+      "GET https://idp.example.com/.well-known/oauth-authorization-server",
+    ],
+    "result": {
+      "error": "HTTP 503 trying to load OAuth metadata from https://idp.example.com/.well-known/oauth-authorization-server",
+    },
+  },
+  "claudeReadiness": {
+    "requests": [
+      "GET https://pointer.example.com/meta/prm.json",
+      "GET https://idp.example.com/.well-known/oauth-authorization-server",
+      "GET https://idp.example.com/.well-known/openid-configuration",
+    ],
+    "result": {
+      "firstAuthorizationServer": {
+        "fetchError": "https://idp.example.com/.well-known/openid-configuration answered 503",
+        "issuer": "https://idp.example.com",
+        "reachable": false,
+      },
+      "prm": {
+        "discoveredVia": "www-authenticate",
+        "document": {
+          "authorization_servers": [
+            "https://idp.example.com",
+          ],
+          "resource": "https://pointer.example.com/mcp",
+        },
+        "rejectedPointer": undefined,
+        "url": "https://pointer.example.com/meta/prm.json",
+      },
+    },
+  },
+  "directoryReadiness": {
+    "requests": [
+      "GET https://pointer.example.com/meta/prm.json",
+    ],
+    "result": {
+      "discoveredVia": "www-authenticate",
+      "document": {
+        "authorization_servers": [
+          "https://idp.example.com",
+        ],
+        "resource": "https://pointer.example.com/mcp",
+      },
+      "rejectedPointer": undefined,
+      "url": "https://pointer.example.com/meta/prm.json",
+    },
+  },
+  "oauthConformance": {
+    "requests": [
+      "GET https://pointer.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://pointer.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": undefined,
+  },
+  "openaiReadiness": {
+    "requests": [
+      "GET https://pointer.example.com/meta/prm.json",
+      "GET https://idp.example.com/.well-known/oauth-authorization-server",
+      "GET https://idp.example.com/.well-known/openid-configuration",
+    ],
+    "result": {
+      "advertisedAuthorizationServerCount": 1,
+      "authorizationServers": [
+        {
+          "fetchError": "https://idp.example.com/.well-known/openid-configuration answered 503",
+          "issuer": "https://idp.example.com",
+          "metadataUrl": "https://idp.example.com/.well-known/oauth-authorization-server",
+        },
+      ],
+      "prm": {
+        "discoveredVia": "www-authenticate",
+        "document": {
+          "authorization_servers": [
+            "https://idp.example.com",
+          ],
+          "resource": "https://pointer.example.com/mcp",
+        },
+        "rejectedPointer": undefined,
+        "url": "https://pointer.example.com/meta/prm.json",
+      },
+    },
+  },
+  "probe": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://pointer.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://pointer.example.com/meta/prm.json",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 503,
+        "url": "https://idp.example.com/.well-known/oauth-authorization-server",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 503,
+        "url": "https://idp.example.com/.well-known/openid-configuration",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": undefined,
+      "authorizationServerMetadataUrl": undefined,
+      "discoveryError": "HTTP 503 Service Unavailable",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://idp.example.com",
+        ],
+        "resource": "https://pointer.example.com/mcp",
+      },
+      "resourceMetadataUrl": "https://pointer.example.com/meta/prm.json",
+      "wwwAuthenticate": "Bearer resource_metadata="https://pointer.example.com/meta/prm.json"",
+    },
+    "status": "oauth_required",
+  },
+  "probeLegacy": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://pointer.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://pointer.example.com/meta/prm.json",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 503,
+        "url": "https://idp.example.com/.well-known/oauth-authorization-server",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": undefined,
+      "authorizationServerMetadataUrl": undefined,
+      "discoveryError": "HTTP 503 Service Unavailable",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://idp.example.com",
+        ],
+        "resource": "https://pointer.example.com/mcp",
+      },
+      "resourceMetadataUrl": "https://pointer.example.com/meta/prm.json",
+      "wwwAuthenticate": "Bearer resource_metadata="https://pointer.example.com/meta/prm.json"",
+    },
+    "status": "oauth_required",
+  },
+}
+`;
+
+exports[`metadata discovery against recorded responses > 'metadata only at the root, root issuer' 1`] = `
+{
+  "browserAuth": {
+    "requests": [
+      "GET https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "GET https://api.example.com/.well-known/oauth-protected-resource",
+      "GET https://api.example.com/.well-known/oauth-authorization-server",
+    ],
+    "result": {
+      "authorizationServerMetadata": {
+        "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+        "code_challenge_methods_supported": [
+          "S256",
+        ],
+        "issuer": "https://api.example.com",
+        "registration_endpoint": "https://api.example.com/register",
+        "response_types_supported": [
+          "code",
+        ],
+        "token_endpoint": "https://auth.example.com/tenant/token",
+      },
+      "authorizationServerUrl": "https://api.example.com",
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://api.example.com",
+        ],
+        "resource": "https://api.example.com/v1/mcp",
+      },
+    },
+  },
+  "claudeReadiness": {
+    "requests": [
+      "GET https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "GET https://api.example.com/.well-known/oauth-protected-resource",
+      "GET https://api.example.com/.well-known/oauth-authorization-server",
+    ],
+    "result": {
+      "firstAuthorizationServer": {
+        "document": {
+          "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+          "code_challenge_methods_supported": [
+            "S256",
+          ],
+          "issuer": "https://api.example.com",
+          "registration_endpoint": "https://api.example.com/register",
+          "response_types_supported": [
+            "code",
+          ],
+          "token_endpoint": "https://auth.example.com/tenant/token",
+        },
+        "issuer": "https://api.example.com",
+        "metadataUrl": "https://api.example.com/.well-known/oauth-authorization-server",
+        "reachable": true,
+      },
+      "prm": {
+        "discoveredVia": "well-known-root",
+        "document": {
+          "authorization_servers": [
+            "https://api.example.com",
+          ],
+          "resource": "https://api.example.com/v1/mcp",
+        },
+        "rejectedPointer": undefined,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource",
+      },
+    },
+  },
+  "directoryReadiness": {
+    "requests": [
+      "GET https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "GET https://api.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": {
+      "discoveredVia": "well-known-root",
+      "document": {
+        "authorization_servers": [
+          "https://api.example.com",
+        ],
+        "resource": "https://api.example.com/v1/mcp",
+      },
+      "rejectedPointer": undefined,
+      "url": "https://api.example.com/.well-known/oauth-protected-resource",
+    },
+  },
+  "oauthConformance": {
+    "requests": [
+      "GET https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "GET https://api.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": "https://api.example.com/.well-known/oauth-protected-resource",
+  },
+  "openaiReadiness": {
+    "requests": [
+      "GET https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "GET https://api.example.com/.well-known/oauth-protected-resource",
+      "GET https://api.example.com/.well-known/oauth-authorization-server",
+    ],
+    "result": {
+      "advertisedAuthorizationServerCount": 1,
+      "authorizationServers": [
+        {
+          "document": {
+            "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+            "code_challenge_methods_supported": [
+              "S256",
+            ],
+            "issuer": "https://api.example.com",
+            "registration_endpoint": "https://api.example.com/register",
+            "response_types_supported": [
+              "code",
+            ],
+            "token_endpoint": "https://auth.example.com/tenant/token",
+          },
+          "issuer": "https://api.example.com",
+          "metadataUrl": "https://api.example.com/.well-known/oauth-authorization-server",
+        },
+      ],
+      "prm": {
+        "discoveredVia": "well-known-root",
+        "document": {
+          "authorization_servers": [
+            "https://api.example.com",
+          ],
+          "resource": "https://api.example.com/v1/mcp",
+        },
+        "rejectedPointer": undefined,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource",
+      },
+    },
+  },
+  "probe": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://api.example.com/v1/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 200,
+        "url": "https://api.example.com/.well-known/oauth-authorization-server",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": {
+        "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+        "code_challenge_methods_supported": [
+          "S256",
+        ],
+        "issuer": "https://api.example.com",
+        "registration_endpoint": "https://api.example.com/register",
+        "response_types_supported": [
+          "code",
+        ],
+        "token_endpoint": "https://auth.example.com/tenant/token",
+      },
+      "authorizationServerMetadataUrl": "https://api.example.com/.well-known/oauth-authorization-server",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+        "dcr",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://api.example.com",
+        ],
+        "resource": "https://api.example.com/v1/mcp",
+      },
+      "resourceMetadataUrl": "https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "wwwAuthenticate": "Bearer error="invalid_token"",
+    },
+    "status": "oauth_required",
+  },
+  "probeLegacy": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://api.example.com/v1/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://api.example.com/.well-known/oauth-protected-resource",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 200,
+        "url": "https://api.example.com/.well-known/oauth-authorization-server",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": {
+        "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+        "code_challenge_methods_supported": [
+          "S256",
+        ],
+        "issuer": "https://api.example.com",
+        "registration_endpoint": "https://api.example.com/register",
+        "response_types_supported": [
+          "code",
+        ],
+        "token_endpoint": "https://auth.example.com/tenant/token",
+      },
+      "authorizationServerMetadataUrl": "https://api.example.com/.well-known/oauth-authorization-server",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+        "dcr",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://api.example.com",
+        ],
+        "resource": "https://api.example.com/v1/mcp",
+      },
+      "resourceMetadataUrl": "https://api.example.com/.well-known/oauth-protected-resource/v1/mcp",
+      "wwwAuthenticate": "Bearer error="invalid_token"",
+    },
+    "status": "oauth_required",
+  },
+}
+`;
+
+exports[`metadata discovery against recorded responses > 'no metadata anywhere' 1`] = `
+{
+  "browserAuth": {
+    "requests": [
+      "GET https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://plain.example.com/.well-known/oauth-protected-resource",
+      "GET https://plain.example.com/.well-known/oauth-authorization-server",
+      "GET https://plain.example.com/.well-known/openid-configuration",
+    ],
+    "result": {
+      "authorizationServerMetadata": undefined,
+      "authorizationServerUrl": "https://plain.example.com/",
+      "resourceMetadata": undefined,
+    },
+  },
+  "claudeReadiness": {
+    "requests": [
+      "GET https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://plain.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": {
+      "firstAuthorizationServer": undefined,
+      "prm": {
+        "discoveredVia": "not-found",
+        "fetchError": "https://plain.example.com/.well-known/oauth-protected-resource answered 404",
+        "rejectedPointer": undefined,
+      },
+    },
+  },
+  "directoryReadiness": {
+    "requests": [
+      "GET https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://plain.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": {
+      "discoveredVia": "not-found",
+      "fetchError": "https://plain.example.com/.well-known/oauth-protected-resource answered 404",
+      "rejectedPointer": undefined,
+    },
+  },
+  "oauthConformance": {
+    "requests": [
+      "GET https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://plain.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": undefined,
+  },
+  "openaiReadiness": {
+    "requests": [
+      "GET https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://plain.example.com/.well-known/oauth-protected-resource",
+    ],
+    "result": {
+      "advertisedAuthorizationServerCount": 0,
+      "authorizationServers": undefined,
+      "prm": {
+        "discoveredVia": "not-found",
+        "fetchError": "https://plain.example.com/.well-known/oauth-protected-resource answered 404",
+        "rejectedPointer": undefined,
+      },
+    },
+  },
+  "probe": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://plain.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://plain.example.com/.well-known/oauth-protected-resource",
+      },
+    ],
+    "oauth": {
+      "discoveryError": "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadataUrl": "https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "wwwAuthenticate": "Bearer",
+    },
+    "status": "oauth_required",
+  },
+  "probeLegacy": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://plain.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://plain.example.com/.well-known/oauth-protected-resource",
+      },
+    ],
+    "oauth": {
+      "discoveryError": "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadataUrl": "https://plain.example.com/.well-known/oauth-protected-resource/mcp",
+      "wwwAuthenticate": "Bearer",
+    },
+    "status": "oauth_required",
+  },
+}
+`;
+
+exports[`metadata discovery against recorded responses > 'path issuer publishing only OIDC meta…' 1`] = `
+{
+  "browserAuth": {
+    "requests": [
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+      "GET https://auth.example.com/.well-known/openid-configuration/tenant",
+    ],
+    "result": {
+      "authorizationServerMetadata": {
+        "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+        "client_id_metadata_document_supported": true,
+        "code_challenge_methods_supported": [
+          "S256",
+        ],
+        "issuer": "https://auth.example.com/tenant",
+        "response_types_supported": [
+          "code",
+        ],
+        "token_endpoint": "https://auth.example.com/tenant/token",
+      },
+      "authorizationServerUrl": "https://auth.example.com/tenant",
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://auth.example.com/tenant",
+        ],
+        "resource": "https://mcp.example.com/mcp",
+        "scopes_supported": [
+          "read",
+        ],
+      },
+    },
+  },
+  "claudeReadiness": {
+    "requests": [
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+      "GET https://auth.example.com/.well-known/openid-configuration/tenant",
+    ],
+    "result": {
+      "firstAuthorizationServer": {
+        "document": {
+          "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+          "client_id_metadata_document_supported": true,
+          "code_challenge_methods_supported": [
+            "S256",
+          ],
+          "issuer": "https://auth.example.com/tenant",
+          "response_types_supported": [
+            "code",
+          ],
+          "token_endpoint": "https://auth.example.com/tenant/token",
+        },
+        "issuer": "https://auth.example.com/tenant",
+        "metadataUrl": "https://auth.example.com/.well-known/openid-configuration/tenant",
+        "reachable": true,
+      },
+      "prm": {
+        "discoveredVia": "well-known-path-suffixed",
+        "document": {
+          "authorization_servers": [
+            "https://auth.example.com/tenant",
+          ],
+          "resource": "https://mcp.example.com/mcp",
+          "scopes_supported": [
+            "read",
+          ],
+        },
+        "rejectedPointer": undefined,
+        "url": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+    },
+  },
+  "directoryReadiness": {
+    "requests": [
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    ],
+    "result": {
+      "discoveredVia": "well-known-path-suffixed",
+      "document": {
+        "authorization_servers": [
+          "https://auth.example.com/tenant",
+        ],
+        "resource": "https://mcp.example.com/mcp",
+        "scopes_supported": [
+          "read",
+        ],
+      },
+      "rejectedPointer": undefined,
+      "url": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+  },
+  "oauthConformance": {
+    "requests": [
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+    ],
+    "result": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+  },
+  "openaiReadiness": {
+    "requests": [
+      "GET https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+      "GET https://auth.example.com/tenant/.well-known/openid-configuration",
+    ],
+    "result": {
+      "advertisedAuthorizationServerCount": 1,
+      "authorizationServers": [
+        {
+          "fetchError": "https://auth.example.com/tenant/.well-known/openid-configuration answered 404",
+          "issuer": "https://auth.example.com/tenant",
+          "metadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+        },
+      ],
+      "prm": {
+        "discoveredVia": "well-known-path-suffixed",
+        "document": {
+          "authorization_servers": [
+            "https://auth.example.com/tenant",
+          ],
+          "resource": "https://mcp.example.com/mcp",
+          "scopes_supported": [
+            "read",
+          ],
+        },
+        "rejectedPointer": undefined,
+        "url": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+    },
+  },
+  "probe": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://mcp.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 404,
+        "url": "https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 200,
+        "url": "https://auth.example.com/.well-known/openid-configuration/tenant",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": {
+        "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+        "client_id_metadata_document_supported": true,
+        "code_challenge_methods_supported": [
+          "S256",
+        ],
+        "issuer": "https://auth.example.com/tenant",
+        "response_types_supported": [
+          "code",
+        ],
+        "token_endpoint": "https://auth.example.com/tenant/token",
+      },
+      "authorizationServerMetadataUrl": "https://auth.example.com/.well-known/openid-configuration/tenant",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+        "cimd",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://auth.example.com/tenant",
+        ],
+        "resource": "https://mcp.example.com/mcp",
+        "scopes_supported": [
+          "read",
+        ],
+      },
+      "resourceMetadataUrl": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "wwwAuthenticate": "Bearer realm="mcp"",
+    },
+    "status": "oauth_required",
+  },
+  "probeLegacy": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://mcp.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 200,
+        "url": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 404,
+        "url": "https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+      },
+      {
+        "name": "authorization_server_metadata",
+        "status": 404,
+        "url": "https://auth.example.com/.well-known/oauth-authorization-server",
+      },
+    ],
+    "oauth": {
+      "authorizationServerMetadata": undefined,
+      "authorizationServerMetadataUrl": undefined,
+      "discoveryError": "HTTP 404 Not Found",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadata": {
+        "authorization_servers": [
+          "https://auth.example.com/tenant",
+        ],
+        "resource": "https://mcp.example.com/mcp",
+        "scopes_supported": [
+          "read",
+        ],
+      },
+      "resourceMetadataUrl": "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+      "wwwAuthenticate": "Bearer realm="mcp"",
+    },
+    "status": "oauth_required",
+  },
+}
+`;
+
+exports[`metadata discovery against recorded responses > 'pointer to another origin' 1`] = `
+{
+  "browserAuth": {
+    "requests": [
+      "GET https://meta.example.net/prm",
+      "GET https://split.example.com/.well-known/oauth-authorization-server",
+      "GET https://split.example.com/.well-known/openid-configuration",
+    ],
+    "result": {
+      "authorizationServerMetadata": undefined,
+      "authorizationServerUrl": "https://split.example.com/",
+      "resourceMetadata": undefined,
+    },
+  },
+  "claudeReadiness": {
+    "requests": [
+      "GET https://split.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+    ],
+    "result": {
+      "firstAuthorizationServer": {
+        "document": {
+          "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+          "code_challenge_methods_supported": [
+            "S256",
+          ],
+          "issuer": "https://auth.example.com/tenant",
+          "response_types_supported": [
+            "code",
+          ],
+          "token_endpoint": "https://auth.example.com/tenant/token",
+        },
+        "issuer": "https://auth.example.com/tenant",
+        "metadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+        "reachable": true,
+      },
+      "prm": {
+        "discoveredVia": "well-known-path-suffixed",
+        "document": {
+          "authorization_servers": [
+            "https://auth.example.com/tenant",
+          ],
+          "resource": "https://split.example.com/mcp",
+        },
+        "rejectedPointer": "https://meta.example.net/prm",
+        "url": "https://split.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+    },
+  },
+  "directoryReadiness": {
+    "requests": [
+      "GET https://split.example.com/.well-known/oauth-protected-resource/mcp",
+    ],
+    "result": {
+      "discoveredVia": "well-known-path-suffixed",
+      "document": {
+        "authorization_servers": [
+          "https://auth.example.com/tenant",
+        ],
+        "resource": "https://split.example.com/mcp",
+      },
+      "rejectedPointer": "https://meta.example.net/prm",
+      "url": "https://split.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+  },
+  "oauthConformance": {
+    "requests": [
+      "GET https://split.example.com/.well-known/oauth-protected-resource/mcp",
+    ],
+    "result": "https://split.example.com/.well-known/oauth-protected-resource/mcp",
+  },
+  "openaiReadiness": {
+    "requests": [
+      "GET https://split.example.com/.well-known/oauth-protected-resource/mcp",
+      "GET https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+    ],
+    "result": {
+      "advertisedAuthorizationServerCount": 1,
+      "authorizationServers": [
+        {
+          "document": {
+            "authorization_endpoint": "https://auth.example.com/tenant/authorize",
+            "code_challenge_methods_supported": [
+              "S256",
+            ],
+            "issuer": "https://auth.example.com/tenant",
+            "response_types_supported": [
+              "code",
+            ],
+            "token_endpoint": "https://auth.example.com/tenant/token",
+          },
+          "issuer": "https://auth.example.com/tenant",
+          "metadataUrl": "https://auth.example.com/.well-known/oauth-authorization-server/tenant",
+        },
+      ],
+      "prm": {
+        "discoveredVia": "well-known-path-suffixed",
+        "document": {
+          "authorization_servers": [
+            "https://auth.example.com/tenant",
+          ],
+          "resource": "https://split.example.com/mcp",
+        },
+        "rejectedPointer": "https://meta.example.net/prm",
+        "url": "https://split.example.com/.well-known/oauth-protected-resource/mcp",
+      },
+    },
+  },
+  "probe": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://split.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://meta.example.net/prm",
+      },
+    ],
+    "oauth": {
+      "discoveryError": "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadataUrl": "https://meta.example.net/prm",
+      "wwwAuthenticate": "Bearer resource_metadata="https://meta.example.net/prm"",
+    },
+    "status": "oauth_required",
+  },
+  "probeLegacy": {
+    "attempts": [
+      {
+        "name": "streamable_initialize",
+        "status": 401,
+        "url": "https://split.example.com/mcp",
+      },
+      {
+        "name": "resource_metadata",
+        "status": 404,
+        "url": "https://meta.example.net/prm",
+      },
+    ],
+    "oauth": {
+      "discoveryError": "Resource server does not implement OAuth 2.0 Protected Resource Metadata.",
+      "optional": false,
+      "registrationStrategies": [
+        "preregistered",
+      ],
+      "required": true,
+      "resourceMetadataUrl": "https://meta.example.net/prm",
+      "wwwAuthenticate": "Bearer resource_metadata="https://meta.example.net/prm"",
+    },
+    "status": "oauth_required",
+  },
+}
+`;

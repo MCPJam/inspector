@@ -44,6 +44,12 @@ import { hostedCatalogModelDefinitions } from "../hosted-model-catalog.js";
 // case for org-BYOK scenarios (Ollama, custom: providers, OpenRouter ids).
 import { logger } from "../../utils/logger.js";
 import type { MCPJamHandlerOptions } from "../../utils/mcpjam-stream-handler.js";
+import {
+  SYNTHETIC_SESSION_APPROVAL_DENIAL,
+  appliedToolApproval,
+  engineApprovalMode,
+} from "@/shared/tool-approval";
+import { replaceActingServerSkillGateWithRefusal } from "../../utils/server-skill-acting-gate.js";
 import { resolveLocalOrgMaxSteps } from "../../utils/org-model-stream-handler.js";
 import type { DirectChatTurnTraceEvents } from "../../utils/direct-chat-turn.js";
 import type { SwarmStreamPayload } from "../../../shared/swarm-stream-events.js";
@@ -566,7 +572,6 @@ export async function runSyntheticHostSession(
     temperature,
     maxSteps,
     maxOutputTokens,
-    requireToolApproval,
     respectToolVisibility,
     progressiveToolDiscovery,
     builtInToolIds,
@@ -588,6 +593,10 @@ export async function runSyntheticHostSession(
     modelSelection,
     reasoningEffort,
   } = runtime;
+  const requireToolApproval = appliedToolApproval(
+    "synthetic",
+    runtime.requireToolApproval,
+  );
   // What the session records for each turn: the selection it ran, effort
   // included. (A swarm session's backend pins it from the run snapshot.)
   const sessionModelSelection = ranTurnSelection({
@@ -961,18 +970,13 @@ export async function runSyntheticHostSession(
     // harness path (it delivers skills itself), so this only wires the emulated
     // path, mirroring `web/chat-v2.ts`. Zero skills → no tools/stanza.
     //
-    // BUT skip skills entirely when the scenario requires tool approval. A
-    // synthetic visitor is headless and can't grant approval: the local-runtime
-    // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
-    // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
-    // call — so advertising `loadSkill` on a project that has skills would turn
-    // an otherwise-toolless approval simulation into one that fails every
-    // session for no benefit. The skip stays correct even though empty
-    // projects no longer advertise phantom tools.
+    // Delivered whether or not the scenario requires tool approval: no skill
+    // tool asks, so a headless visitor has nothing to answer. Commands still
+    // follow approval, and ask while a server's skill is loaded
+    // (`server-skill-acting-gate.ts`).
     const { pinnedSkillSource } = runtime;
     const cloudSkillsEnabled =
       pinnedSkillSource === undefined &&
-      !requireToolApproval &&
       Boolean(authHeader) &&
       Boolean(projectId) &&
       shouldEnableCloudSkillTools({
@@ -988,7 +992,7 @@ export async function runSyntheticHostSession(
     // Authoritative pinned mode (env-based swarm target): every turn is
     // planned from the target's frozen skills (`sessionTurnSkills`) — NEVER
     // the live cloud-skill tools. MCPJam's agent gets them as tools; a
-    // HARNESS turn gets no tools, and the copies ride `pinnedHarnessSkills`
+    // HARNESS turn gets no tools, and the plan rides `skillPlan`
     // on the drain instead.
     // The live arm, for a run with no pins: the project pool, plus the
     // connected servers' own skills.
@@ -1293,14 +1297,11 @@ export async function runSyntheticHostSession(
             // resolved once above; `journeyRunId`/`hostId` are the swarm run + pinned
             // host. All three are inert for the emulated engine / non-swarm surfaces.
             ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
-            // Pinned harness skills (env-based swarm target running a real
-            // harness): the harness turn skips the live skills fetch and delivers
-            // exactly these artifacts (skillsHash derives from their fingerprints).
-            // Passed even when EMPTY — an empty authoritative set means the
-            // harness must run skill-less, not fall back to the live pool.
-            ...(harness && pinnedSkillSource
-              ? { pinnedHarnessSkills: [...pinnedSkillSource.harnessSkills] }
-              : {}),
+            // The session's skill plan, which the harness carries out: a target's
+            // frozen skills (an empty frozen set clears the box rather than
+            // falling back to the live pool) or, for an older target that pinned
+            // none, a box left as it is.
+            ...(harness ? { skillPlan: sessionSkills.skills } : {}),
             // The attempt's own disposable box for the HARNESS turn. Only meaningful
             // when a harness is selected — the emulated engine's shell binds through
             // `resolveHostTools` above instead.
@@ -2076,7 +2077,7 @@ export async function drainAssistantTurn(
     journeyRunId,
     hostId,
     harnessMcpProxy,
-    pinnedHarnessSkills,
+    skillPlan,
     harnessSandboxBinding,
     harnessExecutionTarget,
     environmentId,
@@ -2227,7 +2228,13 @@ export async function drainAssistantTurn(
       ...(args.temperature !== undefined
         ? { temperature: args.temperature }
         : {}),
-      tools: args.tools as ToolSet,
+      // No approval loop here, so a command the acting-skill gate would ask
+      // about while a server's skill is loaded is refused in `execute`, with
+      // the hosted engines' auto-deny answer.
+      tools: replaceActingServerSkillGateWithRefusal(
+        args.tools as ToolSet,
+        SYNTHETIC_SESSION_APPROVAL_DENIAL,
+      ),
       maxSteps: resolveLocalOrgMaxSteps(args.maxSteps),
       ...(args.progressivePlan
         ? { progressivePlan: args.progressivePlan }
@@ -2350,9 +2357,9 @@ export async function drainAssistantTurn(
     authContext: { kind: "user_bearer", token: args.authHeader ?? "" },
     sourceType,
     origin: "scenario",
-    // Synthetic runs have no human-in-the-loop. Auto-deny approval-required
-    // tool calls inside the loop so the run makes forward progress.
-    approvalMode: "auto-deny",
+    // Nobody answers a synthetic run: each gated call is denied inside the
+    // loop, and the run makes forward progress.
+    approvalMode: engineApprovalMode("synthetic"),
     chatSessionId: args.chatSessionId,
     ...(args.projectId ? { projectId: args.projectId } : {}),
     ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
@@ -2371,9 +2378,8 @@ export async function drainAssistantTurn(
     // key on (journeyRunId, hostId, chatSessionId) instead of direct-chat.
     ...(journeyRunId ? { journeyRunId } : {}),
     ...(hostId ? { hostId } : {}),
-    // Pinned harness skills (env-based swarm target): presence — even an
-    // EMPTY array — makes the harness turn skip the live skills fetch.
-    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // The session's skill plan, which the harness turn carries out.
+    ...(skillPlan ? { skillPlan } : {}),
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),

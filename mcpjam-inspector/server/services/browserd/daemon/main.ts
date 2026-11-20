@@ -14,6 +14,7 @@ import { createVideoEncoder } from "./video-encoder";
 import { createVideoRecorder } from "./video-recorder";
 import { ChromiumDriver } from "./chromium-driver";
 import { launchBrowserdContext } from "./chromium-launch";
+import { createPublicNetworkPolicy } from "./public-network";
 import { HandoffLease } from "./lease";
 import { prepareBrowserProfile } from "./prepare-browser-profile";
 import { mkdirSync } from "node:fs";
@@ -56,7 +57,7 @@ function runShell(
       { timeout: 10_000 },
       (error, _stdout, stderr) => {
         resolve({
-          exitCode: error ? (error as { code?: number }).code ?? 1 : 0,
+          exitCode: error ? ((error as { code?: number }).code ?? 1) : 0,
           stderr: typeof stderr === "string" ? stderr : undefined,
         });
       },
@@ -95,6 +96,9 @@ async function main(): Promise<void> {
     extraArgs: extraArgsFor(config),
     contextMode: config.contextMode,
     deviceScaleFactor: config.deviceScaleFactor,
+    ...(config.networkPolicy === "public"
+      ? { egressPolicy: createPublicNetworkPolicy() }
+      : {}),
   });
   // One lease, shared by the handler (which blocks commands while a person
   // holds the browser) and the driver (which makes the first observation after
@@ -123,6 +127,7 @@ async function main(): Promise<void> {
   const driver = new ChromiumDriver(context, {
     lease,
     features: parseBrowserdFeatures(),
+    webOnly: config.networkPolicy === "public",
     viewport: {
       /**
        * The DAEMON's default is `fixed`, and the door widens it.

@@ -212,6 +212,7 @@ describe("agent op registry", () => {
         "dismiss_study_finding",
         "undismiss_study_finding",
         "cancel_study_insights",
+        "cancel_eval_run_insights",
       ].sort(),
     );
   });
@@ -264,6 +265,39 @@ describe("agent op registry", () => {
         runId: "run_1",
       }),
     ).toBe("Cancel run run_1");
+    expect(
+      proposalMetaFor("request_eval_run_insights").description({
+        runId: "run_1",
+      }),
+    ).toBe("Analyze eval run run_1 with a model");
+    expect(
+      proposalMetaFor("request_eval_run_insights").description({
+        runId: "run_1",
+        force: true,
+      }),
+    ).toBe("Analyze eval run run_1 again with a model");
+    expect(
+      proposalMetaFor("build_eval_run_findings").description({
+        runId: "run_1",
+      }),
+    ).toBe("Build findings for eval run run_1");
+  });
+
+  it("names insights targets by the canonical selector, or the deprecated one", () => {
+    // Both spellings validate, so reading only the deprecated one rendered
+    // "(unnamed)" for every current caller.
+    const swarm = proposalMetaFor("request_swarm_run_insights").description;
+    expect(swarm({ swarmRun: "sr_1" })).toBe(
+      "Analyze swarm run sr_1 with a model",
+    );
+    expect(swarm({ wave: "sr_2" })).toBe("Analyze swarm run sr_2 with a model");
+    const study = proposalMetaFor("request_study_insights").description;
+    expect(study({ study: "st_1" })).toBe(
+      "Analyze user testing on st_1 with a model",
+    );
+    expect(study({ scenario: "st_2" })).toBe(
+      "Analyze user testing on st_2 with a model",
+    );
   });
 
   it("reads only the selector the operation's schema actually declares", () => {
@@ -2113,6 +2147,20 @@ describe("tier derives from operation.risk", () => {
         "ledger, which is SHARED with user-testing and eval-run insights — " +
         "a request here takes one from there, across the whole organization.",
     },
+    build_eval_run_findings: {
+      tier: "gated",
+      reason:
+        "No model call, so risk is none, but a finished build on a run never " +
+        "analyzed starts the automatic analysis, which takes a unit of the " +
+        "shared insightsPerDay ledger.",
+    },
+    request_eval_run_insights: {
+      tier: "gated",
+      reason:
+        "The same shared insightsPerDay ledger as request_swarm_run_insights: " +
+        "platform-paid, so risk is none, but one agent turn can take the " +
+        "slice a person was going to use.",
+    },
     request_study_insights: {
       tier: "gated",
       reason:
@@ -2374,6 +2422,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_client` is the first step of every client edit, not an optional one: `update_client` and `set_client_servers` require the `configId` it returns as `expectedConfigId`, and a rename requires the `name` it returns as `expectedName`.",
   "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
   "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+  "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
   "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
   "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
   "- `connect_eval_github_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_github_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do. `connect_eval_check_repo` and `list_eval_check_repos` are the pre-rename spellings of the same two operations — a `check` there is a GITHUB check, never a case's grading check.",
@@ -2387,7 +2436,7 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_goal_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a goal fans out real model conversations and spends credits for every one. Calling `launch_goal_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_goal`.",
-  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with user-testing insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
+  "- `request_swarm_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with study, user-testing and eval run insights — a request here takes one from there. Read the run scorecards first; they cost no quota and usually explain the failure without a model pass.",
   "- Included operations (generation and insights) can be refused with `RATE_LIMITED`. `canTopUp` is false on those refusals: tell the user when it lifts (`retryAfterSeconds`, or 00:00 UTC for a daily budget), and do not retry sooner, suggest topping up credits, or switch identities to get around it.",
   "- For user testing, read `get_study_metrics` and `list_study_findings` first. They answer how a study is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_study_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole study.",

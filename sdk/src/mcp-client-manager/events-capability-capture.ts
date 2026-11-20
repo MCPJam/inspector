@@ -18,6 +18,10 @@
  * Deliberately NOT inventing an `extensions["…"]` id: the draft has none. If
  * the draft moves the capability under `extensions`, add the alias here when
  * the draft (or a real implementation) establishes it.
+ *
+ * The same tap keeps the rest of the raw handshake result that parsing drops
+ * or never exposes (`serverInfo` as sent, `_meta`, `supportedVersions`), so
+ * the server canvas can record the server's full declaration.
  */
 
 import type { RpcLogEvent } from "./types.js";
@@ -41,6 +45,12 @@ export interface CapturedEventsCapability {
   rawCapabilities: Record<string, unknown>;
   /** `protocolVersion` from the raw result when present. */
   protocolVersion?: string;
+  /** `supportedVersions` from a `server/discover` result. */
+  supportedVersions?: string[];
+  /** `result.serverInfo` exactly as sent. */
+  rawServerInfo?: Record<string, unknown>;
+  /** `result._meta` exactly as sent. */
+  rawMeta?: Record<string, unknown>;
   observedAt: number;
 }
 
@@ -107,12 +117,24 @@ export class EventsCapabilityCapture {
       typeof result.protocolVersion === "string"
         ? result.protocolVersion
         : undefined;
+    const supportedVersions = Array.isArray(result.supportedVersions)
+      ? result.supportedVersions.filter(
+          (version): version is string => typeof version === "string"
+        )
+      : undefined;
     this.captured.set(request.serverId, {
       source: request.method,
       events,
       listChanged: events?.listChanged === true,
       rawCapabilities: structuredClone(capabilities),
       ...(protocolVersion !== undefined ? { protocolVersion } : {}),
+      ...(supportedVersions ? { supportedVersions } : {}),
+      ...(isRecord(result.serverInfo)
+        ? { rawServerInfo: structuredClone(result.serverInfo) }
+        : {}),
+      ...(isRecord(result._meta)
+        ? { rawMeta: structuredClone(result._meta) }
+        : {}),
       observedAt: this.now(),
     });
   }

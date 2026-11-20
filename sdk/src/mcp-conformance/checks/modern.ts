@@ -14,8 +14,8 @@
  *      modern wire an HTTP 400 arrives WITH a well-formed JSON-RPC error body,
  *      and the SDK surfaces that body in-band as a `ProtocolError` — so
  *      official-client evidence alone cannot tell "400 + -32020" from
- *      "200 + -32020". Each check asserts both from the capture and reports
- *      them independently, so a failure names which half is wrong.
+ *      "200 + -32020". Checks report both facts independently and only
+ *      assert a status when the spec requires one.
  *   2. **Hostile framing never goes through a client.**
  *      `TransportSendOptions.headers` skips reserved header names, so a probe
  *      that needs a wrong `Mcp-Method` / `Mcp-Name` / `MCP-Protocol-Version`
@@ -24,8 +24,8 @@
  * The spec's HTTP status mapping for ladder-produced errors (the statuses
  * asserted below) is: -32020 HeaderMismatch ⇒ 400, -32022
  * UnsupportedProtocolVersion ⇒ 400, -32021 MissingRequiredClientCapability ⇒
- * 400, -32601 MethodNotFound ⇒ 404. Handler-produced errors (e.g. -32602 for a
- * missing resource) stay in-band on HTTP 200.
+ * 400, -32601 MethodNotFound ⇒ 404. For a missing resource, the spec requires
+ * -32602 without specifying an HTTP status.
  */
 
 import type {
@@ -299,7 +299,7 @@ const MODERN_CHECK_METADATA = {
     category: "resources",
     title: "Resource Not Found",
     description:
-      "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+      "Reading an unknown resource answers with JSON-RPC error -32602.",
   },
   "modern-logs-require-log-level": {
     id: "modern-logs-require-log-level",
@@ -2176,13 +2176,6 @@ async function runResourceNotFoundCheck(
 
   const error = jsonRpcError(result);
   const problems: string[] = [];
-  // A handler-produced error stays in-band on HTTP 200 in the modern era; the
-  // status and the code are asserted as separate facts.
-  if (result.status !== 200) {
-    problems.push(
-      `expected HTTP 200 (in-band error), got HTTP ${result.status}`
-    );
-  }
   if (!error) {
     problems.push("expected an in-band JSON-RPC error object, got none");
   } else if (error.code !== INVALID_PARAMS) {
