@@ -74,7 +74,10 @@ import {
 } from "@/components/evals/runner-checks";
 import type { ScorecardGroup, ScorecardRow } from "./case-scorecard-model";
 import { stageFloor, type StageFloorTrace } from "./stage-floor";
-import { readStoredRubricCheckResults } from "./stored-model-grader-results";
+import {
+  readStoredCustomJudgeResults,
+  readStoredRubricCheckResults,
+} from "./stored-model-grader-results";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
 
 export type TrialRowResultSource =
@@ -673,7 +676,7 @@ function rubricCheckRow(
   };
 }
 
-/** The custom-judge rows this trial was graded with, from its score rows. */
+/** The trial's recorded custom judge results, never the suite's live prompts. */
 export function customJudgeTrialRows(
   iteration: EvalIteration | null,
 ): JoinedScorecardRow[] {
@@ -683,31 +686,44 @@ export function customJudgeTrialRows(
     parseIterationScores(metadata),
     parseEvaluationConfig(metadata),
   );
-  const rows: JoinedScorecardRow[] = [];
+  const rows = new Map<string, JoinedScorecardRow>();
   for (const [scorerId, { score, definition }] of scores.byScorerId) {
     if (!scorerId.startsWith(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX)) continue;
     const id = scorerId.slice(HOSTED_CUSTOM_JUDGE_SCORER_PREFIX.length);
-    const row: ScorecardRow = {
-      key: scorerId,
-      stage: "userValue",
-      provenance: "rubricCheck",
-      label: definition?.label?.replace(/^custom judge: /, "") || id,
-      kindLabel: "Judge",
-      role: "advisory",
-      roleLock: "judge",
-      editable: false,
-      customJudge: { id },
-      tooltip: "A judge prompt this suite wrote. Advisory.",
-      join: { kind: "judge", slot: "rubricChecks", scorerId },
-    };
+    const label = definition?.label?.replace(/^custom judge: /, "") || id;
+    const row = customJudgeRow(id, label, resultFromScore(score, definition));
     const evidence = scoreEvidence(score, definition, row);
-    rows.push({
-      ...row,
-      result: resultFromScore(score, definition),
-      ...(evidence ? { evidence } : {}),
-    });
+    rows.set(scorerId, { ...row, ...(evidence ? { evidence } : {}) });
   }
-  return rows;
+  for (const { key, label, result } of readStoredCustomJudgeResults(
+    metadata.customJudgesVerdict,
+  )) {
+    const row = customJudgeRow(key, label, result);
+    if (!rows.has(row.key)) rows.set(row.key, row);
+  }
+  return [...rows.values()];
+}
+
+function customJudgeRow(
+  id: string,
+  label: string,
+  result: TrialRowResult,
+): JoinedScorecardRow {
+  const scorerId = `${HOSTED_CUSTOM_JUDGE_SCORER_PREFIX}${id}`;
+  return {
+    key: scorerId,
+    stage: "userValue",
+    provenance: "rubricCheck",
+    label,
+    kindLabel: "Judge",
+    role: "advisory",
+    roleLock: "judge",
+    editable: false,
+    customJudge: { id },
+    tooltip: "A judge prompt this suite wrote. Advisory.",
+    join: { kind: "judge", slot: "rubricChecks", scorerId },
+    result,
+  };
 }
 
 function uncertainIfUndecided(result: TrialRowResult): TrialRowResult {
