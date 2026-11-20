@@ -112,7 +112,7 @@ export function useWebClientPane({
         <p className="max-w-sm text-xs text-muted-foreground">
           {account
             ? `${site} signed this account out, so runs on ${client} can't start. Sign in again here, then save it for the project.`
-            : `Runs on ${client} use a project account. Sign in here, then save it for the project. Nothing is saved until you choose to.`}
+            : `Sign in here, then save the account for the project. Nothing is saved until you choose to.`}
         </p>
         <Button type="button" size="sm" onClick={() => setSigningInFor(hostId)}>
           {account ? "Sign in again" : "Start signing in"}
