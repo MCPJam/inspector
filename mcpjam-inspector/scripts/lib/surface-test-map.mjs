@@ -183,7 +183,11 @@ export function parseSurfaces(source) {
       const match = new RegExp(`\\b${name}:\\s*\\[`).exec(text);
       if (!match) return [];
       const open = from + match.index + match[0].length;
-      const close = code.indexOf("]", open);
+      let close = code.indexOf("]", open);
+      // A `]` inside one of the array's strings does not close it.
+      for (const l of inside) {
+        if (l.start < close && l.end > close) close = code.indexOf("]", l.end);
+      }
       return inside
         .filter((l) => l.start >= open && l.start < close)
         .map((l) => l.value);
@@ -194,6 +198,12 @@ export function parseSurfaces(source) {
       id,
       canonicalPath: field("canonicalPath") ?? "",
       routePatterns: arrayField("routePatterns"),
+      scope: field("scope") ?? "",
+      title: field("title") ?? "",
+      purpose: field("purpose") ?? "",
+      navSegments: arrayField("navSegments"),
+      userActivities: arrayField("userActivities"),
+      showInAtlas: /\bshowInAtlas:\s*true\b/.test(text),
     };
   });
 }
