@@ -10,9 +10,14 @@
  * exits, and the person finishes that step in the browser window it opened.
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
+
+/** Generated files the server code imports come from these build steps. */
+const SETUP =
+  "Set up the checkout first: from the repository root run npm ci, then in mcpjam-inspector/ run npm run sdk:build && npm run bundle:all.";
 
 const HARMLESS_PROMPT =
   "Use the MCPJam tracer connector's echo tool with the message 'tracer check', then tell me in one sentence what it returned.";
@@ -61,10 +66,14 @@ async function main() {
   const { createMemorySendJournal, driveRealUiTurn } = await import("../server/utils/harness/real-ui/drive-turn");
   const { RealUiError } = await import("../server/utils/harness/real-ui/page-module");
   const { createPlaywrightDriver } = await import("../server/utils/harness/real-ui/playwright-driver");
+  const endpointFile = new URL("../server/services/web-clients/forwarding-endpoint.ts", import.meta.url);
+  if (!existsSync(endpointFile)) {
+    fail("This checkout has no forwarding endpoint yet. Merge the endpoint branch, then run this again.");
+  }
   const endpointModule = await import("../server/services/web-clients/forwarding-endpoint").catch(
     (error: unknown) =>
       fail(
-        `This checkout has no forwarding endpoint yet (${error instanceof Error ? error.message : String(error)}). Merge the endpoint branch, then run this again.`,
+        `The tracer could not load the Inspector's server code: ${error instanceof Error ? error.message : String(error)}\n${SETUP}`,
       ),
   );
 
