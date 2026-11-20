@@ -57,7 +57,9 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
       await visible(driver, '[data-testid="connector-add"]', ctx, "the connector list");
       const shown = await driver.readText(row(connector.name));
       if (shown !== undefined) {
-        if (shown.includes(connector.url)) return;
+        // The row's own URL, exactly: `/mcp` must not keep `/mcp-old`.
+        const same = `${row(connector.name)}[data-url="${cssString(connector.url)}"]`;
+        if ((await driver.readText(same)) !== undefined) return;
         await driver.click(`${row(connector.name)} [data-testid="connector-remove"]`);
         await driver.waitFor(async () => (await driver.readText(row(connector.name))) === undefined, {
           timeoutMs: ctx.timeoutMs,
@@ -94,7 +96,8 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
         async () => {
           const url = new URL(await driver.url());
           if (!url.pathname.startsWith("/chat/")) return false;
-          if ((await driver.readText('[data-testid="user-message"]')) !== prompt) return false;
+          // The page shows the prompt trimmed; the send happened all the same.
+          if ((await driver.readText('[data-testid="user-message"]')) !== prompt.trim()) return false;
           conversationUrl = `${url.origin}${url.pathname}`;
           return true;
         },
