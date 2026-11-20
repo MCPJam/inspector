@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { NativeWireError } from "../../../utils/harness/forwarding/native-wire.js";
 import {
   answerId,
+  fetchWhileTurnOpen,
   followedRedirect,
   observeBody,
   parseRpcBody,
   readBodyBytes,
+  TurnClosedError,
 } from "../forwarding-wire.js";
 
 const encoder = new TextEncoder();
@@ -62,6 +64,10 @@ describe("forwarding wire: reading the vendor's request", () => {
       '{"account":9007199254740993}',
       '{"rows":[1,{"id":-12345678901234567891}]}',
       '{"amount":1e400}',
+      '{"account":9007199254740993.0}',
+      '{"account":9.007199254740993e15}',
+      '{"ratio":0.3000000000000000444}',
+      '{"tiny":1e-400}',
     ])
       expect(refusalOf(() => parse(toolCall(args)))).toBe("rounded_number");
   });
@@ -73,6 +79,8 @@ describe("forwarding wire: reading the vendor's request", () => {
       '{"ratio":0.30000000000000004}',
       '{"big":1.5e300}',
       '{"account":"9007199254740993"}',
+      '{"account":9007199254740992.0,"ratio":0.1,"hundred":1E2,"zero":-0}',
+      '{"smallest":5e-324,"price":1234567.12345678}',
     ])
       expect(parse(toolCall(args)).messages).toHaveLength(1);
     expect(
@@ -91,6 +99,9 @@ describe("forwarding wire: reading the vendor's request", () => {
       "header_mismatch",
     );
     expect(refusalOf(() => parse(batch, { "mcp-name": "pay" }))).toBe(
+      "header_mismatch",
+    );
+    expect(refusalOf(() => parse(batch, { "mcp-param-region": "eu" }))).toBe(
       "header_mismatch",
     );
     expect(parse(batch).batch).toBe(true);
@@ -212,6 +223,18 @@ describe("forwarding wire: watching the server's answer", () => {
     }
   });
 
+  it("ignores a comment line larger than it reads, wherever the chunks cut it", async () => {
+    const comment = `: ${"x".repeat(8 * 1024 * 1024 + 10)}`;
+    const text = `data: ${JSON.stringify(result)}\n${comment}\n\n`;
+    const start = text.indexOf(comment);
+    const past = start + 8 * 1024 * 1024 + 5;
+    for (const cuts of [[], [past], [start + 3, past]]) {
+      const { relayed, observed } = await relay(text, { cuts });
+      expect(relayed === text).toBe(true);
+      expect(observed).toEqual([result]);
+    }
+  });
+
   it("keeps relaying, and ends once, when the observer throws", async () => {
     const text = `data: ${JSON.stringify(progress)}\n\ndata: ${JSON.stringify(result)}\n\n`;
     const { relayed, observed, ends } = await relay(text, {
@@ -223,5 +246,109 @@ describe("forwarding wire: watching the server's answer", () => {
     expect(relayed).toBe(text);
     expect(observed).toEqual([progress, result]);
     expect(ends).toBe(1);
+  });
+});
+
+describe("forwarding wire: following a redirect hop by hop", () => {
+  const hop = (status: number, location: string) =>
+    new Response(null, { status, headers: { location } });
+  type Sent = { url: string; init: RequestInit; headers: Headers };
+  function upstream(answers: Response[]) {
+    const sent: Sent[] = [];
+    const fetchUpstream = (async (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => {
+      sent.push({
+        url: String(input),
+        init: init ?? {},
+        headers: new Headers(init?.headers),
+      });
+      return answers.shift() ?? Response.error();
+    }) as typeof fetch;
+    return { sent, fetchUpstream };
+  }
+  const body = encoder.encode('{"jsonrpc":"2.0","id":1,"method":"tools/call"}');
+  const init = {
+    method: "POST",
+    body,
+    headers: {
+      authorization: "Bearer project",
+      "x-api-key": "project-key",
+      "content-type": "application/json",
+    },
+  };
+
+  it("sends the same request on, and drops credentials when it leaves the origin", async () => {
+    const { sent, fetchUpstream } = upstream([
+      hop(307, "/moved"),
+      hop(308, "https://other.example.test/mcp"),
+      Response.json({ ok: true }),
+    ]);
+    const response = await fetchWhileTurnOpen(
+      fetchUpstream,
+      "https://server.example.test/mcp",
+      init,
+      () => true,
+    );
+    expect(response.status).toBe(200);
+    expect(response.redirected).toBe(true);
+    expect(
+      sent.map(({ url, init, headers }) => [
+        url,
+        init.method,
+        init.redirect,
+        init.body === body,
+        headers.get("authorization"),
+      ]),
+    ).toEqual([
+      [
+        "https://server.example.test/mcp",
+        "POST",
+        "manual",
+        true,
+        "Bearer project",
+      ],
+      [
+        "https://server.example.test/moved",
+        "POST",
+        "manual",
+        true,
+        "Bearer project",
+      ],
+      ["https://other.example.test/mcp", "POST", "manual", true, null],
+    ]);
+    expect(sent[2]?.headers.get("x-api-key")).toBe("project-key");
+  });
+
+  it("turns the request into a GET without its body on a 303, which needs no turn", async () => {
+    const { sent, fetchUpstream } = upstream([
+      hop(303, "/result"),
+      new Response("done"),
+    ]);
+    const turnOpen = vi.fn(() => false);
+    const response = await fetchWhileTurnOpen(
+      fetchUpstream,
+      "https://server.example.test/mcp",
+      init,
+      turnOpen,
+    );
+    expect(await response.text()).toBe("done");
+    expect(sent[1]?.init).toMatchObject({ method: "GET", body: undefined });
+    expect(sent[1]?.headers.get("content-type")).toBeNull();
+    expect(turnOpen).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing more once the turn has closed, and says the server took the call first", async () => {
+    const { sent, fetchUpstream } = upstream([hop(307, "/moved")]);
+    const error = await fetchWhileTurnOpen(
+      fetchUpstream,
+      "https://server.example.test/mcp",
+      init,
+      () => false,
+    ).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(TurnClosedError);
+    expect(error).toMatchObject({ upstreamStatus: 307, afterRedirect: true });
+    expect(sent).toHaveLength(1);
   });
 });
