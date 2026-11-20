@@ -168,6 +168,32 @@ describe("selectServerEvidence", () => {
     ).toBeUndefined();
   });
 
+  it("does not count a stored failed Refresh as connection history", () => {
+    const row = (fields: Record<string, unknown>) => ({
+      contextHash: CTX_A,
+      captureContext: { transport: "streamable-http", protocolVersion: "2025-11-25" },
+      updatedAt: 500,
+      ...fields,
+    });
+    const failedOnly = row({
+      probes: [{ probeId: "authorization", status: "failed", at: 500, coverage: "not-captured", values: {} }],
+      lastAttemptAt: 500,
+      lastAttemptStatus: "failed",
+      lastAttemptError: "capture_failed",
+    });
+    expect(
+      selectServerEvidence({ probeResults: [failedOnly] }, { connected: false }).input
+        .connected,
+    ).toBe(false);
+    const answered = row({
+      probes: [{ probeId: "authorization", status: "ok", at: 500, coverage: "complete", values: {} }],
+    });
+    expect(
+      selectServerEvidence({ probeResults: [answered] }, { connected: false }).input
+        .connected,
+    ).toBe(true);
+  });
+
   it("reports never-connected servers as not connected", () => {
     const selected = selectServerEvidence({}, { connected: false });
     expect(selected.input.connected).toBe(false);

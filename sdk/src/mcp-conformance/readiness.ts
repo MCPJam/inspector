@@ -100,6 +100,15 @@ function toolOrderWarning(
     return undefined;
   }
 
+  // The spec asks for the same order only "when the underlying set of tools
+  // has not changed". A tool added or removed between the two listings is a
+  // different set, and the rule says nothing about its order.
+  const sameTools =
+    [...first].sort().join("\u0000") === [...second].sort().join("\u0000");
+  if (!sameTools) {
+    return undefined;
+  }
+
   return warning(
     "readiness-tool-order-deterministic",
     "SHOULD",
@@ -248,6 +257,7 @@ export async function collectClientReadiness(
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
         signal: ctx.config.signal,
+        cacheMode: "bypass",
       });
       const orderWarning = toolOrderWarning(
         surface.toolNames,

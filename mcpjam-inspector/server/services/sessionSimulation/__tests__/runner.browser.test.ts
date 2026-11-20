@@ -686,14 +686,17 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
       // eval run.
       serverSkillsVia: "harness-tools",
     });
-    const handed = (runAssistantTurnMock.mock.calls[0]![0] as any)
-      .pinnedHarnessSkills as Array<{ server?: { ref: string } }>;
-    expect(handed).toEqual(target.harnessSkills);
-    // Only the server skill's copy carries its capture, which is how the turn
-    // knows to serve it through the tools rather than write it to the box.
-    expect(handed.map((copy) => copy.server?.ref)).toEqual([
-      undefined,
-      undefined,
+    // The harness turn carries out the same plan the turn's trace is written
+    // from. The server skill's copy is not written to the box, and it is served
+    // through the tools from the plan's set.
+    const handed = (runAssistantTurnMock.mock.calls[0]![0] as any).skillPlan;
+    expect(handed).toBe(prepareOpts.skills);
+    expect(handed.harness).toMatchObject({ mode: "pinned", live: false });
+    expect(handed.harness.skills.map((copy: any) => copy.name)).toEqual([
+      "release-notes",
+      "summarize",
+    ]);
+    expect(handed.set.serverSkills.map((skill: any) => skill.ref)).toEqual([
       "docs/search",
     ]);
     const persisted = persistChatSessionToConvexMock.mock.calls[0]![0] as any;

@@ -6664,7 +6664,6 @@ export default function App() {
           activeOrganizationId={activeOrganizationId}
           activeOrganizationName={activeOrganizationName}
           onSwitchOrganization={handleSidebarSwitchOrganization}
-          onProjectShared={handleProjectShared}
           billingGateDenied={sidebarGateDenied}
           billingGateEnforcementActive={billingGateEnforcementActive}
           isCreateProjectDisabled={isCreateProjectDisabled}

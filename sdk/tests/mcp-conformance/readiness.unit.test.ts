@@ -136,6 +136,45 @@ describe("client readiness advice", () => {
     expect(warnings).toEqual([]);
   });
 
+  it("asks the server for the repeat listing instead of the cached one", async () => {
+    // A cached repeat listing is the first listing again, and a list compared
+    // with itself never differs: the advice could not warn at all.
+    mockedOperations.listTools.mockResolvedValue({
+      tools: [tool("alpha"), tool("beta")],
+      nextCursor: undefined,
+    } as never);
+
+    await collectClientReadiness(clientContext(), surface());
+
+    expect(mockedOperations.listTools).toHaveBeenCalledTimes(1);
+    expect(mockedOperations.listTools).toHaveBeenCalledWith(
+      expect.anything(),
+      { serverId: "server-1", signal: undefined, cacheMode: "bypass" }
+    );
+  });
+
+  // The spec asks for the same order only "when the underlying set of tools
+  // has not changed". The first listing here is always `alpha, beta`.
+  for (const [change, secondListing] of [
+    ["a tool was replaced", ["beta", "gamma"]],
+    ["a tool was added", ["alpha", "beta", "gamma"]],
+    ["a tool was added and the rest moved", ["beta", "alpha", "gamma"]],
+    ["a tool was removed", ["beta"]],
+  ] as const) {
+    it(`gives no order advice when ${change} between the listings`, async () => {
+      mockedOperations.listTools.mockResolvedValue({
+        tools: secondListing.map((name) => tool(name)),
+        nextCursor: undefined,
+      } as never);
+
+      const warnings = await collectClientReadiness(clientContext(), surface());
+
+      expect(
+        warnings.find((item) => item.id === "readiness-tool-order-deterministic")
+      ).toBeUndefined();
+    });
+  }
+
   it("warns when a modern server still advertises superseded functionality", async () => {
     mockedOperations.listTools.mockResolvedValue({
       tools: [tool("alpha"), tool("beta")],

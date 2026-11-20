@@ -28,7 +28,6 @@ import {
   type FeatureEvidence,
   type FeatureFamilyId,
   type FeatureGroupSummary,
-  type FeatureNextAction,
   type FeatureRuleOutcome,
   type FeatureStateCounts,
   type FeatureUserState,
@@ -46,6 +45,7 @@ import {
 import { featuresForCheck } from "./check-map/index.js";
 import { computeCaptureContextHash } from "./context.js";
 import { isConformanceCheckRef } from "./check-evidence.js";
+import { nextStepFor } from "./next-step.js";
 
 const SERVER_SIDE_OWNERS = new Set(["server", "authorization-server"]);
 
@@ -57,8 +57,20 @@ const SOURCE_STRENGTH: readonly EvidenceSource[] = [
   "oauth-flow",
   "declared",
   "detected",
-  "configured",
 ];
+
+/**
+ * The chip names what the evidence shows, not how MCPJam fetched it: a probe
+ * that reads a listing or a metadata document found a declaration.
+ */
+function presentSource(
+  channel: RuleEvidenceArgs["source"],
+  via: Extract<NonNullable<FeatureRuleOutcome>, { kind: "present" }>["via"],
+): EvidenceSource {
+  if (via === "detected") return "detected";
+  if (via === "advertised") return "declared";
+  return channel;
+}
 
 function emptyCounts(): Record<FeatureUserState, number> {
   return Object.fromEntries(
@@ -128,10 +140,7 @@ function evidenceFromRule(args: RuleEvidenceArgs): FeatureEvidence | null {
     case "present":
       return {
         ...base,
-        source:
-          args.source === "declared" && outcome.via === "detected"
-            ? "detected"
-            : args.source,
+        source: presentSource(args.source, outcome.via),
         outcome: "present",
         coverage: "complete",
         detail: outcome.detail,
@@ -271,45 +280,8 @@ function collectEvidence(
       ref: { runId: check.runId, check: check.ref },
     });
   }
-
-  if (rules.setup && input.configured?.includes(rules.setup)) {
-    evidence.push({
-      featureId: feature.id,
-      source: "configured",
-      outcome: "present",
-      provenance: "manual",
-      intrusiveness: "passive",
-      coverage: "complete",
-      contextHash,
-    });
-  }
   return evidence;
 }
-
-const NEXT_ACTION_FOR_PRIMARY: Record<
-  FeatureDefinition["assessment"]["primary"],
-  FeatureNextAction
-> = {
-  declared: "reconnect",
-  probed: "reconnect",
-  "oauth-flow": "reconnect",
-  observed: "use-in-playground",
-  checked: "run-checks",
-  configured: "set-up",
-};
-
-const REASON_FOR_PRIMARY: Record<
-  FeatureDefinition["assessment"]["primary"],
-  string
-> = {
-  declared: "Nothing was captured for this yet. Reconnect to capture it.",
-  probed:
-    "Background checks have not run for this connection. Reconnect or refresh to run them.",
-  "oauth-flow": "Shown after you connect with OAuth.",
-  observed: "Seen only when it is used. Try it in the Playground.",
-  checked: "Only a conformance run can show this. Run checks to test it.",
-  configured: "Needs setup in MCPJam before it can be checked.",
-};
 
 function newest(evidence: readonly FeatureEvidence[]): number | undefined {
   let at: number | undefined;
@@ -434,16 +406,66 @@ function assess(
     });
   }
   const unknown = evidence.find((e) => e.outcome === "unknown");
+  // Setup comes before connecting: connecting without it shows nothing.
+  if (feature.assessment.primary === "configured")
+    return needsSetup(feature, input, unknown, result);
   if (!input.connected && evidence.length === 0) {
     return result("not-checked", {
       reason: "Connect this server to check it.",
       nextAction: "connect",
     });
   }
-  const primary = feature.assessment.primary;
+  const step = nextStepFor(feature, input);
   return result("not-checked", {
-    reason: unknown?.detail ?? REASON_FOR_PRIMARY[primary],
-    nextAction: NEXT_ACTION_FOR_PRIMARY[primary],
+    reason: unknown?.detail ?? step.reason,
+    ...(step.nextAction ? { nextAction: step.nextAction } : {}),
+  });
+}
+
+/**
+ * A feature MCPJam can only check after setup. Setup alone proves nothing
+ * about the server, so it never makes a feature Supported; the evidence comes
+ * from the sign-in that uses it. Setup this MCPJam surface cannot offer, or
+ * whose result it cannot record, gets no step.
+ */
+function needsSetup(
+  feature: FeatureDefinition,
+  input: ServerFeatureEvidenceInput,
+  unknown: FeatureEvidence | undefined,
+  result: (
+    state: FeatureUserState,
+    extra?: Partial<FeatureAssessment>,
+  ) => FeatureAssessment,
+): FeatureAssessment {
+  const setup = feature.assessment.setup;
+  if (!setup || !input.setupOffered?.includes(setup)) {
+    // Setup this surface cannot offer: another source may still reach it.
+    const step = nextStepFor(feature, input);
+    return result("not-checked", {
+      reason: unknown?.detail ?? step.reason,
+      ...(step.nextAction ? { nextAction: step.nextAction } : {}),
+    });
+  }
+  if (!input.configured?.includes(setup)) {
+    return result("not-checked", {
+      reason: unknown?.detail ?? "Needs setup in MCPJam before it can be checked.",
+      nextAction: "set-up",
+    });
+  }
+  // An inconclusive probe is not a connection, so it keeps Connect.
+  if (!input.connected) {
+    return result("not-checked", {
+      reason:
+        unknown?.detail ?? "Set up in MCPJam. Connect this server to check it.",
+      nextAction: "connect",
+    });
+  }
+  // Reconnecting with saved tokens records nothing; only a new sign-in does,
+  // so the way to record it stays even beside an inconclusive probe.
+  const signIn =
+    "Set up in MCPJam. Reconnect the account from the Auth tab to record the result.";
+  return result("not-checked", {
+    reason: unknown?.detail ? `${unknown.detail} ${signIn}` : signIn,
   });
 }
 
@@ -456,7 +478,10 @@ const PARENT_STATE_ORDER: readonly FeatureUserState[] = [
   "not-applicable",
 ];
 
-/** A parent without evidence of its own takes the strongest child state. */
+/**
+ * A parent without evidence of its own takes the strongest child state, and
+ * the sources of the children in that state, so its chip says what they say.
+ */
 function rollUpParent(
   own: FeatureAssessment,
   children: readonly FeatureAssessment[],
@@ -467,7 +492,14 @@ function rollUpParent(
       children.some((child) => child.state === candidate),
     ) ?? own.state;
   if (state === own.state) return own;
-  return { ...own, state, reason: undefined, nextAction: undefined };
+  const rolled = { ...own, state, reason: undefined, nextAction: undefined };
+  if (state !== "supported") return rolled;
+  const sources = SOURCE_STRENGTH.filter((source) =>
+    children.some(
+      (child) => child.state === "supported" && child.sources.includes(source),
+    ),
+  );
+  return { ...rolled, sources };
 }
 
 export function evaluateServerFeatures(

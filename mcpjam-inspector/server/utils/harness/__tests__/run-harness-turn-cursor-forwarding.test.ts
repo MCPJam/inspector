@@ -139,6 +139,7 @@ const KEY = Object.keys(harnessServerKeyToName([{ name: "srv-a" }]))[0]!;
 function manager(config: Record<string, unknown>, capabilities: object = {}) {
   const value = {
     getServerConfig: vi.fn(() => config),
+    getAllToolAnnotations: vi.fn(() => ({})),
     getInitializationInfo: vi.fn(() => ({
       transport: "streamable-http",
       protocolVersion: "2025-11-25",
@@ -395,6 +396,7 @@ describe("the Cursor CLI on the profiled bridge", () => {
         timeout: 300_000,
         clientCapabilities: APPS,
       })),
+      getAllToolAnnotations: vi.fn(() => ({})),
       getInitializationInfo: vi.fn(() => ({
         transport: "streamable-http",
         protocolVersion: "2026-07-28",
