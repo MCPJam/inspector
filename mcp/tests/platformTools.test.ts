@@ -1199,6 +1199,53 @@ describe("runPlatformOperation", () => {
     });
   });
 
+  it("gives a credit refusal its one step and resume call, never a wait hint", async () => {
+    const recovery = {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "buy_credits",
+      actor: "caller",
+      url: "https://app.mcpjam.com/billing",
+    };
+    const resume = {
+      tool: "run_eval_suite",
+      arguments: { project: "p1", suite: "s1", idempotencyKey: "k" },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "RATE_LIMITED",
+            message: "Out of credits.",
+            details: { recovery, resume, internal: "not for agents" },
+          },
+          { status: 429 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("https://app.mcpjam.com/billing");
+    expect(text).toContain(
+      'Once that is done, call run_eval_suite once with {"project":"p1","suite":"s1","idempotencyKey":"k"}.'
+    );
+    expect(text).not.toMatch(/retry/i);
+    expect(result.structuredContent?.error).toMatchObject({
+      creditRecovery: recovery,
+      resume,
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain(
+      "not for agents"
+    );
+  });
+
   it("quotes the failing request's id in both channels", async () => {
     vi.stubGlobal(
       "fetch",
