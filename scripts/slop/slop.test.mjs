@@ -4,6 +4,7 @@ import {
   cpSync,
   mkdtempSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -128,6 +129,63 @@ describe("rules", () => {
     const server = count(text, "mcpjam-inspector/server/a.ts");
     assert.equal(server["client-effect"], 0);
     assert.equal(server["client-timer"], 0);
+  });
+
+  it("counts effects and timers only in executable code", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const commented = [
+      "// useEffect(() => {}, []);",
+      "/* setTimeout(run, 0); */",
+      'const a = "useEffect(";',
+      "const b = 'setInterval(run)';",
+      "const c = `requestAnimationFrame(${x})`;",
+    ].join("\n");
+    assert.equal(count(commented, path)["client-effect"], 0);
+    assert.equal(count(commented, path)["client-timer"], 0);
+
+    const uncommented = commented.replace("// useEffect", "useEffect");
+    assert.equal(count(uncommented, path)["client-effect"], 1);
+
+    const inTemplate =
+      "const d = `${setTimeout(run, 0)} ${'x'}`;\nsetInterval(run);";
+    assert.equal(count(inTemplate, path)["client-timer"], 2);
+
+    const afterComment = "void/* scheduled cleanup */setTimeout(run, 0);";
+    assert.equal(count(afterComment, path)["client-timer"], 1);
+
+    const afterRegex = [
+      "const tick = /`/;",
+      "const quote = x.replace(/'/g, '');",
+      "const ratio = a / b / c;",
+      "setTimeout(run, 0);",
+    ].join("\n");
+    assert.equal(count(afterRegex, path)["client-timer"], 1);
+  });
+
+  it("reads a slash after a postfix update as division", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const postfix = "const ratio = n++ / setTimeout(run, 0) / 2;";
+    assert.equal(count(postfix, path)["client-timer"], 1);
+    const decrement = "const ratio = n-- / setTimeout(run, 0) / 2;";
+    assert.equal(count(decrement, path)["client-timer"], 1);
+
+    const plusRegex = "const s = n+++/setTimeout(run)/.source;";
+    assert.equal(count(plusRegex, path)["client-timer"], 0);
+  });
+
+  it("reads a slash after an identifier named of as division", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const identifier =
+      "const of = 2;\nconst ratio = of / setTimeout(run, 0) / 2;";
+    assert.equal(count(identifier, path)["client-timer"], 1);
+
+    const forOf = "for (const m of /setTimeout(run)/g.exec(s) ?? []) use(m);";
+    assert.equal(count(forOf, path)["client-timer"], 0);
+  });
+
+  it("counts a comment-only catch whose binding holds a dollar sign", () => {
+    const counts = count("try { a(); } catch ($error) { /* ignored */ }");
+    assert.equal(counts["comment-only-catch"], 1);
   });
 
   it("counts raw console only in the inspector server", () => {
@@ -408,6 +466,33 @@ describe("copy review", () => {
     join(repo, ".agents/skills/ui-copy/SKILL.md"),
     "---\nname: ui-copy\n---\n# Rubric\nvague-error: say what failed.\n"
   );
+  writeFileSync(join(repo, "DESIGN.md"), "## Errors\nUntrusted PR design.\n");
+  const workflow = readFileSync(new URL("../../.github/workflows/ui-copy-review.yml", import.meta.url), "utf8");
+  const sparse = workflow.match(/path: \.reviewer\r?\n\s+sparse-checkout: \|\r?\n((?: {12}.+\r?\n)+)/)?.[1];
+  assert.ok(sparse, "The workflow must define the trusted .reviewer checkout.");
+  for (const path of sparse.trim().split(/\r?\n/).map(line => line.trim())) {
+    cpSync(new URL(`../../${path}`, import.meta.url), join(repo, ".reviewer", path), { recursive: true });
+  }
+  const runner = join(repo, "review-copy.mjs");
+  writeFileSync(runner, `
+    import assert from "node:assert/strict";
+    import { main } from "./.reviewer/scripts/slop/copy-review.mjs";
+    let calls = 0;
+    const code = await main(["--base", "HEAD", "--dry-run"], async request => {
+      calls += 1;
+      for (const id of ["E1", "E2", "E3", "E4"]) assert.ok(request.system.includes("**" + id + " —"));
+      assert.match(request.system, /vague-error/);
+      assert.doesNotMatch(request.system, /Untrusted PR design|# Rubric|## Order of decision/);
+      return { items: [], usage: {} };
+    });
+    assert.equal(calls, 1);
+    process.exitCode = code;
+  `);
+  const runSparse = () => spawnSync(process.execPath, [runner], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_STEP_SUMMARY: "" },
+  });
   writeFileSync(join(repo, ui), '<p>Try again</p>\n');
   git("init", "-q");
   git("config", "user.email", "test@example.com");
@@ -427,6 +512,28 @@ describe("copy review", () => {
       process.chdir(cwd);
     }
   };
+
+  it("classifies added copy from the workflow-defined sparse .reviewer checkout", () => {
+    const result = runSparse();
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /2 new strings, none matched a pattern/);
+  });
+
+  for (const path of ["scripts/check-error-rules.mjs", "DESIGN.md"]) {
+    it(`fails closed when the trusted checkout lacks ${path}`, () => {
+      const file = join(repo, ".reviewer", path);
+      const contents = readFileSync(file);
+      rmSync(file);
+      try {
+        const result = runSparse();
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /ERR_MODULE_NOT_FOUND|ENOENT/);
+        assert.ok(result.stderr.includes(path), result.stderr);
+      } finally {
+        writeFileSync(file, contents);
+      }
+    });
+  }
 
   it("lists the copy a change added with its source line", () => {
     const items = inRepo(() => collectAdded("HEAD"));

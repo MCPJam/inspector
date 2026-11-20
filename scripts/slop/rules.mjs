@@ -62,6 +62,92 @@ function countMatches(text, regex) {
   return text.match(regex)?.length ?? 0;
 }
 
+/**
+ * `text` with comments and string literal contents removed, so a rule that
+ * counts calls ignores a commented-out call or a call named inside a string.
+ * Code inside a template literal's `${...}` is kept. A comment becomes a
+ * space so the tokens on either side stay separate. A single-line regex
+ * literal is blanked so a quote or backtick inside it opens nothing. JSX text
+ * is not recognized; a stray quote there blanks at most the rest of its line,
+ * which is rare enough to accept.
+ */
+function codeOnly(text) {
+  let out = "";
+  // One entry per open `${`: the brace depth inside that expression.
+  const templates = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      i = end === -1 ? text.length : end;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+      out += " ";
+    } else if (c === "/" && regexCanStart(out) && regexEnd(text, i) !== -1) {
+      i = regexEnd(text, i);
+      out += " ";
+    } else if (c === '"' || c === "'") {
+      i += 1;
+      while (i < text.length && text[i] !== c && text[i] !== "\n") {
+        i += text[i] === "\\" ? 2 : 1;
+      }
+      i += 1;
+      out += " ";
+    } else if (c === "`" || (c === "}" && templates.at(-1) === 0)) {
+      if (c === "}") templates.pop();
+      i += 1;
+      while (i < text.length && text[i] !== "`") {
+        if (text[i] === "\\") i += 2;
+        else if (text.startsWith("${", i)) break;
+        else i += 1;
+      }
+      if (text.startsWith("${", i)) {
+        templates.push(0);
+        i += 2;
+      } else i += 1;
+      out += " ";
+    } else {
+      const top = templates.length - 1;
+      if (top >= 0 && c === "{") templates[top] += 1;
+      if (top >= 0 && c === "}") templates[top] -= 1;
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** Whether a `/` after `code` opens a regex literal instead of dividing. */
+function regexCanStart(code) {
+  let end = code.length;
+  while (end > 0 && /\s/.test(code[end - 1])) end -= 1;
+  const line = code.slice(code.lastIndexOf("\n", end - 1) + 1, end);
+  // A prefix update cannot take a regex operand, so `++` or `--` here is
+  // postfix and the slash divides. `a+++/re/` is `a++ + /re/`: odd runs end
+  // in a binary operator.
+  const run = /(?:\++|-+)$/.exec(line)?.[0].length ?? 0;
+  if (run > 1) return run % 2 === 1;
+  if (end === 0 || "(,=:[!&|?{};+-*%~^".includes(code[end - 1])) return true;
+  // `of` is only a keyword in a for-of head; elsewhere it is an identifier.
+  if (/\bof$/.test(line))
+    return /\bfor\s*(?:await\s*)?\([^;()=]*of$/.test(line);
+  return /\b(?:return|typeof|case|in|void|yield|await)$/.test(line);
+}
+
+/** Index just past the regex literal opening at `start`, or -1 if it does not close on its line. */
+function regexEnd(text, start) {
+  let inClass = false;
+  for (let i = start + 1; i < text.length && text[i] !== "\n"; i += 1) {
+    if (text[i] === "\\") i += 1;
+    else if (text[i] === "[") inClass = true;
+    else if (text[i] === "]") inClass = false;
+    else if (text[i] === "/" && !inClass) return i + 1;
+  }
+  return -1;
+}
+
 function countCommentLines(text, regex) {
   let count = 0;
   for (const line of text.split("\n")) {
@@ -194,7 +280,7 @@ export const RULES = [
     count: (text) =>
       countMatches(
         text,
-        /\bcatch\s*(?:\(\s*[\w{}\s,:]*\))?\s*\{\s*(?:(?:\/\/[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)+\}/g
+        /\bcatch\s*(?:\(\s*[\w${}\s,:]*\))?\s*\{\s*(?:(?:\/\/[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)+\}/g
       ),
   },
   {
@@ -202,7 +288,8 @@ export const RULES = [
     label: "`useEffect` / `useLayoutEffect` calls in the inspector client",
     appliesTo: (path) => CLIENT_PATH.test(path),
     fix: "Derive the value during render, do the work in the event handler that causes it, reset state with a `key`, or subscribe with `useSyncExternalStore`. If an effect is the only option, replace an existing one in the same change.",
-    count: (text) => countMatches(text, /\buse(?:Layout)?Effect\s*\(/g),
+    count: (text) =>
+      countMatches(codeOnly(text), /\buse(?:Layout)?Effect\s*\(/g),
   },
   {
     id: "client-timer",
@@ -212,7 +299,7 @@ export const RULES = [
     fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
     count: (text) =>
       countMatches(
-        text,
+        codeOnly(text),
         /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\s*\(/g
       ),
   },

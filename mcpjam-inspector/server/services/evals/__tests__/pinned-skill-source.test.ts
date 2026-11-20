@@ -16,7 +16,7 @@ import {
 describe("buildPinnedSkillSource", () => {
   it("stamps a server skill's copy with its capture, under the set's ref", async () => {
     const run = await preparedRunSkills();
-    const [library, plugin, server] = run.pinnedHarnessSkills;
+    const [library, plugin, server] = run.pinnedSkillSource.harnessSkills;
     expect(library?.server).toBeUndefined();
     expect(plugin?.server).toBeUndefined();
     expect(server?.server).toEqual({
@@ -30,8 +30,6 @@ describe("buildPinnedSkillSource", () => {
       capturedAt: 1_700_000_000_000,
       contentSha256: "hash-search",
     });
-    // The plan reads the same stamped copies.
-    expect(run.pinnedSkillSource.harnessSkills).toBe(run.pinnedHarnessSkills);
   });
 
   it("takes the set's ref when it had to disambiguate one", async () => {
@@ -50,7 +48,7 @@ describe("buildPinnedSkillSource", () => {
     });
     const ref = run.pinnedSkillSource.set.serverSkills[0]?.ref;
     expect(ref).toMatch(/^docs\/search~/);
-    expect(run.pinnedHarnessSkills[1]?.server?.ref).toBe(ref);
+    expect(run.pinnedSkillSource.harnessSkills[1]?.server?.ref).toBe(ref);
   });
 
   it("records each supporting file's captured size, which a read re-checks", async () => {
@@ -66,7 +64,7 @@ describe("buildPinnedSkillSource", () => {
       ],
     });
     const run = await preparedRunSkills([authoredPin(), withFile]);
-    expect(run.pinnedHarnessSkills[1]?.server?.fileSizes).toEqual({
+    expect(run.pinnedSkillSource.harnessSkills[1]?.server?.fileSizes).toEqual({
       "notes.md": 5,
     });
   });
@@ -89,18 +87,17 @@ describe("buildPinnedSkillSource", () => {
       effectiveServerIds: ["srv_docs"],
       reportsFailure: false,
     });
-    expect(run.pinnedHarnessSkills.map((copy) => copy.contentHash)).toEqual([
+    expect(run.pinnedSkillSource.harnessSkills.map((copy) => copy.contentHash)).toEqual([
       "served-summarize",
       "served-search",
     ]);
-    expect(run.pinnedHarnessSkills[0]?.server).toBeUndefined();
-    expect(run.pinnedHarnessSkills[1]?.server).toMatchObject({
+    expect(run.pinnedSkillSource.harnessSkills[0]?.server).toBeUndefined();
+    expect(run.pinnedSkillSource.harnessSkills[1]?.server).toMatchObject({
       serverSkillId: "ss_docs_search",
       serverId: "srv_docs",
       ref: "docs/search",
     });
     // The caller's copy is not stamped in place: a cached fetch is shared.
     expect(copies[1]).not.toHaveProperty("server");
-    expect(run.pinnedSkillSource.harnessSkills).toBe(run.pinnedHarnessSkills);
   });
 });
