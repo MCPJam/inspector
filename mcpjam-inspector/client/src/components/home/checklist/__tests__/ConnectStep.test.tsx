@@ -215,4 +215,28 @@ describe("ConnectStep", () => {
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
     expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
   });
+
+  it("retries a failed demo connection without removing it", () => {
+    const { props, view } = setup();
+    const demo = () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Use the Excalidraw demo server" }),
+      );
+    demo();
+    view.rerender(
+      <ConnectStep
+        {...props}
+        servers={{
+          "Excalidraw (App)": {
+            ...server("failed"),
+            name: "Excalidraw (App)",
+          } as ServerWithName,
+        }}
+      />,
+    );
+    demo();
+    expect(props.onRemove).not.toHaveBeenCalled();
+    expect(props.onConnect).toHaveBeenCalledTimes(2);
+    expect(props.onTrack).toHaveBeenLastCalledWith("retried");
+  });
 });

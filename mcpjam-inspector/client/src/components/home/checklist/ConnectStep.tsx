@@ -166,8 +166,14 @@ export function ConnectStep({
 
   const startDemo = () => {
     window.clearTimeout(timer.current);
-    discard(attempt);
     const { name } = EXCALIDRAW_SERVER_CONFIG;
+    if (attempt?.name === name) {
+      trackedFailure.current = null;
+      onTrack("retried");
+      connect(attempt);
+      return;
+    }
+    discard(attempt);
     const next = {
       name,
       formData: EXCALIDRAW_SERVER_CONFIG,
