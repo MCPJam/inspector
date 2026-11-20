@@ -7,6 +7,7 @@ import {
   type ReactNode,
 } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { CircleCheck } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Progress } from "@mcpjam/design-system/progress";
@@ -17,12 +18,18 @@ import {
 import { cn } from "@mcpjam/design-system/cn";
 import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { ChecklistStepRow } from "@/components/home/checklist/ChecklistStepRow";
+import {
+  ChecklistPresence,
+  Rise,
+  StatusSwap,
+  useChecklistHandoff,
+} from "@/components/home/checklist/checklist-motion";
 
 /**
  * Motion lab for the Home setup checklist (BA-10). Replays the three moments
- * the checklist animates, at real speed or slowed down, with the shipped
- * behavior ("Current") beside the options. Exploration only: nothing here is
- * wired into Home until one option is chosen.
+ * the checklist animates, at real speed or slowed down. "Shipped" marks the
+ * option PR #7960 uses (the real component where there is one); the rest are
+ * the alternatives it was picked from.
  */
 const meta = {
   title: "Explorations/Home checklist motion",
@@ -119,7 +126,7 @@ function Grid({ children }: { children: ReactNode }) {
 /* ---------- 1. Step 1 auto-connect ---------- */
 
 type ConnectPhase = "typed" | "connecting" | "connected";
-type ConnectStyle = "cut" | "fade" | "slide" | "height";
+type ConnectStyle = "cut" | "fade" | "slide" | "height" | "shipped";
 
 function useConnectPhase(run: number, ms: (n: number) => number) {
   const [phase, setPhase] = useState<ConnectPhase>("typed");
@@ -211,6 +218,8 @@ function ConnectDemo({
       />
       {style === "cut" ? (
         body
+      ) : style === "shipped" ? (
+        <StatusSwap swapKey={phase}>{body}</StatusSwap>
       ) : (
         <AnimatePresence
           mode={style === "height" ? "sync" : "wait"}
@@ -245,8 +254,14 @@ export const AutoConnect: Story = {
         <Grid>
           <Variant
             current
+            name="Height + fade 220 ms, eased"
+            note="The real Step 1 component: the area eases out to its new height, and the new status fades in once most of it is there, so Confirm isn't revealed half at a time."
+          >
+            <ConnectDemo style="shipped" run={run} ms={ms} />
+          </Variant>
+          <Variant
             name="Cut"
-            note="Status row swaps in place; the Confirm block pops in and pushes the layout down."
+            note="Before: status row swaps in place; the Confirm block pops in and pushes the layout down."
           >
             <ConnectDemo style="cut" run={run} ms={ms} />
           </Variant>
@@ -263,8 +278,8 @@ export const AutoConnect: Story = {
             <ConnectDemo style="slide" run={run} ms={ms} />
           </Variant>
           <Variant
-            name="Height + fade 220 ms"
-            note="Panel grows smoothly to fit the Confirm block, so nothing below jumps."
+            name="Height + fade 220 ms (first try)"
+            note="Grows and fades at once, so the clipped Confirm button appears top half first."
           >
             <ConnectDemo style="height" run={run} ms={ms} />
           </Variant>
@@ -356,7 +371,7 @@ const BAR_STYLES: {
 }[] = [
   {
     name: "700 ms ease-out",
-    note: 'Shipped: Progress pace="gradual". Returning from another page shows the new value with no motion.',
+    note: 'Progress pace="gradual". Shipped for steps that finish on Home; before, returning from another page showed the new value with no motion.',
     current: true,
     bar: {
       duration: 700,
@@ -366,7 +381,8 @@ const BAR_STYLES: {
   },
   {
     name: "700 ms, animate on return",
-    note: "Home remembers the last count it showed and grows from there after navigating back.",
+    note: "Shipped for returns: Home remembers the last count it showed and grows from there after navigating back.",
+    current: true,
     bar: {
       duration: 700,
       ease: "cubic-bezier(0, 0, 0.2, 1)",
@@ -455,7 +471,10 @@ function FinishedChecklist({ celebrate }: { celebrate: boolean }) {
         />
       </div>
       {celebrate ? (
-        <p className="text-sm font-medium text-success">You're all set.</p>
+        <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <CircleCheck className="size-4 text-success" aria-hidden />
+          You're all set.
+        </p>
       ) : null}
       <ul>
         {STEPS.map((title, i) => (
@@ -518,6 +537,38 @@ function FinishDemo({
   );
 }
 
+/** The real handoff pieces from Home, replayed on the same timeline. */
+function ShippedFinishDemo({
+  run,
+  ms,
+}: {
+  run: number;
+  ms: (n: number) => number;
+}) {
+  return <ShippedFinishRun key={`${run}-${ms(1)}`} ms={ms} />;
+}
+
+function ShippedFinishRun({ ms }: { ms: (n: number) => number }) {
+  const handoff = useChecklistHandoff();
+  const { finish } = handoff;
+  useEffect(() => {
+    const t = window.setTimeout(() => finish(true), ms(1500));
+    return () => window.clearTimeout(t);
+  }, [finish, ms]);
+  return (
+    <div>
+      <ChecklistPresence handoff={handoff}>
+        {handoff.finished ? null : <FinishedChecklist celebrate />}
+      </ChecklistPresence>
+      {handoff.homeVisible && handoff.finished ? (
+        <Rise active={handoff.rising}>
+          <TodaysHome />
+        </Rise>
+      ) : null}
+    </div>
+  );
+}
+
 export const FinishToHome: Story = {
   name: "3. 5 of 5 → today's Home",
   render: function Render() {
@@ -528,8 +579,14 @@ export const FinishToHome: Story = {
         <Grid>
           <Variant
             current
+            name="“You're all set”, collapse, then rise"
+            note="The real Home handoff: 1.5 s hold with the success line, the checklist collapses (280 ms), then today's Home rises 6 px (280 ms). Real speed only."
+          >
+            <ShippedFinishDemo run={run} ms={ms} />
+          </Variant>
+          <Variant
             name="Hold 1.5 s, then cut"
-            note="Shipped: 5 of 5 stays up for 1.5 s, then today's Home replaces it in one frame."
+            note="Before: 5 of 5 stays up for 1.5 s, then today's Home replaces it in one frame."
           >
             <FinishDemo style="cut" run={run} ms={ms} />
           </Variant>
