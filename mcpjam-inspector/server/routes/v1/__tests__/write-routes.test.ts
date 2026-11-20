@@ -2907,6 +2907,43 @@ describe("v1 write routes", () => {
       await drain(gates2, d2, 2);
     });
 
+    it("keys an unkeyed group and returns the key, so its replay dedupes", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const body = {
+        suiteId: "suite1xxxxxxxxxxxxxxxxxxxxxxxxxx",
+        targets: [
+          { namedHostId: "hostclaudexxxxxxxxxxxxxxxxxxxxxx" },
+          { namedHostId: "hostchatgptxxxxxxxxxxxxxxxxxxxxx" },
+        ],
+      };
+      const first = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", body)
+      ).json()) as any;
+      expect(typeof first.idempotencyKey).toBe("string");
+      const firstKeys = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].idempotencyKey
+      );
+      expect(new Set(firstKeys).size).toBe(2);
+      await drain(releaseGates, disconnectAllServers, 2);
+      prepareEvalRunMock.mockClear();
+
+      const { releaseGates: gates2, disconnectAllServers: d2 } =
+        mockPendingLaunches();
+      const replay = (await (
+        await request(app, "POST", "/api/v1/projects/proj1xxxxxxxxxxxxxxxxxxxxxxxxxxx/eval-run-groups", {
+          ...body,
+          idempotencyKey: first.idempotencyKey,
+        })
+      ).json()) as any;
+      expect(replay.runGroupId).toBe(first.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey)
+      ).toEqual(firstKeys);
+      await drain(gates2, d2, 2);
+    });
+
     it("does not treat a client-supplied runGroupId on the single-run route as a group", async () => {
       mockConvexQueries({
         "testSuites:getSuiteRunServerSelection": () => ({

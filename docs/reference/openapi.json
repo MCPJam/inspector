@@ -18458,6 +18458,10 @@
           "suiteId": {
             "type": "string"
           },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "The launch's key: the caller's, or one the server minted. Sending the same request again with this key returns the targets that started as their existing runs and launches only the ones that did not, such as a target MCPJam credits refused."
+          },
           "outcome": {
             "type": "string",
             "description": "`started`: every target launched; `partial`: some did and some did not; `failed`: none did (still a `202`: the group itself was valid, and the per-target reasons are in `targets`).",
@@ -18546,7 +18550,7 @@
                     },
                     "recovery": {
                       "type": "object",
-                      "description": "When MCPJam credits refused this target: the one next step (`action`, `actor`, `url`), same shape as an iteration's `infraError.recovery`. No run was created for the target; launch it again once the step is done."
+                      "description": "When MCPJam credits refused this target: the one next step (`action`, `actor`, `url`), same shape as an iteration's `infraError.recovery`. No run was created for the target; once the step is done, send the same request again with the receipt's `idempotencyKey`."
                     }
                   }
                 }
@@ -18690,6 +18694,15 @@
         "type": "object",
         "required": ["id", "suiteId", "status", "source", "createdAt"],
         "properties": {
+          "resumeSelection": {
+            "type": "object",
+            "description": "On a terminal run, the exact cases a launch with `resumeFromRunId` set to this run would run. Absent on deployments that do not serve it.",
+            "required": ["caseIds", "totalCaseCount"],
+            "properties": {
+              "caseIds": { "type": "array", "items": { "type": "string" } },
+              "totalCaseCount": { "type": "integer" }
+            }
+          },
           "client": {
             "type": "object",
             "description": "Durable execution client, omitted on older runs without a descriptor. Separate from launcher identity.",

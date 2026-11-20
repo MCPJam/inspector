@@ -64,7 +64,10 @@ import {
   type RunCompareBaseline,
 } from "./eval-compare-projection.js";
 import { isRequiredRole } from "@mcpjam/sdk/predicates";
-import { type RequestedModelSelection } from "@mcpjam/sdk";
+import {
+  parseResumeSelection,
+  type RequestedModelSelection,
+} from "@mcpjam/sdk";
 import {
   ADVANCED_CONFIG_REASONING_EFFORT_MESSAGE,
   computedModelId,
@@ -1892,6 +1895,11 @@ function toRunDto(run: RunDoc) {
     // without walking iterations. Re-parsed, not forwarded raw: a stored value
     // that is malformed or carries an off-origin URL is dropped, never emitted.
     ...creditRecoveryProjection(run.creditRecovery),
+    // The exact cases a resume of this terminal run would launch, so a
+    // preview of "what the resume reruns" is the backend's own selection.
+    ...(parseResumeSelection(run.resumeSelection)
+      ? { resumeSelection: parseResumeSelection(run.resumeSelection) }
+      : {}),
     ...(typeof run.effectiveModelId === "string"
       ? { effectiveModelId: run.effectiveModelId }
       : {}),
@@ -4965,14 +4973,10 @@ const createEvalRunGroupSchema = z
  * target that already started dedupes at the run level instead of launching a
  * second paid run — and the rebuilt receipt names the original run ids.
  *
- * An UNKEYED launch gets a random id, which is the honest answer: a request
- * with no replay identity has no replay semantics to offer.
+ * An unkeyed launch is given a random key first, which the receipt returns,
+ * so its refused targets can be replayed the same way.
  */
-function deriveRunGroupId(
-  suiteId: string,
-  idempotencyKey: string | undefined,
-): string {
-  if (!idempotencyKey) return randomUUID();
+function deriveRunGroupId(suiteId: string, idempotencyKey: string): string {
   return createHash("sha256")
     .update(`eval-run-group:${suiteId}:${idempotencyKey}`)
     .digest("hex")
@@ -5200,7 +5204,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     );
   }
 
-  const runGroupId = deriveRunGroupId(body.suiteId, body.idempotencyKey);
+  // Keyed even when the caller sent no key, so replaying the launch with the
+  // receipt's key starts only the targets that did not start the first time.
+  const groupKey = body.idempotencyKey ?? randomUUID();
+  const runGroupId = deriveRunGroupId(body.suiteId, groupKey);
   const callerContext = callerContextFromHono(c);
   const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
   // Read ONCE for the whole group: every sibling of a fan-out was launched by
@@ -5256,14 +5263,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           // RUN level against the run the first attempt created, instead of
           // every sibling colliding on one key (which would return target 1's
           // run for every target) or sharing none (which would double-launch).
-          ...(body.idempotencyKey
-            ? {
-                idempotencyKey: deriveItemIdempotencyKey(
-                  `eval-run-group:${runGroupId}`,
-                  target.environmentId ?? target.namedHostId ?? "",
-                ),
-              }
-            : {}),
+          idempotencyKey: deriveItemIdempotencyKey(
+            `eval-run-group:${runGroupId}`,
+            target.environmentId ?? target.namedHostId ?? "",
+          ),
         },
         // A group launches persisted suites only — there are no inline tests to
         // upsert, so every target is a rerun.
@@ -5323,6 +5326,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     {
       runGroupId,
       suiteId: body.suiteId,
+      idempotencyKey: groupKey,
       // DISCRIMINATED, not an optional-field soup: a caller decides severity
       // from one field instead of comparing counts and guessing.
       outcome:
