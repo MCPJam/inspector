@@ -39,11 +39,16 @@ function suite(id: string, latestRunAt: number | null, updatedAt: number) {
   };
 }
 
-function run(id: string, status: string, createdAt: number) {
+function run(
+  id: string,
+  status: string,
+  createdAt: number,
+  suiteId = "suite-a"
+) {
   const finished = status === "completed";
   return {
     id,
-    suiteId: "suite-a",
+    suiteId,
     runNumber: createdAt,
     status,
     result: finished ? "passed" : "pending",
@@ -55,8 +60,12 @@ function run(id: string, status: string, createdAt: number) {
   };
 }
 
-/** A client whose suite listing and run history are the given rows. */
-function makeClient(suites: unknown[], runs: ReturnType<typeof run>[]) {
+/**
+ * A client whose suite listing and run history are the given rows. Runs are
+ * served for whichever suite the request names, so a history spread over
+ * several suites is filtered by `suiteId`.
+ */
+function makeClient(suites: unknown[], allRuns: ReturnType<typeof run>[]) {
   const fetchMock = vi.fn<typeof fetch>(async (target) => {
     const url = new URL(String(target));
     if (url.pathname === "/api/v1/projects") {
@@ -65,8 +74,12 @@ function makeClient(suites: unknown[], runs: ReturnType<typeof run>[]) {
     if (/\/eval-suites$/.test(url.pathname)) {
       return Response.json({ items: suites });
     }
-    if (/\/eval-suites\/[^/]+\/runs$/.test(url.pathname)) {
+    const runsOf = /\/eval-suites\/([^/]+)\/runs$/.exec(url.pathname);
+    if (runsOf) {
       const limit = Number(url.searchParams.get("limit") ?? 25);
+      const runs = allRuns.filter(
+        (item) => item.suiteId === decodeURIComponent(runsOf[1])
+      );
       return Response.json({ items: runs.slice(0, limit) });
     }
     return Response.json({ code: "NOT_FOUND" }, { status: 404 });
@@ -91,7 +104,7 @@ describe("listEvalSuiteRunsOperation without a suite", () => {
         suite("suite-b", 30, 5),
         suite("suite-c", null, 99),
       ],
-      [run("r1", "completed", 30)]
+      [run("r1", "completed", 30, "suite-b")]
     );
 
     const input = listEvalSuiteRunsOperation.inputSchema.parse({ limit: 1 });
@@ -177,5 +190,102 @@ describe("listEvalSuiteRunsOperation latestFinishedRun", () => {
 
     expect(result.latestFinishedRun).toBeNull();
     expect(runCalls()).toHaveLength(1);
+  });
+});
+
+describe("listEvalSuiteRunsOperation latestFinishedRun across suites", () => {
+  function runningSuite(id: string, latestRunAt: number, updatedAt = 1) {
+    const row = suite(id, latestRunAt, updatedAt);
+    return { ...row, latestRun: { ...row.latestRun!, status: "running" } };
+  }
+
+  it("looks in the project's other suites when the newest run's suite has no finished run", async () => {
+    // A new suite's first run is the newest in the project and still going;
+    // the last verdict is in another suite.
+    const { client, runCalls } = makeClient(
+      [runningSuite("suite-new", 50), suite("suite-old", 40, 1)],
+      [
+        run("first", "running", 50, "suite-new"),
+        run("verdict", "completed", 40, "suite-old"),
+      ]
+    );
+
+    const result = await listEvalSuiteRunsOperation.execute({}, { client });
+
+    expect(result.suite.id).toBe("suite-new");
+    expect(result.items.map((item) => item.id)).toEqual(["first"]);
+    expect(result.latestFinishedRun?.id).toBe("verdict");
+    expect(result.latestFinishedRunSuite).toEqual({
+      id: "suite-old",
+      name: "SUITE-OLD",
+    });
+    expect(runCalls().map((url) => url.pathname.split("/")[6])).toEqual([
+      "suite-new",
+      "suite-old",
+    ]);
+  });
+
+  it("stays inside a suite the caller named", async () => {
+    const { client, runCalls } = makeClient(
+      [runningSuite("suite-new", 50), suite("suite-old", 40, 1)],
+      [
+        run("first", "running", 50, "suite-new"),
+        run("verdict", "completed", 40, "suite-old"),
+      ]
+    );
+
+    const result = await listEvalSuiteRunsOperation.execute(
+      { suite: "suite-new" },
+      { client }
+    );
+
+    expect(result.latestFinishedRun).toBeNull();
+    expect(result).not.toHaveProperty("latestFinishedRunSuite");
+    expect(runCalls()).toHaveLength(1);
+  });
+
+  it("takes the newest finished run and stops once no other suite can beat it", async () => {
+    // suite-b's latest run is going, but an earlier one finished at 45. No run
+    // in suite-c (latest 30) or suite-d (latest 20) can be newer, so neither
+    // is read.
+    const { client, runCalls } = makeClient(
+      [
+        runningSuite("suite-a", 60),
+        suite("suite-c", 30, 1),
+        runningSuite("suite-b", 55),
+        suite("suite-d", 20, 1),
+      ],
+      [
+        run("a-first", "running", 60, "suite-a"),
+        run("b-going", "running", 55, "suite-b"),
+        run("b-done", "completed", 45, "suite-b"),
+        run("c-done", "completed", 30, "suite-c"),
+        run("d-done", "completed", 20, "suite-d"),
+      ]
+    );
+
+    const result = await listEvalSuiteRunsOperation.execute({}, { client });
+
+    expect(result.latestFinishedRun?.id).toBe("b-done");
+    expect(result.latestFinishedRunSuite?.id).toBe("suite-b");
+    expect(runCalls().map((url) => url.pathname.split("/")[6])).toEqual([
+      "suite-a",
+      "suite-b",
+    ]);
+  });
+
+  it("is null when no suite in the project has a finished run", async () => {
+    const { client } = makeClient(
+      [runningSuite("suite-new", 50), runningSuite("suite-other", 40)],
+      [
+        run("first", "running", 50, "suite-new"),
+        run("other", "running", 40, "suite-other"),
+      ]
+    );
+
+    const result = await listEvalSuiteRunsOperation.execute({}, { client });
+
+    expect(result.latestFinishedRun).toBeNull();
+    expect(result).not.toHaveProperty("latestFinishedRunSuite");
   });
 });

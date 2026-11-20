@@ -62,6 +62,59 @@ export async function resolveSuiteForRunListing(
 }
 
 /**
+ * How many other suites a project-wide search reads at most, newest run
+ * first. The search usually stops at the first one.
+ */
+export const LATEST_FINISHED_RUN_SUITES = 10;
+
+/**
+ * The project's newest finished run outside the suite already searched, for a
+ * listing that named no suite and found no finished run in the one it read.
+ * That suite is often new: the newest run in the project is its first, still
+ * going, while other suites hold the last verdict.
+ *
+ * Suites are read newest run first. A suite's runs are all no newer than its
+ * latest, so the search stops once no remaining suite can hold a newer finished
+ * run than the best found. `null` when no other suite has a finished run.
+ */
+export async function latestFinishedRunInProject(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  searchedSuiteId: string,
+  signal: AbortSignal | undefined
+): Promise<{ run: PlatformEvalRun; suite: PlatformEvalSuite } | null> {
+  const { items } = await client.listEvalSuites(
+    { projectId: project.id },
+    { signal }
+  );
+  const others = items
+    .filter((suite) => suite.id !== searchedSuiteId && suite.latestRun)
+    .sort(
+      (a, b) => (b.latestRun?.createdAt ?? -1) - (a.latestRun?.createdAt ?? -1)
+    )
+    .slice(0, LATEST_FINISHED_RUN_SUITES);
+  let best: { run: PlatformEvalRun; suite: PlatformEvalSuite } | null = null;
+  for (const suite of others) {
+    if (best && (suite.latestRun?.createdAt ?? -1) <= best.run.createdAt) {
+      break;
+    }
+    const { items: runs } = await client.listEvalSuiteRuns(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        limit: LATEST_FINISHED_RUN_LOOKBACK,
+      },
+      { signal }
+    );
+    const finished = runs.find((run) => isEvalRunTerminalStatus(run.status));
+    if (finished && (!best || finished.createdAt > best.run.createdAt)) {
+      best = { run: finished, suite };
+    }
+  }
+  return best;
+}
+
+/**
  * The newest finished run, for a page of runs none of which has finished.
  *
  * `undefined` when the page needs none: it is empty, or one of its runs has
