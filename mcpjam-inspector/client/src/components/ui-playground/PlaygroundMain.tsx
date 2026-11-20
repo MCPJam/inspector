@@ -2815,14 +2815,17 @@ export function PlaygroundMain({
     },
     [multiModelSessionGeneration],
   );
-  const compareLanesReady = () =>
-    !retainedClientsPaused &&
-    compareLanes.length > 0 &&
-    compareLanes.every(
-      ({ id }) =>
-        compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
-          ?.ready === true,
-    );
+  const compareLanesReady = useCallback(
+    () =>
+      !retainedClientsPaused &&
+      compareLanes.length > 0 &&
+      compareLanes.every(
+        ({ id }) =>
+          compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
+            ?.ready === true,
+      ),
+    [retainedClientsPaused, compareLanes, multiModelSessionGeneration],
+  );
   const ensureCompareReady = () => {
     if (compareLanesReady()) return true;
     const states = compareLanes.map(({ id }) =>
@@ -5079,6 +5082,7 @@ export function PlaygroundMain({
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
   const compareAutoRun = useCompareAutoRun(onAutoRunSent);
+  const sendCompareAutoRun = compareAutoRun.send;
   useEffect(() => {
     if (
       !shouldAutoRunPreview({
@@ -5123,7 +5127,7 @@ export function PlaygroundMain({
           (await ensureLocalHarnessReadyForSend());
         if (!gated) return composer.setInput(prompt);
         const queued = { ...turn, prependMessages: [] };
-        if (!compareAutoRun.send(queued, broadcastSequence))
+        if (!sendCompareAutoRun(queued, broadcastSequence))
           autoRanRef.current = false;
       })();
       return;
@@ -5141,6 +5145,8 @@ export function PlaygroundMain({
     isStreaming,
     isCompareMode,
     compareReadyCount,
+    compareLanesReady,
+    sendCompareAutoRun,
     submitBlocked,
     modelContextQueue,
     ensureSelectedServerReadyForChat,
