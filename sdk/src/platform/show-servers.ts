@@ -98,7 +98,7 @@ const STDIO_SKIP_REASON =
   "stdio transport is not supported by the hosted MCPJam MCP server.";
 const MISSING_URL_SKIP_REASON = "HTTP server is missing a URL.";
 const HOSTED_HTTP_SKIP_REASON =
-  "Hosted MCPJam MCP only probes HTTPS HTTP servers.";
+  "Not checked: hosted MCPJam connects only to https:// servers.";
 
 export type ProjectResolution =
   | {
