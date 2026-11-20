@@ -1,6 +1,6 @@
 /**
  * Starting and stopping the one dev instance a driver owns. It wraps
- * `npm run dev:worktree -- <N> --no-worker`, the launcher contributors use,
+ * `npm run dev:hosted -- <N> --no-worker`, the launcher contributors use,
  * and records what it started in a state file outside the repo so `stop`
  * only ever stops that process tree.
  */
@@ -124,6 +124,7 @@ export async function startInstance({
   instance,
   worker = false,
   prepare = true,
+  envFile,
   timeoutSeconds = 300,
   log = (line) => process.stdout.write(`${line}\n`),
 }) {
@@ -149,11 +150,12 @@ export async function startInstance({
   const logFd = openSync(logPath, "w", 0o600);
   const args = [
     "run",
-    "dev:worktree",
+    "dev:hosted",
     "--",
     String(chosen),
     ...(worker ? [] : ["--no-worker"]),
     ...(prepare ? [] : ["--skip-prepare"]),
+    ...(envFile ? ["--env-file", envFile] : []),
   ];
   const child = spawn(
     npmCli ? process.execPath : "npm",

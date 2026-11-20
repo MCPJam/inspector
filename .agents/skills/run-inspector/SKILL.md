@@ -39,9 +39,10 @@ node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only
   `MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`).
 - `--fresh` keeps the first-run onboarding (it is marked done by default),
   `--headed` shows the browser, `--out <dir>` picks the artifact folder.
-- `start` runs `npm run dev:worktree -- <N> --no-worker` (`--worker` adds the
-  platform MCP worker, `--skip-prepare` skips the SDK and bundle builds) with
-  a token it chose, and logs to the temp folder it prints. It stops the
+- `start` runs `npm run dev:hosted -- <N> --no-worker` (`--worker` adds the
+  platform MCP worker, `--skip-prepare` skips the SDK and bundle builds,
+  `--env-file <profile>` picks the backend profile, for example
+  `.env.development`) with a token it chose, and logs to the file it prints. It stops the
   instance again if it is not ready within `--ready-timeout` seconds. Use
   `--skip-prepare` only when `npm run bundle:all -w @mcpjam/inspector` has
   run in this worktree: without the bundles the server crashes, and under

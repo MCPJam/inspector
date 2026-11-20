@@ -60,6 +60,22 @@ export async function openContext({ baseUrl, token, theme, fresh, headed }) {
     },
     { origin, force, ifAbsent },
   );
+  // The client holds its guest token in memory only, so every page load
+  // mints a guest, and mints draw on a small per-IP allowance: a sweep ran
+  // out after about 18 surfaces. One real mint per run, replayed after that.
+  let guestSession;
+  await context.route("**/api/web/guest-session", async (route) => {
+    if (guestSession) return route.fulfill(guestSession);
+    const response = await route.fetch();
+    if (response.ok()) {
+      guestSession = {
+        status: response.status(),
+        headers: response.headers(),
+        body: await response.body(),
+      };
+    }
+    return route.fulfill({ response });
+  });
   return {
     context,
     close: () => browser.close(),
@@ -97,9 +113,12 @@ export function recordEvents(page) {
   return events;
 }
 
+const LOADING_SCREEN_TIMEOUT_MS = 20_000;
+
 /**
  * Load a URL and wait for the app shell, the same readiness the e2e smoke
- * test uses. A missing shell or the not-found screen is itself an event.
+ * test uses. A missing shell, a screen stuck loading or the not-found screen
+ * is itself an event.
  */
 export async function loadAndSettle(page, url, events, timeoutMs) {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: timeoutMs });
@@ -127,6 +146,22 @@ async function settle(page, events, timeoutMs) {
     () => undefined,
     () => undefined,
   );
+  // The shell mounts before a lazy screen does, and the network can go quiet
+  // while that screen still shows LoadingScreen's spinner.
+  const loaded = await page
+    .locator('[role="status"] .animate-spin')
+    .first()
+    .waitFor({ state: "hidden", timeout: LOADING_SCREEN_TIMEOUT_MS })
+    .then(
+      () => true,
+      () => false,
+    );
+  if (!loaded) {
+    events.push({
+      kind: "still-loading",
+      text: `loading screen still shown after ${LOADING_SCREEN_TIMEOUT_MS}ms at ${page.url()}`,
+    });
+  }
   if ((await page.getByTestId("route-not-found").count()) > 0) {
     events.push({
       kind: "not-found",

@@ -8,6 +8,7 @@
  *
  *   node scripts/inspector-driver.mjs surfaces
  *   node scripts/inspector-driver.mjs start [--instance N] [--worker] [--skip-prepare]
+ *                                           [--env-file <profile>]
  *   node scripts/inspector-driver.mjs status | stop
  *   node scripts/inspector-driver.mjs open <surface|/path|url> [--theme light|dark]
  *   node scripts/inspector-driver.mjs run <steps.json|inline-json> [--start <surface>]
@@ -61,6 +62,7 @@ const OPTIONS = {
   headed: { type: "boolean" },
   worker: { type: "boolean" },
   "skip-prepare": { type: "boolean" },
+  "env-file": { type: "string" },
   help: { type: "boolean", short: "h" },
 };
 
@@ -331,6 +333,7 @@ async function cmdStart(values) {
     instance,
     worker: values.worker,
     prepare: !values["skip-prepare"],
+    envFile: values["env-file"],
     timeoutSeconds: positiveInt(values["ready-timeout"], "ready-timeout", 300),
   });
   process.stdout.write(`base-url ${state.baseUrl}\n`);

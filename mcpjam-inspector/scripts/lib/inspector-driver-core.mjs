@@ -16,6 +16,7 @@ const FAILING_KINDS = new Set([
   "navigation-failed",
   "no-app-shell",
   "not-found",
+  "still-loading",
   "step-failed",
 ]);
 
