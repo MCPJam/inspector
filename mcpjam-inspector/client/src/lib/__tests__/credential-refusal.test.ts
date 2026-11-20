@@ -171,7 +171,7 @@ describe("withCredentialRefusal", () => {
 
 describe("a shared or uploaded account's refusal", () => {
   const SENTENCE =
-    "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.";
+    "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.";
 
   it("is its own kind, with its cause, on a local envelope and a hosted result", () => {
     expect(
@@ -204,7 +204,7 @@ describe("a shared or uploaded account's refusal", () => {
     ) as { error: string; normalized: NormalizedError };
     expect(result.error).toBe(SENTENCE);
     expect(result.error).not.toMatch(/organization admin/);
-    expect(result.normalized.title).toBe("Local runs not allowed yet");
+    expect(result.normalized.title).toBe("Local runs are off for this server");
   });
 
   it("names the admin's step when the result carries no sentence", () => {
@@ -212,7 +212,10 @@ describe("a shared or uploaded account's refusal", () => {
       { kind: "hosted_only", cause: "not_acknowledged" },
       "Docs",
     );
-    expect(message).toMatch(/Allow local runs/);
+    // Also shown after an admin turns local runs off, so no "yet".
+    expect(message).toBe(
+      '"Docs" uses the project\'s shared sign-in, and local runs are off for it. Ask a project admin to turn on Allow local runs on the server\'s Auth tab.',
+    );
     expect(message).not.toMatch(/organization admin/);
     expect(
       credentialRefusalMessage({ kind: "hosted_only" }, "Docs"),

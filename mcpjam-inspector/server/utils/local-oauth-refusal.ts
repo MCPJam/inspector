@@ -14,9 +14,9 @@ export type AuthorizeOAuthOutcome = {
 };
 
 /** The sentence for a hosted-only refusal when the backend sent none. */
-function hostedOnlyFallback(named: string, cause?: string): string {
+export function hostedOnlyFallback(named: string, cause?: string): string {
   if (cause === "not_acknowledged")
-    return `${named} uses the project's shared sign-in, and local runs aren't allowed for it yet. Ask a project admin to turn on Allow local runs in its sharing settings.`;
+    return `${named} uses the project's shared sign-in, and local runs are off for it. Ask a project admin to turn on Allow local runs on the server's Auth tab.`;
   if (cause === "client_upgrade_required")
     return `${named} signs in with a shared or uploaded account. Update MCPJam to use it locally.`;
   return `${named} signs in with a shared or uploaded account this app can't use. Run it from MCPJam instead.`;

@@ -66,16 +66,32 @@ describe("an export refusal names the rule that refused", () => {
     });
   });
 
+  it("says local runs are off when the backend names that cause but no sentence", async () => {
+    stubAuthorize({
+      oauthUnavailablePolicy: "hostedOnlyAccount",
+      oauthUnavailableCause: "not_acknowledged",
+    });
+    const error = await refusal();
+    expect(error.message).toBe(
+      `"Markets" uses the project's shared sign-in, and local runs are off for it. Ask a project admin to turn on Allow local runs on the server's Auth tab.`,
+    );
+    expect(error.details).toMatchObject({
+      exportDenied: true,
+      policy: "hostedOnlyAccount",
+      cause: "not_acknowledged",
+    });
+  });
+
   it("keeps the backend's own sentence and cause when it sends them", async () => {
     stubAuthorize({
       oauthUnavailablePolicy: "hostedOnlyAccount",
       oauthUnavailableCause: "not_acknowledged",
       oauthUnavailableMessage:
-        "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+        "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.",
     });
     const error = await refusal();
     expect(error.message).toBe(
-      "Local runs aren't allowed yet for this server's shared sign-in. Ask a project admin to turn on Allow local runs in the server's sharing settings.",
+      "Local runs are off for this server's shared sign-in. Ask a project admin to turn on Allow local runs on the server's Auth tab.",
     );
     expect(error.details).toMatchObject({
       exportDenied: true,
