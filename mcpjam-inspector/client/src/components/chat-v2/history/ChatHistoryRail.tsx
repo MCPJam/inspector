@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -14,9 +21,14 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import { ChatHistoryRow } from "./ChatHistoryRow";
+import { ChatHistoryGroupRow } from "./ChatHistoryGroupRow";
+import { foldMultiModelSessions } from "./multi-model-session-rows";
+import { useMultiModelGroupActions } from "./use-multi-model-group-actions";
+import { useMultiModelSessionsEnabled } from "@/hooks/useMultiModelSessionsEnabled";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { useProjectMembers } from "@/hooks/useProjects";
+import { useHostList } from "@/hooks/useClients";
 import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import {
@@ -29,6 +41,7 @@ import { ConvertChatSessionDialog } from "./convert-chat-session-dialog";
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
 
 type ArchiveSectionScope = "personal" | "project";
+const NO_SESSIONS: ChatHistorySession[] = [];
 
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
@@ -222,12 +235,42 @@ export function ChatHistoryRail({
   const [sessionToConvert, setSessionToConvert] =
     useState<ChatHistorySession | null>(null);
   const canUseProjectSharing = isAuthenticated && Boolean(projectId);
-  const { personal, project, loading, error, isReactive, refetch, actions } =
-    useChatHistory({
-      projectId,
-      enabled,
-      requestHeaders,
-    });
+  const multiModelSessionsEnabled = useMultiModelSessionsEnabled();
+  const {
+    personal,
+    project,
+    multiModelSiblings = NO_SESSIONS,
+    loading,
+    error,
+    isReactive,
+    refetch,
+    actions,
+  } = useChatHistory({
+    projectId,
+    enabled,
+    requestHeaders,
+    includeMultiModelSiblings: multiModelSessionsEnabled,
+  });
+  // Siblings only fill out groups on screen; they never become rows of their own.
+  const personalWithSiblings = useMemo(() => {
+    const onPage = new Set(personal.map((session) => session._id));
+    return [
+      ...personal,
+      ...multiModelSiblings.filter((session) => !onPage.has(session._id)),
+    ];
+  }, [personal, multiModelSiblings]);
+  const { hosts } = useHostList({
+    isAuthenticated: isAuthenticated && multiModelSessionsEnabled,
+    projectId: projectId ?? null,
+  });
+  const hostNames = useMemo(
+    () => new Map(hosts.map((host) => [host.hostId, host.name])),
+    [hosts],
+  );
+  const hostName = useCallback(
+    (hostId: string) => hostNames.get(hostId),
+    [hostNames],
+  );
 
   const { activeMembers } = useProjectMembers({
     isAuthenticated,
@@ -277,6 +320,19 @@ export function ChatHistoryRail({
 
     void refetch();
   }, [enabled, isReactive, refetch, refreshSignal]);
+
+  const personalEntries = useMemo(
+    () =>
+      multiModelSessionsEnabled
+        ? foldMultiModelSessions(personalWithSiblings, personal)
+        : personal.map((session) => ({ kind: "session" as const, session })),
+    [multiModelSessionsEnabled, personal, personalWithSiblings],
+  );
+  const groupActions = useMultiModelGroupActions({
+    isReactive,
+    requestHeaders,
+    refetch,
+  });
 
   const archiveBusy = archivingScope !== null;
   const canConvertToTestCase = Boolean(isAuthenticated);
@@ -365,28 +421,56 @@ export function ChatHistoryRail({
                     }
                     archiving={archivingScope === "personal"}
                     onArchive={() =>
-                      void handleArchiveSection("personal", personal)
+                      void handleArchiveSection(
+                        "personal",
+                        personalWithSiblings,
+                      )
                     }
                     onNewChat={onNewChat}
                     newChatDisabled={isStreaming}
                   >
-                    {personal.map((session) => (
-                      <ChatHistoryRow
-                        key={session._id}
-                        session={session}
-                        isActive={session._id === activeSessionId}
-                        isAuthenticated={isAuthenticated}
-                        isStreaming={isStreaming}
-                        sharedThreadsEnabled={canUseProjectSharing}
-                        hostStyle={hostStyle}
-                        onSelect={(selected) => onSelectThread(selected, personal)}
-                        onPrefetch={onPrefetchThread}
-                        onActionComplete={onSessionAction}
-                        canConvertToTestCase={canConvertToTestCase}
-                        onConvertToTestCase={setSessionToConvert}
-                        actions={actions}
-                      />
-                    ))}
+                    {personalEntries.map((entry) =>
+                      entry.kind === "group" ? (
+                        <ChatHistoryGroupRow
+                          key={entry.groupId}
+                          entry={entry}
+                          activeSessionId={activeSessionId}
+                          isAuthenticated={isAuthenticated}
+                          isStreaming={isStreaming}
+                          sharedThreadsEnabled={canUseProjectSharing}
+                          hostStyle={hostStyle}
+                          onSelectGroup={(lead) =>
+                            onSelectThread(lead, personalWithSiblings)
+                          }
+                          onSelectColumn={(column) => onSelectThread(column)}
+                          onPrefetch={onPrefetchThread}
+                          onActionComplete={onSessionAction}
+                          canConvertToTestCase={canConvertToTestCase}
+                          onConvertToTestCase={setSessionToConvert}
+                          actions={actions}
+                          groupActions={groupActions}
+                          hostName={hostName}
+                        />
+                      ) : (
+                        <ChatHistoryRow
+                          key={entry.session._id}
+                          session={entry.session}
+                          isActive={entry.session._id === activeSessionId}
+                          isAuthenticated={isAuthenticated}
+                          isStreaming={isStreaming}
+                          sharedThreadsEnabled={canUseProjectSharing}
+                          hostStyle={hostStyle}
+                          onSelect={(selected) =>
+                            onSelectThread(selected, personal)
+                          }
+                          onPrefetch={onPrefetchThread}
+                          onActionComplete={onSessionAction}
+                          canConvertToTestCase={canConvertToTestCase}
+                          onConvertToTestCase={setSessionToConvert}
+                          actions={actions}
+                        />
+                      ),
+                    )}
                   </ThreadSection>
                 </div>
 

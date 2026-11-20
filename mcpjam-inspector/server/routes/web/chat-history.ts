@@ -143,12 +143,14 @@ async function proxyPost(
 chatHistory.get("/list", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { projectId, status, limit, before } = c.req.query();
+    const { projectId, status, limit, before, includeMultiModelSiblings } =
+      c.req.query();
     return await proxyGet(bearerToken, "/direct-chat/list", {
       projectId,
       status,
       limit,
       before,
+      includeMultiModelSiblings,
     });
   }),
 );
