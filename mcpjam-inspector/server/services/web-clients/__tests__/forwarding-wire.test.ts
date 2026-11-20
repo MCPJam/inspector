@@ -290,6 +290,7 @@ describe("forwarding wire: following a redirect hop by hop", () => {
       "https://server.example.test/mcp",
       init,
       () => true,
+      ["x-api-key"],
     );
     expect(response.status).toBe(200);
     expect(response.redirected).toBe(true);
@@ -318,7 +319,13 @@ describe("forwarding wire: following a redirect hop by hop", () => {
       ],
       ["https://other.example.test/mcp", "POST", "manual", true, null],
     ]);
-    expect(sent[2]?.headers.get("x-api-key")).toBe("project-key");
+    // The server's own key stays with its origin; protocol headers go on.
+    expect(sent.map(({ headers }) => headers.get("x-api-key"))).toEqual([
+      "project-key",
+      "project-key",
+      null,
+    ]);
+    expect(sent[2]?.headers.get("content-type")).toBe("application/json");
   });
 
   it("turns the request into a GET without its body on a 303, which needs no turn", async () => {
