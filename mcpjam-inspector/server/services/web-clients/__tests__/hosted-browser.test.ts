@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("the session transport", () => {
-  const policy = webClientBrowserPolicy("chatgpt");
+  const policy = webClientBrowserPolicy("chatgpt", []);
   const okResponse = {
     status: "ok" as const,
     result: { ok: true, output: { url: "https://chatgpt.com/" } },
@@ -62,9 +62,13 @@ describe("the session transport", () => {
     });
   });
 
-  it("keeps each vendor's browser to its own sites", () => {
-    expect(webClientBrowserPolicy("claude")).toEqual({ mode: "allowlist", originAllowlist: ["https://claude.ai"] });
-    expect(policy.originAllowlist).toEqual(["https://chatgpt.com", "https://auth.openai.com"]);
+  it("keeps each vendor's browser to its own sites and MCPJam's sign-in page", () => {
+    expect(webClientBrowserPolicy("claude", [])).toEqual({ mode: "allowlist", originAllowlist: ["https://claude.ai"] });
+    expect(webClientBrowserPolicy("chatgpt", ["https://signin.example"]).originAllowlist).toEqual([
+      "https://chatgpt.com",
+      "https://auth.openai.com",
+      "https://signin.example",
+    ]);
   });
 });
 
