@@ -6,11 +6,10 @@
  *
  * Evidence: fixture (local test doubles), no live vendor.
  *
- * SKIPPED until `forwarding-endpoint.ts` is merged into this branch: the
- * endpoint is built on its own branch, and this file is written against its
- * contract (`createWebConnectorEndpoint`) so it runs the moment it lands.
+ * Skipped only in a checkout without `forwarding-endpoint.ts`. Set
+ * MCPJAM_WEB_E2E_EVIDENCE to a file path to keep what the server received.
  */
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { serve, type ServerType } from "@hono/node-server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -133,6 +132,30 @@ describe.skipIf(!ENDPOINT_MERGED)(
       expect(entry).toMatchObject({ state: "result", toolName: "echo" });
       expect(toolSpan?.evidenceRequestId).toBe(entry!.id);
       expect(webClientTurnWindows.active(CONNECTOR_ID)).toBeUndefined();
+
+      // Opt-in evidence for a reviewer: what the server received, written to a
+      // file outside the repository. Fixture values only.
+      const evidencePath = process.env.MCPJAM_WEB_E2E_EVIDENCE;
+      if (evidencePath) {
+        writeFileSync(
+          evidencePath,
+          JSON.stringify(
+            {
+              evidence: "fixture",
+              runId: "iteration-e2e",
+              turnId: result.turnTrace?.turnId,
+              ledger: webClientToolCallLedger.forTurn(result.turnTrace?.turnId ?? ""),
+              upstreamReceived: upstream.received.map(({ method, params, headers }) => ({
+                method,
+                params,
+                headers,
+              })),
+            },
+            null,
+            2,
+          ),
+        );
+      }
     });
 
     it("refuses a tool call outside a turn, so nothing reaches the server", async () => {
