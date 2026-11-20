@@ -88,7 +88,7 @@ export function RealClientNotice({
       actions = [action("Send again", onSendAgain)];
       break;
     case "page_module":
-      title = `MCPJam's ${webClientName(vendor)} driver couldn't complete “${stop.step}”`;
+      title = `MCPJam couldn't finish the step “${stop.step}” on ${webClientName(vendor)}`;
       body = `${stop.build ? `This happened on ${site} build ${stop.build}. ` : ""}${NOT_GRADED} Retry, or open the trace to see the page at that step.`;
       actions = [
         action("Retry", onRetry, true),
