@@ -140,6 +140,14 @@ async function startHttpFixture() {
   return { child, url: `http://127.0.0.1:${port}/mcp` };
 }
 
+// Quote for bash, so command.txt can be pasted back and keeps JSON quotes
+// and argument boundaries.
+function shellQuote(arg) {
+  return /^[\w@%+=:,./-]+$/.test(arg)
+    ? arg
+    : `'${arg.replaceAll("'", "'\\''")}'`;
+}
+
 async function run(label, killAfterSeconds, args) {
   const fixture = args.some((arg) => arg.includes("{http}"))
     ? await startHttpFixture()
@@ -154,6 +162,9 @@ async function run(label, killAfterSeconds, args) {
   });
   let stdout = "";
   let stderr = "";
+  // Decode as a stream so a UTF-8 character split across chunks stays whole.
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => (stdout += chunk));
   child.stderr.on("data", (chunk) => (stderr += chunk));
   let killed = false;
@@ -169,7 +180,7 @@ async function run(label, killAfterSeconds, args) {
 
   const dir = path.join(evidenceRoot, label);
   mkdirSync(dir, { recursive: true });
-  const command = `mcpjam ${cliArgs.join(" ")}`;
+  const command = `mcpjam ${cliArgs.map(shellQuote).join(" ")}`;
   writeFileSync(path.join(dir, "command.txt"), `${command}\n`);
   writeFileSync(path.join(dir, "stdout.txt"), stdout);
   writeFileSync(path.join(dir, "stderr.txt"), stderr);
