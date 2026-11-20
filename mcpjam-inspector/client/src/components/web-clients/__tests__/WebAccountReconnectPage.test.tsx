@@ -44,8 +44,8 @@ vi.mock("@/lib/web-accounts/routes", () => ({
   handBackWebReconnect: state.handback,
 }));
 vi.mock("../WebSignInBrowser", () => ({
-  WebSignInBrowser: ({ browserSessionId }: { browserSessionId: string }) => (
-    <div data-testid="sign-in-browser">{browserSessionId}</div>
+  WebSignInBrowser: ({ chatSessionId }: { chatSessionId: string }) => (
+    <div data-testid="sign-in-browser">{chatSessionId}</div>
   ),
 }));
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard: state.copy }));
@@ -86,7 +86,10 @@ describe("WebAccountReconnectPage", () => {
       "webClients:listWebAccounts": [account],
       "webClientReconnect:listWebReconnectRequests": [request],
     };
-    state.signIn.mockResolvedValue({ browserSessionId: "session-1" });
+    state.signIn.mockResolvedValue({
+      browserSessionId: "session-1",
+      chatSessionId: "chat-1",
+    });
   });
   afterEach(cleanup);
 
@@ -107,8 +110,9 @@ describe("WebAccountReconnectPage", () => {
       screen.getByRole("button", { name: "Take over the browser" }),
     );
     expect(state.signIn).toHaveBeenCalledWith("project-1", "wa-1");
+    // The pane attaches by the browser's chat; saving names the browser.
     expect(await screen.findByTestId("sign-in-browser")).toHaveTextContent(
-      "session-1",
+      "chat-1",
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Finish and resume runs" }),

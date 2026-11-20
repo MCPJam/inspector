@@ -20,9 +20,17 @@ export type HandbackResult =
 const accountPath = (webAccountId: string) =>
   `/api/web-clients/accounts/${encodeURIComponent(webAccountId)}`;
 
+/** The hosted browser a sign-in started. */
+export interface WebAccountSignInStarted {
+  /** The browser the route keeps for this sign-in; save-profile names it. */
+  browserSessionId: string;
+  /** The chat the browser belongs to; the pane's browser token names it. */
+  chatSessionId?: string;
+}
+
 /** Starts a hosted browser on the vendor's sign-in page, for this account. */
 export function startWebAccountSignIn(projectId: string, webAccountId: string) {
-  return webPost<{ projectId: string }, { browserSessionId: string }>(
+  return webPost<{ projectId: string }, WebAccountSignInStarted>(
     `${accountPath(webAccountId)}/sign-in`,
     { projectId },
   );

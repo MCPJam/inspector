@@ -16,6 +16,7 @@ import {
   newWebAccountLabel,
   runAccountOf,
   webAccountName,
+  webAccountWasSignedIn,
   webClientName,
   webClientSite,
   webClientVendorOfHost,
@@ -90,11 +91,14 @@ export function useWebClientPane({
     hostId: string;
     webAccountId: string;
     browserSessionId: string;
+    chatSessionId: string;
   } | null>(null);
   const [starting, setStarting] = useState(false);
   if (!vendor || !hostId || !projectId) return null;
   const account = runAccountOf(accounts);
   const signedOut = account?.status === "needs_sign_in";
+  // A new account needs sign-in too, but nobody was signed out of it.
+  const signedOutBySite = !!account && webAccountWasSignedIn(account);
   const active = signIn?.hostId === hostId && !local ? signIn : null;
   const site = webClientSite(vendor);
   const client = webClientName(vendor);
@@ -113,11 +117,13 @@ export function useWebClientPane({
             label: newWebAccountLabel(vendor, accounts),
           })
         ).webAccountId;
-      const { browserSessionId } = await startWebAccountSignIn(
-        projectId,
+      const started = await startWebAccountSignIn(projectId, webAccountId);
+      setSignIn({
+        hostId,
         webAccountId,
-      );
-      setSignIn({ hostId, webAccountId, browserSessionId });
+        browserSessionId: started.browserSessionId,
+        chatSessionId: started.chatSessionId ?? started.browserSessionId,
+      });
     } catch (failure) {
       const fallback = `Couldn't open a browser to sign in to ${site}. Try again.`;
       const refusal = describeConvexFailure(failure, fallback);
@@ -132,7 +138,7 @@ export function useWebClientPane({
     blocker = (
       <WebSignInBrowser
         projectId={projectId}
-        browserSessionId={active.browserSessionId}
+        chatSessionId={active.chatSessionId}
       />
     );
   else if (local || (account && !signedOut)) blocker = null;
@@ -158,7 +164,7 @@ export function useWebClientPane({
             : `Sign in to ${site} with your team's test account`}
         </p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          {account
+          {signedOutBySite
             ? `${site} signed this account out, so runs on ${client} can't start. Sign in again here, then save it for the project.`
             : `Sign in here, then save the account for the project. Nothing is saved until you choose to.`}
         </p>
@@ -169,7 +175,7 @@ export function useWebClientPane({
           onClick={() => void startSignIn()}
         >
           {starting ? <Loader2 className="animate-spin" aria-hidden /> : null}
-          {account ? "Sign in again" : "Start signing in"}
+          {signedOutBySite ? "Sign in again" : "Start signing in"}
         </Button>
       </div>
     );

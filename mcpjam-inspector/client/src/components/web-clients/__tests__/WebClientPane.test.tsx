@@ -26,8 +26,8 @@ vi.mock("@/lib/web-accounts/routes", () => ({
 }));
 // The hosted browser body has its own suite; here it only names its session.
 vi.mock("../WebSignInBrowser", () => ({
-  WebSignInBrowser: ({ browserSessionId }: { browserSessionId: string }) => (
-    <div data-testid="sign-in-browser">{browserSessionId}</div>
+  WebSignInBrowser: ({ chatSessionId }: { chatSessionId: string }) => (
+    <div data-testid="sign-in-browser">{chatSessionId}</div>
   ),
 }));
 vi.mock("@/lib/clipboard", () => ({ copyToClipboard: mocks.copy }));
@@ -38,6 +38,14 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 
 const ready = createWebAccountView({ webAccountId: "wa-1" });
 const signedOut: WebAccount = { ...ready, status: "needs_sign_in" };
+/** Made, but nobody has signed it in yet: no profile, never verified. */
+const neverSignedIn: WebAccount = {
+  ...ready,
+  status: "needs_sign_in",
+  accountEmail: undefined,
+  hasProfile: false,
+  lastVerifiedAt: undefined,
+};
 
 /** The panel's layout: the chip in its top bar, the banner, then the body. */
 function Pane(props: Parameters<typeof useWebClientPane>[0]) {
@@ -75,7 +83,10 @@ describe("useWebClientPane", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.create.mockResolvedValue({ webAccountId: "wa-new" });
-    mocks.signIn.mockResolvedValue({ browserSessionId: "session-1" });
+    mocks.signIn.mockResolvedValue({
+      browserSessionId: "session-1",
+      chatSessionId: "chat-1",
+    });
   });
   afterEach(cleanup);
 
@@ -146,8 +157,9 @@ describe("useWebClientPane", () => {
       label: "Claude web account",
     });
     expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-new");
+    // The pane attaches by the browser's chat; saving names the browser.
     expect(await screen.findByTestId("sign-in-browser")).toHaveTextContent(
-      "session-1",
+      "chat-1",
     );
     expect(screen.getByTestId("save-web-account-bar")).toBeInTheDocument();
   });
@@ -160,6 +172,27 @@ describe("useWebClientPane", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in again" }));
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-1");
+  });
+
+  it("doesn't say the site signed out an account nobody has signed in yet", async () => {
+    mount({ isAdmin: true, accounts: [neverSignedIn] });
+    const pane = screen.getByTestId("web-pane-sign-in");
+    expect(pane).toHaveTextContent("Sign in here, then save the account");
+    expect(pane).not.toHaveTextContent("signed this account out");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start signing in" }),
+    );
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-1");
+  });
+
+  it("asks a member for an admin's first sign-in, not a sign-in again", () => {
+    mount({ accounts: [neverSignedIn] });
+    const pane = screen.getByTestId("web-pane-blocked");
+    expect(pane).toHaveTextContent(
+      "Ask a project admin to sign in to claude.ai with this account.",
+    );
+    expect(pane).not.toHaveTextContent("signed this account out");
   });
 
   it("saves the signed-in browser and goes back to the run's browser", async () => {

@@ -7,6 +7,7 @@ import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link"
 import type { WebAccount } from "@/lib/web-accounts/api";
 import {
   webAccountName,
+  webAccountWasSignedIn,
   webClientName,
   webClientSite,
 } from "@/lib/web-accounts/clients";
@@ -55,9 +56,11 @@ export function PaneBlocked({
       </p>
       <div className="max-w-sm space-y-2 text-xs text-muted-foreground">
         <p>
-          {account
-            ? `${site} signed this account out, so runs on ${client} can't start. Only a project admin can sign in again.`
-            : `Ask a project admin to sign in to ${site} and add a ${client} account.`}
+          {!account
+            ? `Ask a project admin to sign in to ${site} and add a ${client} account.`
+            : webAccountWasSignedIn(account)
+              ? `${site} signed this account out, so runs on ${client} can't start. Only a project admin can sign in again.`
+              : `Ask a project admin to sign in to ${site} with this account.`}
         </p>
         <p>To use your own account, run MCPJam on your computer.</p>
       </div>
