@@ -19,6 +19,8 @@ import { openWebClientHostedBrowser, type WebClientHostedBrowser } from "./hoste
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
 import { actorFromBearer, restoreWebProfile } from "./hosted-web-client-runtime.js";
 import { createConvexWebReconnectBackend } from "./recovery/convex-backend.js";
+import { PageDriverError } from "../../utils/harness/real-ui/page-driver.js";
+import { logger } from "../../utils/logger.js";
 
 const bearerOf = (c: Context) => c.req.header("authorization") ?? "";
 
@@ -64,7 +66,7 @@ export function createDefaultWebAccountRoutes(): Hono {
     service,
     saveProfile: (actor, args) => createConvexWebReconnectBackend(actor).saveWebAccountProfile(args),
     browser: {
-      async start({ actor, bearer, projectId, webAccountId, restoreProfile }) {
+      async start({ actor, bearer, projectId, webAccountId, restoreProfile, startUrl }) {
         const vendor = await vendorOf(actor, projectId, webAccountId);
         let profileArchive: Uint8Array | undefined;
         if (restoreProfile) {
@@ -84,6 +86,15 @@ export function createDefaultWebAccountRoutes(): Hono {
           ...(profileArchive ? { profileArchive } : {}),
         });
         signInBrowsers.set(browser.browserSessionId, browser);
+        try {
+          await browser.driver.navigate(startUrl);
+        } catch (error) {
+          // The browser is open either way; the person can open the page there.
+          if (!(error instanceof PageDriverError)) throw error;
+          logger.warn("[web-clients] the sign-in browser did not open the vendor's sign-in page", {
+            code: error.code,
+          });
+        }
         return { browserSessionId: browser.browserSessionId, chatSessionId: browser.chatSessionId };
       },
       async driver({ browserSessionId }) {
