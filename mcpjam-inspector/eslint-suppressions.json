@@ -772,11 +772,6 @@
       "count": 1
     }
   },
-  "server/routes/apps/mcp-apps/index.ts": {
-    "no-restricted-syntax": {
-      "count": 1
-    }
-  },
   "server/routes/apps/shared/widget-files.ts": {
     "no-restricted-syntax": {
       "count": 1

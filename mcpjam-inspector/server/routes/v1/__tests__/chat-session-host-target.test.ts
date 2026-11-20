@@ -1376,15 +1376,18 @@ describe("an environment's skills reach the engine that runs", () => {
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
       Record<string, unknown> & {
         effectiveCapabilities?: { standaloneSkills: { skillId: string }[] };
+        skillPlan?: TurnSkills;
       },
     ];
-    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
+    expect(args.skillPlan?.harness?.skills?.map((s) => s.skillId)).toEqual([
+      "sk_env",
+    ]);
     expect(
       args.effectiveCapabilities?.standaloneSkills.map((s) => s.skillId),
     ).toEqual(["sk_env"]);
     expect(args.onBoxSkillsWritten).toBeTypeOf("function");
     // The environment captured its server skills; the turn is not live.
-    expect(args).not.toHaveProperty("liveTurn");
+    expect(args.skillPlan?.harness?.live).toBe(false);
     // A harness gets its skills on its box: MCPJam's agent is handed no plan,
     // so its prompt describes no skill tools the harness lacks.
     const [prepared] = prepareChatV2Mock.mock.calls.at(-1) as [
@@ -1463,9 +1466,9 @@ describe("an environment's skills reach the engine that runs", () => {
     // "This environment delivers no skills" is a real answer, and a different
     // one from "unknown". An omitted field would mean the latter.
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
-      Record<string, unknown>,
+      { skillPlan?: TurnSkills },
     ];
-    expect(args.runtimeSkillsOverride).toEqual([]);
+    expect(args.skillPlan?.harness).toMatchObject({ mode: "environment", skills: [] });
   });
 
   it("reads an environment that names no skills as one with none, on both engines", async () => {
@@ -1479,9 +1482,9 @@ describe("an environment's skills reach the engine that runs", () => {
     await turn(firstTurn({ environmentId: ENVIRONMENT }));
 
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
-      Record<string, unknown>,
+      { skillPlan?: TurnSkills },
     ];
-    expect(args.runtimeSkillsOverride).toEqual([]);
+    expect(args.skillPlan?.harness).toMatchObject({ mode: "environment", skills: [] });
   });
 
   it("gives a host's turn its client's skill selection, live on its servers", async () => {
@@ -1516,10 +1519,12 @@ describe("an environment's skills reach the engine that runs", () => {
       skillScope: "visible",
     });
     const [args] = runUnifiedAssistantTurnMock.mock.calls.at(-1) as [
-      Record<string, unknown>,
+      { skillPlan?: TurnSkills },
     ];
-    expect(args.runtimeSkillsOverride).toEqual([ENV_SKILL]);
-    expect(args.liveTurn).toBe(true);
+    expect(args.skillPlan?.harness?.skills?.map((s) => s.skillId)).toEqual([
+      "sk_env",
+    ]);
+    expect(args.skillPlan?.harness?.live).toBe(true);
   });
 });
 

@@ -33,6 +33,7 @@ import {
   harnessBootstrapObservation,
   watchNewBoxForStaleBake,
 } from "./harness-bake-observer.js";
+import { assertBoxMemoryForHarness } from "./box-memory.js";
 import { harnessPnpmGuardCommand } from "./harness-bake.js";
 import {
   releaseHarnessBoxReservation,
@@ -267,6 +268,13 @@ export async function prepareConversationBox(args: {
     const probe = await fence.probe(session, TIMEOUT_PROBE);
     if (!GNU_TIMEOUT.test(probe.stdout)) return skipped("no_timeout");
     const fenced = fence.session(session);
+    // A box too small for the harness stops here, not minutes into an install
+    // the kernel kills while the Send waits on this claim.
+    await assertBoxMemoryForHarness(
+      (command) => fenced.run({ command }),
+      args.harnessId,
+      signal,
+    );
     const guard = await fenced.run({ command: harnessPnpmGuardCommand() });
     if (guard.exitCode !== 0) {
       throw new Error(`The pnpm guard failed (exit ${guard.exitCode}).`);

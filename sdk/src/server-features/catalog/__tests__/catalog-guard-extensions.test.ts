@@ -200,9 +200,10 @@ describe("authorization extensions", () => {
         "urn:ietf:params:oauth:grant-profile:id-jag",
       ],
     });
+    // The metadata lists the grant; listing it is a declaration.
     expect(probed("auth-ext.client-credentials.grant", probes)).toMatchObject({
       kind: "present",
-      via: "probed",
+      via: "advertised",
     });
     expect(
       probed("auth-ext.client-credentials.token-auth-methods", probes)
@@ -491,12 +492,14 @@ describe("MCP Apps", () => {
     });
     expect(declared("apps.csp", surface)).toBeNull();
     expect(probed("apps.csp", probes)).toEqual({ kind: "absent", basis: [] });
+    // The read content declares permissions; the HTML check is a real read.
     expect(probed("apps.permissions", probes)).toMatchObject({
       kind: "present",
-      via: "probed",
+      via: "detected",
     });
     expect(probed("apps.html-content", probes)).toMatchObject({
       kind: "present",
+      via: "probed",
     });
     for (const id of [
       "apps.app-tools-call",

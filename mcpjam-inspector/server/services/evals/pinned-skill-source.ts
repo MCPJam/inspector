@@ -13,10 +13,9 @@
  *     than per iteration.
  * An eval run stopped here reports its skills-delivered event as `failed`.
  *
- * An EMPTY pin set is a real answer and stays empty: `pinnedHarnessSkills` is
- * `[]` (the harness selects its pinned source by presence, and `undefined`
- * would leave the box's skills as they are), and `pinnedSkillSource`
- * holds no pins, which plans every iteration with no skills.
+ * An EMPTY pin set is a real answer and stays empty: `pinnedSkillSource`
+ * holds no pins, which plans every iteration with no skills, and a harness
+ * box clears for it (an absent source would leave the box's skills as they are).
  */
 import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { RunPluginServer } from "../plugins/run-plugin-servers.js";
@@ -41,7 +40,6 @@ import {
 
 export type BuiltPinnedSkillSource = {
   pinnedSkillSource: PinnedSkillSource;
-  pinnedHarnessSkills: PinnedSkillArtifact[];
 };
 
 export async function buildPinnedSkillSource(args: {
@@ -86,14 +84,12 @@ export async function buildPinnedSkillSource(args: {
       effectiveServerIds: args.effectiveServerIds,
       ...(args.serverNames ? { serverNames: args.serverNames } : {}),
     });
-    const pinnedHarnessSkills = withServerCaptures(args.pins, downloaded, set);
     return {
-      pinnedHarnessSkills,
       pinnedSkillSource: {
         kind: "pins",
         pins: args.pins,
         set,
-        harnessSkills: pinnedHarnessSkills,
+        harnessSkills: withServerCaptures(args.pins, downloaded, set),
       },
     };
   } catch (error) {

@@ -27,8 +27,40 @@ const NODE_BUILTIN = {
 };
 // Tests are left out: a parity test has to load both sides it compares.
 const TESTS = ["**/__tests__/**", "**/*.test.{ts,tsx}"];
+// no-restricted-imports only sees static imports, so `import("../server/x")`
+// would cross a layer unseen. This applies the same patterns to import().
+// It is a rule of its own because no-restricted-syntax is already configured
+// for server/routes, and a later config's options replace an earlier one's.
+const layers = {
+  rules: {
+    "no-restricted-dynamic-imports": {
+      meta: { type: "problem", schema: false },
+      create(context) {
+        const patterns = context.options.map(({ regex, message }) => ({
+          regex: new RegExp(regex),
+          message,
+        }));
+        return {
+          ImportExpression({ source }) {
+            const path =
+              source.type === "Literal"
+                ? source.value
+                : source.type === "TemplateLiteral" &&
+                    source.expressions.length === 0
+                  ? source.quasis[0].value.cooked
+                  : undefined;
+            if (typeof path !== "string") return;
+            const match = patterns.find(({ regex }) => regex.test(path));
+            if (match) context.report({ node: source, message: match.message });
+          },
+        };
+      },
+    },
+  },
+};
 const restrictImports = (...patterns) => ({
   "no-restricted-imports": ["error", { patterns }],
+  "layers/no-restricted-dynamic-imports": ["error", ...patterns],
 });
 
 // Violations that predate a rule are recorded in eslint-suppressions.json, so
@@ -51,6 +83,7 @@ export default [
       parser: tsParser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    plugins: { layers },
     // The source carries disable comments for rules this config does not load
     // (`import/extensions`, `@typescript-eslint/*`). Reporting them as unused
     // would bury the rules below.
@@ -81,7 +114,7 @@ export default [
       SERVER_BY_PATH,
       CLIENT_BY_PATH,
       SDK_BY_PATH,
-      NODE_BUILTIN
+      NODE_BUILTIN,
     ),
   },
   {
@@ -109,8 +142,9 @@ export default [
           selector:
             "CallExpression[callee.type='MemberExpression'][callee.object.name='logger'][callee.property.name=/^(warn|error|info)$/]",
           message:
-            "Use logger.event() for production diagnostics in server/routes/web/. " +
-            "Free-form logger.warn/error/info calls are not queryable in Axiom. " +
+            "Free-form logger.warn/error/info calls are not queryable in Axiom, so server/routes/web/ bans them. " +
+            "Report a caught failure with reportRouteFailure(message, error, { source, hop }) " +
+            "and everything else with logger.event(). " +
             "See server/utils/LOGGING.md for the typed event catalog.",
         },
       ],
