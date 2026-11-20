@@ -277,6 +277,18 @@ export function mapErrorToV1(
       slug: routeError.normalized?.slug,
     };
   }
+  // A drifted server variant (Inspector-only, like the codes beside it).
+  if (routeError.code === ErrorCode.VARIANT_BASE_DRIFTED) {
+    return {
+      code: "CONFLICT",
+      message: routeError.message,
+      details: { ...routeError.details, code: ErrorCode.VARIANT_BASE_DRIFTED },
+      headers: routeError.headers,
+      origin: routeError.origin,
+      slug: routeError.normalized?.slug,
+      captured: routeError.captured === true,
+    };
+  }
   if (routeError.code === ErrorCode.UPSTREAM_AUTH_FAILED) {
     return {
       code: "FORBIDDEN",

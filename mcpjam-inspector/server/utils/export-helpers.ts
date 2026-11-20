@@ -60,6 +60,14 @@ export type ServerToolSnapshot = {
   servers: ServerToolSnapshotServer[];
 };
 
+/** The error behind a failed server's `captureError`, held in memory only. */
+const captureFailures = new WeakMap<ServerToolSnapshotServer, unknown>();
+
+/** What a server's capture threw, while this process holds the snapshot. */
+export function captureFailureOf(server: ServerToolSnapshotServer): unknown {
+  return captureFailures.get(server);
+}
+
 export type DiscoveredTool = {
   name: string;
   description?: string;
@@ -539,11 +547,13 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
         // No `catalogBytes` row: a server we could not list has no catalog
         // to measure, and a 0 here would read as "this server advertises
         // nothing" rather than "we never got an answer".
-        return {
+        const failed: ServerToolSnapshotServer = {
           serverId,
           tools: [],
           captureError: message,
-        } satisfies ServerToolSnapshotServer;
+        };
+        captureFailures.set(failed, error);
+        return failed;
       }
     }),
   );

@@ -269,6 +269,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/environments/capabilities":
     "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
+  "post /projects/{projectId}/variant-servers": "createVariantServer",
   "post /projects/{projectId}/environments/ensure-adhoc":
     "ensureAdhocEnvironment",
   "post /projects/{projectId}/environments/{environmentId}/name":

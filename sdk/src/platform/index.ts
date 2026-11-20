@@ -169,6 +169,7 @@ export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
 export * from "./eval-run-insights-operations.js";
+export * from "./variant-operations.js";
 
 export {
   computeRunTargets,
@@ -315,6 +316,7 @@ export type {
   PlatformEvalRunGroupEntry,
   PlatformEvalRunGroupTarget,
   PlatformEvalRunEnvironment,
+  PlatformEvalRunVariant,
   PlatformEvalRunLauncher,
   PlatformEvalRunAttribution,
   PlatformEvalRunAccount,

@@ -286,7 +286,8 @@ import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import { resolveBrowserSecrets } from "../utils/secrets/browser-secrets.js";
 import { markRuntimeSecretsDelivered } from "../utils/harness/runtime-secrets.js";
-import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import { captureFailureOf, type ServerToolSnapshot } from "../utils/export-helpers.js";
+import { variantDriftOf } from "../utils/variant-servers.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -1240,6 +1241,19 @@ function throwSetupPhaseError(args: {
   /** The observer's explanation, when it recorded one for this failure. */
   detail?: SetupFailureDetail;
 }): never {
+  // A drifted variant would still pass calls through to its base, so the run
+  // is refused with the variant's code and the edited tools that changed.
+  const drift = variantDriftOf(args.error);
+  if (drift) {
+    const { message, tools, variantId } = drift;
+    const serverName = getServerLabelForEvalError(args.serverId, args.environment);
+    const { serverId, phase } = args;
+    const code = ErrorCode.VARIANT_BASE_DRIFTED;
+    const details = { serverName, tools, variantId };
+    const refusal = new EvalSetupPhaseError({ status: 409, code, message, serverId, phase, details });
+    refusal.cause = args.error;
+    throw refusal;
+  }
   const credentialFailure = credentialFailureMessage(args.error);
   const failureLine = credentialFailure ?? args.detail?.line;
   const serverLabel = getServerLabelForEvalError(
@@ -1408,9 +1422,11 @@ async function getEvalToolsForAiSdkOrThrow(args: {
 
   if (firstError.length > 0) {
     // Connection failures dominate: a mixed bag must never earn
-    // `connection: failed` from a later discovery throw.
+    // `connection: failed` from a later discovery throw. A drifted variant
+    // comes first, so its run is refused with its own code.
+    const drifted = firstError.find((row) => variantDriftOf(row.error));
     const connectFail = firstError.find((row) => row.phase === "connection");
-    const chosen = connectFail ?? firstError[0]!;
+    const chosen = drifted ?? connectFail ?? firstError[0]!;
     throwSetupPhaseError({
       serverId: chosen.serverId,
       phase: chosen.phase,
@@ -1440,6 +1456,14 @@ export function throwIfEvalToolSnapshotFailed(args: {
   mcpClientManager: MCPClientManager;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
 }): void {
+  // A drifted variant is refused with its own code, ahead of the rest.
+  for (const server of args.toolSnapshot.servers) {
+    const error = captureFailureOf(server);
+    const { serverId } = server;
+    if (variantDriftOf(error)) {
+      throwSetupPhaseError({ serverId, phase: "discovery", error, environment: args.environment });
+    }
+  }
   const failures = args.toolSnapshot.servers.flatMap((server) => {
     if (server.captureError === undefined) return [];
     const connected =

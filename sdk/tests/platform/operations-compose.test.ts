@@ -444,6 +444,26 @@ describe("compose server selectors", () => {
     });
   });
 
+  it("pins a server variant's id, which the project's listing leaves out, beside a listed server", async () => {
+    const variantServerId = "vsrv1aaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const { client, fetchMock } = makeClient();
+    await ensureAdhocEnvironmentOperation.execute(
+      { host: "Claude Code", servers: ["Sentry", variantServerId] },
+      { client },
+    );
+    expect(groupBodies(fetchMock)).toEqual([
+      {
+        name: `Sentry + ${variantServerId}`,
+        serverIds: ["srv-sentry", variantServerId],
+      },
+    ]);
+    // A name the listing lacks is still refused here, before anything is written.
+    const error = await ensureAdhocEnvironmentOperation
+      .execute({ host: "Claude Code", servers: ["no-such-server"] }, { client })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "NOT_FOUND" });
+  });
+
   it("names a group independently of the order the servers were typed", async () => {
     const { client, fetchMock } = makeClient();
     await ensureAdhocEnvironmentOperation.execute(

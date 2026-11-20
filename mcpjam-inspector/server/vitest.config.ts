@@ -53,6 +53,7 @@ const sdkPublicApiEntry = path.resolve(
   rootDir,
   "../sdk/src/public-api/index.ts",
 );
+const sdkVariantsEntry = path.resolve(rootDir, "../sdk/src/variants/index.ts");
 // Plugin bundle parser/hashing — the local materializer consumes it server-side.
 const sdkPluginBundleEntry = path.resolve(
   rootDir,
@@ -122,6 +123,7 @@ export default defineConfig({
           "@mcpjam/sdk/widget-runtime",
           "@mcpjam/sdk/events",
           "@mcpjam/sdk/internal/plugin-host",
+          "@mcpjam/sdk/variants",
         ],
       },
     },
@@ -164,6 +166,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
       { find: "@mcpjam/sdk/plugin-bundle", replacement: sdkPluginBundleEntry },
+      { find: "@mcpjam/sdk/variants", replacement: sdkVariantsEntry },
       {
         find: "@mcpjam/sdk/widget-runtime",
         replacement: sdkWidgetRuntimeEntry,

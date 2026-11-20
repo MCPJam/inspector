@@ -179,6 +179,7 @@
   "get_project_server",
   "update_project_server",
   "delete_project_server",
+  "create_variant_server",
   "get_capabilities",
   "list_personas",
   "get_persona",

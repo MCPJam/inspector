@@ -60,6 +60,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_server_account: { command: "cloud server-accounts delete" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
+  // Server variants, in beta. Bound rather than excluded, like `goals`: an
+  // organization outside the beta gets the server's clean refusal.
+  create_variant_server: { command: "cloud variants create" },
   show_servers: { command: "cloud projects status" },
 
   // ── Journeys (the Swarms product) ───────────────────────────────────────

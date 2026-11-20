@@ -3952,6 +3952,7 @@ export class MCPClientManager {
     }
     if (
       config.credentialSource === "mcpjam-backend" ||
+      config.replayable === false ||
       config.authProvider ||
       config.eventSourceInit ||
       config.reconnectionOptions ||

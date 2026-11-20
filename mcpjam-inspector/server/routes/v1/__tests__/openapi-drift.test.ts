@@ -109,6 +109,10 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the Inspector's KNOWN_UNDOCUMENTED baseline"). Document it there when the
   // flag comes off.
   "get /harness/{harnessId}/capabilities",
+  // Server variants, in beta behind `variant-servers-enabled`. Enforced per
+  // organization, so undocumented until the flag comes off, as above; the
+  // SDK, CLI and MCP tool carry it meanwhile.
+  "post /projects/{projectId}/variant-servers",
   // The `browser_*` definitions the Tools pane and the Raw preview render. The
   // hosted browser itself is still enforced per deployment (the
   // `hosted-browser` flag plus the backend's exposure verdict), and

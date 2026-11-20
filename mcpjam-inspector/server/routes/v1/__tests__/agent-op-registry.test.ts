@@ -195,6 +195,8 @@ describe("agent op registry", () => {
         "import_directory_finding",
         "ensure_adhoc_environment",
         "name_environment",
+        // A new server row that changes nothing on its base.
+        "create_variant_server",
         createEvalSuiteOperation.name,
         createEvalCaseOperation.name,
         createEvalCasesOperation.name,

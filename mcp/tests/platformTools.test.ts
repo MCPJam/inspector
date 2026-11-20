@@ -149,6 +149,7 @@ const PLAIN_TOOLS = [
   "get_project_server",
   "update_project_server",
   "delete_project_server",
+  "create_variant_server",
   // Server live operations are agent-oriented payloads with no widget view.
   "connect_project_server",
   "get_project_server_connection_status",
@@ -499,6 +500,7 @@ describe("platform tool registration", () => {
       "get_project_server",
       "update_project_server",
       "delete_project_server",
+      "create_variant_server",
       "connect_project_server",
       "get_project_server_connection_status",
       "cancel_project_server_connection",
@@ -739,6 +741,7 @@ describe("platform tool registration", () => {
       "backtest_eval_run",
       "backtest_eval_run_judge",
       "ensure_adhoc_environment",
+      "create_variant_server",
       "create_persona",
       "generate_personas",
       "create_goal",
@@ -766,6 +769,7 @@ describe("platform tool registration", () => {
       "cancel_project_server_connection",
       "send_feedback",
       "ensure_adhoc_environment",
+      "create_variant_server",
       "dismiss_swarm_finding",
       "undismiss_swarm_finding",
       "dismiss_study_finding",
@@ -1196,6 +1200,36 @@ describe("runPlatformOperation", () => {
       code: "FORBIDDEN",
       message: "This feature is not available for your organization.",
       details: { code: "FEATURE_UNAVAILABLE" },
+    });
+  });
+
+  it("keeps a refused variant's code", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json(
+          {
+            code: "VALIDATION_ERROR",
+            message:
+              "base has no tool named nope. Check the name with list_server_tools.",
+            details: { code: "VARIANT_UNKNOWN_TARGET", internal: "dropped" },
+          },
+          { status: 400 }
+        )
+      )
+    );
+
+    const result = (await runPlatformOperation(
+      fakeToolContext({ bearerToken: "user-jwt" }),
+      listProjectsOperation,
+      {}
+    )) as ToolResult;
+
+    expect(result.structuredContent?.error).toEqual({
+      code: "VALIDATION_ERROR",
+      message:
+        "base has no tool named nope. Check the name with list_server_tools.",
+      details: { code: "VARIANT_UNKNOWN_TARGET" },
     });
   });
 

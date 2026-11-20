@@ -19,6 +19,7 @@ import { registerSessionsCommands } from "./sessions.js";
 import { registerSwarmAuthoringCommands } from "./swarms.js";
 import { registerTraceDestinationsCommands } from "./trace-destinations.js";
 import { registerTunnelCommands } from "./tunnel.js";
+import { registerVariantsCommands } from "./variants.js";
 
 /**
  * Account-bound MCPJam Cloud commands. Local MCP testing stays at the program
@@ -56,6 +57,9 @@ export function registerCloudCommands(program: Command): Command {
   registerServerAccountsCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
+  // Variants sit with environments: an ad-hoc environment is what selects one
+  // for a run.
+  registerVariantsCommands(cloud);
 
   cloud.commandsGroup("Conformance:");
   registerCloudConformanceCommands(cloud);

@@ -222,6 +222,7 @@ import {
   type EvalStepReplay,
 } from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { runVariantsProjection } from "../../utils/variant-servers.js";
 import {
   measureTraceBytes,
   recordEvalIterationRead,
@@ -1852,6 +1853,9 @@ function toRunDto(run: RunDoc) {
     ...toRunAccountsProjection(run.accountsAtRun),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // The server variants the run served, from its config snapshot. Omitted
+    // when it served none, so a base arm reads apart from its variant arm.
+    ...runVariantsProjection(run.configSnapshot?.variants),
     ...(run.client
       ? {
           client: {

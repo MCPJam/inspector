@@ -186,6 +186,26 @@ describe("mapErrorToV1 — revoked sessions", () => {
     expect(result.code).toBe("FORBIDDEN");
     expect(result.details).toEqual(details);
   });
+
+  it("maps VARIANT_BASE_DRIFTED to CONFLICT, keeping the code and the tools in details", () => {
+    const err = new WebRouteError(
+      409,
+      ErrorCode.VARIANT_BASE_DRIFTED,
+      "The base server changed tools this variant edits: show_servers. Create the variant again from the current server.",
+      { tools: ["show_servers"], variantId: "variant1" },
+    );
+
+    const result = mapErrorToV1(err);
+
+    expect(result.code).toBe("CONFLICT");
+    expect(result.message).toBe(err.message);
+    expect(result.details).toEqual({
+      code: "VARIANT_BASE_DRIFTED",
+      tools: ["show_servers"],
+      variantId: "variant1",
+    });
+    expect(V1_ERROR_STATUS[result.code]).toBe(409);
+  });
 });
 
 describe("mapErrorToV1 — passthrough", () => {

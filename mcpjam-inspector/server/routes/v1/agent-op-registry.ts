@@ -103,6 +103,7 @@ import {
   generateEvalCasesOperation,
   importEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
+  createVariantServerOperation,
   getEnvironmentOperation,
   nameEnvironmentOperation,
   getEvalCaseOperation,
@@ -1913,6 +1914,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: nameEnvironmentOperation, tier: "direct" },
+  // Changes nothing on the base and spends nothing; its server id is what
+  // `ensure_adhoc_environment` takes to run the variant beside the base.
+  { operation: createVariantServerOperation, tier: "direct" },
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
   { operation: createEvalCasesOperation, tier: "direct" },

@@ -94,6 +94,9 @@ describe("internal-code -> public-code mapping", () => {
     // Inspector-only (a local stdio spawn this device has not approved), and
     // mapped at the v1 boundary the same way: FORBIDDEN, terms in `details`.
     "STDIO_COMMAND_APPROVAL_REQUIRED",
+    // Inspector-only (a drifted server variant), mapped at the v1 boundary:
+    // CONFLICT, with the code in `details.code`. Pinned in envelope.test.ts.
+    "VARIANT_BASE_DRIFTED",
     // Produced only by `mapTargetServerError` on the hosted `/api/web/*`
     // routes. The v1 surface maps through `mapRuntimeError` and never sees it.
     "UPSTREAM_HTTP_ERROR",

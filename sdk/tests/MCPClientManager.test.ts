@@ -538,6 +538,23 @@ describe("MCPClientManager", () => {
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
     });
 
+    it("never writes a connection marked not replayable, such as a server variant", () => {
+      const replayManager = new MCPClientManager();
+      seedRegisteredServer(replayManager, "variant-http", {
+        url: "https://example.com/mcp",
+        replayable: false,
+        requestInit: { headers: { Authorization: "Bearer tok_variant" } },
+      });
+      seedRegisteredServer(replayManager, "base-http", {
+        url: "https://example.com/mcp",
+        requestInit: { headers: { Authorization: "Bearer tok_base" } },
+      });
+
+      expect(
+        replayManager.getServerReplayConfigs().map((config) => config.serverId)
+      ).toEqual(["base-http"]);
+    });
+
     it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
       const replayManager = new MCPClientManager();
       seedRegisteredServer(replayManager, "public-http", {

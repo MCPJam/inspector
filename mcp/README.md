@@ -39,6 +39,7 @@ beta; they are listed [after the table](#held-tools).
 | `get_project_server` | Read one saved MCP server by project and server id. | — |
 | `update_project_server` | Update a saved MCP server's configuration, or rotate or clear its credentials (sparse update). | — |
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
+| `create_variant_server` | In beta: create a variant of a saved HTTP server, its live tool list with edited tool descriptions under a server ID of its own. Nothing on the base changes; the variant's ID runs wherever a server ID does, such as an ad-hoc environment. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
 | `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |

@@ -153,6 +153,7 @@ import {
   updateProjectServerOperation,
   deleteProjectServerOperation,
   deleteProjectOperation,
+  createVariantServerOperation,
   getCapabilitiesOperation,
   listPersonasOperation,
   getPersonaOperation,
@@ -231,6 +232,7 @@ import {
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import { VARIANT_ERROR_CODES } from "@mcpjam/sdk/variants";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
@@ -349,6 +351,11 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // In beta, yet listed for every caller like readiness: the backend refuses
+  // an organization outside the beta, and the description says so. A variant
+  // changes nothing on its base, and its server id is what an agent then puts
+  // in an ad-hoc environment to compare it with the base.
+  createVariantServerOperation,
   // Connecting a server is on the unattended surface deliberately: the flow
   // cannot complete without a person at a browser, so the most an MCP host can
   // do with it is produce a private link for the requester to open.
@@ -922,6 +929,8 @@ const ADDITIVE_WRITE_NAMES: ReadonlySet<string> = new Set([
   "backtest_eval_run",
   "backtest_eval_run_judge",
   "ensure_adhoc_environment",
+  // A new variant under its own server id; the base is never touched.
+  "create_variant_server",
   "create_persona",
   "generate_personas",
   "create_goal",
@@ -982,6 +991,9 @@ const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
   "cancel_project_server_connection",
   "send_feedback",
   "ensure_adhoc_environment",
+  // Content-addressed: the same base, base tools and edits answer the variant
+  // the first call made, with `created: false`.
+  "create_variant_server",
   "dismiss_swarm_finding",
   "undismiss_swarm_finding",
   "dismiss_study_finding",
@@ -1311,8 +1323,11 @@ function errorStructuredContent(
         ? error.details.feature
         : undefined;
     const detailCode = error.details?.code;
+    // A refused variant keeps its code too, so an agent can tell a drifted
+    // base from an edit naming a tool the base lacks.
+    const variantCode = VARIANT_ERROR_CODES.some((code) => code === detailCode);
     const details =
-      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE"
+      feature !== undefined || detailCode === "FEATURE_UNAVAILABLE" || variantCode
         ? {
             ...(typeof detailCode === "string" ? { code: detailCode } : {}),
             ...(feature !== undefined ? { feature } : {}),

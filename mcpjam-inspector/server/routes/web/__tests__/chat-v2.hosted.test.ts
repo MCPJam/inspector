@@ -1158,6 +1158,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           includeConnections: true,
           serverIds: ["server-1", "server-2"],
           localRuntime: true,
+          // A chat turn serves a variant's edits, so it asks for variants.
+          variantSupport: 1,
         }),
       })
     );

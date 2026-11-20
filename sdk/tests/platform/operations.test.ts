@@ -2715,6 +2715,12 @@ describe("operation catalog consistency", () => {
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
     ensure_adhoc_environment: { host: "h" },
+    create_variant_server: {
+      server: "s",
+      edits: [
+        { feature: "tools.description", target: "t", op: "set", value: "v" },
+      ],
+    },
     name_environment: { environment: "e", expectedRevision: 0, name: "n" },
     update_project_environment: {
       environment: "e",
@@ -2902,6 +2908,8 @@ describe("operation catalog consistency", () => {
       "duplicate_client",
       "create_project_environment",
       "ensure_adhoc_environment",
+      // A new server row for a variant; its base is untouched.
+      "create_variant_server",
       "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.

@@ -454,6 +454,13 @@ export type BaseServerConfig = {
    * replay config.
    */
   credentialSource?: "mcpjam-backend";
+  /**
+   * `false` when `baseFetch` changes what the server at `url` answers, as a
+   * server variant's fetch rewrites the base's `tools/list`. A replay config
+   * dials `url` directly, so it would reach the base without the change; such
+   * a connection is never written into one.
+   */
+  replayable?: false;
 };
 
 /**

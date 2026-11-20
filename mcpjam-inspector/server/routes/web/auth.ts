@@ -158,6 +158,11 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { createVariantFetch, type VariantDefinition } from "@mcpjam/sdk/variants";
+import {
+  authorizedVariant,
+  setManagerVariants,
+} from "../../utils/variant-servers.js";
 import {
   deliveryContractHeaders,
   hostedCredentialDeliveryHeaders,
@@ -666,6 +671,11 @@ export type ConvexBatchAuthorizeSuccess = {
     "internalLogContext"
   >["serverConfig"];
   internalLogContext?: InternalLogContext;
+  /**
+   * For a variant server's id: its `VariantDefinition`, beside its base's
+   * authorization. Wire data until `authorizedVariant` reads it.
+   */
+  variant?: unknown;
 };
 
 export type ConvexBatchAuthorizeResult =
@@ -940,6 +950,8 @@ export async function authorizeBatch(
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
+    /** Only for a caller that serves a variant's `variant`; others are refused one. */
+    variantSupport?: boolean;
   },
 ): Promise<ConvexBatchAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -989,6 +1001,7 @@ export async function authorizeBatch(
         ...(options?.pluginComputerRuntime === true && canColocatePluginStdio()
           ? { pluginComputerRuntime: true }
           : {}),
+        ...(options?.variantSupport ? { variantSupport: 1 } : {}),
       }),
     });
   } catch (error) {
@@ -1842,6 +1855,8 @@ export async function createAuthorizedManager(
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
+      // This builder applies a variant's edits; see `authorizedVariant`.
+      variantSupport: true,
     },
   );
   // An uploaded account's token is read again when a refresh can't renew it
@@ -1854,6 +1869,7 @@ export async function createAuthorizedManager(
           accessScope: options?.accessScope,
           scenarioId: options?.scenarioId,
           accessVersion: options?.accessVersion,
+          variantSupport: true,
         })
       : authorizeBatchLocal(null, bearerToken, projectId, [id], undefined, {
           connectionIds,
@@ -1969,6 +1985,11 @@ export async function createAuthorizedManager(
   > = undefined;
   let confidentialCimdProviderForOrgResolved = false;
   const refusedServers: Record<string, unknown> = {};
+  // A variant's entry is its base's authorization: credentials are revealed,
+  // refreshed and minted for the base, exactly as they are for the base.
+  const variantsByServerId = new Map<string, VariantDefinition>();
+  const credentialServerId = (id: string) =>
+    variantsByServerId.get(id)?.baseServerId ?? id;
   for (const serverId of uniqueServerIds) {
     try {
       const auth = batch.results[serverId];
@@ -1998,6 +2019,8 @@ export async function createAuthorizedManager(
         serverNamesById,
         auth.serverConfig,
       );
+      const variant = authorizedVariant(auth, serverId, displayServerName);
+      if (variant) variantsByServerId.set(serverId, variant);
       const effectiveAuth = resolveEffectiveAuthMethod(
         auth.serverConfig,
         options?.xaaPolicy,
@@ -2263,7 +2286,7 @@ export async function createAuthorizedManager(
         await refreshHostedOAuthAccessTokenWithLocalFallback(
           bearerToken,
           projectId,
-          recovery.serverId,
+          credentialServerId(recovery.serverId),
           {
             accessScope: options?.accessScope,
             scenarioId: options?.scenarioId,
@@ -2501,7 +2524,7 @@ export async function createAuthorizedManager(
             ? buildHostedOAuthUnauthorizedHandler({
                 bearerToken,
                 projectId,
-                serverId,
+                serverId: credentialServerId(serverId),
                 connectionId: refreshConnectionId,
                 ...(HOSTED_MODE
                   ? {}
@@ -2516,7 +2539,7 @@ export async function createAuthorizedManager(
                   token: storedOAuthToken,
                   connectionId:
                     options?.connectionIds?.[serverId] ?? auth.oauthCredentialId,
-                  serverId,
+                  serverId: credentialServerId(serverId),
                   serverName: displayServerName,
                 }),
                 // Same reasoning as the local resolver's own handler: in local
@@ -2612,7 +2635,7 @@ export async function createAuthorizedManager(
             issuer: options.xaaIssuer,
             hostedMode: HOSTED_MODE,
             serverConfig: auth.serverConfig,
-            serverId,
+            serverId: credentialServerId(serverId),
             projectId,
             bearerToken,
             resolveServerSecret: fetchServerClientSecret,
@@ -2720,7 +2743,7 @@ export async function createAuthorizedManager(
                 expectedTargetUrl: auth.serverConfig.url,
                 bearerToken,
                 projectId,
-                serverId,
+                serverId: credentialServerId(serverId),
                 accessScope: options?.accessScope,
                 scenarioId: options?.scenarioId,
                 accessVersion: options?.accessVersion,
@@ -2858,7 +2881,7 @@ export async function createAuthorizedManager(
             onUnauthorized: buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
-              serverId,
+              serverId: credentialServerId(serverId),
               connectionId: connection.connectionId,
               serverName: connection.label,
               accessScope: options?.accessScope,
@@ -2876,7 +2899,7 @@ export async function createAuthorizedManager(
                 account: credential,
                 token: credential.accessToken,
                 connectionId: connection.connectionId,
-                serverId,
+                serverId: credentialServerId(serverId),
                 serverName: serverNamesById[serverId] ?? serverId,
                 accountName: connection.label,
               }),
@@ -2908,7 +2931,7 @@ export async function createAuthorizedManager(
           baseFetch = hostedMcpBackpressureFetch({
             fetch: baseFetch,
             projectId,
-            serverId,
+            serverId: credentialServerId(serverId),
             userId: authorizedUserId,
             connectionId:
               connection?.connectionId ?? options?.connectionIds?.[serverId],
@@ -2955,6 +2978,13 @@ export async function createAuthorizedManager(
           ...connectionConfig,
           credentialHeaderNames: binding.headerNames,
         };
+      }
+      // A variant dials its base through everything above, and only its
+      // `tools/list` answers change. A replay would dial the base without them.
+      const variant = variantsByServerId.get(serverId);
+      if (variant) {
+        fetchFn = createVariantFetch({ baseFetch: fetchFn, variant });
+        connectionConfig = { ...connectionConfig, replayable: false };
       }
       return [
         [
@@ -3026,6 +3056,7 @@ export async function createAuthorizedManager(
       : {}),
   });
   uploadedRecoveries.bind(manager);
+  setManagerVariants(manager, variantsByServerId);
   if (pluginLeaseReleases.length > 0) {
     // Every ephemeral-manager teardown path (withManager, web-chat-turn
     // cleanup, manual-connection callers) funnels through

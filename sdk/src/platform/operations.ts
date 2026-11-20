@@ -135,6 +135,7 @@ import {
   updateServerAccountOperation,
   uploadServerAccountTokensOperation,
 } from "./server-account-operations.js";
+import { createVariantServerOperation } from "./variant-operations.js";
 import {
   createDirectorySubmissionOperation,
   deleteDirectorySubmissionOperation,
@@ -2520,6 +2521,7 @@ export * from "./directory-submission-handoff-operations.js";
 export * from "./directory-test-plan-operations.js";
 export * from "./directory-submission-eval-operations.js";
 export * from "./eval-run-insights-operations.js";
+export * from "./variant-operations.js";
 
 // ── Eval operations ──────────────────────────────────────────────────
 
@@ -8798,12 +8800,12 @@ async function resolveRunServers(
   client: PlatformApiClient,
   project: PlatformProject,
   selectors: string[],
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
+  listed?: PlatformPage<PlatformProjectServer>
 ): Promise<PlatformProjectServer[]> {
-  const page = await client.listProjectServers(
-    { projectId: project.id },
-    { signal }
-  );
+  const page =
+    listed ??
+    (await client.listProjectServers({ projectId: project.id }, { signal }));
 
   const resolved = new Map<string, PlatformProjectServer>();
   for (const selector of selectors) {
@@ -11462,11 +11464,8 @@ function sameServerSet(a: string[], b: string[]): boolean {
  * `--compose-server A B` and `--compose-server B A` describe one group and
  * should not mint two.
  */
-function composeServerGroupName(servers: PlatformProjectServer[]): string {
-  return [...servers]
-    .map((server) => server.name)
-    .sort((a, b) => a.localeCompare(b))
-    .join(" + ");
+function composeServerGroupName(names: string[]): string {
+  return [...names].sort((a, b) => a.localeCompare(b)).join(" + ");
 }
 
 /**
@@ -11493,8 +11492,25 @@ async function resolveComposeServerGroup(
 ): Promise<string> {
   // Reuses the run-server resolver: same name-or-id rules, same up-front
   // refusal of stdio/URL-less servers the hosted runner could never connect.
-  const servers = await resolveRunServers(client, project, selectors, signal);
-  const wanted = servers.map((server) => server.id);
+  // A server variant is left out of the listing, so an id it lacks joins the
+  // group as given, and creating the group checks that id.
+  const listing = await client.listProjectServers(
+    { projectId: project.id },
+    { signal }
+  );
+  const isListed = (id: string) =>
+    listing.items.some((server) => server.id === id || server.name === id);
+  const unlisted = selectors
+    .map((selector) => selector.trim())
+    .filter((id) => looksLikeEnvironmentId(id) && !isListed(id)); // any Convex id
+  const servers = await resolveRunServers(
+    client,
+    project,
+    selectors.filter((selector) => !unlisted.includes(selector.trim())),
+    signal,
+    listing
+  );
+  const wanted = [...servers.map((server) => server.id), ...unlisted];
 
   const findMatch = async () => {
     let page;
@@ -11521,7 +11537,10 @@ async function resolveComposeServerGroup(
   const existing = await findMatch();
   if (existing) return existing.id;
 
-  const baseName = composeServerGroupName(servers);
+  const baseName = composeServerGroupName([
+    ...servers.map((server) => server.name),
+    ...unlisted,
+  ]);
   for (let attempt = 1; attempt <= SERVER_GROUP_NAME_ATTEMPTS; attempt += 1) {
     const name = attempt === 1 ? baseName : `${baseName} (${attempt})`;
     try {
@@ -19543,6 +19562,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Server variants, in beta: a saved server's live tools with edited
+  // descriptions, under a server id of its own.
+  createVariantServerOperation,
   // Swarms authoring + insights, and the capability read that lets an agent
   // check before it plans.
   getCapabilitiesOperation,

@@ -255,6 +255,8 @@ const FIELD_EXEMPTIONS: Readonly<Record<string, Readonly<string[]>>> = {
   ProjectEnvironment: ["pluginVersionIds", "sandboxImageId"],
   AdhocEnvironment: ["pluginVersionIds", "sandboxImageId"],
   ProjectEnvironmentResolved: ["pluginVersions", "sandboxImageId"],
+  // Server variants are in beta behind `variant-servers-enabled`.
+  EvalRun: ["variants"],
 };
 // ── SDK type extraction ─────────────────────────────────────────────────────
 

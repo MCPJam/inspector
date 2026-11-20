@@ -51,6 +51,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "directory-readiness",
   "unified-sessions",
   "unified-share-evals",
+  "variant-servers",
   "github-checks",
   "scheduled-evals",
 ] as const;
@@ -82,6 +83,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "directory-readiness": "Directory readiness",
   "unified-sessions": "The unified sessions feed",
   "unified-share-evals": "Eval run sharing",
+  "variant-servers": "Server variants",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
 };
@@ -185,6 +187,8 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   connect_eval_github_repo: "github-checks",
   list_eval_check_repos: "github-checks",
   connect_eval_check_repo: "github-checks",
+  // Server variants. A variant's server id then runs wherever a server id does.
+  create_variant_server: "variant-servers",
   // Description experiments.
   propose_eval_description_rewrite: "description-experiments",
   start_eval_description_experiment: "description-experiments",

@@ -1154,6 +1154,11 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /**
+   * The server variants this run served, read from its config snapshot: one
+   * entry per variant among its servers. ABSENT when it served none.
+   */
+  variants?: PlatformEvalRunVariant[];
   /** Durable execution client; absent on older runs. Distinct from launcher. */
   client?: {
     id: string | null;
@@ -1643,6 +1648,17 @@ export interface PlatformEvalRunEnvironment {
   id: string;
   name: string | null;
   revision: number | null;
+}
+
+/** A server variant a run served, as the run's config snapshot recorded it. */
+export interface PlatformEvalRunVariant {
+  /** The variant's own server id, the one the run's servers name. */
+  serverId: string;
+  variantId: string;
+  baseServerId: string;
+  baseSurfaceHash: string;
+  editsHash: string;
+  contentHash: string;
 }
 
 /**

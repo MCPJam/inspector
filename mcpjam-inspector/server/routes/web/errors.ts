@@ -155,6 +155,10 @@ export const ErrorCode = {
   // "stdio_command_approval_required"` to open the approval dialog, then
   // retries.
   STDIO_COMMAND_APPROVAL_REQUIRED: "STDIO_COMMAND_APPROVAL_REQUIRED",
+  // A server variant's base changed or dropped a tool the variant edits, so
+  // the variant can't be served (409). Publicly a CONFLICT with this code in
+  // `details.code`; the mapping sits in `routes/v1/envelope.ts`.
+  VARIANT_BASE_DRIFTED: "VARIANT_BASE_DRIFTED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

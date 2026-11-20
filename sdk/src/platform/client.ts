@@ -37,6 +37,10 @@ import type {
   ModelSelection,
 } from "../host-config/model-selection.js";
 import { PlatformApiError } from "./errors.js";
+import type {
+  PlatformVariantServer,
+  PlatformVariantServerBody,
+} from "./variant-operations.js";
 import { readSdkVersion } from "../sdk-version.js";
 import type {
   PlatformScenarioSummary,
@@ -1233,6 +1237,22 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       { body: {} },
       options
     );
+  }
+
+  /**
+   * `POST /projects/{p}/variant-servers`: a variant of a saved server, its
+   * live tool list with edited descriptions under a server id of its own. The
+   * same base and edits answer the existing variant with `created: false`.
+   * Declares the launcher, which the variant records as how it was made.
+   */
+  createVariantServer(
+    params: { projectId: string; body: PlatformVariantServerBody },
+    options?: RequestOptions
+  ): Promise<PlatformVariantServer> {
+    const projectId = encodeURIComponent(params.projectId);
+    const path = `/projects/${projectId}/variant-servers`;
+    const init = { body: params.body, declareLaunch: true };
+    return this.request("POST", path, init, options);
   }
 
   listEvalSuites(

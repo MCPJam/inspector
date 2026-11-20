@@ -23,6 +23,7 @@ import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import serverGroups from "./server-groups.js";
 import serverConnections from "./server-connections.js";
+import variantServers from "./variant-servers.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
 import resources from "./resources.js";
@@ -181,6 +182,9 @@ v1.route("/", servers);
 // there is no share-link flow that needs them.
 v1.route("/", serverGroups);
 v1.route("/", serverConnections);
+// Server variants, in beta. Guest-DENIED by default: creating one is a
+// project-server write.
+v1.route("/", variantServers);
 v1.route("/", tools);
 v1.route("/", prompts);
 v1.route("/", resources);
