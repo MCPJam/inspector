@@ -1,0 +1,49 @@
+name: CodeRabbit Major Findings
+
+# Fails while a PR has an unresolved CodeRabbit thread graded Major or
+# Critical. CodeRabbit cannot fail a check by severity itself, so
+# scripts/coderabbit/major-findings.mjs reads the grade from each finding.
+#
+# Review events re-run the gate when CodeRabbit posts a review or replies in a
+# thread (it replies when it resolves one). Resolving a thread by hand fires no
+# event; re-run the job or push to clear it. The token only reads, so fork PRs
+# work too.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: coderabbit-major-findings-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: CodeRabbit Major Findings
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/coderabbit
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.14.0"
+
+      - name: Test the gate
+        run: node --test scripts/coderabbit/major-findings.test.mjs
+
+      - name: Check unresolved findings
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/coderabbit/major-findings.mjs
