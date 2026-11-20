@@ -42,13 +42,16 @@ describe("an eval run's web client context", () => {
     ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" } });
   });
 
-  it("moves each turn of a run one account on, and keeps runs apart", () => {
-    const ids = ["a", "b", "c"];
-    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["a", "b", "c"]);
-    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["b", "c", "a"]);
-    expect(rotateRunAccounts("other-run", ids)).toEqual(["a", "b", "c"]);
-    expect(rotateRunAccounts("rotation-run", ids)).toEqual(["c", "a", "b"]);
-    expect(rotateRunAccounts("rotation-run", ["only"])).toEqual(["only"]);
+  it("starts each iteration one account on, keeps an iteration's turns together, and keeps runs apart", () => {
+    const webAccountIds = ["a", "b", "c"];
+    const order = (runId: string, iterationId: string) => rotateRunAccounts({ runId, iterationId, webAccountIds });
+    expect(order("rotation-run", "it-1")).toEqual(["a", "b", "c"]);
+    expect(order("rotation-run", "it-2")).toEqual(["b", "c", "a"]);
+    expect(order("rotation-run", "it-1")).toEqual(["a", "b", "c"]);
+    expect(order("other-run", "it-1")).toEqual(["a", "b", "c"]);
+    expect(order("rotation-run", "it-3")).toEqual(["c", "a", "b"]);
+    expect(order("rotation-run", "it-4")).toEqual(["a", "b", "c"]);
+    expect(rotateRunAccounts({ runId: "rotation-run", webAccountIds: ["only"] })).toEqual(["only"]);
   });
 });
 

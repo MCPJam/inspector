@@ -95,7 +95,13 @@ export async function runWebClientHarnessTurn(
     ...(options.authHeader ? { bearer: options.authHeader } : {}),
     ...(evalRun?.actor ? { actor: evalRun.actor } : {}),
     ...(evalRun?.webAccountIds
-      ? { runWebAccountIds: rotateRunAccounts(evalRun.runId, evalRun.webAccountIds) }
+      ? {
+          runWebAccountIds: rotateRunAccounts({
+            runId: evalRun.runId,
+            ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
+            webAccountIds: evalRun.webAccountIds,
+          }),
+        }
       : {}),
   });
   if (!environment) {
