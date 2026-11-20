@@ -105,12 +105,19 @@ export const listServerAccountsOperation: PlatformOperation<
   name: "list_server_accounts",
   title: "List a server's accounts",
   description:
-    "List the accounts a saved MCP server signs in with: each one's id, name, whether runs use it by default, whether it needs reconnecting, and whether it is a shared or uploaded account whose token is never revealed. Never a token. You see your own personal accounts, or the project accounts of a server shared with the project.",
+    "List the accounts a saved MCP server signs in with: each one's id, name, whether runs use it by default, whether it needs reconnecting, and whether it is a shared or uploaded account whose token is never revealed. Never a token. You see your own personal accounts, or the project accounts of a server shared with the project. A server that does not sign in with OAuth has no accounts, and the list is empty.",
   readOnly: true,
   permalink: derivePermalinks(serverPermalink),
   inputSchema: serverScopedInput,
   async execute(input, context) {
-    const { client, scope, result } = await resolveServerScope(input, context);
+    const { client, scope, result, server } = await resolveServerScope(
+      input,
+      context
+    );
+    // Accounts hold OAuth sign-ins, so a server without OAuth has none. The
+    // API refuses to list them for it ("Server does not require OAuth"), and a
+    // refusal reads to a caller as something gone wrong.
+    if (server.useOAuth === false) return { ...result, accounts: [] };
     const page = await client.listServerAccounts(scope, {
       signal: context.signal,
     });

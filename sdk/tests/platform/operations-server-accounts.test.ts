@@ -43,14 +43,15 @@ const ACCOUNTS = "/api/v1/projects/project-1/servers/server-1/accounts";
 
 /** A client whose API answers from `routes`, recording every request. */
 function clientWith(
-  routes: Record<string, { body: unknown; status?: number }>
+  routes: Record<string, { body: unknown; status?: number }>,
+  server: Record<string, unknown> = SERVER
 ) {
   const requests: Array<{ key: string; body: unknown }> = [];
   const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = new URL(String(input));
     const key = `${init?.method ?? "GET"} ${url.pathname}`;
     if (key.endsWith("/projects")) return Response.json({ items: [PROJECT] });
-    if (key.endsWith("/servers")) return Response.json({ items: [SERVER] });
+    if (key.endsWith("/servers")) return Response.json({ items: [server] });
     const route = routes[key];
     if (!route) throw new Error(`unexpected ${key}`);
     requests.push({
@@ -83,6 +84,18 @@ describe("server account operations", () => {
       { client, ...CONTEXT }
     );
     expect(result).toEqual({ ...SCOPE, accounts: [ACCOUNT] });
+  });
+
+  it("answers an empty list for a server that does not sign in with OAuth", async () => {
+    // The API refuses this listing ("Server does not require OAuth"); a server
+    // without OAuth has no accounts, so the answer is an empty list.
+    const { client, requests } = clientWith({}, { ...SERVER, useOAuth: false });
+    const result = await listServerAccountsOperation.execute(
+      { server: "markets" },
+      { client, ...CONTEXT }
+    );
+    expect(result).toEqual({ ...SCOPE, accounts: [] });
+    expect(requests).toEqual([]);
   });
 
   it("reads one account by name, escaping it into the path", async () => {

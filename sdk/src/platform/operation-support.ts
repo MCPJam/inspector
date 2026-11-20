@@ -190,6 +190,7 @@ export async function resolveServerScope(
   client: PlatformApiClient;
   scope: { projectId: string; serverId: string };
   result: ServerResult;
+  server: PlatformProjectServer;
 }> {
   const { client, signal, onScopeResolved } = context;
   const { project } = await resolveProjectOrThrow(
@@ -211,6 +212,7 @@ export async function resolveServerScope(
       project: toSelectedProjectInfo(project),
       server: toServerInfo(server),
     },
+    server,
   };
 }
 
