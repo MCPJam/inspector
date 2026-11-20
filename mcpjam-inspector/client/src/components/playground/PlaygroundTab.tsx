@@ -49,8 +49,7 @@ import {
   MIN_BROWSER_PANEL_SIZE,
   useBrowserWorkspaceStore,
 } from "@/stores/browser-workspace-store";
-import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
-import { webClientVendorOfHost } from "@/lib/web-accounts/clients";
+import { useWebClientPaneOpening } from "@/components/web-clients/WebClientPane";
 import { PlaygroundCenter } from "./PlaygroundCenter";
 import { PlaygroundPreviewedClientSync } from "./PlaygroundPreviewedClientSync";
 import { PlaygroundLeftRail } from "./PlaygroundLeftRail";
@@ -178,13 +177,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     ? previewedHost?.config ?? null
     : props.activeHost ?? null;
   const activeMcpProfile = effectiveHostConfig?.mcpProfile;
-  // Claude web and ChatGPT web are a vendor's page, so their browser pane is
-  // the client itself.
-  const webClientsEnabled = useWebClientsEnabled();
-  const webClientVendor =
-    webClientsEnabled && effectiveHostConfig
-      ? webClientVendorOfHost(effectiveHostConfig)
-      : undefined;
 
   // Host-derived widget runtime values. The preferences store is the
   // editing surface for ad-hoc previews; once a host is selected its
@@ -348,8 +340,14 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   // TRI-STATE, kept as one: `undefined` is "PostHog has not answered", which
   // is not the same as "no" and must not close a panel on its own.
   const workspaceState = useBrowserWorkspaceEnabledState();
-  // A web client's pane needs only its own flag and a signed-in person.
-  const webClientPane = !!webClientVendor && isConvexAuthenticated;
+  // Claude web and ChatGPT web are a vendor's page, so the pane is the client.
+  const webClientVendor = useWebClientPaneOpening({
+    hostConfig: effectiveHostConfig,
+    hostId: previewedHostId,
+    conversationId,
+    signedIn: isConvexAuthenticated,
+  });
+  const webClientPane = webClientVendor !== undefined;
   const canBrowseResolved =
     webClientPane ||
     (workspaceState !== undefined && browsersEnabled !== undefined);
@@ -365,16 +363,6 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
         localBrowserRunning,
       }));
   const showBrowser = browserOpen && canBrowse;
-
-  // Opens by itself once per chat and client, and keeps a person's close
-  // until either changes. Opening it starts no browser.
-  const openConversationBrowser = useBrowserWorkspaceStore(
-    (state) => state.openBrowser,
-  );
-  useEffect(() => {
-    if (webClientPane && conversationId)
-      openConversationBrowser(conversationId);
-  }, [webClientPane, conversationId, previewedHostId, openConversationBrowser]);
 
   // The browser takes its room from the Sessions rail, ONCE. Doing it on every
   // reopen would fight a person who deliberately put the rail back — which is
@@ -502,14 +490,21 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
       !railShouldOpenForBrowse({
         conversationId,
         revealConversationId: browseRevealId,
-        workspacePanelVisible: workspaceState === true,
+        // A web client's pane shows even with the workspace flag off.
+        workspacePanelVisible: workspaceState === true || webClientPane,
       })
     ) {
       return;
     }
     pendingRailReveal.current = true;
     setIsRightRailVisible(true);
-  }, [browseRevealSeq, browseRevealId, conversationId, workspaceState]);
+  }, [
+    browseRevealSeq,
+    browseRevealId,
+    conversationId,
+    workspaceState,
+    webClientPane,
+  ]);
 
   useEffect(() => {
     if (!isRightRailVisible || !pendingRailReveal.current) return;
@@ -695,7 +690,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                   // metered box awake.
                   visible={showBrowser}
                   onClose={closeBrowser}
-                  webClientVendor={webClientPane ? webClientVendor : undefined}
+                  webClientVendor={webClientVendor}
                 />
               </ResizablePanel>
             </>

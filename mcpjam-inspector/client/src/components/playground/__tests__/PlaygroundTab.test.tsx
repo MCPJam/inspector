@@ -20,7 +20,7 @@ import {
 // screen shows, so neutralize everything else and drive `loadingState`.
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
-  useBrowserWorkspaceEnabledState: () => true,
+  useBrowserWorkspaceEnabledState: () => webClientFixture.workspace,
   useBrowserEnabledState: () => true,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
@@ -49,6 +49,7 @@ vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 const webClientFixture = vi.hoisted(() => ({
   signedIn: false,
   flag: false,
+  workspace: true,
   host: null as null | { config: { harness: string } },
 }));
 vi.mock("convex/react", () => ({
@@ -372,7 +373,18 @@ describe("PlaygroundTab web clients", () => {
   afterEach(() => {
     webClientFixture.signedIn = false;
     webClientFixture.flag = false;
+    webClientFixture.workspace = true;
     webClientFixture.host = null;
+  });
+
+  it("opens only the pane, not the side panel, with the browser workspace flag off", () => {
+    webClientFixture.workspace = false;
+    render(<PlaygroundTab {...baseProps} />);
+    expect(screen.getByTestId("browser-panel")).toHaveAttribute(
+      "data-web-client",
+      "claude",
+    );
+    expect(screen.getByTestId("collapsed-right-rail")).toBeInTheDocument();
   });
 
   it("opens the browser pane by itself for Claude web", () => {
