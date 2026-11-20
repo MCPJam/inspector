@@ -1362,3 +1362,33 @@ it("forwards frozen agent-loop tool policies through the swarm drain", async () 
     modelVisibleMcpToolResults: { directContent: { text: true } }, tasks,
   }));
 });
+
+it("hands a web client session's leased account through the swarm drain", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const webClientRun = {
+    runId: "run-1",
+    actor: { actorUserId: "owner-1" },
+    webAccountIds: ["acct-2"],
+    onAccountLost: vi.fn(),
+  };
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, harness: "chatgpt-web", webClientRun },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock).toHaveBeenCalledWith(
+    expect.objectContaining({ harness: "chatgpt-web", webClientRun }),
+  );
+});
+
+it("leaves a web client session with no run context on the default account", async () => {
+  createBrowserSessionContextMock.mockReturnValue(buildFakeBrowserContext({ computerUse: false }));
+  const adapter = baseAdapter();
+  const result = await runSyntheticHostSession({
+    ...adapter,
+    runtime: { ...adapter.runtime, harness: "chatgpt-web" },
+  } as never);
+  expect(result).toEqual({ outcome: "succeeded" });
+  expect(runAssistantTurnMock.mock.calls[0]![0]).not.toHaveProperty("webClientRun");
+});
