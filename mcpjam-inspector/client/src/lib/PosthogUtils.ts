@@ -12,7 +12,10 @@ import { HOSTED_MODE } from "./config";
 import { getRuntimeDoNotTrack } from "./runtime-config";
 import { scrubSensitiveUrl } from "../../../shared/credential-url";
 import { stampPostHogEvent } from "./telemetry-context";
-import { hasAnalyticsConsent } from "./analytics-consent";
+import {
+  followAnalyticsConsentAcrossTabs,
+  hasAnalyticsConsent,
+} from "./analytics-consent";
 import {
   isErrorCaptureSurface,
   MASKED_SESSION_RECORDING_OPTIONS,
@@ -314,6 +317,7 @@ export const options = {
   loaded: (posthog: any) => {
     persistedPostHog = posthog;
     scrubPostHogPersistence(posthog);
+    followAnalyticsConsentAcrossTabs(posthog);
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
@@ -407,6 +411,10 @@ export const getPostHogOptions = (
         // not a config field, so passing it here was silently ignored and dev
         // events flowed into prod PostHog from 2026-03-12 until this fix.
         opt_out_capturing_by_default: true,
+        // A grant posthog-js stored while this origin ran an enabled build
+        // would override the default above. Its own key keeps the disable
+        // authoritative.
+        consent_persistence_name: `__ph_opt_in_out_disabled_${POSTHOG_PROJECT_KEY}`,
         // Nothing is sent from here by default, but anything that opts in
         // later still goes through the same scrubber.
         before_send: [

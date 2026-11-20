@@ -23,6 +23,11 @@ export interface AnalyticsConsentClient {
 
 const STORAGE_KEY = "mcpjam-analytics-consent";
 const listeners = new Set<() => void>();
+// A choice the browser refused to store. It wins over storage, so it holds on
+// this page instead of the stale stored one.
+let pageChoice: AnalyticsConsent | null = null;
+// The PostHog instance a choice made in another tab is applied to.
+let followedClient: AnalyticsConsentClient | null = null;
 
 /**
  * Whether this visitor must opt in before optional analytics and session
@@ -38,6 +43,7 @@ export function isAnalyticsConsentRequired(): boolean {
 }
 
 export function getAnalyticsConsent(): AnalyticsConsent | null {
+  if (pageChoice !== null) return pageChoice;
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     return stored === "granted" || stored === "denied" ? stored : null;
@@ -66,43 +72,83 @@ export function setAnalyticsConsent(
 ): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, consent);
+    pageChoice = null;
   } catch (error) {
     // The choice still applies to this page; it is asked again next visit.
+    pageChoice = consent;
     console.debug("[analytics-consent] could not store the choice", error);
   }
-  if (consent === "granted") {
-    client.opt_in_capturing({ captureEventName: false });
-  } else {
-    client.opt_out_capturing();
-    // posthog-js read these getters once at init. A remote config that lands
-    // after this would reload Conversations, and `reset()` deletes the stored
-    // opt-out and falls back to the opt-out defaults, unless the live config
-    // carries the refusal. Persistence off also removes what PostHog stored.
-    client.set_config({
-      disable_conversations: true,
-      opt_out_capturing_by_default: true,
-      opt_out_persistence_by_default: true,
-    });
-    // Outside cookieless mode, opting out leaves a running recorder and a
-    // loaded Conversations widget in place. Re-checking stops the recorder
-    // now that capture is off; reset removes the widget and its stored session.
-    client.sessionRecording?.startIfEnabledOrStop();
-    client.conversations?.reset();
-  }
+  applyToClient(client, consent);
+  notify();
+}
+
+function applyToClient(
+  client: AnalyticsConsentClient,
+  consent: AnalyticsConsent,
+): void {
+  const refused = consent !== "granted";
+  if (refused) client.opt_out_capturing();
+  else client.opt_in_capturing({ captureEventName: false });
+  // posthog-js read these getters once at init. A remote config that lands
+  // later would reload Conversations, and `reset()` deletes the stored choice
+  // and falls back to the opt-out defaults, unless the live config carries
+  // the current choice. Persistence off also removes what PostHog stored.
+  client.set_config({
+    disable_conversations: refused,
+    opt_out_capturing_by_default: refused,
+    opt_out_persistence_by_default: refused,
+  });
+  if (!refused) return;
+  // Outside cookieless mode, opting out leaves a running recorder and a
+  // loaded Conversations widget in place. Re-checking stops the recorder
+  // now that capture is off; reset removes the widget and its stored session.
+  client.sessionRecording?.startIfEnabledOrStop();
+  client.conversations?.reset();
+}
+
+function notify(): void {
   for (const listener of listeners) listener();
 }
 
 /**
- * posthog-js `reset()` returns consent to the init default, which is opted out
- * for a visitor who needed consent. Restore a choice they already made.
+ * posthog-js `reset()` returns consent to its default, which may be opted out
+ * from a refusal made earlier. Restore a grant the visitor made, wherever
+ * they are now.
  */
 export function reapplyAnalyticsConsent(client: AnalyticsConsentClient): void {
-  if (isAnalyticsConsentRequired() && getAnalyticsConsent() === "granted") {
+  if (getAnalyticsConsent() === "granted") {
     client.opt_in_capturing({ captureEventName: false });
   }
 }
 
-/** Calls `listener` after every choice `setAnalyticsConsent` applies. */
+/**
+ * Applies a choice made in another open tab to `client` here too, so a
+ * withdrawal there also stops this tab's recorder and replay.
+ */
+export function followAnalyticsConsentAcrossTabs(
+  client: AnalyticsConsentClient,
+): void {
+  followedClient = client;
+}
+
+// Some test and embedded hosts stand in a `window` without events.
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("storage", (event) => {
+    // `key` is null when another tab cleared all of storage.
+    if (event.key !== STORAGE_KEY && event.key !== null) return;
+    pageChoice = null;
+    const consent = getAnalyticsConsent();
+    if (consent !== null && followedClient) {
+      applyToClient(followedClient, consent);
+    }
+    notify();
+  });
+}
+
+/** Calls `listener` after every choice, made in this tab or another. */
 export function subscribeAnalyticsConsent(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);

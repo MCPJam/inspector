@@ -53,4 +53,18 @@ describe("buildAnalyticsConsentScript", () => {
       }),
     ).toBe(NOT_REQUIRED);
   });
+
+  it("ignores a country header behind a non-Cloudflare ingress", async () => {
+    vi.stubEnv("MCPJAM_TRUSTED_CLIENT_IP_HEADER", "x-real-ip");
+    expect(
+      await scriptFor({ "cf-ipcountry": "US", "x-real-ip": "203.0.113.7" }),
+    ).toBe(REQUIRED);
+    vi.stubEnv("MCPJAM_EDGE_SECRET", "edge-secret");
+    expect(
+      await scriptFor({
+        "cf-ipcountry": "US",
+        "x-mcpjam-edge-secret": "edge-secret",
+      }),
+    ).toBe(NOT_REQUIRED);
+  });
 });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  followAnalyticsConsentAcrossTabs,
   getAnalyticsConsent,
   hasAnalyticsConsent,
   reapplyAnalyticsConsent,
@@ -16,7 +17,10 @@ function client() {
 }
 
 afterEach(() => {
+  // Another tab's clear: drops this page's in-memory choice too.
   window.localStorage.clear();
+  window.dispatchEvent(new StorageEvent("storage", { key: null }));
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -135,5 +139,67 @@ describe("analytics consent", () => {
     const granted = client();
     reapplyAnalyticsConsent(granted);
     expect(granted.opt_in_capturing).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a renewed grant after a reset where the server would not ask", async () => {
+    // Declined earlier, so posthog-js initialised opted out.
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = false;
+    window.localStorage.setItem("mcpjam-analytics-consent", "denied");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+    const { PostHog } = await import("posthog-js");
+    const posthog = new PostHog();
+    posthog.init("phc_consent_regrant_test", {
+      ...options,
+      api_host: window.location.origin,
+      persistence: "memory",
+      advanced_disable_flags: true,
+      disable_session_recording: true,
+      capture_pageview: false,
+      autocapture: false,
+    });
+    expect(posthog.is_capturing()).toBe(false);
+
+    setAnalyticsConsent(posthog, "granted");
+    posthog.reset();
+    expect(posthog.is_capturing()).toBe(true);
+
+    const restored = client();
+    reapplyAnalyticsConsent(restored);
+    expect(restored.opt_in_capturing).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies a withdrawal on this page when storage refuses it", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+    setAnalyticsConsent(client(), "denied");
+    expect(getAnalyticsConsent()).toBe("denied");
+    expect(hasAnalyticsConsent()).toBe(false);
+  });
+
+  it("applies a withdrawal made in another tab", () => {
+    window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+    const posthog = {
+      ...client(),
+      sessionRecording: { startIfEnabledOrStop: vi.fn() },
+    };
+    setAnalyticsConsent(posthog, "granted");
+    followAnalyticsConsentAcrossTabs(posthog);
+
+    window.localStorage.setItem("mcpjam-analytics-consent", "denied");
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: "mcpjam-analytics-consent",
+        newValue: "denied",
+      }),
+    );
+
+    expect(getAnalyticsConsent()).toBe("denied");
+    expect(posthog.opt_out_capturing).toHaveBeenCalledTimes(1);
+    expect(posthog.sessionRecording.startIfEnabledOrStop).toHaveBeenCalledTimes(
+      1,
+    );
   });
 });
