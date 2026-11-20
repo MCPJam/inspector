@@ -262,16 +262,18 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
     });
   });
 
-  it("acts as the eval run's owner on its frozen accounts, one step on per turn", async () => {
+  it("acts as the eval run's owner on its frozen accounts, one account on per iteration", async () => {
     const seen: WebTurnContext[] = [];
     setWebClientEnvironment(async (turn) => {
       seen.push(turn);
       throw new Error("recorded");
     });
     const run = { runId: "run-7", actor: { actorUserId: "owner-1" }, webAccountIds: ["acct-1", "acct-2"] };
-    await expect(runHarnessTurn(options({ webClientRun: run }), "none")).rejects.toThrow("recorded");
-    await expect(runHarnessTurn(options({ webClientRun: run }), "none")).rejects.toThrow("recorded");
+    for (const evalIterationId of ["iteration-1", "iteration-1", "iteration-2"]) {
+      await expect(runHarnessTurn(options({ webClientRun: run, evalIterationId }), "none")).rejects.toThrow("recorded");
+    }
     expect(seen.map((turn) => [turn.actor, turn.runWebAccountIds])).toEqual([
+      [{ actorUserId: "owner-1" }, ["acct-1", "acct-2"]],
       [{ actorUserId: "owner-1" }, ["acct-1", "acct-2"]],
       [{ actorUserId: "owner-1" }, ["acct-2", "acct-1"]],
     ]);

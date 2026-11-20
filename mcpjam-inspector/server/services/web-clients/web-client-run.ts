@@ -56,25 +56,37 @@ export function webClientRunOfEvalRun(args: {
   };
 }
 
-/** Turns started per run in this process, oldest run first. */
-const turnsByRun = new Map<string, number>();
+/** Each run's next place in its rotation, and the place each iteration took. */
+const rotations = new Map<string, { next: number; byIteration: Map<string, number> }>();
 const TRACKED_RUNS = 500;
 
-/** The run's accounts in the order this turn tries them, one step on per turn. */
-export function rotateRunAccounts(
-  runId: string,
-  webAccountIds: readonly string[],
-): string[] {
-  if (webAccountIds.length < 2) return [...webAccountIds];
-  const turn = turnsByRun.get(runId) ?? 0;
-  turnsByRun.delete(runId);
-  turnsByRun.set(runId, turn + 1);
-  if (turnsByRun.size > TRACKED_RUNS) {
-    const oldest = turnsByRun.keys().next();
-    if (!oldest.done) turnsByRun.delete(oldest.value);
+/**
+ * The run's accounts in the order this turn tries them. Each iteration
+ * starts one account on from the last, and every turn of an iteration keeps
+ * the iteration's place, so a conversation stays on one account.
+ */
+export function rotateRunAccounts(args: {
+  runId: string;
+  iterationId?: string;
+  webAccountIds: readonly string[];
+}): string[] {
+  const ids = args.webAccountIds;
+  if (ids.length < 2) return [...ids];
+  const rotation = rotations.get(args.runId) ?? { next: 0, byIteration: new Map<string, number>() };
+  rotations.delete(args.runId);
+  rotations.set(args.runId, rotation);
+  if (rotations.size > TRACKED_RUNS) {
+    const oldest = rotations.keys().next();
+    if (!oldest.done) rotations.delete(oldest.value);
   }
-  const start = turn % webAccountIds.length;
-  return [...webAccountIds.slice(start), ...webAccountIds.slice(0, start)];
+  let place = args.iterationId === undefined ? undefined : rotation.byIteration.get(args.iterationId);
+  if (place === undefined) {
+    place = rotation.next;
+    rotation.next += 1;
+    if (args.iterationId !== undefined) rotation.byIteration.set(args.iterationId, place);
+  }
+  const start = place % ids.length;
+  return [...ids.slice(start), ...ids.slice(0, start)];
 }
 
 /**
