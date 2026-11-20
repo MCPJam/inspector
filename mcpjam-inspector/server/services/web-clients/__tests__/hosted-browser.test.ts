@@ -44,7 +44,8 @@ describe("the session transport", () => {
   });
 
   it("refuses another site before the daemon and reports a lost command as unknown", async () => {
-    const sendCommand = vi.fn(async () => {
+    const sendCommand = vi.fn(async (command: { action: { kind: string } }) => {
+      if (command.action.kind === "observe") return okResponse;
       throw new Error("socket closed");
     });
     const send = sessionBrowserTransport({
@@ -60,6 +61,36 @@ describe("the session transport", () => {
     expect(await send({ op: "act", verb: "click", target: { selector: "#x" } })).toMatchObject({
       status: "unknown",
     });
+  });
+
+  it("sends nothing that could change a page off the vendor's sites, until a navigate brings it back", async () => {
+    let page: string | Error = "https://elsewhere.example/";
+    const sendCommand = vi.fn(async (_command: { action: { kind: string } }) => {
+      if (page instanceof Error) throw page;
+      return { status: "ok" as const, result: { ok: true, output: { url: page } }, bootId: "boot-1" };
+    });
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    const typed = { op: "act", verb: "type", target: { selector: "#prompt" }, value: "the prompt" } as const;
+    for (const command of [typed, { op: "act", verb: "press", value: "Enter" } as const]) {
+      expect(await send(command)).toMatchObject({ status: "refused", refusal: { code: "origin_not_allowed" } });
+    }
+    // A page the browser can't place counts as off the sites.
+    page = new Error("socket closed");
+    expect(await send(typed)).toMatchObject({ status: "refused", refusal: { code: "origin_not_allowed" } });
+    expect(sendCommand.mock.calls.map(([command]) => command.action.kind)).toEqual(["observe", "observe", "observe"]);
+
+    page = "https://chatgpt.com/";
+    expect(await send({ op: "navigate", url: "https://chatgpt.com/" })).toMatchObject({ status: "executed", ok: true });
+    expect(await send(typed)).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand.mock.calls.slice(3).map(([command]) => command.action.kind)).toEqual([
+      "navigate",
+      "observe",
+      "act",
+    ]);
   });
 
   it("keeps each vendor's browser to its own sites", () => {
