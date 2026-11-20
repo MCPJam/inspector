@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ContentBlockSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ContentBlockSchema } from "@mcpjam/sdk/browser";
 import type { ModelMessage, UserContent } from "ai";
 import {
   pluginResourceLink,

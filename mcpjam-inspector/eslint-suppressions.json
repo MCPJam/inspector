@@ -971,20 +971,5 @@
     "@typescript-eslint/no-explicit-any": {
       "count": 1
     }
-  },
-  "shared/plugin-icons.ts": {
-    "no-restricted-imports": {
-      "count": 1
-    }
-  },
-  "shared/plugin-model-context.ts": {
-    "no-restricted-imports": {
-      "count": 1
-    }
-  },
-  "shared/plugin-resource-link.ts": {
-    "no-restricted-imports": {
-      "count": 1
-    }
   }
 }
