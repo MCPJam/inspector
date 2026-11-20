@@ -85,15 +85,16 @@ export function ConnectStep({
   const [attempt, setAttemptState] = useState<Attempt | null>(null);
   // Read by the unmount cleanup, which outlives the last render's state.
   const attemptRef = useRef<Attempt | null>(null);
+  // Reported in the same update that adds the server, so Home never counts an
+  // unconfirmed attempt as connected for a render.
   const setAttempt = (next: Attempt | null) => {
     attemptRef.current = next;
     setAttemptState(next);
+    onAttemptChange(next?.name ?? null);
   };
   const timer = useRef<number | undefined>(undefined);
   const latest = useRef({ onRemove, onAttemptChange, onTrack });
   latest.current = { onRemove, onAttemptChange, onTrack };
-  const attemptName = attempt?.name ?? null;
-  useEffect(() => onAttemptChange(attemptName), [attemptName, onAttemptChange]);
   useEffect(
     () => () => {
       window.clearTimeout(timer.current);
