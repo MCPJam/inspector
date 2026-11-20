@@ -149,7 +149,7 @@ describe("XAAFlowLogger run controls", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
 
     expect(copyToClipboard).toHaveBeenCalledTimes(1);
     const copied = copyToClipboard.mock.calls[0][0];
@@ -167,7 +167,7 @@ describe("XAAFlowLogger run controls", () => {
     const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
     const { unmount } = renderLogger();
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
     await user.click(screen.getByRole("button", { name: "Copied!" }));
 
     expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
@@ -180,7 +180,7 @@ describe("XAAFlowLogger run controls", () => {
     copyToClipboard.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     renderLogger();
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
     expect(
       screen.getByRole("button", { name: "Copy failed" })
     ).toBeInTheDocument();
@@ -233,6 +233,92 @@ describe("XAAFlowLogger run controls", () => {
     const copied = copyToClipboard.mock.calls[0][0];
     expect(copied).toContain("Resource metadata received");
     expect(copied).not.toContain("JWT bearer request");
+  });
+});
+
+describe("XAAFlowLogger step range selection", () => {
+  const RANGE_STEPS = [
+    "discover_resource_metadata",
+    "received_resource_metadata",
+    "discover_authz_metadata",
+    "received_authz_metadata",
+  ] as const;
+
+  function renderRangeLogger() {
+    return render(
+      <XAAFlowLogger
+        flowState={createInitialXAAFlowState({
+          serverUrl: "https://mcp.example.com",
+          currentStep: "received_authz_metadata",
+          infoLogs: RANGE_STEPS.map((step, index) => ({
+            id: step,
+            step,
+            label: `Log for ${step}`,
+            timestamp: index,
+            level: "info" as const,
+          })),
+        })}
+        hasProfile
+        actions={{
+          onConfigure: vi.fn(),
+          onReset: vi.fn(),
+          onContinue: vi.fn(),
+          continueLabel: "Continue",
+        }}
+        summary={{ serverUrl: "https://mcp.example.com" }}
+      />,
+    );
+  }
+
+  const stepCheckboxes = () =>
+    screen.getAllByRole("checkbox", { name: /^Select step / });
+
+  it("copies a shift-clicked range in flow order", async () => {
+    const user = userEvent.setup();
+    renderRangeLogger();
+
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+    expect(stepCheckboxes()).toHaveLength(4);
+
+    // Click the third step, then shift-click back to the first.
+    await user.click(stepCheckboxes()[2]);
+    await user.keyboard("{Shift>}");
+    await user.click(stepCheckboxes()[0]);
+    await user.keyboard("{/Shift}");
+
+    expect(
+      stepCheckboxes().map((box) => box.getAttribute("aria-checked")),
+    ).toEqual(["true", "true", "true", "false"]);
+    expect(screen.getByText("3 selected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Copy 3 steps" }));
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    const positions = RANGE_STEPS.slice(0, 3).map((step) =>
+      copied.indexOf(`Log for ${step}`),
+    );
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+    expect(copied).not.toContain("Log for received_authz_metadata");
+    expect(screen.getByRole("button", { name: "Copied!" })).toBeInTheDocument();
+  });
+
+  it("does not expand or collapse steps while selecting", async () => {
+    const user = userEvent.setup();
+    renderRangeLogger();
+    const title = getXAAStepInfo("discover_resource_metadata").title;
+    const header = screen.getByRole("button", { name: new RegExp(title) });
+    expect(header).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+    await user.click(stepCheckboxes()[0]);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Copy all" })).toBeEnabled();
+    expect(copyToClipboard).not.toHaveBeenCalled();
   });
 });
 
