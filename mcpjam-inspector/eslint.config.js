@@ -109,8 +109,9 @@ export default [
           selector:
             "CallExpression[callee.type='MemberExpression'][callee.object.name='logger'][callee.property.name=/^(warn|error|info)$/]",
           message:
-            "Use logger.event() for production diagnostics in server/routes/web/. " +
-            "Free-form logger.warn/error/info calls are not queryable in Axiom. " +
+            "Free-form logger.warn/error/info calls are not queryable in Axiom, so server/routes/web/ bans them. " +
+            "Report a caught failure with reportRouteFailure(message, error, { source, hop }) " +
+            "and everything else with logger.event(). " +
             "See server/utils/LOGGING.md for the typed event catalog.",
         },
       ],
