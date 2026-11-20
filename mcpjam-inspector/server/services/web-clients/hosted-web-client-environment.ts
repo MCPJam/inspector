@@ -62,6 +62,8 @@ const profileAnswer = z.object({
   sha256: z.string(),
   savedAt: z.number(),
 });
+/** The backend's refusal: `{ error: { code, message? } }`. */
+const refusalAnswer = z.object({ error: z.object({ code: z.string() }) });
 
 /** `POST /internal/v1/web-accounts/profile-for-run`. */
 export function createProfileForRunClient(options: {
@@ -94,14 +96,33 @@ export function createProfileForRunClient(options: {
       },
     );
     if (!response.ok) {
-      throw needsSignIn(
-        "signed_out",
-        "sign_in_check",
-        "The saved browser session for this account could not be loaded.",
-      );
+      // Only the backend saying the account has no usable saved sign-in is
+      // about the account. An outage or any other refusal is the run's, and
+      // must not mark a signed-in account as signed out.
+      if ((await refusalCode(response)) === "WEB_ACCOUNT_NEEDS_SIGN_IN") {
+        throw needsSignIn(
+          "signed_out",
+          "sign_in_check",
+          "The saved browser session for this account could not be loaded.",
+        );
+      }
+      throw new RealUiError({
+        kind: "driver",
+        step: "sign_in_check",
+        message: "MCPJam could not load the saved browser session for this account.",
+      });
     }
     return profileAnswer.parse(await response.json());
   };
+}
+
+async function refusalCode(response: Response): Promise<string | undefined> {
+  try {
+    return refusalAnswer.safeParse(await response.json()).data?.error.code;
+  } catch {
+    // A body that isn't JSON is not one of the backend's refusals.
+    return undefined;
+  }
 }
 
 export type HostedWebClientDeps = {

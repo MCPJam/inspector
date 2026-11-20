@@ -453,6 +453,14 @@ describe("scrubTokenFromUrl", () => {
       "<-- GET /bench/results/[redacted]?x=1",
     ],
     [
+      "<-- POST /api/web-clients/local-connectors/SENTINEL_conn/turn",
+      "<-- POST /api/web-clients/local-connectors/[redacted]/turn",
+    ],
+    [
+      "--> DELETE /api/web-clients/local-connectors/SENTINEL_conn 204 1ms",
+      "--> DELETE /api/web-clients/local-connectors/[redacted] 204 1ms",
+    ],
+    [
       "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
       "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",
     ],

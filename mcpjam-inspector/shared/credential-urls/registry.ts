@@ -181,6 +181,15 @@ export const CREDENTIAL_ROUTES = [
     note: "Legacy conformance share read behind /conformance/shared/<token>.",
   },
   {
+    id: "api-local-web-connector",
+    pattern: "/api/web-clients/local-connectors/:connectorId",
+    secretParam: "connectorId",
+    secretIn: "path",
+    scope: "api",
+    ttl: "permanent",
+    note: "A local Inspector's capability connector for Claude web or ChatGPT web, in its turn and remove routes. The id is the connector's only credential.",
+  },
+  {
     id: "app-view-local",
     pattern: "/api/apps/mcp-apps/sandbox-proxy",
     secretParam: "view_token",

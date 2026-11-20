@@ -54,11 +54,13 @@ export function mountInspectorWebConnectors(app: Hono): void {
             },
           }
         : {}),
-      // A local connector was registered with the flag on, by whoever runs
-      // this Inspector, and names no user PostHog could be asked about.
+      // A local connector's requests name no user PostHog could be asked
+      // about, so it answers to the flag of whoever registered it, as it is
+      // now: turned off, the connector stops forwarding.
       isEnabled: async (connector, context) =>
-        local?.has(connector.connectorId) === true ||
-        webClientsEnabledFor(context.userId),
+        local?.has(connector.connectorId)
+          ? local.enabled(connector.connectorId)
+          : webClientsEnabledFor(context.userId),
     }),
   );
 }

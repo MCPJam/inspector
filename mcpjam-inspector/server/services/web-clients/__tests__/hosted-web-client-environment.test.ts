@@ -80,10 +80,12 @@ describe("the hosted environment's backend calls", () => {
         vendor: "claude",
       }),
     ).toEqual({ webAccountId: "acct-other" });
-    // A run whose frozen accounts are all gone stops; it never moves to the default.
-    await expect(
-      environment(service, { runWebAccountIds: ["acct-removed"] }).resolveAccount({ projectId: "p", vendor: "claude" }),
-    ).rejects.toThrow("Claude web accounts this run uses were removed");
+    // A run whose frozen accounts are all gone, or are another vendor's, stops; it never moves to the default.
+    for (const id of ["acct-removed", "acct-gpt"]) {
+      await expect(
+        environment(service, { runWebAccountIds: [id] }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      ).rejects.toThrow("Claude web accounts this run uses were removed");
+    }
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",
@@ -135,11 +137,48 @@ describe("the hosted environment's backend calls", () => {
     const refusing = createProfileForRunClient({
       convexHttpUrl: "https://backend.example",
       serviceToken: "service-token",
-      fetchImpl: async () => new Response("{}", { status: 403 }),
+      fetchImpl: async () => Response.json({ error: { code: "WEB_ACCOUNT_NEEDS_SIGN_IN" } }, { status: 409 }),
     });
     await expect(
       refusing({ actor: { actorUserId: "u1" }, webAccountId: "a", runId: "r", venue: "hosted" }),
     ).rejects.toMatchObject({ failure: { kind: "needs_sign_in" } });
+  });
+
+  it("fails the run and leaves the account alone when the profile service fails", async () => {
+    const answers: Array<[number, string]> = [
+      [503, "Service Unavailable"],
+      [500, JSON.stringify({ error: { code: "ERROR" } })],
+      [401, JSON.stringify({ error: { code: "UNAUTHORIZED" } })],
+      [403, JSON.stringify({ error: { code: "FORBIDDEN" } })],
+    ];
+    for (const [status, body] of answers) {
+      const { service, calls } = recordedService();
+      const result = await runWebClientTurn({
+        runtimeId: "claude-web",
+        projectId: "project-1",
+        serverIds: ["orders"],
+        prompt: "say hello",
+        runId: "run-1",
+        approval: { requireToolApproval: false, answer: "deny" },
+        environment: environment(service, {
+          profileForRun: createProfileForRunClient({
+            convexHttpUrl: "https://backend.example",
+            serviceToken: "service-token",
+            fetchImpl: async () => new Response(body, { status }),
+          }),
+        }),
+        turnWindows: createInMemoryTurnWindowStore(),
+        ledger: createInMemoryToolCallLedger(),
+      });
+      expect(result).toMatchObject({ ok: false, infrastructure: true, failure: { kind: "driver", step: "sign_in_check" } });
+      // Nothing marks the account as needing sign-in.
+      expect(calls.map((call) => call.command.action)).toEqual([
+        "listWebAccounts",
+        "ensureWebConnector",
+        "openWebTurnWindow",
+        "closeWebTurnWindow",
+      ]);
+    }
   });
 });
 

@@ -8,7 +8,7 @@
  * Evidence: fixture. The end to end test with the real endpoint is
  * `web-client-e2e.test.ts`.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
@@ -19,6 +19,7 @@ import { createMemorySendJournal } from "../../../utils/harness/real-ui/drive-tu
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
 import { runHarnessTurn } from "../../../utils/harness/run-harness-turn";
+import { logger } from "../../../utils/logger";
 import type { MCPJamHandlerOptions } from "../../../utils/mcpjam-stream-handler";
 import {
   createInMemoryToolCallLedger,
@@ -91,7 +92,7 @@ function environment(): WebClientEnvironment {
 
 const ALLOW: WebTurnApproval = { requireToolApproval: false, answer: "deny" };
 
-function turn(approval: WebTurnApproval = ALLOW) {
+function turn(approval: WebTurnApproval = ALLOW, env: WebClientEnvironment = environment()) {
   return runWebClientTurn({
     runtimeId: "claude-web",
     projectId: "project-1",
@@ -99,7 +100,7 @@ function turn(approval: WebTurnApproval = ALLOW) {
     prompt: "say hello",
     runId: "run-1",
     approval,
-    environment: environment(),
+    environment: env,
     turnWindows: windows,
     ledger,
     stepTimeoutMs: 10_000,
@@ -152,6 +153,70 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
       pendingStep: { stepId: "sign_in_check" },
     });
     expect(vendor.sends).toEqual([]);
+    expect(windows.active("conn-orders")).toBeUndefined();
+  });
+
+  it("keeps the completed turn when recording its outcome fails", async () => {
+    const warn = vi.spyOn(logger, "warn");
+    const result = await turn(ALLOW, {
+      ...environment(),
+      onOutcome: async () => {
+        throw new Error("backend unavailable");
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.page.conversation.replyText).toBe("echo said: echo: say hello");
+      expect(result.toolCalls).toEqual([expect.objectContaining({ toolName: "echo", state: "result" })]);
+    }
+    expect(warn).toHaveBeenCalledWith(
+      "[web-clients] the turn's outcome could not be recorded on the account",
+      expect.objectContaining({ ok: true, message: "backend unavailable" }),
+    );
+    warn.mockRestore();
+  });
+
+  it("keeps the turn's own failure when recording it fails", async () => {
+    vendor.challenge = true;
+    const result = await turn(ALLOW, {
+      ...environment(),
+      onOutcome: async () => {
+        throw new Error("backend unavailable");
+      },
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      failure: { kind: "needs_sign_in", reason: "human_check" },
+      pendingStep: { stepId: "sign_in_check" },
+    });
+  });
+
+  it("retries a durable close that failed, and closes the browser either way", async () => {
+    let closes = 0;
+    const close = vi.fn(async (_turnId: string) => {
+      closes += 1;
+      if (closes === 1) throw new Error("backend unavailable");
+    });
+    const browserClosed = vi.fn();
+    const base = environment();
+    const failure = await turn(ALLOW, {
+      ...base,
+      turnGate: { open: async () => {}, close },
+      async openBrowser(args) {
+        const opened = await base.openBrowser(args);
+        return {
+          driver: opened.driver,
+          close: async () => {
+            browserClosed();
+            await opened.close();
+          },
+        };
+      },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ message: "backend unavailable" });
+    expect(close).toHaveBeenCalledTimes(2);
+    expect(close.mock.calls[1]).toEqual(close.mock.calls[0]);
+    expect(browserClosed).toHaveBeenCalledTimes(1);
     expect(windows.active("conn-orders")).toBeUndefined();
   });
 });

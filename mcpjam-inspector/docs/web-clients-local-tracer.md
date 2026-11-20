@@ -62,7 +62,8 @@ repository).
 The tracer never answers a "Verify you are human" check, a password, a
 verification code or a consent page. When claude.ai shows one, or the profile
 is signed out, it prints one line starting with `Needs sign-in` and exits with
-code 2. Sign in by hand:
+code 2. Sign in by hand on the profile the tracer used. If you ran it with
+`--profile <dir>`, add the same `--profile <dir>` here:
 
 ```sh
 npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts --sign-in
