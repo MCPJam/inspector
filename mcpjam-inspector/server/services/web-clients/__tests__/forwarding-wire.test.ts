@@ -223,6 +223,19 @@ describe("forwarding wire: watching the server's answer", () => {
     }
   });
 
+  it("reads an event whose data is exactly the limit, wherever the chunks cut it", async () => {
+    const shell = { jsonrpc: "2.0", id: 9, result: { text: "" } };
+    const pad = 8 * 1024 * 1024 - JSON.stringify(shell).length;
+    const exact = { ...shell, result: { text: "x".repeat(pad) } };
+    const data = JSON.stringify(exact);
+    const text = `data: ${data}\n\n`;
+    // Whole, and cut once the line with its prefix is over the limit.
+    for (const cuts of [[], [6 + data.length - 1]]) {
+      const { observed } = await relay(text, { cuts });
+      expect(observed).toEqual([exact]);
+    }
+  });
+
   it("ignores a comment line larger than it reads, wherever the chunks cut it", async () => {
     const comment = `: ${"x".repeat(8 * 1024 * 1024 + 10)}`;
     const text = `data: ${JSON.stringify(result)}\n${comment}\n\n`;
@@ -290,6 +303,7 @@ describe("forwarding wire: following a redirect hop by hop", () => {
       "https://server.example.test/mcp",
       init,
       () => true,
+      ["x-api-key"],
     );
     expect(response.status).toBe(200);
     expect(response.redirected).toBe(true);
@@ -318,7 +332,13 @@ describe("forwarding wire: following a redirect hop by hop", () => {
       ],
       ["https://other.example.test/mcp", "POST", "manual", true, null],
     ]);
-    expect(sent[2]?.headers.get("x-api-key")).toBe("project-key");
+    // The server's own key stays with its origin; protocol headers go on.
+    expect(sent.map(({ headers }) => headers.get("x-api-key"))).toEqual([
+      "project-key",
+      "project-key",
+      null,
+    ]);
+    expect(sent[2]?.headers.get("content-type")).toBe("application/json");
   });
 
   it("turns the request into a GET without its body on a 303, which needs no turn", async () => {

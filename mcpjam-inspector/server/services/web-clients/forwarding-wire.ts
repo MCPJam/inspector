@@ -280,7 +280,7 @@ function sseEvents(onData: (data: string) => void): (text: string) => void {
       start = i + 1;
     }
     if (!longLine) line += text.slice(start);
-    if (line.length > MAX_OBSERVED_CHARS) {
+    if (line.length > MAX_OBSERVED_CHARS + "data: ".length) {
       longLine = true;
       longData = line.startsWith("data:");
       line = "";
@@ -360,7 +360,9 @@ export async function fetchWhileTurnOpen(
   fetchUpstream: typeof fetch,
   url: string,
   init: RequestInit,
-  turnOpen: () => boolean,
+  turnOpen: () => boolean = () => true,
+  /** Headers meant for `url`'s server alone, dropped like `authorization`. */
+  credentials: readonly string[] = [],
 ): Promise<Response> {
   let current = url;
   let method = (init.method ?? "GET").toUpperCase();
@@ -404,6 +406,7 @@ export async function fetchWhileTurnOpen(
     if (next.origin !== new URL(current).origin) {
       headers = new Headers(headers);
       for (const name of CROSS_ORIGIN_HEADERS) headers.delete(name);
+      for (const name of credentials) headers.delete(name);
     }
     current = next.href;
   }
