@@ -249,6 +249,7 @@ import {
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -587,6 +588,9 @@ if (!HOSTED_MODE) {
   // Mirror of server/app.ts — both entries share mountHostedOpenRoutes.
   mountHostedOpenRoutes(app);
 }
+// A person hands a web account back after signing it in, and its paused
+// runs resume. Hosted only in effect: it needs the backend's service credential.
+app.route("/api/web-clients/reconnect", createWebReconnectRoutes());
 // Construct after loadInspectorEnv() so hosted confidential CIMD observes
 // Inspector dotenv configuration and malformed configured keys fail startup.
 app.route("/api/web/xaa", createXaaWebRouter());
