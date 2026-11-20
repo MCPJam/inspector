@@ -23,13 +23,19 @@ const REGEX_PRECEDERS = new Set(["", ..."(,=:[!&|?{};+-*%<>~^".split("")]);
  * String literals of a JS/TS source (JSX text is not supported), plus the
  * source with comments blanked out (offsets kept). A template literal's
  * `${…}` becomes {@link PLACEHOLDER} in its value, and the literals inside the
- * expression are reported on their own.
+ * expression are reported on their own. `executable` also blanks template
+ * text, keeping its `${…}` expressions: only those can run an import.
  */
 export function scanSource(source) {
   const literals = [];
   const code = source.split("");
+  const executable = source.split("");
+  const blankIn = (chars, from, to) => {
+    for (let k = from; k < to; k += 1) if (chars[k] !== "\n") chars[k] = " ";
+  };
   const blank = (from, to) => {
-    for (let k = from; k < to; k += 1) if (code[k] !== "\n") code[k] = " ";
+    blankIn(code, from, to);
+    blankIn(executable, from, to);
   };
   const previousSignificant = (pos) => {
     let k = pos - 1;
@@ -75,6 +81,7 @@ export function scanSource(source) {
   function readTemplate(start) {
     let k = start + 1;
     let value = "";
+    let textStart = k;
     while (k < source.length && source[k] !== "`") {
       if (source[k] === "\\") {
         value += source[k + 1] ?? "";
@@ -82,13 +89,16 @@ export function scanSource(source) {
         continue;
       }
       if (source[k] === "$" && source[k + 1] === "{") {
+        blankIn(executable, textStart, k);
         k = readCode(k + 2, true);
+        textStart = k;
         value += PLACEHOLDER;
         continue;
       }
       value += source[k];
       k += 1;
     }
+    blankIn(executable, textStart, k);
     literals.push({ value, start, end: k + 1 });
     return k + 1;
   }
@@ -126,7 +136,7 @@ export function scanSource(source) {
     return k;
   }
   readCode(0, false);
-  return { code: code.join(""), literals };
+  return { code: code.join(""), executable: executable.join(""), literals };
 }
 
 /**
@@ -303,7 +313,7 @@ const isTypeOnly = (statement) => {
 
 /** Value imports of a module (type-only imports exercise nothing). */
 export function importSpecifiers(source) {
-  const { code } = scanSource(source);
+  const { executable: code } = scanSource(source);
   const out = [];
   for (const re of IMPORT_SPECIFIERS) {
     for (const match of code.matchAll(re)) {
@@ -337,7 +347,7 @@ export function topLevelDeclarations(source) {
 /** Imported local name → its specifier and the name the module exports. */
 export function importBindings(source) {
   const out = new Map();
-  const { code } = scanSource(source);
+  const { executable: code } = scanSource(source);
   for (const match of code.matchAll(
     /\bimport\s+(?!type\s)([\w$]+)?\s*,?\s*(?:\{([^}]*)\})?\s*from\s*["']([^"']+)["']/g,
   )) {
@@ -395,8 +405,9 @@ export function surfaceRoots({
 
   const collect = (tags, imports, fromRel, into, seen) => {
     for (const tag of tags) {
-      if (seen.has(tag)) continue;
-      seen.add(tag);
+      const key = `${fromRel}\0${tag}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       const binding = imports.get(tag);
       const specifier = binding?.specifier;
       const fromApp = specifier && /^\.\/App(?:\.tsx)?$/.test(specifier);

@@ -154,13 +154,13 @@ test("harness pages map to the module they load", () => {
 
 test("roots follow router entries through App route functions to imported files", () => {
   const routerSource = `
-import App, { ToolsRoute as ToolsPage, HomeRoute } from "./App";
+import App, { ToolsRoute as ToolsTab, HomeRoute } from "./App";
 import { Shell } from "./components/ui/shell";
 const ROUTE_ELEMENTS: Record<string, unknown> = {
   "/": { element: <HomeRoute /> },
-  tools: { element: <Shell><ToolsPage /></Shell> },
+  tools: { element: <Shell><ToolsTab /></Shell> },
   // A comment naming <NotRendered /> is not an element.
-  "embed/x": { element: <ToolsPage /> },
+  "embed/x": { element: <ToolsTab /> },
 };`;
   const appSource = `
 import { ToolsTab } from "./components/ToolsTab";
@@ -207,11 +207,13 @@ import { type HomeProps, type HomeState } from "./HomeTab";
 import { Gate, type GateProps } from "./Gate";
 vi.mock("./Mocked"); // import { Mocked } from "./Mocked";
 const url = "https://example.com"; import "./after-url";
+const fixture = \`import { Fake } from "./Fake"; \${await import("./Lazy")}\`;
 `;
   assert.deepEqual(importSpecifiers(source), [
     "./ToolsTab",
     "./Gate",
     "./after-url",
+    "./Lazy",
   ]);
 });
 
