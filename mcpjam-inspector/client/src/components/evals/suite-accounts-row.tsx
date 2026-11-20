@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils";
 import { describeConvexFailure } from "@/lib/convex-error";
 import { buildProjectServerPath, navigateApp } from "@/lib/app-navigation";
 import { useEvalAccountSelectionEnabled } from "@/hooks/useEvalAccountSelectionEnabled";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { useSuiteWebAccounts } from "@/hooks/use-web-accounts";
+import { webAccountsApi } from "@/lib/web-accounts/api";
+import { webAccountName, webClientName } from "@/lib/web-accounts/clients";
+import { WEB_CLIENT_VENDORS, type WebClientVendor } from "@/shared/web-clients";
 import { useSuiteAccounts } from "@/hooks/use-suite-accounts";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
@@ -50,19 +55,47 @@ export function SuiteAccountsRow({
   projectId?: string | null;
 }) {
   const enabled = useEvalAccountSelectionEnabled();
+  // Web accounts follow their own flag alone, with or without server accounts.
+  const webClients = useWebClientsEnabled();
   const project = projectId ?? suite.projectId ?? null;
   // Accounts belong to a hosted project. A local one has no servers query to
   // wait on, so the row would read "Loading accounts…" forever.
-  if (!enabled || !shouldQueryProjectId(project)) return null;
-  return <SuiteAccountsSection suite={suite} projectId={project} />;
+  if (!project || !shouldQueryProjectId(project)) return null;
+  if (enabled)
+    return (
+      <SuiteAccountsSection
+        suite={suite}
+        projectId={project}
+        webAccounts={webClients}
+      />
+    );
+  if (!webClients) return null;
+  return (
+    <SuiteWebAccountsGroup
+      suiteId={suite._id}
+      projectId={project}
+      frame={(group) => (
+        <SuiteSettingsRow
+          settingKey="accounts"
+          chained={false}
+          data-subsection-id="accounts"
+          hint={SUITE_ACCOUNTS_HINT}
+        >
+          {group}
+        </SuiteSettingsRow>
+      )}
+    />
+  );
 }
 
 function SuiteAccountsSection({
   suite,
   projectId,
+  webAccounts,
 }: {
   suite: EvalSuite;
-  projectId: string | null;
+  projectId: string;
+  webAccounts: boolean;
 }) {
   const { view, error, loading, serverIds, serverName } = useSuiteAccounts(
     suite,
@@ -92,7 +125,92 @@ function SuiteAccountsSection({
           None of this suite's servers use an account.
         </p>
       )}
+      {webAccounts ? (
+        <SuiteWebAccountsGroup
+          suiteId={suite._id}
+          projectId={projectId}
+          frame={(group) => <div className="pt-4">{group}</div>}
+        />
+      ) : null}
     </SuiteSettingsRow>
+  );
+}
+
+/**
+ * Claude web and ChatGPT web, in a group of their own so no client sits
+ * under a Server heading: which project web accounts this person's runs sign
+ * in as. Hidden while the project has none.
+ */
+function SuiteWebAccountsGroup({
+  suiteId,
+  projectId,
+  frame,
+}: {
+  suiteId: string;
+  projectId: string;
+  frame: (group: ReactNode) => ReactNode;
+}) {
+  const { accounts, selections } = useSuiteWebAccounts(suiteId, projectId);
+  const save = useMutation(webAccountsApi.setSuiteSelection);
+  const [pending, setPending] = useState<Partial<Record<string, string[]>>>({});
+  const servers: SuiteAccountsServer[] = WEB_CLIENT_VENDORS.map((vendor) => ({
+    serverId: vendor,
+    mode: "shared" as const,
+    accounts: accounts
+      .filter((account) => account.vendor === vendor)
+      .map((account) => ({
+        connectionId: account.webAccountId,
+        name: webAccountName(account),
+        isDefault: account.isDefault,
+        needsReauth: account.status === "needs_sign_in",
+      })),
+    chosen:
+      selections.find((selection) => selection.vendor === vendor)
+        ?.webAccountIds ?? null,
+  })).filter((server) => server.accounts.length);
+  if (!servers.length) return null;
+
+  const choose = async (vendor: WebClientVendor, next: string[]) => {
+    setPending((current) => ({ ...current, [vendor]: next }));
+    try {
+      await save({ suiteId, vendor, webAccountIds: next });
+    } catch (failure) {
+      const fallback = `Couldn't save your ${webClientName(vendor)} accounts. Try again.`;
+      const refusal = describeConvexFailure(failure, fallback);
+      toast.error(refusal.refusal ? refusal.message : fallback);
+    } finally {
+      setPending((current) =>
+        Object.fromEntries(
+          Object.entries(current).filter(([id]) => id !== vendor),
+        ),
+      );
+    }
+  };
+
+  return frame(
+    <AccountGroup
+      testId="suite-accounts-web"
+      title="Web clients"
+      description="The accounts Claude web and ChatGPT web sign in as for runs you start and schedules you own."
+      footer="Teammates choose their own accounts."
+      column="Client"
+    >
+      {servers.map((server) => {
+        const vendor = server.serverId as WebClientVendor;
+        return (
+          <AccountServerRow key={vendor} name={webClientName(vendor)}>
+            <AccountChoices
+              server={server}
+              serverName={webClientName(vendor)}
+              checked={pending[vendor] ?? checkedAccountIds(server)}
+              saving={vendor in pending}
+              onChange={(next) => void choose(vendor, next)}
+              needsReauthLabel="Needs sign-in"
+            />
+          </AccountServerRow>
+        );
+      })}
+    </AccountGroup>,
   );
 }
 
@@ -219,12 +337,15 @@ function AccountChoices({
   checked,
   saving,
   onChange,
+  needsReauthLabel,
 }: {
   server: SuiteAccountsServer;
   serverName: string;
   checked: readonly string[];
   saving: boolean;
   onChange: (next: string[]) => void;
+  /** A web account needs sign-in rather than a reconnect. */
+  needsReauthLabel?: string;
 }) {
   const listed = new Set(server.accounts.map((a) => a.connectionId));
   const removed = Boolean(server.chosen?.some((id) => !listed.has(id)));
@@ -273,7 +394,9 @@ function AccountChoices({
                 Default
               </Badge>
             ) : null}
-            {account.needsReauth ? <NeedsReconnectTag /> : null}
+            {account.needsReauth ? (
+              <NeedsReconnectTag label={needsReauthLabel} />
+            ) : null}
           </>
         );
         if (server.accounts.length === 1) {
@@ -340,10 +463,14 @@ function AccountChoices({
 }
 
 /** "Needs reconnect", the words the Authorization tab uses. */
-export function NeedsReconnectTag() {
+export function NeedsReconnectTag({
+  label = "Needs reconnect",
+}: {
+  label?: string;
+}) {
   return (
     <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] text-destructive">
-      Needs reconnect
+      {label}
     </span>
   );
 }
@@ -354,6 +481,7 @@ function AccountGroup({
   tag,
   description,
   footer,
+  column = "Server",
   children,
 }: {
   testId: string;
@@ -361,6 +489,8 @@ function AccountGroup({
   tag?: string;
   description: string;
   footer?: string;
+  /** What each row names. */
+  column?: string;
   children: ReactNode;
 }) {
   return (
@@ -387,7 +517,7 @@ function AccountGroup({
         <thead className="text-xs text-muted-foreground">
           <tr className="border-b border-border/60">
             <th scope="col" className="w-[35%] px-4 py-2 font-medium">
-              Server
+              {column}
             </th>
             <th scope="col" className="px-4 py-2 font-medium">
               Accounts
