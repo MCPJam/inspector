@@ -41,6 +41,7 @@ export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   check: "eval step picker check ids",
   connection: "server facts row keys",
   discovery: "server facts row keys",
+  draft: "route ids for an unsaved test case in the case editor",
   judge: "suite grading model keys",
   lc: "canvas builder option strings",
   match: "suite grading model keys",
