@@ -123,7 +123,7 @@
           {
             "group": "Troubleshoot",
             "icon": "life-buoy",
-            "pages": ["troubleshooting/common-errors", "troubleshooting/error-codes"]
+            "pages": ["troubleshooting/common-errors", "troubleshooting/error-codes", "inspector/ask-mcpjam"]
           },
           {
             "group": "Changelog",
