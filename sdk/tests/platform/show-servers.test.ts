@@ -285,7 +285,9 @@ describe("buildShowServersPayload", () => {
 
     const byId = new Map(payload.servers.map((entry) => [entry.id, entry]));
     expect(byId.get("stdio")?.statusDetail).toContain("stdio transport");
-    expect(byId.get("insecure")?.statusDetail).toContain("HTTPS");
+    expect(byId.get("insecure")?.statusDetail).toBe(
+      "Not checked: hosted MCPJam connects only to https:// servers."
+    );
     expect(byId.get("ready")?.serverInfo).toEqual({
       name: "ready-server",
       version: "2.0.0",
