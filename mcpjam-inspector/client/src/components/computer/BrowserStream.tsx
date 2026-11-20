@@ -19,6 +19,8 @@ import { useEffect, useRef, useState } from "react";
 // The package's single export; it ships no types, so the shape this file
 // relies on is declared in `types/novnc.d.ts`.
 import RFB from "@novnc/novnc";
+import type { ViewportSize } from "@/shared/browser-viewport";
+import { useViewportReporter } from "@/lib/browser-pane/use-viewport-reporter";
 import { Button } from "@mcpjam/design-system/button";
 
 interface BrowserStreamProps {
@@ -30,6 +32,7 @@ interface BrowserStreamProps {
   bootId: string;
   onSessionGone: () => void;
   onInput: () => void;
+  onViewport: (size: ViewportSize) => Promise<void>;
 }
 
 /** Close codes the server sends. 4401 is recoverable — mint a new token. */
@@ -105,6 +108,7 @@ export function BrowserStream({
   bootId,
   onSessionGone,
   onInput,
+  onViewport,
 }: BrowserStreamProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const rfbRef = useRef<RFB | null>(null);
@@ -236,11 +240,25 @@ export function BrowserStream({
     if (rfbRef.current) rfbRef.current.viewOnly = viewOnly;
   }, [viewOnly]);
 
+  const followsPane = !viewOnly && status === "live";
+  const reportViewport = useViewportReporter(onViewport, `${bootId}:${followsPane}`);
+  useEffect(() => {
+    const pane = containerRef.current;
+    if (!pane || !followsPane || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (!entry) return;
+      const { width, height } = entry.contentRect;
+      if (width > 0 && height > 0) reportViewport({ width, height });
+    });
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [followsPane, reportViewport]);
+
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
       <div
         ref={containerRef}
-        className="h-full w-full"
+        className="absolute inset-0"
         onKeyDownCapture={viewOnly ? undefined : onInput}
         onPointerDownCapture={viewOnly ? undefined : onInput}
         onWheelCapture={viewOnly ? undefined : onInput}
