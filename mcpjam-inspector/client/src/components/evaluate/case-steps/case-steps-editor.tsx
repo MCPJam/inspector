@@ -86,9 +86,15 @@ export interface CaseStepsEditorProps {
   onOpenKeyChange: (key: string | null) => void;
   onOpenSuiteSettings: (tab: SuiteSettingsTab) => void;
   onDraftValidityChange?: (invalid: boolean) => void;
+  /**
+   * False for a draft not in the suite yet: it stores no judge opt-out or tool
+   * error policy, so their switches are hidden.
+   */
+  caseOverrides?: boolean;
 }
 
-type PendingRemove = DeleteActionPlan & { stepId: string };
+/** `steps` is what the plan was counted on; a reload under the dialog drops it. */
+type PendingRemove = DeleteActionPlan & { stepId: string; steps: TestStep[] };
 
 /** A widget check added after an Interact step checks its view; else pick one. */
 const viewOf = (step: TestStep | undefined) =>
@@ -106,6 +112,7 @@ export function CaseStepsEditor({
   onOpenKeyChange,
   onOpenSuiteSettings,
   onDraftValidityChange,
+  caseOverrides = true,
 }: CaseStepsEditorProps) {
   const groups = useMemo(() => groupCaseSteps(draft.steps), [draft.steps]);
   const section = useMemo(() => afterRunSection(card), [card]);
@@ -191,10 +198,12 @@ export function CaseStepsEditor({
     );
   };
 
+  const livePending =
+    pendingRemove?.steps === draft.steps ? pendingRemove : null;
   const requestRemove = (stepId: string) => {
     const plan = deleteActionPlan(draft.steps, stepId);
     if (!plan.needsConfirm) setSteps((steps) => removeStepById(steps, stepId));
-    else setPendingRemove({ ...plan, stepId });
+    else setPendingRemove({ ...plan, stepId, steps: draft.steps });
   };
 
   return (
@@ -358,6 +367,7 @@ export function CaseStepsEditor({
             draft={draft}
             card={card}
             readOnly={readOnly}
+            caseOverrides={caseOverrides}
             onEdit={edit}
             onOpenSuiteSettings={openSettings}
           />
@@ -380,10 +390,10 @@ export function CaseStepsEditor({
         </div>
       </CheckDraftBoundary>
       <RemoveStepDialog
-        pending={pendingRemove}
+        pending={livePending}
         onClose={() => setPendingRemove(null)}
         onRemove={(withAssertions) => {
-          const stepId = pendingRemove?.stepId;
+          const stepId = livePending?.stepId;
           if (!stepId) return;
           setSteps((steps) =>
             withAssertions

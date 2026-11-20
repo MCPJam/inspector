@@ -62,6 +62,57 @@ function countMatches(text, regex) {
   return text.match(regex)?.length ?? 0;
 }
 
+/**
+ * `text` with comments and string literal contents removed, so a rule that
+ * counts calls ignores a commented-out call or a call named inside a string.
+ * Code inside a template literal's `${...}` is kept. Regex literals and JSX
+ * text are not recognized; a stray quote there blanks at most the rest of
+ * its line, which is rare enough to accept.
+ */
+function codeOnly(text) {
+  let out = "";
+  // One entry per open `${`: the brace depth inside that expression.
+  const templates = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "/" && text[i + 1] === "/") {
+      const end = text.indexOf("\n", i);
+      i = end === -1 ? text.length : end;
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 2;
+    } else if (c === '"' || c === "'") {
+      i += 1;
+      while (i < text.length && text[i] !== c && text[i] !== "\n") {
+        i += text[i] === "\\" ? 2 : 1;
+      }
+      i += 1;
+      out += " ";
+    } else if (c === "`" || (c === "}" && templates.at(-1) === 0)) {
+      if (c === "}") templates.pop();
+      i += 1;
+      while (i < text.length && text[i] !== "`") {
+        if (text[i] === "\\") i += 2;
+        else if (text.startsWith("${", i)) break;
+        else i += 1;
+      }
+      if (text.startsWith("${", i)) {
+        templates.push(0);
+        i += 2;
+      } else i += 1;
+      out += " ";
+    } else {
+      const top = templates.length - 1;
+      if (top >= 0 && c === "{") templates[top] += 1;
+      if (top >= 0 && c === "}") templates[top] -= 1;
+      out += c;
+      i += 1;
+    }
+  }
+  return out;
+}
+
 function countCommentLines(text, regex) {
   let count = 0;
   for (const line of text.split("\n")) {
@@ -173,7 +224,7 @@ export const RULES = [
     count: (text) =>
       countMatches(
         text,
-        /\bcatch\s*(?:\(\s*[\w{}\s,:]*\))?\s*\{\s*(?:(?:\/\/[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)+\}/g
+        /\bcatch\s*(?:\(\s*[\w${}\s,:]*\))?\s*\{\s*(?:(?:\/\/[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)+\}/g
       ),
   },
   {
@@ -181,7 +232,8 @@ export const RULES = [
     label: "`useEffect` / `useLayoutEffect` calls in the inspector client",
     appliesTo: (path) => CLIENT_PATH.test(path),
     fix: "Derive the value during render, do the work in the event handler that causes it, reset state with a `key`, or subscribe with `useSyncExternalStore`. If an effect is the only option, replace an existing one in the same change.",
-    count: (text) => countMatches(text, /\buse(?:Layout)?Effect\s*\(/g),
+    count: (text) =>
+      countMatches(codeOnly(text), /\buse(?:Layout)?Effect\s*\(/g),
   },
   {
     id: "client-timer",
@@ -191,7 +243,7 @@ export const RULES = [
     fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
     count: (text) =>
       countMatches(
-        text,
+        codeOnly(text),
         /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\s*\(/g
       ),
   },

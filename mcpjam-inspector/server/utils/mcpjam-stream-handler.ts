@@ -71,13 +71,12 @@ import { runHarnessTurn } from "./harness/run-harness-turn.js";
 import type { TrustedHarnessSandboxBinding } from "./harness/resolve-sandbox.js";
 import type { HarnessSessionCommitPayload } from "./harness/harness-session-state.js";
 import type { ExecutionScope } from "./execution-scope.js";
-import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
-import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import {
   httpStatusOrUndefined,
   type InfraFailureEvidence,
 } from "./infra-failure-evidence.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
+import type { TurnSkills } from "../services/environments/turn-skills.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
 import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
 import type { BoxSkillsResult } from "./harness/box-skills-writer.js";
@@ -1067,41 +1066,23 @@ export interface MCPJamHandlerOptions {
   journeyRunId?: string;
   hostId?: string;
   /**
-   * Pinned harness skills (eval runs and swarm targets). When set — even
-   * EMPTY — the harness turn delivers exactly these pinned artifacts; its
-   * `skillsHash` derives from the pinned artifact fingerprints. HARNESS-ONLY:
-   * the emulated engine receives pinned skills via prepareChatV2's `skills`
-   * plan instead (which it refuses on a harness turn — the two paths are
-   * deliberately disjoint).
+   * The turn's skill plan, which a harness turn carries out: what its box
+   * writer plans from, its supporting files, its captured MCP-server skills
+   * and whether its servers' own skills may be offered. A turn with no plan
+   * leaves the box as it is.
    */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-  /**
-   * The skills THIS turn's environment resolved to. When set — even EMPTY —
-   * the harness turn delivers exactly these. Ranks BELOW `pinnedHarnessSkills`
-   * (a pinned run's reproducibility outranks a live environment resolution);
-   * see `harness/skill-delivery.ts` for the single place that precedence is
-   * written down. With neither, the turn leaves the box's skills as they are.
-   */
-  runtimeSkillsOverride?: RuntimeSkill[];
+  skillPlan?: TurnSkills;
   /**
    * The turn's resolved `EffectiveCapabilitySet` (INS-3), harness side (INS-7).
-   * Set alongside `runtimeSkillsOverride` for an environment turn; it carries
-   * what the flat skill list structurally cannot — per-skill SUPPORTING FILES
-   * (the only source that includes a plugin skill's, since the project-wide file
-   * query excludes `plugin_component` rows) and the pinned plugin VERSIONS,
-   * which fold into the harness runtime fingerprint so a plugin change
-   * invalidates an incompatible resumed sandbox.
+   * Set for an environment turn; it carries the plugins' server origins and the
+   * pinned plugin VERSIONS, which fold into the harness runtime fingerprint so a
+   * plugin change invalidates an incompatible resumed sandbox. The turn's skills
+   * and their supporting files come from `skillPlan`.
    *
    * Delivery input only. Nothing derived from it is persisted as a pin: every
    * launch re-resolves the environment, so a recorded version is provenance.
    */
   effectiveCapabilities?: EffectiveCapabilitySet;
-  /**
-   * A client's or a study's turn: its servers are connected now, so their own
-   * MCP-server skills may be offered beside its skills. Unset for a named
-   * environment, whose server skills were captured with it.
-   */
-  liveTurn?: boolean;
   /**
    * The Project Environment this turn resolved — the GRANT BOUNDARY for project
    * secrets, and the ONLY thing the harness turn needs to fetch them.
