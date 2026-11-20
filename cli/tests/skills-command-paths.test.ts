@@ -11,7 +11,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { Command } from "commander";
+import { Command, type Option } from "commander";
 import { registerCliCommands } from "../src/index.js";
 
 const repoRoot = path.resolve(
@@ -22,6 +22,7 @@ const repoRoot = path.resolve(
 const GLOBAL_FLAGS = new Set(["--quiet", "--rpc", "--no-telemetry"]);
 const GLOBAL_FLAGS_WITH_VALUE = new Set(["--format", "--timeout"]);
 const COMMAND_WORD = /^[a-z][a-z0-9-]*$/;
+const ALTERNATIVES = /^[a-z][a-z0-9-]*(?:\|[a-z][a-z0-9-]*)+$/;
 
 function markdownFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -31,8 +32,15 @@ function markdownFiles(directory: string): string[] {
   });
 }
 
+/**
+ * A file that says this sentence lists bare commands in its tables (`server
+ * diff --baseline <file>`); those spans are checked with the prefix added.
+ */
+const BARE_TABLE_MARKER = "Prefix each with `mcpjam`";
+
 /** Command lines from fenced blocks and inline code spans that start with `mcpjam `. */
 function mentionedCommands(markdown: string): string[] {
+  const bareTables = markdown.includes(BARE_TABLE_MARKER);
   const candidates: string[] = [];
   let inFence = false;
   for (const line of markdown.split(/\r?\n/)) {
@@ -44,8 +52,13 @@ function mentionedCommands(markdown: string): string[] {
       candidates.push(line.trim().replace(/^\$\s+/, ""));
       continue;
     }
+    const tableRow = bareTables && line.trimStart().startsWith("|");
     for (const span of line.matchAll(/`([^`]+)`/g)) {
-      candidates.push(span[1]);
+      const text = span[1];
+      const bare = tableRow && COMMAND_WORD.test(text.split(/\s+/)[0]);
+      candidates.push(
+        bare && !text.startsWith("mcpjam ") ? `mcpjam ${text}` : text,
+      );
     }
   }
   return candidates
@@ -54,10 +67,37 @@ function mentionedCommands(markdown: string): string[] {
     .filter((text) => text.startsWith("mcpjam "));
 }
 
+/** `readiness start|status|list` names three commands; expand each one. */
+function expandAlternatives(words: string[]): string[][] {
+  const index = words.findIndex((word) => ALTERNATIVES.test(word));
+  if (index === -1) return [words];
+  return words[index]
+    .split("|")
+    .flatMap((choice) =>
+      expandAlternatives([
+        ...words.slice(0, index),
+        choice,
+        ...words.slice(index + 1),
+      ]),
+    );
+}
+
+/** The option `flag` names on `command` or any command above it. */
+function findOption(command: Command, flag: string): Option | undefined {
+  for (let at: Command | null = command; at; at = at.parent) {
+    const option = at.options.find(
+      (candidate) => candidate.long === flag || candidate.short === flag,
+    );
+    if (option) return option;
+  }
+  return undefined;
+}
+
 /**
  * Walks `words` down the command tree and reports the first word that names no
- * subcommand. Words after a command that takes positional arguments, or that
- * has no subcommands, are arguments and end the path.
+ * subcommand. Recognized options and their values are skipped. A word the
+ * command cannot take as a positional argument fails; a placeholder or other
+ * non-command word ends the path.
  */
 function resolvePath(
   program: Command,
@@ -67,9 +107,17 @@ function resolvePath(
   const walked = ["mcpjam"];
   for (let index = 0; index < words.length; index += 1) {
     const word = words[index];
-    if (GLOBAL_FLAGS.has(word)) continue;
-    if (GLOBAL_FLAGS_WITH_VALUE.has(word)) {
-      index += 1;
+    if (word.startsWith("-")) {
+      const [flag, inlineValue] = word.split("=", 2);
+      if (GLOBAL_FLAGS.has(flag)) continue;
+      if (GLOBAL_FLAGS_WITH_VALUE.has(flag)) {
+        if (inlineValue === undefined) index += 1;
+        continue;
+      }
+      const option = findOption(current, flag);
+      if (!option) return { ok: true };
+      const takesValue = option.required || option.optional;
+      if (takesValue && inlineValue === undefined) index += 1;
       continue;
     }
     if (!COMMAND_WORD.test(word)) return { ok: true };
@@ -81,12 +129,7 @@ function resolvePath(
       walked.push(word);
       continue;
     }
-    if (
-      current.commands.length === 0 ||
-      current.registeredArguments.length > 0
-    ) {
-      return { ok: true };
-    }
+    if (current.registeredArguments.length > 0) return { ok: true };
     return { ok: false, at: word, parent: walked.join(" ") };
   }
   return { ok: true };
@@ -106,12 +149,16 @@ test("every mcpjam command named in the skills and the CLI README exists", () =>
   let checked = 0;
   for (const file of sources) {
     for (const command of mentionedCommands(readFileSync(file, "utf8"))) {
-      checked += 1;
-      const result = resolvePath(program, command.split(/\s+/).slice(1));
-      if (!result.ok) {
-        missing.push(
-          `${path.relative(repoRoot, file)}: \`${command}\` (no \`${result.at}\` under \`${result.parent}\`)`,
-        );
+      for (const words of expandAlternatives(command.split(/\s+/).slice(1))) {
+        checked += 1;
+        const result = resolvePath(program, words);
+        if (!result.ok) {
+          missing.push(
+            `${path.relative(repoRoot, file)}: \`${command}\` (no \`${
+              result.at
+            }\` under \`${result.parent}\`)`,
+          );
+        }
       }
     }
   }

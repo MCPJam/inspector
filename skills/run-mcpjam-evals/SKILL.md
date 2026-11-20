@@ -49,9 +49,9 @@ Rules:
 
 - **Confirm before the first spend in a conversation.** Say which suite, how many cases, and — if the user set `iterations` (or its legacy spelling `repetitions`) — what that multiplies out to. "Run the evals?" is not a confirmation if the user has not been told it bills.
 - **Never call either in a loop, or to poll.** Polling is `get_eval_run`, which is free.
-- **Pass `idempotencyKey` when a launch might be retried.** A transport error is not proof the run did not start; retrying without the key can bill the same run twice.
+- **Pass `idempotencyKey` when a launch might be retried, and reuse it while the outcome is unknown.** A transport error is not proof the run did not start; retrying without the key, or with a new one, can bill the same run twice. Use a new key only when the user asks to relaunch a run you know stopped.
 - **A failed run has already been paid for.** Re-running to "see if it passes this time" spends again and is rarely the right next step — triage first.
-- **A run that stops for credits** (`user_rate_limit`, a daily or monthly MCPJam model limit, a required platform fee): tell the user first that upgrading the plan (Free to Pro) at `https://app.mcpjam.com/billing` is the immediate fix. Free plans cannot buy credits. BYOK avoids MCPJam inference charges but not platform fees. Waiting for the allowance to reset is the last option. Results the run completed are saved. Do not relaunch on your own; if the user upgrades and asks for a relaunch, use a new `idempotencyKey`, because the old one returns the stopped run. Never pay, upgrade, or buy credits yourself.
+- **A run that stops for credits** (`user_rate_limit`, a daily or monthly MCPJam model limit, a required platform fee): tell the user the immediate fix for their plan, at `https://app.mcpjam.com/billing`: on a Free plan, upgrade to Pro (Free plans cannot buy credits); on a paid plan, buy credits. Then suggest BYOK, which avoids MCPJam inference charges but not platform fees; you cannot add the keys. Waiting for credits to reset is the last option. Results the run completed are saved. Do not relaunch on your own; if the user asks to relaunch a run you know stopped, use a new `idempotencyKey`, because the old one returns the stopped run. Never pay, upgrade, or buy credits yourself.
 
 ## Polling without being a nuisance
 

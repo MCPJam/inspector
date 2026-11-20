@@ -28,7 +28,7 @@ Most commands act on one project, chosen in this order: `--project <id-or-name>`
 
 ## What lives where
 
-| Group | Use it to | Key commands |
+| Group | What it covers | Key commands |
 |---|---|---|
 | `cloud organizations`, `cloud projects` | Find orgs and projects; create, update, delete projects | `organizations list`, `projects list`, `projects capabilities`, `projects status` |
 | `cloud projects servers` | Saved MCP servers in a project | `projects servers`, `projects servers connect --url <url>`, `connect-status`, `connect-cancel` |
@@ -50,7 +50,7 @@ Most commands act on one project, chosen in this order: `--project <id-or-name>`
 
 ### Get a server into the project
 
-- Public HTTPS server: `mcpjam cloud projects servers connect --url <url> --project <p>`. Always pass `--project`. Without it the request stops at `awaiting_project`, which needs a person in a browser even for a server with no auth.
+- Public HTTPS server: `mcpjam cloud projects servers connect --url <url> --project <p>`. Always pass `--project`. With no `--project`, `MCPJAM_PROJECT`, or linked project, the request stops at `awaiting_project`, which needs a person in a browser even for a server with no auth.
   - Read `status` in the result. A browser is needed only when it is `awaiting_project` or `awaiting_authorization`. In that case the command prints a private link and opens a browser unless `--no-browser` is set; pass the link to the user rather than completing consent yourself, and never post it anywhere shared. Some CLI versions print a link line for other statuses too; go by `status`, not by the link.
   - `ready` means the server is saved in the project. If `server.enabled` is `false`, someone disabled that server on purpose. Tell the user; do not run `servers update --body '{"enabled":true}'` yourself.
   - Never edit server state to get past connect. A `failed` status carries an `error`; report it.
@@ -71,8 +71,8 @@ Flags do not carry over between commands, so pass the same `--project` to each s
 ### Run hosted evals from the CLI
 
 1. `mcpjam cloud eval list --project <p>` to find the suite. For a local suite file, `mcpjam cloud eval validate --file <path>` checks it offline first.
-2. Before launching, tell the user how many runs and iterations this starts and get a yes. `--environment`, `--client`, and `--all-targets` start one paid run per target, and `--iterations` multiplies every case: runs × cases × iterations model conversations. The CLI has no separate disclosure step. In human format, `eval run` prints a `Pre-run disclosure:` block (models, where they route, capture, retention) just before it creates the run, without pausing, and it says nothing about cost. With `--format json` that block is not printed; the receipt carries a `disclosure` field after launch. So the count you tell the user is the only pre-launch cost check.
-3. `mcpjam cloud eval run --suite <id-or-name> --project <p> --idempotency-key <key>` starts the run and **spends**. Add `--wait` to block until every started run is terminal; `--wait-timeout <ms>` caps the wait (default 600000, plus up to 31 minutes for a run held for its judge unless you set the flag).
+2. Before launching, tell the user runs × cases × iterations and get a yes; this count is the only pre-launch cost check. `--environment`, `--client`, and `--all-targets` start one paid run per target, and `--iterations` multiplies every case. Count the cases with `mcpjam cloud eval cases list --suite <id-or-name> --project <p>`, or read `suite.enabledCases` from `eval validate --file <path>` for a local file. The CLI has no separate disclosure step. In human format, `eval run` prints a `Pre-run disclosure:` block (models, where they route, capture, retention) just before it creates the run, without pausing, and it says nothing about cost. With `--format json` that block is not printed; the receipt carries a `disclosure` field after launch.
+3. `mcpjam cloud eval run --suite <id-or-name> --project <p> --idempotency-key <key>` starts the run and **spends**. Add `--wait` to block until every started run is terminal; `--wait-timeout <ms>` caps the wait. The default is 600000 plus up to 31 minutes for a run held for its judge; setting `--wait-timeout` removes those extra 31 minutes.
 4. Without `--wait`, poll `mcpjam cloud eval status --run <id> --project <p>`. Never relaunch to poll. Run statuses: `pending`, `running`, and `grading` (every trial done, waiting for the judge) are still going; `completed`, `failed`, `cancelled`, and `timed_out` are final. Only `completed` carries a verdict in `result`.
 5. On anything but a pass, triage in this order: `eval status` (the verdict and its decision summary, including each stage's state), then `mcpjam cloud eval iterations --run <id> --project <p>` (paginated; follow the cursor) for the failing iteration and its error, then `mcpjam cloud eval steps --run <id> --iteration <id> --project <p>` for the step that failed and its evidence. `eval trace`, `eval screenshot`, and `eval video` fetch more.
 6. `mcpjam cloud eval compare --run <id> --project <p> --gate-regressions` exits `1` on a statistically significant pass-rate regression against the previous completed run; without `--gate-regressions` it does not gate pass rate. `mcpjam cloud eval gate --run <id> --project <p> --min-pass-rate-percent <n>` applies an absolute threshold. Both turn a finished run into a CI exit code.
@@ -83,12 +83,14 @@ Exit codes for `eval run --wait` (without `--wait`, `eval run` exits `0` once th
 |---|---|
 | `0` | Every waited run completed and passed. |
 | `1` | A run completed with `result: "failed"`. Nothing else produces `1`. |
-| `2` | Usage error or invalid suite file, including an organization AI-key policy refusal. |
-| `3` | Auth failed: no credential, or it was rejected at launch or during the wait. |
+| `2` | Usage or configuration error: an invalid suite file, a bad `--api-url`, a legacy `mcpjam_…` key, or an organization AI-key policy refusal. Fix the command; retrying it unchanged does not help. |
+| `3` | Auth failed: no credential, or it was rejected at launch or during the wait. `LOGIN_DEPLOYMENT_MISMATCH` means the stored login belongs to a different MCPJam server than the one selected; run `mcpjam cloud login` for that server or use an `sk_` key for it. |
 | `4` | Setup or launch failed before evaluation, including a billing or credit refusal at launch. |
 | `5` | No valid verdict: an `inconclusive` result, a run whose status is `failed`, `cancelled`, or `timed_out` (a run stopped by credit exhaustion lands here), or a wait that hit its deadline with the run still going. |
 
-Several targets merge worst-of in the order `1 > 3 > 4 > 5 > 0`. `eval gate` uses a different four-code contract, where `3` means incomplete.
+`result: "failed"` (exit `1`) is a verdict: the run finished and its cases failed. `status: failed` (exit `5`) means the run itself did not finish, so there is no verdict.
+
+Several targets merge worst-of in the order `1 > 3 > 4 > 5 > 0`. `2` is not in the merge because a usage or policy refusal stops the command before any run starts. `eval gate` uses its own codes: `0` passed or waived, `1` the gate failed, `2` usage error, `3` incomplete (cancelled, timed out, network failure, or a run that cannot be gated).
 
 A run's decision summary can carry a `nextAction` that says to check the server connection when the real cause was a model or credit failure, even with the connection and discovery stages `passed`. Trust the stage states and the iteration's error over that line.
 
@@ -96,20 +98,20 @@ A run's decision summary can carry a `nextAction` that says to check the server 
 
 ### When a run stops for credits
 
-A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, or a required platform fee means the organization is out of allowance. In this order:
+A launch refusal (exit `4`) or a run that stops partway (exit `5`) with `user_rate_limit`, a daily or monthly MCPJam model limit, or a required platform fee means the organization is out of credits. In this order:
 
-1. Tell the user first that upgrading the plan (Free to Pro) is the immediate fix, and send them to `https://app.mcpjam.com/billing`. Free plans cannot buy credits; paid plans can buy them on the same page.
-2. Bring your own provider keys (BYOK) to stop MCPJam inference charges. BYOK does not remove platform fees.
-3. Waiting for the allowance to reset is the last option, not the first.
+1. Tell the user the immediate fix for their plan, at `https://app.mcpjam.com/billing`: on a Free plan, upgrade to Pro (Free plans cannot buy credits); on a paid plan, buy credits.
+2. Suggest BYOK (their own provider keys) to stop MCPJam inference charges. You cannot add the keys. BYOK does not remove platform fees.
+3. Waiting for credits to reset is the last option, not the first.
 
-Results the run completed before it stopped are saved. Do not relaunch on your own. If the user upgrades and asks to relaunch, pass a NEW `--idempotency-key`: reusing the old key returns the stopped run instead of starting one. Never pay, upgrade, or buy credits yourself.
+Results the run completed before it stopped are saved. Do not relaunch on your own. If the user asks to relaunch a run you know stopped, use a new `--idempotency-key`: reusing the old key returns the stopped run instead of starting one. Never pay, upgrade, or buy credits yourself.
 
 ### Swarms goals
 
-1. A goal needs a persona: `mcpjam cloud personas list`, or `personas create --name <n> --role <r> --notes <text> --idempotency-key <key>`. `personas generate` drafts candidates and saves nothing.
-2. `mcpjam cloud goals create --persona <id> --goal <text> --environment <id> --iterations <n> --max-turns <n>` authors a goal. `--iterations` and `--max-turns` are both required. Creating does not run it.
-3. `mcpjam cloud goals get --goal-id <id>` shows what a run costs: targets × iterations conversations.
-4. `mcpjam cloud goals run --goal-id <id> --idempotency-key <key>` **spends** and returns immediately. Poll `goals status --run <id>`.
+1. A goal needs a persona: `mcpjam cloud personas list`, or `personas create --project <p> --name <n> --role <r> --notes <text> --idempotency-key <key>`. `personas generate` drafts candidates and saves nothing.
+2. `mcpjam cloud goals create --project <p> --persona <id> --goal <text> --environment <id> --iterations <n> --max-turns <n>` authors a goal. `--iterations` and `--max-turns` are both required. Creating does not run it.
+3. `mcpjam cloud goals get --goal-id <id>` shows how many conversations a run starts (targets × iterations), not a credit cost.
+4. `mcpjam cloud goals run --project <p> --goal-id <id> --idempotency-key <key>` **spends** and returns immediately. Poll `goals status --run <id>`.
 5. Explain results from `goals scorecard --run <id>` first; it is deterministic and free. `goals findings` lists criteria that keep failing. `goals request-insights` uses a daily quota, so read the scorecard before asking for it.
 
 ### Studies
@@ -128,28 +130,27 @@ Values are write-only: no command prints one. Pass a value with `--value-file`, 
 
 Confirm with the user before the first of these in a conversation, naming the project and what it multiplies out to:
 
-| Spends credits or quota | Changes or removes shared state |
+| Spends credits or daily quota | Changes or removes shared state |
 |---|---|
 | `cloud eval run`, `eval rerun`, `eval judge`, `eval judge-backtest`, `eval cases run` | `cloud projects delete`, `eval delete`, `clients delete`, `images delete`, `secrets rm`, `trace-destinations rm` |
 | `cloud goals run` | `cloud studies rotate-link` (the old link stops working for everyone at once), `studies unpublish`, `studies guest-execution` |
 | `cloud sessions send` (every turn is a model call; `--tool-mode auto` can make the servers take real actions) | `cloud images use`, `images reset` (wipe the user's computer) |
 | `goals request-insights`, `studies request-insights`, `personas generate`, `goals generate` (daily quotas) | `cloud tunnel` on an existing server name (repoints it), `trace-destinations backfill` (a large window is a lot of vendor ingest) |
 
-- Pass `--idempotency-key` on every launch and create that takes one, and reuse the same key when retrying. A timeout does not prove the launch failed, and a fresh key can start and bill a second run.
+- Pass `--idempotency-key` on every launch and create that takes one. Reuse the key while the launch outcome is unknown: a timeout does not prove the launch failed, and a fresh key can start and bill a second run. Use a new key only when the user asks to relaunch a run you know stopped.
 - Never launch in a loop or to poll. Poll the matching `status` command.
 - `environments archive` is undone by `environments restore`. `goals archive` and `swarms archive` keep past runs readable but have no CLI restore, and deletes are permanent. Prefer the reversible option when the user only wants something out of the way.
 
 ## Errors
 
-- Exit `2` is a usage or configuration error, including a bad `--api-url` or a legacy `mcpjam_…` key. Fix the command; retrying it unchanged does not help.
-- Exit `3` with `LOGIN_DEPLOYMENT_MISMATCH` means the stored login belongs to a different MCPJam server than the one selected. Run `mcpjam cloud login` for that server or use an `sk_` key for it.
+- Exit `2` and `3` mean the same on every `mcpjam cloud` command as in the `eval run --wait` table above.
 - Missing credentials fail before any network call with login guidance. Ask the user to run `mcpjam cloud login`; it opens a browser and needs them.
 - An internal error with a request ID ends with a suggested `mcpjam cloud feedback` command. That sends text to the MCPJam team outside the user's organization, so show it to the user and let them decide.
 
 ## Hard rules
 
-- Never use `mcpjam cloud` to test a server the user named by URL when a local command answers the question. Local commands do not touch their projects.
+- Never run `mcpjam cloud …` to test a server the user gave you by URL when a local command answers the question. Local commands reach it directly; Cloud commands act on the user's MCPJam projects.
 - Never act on the automatically chosen project for a write, publish, or spend. Name it.
-- Never generate a new idempotency key to retry a launch whose outcome is unknown. Read its status first.
+- Reuse the idempotency key while a launch outcome is unknown, and read its status first. Use a new key only when the user asks to relaunch a run you know stopped.
 - Never report a goal or eval failure from a single iteration without reading the scorecard or steps behind it.
 - Never pass secret values as positional or inline arguments.
