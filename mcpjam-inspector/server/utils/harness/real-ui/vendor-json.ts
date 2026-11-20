@@ -4,7 +4,8 @@
  * With a script in the page (Playwright), it is a same-origin `fetch` that
  * carries the page's cookies and nothing of MCPJam's. Without one (the hosted
  * browser), the browser opens the URL itself and the module reads the JSON
- * the browser shows; only a cookie-authenticated endpoint works that way.
+ * the browser shows; only a cookie-authenticated endpoint works that way, and
+ * only an answer short enough for the browser's page text.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
@@ -38,11 +39,27 @@ export async function readVendorJson(
       "This site's saved data needs a script in the page, which this browser can't run.",
     );
   }
+  if (!driver.readPageText) {
+    throw new PageDriverError("unsupported", "This browser can't read the site's saved data.");
+  }
   const back = await driver.url();
   await driver.navigate(url);
-  const text = (await driver.readText("body")) ?? "";
+  const shown = await driver.readPageText();
   await driver.navigate(back);
-  return JSON.parse(text);
+  try {
+    return JSON.parse(shownJson(shown));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    throw new PageDriverError("failed", "The site's saved data didn't come through whole in this browser.");
+  }
+}
+
+/** The JSON in a browser's page text: a block the page shows fenced, or the text from its first bracket. */
+function shownJson(text: string): string {
+  const fenced = /```[^\n]*\n([\s\S]*?)\n```/.exec(text)?.[1];
+  if (fenced !== undefined) return fenced;
+  const start = text.search(/[[{]/);
+  return start >= 0 ? text.slice(start) : text;
 }
 
 export function record(value: unknown): Record<string, unknown> {
