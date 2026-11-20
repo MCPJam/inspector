@@ -28,6 +28,7 @@ import { RealUiError, needsSignIn } from "../../utils/harness/real-ui/page-modul
 import { INSPECTOR_SERVICE_TOKEN_HEADER } from "../service-credential.js";
 import type { WebClientService } from "./backend-connector-resolver.js";
 import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
+import { WebAccountUnavailableError } from "./web-client-run.js";
 
 export type WebActor = { actorExternalId: string } | { actorUserId: string };
 
@@ -145,7 +146,7 @@ export function createHostedWebClientEnvironment(
             .find((row) => row !== undefined)
         : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
       if (!chosen && deps.runWebAccountIds?.length) {
-        throw new Error(
+        throw new WebAccountUnavailableError(
           `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. Choose an account for the suite, then run again.`,
         );
       }
