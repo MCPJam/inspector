@@ -30,7 +30,14 @@ var BROWSERD_WEBMCP_FEATURES = [
    */
   "navigation-stop",
   /** A callback stop can remain armed between commands on the same tab. */
-  "navigation-stop-persistent"
+  "navigation-stop-persistent",
+  /**
+   * `observe {mode:"text"}` takes a `rootSelector` and reads that element's
+   * text, and a `rootSelector` may use Playwright's selector syntax. Without
+   * it the server must not send a scoped text read: an old daemon ignores
+   * `rootSelector` there and answers with the whole page's text.
+   */
+  "element-text"
 ];
 var BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 var BROWSERD_OBSERVATION_VIEWPORT = {
@@ -4880,15 +4887,21 @@ async function readScrollableNodes(cdp) {
   return found;
 }
 var DOCUMENT_SCROLLER_NAMES = /* @__PURE__ */ new Set(["HTML", "BODY"]);
-async function resolveBackendNodeId(cdp, selector) {
+async function resolveBackendNodeId(cdp, selector, otherwise) {
   try {
     const doc = await cdp.send("DOM.getDocument", { depth: 0 });
     const rootNodeId = doc?.root?.nodeId;
     if (rootNodeId === void 0) return null;
-    const found = await cdp.send("DOM.querySelector", {
-      nodeId: rootNodeId,
-      selector
-    });
+    let found;
+    try {
+      found = await cdp.send("DOM.querySelector", {
+        nodeId: rootNodeId,
+        selector
+      });
+    } catch (refused) {
+      if (!otherwise) throw refused;
+      return await otherwise(selector);
+    }
     if (!found?.nodeId) return null;
     const described = await cdp.send("DOM.describeNode", {
       nodeId: found.nodeId
@@ -7906,6 +7919,12 @@ var ActError2 = class extends Error {
 };
 var LeaseTakenMidAct = class extends Error {
 };
+function nothingMatches(selector) {
+  return formatBrowserdError(
+    "unknown_selector",
+    `nothing on this page matches "${selector}"; re-observe the page and pick a selector from what it shows`
+  );
+}
 function withoutRefIndex(fields) {
   const { refs: _unstored, ...rest } = fields;
   return rest;
@@ -9264,7 +9283,7 @@ var ChromiumDriver = class {
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
       case "text": {
-        return this.observeText(tabId, entry, permit);
+        return this.observeText(tabId, entry, permit, action.rootSelector);
       }
       case "a11y": {
         const rendered = await this.renderA11y(tabId, entry, action);
@@ -9393,11 +9412,13 @@ var ChromiumDriver = class {
    * because a tree has boundaries to drop at; running text has none, and a cut
    * string with a counted marker is honest about exactly that.
    */
-  async observeText(tabId, entry, permit) {
+  async observeText(tabId, entry, permit, rootSelector) {
+    const read = () => rootSelector === void 0 ? entry.page.pageText() : this.readElementText(entry, rootSelector);
     const STABLE_ATTEMPTS = 2;
     let before = await this.snapshot(entry.page);
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
-      const text2 = await entry.page.pageText();
+      const text2 = await read();
+      if (typeof text2 !== "string") return text2;
       const after2 = await this.snapshot(entry.page);
       const output = this.cappedText(text2);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
@@ -9410,12 +9431,39 @@ var ChromiumDriver = class {
         "a person has taken control of this browser; nothing was observed"
       );
     }
-    const text = await entry.page.pageText();
+    const text = await read();
+    if (typeof text !== "string") return text;
     const after = await this.snapshot(entry.page);
     return {
       ...this.observation(tabId, entry, this.cappedText(text), after, permit),
       settled: false
     };
+  }
+  /**
+   * One element's text for a scoped text observation, found by Playwright's
+   * engine as an act's target is; otherwise the result that says why not.
+   */
+  async readElementText(entry, selector) {
+    if (!entry.page.elementText) {
+      return {
+        ok: false,
+        error: formatBrowserdError(
+          "unsupported_target",
+          `this browser reads only a whole page's text; observe {mode:"text"} without rootSelector`
+        )
+      };
+    }
+    let text;
+    try {
+      text = await entry.page.elementText(selector);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        ok: false,
+        error: formatBrowserdError("unsupported_target", message.split("\n")[0])
+      };
+    }
+    return text ?? { ok: false, error: nothingMatches(selector) };
   }
   /** The text observation's payload, cut to budget with the counted marker. */
   cappedText(text) {
@@ -10191,14 +10239,15 @@ var ChromiumDriver = class {
       }
       rootBackendNodeId = known.backendDOMNodeId;
     } else if (action.rootSelector !== void 0) {
-      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      const resolved = await resolveBackendNodeId(
+        cdp,
+        action.rootSelector,
+        entry.page.elementNodeId?.bind(entry.page)
+      );
       if (resolved === null) {
         return {
           ok: false,
-          error: {
-            ok: false,
-            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
-          }
+          error: { ok: false, error: nothingMatches(action.rootSelector) }
         };
       }
       rootBackendNodeId = resolved;
@@ -11006,6 +11055,58 @@ function defaultIsAlive(pid) {
   }
 }
 
+// server/services/browserd/daemon/engine-element.ts
+import { randomUUID as randomUUID4 } from "node:crypto";
+var READ_TIMEOUT_MS = 2e3;
+var VANISHED = /TimeoutError|Execution context was destroyed|frame was detached/;
+var MARK = "data-mcpjam-element";
+function vanished(error) {
+  return error instanceof Error && VANISHED.test(`${error.name} ${error.message}`);
+}
+async function elementText(locator, selector) {
+  const first = locator(selector).first();
+  if (await first.count() === 0) return null;
+  try {
+    return await first.innerText({ timeout: READ_TIMEOUT_MS });
+  } catch (error) {
+    if (vanished(error)) return null;
+    throw error;
+  }
+}
+async function elementNodeId(locator, cdp, selector) {
+  const first = locator(selector).first();
+  if (await first.count() === 0) return null;
+  let handle;
+  try {
+    handle = await first.elementHandle({ timeout: READ_TIMEOUT_MS });
+  } catch (error) {
+    if (vanished(error)) return null;
+    throw error;
+  }
+  const token = randomUUID4();
+  try {
+    await handle.evaluate(
+      (element, [name, value]) => element.setAttribute(name, value),
+      [MARK, token]
+    );
+    return await resolveBackendNodeId(cdp, `[${MARK}="${token}"]`);
+  } finally {
+    await unmark(handle);
+  }
+}
+async function unmark(handle) {
+  try {
+    await handle.evaluate(
+      (element, name) => element.removeAttribute(name),
+      MARK
+    );
+  } catch (error) {
+    if (!vanished(error)) throw error;
+  } finally {
+    await handle.dispose();
+  }
+}
+
 // server/services/browserd/daemon/chromium-launch.ts
 var DISABLE_NON_PROXIED_UDP = "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
@@ -11140,6 +11241,7 @@ function wrapPage(page, localSecurity = false, localBudget) {
   let webmcpPromise = null;
   let attachedBridge = null;
   let cdpPromise = null;
+  const locate = page.locator?.bind(page);
   const adapted = {
     async goto(url) {
       await page.goto(url, {
@@ -11244,6 +11346,13 @@ function wrapPage(page, localSecurity = false, localBudget) {
         return "";
       }
     },
+    ...locate ? {
+      elementText: (selector) => elementText(locate, selector),
+      async elementNodeId(selector) {
+        const session = await adapted.cdp();
+        return session ? elementNodeId(locate, session, selector) : null;
+      }
+    } : {},
     networkEntries: () => network.entries(),
     dropNetworkSince: (since) => network.dropSince(since),
     networkCursor: () => network.count(),

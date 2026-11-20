@@ -36,6 +36,7 @@ import { PAGE_TEXT_FN } from "./page-text";
 import type { PendingDialog } from "./dialogs";
 import { NetworkRing } from "./network";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
+import { elementNodeId, elementText, type AnyLocator } from "./engine-element";
 
 /**
  * Evaluated IN THE PAGE to decide whether this browser really supports
@@ -124,6 +125,12 @@ export type AnyPage = {
    */
   frames?(): AnyFrame[];
   mainFrame?(): AnyFrame;
+  /**
+   * Playwright's selector engine, for an observation scoped to one element
+   * (`engine-element.ts`). Optional for the reason `frames` is: a page
+   * without it reads no single element.
+   */
+  locator?(selector: string): AnyLocator;
 };
 
 /** The little of a Playwright `Frame` the WebMCP sweep needs. */
@@ -353,6 +360,7 @@ export function wrapPage(
   // bridge and the viewport both want one, and attaching twice to the same
   // page gives two sessions whose events interleave unpredictably.
   let cdpPromise: Promise<CdpLike | null> | null = null;
+  const locate = page.locator?.bind(page);
 
   // Named rather than returned inline so `webmcp()` can reach `cdp()` — one
   // attach, two consumers.
@@ -492,6 +500,15 @@ export function wrapPage(
         return "";
       }
     },
+    ...(locate
+      ? {
+          elementText: (selector: string) => elementText(locate, selector),
+          async elementNodeId(selector: string) {
+            const session = await adapted.cdp();
+            return session ? elementNodeId(locate, session, selector) : null;
+          },
+        }
+      : {}),
     networkEntries: () => network.entries(),
     dropNetworkSince: (since: number) => network.dropSince(since),
     networkCursor: () => network.count(),
