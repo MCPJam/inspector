@@ -171,7 +171,7 @@ export function ConformanceTab({
       `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
       { replace: true },
     );
-  }, [location.search]);
+  }, [location.search, location.pathname, location.hash, navigate]);
   const [start, setStart] = useState<{
     id: number;
     serverName: string;
