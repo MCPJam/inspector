@@ -19,7 +19,10 @@ export type SignInReason =
 export type PendingStep = {
   /** The runtime's own name for the step, such as the prompt's index. */
   stepId: string;
-  /** When the step first started (ISO). Calls forwarded earlier are not its own. */
+  /**
+   * When the step first started, as `toISOString()` writes it: the ledger
+   * compares it as text. Calls forwarded earlier are not this step's.
+   */
   startedAt: string;
   /** The turn the step opened on its connector, once it got that far. */
   turnId?: string;
