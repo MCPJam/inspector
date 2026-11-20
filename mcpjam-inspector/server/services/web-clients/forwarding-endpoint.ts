@@ -37,6 +37,7 @@ import type {
 } from "./connectors.js";
 import {
   authkitAuthorizationServers,
+  connectorOriginAllowed,
   verifyAuthKitBearer,
   webClientsEnabledFor,
 } from "./endpoint-auth.js";
@@ -49,6 +50,8 @@ import {
 import {
   answerId,
   bodyKind,
+  discardBody,
+  followedRedirect,
   isRecord,
   isRequest,
   observeBody,
@@ -106,6 +109,12 @@ const COPY = {
     "MCPJam's tool approval did not allow this call, so it was not sent. Change the approval in MCPJam, then send the prompt again.",
   approvalFailed:
     "MCPJam could not check this tool call, so it was not sent. Send the prompt again.",
+  notRecorded:
+    "MCPJam could not record this tool call, so it was not sent. Send the prompt again.",
+  unknownOutcome:
+    "MCPJam could not tell whether this project's MCP server ran this tool call. Check what the tool did before you send the prompt again.",
+  roundedNumber:
+    "This tool call has a number too large for MCPJam to check exactly, so it was not sent. Send the number as a string instead.",
   noToolName:
     "This tool call names no tool, so it was not sent. Send it again with a tool name.",
   batchHeld:
@@ -128,6 +137,8 @@ const COPY = {
     "Your MCPJam account can't use this connector's project. Ask a project admin to add you, then connect again.",
   notFound:
     "No MCPJam connector has this URL. Copy the connector URL from MCPJam again.",
+  origin:
+    "This connector does not accept requests from this web page. Connect to it from Claude or ChatGPT instead.",
   method: "This endpoint answers GET, POST and DELETE.",
 } as const;
 
@@ -240,9 +251,11 @@ function refuseUnread(error: NativeWireError): Response {
       ? [413, -32600, COPY.tooLarge]
       : error.code === "header_mismatch"
         ? [400, -32020, COPY.headerMismatch]
-        : error.code === "invalid_json"
-          ? [400, -32700, COPY.invalid]
-          : [400, -32600, COPY.invalid];
+        : error.code === "rounded_number"
+          ? [400, -32602, COPY.roundedNumber]
+          : error.code === "invalid_json"
+            ? [400, -32700, COPY.invalid]
+            : [400, -32600, COPY.invalid];
   return Response.json(
     { jsonrpc: "2.0", id: null, error: { code, message } },
     { status },
@@ -346,9 +359,9 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         ...(toolUseId ? { toolUseId } : {}),
       });
     } catch (error) {
-      logger.warn("[web-clients] the tool approval check failed", {
-        connector: connectorTag(connectorId),
-        message: error instanceof Error ? error.message : String(error),
+      reportRouteFailure("Web connector tool approval failed", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
       });
       return COPY.approvalFailed;
     }
@@ -363,6 +376,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     target: UpstreamTarget,
     request: Request,
     bytes: Uint8Array<ArrayBuffer> | undefined,
+    mayResend: () => boolean,
   ): Promise<Response> => {
     const fetchUpstream = target.fetch ?? deps.fetchUpstream ?? fetch;
     // The vendor's `authorization` is never among the headers passed on.
@@ -375,10 +389,18 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       redirect: "follow",
     };
     const response = await fetchUpstream(target.url, init);
-    if (response.status !== 401 || !target.onUnauthorized) return response;
-    await response.body?.cancel();
+    // Only a 401 to the request itself says it never ran. Behind a redirect
+    // the server took it first, so sending it again could run a tool twice.
+    if (
+      response.status !== 401 ||
+      !target.onUnauthorized ||
+      followedRedirect(response, target.url)
+    )
+      return response;
+    await discardBody(response);
     const token = await target.onUnauthorized();
-    if (!token) return new Response(null, { status: 401 });
+    // The refresh can outlast the turn that approved the call.
+    if (!token || !mayResend()) return new Response(null, { status: 401 });
     headers.set("authorization", `Bearer ${token}`);
     return fetchUpstream(target.url, init);
   };
@@ -440,22 +462,9 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return answerAll(body, () => COPY.noUpstream, REFUSED, 502, frame);
     }
 
-    // Written down before anything is sent: a call lost mid-flight stays on record as uncertain.
+    const calls = body.messages.filter(isToolCall);
+    const callIds = new Set(calls.map((call) => call.id));
     const pending = new Map<RpcId, string>();
-    for (const call of body.messages.filter(isToolCall)) {
-      const params = paramsOf(call);
-      const toolUseId = toolUseIdOf(params);
-      const entry = ledger.forwarded({
-        connectorId,
-        turnId: window?.turnId,
-        runId: window?.runId,
-        jsonrpcId: call.id,
-        toolName: String(params.name),
-        ...(toolUseId ? { toolUseId } : {}),
-        argsHash: hashPayload(params.arguments ?? {}),
-      });
-      pending.set(call.id, entry.id);
-    }
     const settle = (
       entryId: string,
       state: Exclude<LedgerState, "forwarded">,
@@ -489,25 +498,89 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         }),
       );
     };
+    // A call goes only under the turn that approved it, which can end while
+    // the server is resolved or its credential refreshed.
+    const approvedTurnOpen = () =>
+      calls.length === 0 ||
+      turns.active(connectorId)?.turnId === window?.turnId;
+    if (!approvedTurnOpen()) {
+      finish("error");
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? COPY.noTurn : COPY.batchHeld),
+        REFUSED,
+        200,
+        frame,
+      );
+    }
+
+    // Written down before anything is sent: a call lost mid-flight stays on record as uncertain.
+    try {
+      for (const call of calls) {
+        const params = paramsOf(call);
+        const toolUseId = toolUseIdOf(params);
+        const entry = ledger.forwarded({
+          connectorId,
+          turnId: window?.turnId,
+          runId: window?.runId,
+          jsonrpcId: call.id,
+          toolName: String(params.name),
+          ...(toolUseId ? { toolUseId } : {}),
+          argsHash: hashPayload(params.arguments ?? {}),
+        });
+        pending.set(call.id, entry.id);
+      }
+    } catch (error) {
+      // Recorded but never sent: each record gets the error the vendor gets.
+      finish("error");
+      reportRouteFailure("Web connector call could not be recorded", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
+      });
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? COPY.notRecorded : COPY.batchHeld),
+        REFUSED,
+        200,
+        frame,
+      );
+    }
 
     let response: Response;
     try {
-      response = await send(target, request, args.bytes);
+      response = await send(target, request, args.bytes, approvedTurnOpen);
     } catch (error) {
       finish("lost");
       reportRouteFailure("Web connector upstream did not answer", error, {
         source: SOURCE,
         hop: "user_server_hop",
       });
-      return answerAll(body, () => COPY.unreachable, REFUSED, 502, frame);
+      return answerAll(
+        body,
+        (id) => (callIds.has(id) ? COPY.unknownOutcome : COPY.unreachable),
+        REFUSED,
+        502,
+        frame,
+      );
     }
     if (response.status === 401) {
       // The vendor holds MCPJam's credential, not the server's, so a
       // challenge from the server is not one it could answer; passing it on
-      // would send the vendor to re-authorize somewhere else.
-      await response.body?.cancel();
-      finish("error", 401);
-      return answerAll(body, () => COPY.upstreamRefused, REFUSED, 502, frame);
+      // would send the vendor to re-authorize somewhere else. Behind a
+      // redirect the server took the request first, so a call may have run.
+      const unsure = followedRedirect(response, target.url);
+      await discardBody(response);
+      finish(unsure ? "lost" : "error", 401);
+      return answerAll(
+        body,
+        (id) =>
+          unsure && callIds.has(id)
+            ? COPY.unknownOutcome
+            : COPY.upstreamRefused,
+        REFUSED,
+        502,
+        frame,
+      );
     }
     const status = response.status;
     const headers = nativeResponseHeaders(response.headers);
@@ -524,7 +597,6 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         const entryId = id === undefined ? undefined : pending.get(id);
         if (id === undefined || entryId === undefined || !isRecord(message))
           return;
-        pending.delete(id);
         const failed = "error" in message;
         settle(
           entryId,
@@ -532,6 +604,8 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
           status,
           hashPayload(failed ? message.error : message.result),
         );
+        // Only once settled: an answer that can't be recorded leaves it to end lost.
+        pending.delete(id);
       },
       onEnd: () => finish("lost", status),
     });
@@ -563,6 +637,9 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
   );
 
   app.all(`${WEB_CONNECTOR_PATH_PREFIX}/:connectorId`, async (c) => {
+    // The global origin check never sees these requests.
+    if (!connectorOriginAllowed(c.req.header("origin")))
+      return c.json({ error: COPY.origin }, 403);
     const admitted = await admit(c, c.req.param("connectorId"));
     if (admitted instanceof Response) return admitted;
     const request = c.req.raw;
