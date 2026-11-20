@@ -21,6 +21,8 @@ describe("harness descriptors", () => {
       cursor: "harness",
       "copilot-cli": "harness",
       opencode: "mcpjam",
+      "claude-web": "harness",
+      "chatgpt-web": "harness",
     });
     expect(HARNESS_PINNED_VERSIONS).toEqual({
       "claude-code": "2.1.290",
@@ -28,6 +30,8 @@ describe("harness descriptors", () => {
       cursor: "2026.11.05-86047df",
       "copilot-cli": "1.0.92",
       opencode: "1.18.34",
+      "claude-web": "page-2026-11-20",
+      "chatgpt-web": "page-2026-11-20",
     });
     expect(HARNESS_DESCRIPTORS.cursor.orgKeys).toBe(false);
     expect(HARNESS_DESCRIPTORS.opencode.orgKeys).toBe(true);
@@ -64,9 +68,18 @@ describe("harness surface support", () => {
         (surface) => `${id} ${surface}`,
       ),
     ).sort();
-    expect(declared).toEqual(["cursor guests", "cursor user-testing"]);
+    expect(declared).toEqual([
+      "chatgpt-web guests",
+      "chatgpt-web local",
+      "chatgpt-web user-testing",
+      "claude-web guests",
+      "claude-web local",
+      "claude-web user-testing",
+      "cursor guests",
+      "cursor user-testing",
+    ]);
   });
-  it("lets signed-in guests run every runtime but Cursor CLI", () => {
+  it("lets signed-in guests run every runtime but Cursor CLI and the web clients", () => {
     // The backend derives its guest list from these same exceptions
     // (`GUEST_ALLOWED_HARNESSES`, pinned by the mirror check); Cursor stays
     // off because its tokens would sit in a box the guest controls.
