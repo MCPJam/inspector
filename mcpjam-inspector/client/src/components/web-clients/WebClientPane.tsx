@@ -1,17 +1,48 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { KeyRound } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import {
   runAccountOf,
   webAccountName,
   webClientName,
   webClientSite,
+  webClientVendorOfHost,
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
 import { PaneBlocked } from "./PaneBlocked";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebAccountChip } from "./WebAccountChip";
+
+/**
+ * The web client a signed-in person is previewing in the playground, while
+ * the flag is on, and its pane opened by itself: once per chat and client,
+ * so a person's close holds until either changes. Opening starts no browser.
+ */
+export function useWebClientPaneOpening({
+  hostConfig,
+  hostId,
+  conversationId,
+  signedIn,
+}: {
+  hostConfig: { harness?: string | null; agentLoop?: string | null } | null;
+  hostId: string | null;
+  conversationId: string | null;
+  signedIn: boolean;
+}): WebClientVendor | undefined {
+  const enabled = useWebClientsEnabled();
+  const vendor =
+    enabled && signedIn && hostConfig
+      ? webClientVendorOfHost(hostConfig)
+      : undefined;
+  const openBrowser = useBrowserWorkspaceStore((state) => state.openBrowser);
+  useEffect(() => {
+    if (vendor && conversationId) openBrowser(conversationId);
+  }, [vendor, conversationId, hostId, openBrowser]);
+  return vendor;
+}
 
 export interface WebClientPaneParts {
   /** Which account the chat runs as, for the pane's top bar. */
