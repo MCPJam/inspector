@@ -10,7 +10,9 @@ vi.mock("@/lib/app-navigation", () => ({
   buildConformanceSetupPath: () => "/conformance?setup=1",
   buildEvaluatePath: () => "/evaluate",
 }));
-vi.mock("@/hooks/use-soft-query", () => ({ useSoftQuery: () => ({ data: [] }) }));
+vi.mock("@/hooks/use-soft-query", () => ({
+  useSoftQuery: () => ({ data: [] }),
+}));
 vi.mock("@/components/ui/error-card", () => ({ ErrorCard: () => null }));
 vi.mock("@/lib/app-route-context", () => ({
   useAppRouteContext: () => ({
@@ -28,7 +30,9 @@ it("shows the first unfinished step, then the step the user picks", () => {
   render(<HomeChecklist onFinished={vi.fn()} />);
   expect(screen.getByText("Finish setting up Default")).toBeVisible();
   expect(panelTitle()).toHaveTextContent("Connect your server");
-  const agent = screen.getByRole("button", { name: /Add MCPJam to your coding agent/ });
+  const agent = screen.getByRole("button", {
+    name: /Add MCPJam to your coding agent/,
+  });
   fireEvent.click(agent);
   expect(panelTitle()).toHaveTextContent("Add MCPJam to your coding agent");
   expect(agent).toHaveAttribute("aria-current", "step");

@@ -3,11 +3,7 @@ import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import type { ChecklistProgress } from "./checklist-progress";
 
 export type StepId =
-  | "connect"
-  | "chat"
-  | "onboard_agent"
-  | "check_server"
-  | "create_eval";
+  "connect" | "chat" | "onboard_agent" | "check_server" | "create_eval";
 
 export interface ChecklistSignals {
   done: Record<StepId, boolean>;

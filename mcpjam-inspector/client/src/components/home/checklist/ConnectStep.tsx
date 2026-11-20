@@ -10,6 +10,7 @@ import { EXCALIDRAW_SERVER_CONFIG } from "@/lib/excalidraw-quick-connect";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/state/app-types";
+import { StatusSwap } from "./checklist-motion";
 
 /** How long typing has to pause before a valid URL starts connecting. */
 export const CONNECT_TYPING_PAUSE_MS = 1000;
@@ -212,6 +213,15 @@ export function ConnectStep({
   };
 
   const meta = status ? getConnectionStatusMeta(status) : null;
+  const statusKey = !attempt
+    ? "idle"
+    : status === "connecting" || status === "oauth-flow"
+      ? "connecting"
+      : status === "connected"
+        ? "connected"
+        : status === "failed" || status === "disconnected"
+          ? "failed"
+          : "other";
 
   return (
     <>
@@ -231,84 +241,88 @@ export function ConnectStep({
         />
         <FieldError>{error}</FieldError>
       </div>
-      {attempt &&
-      meta &&
-      (status === "connecting" || status === "oauth-flow") ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <meta.Icon className={meta.iconClassName} aria-hidden />
-          <span className="flex-1" role="status">
-            {meta.label}
-          </span>
-          <Button type="button" variant="ghost" size="sm" onClick={reset}>
-            Cancel
-          </Button>
-        </div>
-      ) : null}
-      {attempt && meta && status === "connected" ? (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 text-sm" role="status">
-            <span
-              className={cn("size-2 rounded-full", meta.indicatorClassName)}
-              aria-hidden
-            />
-            <span className="text-foreground">Connected to {attempt.name}</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => {
-                onTrack("confirmed");
-                onConfirmed(attempt.name);
-                setAttempt(null);
-                setUrl("");
-              }}
-            >
-              Confirm
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                onTrack("denied");
-                reset();
-              }}
-            >
-              Use a different server
+      <StatusSwap swapKey={statusKey}>
+        {attempt &&
+        meta &&
+        (status === "connecting" || status === "oauth-flow") ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <meta.Icon className={meta.iconClassName} aria-hidden />
+            <span className="flex-1" role="status">
+              {meta.label}
+            </span>
+            <Button type="button" variant="ghost" size="sm" onClick={reset}>
+              Cancel
             </Button>
           </div>
-        </div>
-      ) : null}
-      {attempt && (status === "failed" || status === "disconnected") ? (
-        <ErrorCard
-          density="row"
-          error={
-            server?.lastNormalizedError ??
-            server?.lastError ??
-            `Couldn't connect to ${attempt.formData.url}. Check the URL and try again.`
-          }
-          onRetry={() => {
-            trackedFailure.current = null;
-            onTrack("retried");
-            connect(attempt);
-          }}
-        />
-      ) : null}
-      {!attempt || status === "failed" || status === "disconnected" ? (
-        <p className="text-sm text-muted-foreground">
-          No server handy?{" "}
-          <Button
-            type="button"
-            variant="link"
-            size="sm"
-            className="h-auto p-0"
-            onClick={startDemo}
-          >
-            Use the Excalidraw demo server
-          </Button>
-        </p>
-      ) : null}
+        ) : null}
+        {attempt && meta && status === "connected" ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm" role="status">
+              <span
+                className={cn("size-2 rounded-full", meta.indicatorClassName)}
+                aria-hidden
+              />
+              <span className="text-foreground">
+                Connected to {attempt.name}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  onTrack("confirmed");
+                  onConfirmed(attempt.name);
+                  setAttempt(null);
+                  setUrl("");
+                }}
+              >
+                Confirm
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  onTrack("denied");
+                  reset();
+                }}
+              >
+                Use a different server
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {attempt && (status === "failed" || status === "disconnected") ? (
+          <ErrorCard
+            density="row"
+            error={
+              server?.lastNormalizedError ??
+              server?.lastError ??
+              `Couldn't connect to ${attempt.formData.url}. Check the URL and try again.`
+            }
+            onRetry={() => {
+              trackedFailure.current = null;
+              onTrack("retried");
+              connect(attempt);
+            }}
+          />
+        ) : null}
+        {!attempt || status === "failed" || status === "disconnected" ? (
+          <p className="text-sm text-muted-foreground">
+            No server handy?{" "}
+            <Button
+              type="button"
+              variant="link"
+              size="sm"
+              className="h-auto p-0"
+              onClick={startDemo}
+            >
+              Use the Excalidraw demo server
+            </Button>
+          </p>
+        ) : null}
+      </StatusSwap>
     </>
   );
 }

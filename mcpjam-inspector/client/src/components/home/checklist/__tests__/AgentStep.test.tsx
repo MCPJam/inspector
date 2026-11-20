@@ -19,13 +19,17 @@ const renderStep = (onCopied = vi.fn()) =>
 describe("AgentStep", () => {
   it("shows the hosted MCP setup for each coding agent", async () => {
     renderStep();
-    expect(screen.getByText(/claude mcp add --transport http mcpjam/)).toBeTruthy();
+    expect(
+      screen.getByText(/claude mcp add --transport http mcpjam/),
+    ).toBeTruthy();
     for (const label of ["Codex", "Cursor", "VS Code", "Other"]) {
       expect(screen.getByRole("tab", { name: label })).toBeTruthy();
     }
     await userEvent.click(screen.getByRole("tab", { name: "Codex" }));
     expect(
-      screen.getByText(/codex mcp add mcpjam --url https:\/\/mcp\.mcpjam\.com\/mcp/),
+      screen.getByText(
+        /codex mcp add mcpjam --url https:\/\/mcp\.mcpjam\.com\/mcp/,
+      ),
     ).toBeTruthy();
   });
 
