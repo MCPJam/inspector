@@ -99,6 +99,11 @@ import {
   harnessOfHostConfig,
   isModelFreeCase,
 } from "./evals/harness-admission.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import {
+  webClientRunOfEvalRun,
+  type WebClientRunContext,
+} from "./web-clients/web-client-run.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -4413,6 +4418,11 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    // A web client's account runs one turn per server at a time (a second
+    // is refused as turn_running), so its cases take turns.
+    const webClientCaseLimit = isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))
+      ? createConcurrencyLimiter(1)
+      : undefined;
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4423,7 +4433,9 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        : webClientCaseLimit
+          ? webClientCaseLimit(() => runOne(test))
+          : runOne(test),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -6347,7 +6359,8 @@ const runHostedIterationWithBrowser = async (
   });
   browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
 
-
+  // A web client's turns act as the run's owner on the accounts it froze.
+  let webClientRun: WebClientRunContext | undefined;
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -6355,6 +6368,11 @@ const runHostedIterationWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId },
       );
+      webClientRun = webClientRunOfEvalRun({
+        harness: harnessOfHostConfig(suiteHostConfig),
+        runId,
+        run: currentRun,
+      });
       if (currentRun?.status === "cancelled") {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
@@ -7311,6 +7329,7 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
+    ...(webClientRun ? { webClientRun } : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.

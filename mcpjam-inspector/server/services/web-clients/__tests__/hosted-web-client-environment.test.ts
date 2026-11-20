@@ -72,11 +72,18 @@ function environment(
 }
 
 describe("the hosted environment's backend calls", () => {
-  it("uses the run's chosen account, else the vendor's default, else its only one", async () => {
+  it("uses the run's frozen accounts, else the vendor's default, else its only one", async () => {
     const { service } = recordedService();
     expect(
-      await environment(service, { chosenWebAccountId: "acct-other" }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      await environment(service, { runWebAccountIds: ["acct-removed", "acct-other"] }).resolveAccount({
+        projectId: "p",
+        vendor: "claude",
+      }),
     ).toEqual({ webAccountId: "acct-other" });
+    // A run whose frozen accounts are all gone stops; it never moves to the default.
+    await expect(
+      environment(service, { runWebAccountIds: ["acct-removed"] }).resolveAccount({ projectId: "p", vendor: "claude" }),
+    ).rejects.toThrow("Claude web accounts this run uses were removed");
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",

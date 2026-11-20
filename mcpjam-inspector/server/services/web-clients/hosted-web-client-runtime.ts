@@ -4,7 +4,9 @@
  * Inspector's public HTTPS origin for the connector URL, and the
  * Playground's hosted browser booted with the account's restored profile.
  */
+import { z } from "zod";
 import { webClientVendorForRuntime } from "@/shared/web-clients";
+import { createConvexClient } from "../../routes/v1/convex-client.js";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { getInternalBackendConfig } from "../internal-backend.js";
 import { AuthKitVerificationError, verifyAuthKitToken } from "../authkit-jwt.js";
@@ -36,6 +38,27 @@ export async function actorFromBearer(bearer: string): Promise<WebActor | undefi
   }
 }
 
+const currentUser = z.object({ _id: z.string().min(1), isAnonymous: z.boolean().optional() });
+
+/**
+ * The person a run's bearer names. A person's own session is checked here.
+ * Anything else a run carries is the delegated session MCPJam mints for a
+ * scheduled, API or swarm run's owner (`testSuiteRun.createdBy`,
+ * `journeyRuns.createdByUserId`), so the backend that minted it is asked.
+ * Guests are nobody: web clients don't run for them.
+ */
+export async function actorForRun(
+  bearer: string,
+  whoIs: (token: string) => Promise<unknown> = (token) =>
+    createConvexClient(token).query("users:getCurrentUser" as never, {} as never),
+): Promise<WebActor | undefined> {
+  const person = await actorFromBearer(bearer);
+  if (person) return person;
+  const user = currentUser.safeParse(await whoIs(bearer.replace(/^Bearer\s+/i, "")));
+  if (!user.success || user.data.isAnonymous) return undefined;
+  return { actorUserId: user.data._id };
+}
+
 /** Downloads the sealed profile and opens it with the run's data key. */
 export async function restoreWebProfile(
   profile: ProfileForRun,
@@ -59,7 +82,7 @@ export function createHostedWebClientEnvironmentFactory(
   return async (turn) => {
     const vendor = webClientVendorForRuntime(turn.runtimeId);
     if (!vendor) throw new Error(`Not a web client runtime: ${turn.runtimeId}`);
-    const actor = turn.actor ?? (turn.bearer ? await actorFromBearer(turn.bearer) : undefined);
+    const actor = turn.actor ?? (turn.bearer ? await actorForRun(turn.bearer) : undefined);
     if (!actor) {
       throw new Error("This run has no MCPJam user to act as. Start it again while signed in.");
     }
@@ -80,7 +103,7 @@ export function createHostedWebClientEnvironmentFactory(
       publicBaseUrl,
       runId: turn.runId,
       ...(turn.iterationId ? { iterationId: turn.iterationId } : {}),
-      ...(turn.chosenWebAccountId ? { chosenWebAccountId: turn.chosenWebAccountId } : {}),
+      ...(turn.runWebAccountIds ? { runWebAccountIds: turn.runWebAccountIds } : {}),
       profileForRun: createProfileForRunClient({ convexHttpUrl: convexUrl, serviceToken }),
       async openHostedBrowser({ profile }) {
         const browser = await openWebClientHostedBrowser({

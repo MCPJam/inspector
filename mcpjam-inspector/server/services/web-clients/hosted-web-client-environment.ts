@@ -3,8 +3,9 @@
  * accounts, their connectors and their saved browser profiles, and the run
  * acts as its person through the Inspector service token.
  *
- *  - Account: the suite's or run's choice, else the vendor's default
- *    (`isDefault`), else the vendor's only account.
+ *  - Account: the run's frozen choice (the suite's, else the project's
+ *    default at start), else the vendor's default (`isDefault`), else the
+ *    vendor's only account.
  *  - Connector: `ensureWebConnector` with `oauth` auth; the vendor's app adds
  *    it as `https://<inspector host>/mcp/<connectorId>`.
  *  - Browser: the saved profile from `profile-for-run`, restored into the
@@ -111,8 +112,12 @@ export type HostedWebClientDeps = {
   publicBaseUrl: string;
   runId: string;
   iterationId?: string;
-  /** The suite's or run's chosen account, when it chose one. */
-  chosenWebAccountId?: string;
+  /**
+   * The accounts the run froze at start, in the order this turn tries them.
+   * Given, the turn runs on the first still in the project and never on
+   * another; absent (the Playground), it runs on the vendor's default.
+   */
+  runWebAccountIds?: readonly string[];
   profileForRun: ReturnType<typeof createProfileForRunClient>;
   /** Restores the profile into the run's hosted browser and drives it. */
   openHostedBrowser(args: {
@@ -134,10 +139,16 @@ export function createHostedWebClientEnvironment(
         .array(accountRow)
         .parse(await deps.service.read({ action: "listWebAccounts", projectId, ...deps.actor }))
         .filter((row) => row.vendor === vendor);
-      const chosen =
-        rows.find((row) => row.webAccountId === deps.chosenWebAccountId) ??
-        rows.find((row) => row.isDefault) ??
-        (rows.length === 1 ? rows[0] : undefined);
+      const chosen = deps.runWebAccountIds
+        ? deps.runWebAccountIds
+            .map((id) => rows.find((row) => row.webAccountId === id))
+            .find((row) => row !== undefined)
+        : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
+      if (!chosen && deps.runWebAccountIds?.length) {
+        throw new Error(
+          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. Choose an account for the suite, then run again.`,
+        );
+      }
       if (!chosen) throw noAccount(vendor);
       return {
         webAccountId: chosen.webAccountId,
