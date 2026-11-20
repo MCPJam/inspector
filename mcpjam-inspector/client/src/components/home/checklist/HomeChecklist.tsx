@@ -19,6 +19,7 @@ import { useSoftQuery } from "@/hooks/use-soft-query";
 import { PLAYGROUND_FIRST_RUN_PROMPT } from "@/components/ui-playground/hooks/use-playground-state";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
+import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import type { ServerWithName } from "@/state/app-types";
 import { AgentStep } from "./AgentStep";
@@ -101,15 +102,25 @@ export function HomeChecklist({
     "testSuites:getTestSuitesOverview",
     convexProjectId ? { projectId: convexProjectId } : "skip",
   );
+  const historyQuery = useSoftQuery<{ personal?: ChatHistorySession[] }>(
+    "directChatHistory:listCurrentHistory",
+    convexProjectId ? { projectId: convexProjectId, status: "active" } : "skip",
+  );
   const conformanceRuns = conformanceQuery.data;
   const suites = suitesQuery.data;
-  // Until both answer, steps 4 and 5 would read as not done.
+  const answered = (query: { data?: unknown; error?: unknown }) =>
+    query.data !== undefined || query.error !== undefined;
+  // Until all answer, steps 2, 4 and 5 would read as not done.
   const loaded =
     !convexProjectId ||
-    ((conformanceRuns !== undefined || conformanceQuery.error !== undefined) &&
-      (suites !== undefined || suitesQuery.error !== undefined));
+    (answered(conformanceQuery) &&
+      answered(suitesQuery) &&
+      answered(historyQuery));
   const signals = computeChecklistSignals({
     hasServer: confirmedServers.length > 0,
+    hasPlaygroundChat: (historyQuery.data?.personal ?? []).some(
+      (session) => session.messageCount > 0,
+    ),
     progress,
     userId,
     conformanceRuns: conformanceRuns ?? [],

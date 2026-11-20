@@ -219,6 +219,10 @@ describe("ConnectStep", () => {
     );
     expect(props.onRemove).toHaveBeenCalledWith("Acme");
     expect(props.onAttemptChange).toHaveBeenLastCalledWith("Excalidraw (App)");
+    // Home must know the demo is unconfirmed before its server can appear.
+    const reported = props.onAttemptChange.mock.invocationCallOrder.at(-1)!;
+    const connected = props.onConnect.mock.invocationCallOrder.at(-1)!;
+    expect(reported).toBeLessThan(connected);
   });
 
   it("retries a failed demo connection without removing it", () => {
