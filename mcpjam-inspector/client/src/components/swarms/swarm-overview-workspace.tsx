@@ -206,35 +206,18 @@ function RunWorkspace({
     return () => desktop.removeEventListener("change", closeOnDesktop);
   }, [historyOpen]);
 
-  const options = (field: "servers" | "clients" | "environments") =>
-    [...new Set(rows.flatMap((row) => row[field]))].sort((a, b) => a.localeCompare(b));
-  const filters = [
-    {
-      label: "All servers",
-      names: options("servers"),
-      value: server,
-      onChange: setServer,
-      field: "servers",
-    },
-    {
-      label: "All clients",
-      names: options("clients"),
-      value: client,
-      onChange: setClient,
-      field: "clients",
-    },
-    ...(environmentsEnabled
-      ? [
-          {
-            label: "All environments",
-            names: options("environments"),
-            value: environment,
-            onChange: setEnvironment,
-            field: "environments" as const,
-          },
-        ]
-      : []),
-  ] as const;
+  const filters = ([
+    { field: "servers", value: server, onChange: setServer },
+    { field: "clients", value: client, onChange: setClient },
+    { field: "environments", value: environment, onChange: setEnvironment },
+  ] as const)
+    .filter(({ field }) => environmentsEnabled || field !== "environments")
+    .map((filter) => ({
+      ...filter,
+      names: [...new Set(rows.flatMap((row) => row[filter.field]))].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    }));
   const query = search.trim().toLocaleLowerCase();
   const visible = rows.filter(
     (row) =>
@@ -248,6 +231,13 @@ function RunWorkspace({
   const select = (id: string) => {
     onSelectRun(id);
     setHistoryOpen(false);
+  };
+  const historyProps = {
+    rows: visible,
+    activeId: active?.id,
+    onSelect: select,
+    personas,
+    hostStyleByName,
   };
 
   const openSwarm = (id: string) => {
@@ -327,7 +317,7 @@ function RunWorkspace({
             .map((filter) => (
               <OverviewFilter
                 key={filter.field}
-                label={filter.label}
+                label={`All ${filter.field}`}
                 options={filter.names}
                 value={filter.names.includes(filter.value.slice(5)) ? filter.value : "all"}
                 onChange={filter.onChange}
@@ -348,14 +338,7 @@ function RunWorkspace({
             <SheetHeader className="border-b">
               <SheetTitle>Run history</SheetTitle>
             </SheetHeader>
-            <History
-              rows={visible}
-              activeId={active?.id}
-              onSelect={select}
-              personas={personas}
-              hostStyleByName={hostStyleByName}
-              inSheet
-            />
+            <History {...historyProps} inSheet />
           </SheetContent>
         </Sheet>
       </div>
@@ -368,13 +351,7 @@ function RunWorkspace({
             maxSize={45}
             className="max-lg:hidden"
           >
-            <History
-              rows={visible}
-              activeId={active?.id}
-              onSelect={select}
-              personas={personas}
-              hostStyleByName={hostStyleByName}
-            />
+            <History {...historyProps} />
           </ResizablePanel>
           <ResizableHandle withHandle className="max-lg:hidden" />
           <ResizablePanel id="swarm-report" minSize={55} className="max-lg:flex-1!">
