@@ -6,8 +6,11 @@
  */
 import type { Hono } from "hono";
 import { HOSTED_MODE } from "../../config.js";
-import { getServiceCredential } from "../service-credential.js";
-import { createBackendConnectorResolver } from "./backend-connector-resolver.js";
+import {
+  createBackendConnectorResolver,
+  createBackendToolCallLedger,
+  webClientService,
+} from "./backend-connector-resolver.js";
 import type { WebConnectorResolver } from "./connectors.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
 import {
@@ -20,15 +23,13 @@ export { createLocalConnectorRoutes } from "./local-connectors.js";
 
 export function mountInspectorWebConnectors(app: Hono): void {
   const local = HOSTED_MODE ? undefined : localWebConnectors;
-  const backend = createBackendConnectorResolver();
-  // Asked only when this process can reach the backend: a local install
-  // without the service credential has its own registry and nothing else.
+  // Only with the service credential: a local install without one has its
+  // own registry and nothing else.
+  const service = webClientService();
+  const backend = service && createBackendConnectorResolver(service);
+  const durable = service && createBackendToolCallLedger(service);
   const pick = (connectorId: string): WebConnectorResolver | undefined =>
-    local?.has(connectorId)
-      ? local.resolver
-      : process.env.CONVEX_HTTP_URL && getServiceCredential()
-        ? backend
-        : undefined;
+    local?.has(connectorId) ? local.resolver : backend;
   const resolver: WebConnectorResolver = {
     resolve: async (connectorId) => pick(connectorId)?.resolve(connectorId),
     upstream: async (connector, context) => {
@@ -43,6 +44,16 @@ export function mountInspectorWebConnectors(app: Hono): void {
     app,
     createWebConnectorEndpoint({
       resolver,
+      // The local registry's connectors are not the backend's to keep.
+      ...(durable
+        ? {
+            durableLedger: {
+              record: async (call) =>
+                local?.has(call.connectorId) ? undefined : durable.record(call),
+              settle: durable.settle,
+            },
+          }
+        : {}),
       // A local connector was registered with the flag on, by whoever runs
       // this Inspector, and names no user PostHog could be asked about.
       isEnabled: async (connector, context) =>
