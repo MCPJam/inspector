@@ -48,7 +48,7 @@ import {
   type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
-import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { verdictWithCodeEvaluators } from "./evals/code-evaluators/verdict";
 import {
   assessAgentActivity,
   countModelInvocations,
@@ -495,6 +495,8 @@ export type EvalTestCase = {
    * is no gate. See `shared/predicates`.
    */
   successPredicates?: import("@/shared/eval-matching").Predicate[];
+  /** The suite's code evaluators, frozen on the run; run after each trial. */
+  codeEvaluators?: import("./evals/code-evaluators/types.js").CodeEvaluatorDefinition[];
   /**
    * Per-Run override layered on top of the suite's hostConfig. Carries
    * the editor's in-place tweaks (locale, timezone, hostContext,
@@ -5712,7 +5714,8 @@ const runLocalIteration = async ({
       selectedServers,
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
-    const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    const { evaluation, passed, predicateResults, codeEvaluatorResults } =
+      await verdictWithCodeEvaluators({
       ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5782,6 +5785,9 @@ const runLocalIteration = async ({
           messages: traceForGate?.messages,
         }),
       }),
+    }, {
+      evaluators: test.codeEvaluators,
+      runKey: String(runId ?? iterationId ?? test.title),
     });
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
@@ -5872,6 +5878,7 @@ const runLocalIteration = async ({
         ? { errorDetails: acc.iterationErrorDetails }
         : {}),
       predicateResults,
+      ...(codeEvaluatorResults.length ? { codeEvaluatorResults } : {}),
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
         : {}),
@@ -7555,7 +7562,8 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     selectedServers,
   );
-  const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+  const { evaluation, passed, predicateResults, codeEvaluatorResults } =
+    await verdictWithCodeEvaluators({
     ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -7612,6 +7620,9 @@ const runHostedIterationWithBrowser = async (
         messages: traceForGate?.messages,
       }),
     }),
+  }, {
+    evaluators: test.codeEvaluators,
+    runKey: String(runId ?? iterationId ?? test.title),
   });
   const promptTraceSummaries = buildPromptTraceSummaries(
     evaluation,
@@ -7707,6 +7718,7 @@ const runHostedIterationWithBrowser = async (
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
     predicateResults,
+    ...(codeEvaluatorResults.length ? { codeEvaluatorResults } : {}),
     ...(toolPolicyGate?.blocks.length
       ? { policyBlocks: toolPolicyGate.blocks }
       : {}),

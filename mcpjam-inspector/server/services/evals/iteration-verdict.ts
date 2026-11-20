@@ -117,9 +117,20 @@ export interface EvalIterationVerdict {
   predicateResults: PredicateResult[];
 }
 
-export function buildEvalIterationVerdict(
+/** The matcher result and the transcript checks read; computed once. */
+export type PreparedEvalIterationVerdict = {
+  evaluation: MultiTurnEvaluationResult;
+  transcript: ReturnType<typeof buildIterationTranscript>;
+};
+
+/**
+ * Step one: run the matcher and build the transcript. Split out so a caller
+ * can hand the same transcript to code evaluators, which run asynchronously
+ * in a sandbox, before the verdict is finished.
+ */
+export function prepareEvalIterationVerdict(
   input: EvalIterationVerdictInput,
-): EvalIterationVerdict {
+): PreparedEvalIterationVerdict {
   const evaluation = evaluateMultiTurnResults(
     input.promptTurns,
     input.toolsCalledByPrompt,
@@ -132,41 +143,54 @@ export function buildEvalIterationVerdict(
       toolErrors: extractToolErrors(input.trace),
     },
   );
-
-  // Extracted once, outside the `effectivePredicates` guard's branch, so the
-  // capture states describe THIS iteration rather than whether anybody
-  // happened to author a check over it.
+  // Extracted once, so the capture states describe THIS iteration rather
+  // than whether anybody happened to author a check over it.
   const evidence = extractTranscriptEvidence(input.trace);
+  const transcript = buildIterationTranscript({
+    trace: input.trace as TranscriptArgs["trace"],
+    // `evaluation.toolsCalled` already includes widget calls (merged into
+    // the matcher input by the caller).
+    toolCalls: evaluation.toolsCalled,
+    usage: input.usage,
+    renderObservations: input.renderObservations,
+    // Pinned turns have no trace; thread their tool errors explicitly.
+    ...(input.toolErrors !== undefined ? { toolErrors: input.toolErrors } : {}),
+    toolResults: evidence.toolResults,
+    resultsCaptured: evidence.resultsCaptured,
+    toolCallTimings: evidence.toolCallTimings,
+    timingsCaptured: evidence.timingsCaptured,
+    toolDeclarations: input.toolDeclarations,
+    declarationsCaptured: input.declarationsCaptured,
+    ...(input.selectionTools
+      ? {
+          toolInventory: toTranscriptToolInventory(
+            input.selectionTools,
+            input.selectionToolAnnotations,
+          ),
+        }
+      : {}),
+  });
+  return { evaluation, transcript };
+}
+
+export function buildEvalIterationVerdict(
+  input: EvalIterationVerdictInput,
+): EvalIterationVerdict {
+  return finishEvalIterationVerdict(prepareEvalIterationVerdict(input), input);
+}
+
+/**
+ * Step two: the checks and every gate. `codeFailed` is true when a Required
+ * code evaluator scored a fail on this trial (`codeEvaluatorsFailTrial`).
+ */
+export function finishEvalIterationVerdict(
+  prepared: PreparedEvalIterationVerdict,
+  input: EvalIterationVerdictInput,
+  codeFailed = false,
+): EvalIterationVerdict {
+  const { evaluation, transcript } = prepared;
   const casePredicateResults = input.effectivePredicates?.length
-    ? evaluatePredicates(
-        buildIterationTranscript({
-          trace: input.trace as TranscriptArgs["trace"],
-          // `evaluation.toolsCalled` already includes widget calls (merged into
-          // the matcher input by the caller).
-          toolCalls: evaluation.toolsCalled,
-          usage: input.usage,
-          renderObservations: input.renderObservations,
-          // Pinned turns have no trace; thread their tool errors explicitly.
-          ...(input.toolErrors !== undefined
-            ? { toolErrors: input.toolErrors }
-            : {}),
-          toolResults: evidence.toolResults,
-          resultsCaptured: evidence.resultsCaptured,
-          toolCallTimings: evidence.toolCallTimings,
-          timingsCaptured: evidence.timingsCaptured,
-          toolDeclarations: input.toolDeclarations,
-          declarationsCaptured: input.declarationsCaptured,
-          ...(input.selectionTools
-            ? {
-                toolInventory: toTranscriptToolInventory(
-                  input.selectionTools,
-                  input.selectionToolAnnotations,
-                ),
-              }
-            : {}),
-        }),
-        input.effectivePredicates,
-      )
+    ? evaluatePredicates(transcript, input.effectivePredicates)
     : [];
 
   // Case-level + per-turn (scope-tagged) results gate AND persist together, in
@@ -209,6 +233,12 @@ export function buildEvalIterationVerdict(
   // Nothing ran. Enforced here as well as by a score row, because under
   // `shadow` and `off` grading the rows decide nothing and this boolean does.
   if (passed && input.agentActivity?.status === "no_agent_activity") {
+    passed = false;
+  }
+
+  // A Required code evaluator that scored a fail fails the trial; an error
+  // does not, the same rule a check with no evidence follows.
+  if (passed && codeFailed) {
     passed = false;
   }
 

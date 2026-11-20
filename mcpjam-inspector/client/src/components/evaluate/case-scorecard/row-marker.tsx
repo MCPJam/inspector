@@ -31,6 +31,7 @@ const WHEN: Record<string, string> = {
   snapshot: "Graded once, over the finished transcript",
   judge: "Runs last, after every assertion",
   rubricCheck: "Runs with the judge, after every assertion",
+  code: "Runs your code on the trial, in a sandbox",
   builtin: "Built-in runner check, measured on every iteration",
 };
 

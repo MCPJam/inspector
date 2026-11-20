@@ -3436,6 +3436,10 @@ export function SuiteIterationsView({
                     />
                   }
                   judgeRubric={draft.current.judgeRubric}
+                  codeEvaluators={draft.current.codeEvaluators}
+                  onCodeEvaluatorsChange={(value) =>
+                    dispatchDraft({ type: "edit", key: "codeEvaluators", value })
+                  }
                   groundednessEvidence={{
                     result: groundedness.result ?? null,
                     pending: groundedness.pending,

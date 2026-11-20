@@ -192,6 +192,8 @@ export type ScorecardProvenance =
    * shows exactly the questions it was asked.
    */
   | "rubricCheck"
+  /** A code evaluator's outcome, from the trial's stored results. */
+  | "code"
   | "builtin";
 
 /** How a row finds its result on a trial. See `joinTrialResults`. */
@@ -1212,6 +1214,7 @@ export function expectationOf(row: ScorecardRow): string {
   if (row.predicate) return formatCriterion({ predicate: row.predicate });
   if (row.route) return routeLabel(row.route);
   if (row.widgetAssertion) return purposeOf(row.widgetAssertion);
+  if (row.provenance === "code") return `“${row.label}” returns a pass.`;
   if (row.provenance === "rubricCheck") {
     return row.rubricCheck?.criterion
       ? `Yes: ${row.label}`

@@ -23,6 +23,7 @@
  * so a new setting cannot render as a change nobody can describe.
  */
 
+import type { CodeEvaluator } from "./evaluator-library/code-evaluators-model";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
@@ -68,6 +69,7 @@ export type SuiteSettingsValues = {
   computerEnvironmentId: string | undefined;
   defaultMatchOptions: EvalMatchOptions | undefined;
   defaultPredicates: Predicate[];
+  codeEvaluators: CodeEvaluator[];
   judgeConfig: EvalJudgeConfig | undefined;
   judgeRubric: EvalJudgeRubric | undefined;
   /**
@@ -133,6 +135,7 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "computerEnvironmentId",
   "defaultMatchOptions",
   "defaultPredicates",
+  "codeEvaluators",
   "judgeConfig",
   "judgeRubric",
   "verdictPolicyVersion",
@@ -246,6 +249,7 @@ export function readSuiteSettingsValues(suite: {
   }>;
   defaultMatchOptions?: EvalMatchOptions;
   defaultPredicates?: Predicate[];
+  codeEvaluators?: CodeEvaluator[];
   judgeConfig?: EvalJudgeConfig;
   judgeRubric?: EvalJudgeRubric;
   verdictPolicyVersion?: 2;
@@ -272,6 +276,7 @@ export function readSuiteSettingsValues(suite: {
     // Absent and empty are the same state to a reader, and two spellings is
     // how one of them ends up looking like an unsaved change.
     defaultPredicates: suite.defaultPredicates ?? [],
+    codeEvaluators: suite.codeEvaluators ?? [],
     judgeConfig: suite.judgeConfig,
     judgeRubric: suite.judgeRubric,
     verdictPolicyVersion: suite.verdictPolicyVersion,
@@ -624,6 +629,10 @@ export function toUpdateArgs(
         args.defaultPredicates =
           (value as Predicate[]).length === 0 ? null : value;
         break;
+      case "codeEvaluators":
+        args.codeEvaluators =
+          (value as CodeEvaluator[]).length === 0 ? null : value;
+        break;
       case "judgeConfig":
         args.judgeConfig = value ?? null;
         break;
@@ -816,6 +825,13 @@ export function describeChange(
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };
+    case "codeEvaluators":
+      return {
+        key,
+        label: "Code evaluators",
+        before: describeCodeEvaluators(before.codeEvaluators),
+        after: describeCodeEvaluators(after.codeEvaluators),
+      };
     case "judgeConfig":
       return {
         key,
@@ -946,4 +962,8 @@ export function environmentImageSaveBlock(args: {
   return args.capabilities === undefined
     ? "Still checking what this deployment supports. Try saving again in a moment."
     : "This deployment cannot set a sandbox image on this suite's environments yet. Undo the image change to save your other edits.";
+}
+
+function describeCodeEvaluators(list: readonly CodeEvaluator[] = []): string {
+  return list.length === 0 ? "None" : list.map((e) => e.label).join(", ");
 }

@@ -1,4 +1,5 @@
 import type { PlatformEvalIterationReport } from "@mcpjam/sdk/platform";
+import { codeEvaluatorTrialRows } from "./code-evaluator-trial-rows";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { Button } from "@mcpjam/design-system/button";
 /**
@@ -274,6 +275,7 @@ export function TrialScorecard({
       [
         ...rubricCheckTrialRows(iteration),
         ...customJudgeTrialRows(iteration),
+        ...codeEvaluatorTrialRows(iteration),
       ],
     );
     // Keyed on the FIELDS, not the input object: callers build that object in

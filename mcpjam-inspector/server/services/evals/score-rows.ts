@@ -30,6 +30,11 @@ import { evaluateToolCalls } from "@mcpjam/sdk/matchers";
 import { resolveExtrasCap } from "@/shared/eval-matching";
 import type { AgentActivityAssessment } from "./agent-activity.js";
 import {
+  codeEvaluatorDefinitionInputs,
+  codeEvaluatorScoreRows,
+} from "./code-evaluator-rows.js";
+import type { CodeEvaluatorOutcome } from "./code-evaluators/types.js";
+import {
   customJudgeDefinitionInputs,
   customJudgeScoreRows,
   type HostedCustomJudgesVerdictLike,
@@ -151,6 +156,8 @@ export type HostedScoreRowInputs = {
   rubricChecksVerdict?: HostedRubricChecksVerdictLike;
   /** Absent on the first pass; present on the judge second pass. */
   customJudgesVerdict?: HostedCustomJudgesVerdictLike;
+  /** First pass only: the trial's code evaluator outcomes. */
+  codeEvaluatorResults?: readonly CodeEvaluatorOutcome[];
 };
 
 const RUBRIC_CHECK_KINDS = new Set(["boolean", "choice", "score"]);
@@ -288,7 +295,11 @@ export function hostedScoreDefinitionInputs(
   const judge = inputs.judgeVerdict;
   const rubricChecks = rubricCheckQuestionsFrom(inputs.rubricChecksVerdict);
   const customJudges = customJudgeDefinitionInputs(inputs.customJudgesVerdict);
+  const codeEvaluators = codeEvaluatorDefinitionInputs(
+    inputs.codeEvaluatorResults,
+  );
   return {
+    ...(codeEvaluators.length > 0 ? { codeEvaluators } : {}),
     ...(customJudges.length > 0 ? { customJudges } : {}),
     ...(inputs.predicateResults?.length
       ? {
@@ -597,6 +608,7 @@ export function buildHostedScoreRows(
   }
 
   rows.push(...customJudgeScoreRows(inputs.customJudgesVerdict, byId));
+  rows.push(...codeEvaluatorScoreRows(inputs.codeEvaluatorResults, byId));
   return rows;
 }
 
