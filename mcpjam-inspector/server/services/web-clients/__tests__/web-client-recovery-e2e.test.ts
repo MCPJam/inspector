@@ -419,6 +419,47 @@ describe(
       expect(vendor.sends).toEqual(["lost eval reply"]);
     });
 
+    it("reloads instead of pausing when the account was signed in again since the run restored it", async () => {
+      interruption.passwordAfterCall = true;
+      // The run restored version 1; a person has signed in again since (version 2).
+      environment.restoredProfileVersion = () => 1;
+      await backend.saveWebAccountProfile({
+        webAccountId: ACCOUNT,
+        expectedProfileVersion: 1,
+        profile: new Uint8Array(),
+      });
+      // A pause would hold the iteration; fail fast instead of waiting it out.
+      setWebRecovery({
+        backendFor: () => backend,
+        ledger: webClientToolCallLedger,
+        maxPauseMs: 3_000,
+        pollMs: 200,
+      });
+      try {
+        const result = await runHarnessTurn(
+          turnOptions("signed in since", {
+            evalIterationId: "iteration-recovery-reload",
+            sourceType: "eval",
+          }),
+          "none",
+        );
+        expect(result.messageHistory.at(-1)).toMatchObject({
+          role: "assistant",
+          content: expect.arrayContaining([
+            { type: "text", text: "echo said: echo: signed in since" },
+          ]),
+        });
+        // Nobody was asked to sign in, and the server still got one call.
+        expect(
+          await backend.listWebReconnectRequests({ projectId: PROJECT }),
+        ).toEqual([]);
+        expect(upstream.toolCalls()).toHaveLength(1);
+        expect(vendor.sends).toEqual(["signed in since"]);
+      } finally {
+        delete environment.restoredProfileVersion;
+      }
+    });
+
     it("stops an eval iteration as ambiguous when the server never answered, without calling it again", async () => {
       upstream.state.holdToolCalls = true;
       interruption.shortReply = true;

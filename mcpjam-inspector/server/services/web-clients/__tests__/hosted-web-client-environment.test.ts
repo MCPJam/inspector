@@ -13,6 +13,7 @@ import { startFixtureVendor } from "../../../test/support/web-clients/fixture-ve
 import { startStandInEndpoint } from "../../../test/support/web-clients/stand-in-endpoint";
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
+import type { PageDriver } from "../../../utils/harness/real-ui/page-driver";
 import type { WebClientService } from "../backend-connector-resolver";
 import {
   createHostedWebClientEnvironment,
@@ -252,6 +253,16 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
       accountEmail: "runner@example.com",
       workspaceName: "Fixture workspace",
     });
+  });
+
+  it("tells recovery which profile version the account's browser restored", async () => {
+    const { service } = recordedService();
+    const env = environment(service, {
+      openHostedBrowser: async () => ({ driver: {} as PageDriver, close: async () => {} }),
+    });
+    expect(env.restoredProfileVersion?.("acct-default")).toBeUndefined();
+    await env.openBrowser({ webAccountId: "acct-default", sites: [] });
+    expect(env.restoredProfileVersion?.("acct-default")).toBe(3);
   });
 
   it("marks the account as needing sign-in and reports the pending step", async () => {
