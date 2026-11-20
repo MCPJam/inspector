@@ -2,6 +2,7 @@ import {
   consumeCallbackProjectReturn,
   useCallbackProjectReturnRecovery,
 } from "./lib/callback-project-return";
+import { usePlanCheckoutReturn } from "@/hooks/usePlanCheckoutReturn";
 import { projectTransitionRecovery } from "./lib/auth/project-transition-recovery";
 import { useProjectTransitionRecovery } from "./hooks/use-project-transition-recovery";
 import { PricingFeatureSignInGate } from "./components/billing/PricingFeatureSignInGate";
@@ -2966,6 +2967,7 @@ export function HomeRoute() {
 }
 
 export default function App() {
+  usePlanCheckoutReturn();
   const activeTab = useActiveTab();
   const currentOrgRoute = useCurrentOrgRoute();
   const billingLocation = useCurrentLocationParts();
