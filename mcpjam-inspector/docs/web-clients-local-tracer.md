@@ -31,8 +31,11 @@ The turn window only allows the tracer's `echo` tool.
 
 ## Run it
 
-Use the Node version in `mcpjam-inspector/.nvmrc`, install dependencies from
-the repository root, and install Chromium for Playwright if you have not:
+Use the Node version in `mcpjam-inspector/.nvmrc`. Set up the checkout once,
+since the server code imports generated files: from the repository root run
+`npm ci`, then in `mcpjam-inspector/` run
+`npm run sdk:build && npm run bundle:all`. Install Chromium for Playwright if
+you have not:
 
 ```sh
 npx playwright install chromium
