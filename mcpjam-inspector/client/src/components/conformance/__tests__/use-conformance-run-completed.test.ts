@@ -76,6 +76,11 @@ describe("useConformanceRunCompleted", () => {
     },
   );
 
+  it("does not ask for a star when nothing was applicable", () => {
+    runThenFinish({ ...score("passed"), score: null, applicable: 0 });
+    expect(requestGitHubStarPrompt).not.toHaveBeenCalled();
+  });
+
   it("ignores a finished run it never saw running", () => {
     renderHook(() => useConformanceRunCompleted(false, score("passed")));
     expect(track).not.toHaveBeenCalled();

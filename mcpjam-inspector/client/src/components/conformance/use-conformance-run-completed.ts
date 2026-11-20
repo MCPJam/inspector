@@ -23,7 +23,8 @@ export function useConformanceRunCompleted(
       outcome: score.outcome,
       has_advice: hasAdvice,
     });
-    if (score.outcome === "passed") {
+    // A run where nothing applied passes vacuously; it is no success to celebrate.
+    if (score.outcome === "passed" && score.score !== null) {
       requestGitHubStarPrompt({
         trigger: "conformance",
         reason: "completed",
