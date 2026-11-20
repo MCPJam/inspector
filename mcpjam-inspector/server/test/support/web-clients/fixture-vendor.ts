@@ -31,6 +31,8 @@ export type FixtureVendor = {
   connectors: Map<string, string>;
   /** Shows a human check on every page while set. */
   challenge: boolean;
+  /** Where `/redirect` sends the page, like a vendor link to another site. */
+  redirectTo?: string;
   close(): Promise<void>;
 };
 
@@ -175,8 +177,8 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
       response.end(JSON.stringify(body));
     };
     if (url.pathname === "/redirect") {
-      // A vendor link that sends the page wherever `to` says.
-      response.writeHead(302, { location: url.searchParams.get("to") ?? "/new" });
+      // The test chooses the target, so no request decides where this goes.
+      response.writeHead(302, { location: vendor.redirectTo ?? "/new" });
       response.end();
       return;
     }
