@@ -15,6 +15,7 @@ import {
   webClientScope,
   type WebClientRecorder,
 } from "../forwarding-recorder.js";
+import { createStreamingPinnedFetch } from "../../../utils/pinned-fetch.js";
 import {
   createInMemoryToolCallLedger,
   hashPayload,
@@ -282,7 +283,9 @@ describe("forwarding endpoint: the turn gate", () => {
     expect(response.status).toBe(400);
     expect((await response.json()).error).toMatchObject({
       code: -32602,
-      message: expect.stringMatching(/^This tool call has a number too large/),
+      message: expect.stringMatching(
+        /^This tool call has a number MCPJam can't check exactly/,
+      ),
     });
     expect(approvals).toHaveLength(0);
     expect(fixture.received).toHaveLength(0);
@@ -556,12 +559,94 @@ describe("forwarding endpoint: sending", () => {
     const window = openTurn();
     endTurn = () => turns.close(window.turnId);
     const vendor = vendorClient(app, { path: PATH });
-    expect(
-      (await vendor.post(vendor.callToolRaw(23, "echo", "r"))).status,
-    ).toBe(502);
+    const response = await vendor.post(vendor.callToolRaw(23, "echo", "r"));
+    expect(response.status).toBe(200);
+    expect((await response.json()).error.message).toMatch(
+      /^No MCPJam run is using this connector/,
+    );
     expect(upstreamFetch).toHaveBeenCalledOnce();
     expect(ledger.forTurn(window.turnId)).toEqual([
       expect.objectContaining({ state: "error", upstreamStatus: 401 }),
+    ]);
+  });
+
+  /** The hosted transport, which follows a redirect itself unless asked not to. */
+  const hostedFetch = () =>
+    createStreamingPinnedFetch({ hosted: true, allowLoopback: true });
+
+  it("does not send a tool call on through a redirect once its turn has closed, and records it lost", async () => {
+    const { app, ledger, openTurn, turns } = setup({
+      upstreamUrl: fixture.redirectUrl(307),
+      upstream: { fetch: hostedFetch() },
+    });
+    const window = openTurn();
+    fixture.hooks.onRedirect = () => turns.close(window.turnId);
+    try {
+      const vendor = vendorClient(app, { path: PATH });
+      const response = await vendor.post(
+        vendor.callToolRaw(27, "echo", "moved"),
+      );
+      expect((await response.json()).error.message).toMatch(
+        /^MCPJam could not tell whether/,
+      );
+    } finally {
+      fixture.hooks.onRedirect = undefined;
+    }
+    expect(fixture.received.map((request) => request.url)).toEqual([
+      "/redirect/307",
+    ]);
+    expect(ledger.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({ state: "lost", upstreamStatus: 307 }),
+    ]);
+  });
+
+  it("follows a redirect with a tool call while its turn is open", async () => {
+    const { app, ledger, openTurn } = setup({
+      upstreamUrl: fixture.redirectUrl(308),
+      upstream: { fetch: hostedFetch() },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const response = await vendor.post(vendor.callToolRaw(28, "echo", "moved"));
+    expect(await response.json()).toMatchObject({
+      id: 28,
+      result: { content: [{ text: "echo: moved" }] },
+    });
+    expect(fixture.received.map((request) => request.url)).toEqual([
+      "/redirect/308",
+      "/mcp",
+    ]);
+    expect(fixture.received[1]?.headers.authorization).toBe(PROJECT_CREDENTIAL);
+    expect(ledger.forTurn(window.turnId)[0]?.state).toBe("result");
+  });
+
+  it("settles a call from the server's answer when the ledger refused it the first time", async () => {
+    const inner = createInMemoryToolCallLedger();
+    let attempts = 0;
+    const { app, openTurn } = setup({
+      deps: {
+        ledger: {
+          ...inner,
+          settle: (id, outcome) => {
+            attempts += 1;
+            if (attempts === 1) throw new Error("ledger unavailable");
+            inner.settle(id, outcome);
+          },
+        },
+      },
+    });
+    const window = openTurn();
+    const vendor = vendorClient(app, { path: PATH });
+    const answer = await (
+      await vendor.post(vendor.callToolRaw(29, "echo", "kept"))
+    ).json();
+    expect(answer).toMatchObject({ id: 29, result: {} });
+    expect(inner.forTurn(window.turnId)).toEqual([
+      expect.objectContaining({
+        state: "result",
+        upstreamStatus: 200,
+        resultHash: hashPayload(answer.result),
+      }),
     ]);
   });
 
