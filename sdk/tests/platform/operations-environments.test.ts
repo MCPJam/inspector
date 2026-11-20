@@ -261,3 +261,33 @@ describe("id fast-path", () => {
     expect(result.id).toBe(ADHOC_ID);
   });
 });
+
+describe("an environment selector nothing matches", () => {
+  it("names the named environments and says unnamed ones go by id", async () => {
+    const { client } = makeClient([environment("env-live", "Staging", false)]);
+
+    const error = await getEnvironmentOperation
+      .execute(
+        { environment: "MCPJam · eval settings · claude-haiku-4.5" },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as Error).message).toBe(
+      'Project environment "MCPJam · eval settings · claude-haiku-4.5" was not found in project "Acme". Named environments: Staging (id: env-live). An unnamed environment, such as the `environment` an eval run records, is addressed by its id.'
+    );
+  });
+
+  it("does not claim the project has no environments when none is named", async () => {
+    const { client } = makeClient([]);
+
+    const error = await getEnvironmentOperation
+      .execute({ environment: "eval settings" }, { client })
+      .catch((caught: unknown) => caught);
+
+    expect((error as Error).message).toContain(
+      "It has no named environments. An unnamed environment"
+    );
+    expect((error as Error).message).not.toContain("has none");
+  });
+});

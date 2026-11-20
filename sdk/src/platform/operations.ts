@@ -4,6 +4,7 @@ import {
   resolveSuiteHostTargets,
 } from "./suite-client-targets.js";
 import {
+  formatResourceList,
   resolveByIdOrName,
   resolutionError,
   operationInputError,
@@ -11054,11 +11055,40 @@ async function resolveEnvironmentSelector(
   const preferredHasName = preferred.some(
     (item) => item.name?.toLocaleLowerCase() === normalizedSelector
   );
+  if (
+    !preferredHasName &&
+    !page.items.some(
+      (item) => item.name?.toLocaleLowerCase() === normalizedSelector
+    )
+  ) {
+    throw unknownEnvironmentError(trimmedSelector, project, page.items);
+  }
   return resolveByIdOrName(
     preferredHasName ? preferred : page.items,
     selector,
     "Project environment",
     `project "${project.name}"`
+  );
+}
+
+/**
+ * No environment has this id or name. Unnamed environments (the ad-hoc ones
+ * eval runs and compose create) never match a name: a run shows one under a
+ * label like "MCPJam · eval settings · <model>", which is not its name, so the
+ * message says to use the id rather than claim the project has none.
+ */
+function unknownEnvironmentError(
+  selector: string,
+  project: { name: string },
+  environments: Array<{ id: string; name?: string | null }>
+): PlatformApiError {
+  const named = environments.filter((item) => item.name);
+  const listed =
+    named.length > 0
+      ? ` Named environments: ${formatResourceList(named)}.`
+      : " It has no named environments.";
+  return resolutionError(
+    `Project environment "${selector}" was not found in project "${project.name}".${listed} An unnamed environment, such as the \`environment\` an eval run records, is addressed by its id.`
   );
 }
 
