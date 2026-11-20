@@ -71,7 +71,7 @@ describe("a local web client environment", () => {
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {
     const close = vi.fn(async () => {});
     const launch = vi.fn(async () => ({ page: { route: async () => {} } as never, close }));
-    const env = environment({ launch });
+    const env = environment({ launch, profileWaitMs: 60, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const browser = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
     expect(launch).toHaveBeenCalledWith("/profiles/chatgpt-profile", { headless: true });
@@ -83,6 +83,19 @@ describe("a local web client environment", () => {
     launch.mockRejectedValueOnce(new Error("Chromium is not installed"));
     await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("Chromium is not installed");
     await (await env.openBrowser({ webAccountId: "local:chatgpt", sites })).close();
+  });
+
+  it("lets a second turn on the same profile wait for the first browser to close", async () => {
+    const launch = vi.fn(async () => ({ page: { route: async () => {} } as never, close: async () => {} }));
+    const env = environment({ launch, profilePollMs: 10 });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const second = env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(launch).toHaveBeenCalledTimes(1);
+    await first.close();
+    await (await second).close();
+    expect(launch).toHaveBeenCalledTimes(2);
   });
 
   it("keeps profiles outside any checkout, under the folder the person chose", () => {
