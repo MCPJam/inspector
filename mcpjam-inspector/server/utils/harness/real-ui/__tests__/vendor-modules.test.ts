@@ -184,12 +184,11 @@ describe("chatgpt.com", () => {
     const driver: PageDriver = {
       ...cannedDriver({
         url: `https://chatgpt.com/c/${id}`,
-        // The hosted browser reads an element as its accessibility tree.
+        // The hosted browser reads an element's text, as the Playwright one does.
         texts: {
-          '[data-message-author-role="user"]': '- text "say hello"',
-          '[data-message-author-role="assistant"]': '- text "Calling echo"',
-          '[data-message-author-role="assistant"] >> nth=-1':
-            '- paragraph\n  - text "It said"\n  - strong\n    - text "\\"hello\\"."',
+          '[data-message-author-role="user"]': "say hello",
+          '[data-message-author-role="assistant"]': "Calling echo",
+          '[data-message-author-role="assistant"] >> nth=-1': 'It said "hello".',
         },
       }),
       kind: "hosted",
@@ -259,23 +258,41 @@ describe("the hosted driver", () => {
 
   it("sends the command API's own commands and runs no script", async () => {
     const send = vi.fn(async (_command: BrowserAgentCommand) =>
-      executed({ url: "https://claude.ai/new", a11y: "textbox" }),
+      executed({ url: "https://claude.ai/new", text: " hi\n" }),
     );
     const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
     await driver.navigate("https://claude.ai/new");
     await driver.click('[data-testid="chat-input-send"]');
     await driver.type('[data-testid="chat-input"]', "hi");
     expect(await driver.url()).toBe("https://claude.ai/new");
-    expect(await driver.readText('[data-testid="chat-input"]')).toBe("textbox");
+    expect(await driver.readText('[data-testid="chat-input"]')).toBe("hi");
     expect(send.mock.calls.map(([command]) => command)).toEqual([
       { op: "navigate", url: "https://claude.ai/new", observeAfter: "none" },
       { op: "act", verb: "click", target: { selector: '[data-testid="chat-input-send"]' }, observeAfter: "none" },
       { op: "act", verb: "type", target: { selector: '[data-testid="chat-input"]' }, value: "hi", observeAfter: "none" },
       { op: "observe", mode: "url" },
-      { op: "observe", mode: "a11y", rootSelector: '[data-testid="chat-input"]', filter: "all" },
+      { op: "observe", mode: "text", rootSelector: '[data-testid="chat-input"]' },
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("reads an element as absent only when nothing matches it, and fails any other read", async () => {
+    const failed = (code: string): BrowserAgentResult => ({
+      status: "executed",
+      commandId: "c",
+      ok: false,
+      error: { code, message: `${code} for this read` },
+    });
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.rootSelector === "role=dialog"
+        ? failed("unknown_selector")
+        : failed("unsupported_target"),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await driver.readText("role=dialog")).toBeUndefined();
+    // A read that failed is never taken for an element that isn't there.
+    await expect(driver.readText("main")).rejects.toMatchObject({ code: "failed" });
   });
 
   it("refuses other sites and never retries a command whose outcome is unknown", async () => {

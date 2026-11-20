@@ -57,8 +57,8 @@ export interface PageDriver {
   /** The first match's text, or `undefined` when nothing matches. */
   readText(selector: string): Promise<string | undefined>;
   /**
-   * The whole page's text as the browser renders it, where `readText` reads
-   * names rather than prose (the hosted browser). Bounded by the browser.
+   * The whole page's text as the browser renders it, for a driver that runs
+   * no script in the page (the hosted browser). Bounded by the browser.
    */
   readPageText?(): Promise<string>;
 }

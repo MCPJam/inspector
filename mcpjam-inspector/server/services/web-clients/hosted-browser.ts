@@ -53,12 +53,32 @@ export function webClientBrowserPolicy(
   return { mode: "allowlist", originAllowlist: [...new Set([...WEB_CLIENT_SITES[vendor], ...mcpjamSignIn])] };
 }
 
+/**
+ * Whether the session's daemon reads one element's text, or `undefined` when
+ * it didn't say. An older daemon answers that read with the whole page's
+ * text, which a page module would take for the element's.
+ */
+async function daemonReadsElements(
+  client: Pick<SessionClient, "status">,
+): Promise<boolean | undefined> {
+  try {
+    const status = await client.status();
+    return status.kind === "ok" ? (status.features ?? []).includes("element-text") : undefined;
+  } catch (error) {
+    logger.warn("[web-clients] hosted browser status unreadable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
 /** One command to the session's daemon, answered in the public contract. */
 export function sessionBrowserTransport(args: {
-  handle: { client: Pick<SessionClient, "sendCommand">; bootId: string };
+  handle: { client: Pick<SessionClient, "sendCommand" | "status">; bootId: string };
   sessionId: string;
   policy: BrowserAgentSessionPolicy;
 }): BrowserCommandTransport {
+  let readsElements: boolean | undefined;
   return async (command: BrowserAgentCommand): Promise<BrowserAgentResult> => {
     const commandId = randomUUID();
     const mapped = toDaemonAction(command);
@@ -72,6 +92,16 @@ export function sessionBrowserTransport(args: {
         code: "origin_not_allowed",
         message: "This browser may only open the vendor's own sites.",
       });
+    }
+    if (command.op === "observe" && command.mode === "text" && command.rootSelector !== undefined) {
+      readsElements ??= await daemonReadsElements(args.handle.client);
+      if (!readsElements) {
+        return refusedResult({
+          commandId,
+          code: "unsupported_target",
+          message: "This hosted browser can't read the page yet. Close its browser pane and run again in a minute.",
+        });
+      }
     }
     try {
       const response = await args.handle.client.sendCommand(
