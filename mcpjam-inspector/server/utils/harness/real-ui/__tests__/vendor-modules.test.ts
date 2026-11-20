@@ -178,6 +178,32 @@ describe("chatgpt.com", () => {
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
   });
+
+  it("reads the chat from the page in a browser that runs no script", async () => {
+    const driver: PageDriver = {
+      ...cannedDriver({
+        url: `https://chatgpt.com/c/${id}`,
+        texts: {
+          '[data-message-author-role="user"]': " say hello ",
+          '[data-message-author-role="assistant"]': "Calling echo",
+          '[data-message-author-role="assistant"] >> nth=-1': "It said hello.",
+        },
+      }),
+      kind: "hosted",
+      canEvaluate: false,
+    };
+    expect(
+      await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 }),
+    ).toEqual({
+      conversationId: id,
+      url: `https://chatgpt.com/c/${id}`,
+      userPrompt: "say hello",
+      replyText: "It said hello.",
+      toolCalls: [],
+    });
+    // The chat list needs the session's token, so an earlier send stays ambiguous.
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", { timeoutMs: 1_000 })).toBeUndefined();
+  });
 });
 
 describe("chatgpt.com's connector step", () => {

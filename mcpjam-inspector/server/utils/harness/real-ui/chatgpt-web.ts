@@ -25,6 +25,7 @@ import {
   pageChanged,
   type ConversationToolCall,
   type RealUiPageModule,
+  type SavedConversation,
   type StepContext,
 } from "./page-module.js";
 import { list, readVendorJson, record, text } from "./vendor-json.js";
@@ -61,6 +62,30 @@ async function waitVisible(
 /** ChatGPT's own API takes the session's access token, read from the page. */
 async function session(driver: PageDriver): Promise<Record<string, unknown>> {
   return record(await readVendorJson(driver, `${ORIGIN}/api/auth/session`));
+}
+
+/**
+ * The chat as the page shows it, for a browser that can't run a script in
+ * the page (the hosted one): ChatGPT's own API takes the session's token in a
+ * header, which only a script can send. The page shows no tool call times,
+ * so the turn's calls come from MCPJam's record of the wire alone.
+ */
+async function readShownConversation(
+  driver: PageDriver,
+  id: string,
+  ctx: StepContext,
+): Promise<SavedConversation> {
+  const url = `${ORIGIN}/c/${id}`;
+  if ((await driver.url()) !== url) await driver.navigate(url);
+  await waitVisible(driver, ASSISTANT, ctx, "the saved reply");
+  const userPrompt = await driver.readText(USER_MESSAGE);
+  return {
+    conversationId: id,
+    url,
+    ...(userPrompt ? { userPrompt: userPrompt.trim() } : {}),
+    replyText: ((await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "").trim(),
+    toolCalls: [],
+  };
 }
 
 async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string) {
@@ -185,6 +210,9 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async findSent(driver, prompt) {
+    // Without a script the chat list can't be read, so the send stays
+    // ambiguous rather than being guessed.
+    if (!driver.canEvaluate) return undefined;
     const token = text((await session(driver)).accessToken);
     if (!token) return undefined;
     const page = record(
@@ -220,9 +248,10 @@ export const chatgptWebPageModule: RealUiPageModule = {
     return { finished: signals.length === 3, signals };
   },
 
-  async readConversation(driver, conversationUrl) {
+  async readConversation(driver, conversationUrl, ctx) {
     const id = CHAT_PATH.exec(new URL(conversationUrl).pathname)?.[1];
     if (!id) throw pageChanged("read_conversation", "The chat's address has no conversation id.");
+    if (!driver.canEvaluate) return readShownConversation(driver, id, ctx);
     const token = text((await session(driver)).accessToken);
     if (!token) throw needsSignIn("signed_out", "read_conversation", "The ChatGPT account is signed out.");
     const saved = record(
