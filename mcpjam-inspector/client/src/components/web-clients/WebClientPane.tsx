@@ -16,6 +16,7 @@ import {
   newWebAccountLabel,
   runAccountOf,
   webAccountName,
+  webAccountWasSignedIn,
   webClientName,
   webClientSite,
   webClientVendorOfHost,
@@ -95,6 +96,8 @@ export function useWebClientPane({
   if (!vendor || !hostId || !projectId) return null;
   const account = runAccountOf(accounts);
   const signedOut = account?.status === "needs_sign_in";
+  // A new account needs sign-in too, but nobody was signed out of it.
+  const signedOutBySite = !!account && webAccountWasSignedIn(account);
   const active = signIn?.hostId === hostId && !local ? signIn : null;
   const site = webClientSite(vendor);
   const client = webClientName(vendor);
@@ -158,7 +161,7 @@ export function useWebClientPane({
             : `Sign in to ${site} with your team's test account`}
         </p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          {account
+          {signedOutBySite
             ? `${site} signed this account out, so runs on ${client} can't start. Sign in again here, then save it for the project.`
             : `Sign in here, then save the account for the project. Nothing is saved until you choose to.`}
         </p>
@@ -169,7 +172,7 @@ export function useWebClientPane({
           onClick={() => void startSignIn()}
         >
           {starting ? <Loader2 className="animate-spin" aria-hidden /> : null}
-          {account ? "Sign in again" : "Start signing in"}
+          {signedOutBySite ? "Sign in again" : "Start signing in"}
         </Button>
       </div>
     );

@@ -38,6 +38,14 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 
 const ready = createWebAccountView({ webAccountId: "wa-1" });
 const signedOut: WebAccount = { ...ready, status: "needs_sign_in" };
+/** Made, but nobody has signed it in yet: no profile, never verified. */
+const neverSignedIn: WebAccount = {
+  ...ready,
+  status: "needs_sign_in",
+  accountEmail: undefined,
+  hasProfile: false,
+  lastVerifiedAt: undefined,
+};
 
 /** The panel's layout: the chip in its top bar, the banner, then the body. */
 function Pane(props: Parameters<typeof useWebClientPane>[0]) {
@@ -160,6 +168,27 @@ describe("useWebClientPane", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in again" }));
     expect(mocks.create).not.toHaveBeenCalled();
     expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-1");
+  });
+
+  it("doesn't say the site signed out an account nobody has signed in yet", async () => {
+    mount({ isAdmin: true, accounts: [neverSignedIn] });
+    const pane = screen.getByTestId("web-pane-sign-in");
+    expect(pane).toHaveTextContent("Sign in here, then save the account");
+    expect(pane).not.toHaveTextContent("signed this account out");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Start signing in" }),
+    );
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.signIn).toHaveBeenCalledWith("project-1", "wa-1");
+  });
+
+  it("asks a member for an admin's first sign-in, not a sign-in again", () => {
+    mount({ accounts: [neverSignedIn] });
+    const pane = screen.getByTestId("web-pane-blocked");
+    expect(pane).toHaveTextContent(
+      "Ask a project admin to sign in to claude.ai with this account.",
+    );
+    expect(pane).not.toHaveTextContent("signed this account out");
   });
 
   it("saves the signed-in browser and goes back to the run's browser", async () => {
