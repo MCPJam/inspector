@@ -46,6 +46,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
+import { routeParam } from "./route-param.js";
 
 const swarmInsights = new Hono();
 
@@ -455,8 +456,8 @@ both(
   "/projects/:projectId/goal-runs/:runId/scorecard",
   "/projects/:projectId/journey-runs/:runId/scorecard",
   async (c) => {
-    const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const projectId = routeParam(c, "projectId");
+    const runId = routeParam(c, "runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireRunInProject(client, projectId, runId);
 
@@ -504,7 +505,7 @@ both(
  * it by. `swarmRunGroupId` upstream on both.
  */
 function swarmRunIdParam(c: Context, surface: { legacy: boolean }): string {
-  return c.req.param(surface.legacy ? "waveId" : "swarmRunId");
+  return routeParam(c, surface.legacy ? "waveId" : "swarmRunId");
 }
 
 /** Register one insights route on both spellings, deprecating the old one. */
@@ -673,8 +674,8 @@ both(
   "/projects/:projectId/goal-findings/:findingId/dismiss",
   "/projects/:projectId/journey-findings/:findingId/dismiss",
   async (c) => {
-    const projectId = c.req.param("projectId");
-    const findingId = c.req.param("findingId");
+    const projectId = routeParam(c, "projectId");
+    const findingId = routeParam(c, "findingId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireFindingInProject(client, projectId, findingId);
     try {
@@ -700,8 +701,8 @@ both(
   "/projects/:projectId/goal-findings/:findingId/undismiss",
   "/projects/:projectId/journey-findings/:findingId/undismiss",
   async (c) => {
-    const projectId = c.req.param("projectId");
-    const findingId = c.req.param("findingId");
+    const projectId = routeParam(c, "projectId");
+    const findingId = routeParam(c, "findingId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireFindingInProject(client, projectId, findingId);
     try {

@@ -44,6 +44,7 @@ import {
   classifyConvexReadError,
   translateConvexReadError,
 } from "./convex-read-errors.js";
+import { routeParam } from "./route-param.js";
 
 const scenarios = new Hono();
 
@@ -195,8 +196,8 @@ async function readOptionalJsonBody(c: {
 // The optional body carries create-time overrides, forwarded in ONE call so a
 // scenario is never briefly live in a wider mode than the caller asked for.
 const publishHandler = async (c: Context) => {
-  const projectId = c.req.param("projectId");
-  const environmentId = c.req.param("environmentId");
+  const projectId = routeParam(c, "projectId");
+  const environmentId = routeParam(c, "environmentId");
   const rawBody = await readOptionalJsonBody(c);
   const parsed = publishScenarioSchema.safeParse(rawBody);
   if (!parsed.success) {
@@ -276,8 +277,8 @@ const publishHandler = async (c: Context) => {
 // spelling they have would make the rename cost them a lookup. The canonical
 // name wins when both are sent; the spec documents one per surface.
 const unpublishHandler = async (c: Context) => {
-  const projectId = c.req.param("projectId");
-  const environmentId = c.req.param("environmentId");
+  const projectId = routeParam(c, "projectId");
+  const environmentId = routeParam(c, "environmentId");
   const scenarioId = c.req.query("studyId") ?? c.req.query("scenarioId");
   const client = createConvexClient(await getConvexBearerForRequest(c));
   await requireEnvironmentInProject(client, projectId, environmentId);

@@ -1,7 +1,6 @@
 {
   "server/index.ts": 1,
   "server/middleware/in-app-browser.ts": 1,
-  "server/routes/mcp/chat-v2.ts": 1,
   "server/routes/mcp/elicitation.ts": 1,
   "server/routes/mcp/skills.ts": 1,
   "server/routes/shared/conformance-runs.ts": 1,
@@ -10,15 +9,8 @@
   "server/routes/v1/catalog.ts": 1,
   "server/routes/v1/environments.ts": 1,
   "server/routes/v1/evals.ts": 2,
-  "server/routes/v1/goals.ts": 14,
-  "server/routes/v1/scenarios.ts": 2,
-  "server/routes/v1/shares.ts": 4,
-  "server/routes/v1/studies.ts": 17,
-  "server/routes/v1/swarm-generate.ts": 1,
-  "server/routes/v1/swarm-insights.ts": 5,
-  "server/routes/web/chat-v2.ts": 2,
+  "server/routes/v1/goals.ts": 4,
   "server/routes/web/computer-browser-frames.ts": 1,
-  "server/routes/web/computer-browser-stream.ts": 3,
   "server/routes/web/swarm-runs.ts": 2,
   "server/services/browserd/profile-archive.ts": 1,
   "server/services/browserd/v1-bridge.ts": 2,
@@ -36,11 +28,8 @@
   "server/services/readiness/worker.ts": 2,
   "server/services/sessionSimulation/swarm-runner.ts": 1,
   "server/utils/built-in-tools/mcpjam.ts": 1,
-  "server/utils/computers/eval-attachments-seed.ts": 1,
   "server/utils/guest-spend-ip.ts": 1,
   "server/utils/harness/local/inspector-layer-files.ts": 1,
-  "server/utils/harness/registry.ts": 2,
   "server/utils/harness/run-harness-turn.ts": 2,
-  "server/utils/local-server-resolver.ts": 1,
-  "server/utils/org-model-stream-handler.ts": 1
+  "server/utils/local-server-resolver.ts": 1
 }
