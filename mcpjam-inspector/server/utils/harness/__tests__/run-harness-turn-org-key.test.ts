@@ -24,7 +24,9 @@ const harnessState = vi.hoisted(() => ({
   /** Thrown by the runtime's stream after its parts, when set. */
   streamError: undefined as unknown,
   /** What the backend recorded as the proxy's refusal on the lease. */
-  recordedRefusal: undefined as { reason: string; at: number } | undefined,
+  recordedRefusal: undefined as
+    | { reason: string; at: number; recovery?: unknown }
+    | undefined,
   readRefusal: vi.fn(),
   supportsModel: vi.fn((_modelId: string, _options?: unknown) => true),
   createHarness: vi.fn((_args?: unknown) => ({ harnessId: "claude-code" })),
@@ -164,6 +166,7 @@ import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { reserveHarnessBox } from "../harness-box-reservation.js";
 import { stampOrgCredentialRevision } from "../org-credential-continuity";
 import { classifyEvalInfraError } from "../../../services/evals/infra-error-classification";
+import { runStopRefusal } from "../../../../shared/credit-exhaustion";
 
 const ADAPTER_STATE = {
   type: "resume-session",
@@ -411,6 +414,89 @@ describe("runHarnessTurn on the organization's own key", () => {
       const infra = (await failedTurn()).at(-1)?.infra;
       expect(infra).toMatchObject({ httpStatus: 409 });
       expect(infra?.code).toBeUndefined();
+    });
+
+    // A spend refusal: the proxy recorded its recovery step beside the
+    // reason, and a run stopping on the turn names that step.
+    it.each([
+      [
+        "spending_limit_reached",
+        {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "upgrade_plan",
+          actor: "caller",
+          plan: "pro",
+          url: "https://app.mcpjam.com/organizations/org_1/plans",
+        },
+      ],
+      [
+        "wallet_locked",
+        {
+          version: 1,
+          reason: "wallet_locked",
+          action: "contact_support",
+          actor: "support",
+        },
+      ],
+      [
+        "spend_budget_reached",
+        {
+          version: 1,
+          reason: "budget_reached",
+          action: "raise_budget",
+          actor: "owner_or_admin",
+          url: "https://app.mcpjam.com/organizations/org_1/budget",
+        },
+      ],
+    ])("a %s refusal carries its recovery to the run stop", async (reason, recovery) => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = bridgeRefusalError;
+      harnessState.recordedRefusal = {
+        reason,
+        at: Date.now() + 60_000,
+        recovery,
+      };
+      const event = (await failedTurn()).at(-1)!;
+      expect(event.infra).toMatchObject({ code: reason, httpStatus: 409 });
+      expect(JSON.parse(event.rawText!)).toEqual({
+        message: "API Error: 409",
+        code: reason,
+        recovery,
+      });
+      // How the eval runner reads a failed trial (`iterationError`, then
+      // `iterationErrorDetails`).
+      expect(
+        runStopRefusal({ message: event.message, details: event.rawText }),
+      ).toEqual({ recovery });
+      expect(classifyEvalInfraError(event.infra as never)).toBeUndefined();
+    });
+
+    it("a recorded recovery off an MCPJam origin keeps its step, not its link", async () => {
+      harnessState.streamParts = [{ type: "start-step" }];
+      harnessState.streamError = bridgeRefusalError;
+      harnessState.recordedRefusal = {
+        reason: "spending_limit_reached",
+        at: Date.now() + 60_000,
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+          url: "https://evil.example/topup",
+        },
+      };
+      const event = (await failedTurn()).at(-1)!;
+      expect(
+        runStopRefusal({ message: event.message, details: event.rawText }),
+      ).toEqual({
+        recovery: {
+          version: 1,
+          reason: "allowance_exhausted",
+          action: "buy_credits",
+          actor: "caller",
+        },
+      });
     });
 
     it("a definite provider status stands: no lookup", async () => {

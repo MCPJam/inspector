@@ -41,6 +41,13 @@ import {
  *       deadline with the run still non-terminal, a mid-poll failure that
  *       was not auth-shaped, or a report that could not be assembled
  *       (iteration fetch failed, or the walk did not complete).
+ *   6 — blocked: MCPJam credits refused the launch, or stopped the run
+ *       partway, and the refusal names a recovery a PERSON must act on
+ *       (upgrade, buy credits, raise the budget, ask an admin, contact
+ *       support) — anything but `wait`. The CLI prints the one step and a
+ *       `Resume:` command and starts nothing more. A refusal whose only step
+ *       is `wait` (an allowance that resets on its own) is not a person-must-
+ *       act block and keeps its 4 (launch) or 5 (stop).
  * ```
  *
  * ## A run held for its judge is not a status this module ever sees
@@ -63,7 +70,7 @@ import {
  * 4, or 5. Only a run that reached `status: "completed"` with
  * `result: "failed"` may ever produce 1.
  *
- * ## Severity order: 1 > 3 > 4 > 5 > 0
+ * ## Severity order: 1 > 6 > 3 > 4 > 5 > 0
  *
  * A launch can fan out to several targets, so the exit code is a worst-of
  * merge over every started run plus every wait/report failure. The order is
@@ -71,7 +78,13 @@ import {
  *
  * - **1 first.** A real verdict failure is never masked by a sibling's
  *   infrastructure noise. Nothing but a verdict produces 1, and nothing
- *   hides a verdict's 1 — one invariant, easy to test.
+ *   hides a verdict's 1 — one invariant, easy to test. A credit stop
+ *   finalizes a run `status: "failed"`, never `completed/failed`, so 6 and 1
+ *   never describe the same run; on a fan-out a real regression still wins.
+ * - **6 beats 3/4/5.** A credit block is the one failure a person can clear
+ *   right now, and the credential already authenticated (the backend named
+ *   the org's billing), so it outranks auth, setup and no-verdict — but never
+ *   a measured regression.
  * - **3 beats 4.** A credential failure poisons every other observation (a
  *   mid-poll 401 may be *why* siblings show no verdict) and is prerequisite
  *   to fixing anything else.
@@ -208,8 +221,15 @@ export interface EvalRunWaitExitInput {
   waitErrors: EvalRunWaitErrorSummary[];
 }
 
-/** Severity order, most severe first. Anything absent from `codes` loses to 0. */
-const SEVERITY_ORDER = [1, 3, 4, 5, 0] as const;
+/**
+ * Severity order, most severe first. Anything absent from `codes` loses to 0.
+ * 6 (a person-must-act credit block) sits just under a measured verdict
+ * failure — see the severity-order doc above.
+ */
+const SEVERITY_ORDER = [1, 6, 3, 4, 5, 0] as const;
+
+/** The exit code for a blocked run or launch — a person must act. See the doc block. */
+export const EVAL_RUN_BLOCKED_EXIT_CODE = 6;
 
 /**
  * Worst-of merge over raw exit codes, by {@link SEVERITY_ORDER}. Exported so

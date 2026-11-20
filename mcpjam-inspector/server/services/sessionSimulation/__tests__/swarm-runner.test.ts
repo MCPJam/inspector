@@ -958,7 +958,7 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
           {
             outcome: "failed",
             errorMessage:
-              "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Upgrade the plan to keep going: https://app.mcpjam.com/billing",
+              "Out of MCPJam credits. Completed results are saved; remaining iterations were skipped. Upgrade the plan or add credits to keep going: https://app.mcpjam.com/billing",
           },
           true,
         ],

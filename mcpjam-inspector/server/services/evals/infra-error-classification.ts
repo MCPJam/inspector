@@ -268,6 +268,8 @@ const PROXY_REFUSAL_ROWS: Record<
 > = {
   spend_budget_reached: null,
   spending_limit_reached: null,
+  spend_held: null,
+  wallet_locked: null,
   spend_admission: null,
   pricing_unavailable: null,
   gateway_not_configured: null,

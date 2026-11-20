@@ -231,6 +231,7 @@ import {
   type PlatformOperation,
   type PlatformPermalink,
 } from "@mcpjam/sdk/platform";
+import { creditRefusalHint, creditRefusalOf } from "./creditRefusal.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/server";
 import { MCPJAM_APP_HTML } from "../generated/McpAppsHtml.bundled.js";
 import {
@@ -1327,6 +1328,7 @@ function errorStructuredContent(
         ...(error.requestId ? { requestId: error.requestId } : {}),
         ...(refusal ? { refusal } : {}),
         ...(Object.keys(details).length > 0 ? { details } : {}),
+        ...creditRefusalOf(error),
       },
     };
   }
@@ -1347,9 +1349,13 @@ function describeOperationError(error: unknown): string {
     // Hosts vary in whether the model sees `structuredContent`, so the retry
     // guidance is in the text too.
     const refusal = describePlatformRefusal(error);
+    const creditRefusal = creditRefusalOf(error);
     return [
       base,
-      refusal ? platformRefusalHint(refusal) : undefined,
+      // A credit block names a step a person takes; a wait hint beside it
+      // would be a second action.
+      refusal && !creditRefusal ? platformRefusalHint(refusal) : undefined,
+      creditRefusal ? creditRefusalHint(creditRefusal, base) : undefined,
     ]
       .filter((part): part is string => part !== undefined)
       .join(" ");

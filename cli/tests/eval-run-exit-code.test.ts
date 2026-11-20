@@ -19,6 +19,8 @@ import {
   classifyLaunchErrorExitCode,
   classifyWaitErrorExitCode,
   evalRunWaitExitCode,
+  worstOf,
+  EVAL_RUN_BLOCKED_EXIT_CODE,
   type EvalRunWaitErrorSummary,
   type EvalRunWaitRunOutcome,
 } from "../src/lib/eval-run-exit-code.js";
@@ -468,4 +470,25 @@ test("severity: a single non-zero code anywhere rules out 0", () => {
     }),
     5
   );
+});
+
+// ---------------------------------------------------------------------------
+// worstOf with the blocked code (6): sits under a verdict failure, over the
+// infrastructure codes. A credit stop finalizes `status: failed` (base 5), so
+// the caller merges 6 in itself; these pin where it lands.
+// ---------------------------------------------------------------------------
+
+test("blocked exit code is 6", () => {
+  assert.equal(EVAL_RUN_BLOCKED_EXIT_CODE, 6);
+});
+
+test("worstOf: 6 beats 3, 4 and 5", () => {
+  assert.equal(worstOf([5, 6]), 6);
+  assert.equal(worstOf([4, 6]), 6);
+  assert.equal(worstOf([3, 6]), 6);
+  assert.equal(worstOf([6, 0]), 6);
+});
+
+test("worstOf: a measured verdict failure (1) still outranks a block (6)", () => {
+  assert.equal(worstOf([6, 1]), 1);
 });

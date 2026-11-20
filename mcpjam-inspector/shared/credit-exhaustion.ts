@@ -14,8 +14,10 @@ import {
 /** The fields a refusal states itself in; see {@link isHoldRefusal}. */
 const OWN_MESSAGE_KEYS = ["message", "error", "errorMessage"] as const;
 
+// `spending_limit_reached` is the harness model proxy's: the credits the
+// platform spend precheck found spent (a budget or a locked wallet has its own).
 const EXHAUSTION_CODES =
-  /\b(?:mcpjam_rate_limit|user_rate_limit|org_rate_limit|billing_limit_reached)\b/i;
+  /\b(?:mcpjam_rate_limit|user_rate_limit|org_rate_limit|billing_limit_reached|spending_limit_reached)\b/i;
 
 /**
  * The object a refusal states itself in: the value, or the JSON envelope a

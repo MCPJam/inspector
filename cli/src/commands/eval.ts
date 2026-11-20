@@ -191,18 +191,25 @@ import {
   classifyWaitErrorExitCode,
   evalRunWaitExitCode,
   worstOf,
+  EVAL_RUN_BLOCKED_EXIT_CODE,
   type EvalRunWaitRunOutcome,
 } from "../lib/eval-run-exit-code.js";
+import { creditRecoveryOfCliError } from "../lib/eval-resume.js";
+import {
+  creditBlocksJsonFields,
+  launchCreditExitCode,
+  readRunCreditStops,
+  refusedLaunchCreditBlock,
+  refusedTargetCreditBlocks,
+  stoppedRunCreditBlock,
+  writeCreditBlocks,
+} from "../lib/eval-credit-blocks.js";
 import { fetchAllIterations, p95Of } from "../lib/eval-iterations.js";
 import {
   decisionSummaryFromIterations,
   readEvalRunDecisionSummary,
 } from "../lib/eval-decision-summary.js";
-import {
-  creditRecoveryOfIterations,
-  readEvalRunCreditRecovery,
-  type EvalRunDecisionSummary,
-} from "@mcpjam/sdk";
+import { isCreditBlock, type EvalRunDecisionSummary } from "@mcpjam/sdk";
 import {
   comparePolicyFromOptions,
   compareGateInputFrom,
@@ -268,7 +275,7 @@ type CreateOptions = PlatformOptions & {
 function clientSelectorOf<T>(options: { client?: T; host?: T }): T | undefined {
   if (options.client !== undefined && options.host !== undefined) {
     throw usageError(
-      "Use either --client or its deprecated --host alias, not both."
+      "Use either --client or its deprecated --host alias, not both.",
     );
   }
   return options.client ?? options.host;
@@ -289,7 +296,7 @@ function clientSelectorOf<T>(options: { client?: T; host?: T }): T | undefined {
  */
 function annotateCatalogHostConfusion(
   error: unknown,
-  selectors: readonly string[] | undefined
+  selectors: readonly string[] | undefined,
 ): unknown {
   const isNotFound =
     (isPlatformApiError(error) || error instanceof CliError) &&
@@ -304,7 +311,7 @@ function annotateCatalogHostConfusion(
       // a host-compat catalog id would be a confident non-sequitur. The SDK's
       // resolver names what it was looking for, so match on that plus the
       // selector rather than on the code alone.
-      error.message.includes(`Suite host "${selector.trim()}"`)
+      error.message.includes(`Suite host "${selector.trim()}"`),
   );
   if (catalogIds.length === 0) return error;
   const named = catalogIds.map((id) => `"${id}"`).join(", ");
@@ -322,7 +329,7 @@ function annotateCatalogHostConfusion(
 /** Run `body`, adding the catalog-id hint to a not-found on a client selector. */
 async function withCatalogHostHint<T>(
   selectors: readonly string[] | undefined,
-  body: () => Promise<T>
+  body: () => Promise<T>,
 ): Promise<T> {
   try {
     return await body();
@@ -339,7 +346,7 @@ async function withCatalogHostHint<T>(
 function selectorField(
   singular: string,
   plural: string,
-  values: string[] | undefined
+  values: string[] | undefined,
 ): Record<string, string | string[]> {
   if (!values?.length) return {};
   return values.length === 1
@@ -392,7 +399,7 @@ function composeField(options: {
     options.composeHost !== undefined
   ) {
     throw usageError(
-      "Use either --compose-client or its deprecated --compose-host alias, not both."
+      "Use either --compose-client or its deprecated --compose-host alias, not both.",
     );
   }
   const composeClient = options.composeClient ?? options.composeHost;
@@ -402,18 +409,21 @@ function composeField(options: {
   const models = Array.isArray(options.composeModel)
     ? options.composeModel
     : options.composeModel
-    ? [options.composeModel]
-    : undefined;
+      ? [options.composeModel]
+      : undefined;
   const modelSelections = (
     Array.isArray(options.composeModelSelection)
       ? options.composeModelSelection
       : options.composeModelSelection !== undefined
-      ? [options.composeModelSelection]
-      : []
+        ? [options.composeModelSelection]
+        : []
   ).map(
     (raw) =>
       // The server validates the selection; the flag parser only guarantees JSON.
-      parseModelSelectionFlag(raw, "--compose-model-selection") as ModelSelection
+      parseModelSelectionFlag(
+        raw,
+        "--compose-model-selection",
+      ) as ModelSelection,
   );
   const refinements =
     options.composeComputer !== undefined ||
@@ -429,7 +439,7 @@ function composeField(options: {
   if (!composeClient) {
     if (refinements) {
       throw usageError(
-        "--compose-* flags need --compose-client: the client is what the composed stack runs as, and the others only refine it."
+        "--compose-* flags need --compose-client: the client is what the composed stack runs as, and the others only refine it.",
       );
     }
     return {};
@@ -441,7 +451,7 @@ function composeField(options: {
     options.composeServer?.length
   ) {
     throw usageError(
-      "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID."
+      "--compose-server and --compose-server-group both pin the run's servers. Use --compose-server with server names, or --compose-server-group with an existing group ID.",
     );
   }
   // `--compose-host-servers` used to run against the client's current server
@@ -450,7 +460,7 @@ function composeField(options: {
   // refuses to launch. Refused here with the flags that replace it.
   if (options.composeHostServers === true) {
     throw usageError(
-      "--compose-host-servers is no longer supported: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Use --compose-server <name> or --compose-server-group <id> instead."
+      "--compose-host-servers is no longer supported: an eval run takes its servers from a server group alone, so following the client's list would run with no servers. Use --compose-server <name> or --compose-server-group <id> instead.",
     );
   }
   const pinsServers =
@@ -460,7 +470,7 @@ function composeField(options: {
   // as a server group.
   if (!pinsServers) {
     throw usageError(
-      `${clientFlag} needs to know which servers to test: add --compose-server <name> (or --compose-server-group <id>).`
+      `${clientFlag} needs to know which servers to test: add --compose-server <name> (or --compose-server-group <id>).`,
     );
   }
   return {
@@ -552,7 +562,7 @@ function parseMatchOptionsOption(raw: string): Record<string, unknown> {
     throw usageError(
       `--match-options must be valid JSON: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
     );
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -597,14 +607,14 @@ function writeRunGroupSummary(
           error: { code: string; message: string };
         }
     >;
-  }
+  },
 ): void {
   if (format !== "human") return;
   for (const target of result.targets) {
     if (target.status !== "started") continue;
     if (target.deduped === true) {
       process.stderr.write(
-        `Reused existing eval run ${target.runId} (idempotency key replay).\n`
+        `Reused existing eval run ${target.runId} (idempotency key replay).\n`,
       );
     }
     writeRunLink(format, webOrigin, {
@@ -618,7 +628,7 @@ function writeRunGroupSummary(
     process.stdout.write(
       `Started ${result.startedCount}/${total} runs` +
         (result.runGroupId ? ` (group ${result.runGroupId})` : "") +
-        "\n"
+        "\n",
     );
   }
   for (const target of result.targets) {
@@ -638,7 +648,7 @@ function writeRunGroupSummary(
         ? `${base} · ${composeModelTail(cell?.modelId)}`
         : base;
     process.stderr.write(
-      `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
+      `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`,
     );
   }
 }
@@ -662,7 +672,7 @@ function writeRunGroupSummary(
 function writeRunDisclosure(
   format: string,
   disclosure: PlatformEvalRunDisclosure | undefined,
-  stream: NodeJS.WritableStream = process.stdout
+  stream: NodeJS.WritableStream = process.stdout,
 ): void {
   if (format !== "human" || !disclosure) return;
   const lines: string[] = ["Pre-run disclosure:"];
@@ -680,15 +690,15 @@ function writeRunDisclosure(
         const destination = model.byok?.baseUrlHost
           ? model.byok.baseUrlHost
           : model.rail.managed
-          ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${
-              model.rail.outcomeIfRunNow.destination
-            })`
-          : model.tenantEgress;
+            ? `${model.rail.possibleDestinations.join(" or ")} (currently: ${
+                model.rail.outcomeIfRunNow.destination
+              })`
+            : model.tenantEgress;
         lines.push(`  Model: ${model.modelId} — ${destination}`);
       }
     } else if (execution.modelsUnresolved) {
       lines.push(
-        `  Models: not derivable — ${execution.modelsUnresolved.reason}`
+        `  Models: not derivable — ${execution.modelsUnresolved.reason}`,
       );
     }
     if (execution.sandbox.engaged) {
@@ -699,7 +709,7 @@ function writeRunDisclosure(
     lines.push(
       kind === "ingested-run"
         ? `  Execution: none — this run was ingested, MCPJam did not execute it (${reason})`
-        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`
+        : `  Execution: not yet resolved — this run WILL execute and WILL call models, they are just not derivable yet (${reason})`,
     );
   }
   // `capture` is ALWAYS present, regardless of `execution`/`executionAbsence`
@@ -709,13 +719,13 @@ function writeRunDisclosure(
   // consequential setting like a non-DLP redaction module or a captureLevel
   // of "full" must not be silently absent from the printed block.
   lines.push(
-    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`
+    `  Capture: ${disclosure.capture.captureLevel} · reporting ${disclosure.capture.reportingMode}`,
   );
   lines.push(
     `  Redaction: ${disclosure.capture.redaction.kind}` +
       (disclosure.capture.redaction.isDlp
         ? ""
-        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`)
+        : ` — NOT a DLP system (${disclosure.capture.redaction.limitation})`),
   );
   // A separate question from at-rest redaction. Older backends omit it, and
   // then nothing is printed rather than a guess.
@@ -731,13 +741,13 @@ function writeRunDisclosure(
         ? "zero data retention and no training required"
         : "zero data retention required, training NOT restricted"
       : noTraining
-      ? "no training required, zero data retention NOT required"
-      : "zero data retention and training NOT restricted";
+        ? "no training required, zero data retention NOT required"
+        : "zero data retention and training NOT restricted";
     lines.push(
       `  Analysis providers: ${policy} on platform-key analysis calls` +
         (providerRetention.notAppliedTo.length > 0
           ? ` — NOT applied to: ${providerRetention.notAppliedTo.join("; ")}`
-          : "")
+          : ""),
     );
   }
   lines.push(
@@ -745,10 +755,10 @@ function writeRunDisclosure(
       disclosure.capture.exportDefaults.includeContent
         ? "includes content"
         : "excludes content"
-    } (${disclosure.capture.exportDefaults.note})`
+    } (${disclosure.capture.exportDefaults.note})`,
   );
   const firingAnalysis = disclosure.analysis.filter(
-    (touchpoint) => typeof touchpoint.fires === "string"
+    (touchpoint) => typeof touchpoint.fires === "string",
   );
   if (firingAnalysis.length > 0) {
     // One line PER touchpoint — different touchpoints can have different
@@ -768,13 +778,13 @@ function writeRunDisclosure(
         `  Analysis: ${
           touchpoint.label
         } ${firesLabel}, may send evidence to ${touchpoint.destinations.join(
-          ", "
-        )}`
+          ", ",
+        )}`,
       );
     }
   } else {
     lines.push(
-      "  Analysis: no analyzer/judge touchpoint can fire for this run"
+      "  Analysis: no analyzer/judge touchpoint can fire for this run",
     );
   }
   lines.push(
@@ -782,17 +792,17 @@ function writeRunDisclosure(
       ? "  Retention: kept indefinitely"
       : `  Retention: swept after ${
           disclosure.retention.policyDays ?? "?"
-        } day(s)`
+        } day(s)`,
   );
   lines.push(
     disclosure.region.stated
       ? `  Region: ${disclosure.region.value}`
-      : "  Region: not stated"
+      : "  Region: not stated",
   );
   const engaged = disclosure.subprocessors.filter((entry) => entry.engaged);
   if (engaged.length > 0) {
     lines.push(
-      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`
+      `  Subprocessors: ${engaged.map((entry) => entry.vendor).join(", ")}`,
     );
   }
   stream.write(`${lines.join("\n")}\n`);
@@ -812,7 +822,7 @@ function writeRunDisclosure(
 function writeRunLink(
   format: string,
   webOrigin: string,
-  run: { projectId?: string; suiteId?: string; runId?: string }
+  run: { projectId?: string; suiteId?: string; runId?: string },
 ): void {
   if (format !== "human") return;
   const suiteId = run.suiteId?.trim();
@@ -828,7 +838,7 @@ function writeRunLink(
         parent: { type: "eval_suite", id: suiteId },
         projectId,
       },
-      { appOrigin: webOrigin }
+      { appOrigin: webOrigin },
     );
   } catch {
     // A convenience line may never fail a command that already succeeded.
@@ -882,7 +892,7 @@ function writeJudgeSummary(format: string, judges: unknown): void {
     const model =
       typeof judge.modelUsed === "string" ? ` — ${judge.modelUsed}` : "";
     process.stdout.write(
-      `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`
+      `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`,
     );
   }
 }
@@ -923,7 +933,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     }
     if (looksLikeVersionedSuiteFile(text)) {
       throw usageError(
-        "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+        "That looks like a versioned suite file. Use `eval run --file` to upload and run it.",
       );
     }
     try {
@@ -945,7 +955,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
   }
   if ("schemaVersion" in (base as Record<string, unknown>)) {
     throw usageError(
-      "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+      "That looks like a versioned suite file. Use `eval run --file` to upload and run it.",
     );
   }
 
@@ -1007,7 +1017,7 @@ function loadBodyObject(options: {
  * before `executeOp` must drop the requirement.
  */
 function schemaWithOptionalProject<TInput>(
-  schema: PlatformOperation<TInput, unknown>["inputSchema"]
+  schema: PlatformOperation<TInput, unknown>["inputSchema"],
 ): PlatformOperation<TInput, unknown>["inputSchema"] {
   const objectSchema = schema as {
     shape?: Record<string, unknown>;
@@ -1029,7 +1039,7 @@ function schemaWithOptionalProject<TInput>(
 function validateOpInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
   raw: unknown,
-  extras: { projectOptional?: boolean } = {}
+  extras: { projectOptional?: boolean } = {},
 ): TInput {
   const schema = extras.projectOptional
     ? schemaWithOptionalProject(op.inputSchema)
@@ -1082,7 +1092,7 @@ async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
   options: PlatformOptions & { project?: string },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const inputProject =
@@ -1103,7 +1113,7 @@ async function executeOp<TInput, TOutput>(
     {
       projectScope: resolved.projectScope,
       quiet: globalOptions.quiet,
-    }
+    },
   );
   if (result !== undefined) writeResult(result, globalOptions.format);
 }
@@ -1115,7 +1125,7 @@ async function executeOp<TInput, TOutput>(
  */
 function applyGradingFlags(
   options: Record<string, any>,
-  settings: Record<string, any>
+  settings: Record<string, any>,
 ): EvalGradingPolicyEdit {
   const edit: EvalGradingPolicyEdit = {};
   if (
@@ -1123,12 +1133,12 @@ function applyGradingFlags(
     options.passThreshold !== undefined
   ) {
     throw usageError(
-      "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number."
+      "Use either --min-accuracy or --pass-threshold, not both: --min-accuracy is one suite-wide percentage over the whole run and --pass-threshold is the fraction each case must pass on its own. They are different criteria, not two units of one number.",
     );
   }
   if (options.minIterations !== undefined && options.iterations !== undefined) {
     throw usageError(
-      "Use either --min-iterations or --iterations, not both: --min-iterations is a floor that raises a case's own count and --iterations is the default that replaces it."
+      "Use either --min-iterations or --iterations, not both: --min-iterations is a floor that raises a case's own count and --iterations is the default that replaces it.",
     );
   }
   if (options.minAccuracy !== undefined) {
@@ -1145,7 +1155,7 @@ function applyGradingFlags(
     // the error would name a field the caller did spell correctly.
     if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
       throw usageError(
-        "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90)."
+        "--pass-threshold must be a fraction from 0 to 1 (0.9, not 90).",
       );
     }
     edit.passThreshold = fraction;
@@ -1160,7 +1170,7 @@ function applyGradingFlags(
       const floor = Number(options.minIterations);
       if (!Number.isInteger(floor) || floor < 1 || floor > 10) {
         throw usageError(
-          '--min-iterations must be a whole number from 1 to 10, or "off".'
+          '--min-iterations must be a whole number from 1 to 10, or "off".',
         );
       }
       edit.minimumIterations = floor;
@@ -1302,7 +1312,7 @@ const OUTAGE_POLICY_BY_FLAG = new Map([
 /** Merge a --file/--json case body with the selectors (+ optional --title). */
 function buildCaseInput(
   options: Record<string, any>,
-  opts: { requireCase: boolean }
+  opts: { requireCase: boolean },
 ): Record<string, unknown> {
   const input: Record<string, any> = { ...loadBodyObject(options) };
   if (options.project !== undefined) input.project = options.project;
@@ -1322,7 +1332,7 @@ type ScreenshotItem = RenderedScreenshot & { savedTo?: string };
 /** Fetch raw image bytes for a screenshot URL, bounded by the request timeout. */
 function fetchScreenshotBytes(
   url: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<Uint8Array> {
   return fetchArtifactBytes(url, timeoutMs, "screenshot");
 }
@@ -1337,7 +1347,7 @@ function resolveScreenshotPath(
   out: string,
   shot: RenderedScreenshot,
   index: number,
-  total: number
+  total: number,
 ): string {
   const looksLikeDir =
     out.endsWith("/") || (existsSync(out) && statSync(out).isDirectory());
@@ -1346,7 +1356,7 @@ function resolveScreenshotPath(
   }
   if (total > 1) {
     throw usageError(
-      "--out must be a directory when the iteration rendered multiple screenshots."
+      "--out must be a directory when the iteration rendered multiple screenshots.",
     );
   }
   return out;
@@ -1367,7 +1377,7 @@ function resolveScreenshotPath(
 function resolveIterationVideoPath(
   out: string,
   iterationId: string,
-  meta: IterationVideoMeta | undefined
+  meta: IterationVideoMeta | undefined,
 ): string {
   const safeId = iterationId.replace(/[^a-zA-Z0-9_-]+/g, "-") || "iteration";
   return join(out, `${safeId}.${iterationVideoExtension(meta)}`);
@@ -1386,7 +1396,7 @@ function resolveIterationVideoPath(
 function requireVideoOutDirectory(out: string): void {
   if (existsSync(out) && !statSync(out).isDirectory()) {
     throw usageError(
-      `--out must be a directory when --video is set (${out} is a file), so the recording can be saved beside the screenshots.`
+      `--out must be a directory when --video is set (${out} is a file), so the recording can be saved beside the screenshots.`,
     );
   }
   mkdirSync(out, { recursive: true });
@@ -1468,7 +1478,7 @@ async function waitForEvalRun(
   projectId: string,
   runId: string,
   deadline: number,
-  gradingExtensionMs = 0
+  gradingExtensionMs = 0,
 ) {
   let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
@@ -1479,7 +1489,7 @@ async function waitForEvalRun(
     }
     if (Date.now() >= deadline) {
       throw operationalError(
-        `Eval run "${runId}" is still ${run.status} after waiting for completion.`
+        `Eval run "${runId}" is still ${run.status} after waiting for completion.`,
       );
     }
     await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
@@ -1489,7 +1499,7 @@ async function waitForEvalRun(
 }
 
 function launchFailureCases(
-  result: RunEvalSuiteResult
+  result: RunEvalSuiteResult,
 ): StructuredCaseResult[] {
   return result.targets.flatMap((target, index) => {
     if (target.status !== "failed") return [];
@@ -1516,7 +1526,7 @@ function launchFailureCases(
 
 function gateReportCase(
   report: GateReport,
-  baselineProvenance?: Record<string, unknown>
+  baselineProvenance?: Record<string, unknown>,
 ): StructuredCaseResult {
   const waived = report.outcome === "waived";
   // A WAIVED gate did not block the build, so it must not inflate the
@@ -1540,13 +1550,13 @@ function gateReportCase(
       report.outcome === "failed"
         ? "breaking"
         : // A waived gate is `informational`, NOT `non_breaking`. It really did
-        // fail; `non_breaking` would claim the run observed no breaking change,
-        // which is the opposite of what happened.
-        waived
-        ? "informational"
-        : passed
-        ? "non_breaking"
-        : "informational",
+          // fail; `non_breaking` would claim the run observed no breaking change,
+          // which is the opposite of what happened.
+          waived
+          ? "informational"
+          : passed
+            ? "non_breaking"
+            : "informational",
     // The failing verdicts are carried on a WAIVED case too. The waiver
     // explains why the build was not blocked; it is not a reason to stop
     // saying what failed.
@@ -1556,7 +1566,7 @@ function gateReportCase(
           error: report.verdicts
             .filter(
               (verdict) =>
-                verdict.status !== "passed" && verdict.status !== "waived"
+                verdict.status !== "passed" && verdict.status !== "waived",
             )
             .map((verdict) => verdict.message)
             .join("; "),
@@ -1616,7 +1626,7 @@ async function runEvalGate(
        */
       suitePolicy?: boolean;
     },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   // Enforced here rather than by commander — see the option's declaration. A
@@ -1670,14 +1680,14 @@ async function runEvalGate(
       // reached.
       Math.max(
         globalOptions.timeout,
-        options.wait ? waitTimeoutMs + gradingExtensionMs : 0
+        options.wait ? waitTimeoutMs + gradingExtensionMs : 0,
       ),
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
         const resolution = resolveProject(projects.items, resolved.project);
         if (!resolution.ok) {
           throw usageError(
-            appendProjectLinkHint(resolution.message, resolved.projectScope)
+            appendProjectLinkHint(resolution.message, resolved.projectScope),
           );
         }
         const project = resolution.project;
@@ -1686,7 +1696,7 @@ async function runEvalGate(
         let gradingExtended = false;
         let run = await client.getEvalRun(
           { projectId: project.id, runId },
-          { signal }
+          { signal },
         );
 
         while (!isEvalRunTerminalStatus(run.status)) {
@@ -1707,7 +1717,7 @@ async function runEvalGate(
               client,
               signal,
               project.id,
-              run
+              run,
             );
             return {
               report: {
@@ -1732,7 +1742,7 @@ async function runEvalGate(
               client,
               signal,
               project.id,
-              run
+              run,
             );
             return {
               report: {
@@ -1752,13 +1762,12 @@ async function runEvalGate(
           await new Promise((resolve) => setTimeout(resolve, 3000));
           run = await client.getEvalRun(
             { projectId: project.id, runId },
-            { signal }
+            { signal },
           );
         }
 
         let iterations:
-          | Awaited<ReturnType<typeof fetchAllIterations>>
-          | undefined;
+          Awaited<ReturnType<typeof fetchAllIterations>> | undefined;
         let iterationError: string | undefined;
         if (needsReport || policyNeedsIterations(policy)) {
           try {
@@ -1766,7 +1775,7 @@ async function runEvalGate(
               client,
               signal,
               project.id,
-              runId
+              runId,
             );
           } catch (error) {
             iterationError =
@@ -1789,7 +1798,7 @@ async function runEvalGate(
                   client,
                   signal,
                   project.id,
-                  run
+                  run,
                 );
           // Cancelled / timed out: the run has not told us the server
           // regressed, it has told us nothing. Same for a policy-2
@@ -1838,7 +1847,7 @@ async function runEvalGate(
                   client,
                   signal,
                   project.id,
-                  run
+                  run,
                 );
           return {
             report: importIneligibleReport(run),
@@ -1868,7 +1877,7 @@ async function runEvalGate(
             client,
             signal,
             project.id,
-            run
+            run,
           );
         }
         // A failed LOCAL iteration fetch makes the run's own threshold report
@@ -1895,7 +1904,7 @@ async function runEvalGate(
           : reportForRun(
               run,
               policyNeedsIterations(policy) ? iterations : undefined,
-              policy
+              policy,
             );
 
         // A failed fetch is never "complete", whether or not a report was
@@ -1903,7 +1912,7 @@ async function runEvalGate(
         // case, not for "asked and it broke".
         const iterationsComplete = iterationError
           ? false
-          : iterations?.complete ?? !needsReport;
+          : (iterations?.complete ?? !needsReport);
 
         // Baseline regression gating only makes sense once the run being
         // gated has a verdict of its own; every early return above already
@@ -1939,7 +1948,7 @@ async function runEvalGate(
             ? { baselineProvenance: baselineResult.provenance }
             : {}),
         };
-      }
+      },
     );
   } catch (error) {
     // A USAGE error (bad project selector, malformed flag) is the author's
@@ -1979,7 +1988,7 @@ async function runEvalGate(
       await writeReporterArtifact(
         options.out,
         reporter ?? "json-summary",
-        structured
+        structured,
       );
     }
     if (reporter && structured) {
@@ -1987,7 +1996,7 @@ async function runEvalGate(
     } else {
       writeResult(
         { gate: report, exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE },
-        globalOptions.format
+        globalOptions.format,
       );
     }
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
@@ -2009,7 +2018,7 @@ async function runEvalGate(
   // anything.
   const report = applyGateWaiver(
     outcome.report,
-    activeWaiverForRun(outcome.run)
+    activeWaiverForRun(outcome.run),
   );
   // THE SUITE POLICY, folded in AFTER the base waiver and never waived by
   // it. `--no-suite-policy` skips only this call. A missing route is a
@@ -2030,7 +2039,7 @@ async function runEvalGate(
             kind: "report" as const,
             report: await client.getEvalRunGate(
               { projectId: resolvedProjectId!, runId },
-              { signal }
+              { signal },
             ),
           };
         } catch (error) {
@@ -2053,7 +2062,7 @@ async function runEvalGate(
             message: error instanceof Error ? error.message : String(error),
           };
         }
-      }
+      },
     );
     if (fetched.kind === "report") {
       suiteGate = fetched.report;
@@ -2126,14 +2135,14 @@ async function runEvalGate(
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
             : {}),
-        }
+        },
       )
     : undefined;
   if (options.out && structured) {
     await writeReporterArtifact(
       options.out,
       reporter ?? "json-summary",
-      structured
+      structured,
     );
   }
   if (reporter && structured) {
@@ -2149,7 +2158,7 @@ async function runEvalGate(
             ...(decisionSummary ? { decisionSummary } : {}),
           }
         : { gate: composedReport, exitCode },
-      globalOptions.format
+      globalOptions.format,
     );
   }
   if (globalOptions.format === "human" && !reporter) {
@@ -2160,7 +2169,7 @@ async function runEvalGate(
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
-      process.stderr
+      process.stderr,
     );
   }
   if (exitCode !== 0) {
@@ -2217,7 +2226,7 @@ function gateSubcommandScope(command: Command): {
  */
 async function runEvalGateWaive(
   options: { reason: string; expiresIn: string },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
@@ -2238,7 +2247,7 @@ async function runEvalGateWaive(
       const resolution = resolveProject(projects.items, resolved.project);
       if (!resolution.ok) {
         throw usageError(
-          appendProjectLinkHint(resolution.message, resolved.projectScope)
+          appendProjectLinkHint(resolution.message, resolved.projectScope),
         );
       }
       return await client.createGateWaiver(
@@ -2248,9 +2257,9 @@ async function runEvalGateWaive(
           reason: options.reason,
           expiresAt,
         },
-        { signal }
+        { signal },
       );
-    }
+    },
   );
 
   writeResult(result, globalOptions.format);
@@ -2263,14 +2272,14 @@ async function runEvalGateWaive(
         result.status === "conflict"
           ? "A waiver was already in force over this run; it was NOT replaced."
           : "Gate waived."
-      } ${formatGateWaiverLine(result.waiver)}\n`
+      } ${formatGateWaiverLine(result.waiver)}\n`,
     );
     // A published Check Run is a persisted verdict, not a live read. Zero
     // republished checks on a repository with checks connected means the
     // status that actually gates the merge did not move — worth saying, since
     // that is usually the reason someone waived at all.
     process.stderr.write(
-      `Republished ${result.republishedChecks} GitHub check run(s).\n`
+      `Republished ${result.republishedChecks} GitHub check run(s).\n`,
     );
   }
 }
@@ -2289,7 +2298,7 @@ async function runEvalGateWaive(
  */
 async function runEvalGateUnwaive(
   options: { waiver?: string },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const scope = gateSubcommandScope(command);
@@ -2303,7 +2312,7 @@ async function runEvalGateUnwaive(
       const resolution = resolveProject(projects.items, resolved.project);
       if (!resolution.ok) {
         throw usageError(
-          appendProjectLinkHint(resolution.message, resolved.projectScope)
+          appendProjectLinkHint(resolution.message, resolved.projectScope),
         );
       }
       const projectId = resolution.project.id;
@@ -2312,7 +2321,7 @@ async function runEvalGateUnwaive(
       if (!waiverId) {
         const { waiver } = await client.getGateWaiver(
           { projectId, runId: scope.run },
-          { signal }
+          { signal },
         );
         if (!waiver) {
           // A usage error, not a silent success. "Nothing to revoke" and "I
@@ -2321,7 +2330,7 @@ async function runEvalGateUnwaive(
           // to reach an already-expired or already-revoked row, which this
           // read deliberately does not return.
           throw usageError(
-            `No waiver is in force over run "${scope.run}". Pass --waiver <id> to revoke a specific one.`
+            `No waiver is in force over run "${scope.run}". Pass --waiver <id> to revoke a specific one.`,
           );
         }
         waiverId = waiver.id;
@@ -2329,9 +2338,9 @@ async function runEvalGateUnwaive(
 
       return await client.revokeGateWaiver(
         { projectId, runId: scope.run, waiverId },
-        { signal }
+        { signal },
       );
-    }
+    },
   );
 
   writeResult(result, globalOptions.format);
@@ -2341,7 +2350,7 @@ async function runEvalGateUnwaive(
         result.status === "already_revoked"
           ? "This waiver was already revoked; the existing revocation stands."
           : "Gate waiver revoked."
-      } Republished ${result.republishedChecks} GitHub check run(s).\n`
+      } Republished ${result.republishedChecks} GitHub check run(s).\n`,
     );
   }
 }
@@ -2364,7 +2373,7 @@ async function runEvalCompare(
       reporter?: string;
       out?: string;
     },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   // Parsed BEFORE any network call, so a malformed flag exits 2 without
@@ -2398,7 +2407,7 @@ async function runEvalCompare(
         const resolution = resolveProject(projects.items, resolved.project);
         if (!resolution.ok) {
           throw usageError(
-            appendProjectLinkHint(resolution.message, resolved.projectScope)
+            appendProjectLinkHint(resolution.message, resolved.projectScope),
           );
         }
         const project = resolution.project;
@@ -2409,7 +2418,7 @@ async function runEvalCompare(
             runId: options.run,
             ...baseSelector,
           },
-          { signal }
+          { signal },
         );
 
         // Latency and flakiness both need per-iteration rows. An INCOMPLETE
@@ -2424,13 +2433,13 @@ async function runEvalCompare(
                 client,
                 signal,
                 project.id,
-                compare.baseRun.id
+                compare.baseRun.id,
               ),
               fetchAllIterations(
                 client,
                 signal,
                 project.id,
-                compare.compareRun.id
+                compare.compareRun.id,
               ),
             ])
           : [
@@ -2439,7 +2448,7 @@ async function runEvalCompare(
                 client,
                 signal,
                 project.id,
-                compare.compareRun.id
+                compare.compareRun.id,
               ),
             ];
 
@@ -2486,7 +2495,7 @@ async function runEvalCompare(
         const compareRunDetail = await client
           .getEvalRun(
             { projectId: project.id, runId: compare.compareRun.id },
-            { signal }
+            { signal },
           )
           .catch(() => undefined);
 
@@ -2508,7 +2517,7 @@ async function runEvalCompare(
             ? detectFlakyCases(flakyInputFrom(compareIterations.items))
             : [],
         };
-      }
+      },
     );
   } catch (error) {
     if (
@@ -2544,7 +2553,7 @@ async function runEvalCompare(
       // Built whenever EITHER output channel was requested. `--reporter` needs
       // it to emit JUnit rather than JSON; `--out` needs it so a CI step
       // reading the artifact finds the verdict instead of a missing file.
-      reporter || options.out ? emptyCompareReport(report) : undefined
+      reporter || options.out ? emptyCompareReport(report) : undefined,
     );
     setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
     return;
@@ -2566,7 +2575,7 @@ async function runEvalCompare(
           flakyCases: outcome.flakyCases,
           decisionSummary: outcome.decisionSummary,
         })
-      : undefined
+      : undefined,
   );
   if (globalOptions.format === "human" && !reporter) {
     process.stderr.write(`${formatGateReport(outcome.report)}\n`);
@@ -2577,7 +2586,7 @@ async function runEvalCompare(
     writeEvalDecisionSummary(
       globalOptions.format,
       outcome.decisionSummary,
-      process.stderr
+      process.stderr,
     );
   }
   if (exitCode !== 0) {
@@ -2605,7 +2614,7 @@ async function runEvalPull(
     frozen?: boolean;
     skipUnsupported?: boolean;
   },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const lockPath = resolveCorpusLockPath(options.lock);
@@ -2648,7 +2657,7 @@ async function runEvalPull(
             "CORPUS_TRUNCATED",
             `Suite "${options.suite}" returned more cases than one page and ` +
               `this CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
-            CORPUS_INCOMPLETE_EXIT_CODE
+            CORPUS_INCOMPLETE_EXIT_CODE,
           );
         }
 
@@ -2664,7 +2673,7 @@ async function runEvalPull(
             : {}),
         };
       },
-      { projectScope: resolved.projectScope }
+      { projectScope: resolved.projectScope },
     );
   } catch (error) {
     throw corpusFetchFailure(error);
@@ -2694,13 +2703,13 @@ async function runEvalPull(
         `${error.message} Pass --skip-unsupported to omit cases like this ` +
           `from the corpus and the lock.`,
         CORPUS_USAGE_EXIT_CODE,
-        { caseId: error.caseId, caseTitle: error.caseTitle }
+        { caseId: error.caseId, caseTitle: error.caseTitle },
       );
     }
     throw cliError(
       "CORPUS_INVALID_CASE",
       error instanceof Error ? error.message : String(error),
-      CORPUS_USAGE_EXIT_CODE
+      CORPUS_USAGE_EXIT_CODE,
     );
   }
 
@@ -2715,7 +2724,7 @@ async function runEvalPull(
     const drift = verifyCorpusLock(locked, corpus.lock);
     writeResult(
       { ...summary, lockPath, frozen: true, drift },
-      globalOptions.format
+      globalOptions.format,
     );
     if (globalOptions.format === "human") {
       process.stderr.write(`${renderCorpusDrift(drift)}\n`);
@@ -2729,7 +2738,7 @@ async function runEvalPull(
   const written = await writeCorpusLockAtomic(lockPath, corpus.lock);
   writeResult(
     { ...summary, lockPath: written, written: true },
-    globalOptions.format
+    globalOptions.format,
   );
 }
 
@@ -2790,7 +2799,7 @@ function emptyCompareReport(report: GateReport): StructuredRunReport {
       },
       cases: [],
     },
-    report
+    report,
   );
 }
 
@@ -2817,7 +2826,7 @@ async function writeCompareResult(
      */
     decisionSummary?: EvalRunDecisionSummary;
   },
-  structured: StructuredRunReport | undefined
+  structured: StructuredRunReport | undefined,
 ): Promise<void> {
   if (args.out && structured) {
     // `--out` and `--reporter` are two terminals for the same artifact: the
@@ -2826,7 +2835,7 @@ async function writeCompareResult(
     await writeReporterArtifact(
       args.out,
       args.reporter ?? "json-summary",
-      structured
+      structured,
     );
   }
   if (args.reporter && structured) {
@@ -2846,7 +2855,7 @@ async function writeCompareResult(
         ? { decisionSummary: args.decisionSummary }
         : {}),
     },
-    args.format
+    args.format,
   );
 }
 
@@ -2894,7 +2903,7 @@ function readSuiteFileInput(value: string): {
       value === "-"
         ? "Failed to read the suite file from stdin."
         : `Failed to read the suite file "${value}".`,
-      { source: error instanceof Error ? error.message : String(error) }
+      { source: error instanceof Error ? error.message : String(error) },
     );
   }
 }
@@ -2978,23 +2987,23 @@ export function parseApprovalFlags(options: {
 
   if (options.suite) {
     throw usageError(
-      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve."
+      "--allow-approximated and --approval-reason apply to a file run (--file). A hosted suite's cases are not the ones this command authored, so there is no authored case id to approve.",
     );
   }
   if (selectors.length === 0) {
     throw usageError(
-      "--approval-reason needs at least one --allow-approximated <case> to apply to."
+      "--approval-reason needs at least one --allow-approximated <case> to apply to.",
     );
   }
   if (rawReason === undefined) {
     throw usageError(
-      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident."
+      "--allow-approximated requires --approval-reason <text>: an approval with no stated reason is indistinguishable from an accident.",
     );
   }
   const reason = rawReason.trim();
   if (reason.length === 0 || reason.length > MAX_APPROVAL_REASON_LENGTH) {
     throw usageError(
-      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`
+      `--approval-reason must be 1-${MAX_APPROVAL_REASON_LENGTH} characters after trimming (received ${reason.length}).`,
     );
   }
   const seen = new Set<string>();
@@ -3005,7 +3014,7 @@ export function parseApprovalFlags(options: {
     }
     if (seen.has(trimmed)) {
       throw usageError(
-        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`
+        `--allow-approximated names "${trimmed}" more than once. Approving a case twice is not twice the approval; name it once.`,
       );
     }
     seen.add(trimmed);
@@ -3019,7 +3028,7 @@ export function parseApprovalFlags(options: {
  * halves of a `--project` validation is reading one format, not two.
  */
 export function formatImportToolFindings(
-  findings: ReadonlyArray<ImportTargetFinding | ImportToolFinding>
+  findings: ReadonlyArray<ImportTargetFinding | ImportToolFinding>,
 ): string {
   return findings
     .map((entry) =>
@@ -3027,7 +3036,7 @@ export function formatImportToolFindings(
         ? `  ${entry.pointer}: ${entry.message} ` +
           `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
           `${entry.imported ? ", imported" : ""})`
-        : `  ${entry.pointer ?? entry.targetLabel}: ${entry.message}`
+        : `  ${entry.pointer ?? entry.targetLabel}: ${entry.message}`,
     )
     .join("\n");
 }
@@ -3044,7 +3053,7 @@ export function formatImportToolFindings(
 async function runProjectValidation(
   options: PlatformOptions & { project?: string },
   command: Command,
-  resolved: ResolvedEvalSuiteFile
+  resolved: ResolvedEvalSuiteFile,
 ): Promise<NonNullable<ValidateResult["projectValidation"]>> {
   const globalOptions = evalGlobalOptions(command);
   const scope = resolveCloudProjectArgs(options);
@@ -3068,13 +3077,13 @@ async function runProjectValidation(
           outcome.targetFindings.length === 0 && outcome.findings.length === 0,
         findings: [...outcome.targetFindings, ...outcome.findings],
       };
-    }
+    },
   );
 }
 
 async function runEvalValidate(
   options: PlatformOptions & { file: string; project?: string },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const source = readSuiteFileInput(options.file);
@@ -3110,14 +3119,14 @@ async function runEvalValidate(
           result.suite?.id
         } ` +
           `(${total} ${total === 1 ? "case" : "cases"}, ` +
-          `${result.suite?.enabledCases} enabled)\n`
+          `${result.suite?.enabledCases} enabled)\n`,
       );
       if (projectValidation && !projectValidation.valid) {
         process.stdout.write(
           `${projectValidation.findings.length} finding(s) ` +
             `against project ${projectValidation.project.name}:\n` +
             formatImportToolFindings(projectValidation.findings) +
-            "\n"
+            "\n",
         );
       }
     } else {
@@ -3146,7 +3155,7 @@ async function runEvalValidate(
     process.stdout.write(
       `${label}: invalid (${loaded.findings.length} ${
         loaded.findings.length === 1 ? "finding" : "findings"
-      })\n${formatSuiteFileFindings(loaded.findings)}\n`
+      })\n${formatSuiteFileFindings(loaded.findings)}\n`,
     );
   } else {
     writeResult(result, globalOptions.format);
@@ -3158,7 +3167,7 @@ async function runEvalValidate(
   setProcessExitCode(
     loaded.stage === "contract"
       ? SUITE_FILE_INVALID_EXIT_CODE
-      : SUITE_FILE_USAGE_EXIT_CODE
+      : SUITE_FILE_USAGE_EXIT_CODE,
   );
 }
 
@@ -3170,7 +3179,7 @@ async function runEvalValidate(
  * rather than exporting a file that silently holds fewer tests than the suite.
  */
 function isEvalSuiteSchemaVersion(
-  value: string
+  value: string,
 ): value is EvalSuiteSchemaVersion {
   return (EVAL_SUITE_SCHEMA_VERSIONS as readonly string[]).includes(value);
 }
@@ -3183,7 +3192,7 @@ async function runEvalExport(
     force?: boolean;
     schemaVersion?: string;
   },
-  command: Command
+  command: Command,
 ): Promise<void> {
   const globalOptions = evalGlobalOptions(command);
   const resolved = resolveCloudProjectArgs(options);
@@ -3195,8 +3204,8 @@ async function runEvalExport(
   if (!isEvalSuiteSchemaVersion(schemaVersion)) {
     throw usageError(
       `--schema-version must be ${EVAL_SUITE_SCHEMA_VERSIONS.map(
-        (v) => `"${v}"`
-      ).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`
+        (v) => `"${v}"`,
+      ).join(" or ")} (received ${JSON.stringify(schemaVersion)}).`,
     );
   }
 
@@ -3239,7 +3248,7 @@ async function runEvalExport(
       const page = {
         ...wirePage,
         items: wirePage.items.map((row) =>
-          caseFromWire(negotiated.vocabulary, row)
+          caseFromWire(negotiated.vocabulary, row),
         ),
       };
 
@@ -3251,7 +3260,7 @@ async function runEvalExport(
           "SUITE_FILE_TRUNCATED",
           `Suite "${options.suite}" returned more cases than one page and this ` +
             `CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
-          SUITE_FILE_USAGE_EXIT_CODE
+          SUITE_FILE_USAGE_EXIT_CODE,
         );
       }
 
@@ -3264,7 +3273,7 @@ async function runEvalExport(
             project: detail.projectId ?? resolved.project,
             environment: environmentIds[0]!,
           },
-          { client, signal }
+          { client, signal },
         );
       }
 
@@ -3274,7 +3283,7 @@ async function runEvalExport(
         ...(environment ? { environment } : {}),
       };
     },
-    { projectScope: resolved.projectScope }
+    { projectScope: resolved.projectScope },
   );
 
   const built = buildSuiteFileFromPlatform(fetched, { schemaVersion });
@@ -3294,7 +3303,7 @@ async function runEvalExport(
   if (bytes > MAX_SUITE_FILE_BYTES) {
     writeExportRefusal(
       [suiteFileTooLarge(bytes, MAX_SUITE_FILE_BYTES)],
-      globalOptions.format
+      globalOptions.format,
     );
     return;
   }
@@ -3309,7 +3318,7 @@ async function runEvalExport(
       `The suite file written for "${built.file.suite.id}" does not read back ` +
         `identically, so nothing was written. This is a bug in @mcpjam/cli — ` +
         `please report it.`,
-      reloaded.ok ? undefined : { findings: reloaded.findings }
+      reloaded.ok ? undefined : { findings: reloaded.findings },
     );
   }
 
@@ -3327,7 +3336,7 @@ async function runEvalExport(
       cases: built.file.cases.length,
       bytes,
     },
-    globalOptions.format
+    globalOptions.format,
   );
 }
 
@@ -3336,7 +3345,7 @@ function refuseToOverwrite(outPath: string, force: boolean): void {
   if (force || !existsSync(outPath)) return;
   throw usageError(
     `"${outPath}" already exists. Pass --force to replace it, or --out to ` +
-      `write somewhere else.`
+      `write somewhere else.`,
   );
 }
 
@@ -3350,7 +3359,7 @@ function refuseToOverwrite(outPath: string, force: boolean): void {
  */
 function writeExportRefusal(
   findings: SuiteExportFinding[],
-  format: ReturnType<typeof getGlobalOptions>["format"]
+  format: ReturnType<typeof getGlobalOptions>["format"],
 ): void {
   if (format === "human") {
     process.stdout.write(
@@ -3362,10 +3371,10 @@ function writeExportRefusal(
           .map((entry) =>
             entry.pointer === ""
               ? `  ${entry.code} ${entry.message}`
-              : `  ${entry.code} ${entry.pointer}: ${entry.message}`
+              : `  ${entry.code} ${entry.pointer}: ${entry.message}`,
           )
           .join("\n") +
-        "\n"
+        "\n",
     );
   } else {
     writeResult({ exported: false, path: null, findings }, format);
@@ -3380,39 +3389,39 @@ export function registerEvalCommands(program: Command): void {
     .description("Author and run eval suites in your hosted MCPJam projects")
     .addHelpText(
       "after",
-      "\nAgents: install the mcpjam-cloud skill for the run, poll, triage and credit rules:\n  npx skills add mcpjam/inspector --skill mcpjam-cloud\n"
+      "\nAgents: install the mcpjam-cloud skill for the run, poll, triage and credit rules:\n  npx skills add mcpjam/inspector --skill mcpjam-cloud\n",
     );
 
   evals
     .command("create")
     .description(
-      "Create a runnable eval suite from authored test cases (does not run it)"
+      "Create a runnable eval suite from authored test cases (does not run it)",
     )
     .option(
       "--project <id-or-name>",
-      "Project name or ID (defaults to the most recently updated project)"
+      "Project name or ID (defaults to the most recently updated project)",
     )
     .option(
       "--file <path>",
-      "Path to a create-API JSON body (or - for stdin). A versioned suite file belongs on `eval run --file`"
+      "Path to a create-API JSON body (or - for stdin). A versioned suite file belongs on `eval run --file`",
     )
     .option(
       "--json <json>",
-      "Inline suite definition JSON (or @file, or - for stdin)"
+      "Inline suite definition JSON (or @file, or - for stdin)",
     )
     .option("--name <name>", "Suite name (overrides the file)")
     .option("--model <model>", "Suite-level default model (overrides the file)")
     .option(
       "--provider <provider>",
-      "Suite-level default provider (overrides the file; needed for bare/custom model ids)"
+      "Suite-level default provider (overrides the file; needed for bare/custom model ids)",
     )
     .option(
       "--server <id-or-name...>",
-      "Project HTTP server names or IDs (overrides the file)"
+      "Project HTTP server names or IDs (overrides the file)",
     )
     .option(
       "--client <id-or-name...>",
-      "Clients to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --client` has nothing to select"
+      "Clients to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --client` has nothing to select",
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
@@ -3430,9 +3439,9 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           createEvalSuiteOperation.execute(
             { ...input, project: resolved.project },
-            { client, signal }
+            { client, signal },
           ),
-        { projectScope: resolved.projectScope }
+        { projectScope: resolved.projectScope },
       );
       writeResult(result, globalOptions.format);
     });
@@ -3442,7 +3451,7 @@ export function registerEvalCommands(program: Command): void {
     .description("List the eval suites saved in a project")
     .option(
       "--project <id-or-name>",
-      "Project name or ID (defaults to the most recently updated project)"
+      "Project name or ID (defaults to the most recently updated project)",
     )
     .action(
       async (options: PlatformOptions & { project?: string }, command) => {
@@ -3455,10 +3464,10 @@ export function registerEvalCommands(program: Command): void {
           // `runCloudOp` resolves the options a second time, so without this
           // it hands back the 30s probe default no matter what this command
           // computed for itself.
-          { defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS }
+          { defaultTimeoutMs: EVAL_REQUEST_TIMEOUT_MS },
         );
         writeResult(result, globalOptions.format);
-      }
+      },
     );
 
   evals
@@ -3467,12 +3476,12 @@ export function registerEvalCommands(program: Command): void {
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option(
       "--project <id-or-name>",
-      "Project name or ID (defaults to the most recently updated project)"
+      "Project name or ID (defaults to the most recently updated project)",
     )
     .option(
       "--limit <n>",
       "Maximum number of runs to return (1-100)",
-      (value) => Number.parseInt(value, 10)
+      (value) => Number.parseInt(value, 10),
     )
     .action(
       async (
@@ -3481,7 +3490,7 @@ export function registerEvalCommands(program: Command): void {
           project?: string;
           limit?: number;
         },
-        command
+        command,
       ) => {
         const input = validateOpInput(listEvalSuiteRunsOperation, {
           suite: options.suite,
@@ -3491,7 +3500,7 @@ export function registerEvalCommands(program: Command): void {
           ...(options.limit === undefined ? {} : { limit: options.limit }),
         });
         await executeOp(listEvalSuiteRunsOperation, input, options, command);
-      }
+      },
     );
 
   evals
@@ -3500,12 +3509,12 @@ export function registerEvalCommands(program: Command): void {
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option(
       "--project <id-or-name>",
-      "Project name or ID (defaults to the most recently updated project)"
+      "Project name or ID (defaults to the most recently updated project)",
     )
     .option(
       "--limit <n>",
       "Maximum number of revisions to return (1-100)",
-      (value) => Number.parseInt(value, 10)
+      (value) => Number.parseInt(value, 10),
     )
     .option("--cursor <cursor>", "Pagination cursor from a previous page")
     .action(
@@ -3516,7 +3525,7 @@ export function registerEvalCommands(program: Command): void {
           limit?: number;
           cursor?: string;
         },
-        command
+        command,
       ) => {
         const input = validateOpInput(listEvalSuiteRevisionsOperation, {
           suite: options.suite,
@@ -3530,146 +3539,154 @@ export function registerEvalCommands(program: Command): void {
           listEvalSuiteRevisionsOperation,
           input,
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   evals
     .command("run")
     .description(
       "Start an eval run of an existing suite, or upload a versioned suite file and run it. " +
-        "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead."
+        "The upload-and-launch has a 120s deadline overall, not per request (raise it with the global --timeout <ms>); --wait-timeout bounds the RUN instead.",
     )
     .option("--suite <id-or-name>", "Eval suite name or ID")
     .option(
       "--file <path>",
-      "Versioned suite file to upload and run (.yaml or .json, or - for stdin)"
+      "Versioned suite file to upload and run (.yaml or .json, or - for stdin)",
     )
     .option(
       "--project <id-or-name>",
-      "Project name or ID (defaults to the most recently updated project)"
+      "Project name or ID (defaults to the most recently updated project)",
     )
     .option(
       "--server <id-or-name...>",
-      "Override the suite's saved server selection (HTTP servers only)"
+      "Override the suite's saved server selection (HTTP servers only)",
     )
     .option(
       "--environment <id-or-name...>",
-      "Attached project environment(s) to run. Several values start one PAID RUN each."
+      "Attached project environment(s) to run. Several values start one PAID RUN each.",
     )
     .option(
       "--client <id-or-name...>",
-      "Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each."
+      "Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each.",
     )
     .option(
       "--host <id-or-name...>",
-      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes.",
     )
     .option(
       "--all-targets",
-      "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
+      "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target",
     )
     .option(
       "--iterations <n>",
       "Run each case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--iterations")
+      (v) => parseIntOption(v, "--iterations"),
     )
     .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
-      parseIntOption(v, "--repetitions")
+      parseIntOption(v, "--repetitions"),
     )
     .option(
       "--case <id-or-title...>",
-      "Run only these cases instead of the whole suite"
+      "Run only these cases instead of the whole suite",
     )
     .option(
       "--exclude-skills",
-      "Run the 'without skills' arm: no skills are pinned, and the run is labelled as excluded"
+      "Run the 'without skills' arm: no skills are pinned, and the run is labelled as excluded",
     )
     .option(
       "--refresh-snapshot",
-      "PERSISTS a new host-config snapshot on the suite, changing every future run of it. Single-target runs only."
+      "PERSISTS a new host-config snapshot on the suite, changing every future run of it. Single-target runs only.",
     )
     .option("--notes <text>", "Free-text note stored on the run")
     .option("--min-pass-rate <n>", "Pass threshold for this run (0-100)", (v) =>
-      parseNumberOption(v, "--min-pass-rate")
+      parseNumberOption(v, "--min-pass-rate"),
     )
     .option(
       "--match-options <json>",
-      'Tool-call match options for this run, e.g. \'{"toolCallOrder":"exact"}\''
+      'Tool-call match options for this run, e.g. \'{"toolCallOrder":"exact"}\'',
     )
     .option(
       "--idempotency-key <key>",
-      "Retry key for a lost launch response; for --file, one is minted and printed when omitted"
+      "Retry key for a lost launch response; for --file, one is minted and printed when omitted",
+    )
+    .option(
+      "--resume",
+      "Run this as the resume of a credit-blocked launch. If it is refused again, print `Still blocked` and exit 6 — never retried automatically.",
+    )
+    .option(
+      "--resume-from <runId>",
+      "Resume a run MCPJam credits stopped partway: run only that run's unfinished cases. Implies --resume.",
     )
     .option("--wait", "Wait for every started run to reach a terminal status")
     .option(
       "--wait-timeout <ms>",
-      "Maximum time to wait for completion (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
+      "Maximum time to wait for completion (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)",
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",
-      "Render the completed run report to stdout"
+      "Render the completed run report to stdout",
     )
     .option(
       "--out <path>",
-      "Atomically write the completed report selected by --reporter (default: json-summary)"
+      "Atomically write the completed report selected by --reporter (default: json-summary)",
     )
     .option(
       "--compose-client <id-or-name>",
-      "Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite)."
+      "Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite).",
     )
     .option(
       "--compose-host <id-or-name>",
-      "Deprecated alias for --compose-client"
+      "Deprecated alias for --compose-client",
     )
     .option(
       "--compose-computer <id-or-name>",
-      "Sandbox image to pin on the composed stack"
+      "Sandbox image to pin on the composed stack",
     )
     .option(
       "--compose-model <id...>",
-      "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
+      "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set.",
     )
     .option(
       "--compose-model-selection <json...>",
-      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model. Repeat it to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell."
+      "A whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -): one cell for its model, at its effort. Alongside --compose-model. Repeat it to add several selections for one model (e.g. at low and at high) — each distinct selection is its own cell.",
     )
     .option(
       "--with-client-default",
-      "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model"
+      "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model",
     )
     .option(
       "--save-targets",
-      "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
+      "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral.",
     )
     .option(
       "--compose-server <id-or-name...>",
-      "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group.",
     )
     .option(
       "--compose-server-group <id>",
-      "Standalone server group to pin on the composed stack"
+      "Standalone server group to pin on the composed stack",
     )
     .option(
       "--compose-host-servers",
-      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group.",
     )
     .option(
       "--compose-skill <id...>",
-      "Project-shared skill IDs to pin on the composed stack"
+      "Project-shared skill IDs to pin on the composed stack",
     )
     .option(
       "--compose-secret <id...>",
-      "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
+      "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`.",
     )
     .option(
       "--allow-approximated <case...>",
-      "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason."
+      "Approve an `approximated` imported case for THIS RUN ONLY (authored case id). Repeatable. --file only, and requires --approval-reason.",
     )
     .option(
       "--approval-reason <text>",
-      "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server."
+      "Why the approximations named by --allow-approximated are acceptable for this run (1-500 characters). Recorded on the run by the server.",
     )
     .action(
       async (
@@ -3705,12 +3722,14 @@ export function registerEvalCommands(program: Command): void {
           minPassRate?: number;
           matchOptions?: string;
           idempotencyKey?: string;
+          resume?: boolean;
+          resumeFrom?: string;
           wait?: boolean;
           waitTimeout?: string;
           reporter?: string;
           out?: string;
         },
-        command
+        command,
       ) => {
         if (options.file && options.suite) {
           throw usageError("Provide either --file or --suite, not both.");
@@ -3723,7 +3742,7 @@ export function registerEvalCommands(program: Command): void {
           options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag.",
           );
         }
         // One selector from here down: `--client` is canonical under
@@ -3741,6 +3760,19 @@ export function registerEvalCommands(program: Command): void {
         }
         const approvals = parseApprovalFlags(options);
         const globalOptions = evalGlobalOptions(command);
+        // --resume-from implies --resume: both mean "this launch is itself a
+        // retry after a credit block". A second refusal under it is reported as
+        // `Still blocked` and never retried, so the CLI cannot spin.
+        const resumed =
+          options.resume === true || options.resumeFrom !== undefined;
+        // A resume runs the source run's own unfinished cases, so it cannot also
+        // fan out across targets. Caught here with a clear message rather than as
+        // an opaque schema rejection from the group launch endpoint.
+        if (options.resumeFrom !== undefined && options.allTargets) {
+          throw usageError(
+            "--resume-from cannot be combined with --all-targets; a resume reruns the stopped run's own unfinished cases.",
+          );
+        }
         const reporter = parseReporterFormat(options.reporter);
         const waitTimeoutMs =
           options.waitTimeout !== undefined
@@ -3798,7 +3830,7 @@ export function registerEvalCommands(program: Command): void {
                 writeRunDisclosure(
                   globalOptions.format,
                   disclosure,
-                  reporter === undefined ? process.stdout : process.stderr
+                  reporter === undefined ? process.stdout : process.stderr,
                 );
               };
               // The failure counterpart: without this, a fetch that failed and a
@@ -3856,17 +3888,20 @@ export function registerEvalCommands(program: Command): void {
                       ...(options.matchOptions
                         ? {
                             matchOptions: parseMatchOptionsOption(
-                              options.matchOptions
+                              options.matchOptions,
                             ),
                           }
                         : {}),
                       ...(options.idempotencyKey
                         ? { idempotencyKey: options.idempotencyKey }
                         : {}),
+                      ...(options.resumeFrom
+                        ? { resumeFromRunId: options.resumeFrom }
+                        : {}),
                       ...(approvals ? { approvals } : {}),
                       ...composeField(options),
                     },
-                  }
+                  },
                 );
               }
               return withCatalogHostHint(clientSelectors, () =>
@@ -3881,7 +3916,7 @@ export function registerEvalCommands(program: Command): void {
                     ...selectorField(
                       "environment",
                       "environments",
-                      options.environment
+                      options.environment,
                     ),
                     ...selectorField("client", "clients", clientSelectors),
                     ...(options.allTargets ? { allAttached: true } : {}),
@@ -3908,12 +3943,15 @@ export function registerEvalCommands(program: Command): void {
                     ...(options.matchOptions
                       ? {
                           matchOptions: parseMatchOptionsOption(
-                            options.matchOptions
+                            options.matchOptions,
                           ),
                         }
                       : {}),
                     ...(options.idempotencyKey
                       ? { idempotencyKey: options.idempotencyKey }
+                      : {}),
+                    ...(options.resumeFrom
+                      ? { resumeFromRunId: options.resumeFrom }
                       : {}),
                     ...composeField(options),
                   },
@@ -3922,13 +3960,44 @@ export function registerEvalCommands(program: Command): void {
                     signal: context.signal,
                     onDisclosure,
                     onDisclosureUnavailable,
-                  }
-                )
+                  },
+                ),
               );
             },
-            { projectScope: resolved.projectScope }
+            { projectScope: resolved.projectScope },
           );
         } catch (error) {
+          // A credit refusal that names a person-must-act step (anything but
+          // `wait`) is a block, not a fault: no run was created, and the only
+          // honest output is the one step plus the command to resume once the
+          // user tops up. Handled here regardless of --wait, so `eval run`
+          // exits 6 the same way with or without it.
+          const launchRecovery =
+            error instanceof CliError
+              ? creditRecoveryOfCliError(error)
+              : undefined;
+          if (error instanceof CliError && isCreditBlock(launchRecovery)) {
+            const block = refusedLaunchCreditBlock(
+              error.details,
+              launchRecovery,
+              options,
+            );
+            if (globalOptions.format === "human") {
+              process.stderr.write(`${error.message}\n`);
+              writeCreditBlocks("human", [block], resumed, process.stderr);
+            } else {
+              writeResult(
+                {
+                  error: { code: error.code, message: error.message },
+                  creditRecovery: launchRecovery,
+                  ...creditBlocksJsonFields([block], resumed, true),
+                },
+                globalOptions.format,
+              );
+            }
+            setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+            return;
+          }
           // Launch-phase remap, --wait only: a thrown CliError whose exitCode
           // is not already 2 (usage error / invalid suite file — untouched)
           // gets reclassified by wire code. `toCliError` drops the HTTP
@@ -3945,24 +4014,35 @@ export function registerEvalCommands(program: Command): void {
               error.code,
               error.message,
               classifyLaunchErrorExitCode(error.code, error.details),
-              error.details
+              error.details,
             );
           }
           throw error;
         }
+        // Fan-out targets credits refused: each gets its own resume command.
+        const refusedBlocks = refusedTargetCreditBlocks(result, options);
         // EXACTLY ONE JSON document on `--format json`: the receipt already
         // carries every run, so appending human lines to it would make the
         // stream unparseable for the CI callers that read it. The human-mode
         // block already printed from `onDisclosure`, ahead of the launch
         // itself — nothing to print again here.
         if (!options.wait) {
-          writeResult(result, globalOptions.format);
+          writeResult(
+            globalOptions.format === "json"
+              ? {
+                  ...result,
+                  ...creditBlocksJsonFields(refusedBlocks, resumed, false),
+                }
+              : result,
+            globalOptions.format,
+          );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
+          writeCreditBlocks(globalOptions.format, refusedBlocks, resumed);
           // A partial or wholly failed fan-out is not a success. Exiting 0 would
-          // let a pipeline treat "1 of 3 runs never started" as a clean launch.
-          if (result.outcome !== "started") {
-            setProcessExitCode(1);
-          }
+          // let a pipeline treat "1 of 3 runs never started" as a clean launch;
+          // a target refused for credits a person must add exits 6 instead.
+          const launchCode = launchCreditExitCode(result, refusedBlocks);
+          if (launchCode !== 0) setProcessExitCode(launchCode);
           return;
         }
 
@@ -4009,7 +4089,7 @@ export function registerEvalCommands(program: Command): void {
                         result.project.id,
                         target.runId,
                         deadline,
-                        gradingExtensionMs
+                        gradingExtensionMs,
                       ),
                     };
                   } catch (error) {
@@ -4032,17 +4112,17 @@ export function registerEvalCommands(program: Command): void {
                         : {}),
                     };
                   }
-                })
+                }),
             );
             const runs = waited.flatMap((entry) =>
-              entry.ok ? [entry.run] : []
+              entry.ok ? [entry.run] : [],
             );
             accountServerNames = await runAccountServerNames(
               client,
               signal,
               result.project.id,
               runs,
-              globalOptions.format
+              globalOptions.format,
             );
             const waitErrors = waited.flatMap((entry) =>
               !entry.ok
@@ -4055,7 +4135,7 @@ export function registerEvalCommands(program: Command): void {
                         : {}),
                     },
                   ]
-                : []
+                : [],
             );
 
             if (!needsReport) {
@@ -4082,18 +4162,15 @@ export function registerEvalCommands(program: Command): void {
                       client,
                       signal,
                       result.project.id,
-                      runs[0]!
+                      runs[0]!,
                     )
                   : undefined;
-              const soloRecovery =
-                result.targets.length === 1 && runs.length === 1
-                  ? await readEvalRunCreditRecovery(
-                      client,
-                      signal,
-                      result.project.id,
-                      runs[0]!
-                    )
-                  : undefined;
+              const creditStops = await readRunCreditStops(
+                client,
+                signal,
+                result.project.id,
+                runs,
+              );
               // Deliberately does NOT throw on `waitErrors` here. Throwing from
               // inside the platform command skips the receipt below, and the
               // receipt is the only place the launched run ids are printed: a
@@ -4108,7 +4185,7 @@ export function registerEvalCommands(program: Command): void {
                 reportInputs: [] as StructuredEvalRunInput[],
                 iterationErrorCodes: new Map<string, string>(),
                 ...(soloSummary ? { decisionSummary: soloSummary } : {}),
-                ...(soloRecovery ? { creditRecovery: soloRecovery } : {}),
+                creditStops,
               };
             }
 
@@ -4124,7 +4201,7 @@ export function registerEvalCommands(program: Command): void {
                     client,
                     signal,
                     result.project.id,
-                    run.id
+                    run.id,
                   );
                   return {
                     run,
@@ -4143,7 +4220,7 @@ export function registerEvalCommands(program: Command): void {
                       error instanceof Error ? error.message : String(error),
                   };
                 }
-              })
+              }),
             );
             // Free: assembled from the walk `reportInputs` already performed,
             // through the same assembler the API endpoint calls. Skipped when the
@@ -4166,23 +4243,37 @@ export function registerEvalCommands(program: Command): void {
                     },
                   })
                 : undefined;
-            // From the walk above, like the summary: no extra read.
-            const creditRecovery = solo
-              ? creditRecoveryOfIterations(solo.iterations)
-              : undefined;
+            // Read off the walk above where it succeeded, with no extra read.
+            const creditStops = await readRunCreditStops(
+              client,
+              signal,
+              result.project.id,
+              runs,
+              new Map(
+                reportInputs
+                  .filter((input) => input.iterationError === undefined)
+                  .map((input) => [
+                    input.run.id,
+                    {
+                      iterations: input.iterations,
+                      complete: input.iterationsComplete,
+                    },
+                  ]),
+              ),
+            );
             return {
               runs,
               waitErrors,
               reportInputs,
               iterationErrorCodes,
               ...(decisionSummary ? { decisionSummary } : {}),
-              ...(creditRecovery ? { creditRecovery } : {}),
+              creditStops,
             };
           },
           {
             projectScope: resolved.projectScope,
             quiet: true,
-          }
+          },
         );
 
         const report = needsReport
@@ -4216,10 +4307,10 @@ export function registerEvalCommands(program: Command): void {
         // mask an already-known verdict failure the moment `--out` also
         // happened to be unwritable.
         const reportingErrors = completion.reportInputs.filter(
-          (input) => !input.iterationsComplete || input.iterationError
+          (input) => !input.iterationsComplete || input.iterationError,
         );
         const reportingFailedRunIds = new Set(
-          reportingErrors.map((input) => input.run.id)
+          reportingErrors.map((input) => input.run.id),
         );
         const runOutcomes: EvalRunWaitRunOutcome[] = completion.runs.map(
           (run) => ({
@@ -4227,15 +4318,33 @@ export function registerEvalCommands(program: Command): void {
             result: run.result,
             reportingFailed: reportingFailedRunIds.has(run.id),
             reportingFailedErrorCode: completion.iterationErrorCodes.get(
-              run.id
+              run.id,
             ),
-          })
+          }),
         );
-        const code = evalRunWaitExitCode({
-          launchOutcome: result.outcome,
-          runs: runOutcomes,
-          waitErrors: completion.waitErrors,
-        });
+        // A credit stop or refusal whose step a person must take (anything but
+        // `wait`) is a block: the run finalized `failed` (base code 5), or the
+        // target never launched (4), but the actionable outcome is "a person
+        // must add credits, then resume", so it merges to 6, per target. A
+        // `wait` recovery keeps the base code.
+        const soloRecovery =
+          result.targets.length === 1
+            ? completion.creditStops[0]?.recovery
+            : undefined;
+        const creditBlocks = [
+          ...refusedBlocks,
+          ...completion.creditStops
+            .filter((stop) => isCreditBlock(stop.recovery))
+            .map((stop) => stoppedRunCreditBlock(stop, options)),
+        ];
+        const code = worstOf([
+          evalRunWaitExitCode({
+            launchOutcome: result.outcome,
+            runs: runOutcomes,
+            waitErrors: completion.waitErrors,
+          }),
+          ...(creditBlocks.length > 0 ? [EVAL_RUN_BLOCKED_EXIT_CODE] : []),
+        ]);
 
         // Captured, NOT thrown here: the receipt below (or the reporter
         // stdout) carries the only copy of the launched run ids, and a local
@@ -4248,7 +4357,7 @@ export function registerEvalCommands(program: Command): void {
             await writeReporterArtifact(
               options.out,
               reporter ?? "json-summary",
-              report
+              report,
             );
           } catch (error) {
             outWriteError =
@@ -4274,16 +4383,23 @@ export function registerEvalCommands(program: Command): void {
               ...(globalOptions.format === "json" && completion.decisionSummary
                 ? { decisionSummary: completion.decisionSummary }
                 : {}),
-              ...(globalOptions.format === "json" && completion.creditRecovery
-                ? { creditRecovery: completion.creditRecovery }
+              ...(globalOptions.format === "json" && soloRecovery
+                ? { creditRecovery: soloRecovery }
+                : {}),
+              ...(globalOptions.format === "json"
+                ? creditBlocksJsonFields(
+                    creditBlocks,
+                    resumed,
+                    result.targets.length === 1,
+                  )
                 : {}),
             },
-            globalOptions.format
+            globalOptions.format,
           );
           writeRunAccounts(
             globalOptions.format,
             completion.runs,
-            accountServerNames
+            accountServerNames,
           );
           writeRunGroupSummary(globalOptions.format, webOrigin, result);
           // Human only, and after the receipt: the receipt carries the run ids
@@ -4291,9 +4407,17 @@ export function registerEvalCommands(program: Command): void {
           writeEvalDecisionSummary(
             globalOptions.format,
             completion.decisionSummary,
-            process.stdout
+            process.stdout,
           );
-          writeCreditRecovery(globalOptions.format, completion.creditRecovery);
+          // A person-must-act block prints the one step and a command per
+          // blocked target to resume once the user tops up; `Still blocked`
+          // instead when this run was already a resume. Any other recovery (a
+          // `wait`) keeps the plain `Recovery:` line.
+          if (creditBlocks.length > 0) {
+            writeCreditBlocks(globalOptions.format, creditBlocks, resumed);
+          } else {
+            writeCreditRecovery(globalOptions.format, soloRecovery);
+          }
         }
 
         // Everything above has already been written — report file, reporter
@@ -4315,7 +4439,7 @@ export function registerEvalCommands(program: Command): void {
             "OPERATIONAL_ERROR",
             needsReport
               ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
-                  ", "
+                  ", ",
                 )}.`
               : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
             code,
@@ -4327,31 +4451,31 @@ export function registerEvalCommands(program: Command): void {
               ...(completion.waitErrors.length > 0
                 ? { waitErrors: completion.waitErrors }
                 : {}),
-            }
+            },
           );
         }
 
         setProcessExitCode(code);
-      }
+      },
     );
 
   addProjectOption(
     evals
       .command("status")
       .description("Get the status and summary of an eval run")
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   )
     .option(
       "--diagnostics-limit <n>",
-      "Failure diagnostics per page (1–200; default 20)"
+      "Failure diagnostics per page (1–200; default 20)",
     )
     .option(
       "--diagnostics-cursor <cursor>",
-      "Cursor from a previous response's decisionSummary.diagnostics.nextCursor"
+      "Cursor from a previous response's decisionSummary.diagnostics.nextCursor",
     )
     .option(
       "--stages",
-      "Print all six user-value chain rows for each failing trial (human output)"
+      "Print all six user-value chain rows for each failing trial (human output)",
     )
     .action(
       async (
@@ -4362,7 +4486,7 @@ export function registerEvalCommands(program: Command): void {
           diagnosticsCursor?: string;
           stages?: boolean;
         },
-        command
+        command,
       ) => {
         const globalOptions = evalGlobalOptions(command);
         // Set by the operation's first step, before any use.
@@ -4388,7 +4512,7 @@ export function registerEvalCommands(program: Command): void {
               ? {
                   diagnosticsLimit: parsePositiveInteger(
                     options.diagnosticsLimit,
-                    "--diagnostics-limit"
+                    "--diagnostics-limit",
                   ),
                 }
               : {}),
@@ -4396,7 +4520,7 @@ export function registerEvalCommands(program: Command): void {
               ? { diagnosticsCursor: options.diagnosticsCursor }
               : {}),
           },
-          { projectOptional: true }
+          { projectOptional: true },
         );
         const result = await runPlatformCommand(
           platformOptionsOf(command),
@@ -4412,7 +4536,7 @@ export function registerEvalCommands(program: Command): void {
               context.signal,
               result.project.id,
               [result.run],
-              globalOptions.format
+              globalOptions.format,
             );
             // Any terminal run that did NOT pass — not just a failed one.
             // `inconclusive` and a run that stopped without a verdict are the
@@ -4436,8 +4560,26 @@ export function registerEvalCommands(program: Command): void {
           {
             projectScope: resolved.projectScope,
             quiet: globalOptions.quiet,
-          }
+          },
         );
+        // A run MCPJam credits stopped and whose step a person must take is a
+        // block: the reader must resume it once the user tops up. The resume
+        // command reconstructs from the run record (suite + project + this run
+        // as the source); `status` carries no launch knobs, so it is the exact
+        // minimum that runs the unfinished cases.
+        const statusBlock = isCreditBlock(result.creditRecovery)
+          ? stoppedRunCreditBlock(
+              {
+                run: result.run,
+                recovery: result.creditRecovery,
+                ...(result.incompleteCases
+                  ? { incompleteCases: result.incompleteCases }
+                  : {}),
+              },
+              { project: result.project.id },
+            )
+          : undefined;
+        const statusResumeCommand = statusBlock?.resumeCommand;
         // The wire-shaped result is useful in JSON, but human output must not
         // leak raw decision enums (for example `argumentMismatch`) before the
         // label-aware summary below. The operation still returns the canonical
@@ -4449,13 +4591,21 @@ export function registerEvalCommands(program: Command): void {
                 const {
                   decisionSummary: _decisionSummary,
                   creditRecovery: _creditRecovery,
+                  resume: _resume,
+                  incompleteCases: _incompleteCases,
                   ...humanResult
                 } = result;
                 return humanResult;
               })()
-            : result;
+            : statusResumeCommand
+              ? { ...result, resumeCommand: statusResumeCommand }
+              : result;
         writeResult(resultForOutput, globalOptions.format);
-        writeRunAccounts(globalOptions.format, [result.run], accountServerNames);
+        writeRunAccounts(
+          globalOptions.format,
+          [result.run],
+          accountServerNames,
+        );
         writeJudgeSummary(globalOptions.format, result.run.judges);
         // Payload, then WHY, then WHERE. The `View:` line stays last on purpose:
         // it is the one thing a reader acts on after reading the rest, and a
@@ -4464,32 +4614,39 @@ export function registerEvalCommands(program: Command): void {
           globalOptions.format,
           decisionSummary,
           process.stdout,
-          { stages: options.stages === true }
+          { stages: options.stages === true },
         );
-        writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        if (statusBlock) {
+          writeCreditBlocks(globalOptions.format, [statusBlock], false);
+        } else {
+          writeCreditRecovery(globalOptions.format, result.creditRecovery);
+        }
         writeRunLink(globalOptions.format, webOrigin, {
           projectId: result.project.id,
           suiteId: result.run.suiteId,
           runId: result.run.id,
         });
-      }
+        if (statusBlock) {
+          setProcessExitCode(EVAL_RUN_BLOCKED_EXIT_CODE);
+        }
+      },
     );
 
   addProjectOption(
     evals
       .command("stage-analytics")
       .description(
-        "Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)"
-      )
+        "Read the user-value chain funnel for one run (--run) or a suite's runs as a trend series (--suite)",
+      ),
   )
     .option("--run <id>", "Eval run ID — one run's funnel")
     .option(
       "--suite <id-or-name>",
-      "Eval suite name or ID — one page of runs, newest first"
+      "Eval suite name or ID — one page of runs, newest first",
     )
     .option(
       "--cursor <cursor>",
-      "Pagination cursor from a previous response (--suite only)"
+      "Pagination cursor from a previous response (--suite only)",
     )
     .option("--limit <n>", "Documents per page, 1-100 (--suite only)")
     .action(
@@ -4501,7 +4658,7 @@ export function registerEvalCommands(program: Command): void {
           cursor?: string;
           limit?: string;
         },
-        command
+        command,
       ) => {
         // XOR, and both halves refused explicitly. `--run` and `--suite` address
         // two genuinely different reads — one document, or a page of them — so
@@ -4509,7 +4666,7 @@ export function registerEvalCommands(program: Command): void {
         // answer a question the caller did not ask.
         if ((options.run === undefined) === (options.suite === undefined)) {
           throw usageError(
-            "Provide either --run <id> or --suite <id-or-name>, not both."
+            "Provide either --run <id> or --suite <id-or-name>, not both.",
           );
         }
         const suiteMode = options.suite !== undefined;
@@ -4547,28 +4704,28 @@ export function registerEvalCommands(program: Command): void {
                 }
               : { runId: options.run }),
           },
-          { projectOptional: true }
+          { projectOptional: true },
         );
         await executeOp(
           operation as PlatformOperation<Record<string, unknown>, unknown>,
           input,
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   addProjectOption(
     evals
       .command("route-facts")
       .description(
-        "Read the tool routes a run's trials took — which paths were used, and which expected tools were missing or substituted"
+        "Read the tool routes a run's trials took — which paths were used, and which expected tools were missing or substituted",
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   ).action(
     async (
       options: PlatformOptions & { project?: string; run: string },
-      command
+      command,
     ) => {
       const input = validateOpInput(
         getEvalRunRouteFactsOperation as PlatformOperation<
@@ -4581,7 +4738,7 @@ export function registerEvalCommands(program: Command): void {
             ? {}
             : { project: options.project }),
         },
-        { projectOptional: true }
+        { projectOptional: true },
       );
       await executeOp(
         getEvalRunRouteFactsOperation as PlatformOperation<
@@ -4590,22 +4747,22 @@ export function registerEvalCommands(program: Command): void {
         >,
         input,
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("server-facts")
       .description(
-        "Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed"
+        "Read the server a run was taken against — tool surface, catalog size, annotation coverage, tool-metadata signals, and what connect and discovery observed",
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   ).action(
     async (
       options: PlatformOptions & { project?: string; run: string },
-      command
+      command,
     ) => {
       const input = validateOpInput(
         getEvalRunServerFactsOperation as PlatformOperation<
@@ -4618,7 +4775,7 @@ export function registerEvalCommands(program: Command): void {
             ? {}
             : { project: options.project }),
         },
-        { projectOptional: true }
+        { projectOptional: true },
       );
       await executeOp(
         getEvalRunServerFactsOperation as PlatformOperation<
@@ -4627,26 +4784,26 @@ export function registerEvalCommands(program: Command): void {
         >,
         input,
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   const descriptionExperiment = evals
     .command("description-experiment")
     .description(
-      "Propose, start, or read a two-arm tool-description rewrite experiment"
+      "Propose, start, or read a two-arm tool-description rewrite experiment",
     );
 
   addProjectOption(
     descriptionExperiment
       .command("propose")
       .description(
-        "Draft a rewritten tool description from a finished run's failed trials. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Poll `description-experiment get` rather than re-proposing."
+        "Draft a rewritten tool description from a finished run's failed trials. Included with MCPJam; no customer credits consumed; subject to MCPJam's daily analysis budget. Poll `description-experiment get` rather than re-proposing.",
       )
       .requiredOption("--run <id>", "Source eval run ID")
       .requiredOption("--tool <name>", "Catalog tool name to rewrite")
-      .option("--case <id...>", "Limit evidence to these case ids")
+      .option("--case <id...>", "Limit evidence to these case ids"),
   ).action(
     async (
       options: PlatformOptions & {
@@ -4655,7 +4812,7 @@ export function registerEvalCommands(program: Command): void {
         tool: string;
         case?: string[];
       },
-      command
+      command,
     ) => {
       // `projectOptional`, like `route-facts`: the operation's schema REQUIRES
       // `project`, and the cloud CLI fills it from --project/env/link/automatic
@@ -4674,7 +4831,7 @@ export function registerEvalCommands(program: Command): void {
             ? {}
             : { project: options.project }),
         },
-        { projectOptional: true }
+        { projectOptional: true },
       );
       await executeOp(
         proposeEvalDescriptionRewriteOperation as PlatformOperation<
@@ -4683,16 +4840,16 @@ export function registerEvalCommands(program: Command): void {
         >,
         input as Record<string, unknown>,
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     descriptionExperiment
       .command("start")
       .description(
-        "Launch the two-arm experiment (original + rewrite). Spends eval-iteration credits; poll `description-experiment get`."
+        "Launch the two-arm experiment (original + rewrite). Spends eval-iteration credits; poll `description-experiment get`.",
       )
       .requiredOption("--experiment <id>", "Description-experiment ID")
       .option("--case-scope <scope>", "Which cases to replay: all or affected")
@@ -4700,9 +4857,9 @@ export function registerEvalCommands(program: Command): void {
       .option("--repetitions <n>", "Legacy spelling of --iterations (1–10)")
       .option(
         "--max-iterations <n>",
-        "Refuse if the planned total (cases × iterations × arms) exceeds this (max 400)"
+        "Refuse if the planned total (cases × iterations × arms) exceeds this (max 400)",
       )
-      .option("--max-trials <n>", "Legacy spelling of --max-iterations")
+      .option("--max-trials <n>", "Legacy spelling of --max-iterations"),
   ).action(
     async (
       options: PlatformOptions & {
@@ -4714,14 +4871,14 @@ export function registerEvalCommands(program: Command): void {
         maxIterations?: string;
         maxTrials?: string;
       },
-      command
+      command,
     ) => {
       if (
         options.iterations !== undefined &&
         options.repetitions !== undefined
       ) {
         throw usageError(
-          "Use --iterations or --repetitions, not both — they are two spellings of one flag."
+          "Use --iterations or --repetitions, not both — they are two spellings of one flag.",
         );
       }
       if (
@@ -4729,7 +4886,7 @@ export function registerEvalCommands(program: Command): void {
         options.maxTrials !== undefined
       ) {
         throw usageError(
-          "Use --max-iterations or --max-trials, not both — they are two spellings of one flag."
+          "Use --max-iterations or --max-trials, not both — they are two spellings of one flag.",
         );
       }
       const iterations = options.iterations ?? options.repetitions;
@@ -4748,7 +4905,7 @@ export function registerEvalCommands(program: Command): void {
                 iterations,
                 options.iterations !== undefined
                   ? "--iterations"
-                  : "--repetitions"
+                  : "--repetitions",
               ),
             }
           : {}),
@@ -4758,7 +4915,7 @@ export function registerEvalCommands(program: Command): void {
                 maxIterations,
                 options.maxIterations !== undefined
                   ? "--max-iterations"
-                  : "--max-trials"
+                  : "--max-trials",
               ),
             }
           : {}),
@@ -4771,22 +4928,22 @@ export function registerEvalCommands(program: Command): void {
         >,
         input as Record<string, unknown>,
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     descriptionExperiment
       .command("get")
       .description(
-        "Read one description-experiment document, including its report when materialised"
+        "Read one description-experiment document, including its report when materialised",
       )
-      .requiredOption("--experiment <id>", "Description-experiment ID")
+      .requiredOption("--experiment <id>", "Description-experiment ID"),
   ).action(
     async (
       options: PlatformOptions & { project?: string; experiment: string },
-      command
+      command,
     ) => {
       await executeOp(
         getEvalDescriptionExperimentOperation as PlatformOperation<
@@ -4800,22 +4957,22 @@ export function registerEvalCommands(program: Command): void {
             : { project: options.project }),
         },
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("cancel")
       .description(
-        "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
+        "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)",
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   ).action(
     async (
       options: PlatformOptions & { project?: string; run: string },
-      command
+      command,
     ) => {
       await executeOp(
         cancelEvalRunOperation,
@@ -4826,37 +4983,37 @@ export function registerEvalCommands(program: Command): void {
             : { project: options.project }),
         } as { project: string; runId: string },
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("rerun")
       .description(
-        "Rerun a finished eval run's failed cases as a new run. The platform picks the cases: any with a trial that did not complete and pass (cancelled and skipped trials do not count)"
+        "Rerun a finished eval run's failed cases as a new run. The platform picks the cases: any with a trial that did not complete and pass (cancelled and skipped trials do not count)",
       )
       .argument("<run-id>", "Eval run ID to rerun (from `eval run`)")
       .option(
         "--failed",
-        "Rerun only the cases that did not pass (required; the only rerun scope)"
+        "Rerun only the cases that did not pass (required; the only rerun scope)",
       )
       .option(
         "--dry-run",
-        "Show which cases would rerun, and why, without starting anything"
+        "Show which cases would rerun, and why, without starting anything",
       )
       .option("--notes <text>", "Free-text note stored on the new run")
       .option(
         "--idempotency-key <key>",
-        "Retry-safety key: repeating the call returns the run it already started"
+        "Retry-safety key: repeating the call returns the run it already started",
       )
       .option("--wait", "Wait for the rerun to reach a terminal status")
       .option(
         "--wait-timeout <ms>",
-        "Maximum time to wait for completion (default 2100000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
+        "Maximum time to wait for completion (default 2100000; a run held for its judge gets up to 31 more minutes unless this flag is set)",
       )
-      .option("--json", "Print machine-readable JSON (same as --format json)")
+      .option("--json", "Print machine-readable JSON (same as --format json)"),
   ).action(
     async (
       runId: string,
@@ -4870,11 +5027,11 @@ export function registerEvalCommands(program: Command): void {
         waitTimeout?: string;
         json?: boolean;
       },
-      command
+      command,
     ) => {
       if (!options.failed) {
         throw usageError(
-          "Pass --failed: rerunning the cases that did not pass is the only rerun scope."
+          "Pass --failed: rerunning the cases that did not pass is the only rerun scope.",
         );
       }
       if (options.waitTimeout !== undefined && !options.wait) {
@@ -4904,7 +5061,7 @@ export function registerEvalCommands(program: Command): void {
           options.wait
             ? Math.max(
                 globalOptions.timeout,
-                waitTimeoutMs + gradingExtensionMs
+                waitTimeoutMs + gradingExtensionMs,
               )
             : globalOptions.timeout,
           async (context) => {
@@ -4914,14 +5071,17 @@ export function registerEvalCommands(program: Command): void {
             const resolution = resolveProject(projects.items, resolved.project);
             if (!resolution.ok) {
               throw usageError(
-                appendProjectLinkHint(resolution.message, resolved.projectScope)
+                appendProjectLinkHint(
+                  resolution.message,
+                  resolved.projectScope,
+                ),
               );
             }
             const projectId = resolution.project.id;
             if (options.dryRun) {
               const preview = await client.getEvalRunRerunPreview(
                 { projectId, runId },
-                { signal }
+                { signal },
               );
               return { projectId, preview };
             }
@@ -4937,7 +5097,7 @@ export function registerEvalCommands(program: Command): void {
                   ? { idempotencyKey: options.idempotencyKey }
                   : {}),
               },
-              { signal }
+              { signal },
             );
             if (!options.wait) return { projectId, rerun };
             try {
@@ -4947,14 +5107,14 @@ export function registerEvalCommands(program: Command): void {
                 projectId,
                 rerun.runId,
                 Date.now() + waitTimeoutMs,
-                gradingExtensionMs
+                gradingExtensionMs,
               );
               accountServerNames = await runAccountServerNames(
                 client,
                 signal,
                 projectId,
                 [run],
-                format
+                format,
               );
               return { projectId, rerun, run };
             } catch (error) {
@@ -4974,7 +5134,7 @@ export function registerEvalCommands(program: Command): void {
               };
             }
           },
-          { projectScope: resolved.projectScope, quiet: globalOptions.quiet }
+          { projectScope: resolved.projectScope, quiet: globalOptions.quiet },
         );
       } catch (error) {
         // Same launch-phase remap as `eval run --wait`: a refusal (nothing to
@@ -4985,7 +5145,7 @@ export function registerEvalCommands(program: Command): void {
             error.code,
             error.message,
             classifyLaunchErrorExitCode(error.code, error.details),
-            error.details
+            error.details,
           );
         }
         throw error;
@@ -5003,7 +5163,7 @@ export function registerEvalCommands(program: Command): void {
       const waitError = "waitError" in outcome ? outcome.waitError : undefined;
       writeResult(
         { rerun, ...(run ? { run } : {}), ...(waitError ? { waitError } : {}) },
-        format
+        format,
       );
       writeRunAccounts(format, run ? [run] : [], accountServerNames);
       writeRunLink(format, webOrigin, {
@@ -5015,7 +5175,7 @@ export function registerEvalCommands(program: Command): void {
         throw cliError(
           "OPERATIONAL_ERROR",
           `Did not observe completion for: ${rerun.runId}. ${waitError.message}`,
-          classifyWaitErrorExitCode(waitError.errorCode)
+          classifyWaitErrorExitCode(waitError.errorCode),
         );
       }
       if (run) {
@@ -5024,23 +5184,23 @@ export function registerEvalCommands(program: Command): void {
             launchOutcome: "started",
             runs: [{ status: run.status, result: run.result }],
             waitErrors: [],
-          })
+          }),
         );
       }
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("judge-backtest")
       .description(
-        "Preview draft grading instructions on recorded evidence (uses credits)"
+        "Preview draft grading instructions on recorded evidence (uses credits)",
       )
       .requiredOption("--run <id>", "Terminal eval run ID")
       .requiredOption(
         "--json <request>",
-        "JSON or @file with rubric and optional continuation"
-      )
+        "JSON or @file with rubric and optional continuation",
+      ),
   ).action(
     async (
       options: PlatformOptions & {
@@ -5048,36 +5208,36 @@ export function registerEvalCommands(program: Command): void {
         run: string;
         json: string;
       },
-      command
+      command,
     ) => {
       const body = new JsonInputContext().parseJsonInputRecord(
         options.json,
-        "--json"
+        "--json",
       );
       const input = validateOpInput(
         backtestEvalRunJudgeOperation,
         { ...body, runId: options.run, project: options.project },
-        { projectOptional: true }
+        { projectOptional: true },
       );
       await executeOp(backtestEvalRunJudgeOperation, input, options, command);
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("backtest")
       .description(
-        "Preview assertion changes on stored evidence without changing results"
+        "Preview assertion changes on stored evidence without changing results",
       )
       .requiredOption("--run <id>", "Terminal eval run ID")
       .requiredOption(
         "--json <draft>",
-        "Draft JSON (or @file, or -); assertions has mode and list"
+        "Draft JSON (or @file, or -); assertions has mode and list",
       )
       .option(
         "--continuation <json>",
-        "Continuation object from the previous preview response"
-      )
+        "Continuation object from the previous preview response",
+      ),
   ).action(
     async (
       options: PlatformOptions & {
@@ -5086,11 +5246,11 @@ export function registerEvalCommands(program: Command): void {
         json: string;
         continuation?: string;
       },
-      command
+      command,
     ) => {
       const draft = new JsonInputContext().parseJsonInputRecord(
         options.json,
-        "--json"
+        "--json",
       );
       const input = validateOpInput(
         backtestEvalRunOperation,
@@ -5102,30 +5262,30 @@ export function registerEvalCommands(program: Command): void {
             ? {
                 continuation: new JsonInputContext().parseJsonInputRecord(
                   options.continuation,
-                  "--continuation"
+                  "--continuation",
                 ),
               }
             : {}),
         },
-        { projectOptional: true }
+        { projectOptional: true },
       );
       await executeOp(backtestEvalRunOperation, input, options, command);
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("judge")
       .description(
-        "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
+        "Grade a finished eval run with LLM as Judge (SPENDS your model budget)",
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   )
     .option("--scope <all|failed>", "Regrade all or retry only failed grading")
     .option("--force", "Re-grade a run that already has a judge result")
     .option(
       "--enable",
-      "Grade this run even though the judge was off when it ran"
+      "Grade this run even though the judge was off when it ran",
     )
     .option("--judge-model <id>", "Judge model for this run only")
     .option("--judge-threshold <0-1>", "Pass threshold for this run only")
@@ -5140,7 +5300,7 @@ export function registerEvalCommands(program: Command): void {
           judgeModel?: string;
           judgeThreshold?: string;
         },
-        command
+        command,
       ) => {
         const threshold =
           options.judgeThreshold !== undefined
@@ -5164,10 +5324,10 @@ export function registerEvalCommands(program: Command): void {
               : {}),
             ...(threshold !== undefined ? { threshold } : {}),
           },
-          { projectOptional: true }
+          { projectOptional: true },
         );
         await executeOp(requestEvalRunJudgeOperation, input, options, command);
-      }
+      },
     );
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
@@ -5187,7 +5347,7 @@ export function registerEvalCommands(program: Command): void {
   // have in their scripts.
   function registerGithubSubcommands(
     group: Command,
-    deprecated: boolean
+    deprecated: boolean,
   ): void {
     const suffix = deprecated
       ? " [deprecated: use `mcpjam cloud eval github`]"
@@ -5196,7 +5356,7 @@ export function registerEvalCommands(program: Command): void {
     group
       .command("list")
       .description(
-        `List the repositories running an eval suite on their pull requests${suffix}`
+        `List the repositories running an eval suite on their pull requests${suffix}`,
       )
       .option("--project <id-or-name>", PROJECT_OPT)
       .action(
@@ -5205,21 +5365,21 @@ export function registerEvalCommands(program: Command): void {
             listEvalGithubReposOperation,
             { project: options.project },
             options,
-            command
+            command,
           );
-        }
+        },
       );
 
     group
       .command("connect")
       .description(
-        `Run this suite on every pull request to a repository (affects everyone who opens one)${suffix}`
+        `Run this suite on every pull request to a repository (affects everyone who opens one)${suffix}`,
       )
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .requiredOption("--repo <owner/repo>", "Repository to connect")
       .requiredOption(
         "--outage-policy <fail-open|fail-closed>",
-        "What the check reports when MCPJam cannot conclude"
+        "What the check reports when MCPJam cannot conclude",
       )
       .option("--project <id-or-name>", PROJECT_OPT)
       .action(
@@ -5230,7 +5390,7 @@ export function registerEvalCommands(program: Command): void {
             repo: string;
             outagePolicy: string;
           },
-          command
+          command,
         ) => {
           // A Map, not an object literal: `{...}[key]` consults the prototype
           // chain, so `--outage-policy constructor` would be truthy, skip the
@@ -5239,7 +5399,7 @@ export function registerEvalCommands(program: Command): void {
           const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
           if (!policy) {
             throw usageError(
-              '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+              '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.',
             );
           }
           const input = validateOpInput(connectEvalGithubRepoOperation, {
@@ -5252,9 +5412,9 @@ export function registerEvalCommands(program: Command): void {
             connectEvalGithubRepoOperation,
             input,
             options,
-            command
+            command,
           );
-        }
+        },
       );
   }
 
@@ -5262,18 +5422,18 @@ export function registerEvalCommands(program: Command): void {
     evals
       .command("github")
       .description(
-        "Run an eval suite on a GitHub repository's pull requests (GitHub checks)"
+        "Run an eval suite on a GitHub repository's pull requests (GitHub checks)",
       ),
-    false
+    false,
   );
 
   registerGithubSubcommands(
     evals
       .command("checks")
       .description(
-        "Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks"
+        "Deprecated alias for `cloud eval github` — a repository's GitHub checks, not a case's grading checks",
       ),
-    true
+    true,
   );
 
   // ── Eval run iterations + traces ───────────────────────────────────
@@ -5281,9 +5441,9 @@ export function registerEvalCommands(program: Command): void {
     evals
       .command("iterations")
       .description(
-        "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
+        "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)",
       )
-      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)"),
   )
     .option("--cursor <cursor>", "Pagination cursor from a previous response")
     .option("--limit <n>", "Max iterations per page (1–200)")
@@ -5295,7 +5455,7 @@ export function registerEvalCommands(program: Command): void {
           cursor?: string;
           limit?: string;
         },
-        command
+        command,
       ) => {
         const input = validateOpInput(
           listEvalRunIterationsOperation,
@@ -5309,22 +5469,22 @@ export function registerEvalCommands(program: Command): void {
               ? { limit: Number(options.limit) }
               : {}),
           },
-          { projectOptional: true }
+          { projectOptional: true },
         );
         await executeOp(
           listEvalRunIterationsOperation,
           input,
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   const gateCommand = addProjectOption(
     evals
       .command("gate")
       .description(
-        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or waived, 1 eval failure, 2 usage, 3 incomplete)"
+        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass or waived, 1 eval failure, 2 usage, 3 incomplete)",
       )
       // `.option`, not `.requiredOption`, ONLY so that `gate waive` and `gate
       // unwaive` below can exist: commander enforces a parent's mandatory
@@ -5335,79 +5495,79 @@ export function registerEvalCommands(program: Command): void {
       // The exit code is UNCHANGED by that move: commander's own
       // missing-option error is mapped to 2 (USAGE_ERROR) by the CLI
       // entrypoint, which is exactly what `usageError` produces.
-      .option("--run <id>", "Eval run ID (from `eval run`)")
+      .option("--run <id>", "Eval run ID (from `eval run`)"),
   )
     .option(
       "--min-pass-rate-percent <0-100>",
-      "Minimum share of iterations that must pass, as a percentage"
+      "Minimum share of iterations that must pass, as a percentage",
     )
     .option(
       // The FLAG keeps its name. It is a published CI contract — renaming it
       // breaks every pipeline that spells it — and it names the quality gate,
       // not an assertion's policy role. Only the help text moves.
       "--no-gating-score-errors",
-      "Fail if any required scorer errored during the run"
+      "Fail if any required scorer errored during the run",
     )
     .option(
       "--min-scorer-pass-rate <scorerId=percent>",
       "Minimum pass rate for one scorer (repeatable)",
       collectRepeatable,
-      [] as string[]
+      [] as string[],
     )
     .option(
       "--min-mean-score <scorerId=0..1>",
       "Minimum mean score for one scorer (repeatable)",
       collectRepeatable,
-      [] as string[]
+      [] as string[],
     )
     .option(
       "--baseline <runId>",
-      "Baseline run ID to gate a regression delta against; mutually exclusive with --baseline-sha"
+      "Baseline run ID to gate a regression delta against; mutually exclusive with --baseline-sha",
     )
     .option(
       "--baseline-sha <sha>",
-      "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --baseline"
+      "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --baseline",
     )
     .option(
       "--min-sample-size <n>",
-      "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline or --baseline-sha"
+      "Iterations required on EACH side before a pass-rate regression is decidable (default 5); requires --baseline or --baseline-sha",
     )
     .option(
       "--min-effect-size-percent <0-100>",
-      "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline or --baseline-sha"
+      "Smallest pass-rate drop worth failing on, as a percentage (default 1); requires --baseline or --baseline-sha",
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha"
+      "Fail if a deterministic required scorer flipped from passed to failed; requires --baseline or --baseline-sha",
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
-      "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
+      "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha",
     )
     .option(
       "--max-cost-usd <usd>",
-      "Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured"
+      "Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured",
     )
     .option(
       "--max-cost-increase-percent <percent>",
-      "Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha"
+      "Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha",
     )
     .option("--wait", "Poll until the run reaches a terminal status")
     .option(
       "--wait-timeout <ms>",
-      "Give up waiting after this many milliseconds (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
+      "Give up waiting after this many milliseconds (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)",
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",
-      "Write a structured report to stdout instead of the default output"
+      "Write a structured report to stdout instead of the default output",
     )
     .option(
       "--out <path>",
-      "Atomically write the structured report selected by --reporter (default: json-summary)"
+      "Atomically write the structured report selected by --reporter (default: json-summary)",
     )
     .option(
       "--no-suite-policy",
-      "Skip the stored suite quality-gate; evaluate only the flag/base report"
+      "Skip the stored suite quality-gate; evaluate only the flag/base report",
     )
     .action(
       async (
@@ -5420,10 +5580,10 @@ export function registerEvalCommands(program: Command): void {
             reporter?: string;
             out?: string;
           },
-        command
+        command,
       ) => {
         await runEvalGate(options, command);
-      }
+      },
     );
 
   // ── `eval gate waive` / `eval gate unwaive` ───────────────────────────────
@@ -5440,15 +5600,15 @@ export function registerEvalCommands(program: Command): void {
   gateCommand
     .command("waive")
     .description(
-      "Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check."
+      "Override a FAILING run's gate until an expiry you name. Does not make the run pass: the run keeps its result, and the waiver is named in every report and check.",
     )
     .requiredOption(
       "--reason <text>",
-      `Why the gate is being overridden (max ${GATE_WAIVER_MAX_REASON_LENGTH} characters). ${GATE_WAIVER_REASON_NOTICE}`
+      `Why the gate is being overridden (max ${GATE_WAIVER_MAX_REASON_LENGTH} characters). ${GATE_WAIVER_REASON_NOTICE}`,
     )
     .requiredOption(
       "--expires-in <duration>",
-      "How long the waiver lasts, e.g. 30m, 12h, 7d. Capped at 30 days by the platform — there is no permanent waiver."
+      "How long the waiver lasts, e.g. 30m, 12h, 7d. Capped at 30 days by the platform — there is no permanent waiver.",
     )
     .action(async (options: { reason: string; expiresIn: string }, command) => {
       await runEvalGateWaive(options, command);
@@ -5457,11 +5617,11 @@ export function registerEvalCommands(program: Command): void {
   gateCommand
     .command("unwaive")
     .description(
-      "Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent."
+      "Revoke a gate waiver, putting the gate and the GitHub Check Run back. Idempotent.",
     )
     .option(
       "--waiver <id>",
-      "Waiver ID to revoke. Omit to revoke the waiver currently in force over --run."
+      "Waiver ID to revoke. Omit to revoke the waiver currently in force over --run.",
     )
     .action(async (options: { waiver?: string }, command) => {
       await runEvalGateUnwaive(options, command);
@@ -5471,49 +5631,49 @@ export function registerEvalCommands(program: Command): void {
     evals
       .command("compare")
       .description(
-        "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
+        "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)",
       )
-      .requiredOption("--run <id>", "Eval run ID to compare")
+      .requiredOption("--run <id>", "Eval run ID to compare"),
   )
     .option(
       "--base-run <id>",
-      "Baseline run ID (defaults to the nearest earlier completed run in the same suite); mutually exclusive with --base-sha"
+      "Baseline run ID (defaults to the nearest earlier completed run in the same suite); mutually exclusive with --base-sha",
     )
     .option(
       "--base-sha <sha>",
-      "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --base-run"
+      "Baseline source commit SHA, resolved to the completed run in this suite recorded against it; mutually exclusive with --base-run",
     )
     .option(
       "--gate-regressions",
-      "Fail on a statistically significant pass-rate regression"
+      "Fail on a statistically significant pass-rate regression",
     )
     .option(
       "--min-sample-size <n>",
-      "Iterations required on EACH side before a pass-rate regression is decidable (default 5)"
+      "Iterations required on EACH side before a pass-rate regression is decidable (default 5)",
     )
     .option(
       "--min-effect-size-percent <0-100>",
-      "Smallest pass-rate drop worth failing on, as a percentage (default 1)"
+      "Smallest pass-rate drop worth failing on, as a percentage (default 1)",
     )
     .option(
       "--gate-deterministic-regressions",
-      "Fail if a deterministic required scorer flipped from passed to failed"
+      "Fail if a deterministic required scorer flipped from passed to failed",
     )
     .option(
       "--max-p95-latency-increase-ms <ms>",
-      "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+      "Fail if p95 end-to-end latency rose by more than this many milliseconds",
     )
     .option(
       "--max-cost-increase-percent <percent>",
-      "Fail if cost rose by more than this percentage of the baseline's; non-gateable when either run's cost is unknown or only partly measured"
+      "Fail if cost rose by more than this percentage of the baseline's; non-gateable when either run's cost is unknown or only partly measured",
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",
-      "Write a structured report to stdout instead of the default output"
+      "Write a structured report to stdout instead of the default output",
     )
     .option(
       "--out <path>",
-      "Atomically write the structured report selected by --reporter (default: json-summary)"
+      "Atomically write the structured report selected by --reporter (default: json-summary)",
     )
     .action(
       async (
@@ -5526,10 +5686,10 @@ export function registerEvalCommands(program: Command): void {
             reporter?: string;
             out?: string;
           },
-        command
+        command,
       ) => {
         await runEvalCompare(options, command);
-      }
+      },
     );
 
   // Offline unless --project asks for the live tool-reference check.
@@ -5537,43 +5697,43 @@ export function registerEvalCommands(program: Command): void {
     when: (options) => options.project !== undefined,
   })
     .description(
-      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)"
+      "Validate a local eval suite file offline — no auth, no network unless --project is passed (0 valid, 1 contract-invalid or unresolved reference, 2 unreadable/oversize/malformed)",
     )
     .requiredOption(
       "--file <path>",
-      "Suite file to validate, .yaml or .json (or - for stdin)"
+      "Suite file to validate, .yaml or .json (or - for stdin)",
     )
     .option(
       "--project <id-or-name>",
-      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline."
+      "Also resolve the file's deterministic tool references against this project's live servers. Opt-in: without it the command stays entirely offline.",
     )
     .action(
       async (
         options: PlatformOptions & { file: string; project?: string },
-        command: Command
+        command: Command,
       ) => {
         await runEvalValidate(options, command);
-      }
+      },
     );
 
   evals
     .command("export")
     .description(
-      "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly"
+      "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite to export (name or ID)")
     .option(
       "--project <id-or-name>",
-      "Project the suite belongs to (defaults to the most recently updated project)"
+      "Project the suite belongs to (defaults to the most recently updated project)",
     )
     .option(
       "--out <path>",
-      "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
+      "Where to write (default .mcpjam/evals/<suite-id>.yaml)",
     )
     .option("--force", "Replace an existing file at the output path")
     .option(
       "--schema-version <1|2>",
-      "Suite-file dialect to write: 1 (repetitions, checks — the default) or 2 (iterations, assertions)"
+      "Suite-file dialect to write: 1 (repetitions, checks — the default) or 2 (iterations, assertions)",
     )
     .action(
       async (
@@ -5584,33 +5744,33 @@ export function registerEvalCommands(program: Command): void {
           force?: boolean;
           schemaVersion?: string;
         },
-        command
+        command,
       ) => {
         await runEvalExport(options, command);
-      }
+      },
     );
 
   evals
     .command("pull")
     .description(
-      "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
+      "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite to pull (name or ID)")
     .option(
       "--project <id-or-name>",
-      "Project the suite belongs to (defaults to the most recently updated project)"
+      "Project the suite belongs to (defaults to the most recently updated project)",
     )
     .option(
       "--lock <path>",
-      `Lock file path (default ${DEFAULT_CORPUS_LOCK_PATH})`
+      `Lock file path (default ${DEFAULT_CORPUS_LOCK_PATH})`,
     )
     .option(
       "--frozen",
-      "Verify the lock matches the hosted suite without writing; exit 1 on drift"
+      "Verify the lock matches the hosted suite without writing; exit 1 on drift",
     )
     .option(
       "--skip-unsupported",
-      "Omit cases a local run cannot execute instead of failing"
+      "Omit cases a local run cannot execute instead of failing",
     )
     .action(
       async (
@@ -5621,23 +5781,23 @@ export function registerEvalCommands(program: Command): void {
           frozen?: boolean;
           skipUnsupported?: boolean;
         },
-        command
+        command,
       ) => {
         await runEvalPull(options, command);
-      }
+      },
     );
 
   addProjectOption(
     evals
       .command("trace")
       .description(
-        "Fetch the full trace for one eval iteration (large: full message history + spans)"
+        "Fetch the full trace for one eval iteration (large: full message history + spans)",
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
         "--iteration <id>",
-        "Iteration ID (from `eval iterations`)"
-      )
+        "Iteration ID (from `eval iterations`)",
+      ),
   ).action(
     async (
       options: PlatformOptions & {
@@ -5645,7 +5805,7 @@ export function registerEvalCommands(program: Command): void {
         run: string;
         iteration: string;
       },
-      command
+      command,
     ) => {
       await executeOp(
         getEvalIterationTraceOperation,
@@ -5657,22 +5817,22 @@ export function registerEvalCommands(program: Command): void {
             : { project: options.project }),
         } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("steps")
       .description(
-        "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why."
+        "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why.",
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
         "--iteration <id>",
-        "Iteration ID (from `eval iterations`)"
-      )
+        "Iteration ID (from `eval iterations`)",
+      ),
   ).action(
     async (
       options: PlatformOptions & {
@@ -5680,7 +5840,7 @@ export function registerEvalCommands(program: Command): void {
         run: string;
         iteration: string;
       },
-      command
+      command,
     ) => {
       await executeOp(
         getEvalRunStepsOperation,
@@ -5692,31 +5852,31 @@ export function registerEvalCommands(program: Command): void {
             : { project: options.project }),
         } as Parameters<typeof getEvalRunStepsOperation.execute>[0],
         options,
-        command
+        command,
       );
-    }
+    },
   );
 
   addProjectOption(
     evals
       .command("screenshot")
       .description(
-        "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL"
+        "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL",
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
         "--iteration <id>",
-        "Iteration ID (from `eval iterations`)"
-      )
+        "Iteration ID (from `eval iterations`)",
+      ),
   )
     .option(
       "--out <path>",
-      "Save the PNG(s) to a file or directory instead of rendering inline"
+      "Save the PNG(s) to a file or directory instead of rendering inline",
     )
     .option("--index <n>", "Show only the Nth screenshot (1-based)")
     .option(
       "--video",
-      "With --out, also download the iteration's replay recording next to the screenshots"
+      "With --out, also download the iteration's replay recording next to the screenshots",
     )
     .action(
       async (
@@ -5728,7 +5888,7 @@ export function registerEvalCommands(program: Command): void {
           index?: string;
           video?: boolean;
         },
-        command
+        command,
       ) => {
         const globalOptions = evalGlobalOptions(command);
         const index =
@@ -5749,12 +5909,12 @@ export function registerEvalCommands(program: Command): void {
                   ? {}
                   : { project: resolved.project }),
               } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
-              { client, signal }
+              { client, signal },
             ),
           {
             projectScope: resolved.projectScope,
             quiet: globalOptions.quiet,
-          }
+          },
         );
 
         // BEFORE any download, so a misuse costs nothing and a caller is never
@@ -5762,7 +5922,7 @@ export function registerEvalCommands(program: Command): void {
         if (options.video) {
           if (options.out === undefined) {
             throw usageError(
-              "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL."
+              "--video needs --out: the recording is a file to save, not something to print. Use `eval video --run … --iteration …` for the URL.",
             );
           }
           requireVideoOutDirectory(options.out);
@@ -5772,7 +5932,7 @@ export function registerEvalCommands(program: Command): void {
         if (index !== undefined) {
           if (index > shots.length) {
             throw usageError(
-              `--index ${index} is out of range; this iteration rendered ${shots.length} screenshot(s).`
+              `--index ${index} is out of range; this iteration rendered ${shots.length} screenshot(s).`,
             );
           }
           shots = [shots[index - 1]];
@@ -5792,13 +5952,13 @@ export function registerEvalCommands(program: Command): void {
             const shot = shots[i];
             const bytes = await fetchScreenshotBytes(
               shot.screenshotUrl,
-              globalOptions.timeout
+              globalOptions.timeout,
             );
             const path = resolveScreenshotPath(
               options.out,
               shot,
               i,
-              shots.length
+              shots.length,
             );
             mkdirSync(dirname(path), { recursive: true });
             writeFileSync(path, bytes);
@@ -5817,12 +5977,12 @@ export function registerEvalCommands(program: Command): void {
               const videoPath = resolveIterationVideoPath(
                 options.out,
                 options.iteration,
-                meta
+                meta,
               );
               const videoBytes = await fetchArtifactBytes(
                 videoUrl,
                 globalOptions.timeout,
-                "video"
+                "video",
               );
               mkdirSync(dirname(videoPath), { recursive: true });
               writeFileSync(videoPath, videoBytes);
@@ -5843,13 +6003,13 @@ export function registerEvalCommands(program: Command): void {
           }
           if (saved.length === 0 && !video) {
             process.stdout.write(
-              "No rendered widget screenshots for this iteration.\n"
+              "No rendered widget screenshots for this iteration.\n",
             );
             return;
           }
           for (const shot of saved) {
             process.stdout.write(
-              `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`
+              `Saved ${shot.toolName ?? "widget"} → ${shot.savedTo}\n`,
             );
           }
           if (options.video) {
@@ -5858,7 +6018,7 @@ export function registerEvalCommands(program: Command): void {
               process.stdout.write(
                 `Saved replay recording → ${video.savedTo}${
                   summary ? `  (${summary})` : ""
-                }\n`
+                }\n`,
               );
             } else {
               process.stdout.write("No replay recording for this iteration.\n");
@@ -5876,7 +6036,7 @@ export function registerEvalCommands(program: Command): void {
         // Human: render inline if the terminal supports it, else print the URL.
         if (shots.length === 0) {
           process.stdout.write(
-            "No rendered widget screenshots for this iteration.\n"
+            "No rendered widget screenshots for this iteration.\n",
           );
           return;
         }
@@ -5886,7 +6046,7 @@ export function registerEvalCommands(program: Command): void {
           if (protocol) {
             const bytes = await fetchScreenshotBytes(
               shot.screenshotUrl,
-              globalOptions.timeout
+              globalOptions.timeout,
             );
             process.stdout.write(`${caption}\n`);
             process.stdout.write(encodeInlineImage(bytes, protocol));
@@ -5894,24 +6054,24 @@ export function registerEvalCommands(program: Command): void {
             process.stdout.write(`${caption}  ${shot.screenshotUrl}\n`);
           }
         }
-      }
+      },
     );
 
   addProjectOption(
     evals
       .command("video")
       .description(
-        "Get the replay recording an eval iteration made — prints the URL, or downloads it with --out. A local widget run records a .webm; an unattended run on a hosted browser records an .mp4"
+        "Get the replay recording an eval iteration made — prints the URL, or downloads it with --out. A local widget run records a .webm; an unattended run on a hosted browser records an .mp4",
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
       .requiredOption(
         "--iteration <id>",
-        "Iteration ID (from `eval iterations`)"
-      )
+        "Iteration ID (from `eval iterations`)",
+      ),
   )
     .option(
       "--out <path>",
-      "Download the recording to this file instead of printing the URL"
+      "Download the recording to this file instead of printing the URL",
     )
     .action(
       async (
@@ -5921,7 +6081,7 @@ export function registerEvalCommands(program: Command): void {
           iteration: string;
           out?: string;
         },
-        command
+        command,
       ) => {
         const globalOptions = evalGlobalOptions(command);
         const resolved = resolveCloudProjectArgs(options);
@@ -5937,12 +6097,12 @@ export function registerEvalCommands(program: Command): void {
                   ? {}
                   : { project: resolved.project }),
               } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
-              { client, signal }
+              { client, signal },
             ),
           {
             projectScope: resolved.projectScope,
             quiet: globalOptions.quiet,
-          }
+          },
         );
 
         const videoUrl = extractIterationVideoUrl(result);
@@ -5976,7 +6136,7 @@ export function registerEvalCommands(program: Command): void {
           const bytes = await fetchArtifactBytes(
             videoUrl,
             globalOptions.timeout,
-            "video"
+            "video",
           );
           mkdirSync(dirname(options.out), { recursive: true });
           writeFileSync(options.out, bytes);
@@ -5992,7 +6152,7 @@ export function registerEvalCommands(program: Command): void {
           process.stdout.write(
             `Saved replay recording → ${options.out}${
               summary ? `  (${summary})` : ""
-            }\n`
+            }\n`,
           );
           return;
         }
@@ -6002,7 +6162,7 @@ export function registerEvalCommands(program: Command): void {
           return;
         }
         process.stdout.write(`${videoUrl}${summary ? `\n${summary}\n` : "\n"}`);
-      }
+      },
     );
 
   // ── Suite settings: get / update / delete / schedule ───────────────
@@ -6014,21 +6174,21 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & { project?: string; suite: string },
-        command
+        command,
       ) => {
         await executeOp(
           getEvalSuiteOperation,
           { project: options.project, suite: options.suite },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   evals
     .command("update")
     .description(
-      "Edit an eval suite's settings (only the flags you pass change)"
+      "Edit an eval suite's settings (only the flags you pass change)",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
@@ -6038,26 +6198,26 @@ export function registerEvalCommands(program: Command): void {
     .option("--description <text>", "Suite description")
     .option(
       "--server <id-or-name...>",
-      "Replace the suite's server selection (project server names or IDs)"
+      "Replace the suite's server selection (project server names or IDs)",
     )
     .option(
       "--computer-image <id-or-name|off>",
-      "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
+      "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image",
     )
     .option(
       "--client <id-or-name...>",
-      "Replace client attachments (by name or ID)"
+      "Replace client attachments (by name or ID)",
     )
     .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
     .option(
       "--model-selection <json>",
-      "Whole saved model selection for the suite (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for --model when both are given."
+      "Whole saved model selection for the suite (source, connection, settings.reasoningEffort), as JSON (or @file, or -). Must be for --model when both are given.",
     )
     .option("--effort <level>", EFFORT_FLAG_DESCRIPTION)
     .option(
       "--clear-effort",
-      "Remove the reasoning effort from the suite's model selection"
+      "Remove the reasoning effort from the suite's model selection",
     )
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
@@ -6066,28 +6226,28 @@ export function registerEvalCommands(program: Command): void {
     // both is refused rather than resolved by precedence.
     .option(
       "--min-accuracy <pct>",
-      "Suite accuracy threshold: one percentage, 0–100, over the whole run"
+      "Suite accuracy threshold: one percentage, 0–100, over the whole run",
     )
     .option(
       "--pass-threshold <0-1>",
-      "Pass threshold, 0–1, preserving the current criterion (suite-wide writes a percentage)"
+      "Pass threshold, 0–1, preserving the current criterion (suite-wide writes a percentage)",
     )
     // How many times each case runs. Same shape: a floor that RAISES a case's
     // own count, or a default that REPLACES it.
     .option(
       "--min-iterations <1-10|off>",
-      "Minimum iterations per case: a floor that raises a case's own count; off removes it"
+      "Minimum iterations per case: a floor that raises a case's own count; off removes it",
     )
     .option(
       "--iterations <n>",
-      "Iterations per case: the suite default, which a case can override"
+      "Iterations per case: the suite default, which a case can override",
     )
     .option("--tool-call-order <any|in-order|exact>", "Tool call order")
     .option("--arguments <ignore|partial|exact>", "Argument matching")
     .option("--extra-tool-calls <unlimited|N>", "Allowed extra tool calls")
     .option(
       "--judge <on|off>",
-      "Turn LLM-as-judge grading on/off (grades every run as it completes)"
+      "Turn LLM-as-judge grading on/off (grades every run as it completes)",
     )
     .option("--judge-model <id>", "Judge model id")
     .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
@@ -6102,7 +6262,7 @@ export function registerEvalCommands(program: Command): void {
             if (Object.keys(edit).length > 0) {
               const detail = await getEvalSuiteOperation.execute(
                 input,
-                context
+                context,
               );
               const plan = planPlatformSuiteGradingUpdate({
                 settings: detail.settings,
@@ -6128,7 +6288,7 @@ export function registerEvalCommands(program: Command): void {
                     ].includes(key) &&
                     value !== undefined &&
                     (key !== "settings" ||
-                      Object.keys(input.settings ?? {}).length > 0)
+                      Object.keys(input.settings ?? {}).length > 0),
                 );
                 const message =
                   "No grading change: the suite already has these values.";
@@ -6146,7 +6306,7 @@ export function registerEvalCommands(program: Command): void {
         },
         input,
         options,
-        command
+        command,
       );
     });
 
@@ -6158,15 +6318,15 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & { project?: string; suite: string },
-        command
+        command,
       ) => {
         await executeOp(
           deleteEvalSuiteOperation,
           { project: options.project, suite: options.suite },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   evals
@@ -6179,7 +6339,7 @@ export function registerEvalCommands(program: Command): void {
     .option("--interval <minutes>", "Run interval in minutes (5–10080)")
     .option(
       "--environment <id-or-name>",
-      "Project environment the scheduled runs launch (only with --enable)"
+      "Project environment the scheduled runs launch (only with --enable)",
     )
     .action(
       async (
@@ -6191,7 +6351,7 @@ export function registerEvalCommands(program: Command): void {
           interval?: string;
           environment?: string;
         },
-        command
+        command,
       ) => {
         if (options.enable && options.disable) {
           throw usageError("Pass either --enable or --disable, not both.");
@@ -6209,25 +6369,25 @@ export function registerEvalCommands(program: Command): void {
           ...(options.environment ? { environment: options.environment } : {}),
         });
         await executeOp(setEvalSuiteScheduleOperation, input, options, command);
-      }
+      },
     );
 
   // ── Suite environment attachments ──────────────────────────────────
   const environments = evals
     .command("environments")
     .description(
-      "Attach or detach the project environments an eval suite runs against"
+      "Attach or detach the project environments an eval suite runs against",
     );
 
   environments
     .command("set")
     .description(
-      "Replace the suite's attached environments (this sets the whole list)"
+      "Replace the suite's attached environments (this sets the whole list)",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .requiredOption(
       "--environment <id-or-name...>",
-      "Project environments to attach, in order"
+      "Project environments to attach, in order",
     )
     .option("--project <id-or-name>", PROJECT_OPT)
     .action(
@@ -6237,7 +6397,7 @@ export function registerEvalCommands(program: Command): void {
           suite: string;
           environment: string[];
         },
-        command
+        command,
       ) => {
         await executeOp(
           setEvalSuiteEnvironmentsOperation,
@@ -6247,22 +6407,22 @@ export function registerEvalCommands(program: Command): void {
             environments: options.environment,
           },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   environments
     .command("clear")
     .description(
-      "Detach every environment, reverting the suite to its saved server selection"
+      "Detach every environment, reverting the suite to its saved server selection",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
     .action(
       async (
         options: PlatformOptions & { project?: string; suite: string },
-        command
+        command,
       ) => {
         await executeOp(
           setEvalSuiteEnvironmentsOperation,
@@ -6272,9 +6432,9 @@ export function registerEvalCommands(program: Command): void {
             environments: null,
           },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   // ── Case CRUD + generate ───────────────────────────────────────────
@@ -6290,15 +6450,15 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & { project?: string; suite: string },
-        command
+        command,
       ) => {
         await executeOp(
           listEvalCasesOperation,
           { project: options.project, suite: options.suite },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   cases
@@ -6314,7 +6474,7 @@ export function registerEvalCommands(program: Command): void {
           suite: string;
           case: string;
         },
-        command
+        command,
       ) => {
         await executeOp(
           getEvalCaseOperation,
@@ -6324,86 +6484,86 @@ export function registerEvalCommands(program: Command): void {
             case: options.case,
           },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   cases
     .command("run")
     .description(
-      "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)"
+      "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .requiredOption("--case <id-or-title>", "Eval case title or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
     .option(
       "--server <id-or-name...>",
-      "Override the suite's saved servers for this run"
+      "Override the suite's saved servers for this run",
     )
     .option(
       "--environment <id-or-name>",
-      "Project environment to run against (must be attached to the suite)"
+      "Project environment to run against (must be attached to the suite)",
     )
     .option(
       "--client <id-or-name>",
-      "Attached client to run against, so the run is stamped with that client's config"
+      "Attached client to run against, so the run is stamped with that client's config",
     )
     .option(
       "--host <id-or-name>",
-      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes.",
     )
     .option(
       "--iterations <n>",
       "Run the case this many times under verdict policy 2 (1-10)",
-      (v) => parseIntOption(v, "--iterations")
+      (v) => parseIntOption(v, "--iterations"),
     )
     .option("--repetitions <n>", "Legacy spelling of --iterations", (v) =>
-      parseIntOption(v, "--repetitions")
+      parseIntOption(v, "--repetitions"),
     )
     .option(
       "--idempotency-key <key>",
-      "Retry-safety key: repeating the call returns the run it already started"
+      "Retry-safety key: repeating the call returns the run it already started",
     )
     .option(
       "--compose-client <id-or-name>",
-      "Compose a stack to run this case instead of naming a saved environment: the client it runs as. Default is EPHEMERAL."
+      "Compose a stack to run this case instead of naming a saved environment: the client it runs as. Default is EPHEMERAL.",
     )
     .option(
       "--compose-host <id-or-name>",
-      "Deprecated alias for --compose-client"
+      "Deprecated alias for --compose-client",
     )
     .option(
       "--compose-computer <id-or-name>",
-      "Sandbox image to pin on the composed stack"
+      "Sandbox image to pin on the composed stack",
     )
     .option(
       "--compose-model <id>",
-      "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
+      "One model to run this case on. A matrix of models is suite-level (`eval run`) only.",
     )
     .option(
       "--compose-model-selection <json>",
-      "One whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -) to run this case on, at its effort."
+      "One whole saved model selection (source, connection, settings.reasoningEffort) as JSON (or @file, or -) to run this case on, at its effort.",
     )
     .option(
       "--compose-server <id-or-name...>",
-      "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group."
+      "Server(s) to pin on the composed stack. Snapshots them into a server group, so the run keeps testing these servers even if the host's own server list changes later. Mutually exclusive with --compose-server-group.",
     )
     .option(
       "--compose-server-group <id>",
-      "Standalone server group to pin on the composed stack"
+      "Standalone server group to pin on the composed stack",
     )
     .option(
       "--compose-host-servers",
-      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group."
+      "No longer supported: eval runs take their servers from a server group. Use --compose-server or --compose-server-group.",
     )
     .option(
       "--compose-skill <id...>",
-      "Project-shared skill IDs to pin on the composed stack"
+      "Project-shared skill IDs to pin on the composed stack",
     )
     .option(
       "--compose-secret <id...>",
-      "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`."
+      "Project SECRET IDs the composed stack grants to its runs. Without one a composed stack carries no credential — list them with `mcpjam secrets list`.",
     )
     .action(
       async (
@@ -6429,14 +6589,14 @@ export function registerEvalCommands(program: Command): void {
           iterations?: number;
           idempotencyKey?: string;
         },
-        command
+        command,
       ) => {
         if (
           options.iterations !== undefined &&
           options.repetitions !== undefined
         ) {
           throw usageError(
-            "Use --iterations or --repetitions, not both — they are two spellings of one flag."
+            "Use --iterations or --repetitions, not both — they are two spellings of one flag.",
           );
         }
         const clientSelector = clientSelectorOf<string>(options);
@@ -6464,10 +6624,10 @@ export function registerEvalCommands(program: Command): void {
                 ...composeField(options),
               },
               options,
-              command
-            )
+              command,
+            ),
         );
-      }
+      },
     );
 
   cases
@@ -6481,7 +6641,7 @@ export function registerEvalCommands(program: Command): void {
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
       const input = validateOpInput(
         createEvalCaseOperation,
-        buildCaseInput(options, { requireCase: false })
+        buildCaseInput(options, { requireCase: false }),
       );
       await executeOp(createEvalCaseOperation, input, options, command);
     });
@@ -6498,7 +6658,7 @@ export function registerEvalCommands(program: Command): void {
     .action(async (options: PlatformOptions & Record<string, any>, command) => {
       const input = validateOpInput(
         updateEvalCaseOperation,
-        buildCaseInput(options, { requireCase: true })
+        buildCaseInput(options, { requireCase: true }),
       );
       await executeOp(updateEvalCaseOperation, input, options, command);
     });
@@ -6516,7 +6676,7 @@ export function registerEvalCommands(program: Command): void {
           suite: string;
           case: string;
         },
-        command
+        command,
       ) => {
         await executeOp(
           deleteEvalCaseOperation,
@@ -6526,30 +6686,30 @@ export function registerEvalCommands(program: Command): void {
             case: options.case,
           },
           options,
-          command
+          command,
         );
-      }
+      },
     );
 
   cases
     .command("generate")
     .description(
-      "AI-generate test cases from the suite's tools (included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota)"
+      "AI-generate test cases from the suite's tools (included with MCPJam; no customer credits consumed; counts against the organization's daily generation quota)",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
     .option("--mode <normal|negative>", "Generation mode (default normal)")
     .option(
       "--server <id-or-name...>",
-      "Servers to discover tools from (default: suite's)"
+      "Servers to discover tools from (default: suite's)",
     )
     .option(
       "--environment <id-or-name>",
-      "Discover tools from this attached environment's server set"
+      "Discover tools from this attached environment's server set",
     )
     .option(
       "--case-model <id...>",
-      "Execution model(s) for the generated cases"
+      "Execution model(s) for the generated cases",
     )
     .option("--simple <n>", "How many easy, single-tool cases")
     .option("--multi-tool <n>", "How many medium, 2+ tool cases")
@@ -6558,11 +6718,11 @@ export function registerEvalCommands(program: Command): void {
     .option("--negative <n>", "How many negative (no-tool) cases")
     .option(
       "--vary-user-styles",
-      "Vary query phrasing across a realistic range of user styles"
+      "Vary query phrasing across a realistic range of user styles",
     )
     .option(
       "--idempotency-key <key>",
-      "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again"
+      "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again",
     )
     .action(
       async (
@@ -6581,7 +6741,7 @@ export function registerEvalCommands(program: Command): void {
           varyUserStyles?: boolean;
           idempotencyKey?: string;
         },
-        command
+        command,
       ) => {
         const caseMix: Record<string, number> = {};
         for (const key of [
@@ -6599,7 +6759,7 @@ export function registerEvalCommands(program: Command): void {
             if (!Number.isInteger(parsed)) {
               const flag = key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
               throw usageError(
-                `--${flag} requires an integer value, got "${raw}".`
+                `--${flag} requires an integer value, got "${raw}".`,
               );
             }
             caseMix[key] = parsed;
@@ -6621,13 +6781,13 @@ export function registerEvalCommands(program: Command): void {
             : {}),
         });
         await executeOp(generateEvalCasesOperation, input, options, command);
-      }
+      },
     );
 
   cases
     .command("import")
     .description(
-      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite"
+      "Turn any text document — markdown, JSON, CSV, notes — into test cases with MCPJam's AI and add them to the suite",
     )
     .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
     .option("--project <id-or-name>", PROJECT_OPT)
@@ -6635,28 +6795,28 @@ export function registerEvalCommands(program: Command): void {
     .option("--content <text>", "Document text, instead of --file")
     .option(
       "--file-name <name>",
-      "Name recorded on each case's source (default: --file's basename)"
+      "Name recorded on each case's source (default: --file's basename)",
     )
     .option(
       "--server <id-or-name...>",
-      "Servers to discover tools from (default: suite's)"
+      "Servers to discover tools from (default: suite's)",
     )
     .option(
       "--environment <id-or-name>",
-      "Discover tools from this attached environment's server set"
+      "Discover tools from this attached environment's server set",
     )
     .option("--case-model <id...>", "Execution model(s) for the imported cases")
     .option(
       "--duplicate-policy <block|warn|create_anyway>",
-      "What to do with a case that already exists (default block)"
+      "What to do with a case that already exists (default block)",
     )
     .option(
       "--override-reason <text>",
-      "Why importing a duplicate is intended (required by warn / create_anyway)"
+      "Why importing a duplicate is intended (required by warn / create_anyway)",
     )
     .option(
       "--idempotency-key <key>",
-      "Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again"
+      "Retry-safety key: repeating the call replays the first attempt's drafts instead of authoring (and billing) again",
     )
     .action(
       async (
@@ -6673,14 +6833,14 @@ export function registerEvalCommands(program: Command): void {
           overrideReason?: string;
           idempotencyKey?: string;
         },
-        command
+        command,
       ) => {
         if (!options.file === !options.content)
           throw usageError(
             "Pass exactly one of --file or --content.",
             options.file
               ? { source: "Both were given." }
-              : { source: "Neither was given." }
+              : { source: "Neither was given." },
           );
         const content = options.file
           ? readFileOrStdin(options.file, "document")
@@ -6711,7 +6871,7 @@ export function registerEvalCommands(program: Command): void {
             : {}),
         });
         await executeOp(importEvalCasesOperation, input, options, command);
-      }
+      },
     );
 
   registerEvalInsightsCommands(evals);

@@ -137,6 +137,7 @@ import { withWarmBridgeRuntime } from "./warm-bridge-runtime.js";
 import { withWarmBridgeBootstrap } from "./warm-bridge-files.js";
 import { warmBridgeWindowMs, warmRetentionFor } from "./warm-retention.js";
 import { OrgLeaseTurn } from "./org-lease-turn.js";
+import { failedTurnErrorText } from "./harness-org-lease.js";
 import {
   harnessBrokerDeliveryEnabled,
   harnessQuietClaudeStartup,
@@ -4828,7 +4829,8 @@ export async function runHarnessTurn(
         ? "This turn lost access to its runtime. Check any tool results before trying again."
         : harnessFailureMessageOf(err);
       const evidence = harnessFailureEvidenceOf(err) ?? rawProviderEvidence;
-      const typedEvidence = await org.failedTurnEvidence(evidence, modelInvoked);
+      const failedTurn = await org.failedTurnEvidence(evidence, modelInvoked);
+      const typedEvidence = failedTurn.evidence;
       // A runtime's provider failure says whose endpoint it came from.
       const failureEvidence =
         typedEvidence?.source === "harness_runtime" && modelEndpoint
@@ -4858,9 +4860,12 @@ export async function runHarnessTurn(
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);
-      emitError(writer, failureEvidence?.code
-        ? JSON.stringify({ message: errorText, code: failureEvidence.code })
-        : errorText);
+      const failureText = failedTurnErrorText(
+        errorText,
+        failureEvidence?.code,
+        failedTurn.recovery,
+      );
+      emitError(writer, failureText.streamText);
       // A mid-stream failure still gets a final snapshot + turn_finish so the
       // Trace tab renders what happened (parity with runChatEngineLoop). Guarded
       // by the driver's `traceStarted` so a pre-stream failure emits no phantom
@@ -4877,7 +4882,7 @@ export async function runHarnessTurn(
       }
       onEngineError?.({
         message: errorText,
-        rawText: errorText,
+        rawText: failureText.rawText,
         promptIndex,
         // This catch covers the WHOLE turn, preparation included: the throws
         // for a missing projectId, a missing auth bearer and disabled broker

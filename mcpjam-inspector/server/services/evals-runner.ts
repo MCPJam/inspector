@@ -4778,6 +4778,11 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(creditStop.exhausted
           ? { notes: creditStopNote(creditStop.recovery) }
           : {}),
+        // Record the refusal's recovery on the run so a reader gets the step
+        // without walking iterations; the backend rebuilds the link.
+        ...(creditStop.exhausted && creditStop.recovery
+          ? { creditRecovery: creditStop.recovery }
+          : {}),
         summary: {
           total: summary.total,
           passed: summary.passed,

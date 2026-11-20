@@ -601,6 +601,17 @@ export const RunEvalsRequestSchema = z.object({
   rerunOfRunId: z.string().min(1).optional(),
   rerunScope: z.literal("failed_cases").optional(),
   /**
+   * Resume a credit-stopped run: the new run executes only the source run's
+   * cases that did not finish. Threaded into Convex
+   * `startTestSuiteRun.resumeFromRunId`, which picks the cases and refuses with
+   * a `RESUME_*` code (nothing to resume, source missing, source still
+   * running, or a scope that cannot be combined with resuming).
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  resumeFromRunId: z.string().min(1).optional(),
+  /**
    * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
    *
    * Claim-only in both directions: the caller supplies an id and a reason, and
@@ -2459,6 +2470,7 @@ export async function prepareEvalRun(
     useCurrentSuiteConfig,
     rerunOfRunId,
     rerunScope,
+    resumeFromRunId,
     ephemeralEnvironment,
     toolPolicy,
     importApprovals,
@@ -2793,6 +2805,7 @@ export async function prepareEvalRun(
     ...(useCurrentSuiteConfig !== undefined ? { useCurrentSuiteConfig } : {}),
     ...(rerunOfRunId ? { rerunOfRunId } : {}),
     ...(rerunScope ? { rerunScope } : {}),
+    ...(resumeFromRunId ? { resumeFromRunId } : {}),
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
     // Named explicitly, like every other field in this call: `startSuiteRun-
     // WithRecorder` reconstructs the mutation args from its own parameters,
