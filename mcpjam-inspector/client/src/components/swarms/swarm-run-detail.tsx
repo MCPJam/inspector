@@ -1,7 +1,7 @@
 /**
  * Dedicated Swarm Run (wave) detail at `/swarms/:swarmId`.
  *
- * Chrome: identity row (back · title · settled outcome · tabs · actions).
+ * Chrome: run identity and actions above the view tabs.
  * A still-running wave with no `?tab=` opens Run — the same matrix +
  * stream as the create wizard. Findings is the default once the wave has
  * settled. The live strip under the header is only for work in flight
@@ -13,6 +13,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { DetailPageHeader } from "@/components/shared/detail-page-header";
 import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import {
   buildSwarmPath,
   parseSwarmDetailTab,
@@ -51,7 +52,6 @@ import {
   waveEnvironmentNames,
   waveLiveProgress,
   waveRunState,
-  waveSessionTotals,
   waveTargets,
 } from "@/components/swarms/swarm-overview-panel";
 import { SwarmFindingsTab } from "@/components/swarms/findings/swarm-findings-tab";
@@ -384,18 +384,8 @@ export function SwarmRunDetail({
       cancelRequested: run.cancelRequested || stoppedRunIds.includes(run.runId),
     })),
   );
-  // `stoppedHere` only overrides a TERMINAL read: between the cancel resolving
-  // and the wave query catching up, the runs still say `running`, and claiming
-  // "stopped" over a strip that is still counting sessions would be a lie the
-  // progress bar contradicts on screen.
-  const cleanupPending = wave.runs.some((run) => run.cleanupPending);
-  const canceledHere =
-    stoppedRunIds.some((runId) =>
-      wave.runs.some((run) => run.runId === runId),
-    ) || wave.runs.some((run) => run.cancelRequested);
-  const showStopped =
-    canceledHere && !cleanupPending && dataRunState === "stopped";
-  const sessionTotals = waveSessionTotals(wave.runs);
+  const showRunState =
+    dataRunState !== "complete" && (!live || dataRunState === "stopping");
   /**
    * The finding this viewer followed in, resolved from the wave itself — the URL
    * carries only the criterion id, so a renamed or removed criterion degrades
@@ -439,60 +429,48 @@ export function SwarmRunDetail({
         onBack={() => navigate(routePaths.swarms)}
         backTestId="swarm-run-detail-back"
         className="px-3 sm:px-8"
-        stackWhenNarrow
+        tabsBelow
         title={
-          <div className="flex flex-wrap items-baseline gap-x-3">
-            <h1
-              className="min-w-0 truncate text-xl font-bold tracking-tight text-foreground"
-              title={heading}
-              data-testid="swarm-run-detail-title"
-            >
-              {heading}
-            </h1>
-            {date && <span className="text-sm text-foreground/75">{date}</span>}
-            {hasLocalExecution && (
-              <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                {hasHostedExecution ? "Local + cloud" : "Ran locally"}
-              </span>
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1.5">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
+              <h1
+                className="min-w-0 truncate text-xl font-bold tracking-tight text-foreground"
+                title={heading}
+                data-testid="swarm-run-detail-title"
+              >
+                {heading}
+              </h1>
+              {date && <span className="text-sm text-foreground/75">{date}</span>}
+              {hasLocalExecution && (
+                <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                  {hasHostedExecution ? "Local + cloud" : "Ran locally"}
+                </span>
+              )}
+              {showRunState && (
+                <span
+                  className={cn(
+                    "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                    swarmWaveRunStateChipClass(dataRunState),
+                  )}
+                  data-testid="swarm-run-detail-state"
+                  data-run-state={dataRunState}
+                  role="status"
+                >
+                  <span data-testid="swarm-run-detail-state-label">
+                    {swarmWaveRunStateLabel(dataRunState)}
+                  </span>
+                </span>
+              )}
+            </div>
+            {(title || targets.length > 0) && (
+              <SwarmRunMetadata
+                name={title}
+                targets={targets}
+                environments={showEnvironment ? waveEnvironmentNames(targets) : []}
+                hostStyleByName={hostStyleByName}
+              />
             )}
           </div>
-        }
-        meta={
-          live && !cleanupPending ? undefined : (
-            <div
-              className="flex items-center gap-2"
-              data-testid="swarm-run-detail-state"
-              data-run-state={
-                cleanupPending
-                  ? "stopping"
-                  : showStopped
-                    ? "stopped"
-                    : dataRunState
-              }
-              role="status"
-            >
-              <span
-                className={
-                  "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide " +
-                  (showStopped
-                    ? "bg-muted text-muted-foreground"
-                    : swarmWaveRunStateChipClass(dataRunState))
-                }
-                data-testid="swarm-run-detail-state-label"
-              >
-                {cleanupPending
-                  ? "Stop requested"
-                  : showStopped
-                    ? "Stopped"
-                    : swarmWaveRunStateLabel(dataRunState)}
-              </span>
-              <span className="truncate text-sm text-muted-foreground">
-                {sessionTotals.total > 0
-                  ? `${sessionTotals.succeeded} of ${sessionTotals.total}`
-                  : "None ran"}
-              </span>
-            </div>
-          )
         }
         actions={
           <>
@@ -540,19 +518,8 @@ export function SwarmRunDetail({
           ariaLabel: "Swarm run view",
           indicatorId: "swarm-run-detail",
         }}
-      >
-        {(title || targets.length > 0) && (
-          <SwarmRunMetadata
-            name={title}
-            targets={targets}
-            environments={showEnvironment ? waveEnvironmentNames(targets) : []}
-            hostStyleByName={hostStyleByName}
-          />
-        )}
-      </DetailPageHeader>
+      />
 
-      {/* Live only. Settled outcome lives in the header so a finished wave
-          does not spend a second row repeating Complete + the session tally. */}
       {live ? (
         <div
           className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/40 bg-primary/[0.04] px-8 py-2"

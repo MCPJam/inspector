@@ -1023,10 +1023,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
 
   it("opens the matrix from the Run tab on a finished wave", async () => {
     renderTab("run-2b");
-    const state = await screen.findByTestId("swarm-run-detail-state");
-    expect(state.getAttribute("data-run-state")).toBe("complete");
-
-    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run" }));
     expect(window.location.search).toBe("?tab=run");
     expect(await screen.findByTestId("new-swarm-running-step")).toBeTruthy();
     expect(screen.getByTestId("new-swarm-running-stream")).toBeTruthy();
@@ -1219,16 +1216,10 @@ describe("Swarm run state and navigation", () => {
     );
   });
 
-  it("states the outcome when the viewer returns to a finished run", async () => {
+  it("omits the Complete badge and tally on a successful run", async () => {
     renderTab("run-2b");
-
-    const state = await screen.findByTestId("swarm-run-detail-state");
-    // Settled outcome sits in the header, not on a second status strip.
-    expect(state.getAttribute("data-run-state")).toBe("complete");
-    expect(
-      screen.getByTestId("swarm-run-detail-state-label").textContent
-    ).toBe("Complete");
-    expect(state.textContent).toMatch(/\d+ of \d+/);
+    expect(await screen.findByTestId("swarm-run-detail-title")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-run-detail-state")).toBeNull();
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
