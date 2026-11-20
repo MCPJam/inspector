@@ -1,4 +1,4 @@
-import matter from "gray-matter";
+import { splitSkillMarkdown } from "@mcpjam/sdk";
 import fs from "fs/promises";
 import path from "path";
 import { logger } from "./logger";
@@ -6,7 +6,6 @@ import {
   isValidSkillName,
   type Skill,
   type SkillListItem,
-  type SkillFrontmatter,
   type SkillFile,
 } from "../../shared/skill-types";
 
@@ -195,13 +194,26 @@ export function parseSkillFile(
   fileContent: string,
   skillPath: string,
 ): Skill | null {
-  try {
-    const parsed = matter(fileContent);
+  return parseSkillFileWithFrontmatter(fileContent, skillPath)?.skill ?? null;
+}
 
-    const frontmatter = parsed.data as Partial<SkillFrontmatter>;
+/** The Inspector accepts YAML frontmatter; skill files cannot select a parser. */
+export function readSkillDocument(fileContent: string) {
+  // Preserve the optional BOM, explicit YAML marker and trailing blanks accepted
+  // by older skill files while passing only the standard delimiter to the SDK.
+  const markdown = fileContent.replace(/^\uFEFF?---(?:yaml)?[ \t]*(?=\r?\n)/, "---");
+  return splitSkillMarkdown(markdown);
+}
+
+export function parseSkillFileWithFrontmatter(
+  fileContent: string,
+  skillPath: string,
+): { skill: Skill; frontmatter: Record<string, unknown> } | null {
+  try {
+    const { frontmatter, body } = readSkillDocument(fileContent);
 
     // Validate required fields
-    if (!frontmatter.name || typeof frontmatter.name !== "string") {
+    if (!frontmatter?.name || typeof frontmatter.name !== "string") {
       logger.warn(`Skill at ${skillPath} missing required 'name' field`);
       return null;
     }
@@ -231,10 +243,13 @@ export function parseSkillFile(
     }
 
     return {
-      name: frontmatter.name,
-      description: frontmatter.description,
-      content: parsed.content.trim(),
-      path: skillPath,
+      frontmatter,
+      skill: {
+        name: frontmatter.name,
+        description: frontmatter.description,
+        content: body.trim(),
+        path: skillPath,
+      },
     };
   } catch (error) {
     logger.error(`Error parsing skill file at ${skillPath}:`, error);
