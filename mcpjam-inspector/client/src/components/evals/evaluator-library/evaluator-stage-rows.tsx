@@ -1,5 +1,6 @@
 import { Button } from "@mcpjam/design-system/button";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { EvaluatorKindBadge } from "./evaluator-kind-badge";
@@ -46,12 +47,15 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   rows,
   predicateOf,
   renderRow,
+  questions = [],
   onRemoveEvaluator,
   onUpdateEvaluator,
 }: {
   rows: readonly Row[];
   predicateOf: (row: Row) => Predicate | undefined;
   renderRow: (row: Row) => ReactNode;
+  /** Rubric-check questions to show under their evaluator in this stage. */
+  questions?: readonly RubricCheckQuestion[];
   /** Omitted where the rows are inherited and cannot be edited here. */
   onRemoveEvaluator?: (evaluatorId: string) => void;
   onUpdateEvaluator?: (evaluatorId: string) => void;
@@ -59,6 +63,18 @@ export function EvaluatorStageRows<Row extends { id: string }>({
   const enabled = useEvaluatorLibraryEnabled();
   if (!enabled) return <ul className="space-y-3">{rows.map(renderRow)}</ul>;
   const { loose, clusters } = clusterByEvaluator(rows, predicateOf);
+  for (const q of questions) {
+    if (
+      q.evaluator &&
+      !clusters.some((c) => c.evaluatorId === q.evaluator?.id)
+    ) {
+      clusters.push({
+        evaluatorId: q.evaluator.id,
+        version: q.evaluator.version,
+        rows: [],
+      });
+    }
+  }
   return (
     <div className="space-y-3">
       {loose.length ? (
@@ -108,7 +124,28 @@ export function EvaluatorStageRows<Row extends { id: string }>({
                 ) : null}
               </span>
             </div>
-            <ul className="space-y-3">{cluster.rows.map(renderRow)}</ul>
+            <ul className="space-y-3">
+              {cluster.rows.map(renderRow)}
+              {questions
+                .filter((q) => q.evaluator?.id === cluster.evaluatorId)
+                .map((q) => (
+                  <li
+                    key={q.id}
+                    className="flex items-start justify-between gap-3 text-sm"
+                  >
+                    <span>
+                      <span className="text-foreground">{q.label}</span>
+                      <span className="block text-xs text-muted-foreground">
+                        Yes/no question, passes on{" "}
+                        {q.pass.answer === "no" ? "No" : "Yes"}
+                      </span>
+                    </span>
+                    <span className="rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em] text-muted-foreground">
+                      Advisory
+                    </span>
+                  </li>
+                ))}
+            </ul>
           </section>
         );
       })}

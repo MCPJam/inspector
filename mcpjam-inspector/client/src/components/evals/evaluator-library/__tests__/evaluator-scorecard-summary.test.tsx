@@ -72,6 +72,30 @@ describe("EvaluatorScorecardSummary", () => {
     expect(card).not.toHaveTextContent("No tool errors");
   });
 
+  it("groups a yes/no question row under its evaluator", () => {
+    renderWithProviders(
+      <EvaluatorScorecardSummary
+        rows={[
+          {
+            key: "judge:rubricChecks:q:answer-grounded-in-results-grounded",
+            label: "Every claim is backed by a tool result",
+            role: "advisory",
+            rubricCheck: { key: "q:answer-grounded-in-results-grounded" },
+            result: {
+              state: "passed",
+              source: "scoreRow",
+              reason: "Yes · P(yes) 0.97",
+            },
+          },
+        ]}
+      />,
+    );
+    const card = screen.getByRole("region", {
+      name: "Answer Grounded in Results",
+    });
+    expect(card).toHaveTextContent("Passed");
+  });
+
   it("renders nothing with the flag off or no library checks", () => {
     flag.on = false;
     const { container, rerender } = renderWithProviders(

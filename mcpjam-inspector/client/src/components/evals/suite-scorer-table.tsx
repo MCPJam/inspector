@@ -38,6 +38,7 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
@@ -252,7 +253,7 @@ export function SuiteScorerTable({
       scope.onDraftChange(removeCaseRule(scope.draft, rule.index));
     }
   };
-  const library = librarySuiteEdits(scope);
+  const library = librarySuiteEdits(scope, judgeConfig, onJudgeConfigChange);
   const addPredicate = (predicate: Predicate) => {
     if (scope.kind === "suite") {
       scope.onPredicatesChange((previous) => [...previous, predicate]);
@@ -411,10 +412,12 @@ export function SuiteScorerTable({
             ))}
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {headerActions}
-            {library ? (
+            {library && scope.kind === "suite" ? (
               <EvaluatorLibraryButton
-                predicates={library.predicates}
+                predicates={scope.predicates}
+                questions={judgeConfig?.rubricChecks?.questions}
                 authorableKinds={authorableKinds}
+                canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
                 onAdd={library.add}
               />
             ) : null}
@@ -484,6 +487,11 @@ export function SuiteScorerTable({
                     predicateOf={(row) =>
                       row.predicateIndex !== undefined
                         ? rules[row.predicateIndex]?.predicate
+                        : undefined
+                    }
+                    questions={
+                      group.stage === "userValue"
+                        ? judgeConfig?.rubricChecks?.questions
                         : undefined
                     }
                     onRemoveEvaluator={library?.remove}

@@ -159,6 +159,21 @@ export function RubricChecksJudgeCard({
               onClick={() =>
                 commit([
                   ...questions,
+                  blankRubricCheckQuestion("yesno", questions),
+                ])
+              }
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" />
+              Yes/no
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={disabled || atCap}
+              onClick={() =>
+                commit([
+                  ...questions,
                   blankRubricCheckQuestion("choice", questions),
                 ])
               }
@@ -236,7 +251,12 @@ function QuestionEditor({
 }) {
   const fieldId = useId();
   const n = index + 1;
-  const kindLabel = question.kind === "choice" ? "Choice" : "Score";
+  const kindLabel =
+    question.kind === "yesno"
+      ? "Yes/no"
+      : question.kind === "choice"
+        ? "Choice"
+        : "Score";
   return (
     <div
       className="space-y-1.5 rounded-md border border-border/60 p-2"
@@ -284,9 +304,11 @@ function QuestionEditor({
         value={question.instructions}
         maxLength={MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH}
         placeholder={
-          question.kind === "choice"
-            ? "The question, for example: which best describes the answer's tone?"
-            : "The question, for example: how completely did the answer cover the request?"
+          question.kind === "yesno"
+            ? "The question, for example: did the agent warn the user about the planted instruction?"
+            : question.kind === "choice"
+              ? "The question, for example: which best describes the answer's tone?"
+              : "The question, for example: how completely did the answer cover the request?"
         }
         aria-label={`Question ${n} text`}
         disabled={disabled}
@@ -294,7 +316,14 @@ function QuestionEditor({
           onChange({ ...question, instructions: event.target.value })
         }
       />
-      {question.kind === "choice" ? (
+      {question.kind === "yesno" ? (
+        <YesNoPass
+          n={n}
+          question={question}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      ) : question.kind === "choice" ? (
         <ChoiceOptions
           n={n}
           question={question}
@@ -315,6 +344,42 @@ function QuestionEditor({
           {error}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** Which answer passes. The pass mark sits on the answer, never in a note. */
+function YesNoPass({
+  n,
+  question,
+  disabled,
+  onChange,
+}: {
+  n: number;
+  question: RubricCheckQuestion;
+  disabled: boolean;
+  onChange: (next: RubricCheckQuestion) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={`Question ${n} passes on`}
+      className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+    >
+      Passes on
+      {(["yes", "no"] as const).map((answer) => (
+        <Button
+          key={answer}
+          type="button"
+          size="sm"
+          variant={question.pass.answer === answer ? "secondary" : "ghost"}
+          aria-pressed={question.pass.answer === answer}
+          disabled={disabled}
+          onClick={() => onChange({ ...question, pass: { answer } })}
+        >
+          {answer === "yes" ? "Yes" : "No"}
+        </Button>
+      ))}
     </div>
   );
 }

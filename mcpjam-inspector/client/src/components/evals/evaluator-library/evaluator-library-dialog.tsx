@@ -8,6 +8,7 @@ import {
   DialogTrigger,
 } from "@mcpjam/design-system/dialog";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
 import { ArrowLeft, Library } from "lucide-react";
 import { useState } from "react";
 import { formatCriterion } from "@/shared/predicate-kinds";
@@ -19,6 +20,7 @@ import {
   isInSuite,
   LIBRARY_EVALUATORS,
   missingChecks,
+  taggedQuestions,
   type LibraryEvaluator,
 } from "./library-catalog";
 
@@ -30,22 +32,33 @@ import {
  */
 export function EvaluatorLibraryButton({
   predicates,
+  questions = [],
   authorableKinds,
+  canAskYesNo = false,
   onAdd,
 }: {
   predicates: readonly Predicate[];
+  /** The suite's rubric-check questions, to mark evaluators already added. */
+  questions?: readonly RubricCheckQuestion[];
   authorableKinds?: readonly Predicate["type"][];
-  onAdd: (checks: readonly Predicate[]) => void;
+  /** Whether this deployment accepts yes/no rubric-check questions. */
+  canAskYesNo?: boolean;
+  onAdd: (
+    checks: readonly Predicate[],
+    questions: readonly RubricCheckQuestion[],
+  ) => void;
 }) {
   const enabled = useEvaluatorLibraryEnabled();
   const anyAuthorable = LIBRARY_EVALUATORS.some((e) =>
-    isAuthorable(e, authorableKinds),
+    isAuthorable(e, authorableKinds, canAskYesNo),
   );
   if (!enabled || !anyAuthorable) return null;
   return (
     <EvaluatorLibraryDialog
       predicates={predicates}
+      questions={questions}
       authorableKinds={authorableKinds}
+      canAskYesNo={canAskYesNo}
       onAdd={onAdd}
     />
   );
@@ -53,21 +66,34 @@ export function EvaluatorLibraryButton({
 
 export function EvaluatorLibraryDialog({
   predicates,
+  questions = [],
   authorableKinds,
+  canAskYesNo = false,
   onAdd,
 }: {
   predicates: readonly Predicate[];
+  /** The suite's rubric-check questions, to mark evaluators already added. */
+  questions?: readonly RubricCheckQuestion[];
   authorableKinds?: readonly Predicate["type"][];
-  onAdd: (checks: readonly Predicate[]) => void;
+  /** Whether this deployment accepts yes/no rubric-check questions. */
+  canAskYesNo?: boolean;
+  onAdd: (
+    checks: readonly Predicate[],
+    questions: readonly RubricCheckQuestion[],
+  ) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const available = LIBRARY_EVALUATORS.filter((e) =>
-    isAuthorable(e, authorableKinds),
+    isAuthorable(e, authorableKinds, canAskYesNo),
   );
   const selected = available.find((e) => e.id === selectedId);
   const add = (evaluator: LibraryEvaluator) => {
-    onAdd(missingChecks(evaluator, predicates));
+    const ids = new Set(questions.map((q) => q.id));
+    onAdd(
+      missingChecks(evaluator, predicates),
+      taggedQuestions(evaluator).filter((q) => !ids.has(q.id)),
+    );
   };
   return (
     <Dialog
@@ -97,7 +123,7 @@ export function EvaluatorLibraryDialog({
         {selected ? (
           <EvaluatorDetail
             evaluator={selected}
-            inSuite={isInSuite(selected, predicates)}
+            inSuite={isInSuite(selected, predicates, questions)}
             onBack={() => setSelectedId(null)}
             onAdd={() => add(selected)}
           />
@@ -111,7 +137,7 @@ export function EvaluatorLibraryDialog({
                 icon={evaluator.icon}
                 tone={evaluator.tone}
                 builtFrom={builtFrom(evaluator)}
-                inSuite={isInSuite(evaluator, predicates)}
+                inSuite={isInSuite(evaluator, predicates, questions)}
                 onOpen={() => setSelectedId(evaluator.id)}
                 onAdd={() => add(evaluator)}
               />
@@ -137,9 +163,25 @@ function EvaluatorDetail({
   return (
     <div className="flex flex-col gap-4">
       <ul
-        aria-label="Assertions this evaluator adds"
+        aria-label="What this evaluator adds"
         className="divide-y divide-border rounded-lg border border-border"
       >
+        {taggedQuestions(evaluator).map((q) => (
+          <li
+            key={q.id}
+            className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
+          >
+            <span>
+              {q.label}
+              <span className="block text-xs text-muted-foreground">
+                Yes/no question, passes on{" "}
+                {q.pass.answer === "yes" ? "Yes" : "No"}. Asked with the
+                goal-completion judge.
+              </span>
+            </span>
+            <span className="text-xs text-muted-foreground">Advisory</span>
+          </li>
+        ))}
         {evaluator.checks.map((check) => (
           <li
             key={check.type}

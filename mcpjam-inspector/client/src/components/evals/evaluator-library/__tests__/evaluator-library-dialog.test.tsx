@@ -19,7 +19,11 @@ vi.mock("posthog-js/react", () => ({
 
 function open(onAdd = vi.fn(), predicates = []) {
   renderWithProviders(
-    <EvaluatorLibraryButton predicates={predicates} onAdd={onAdd} />,
+    <EvaluatorLibraryButton
+      predicates={predicates}
+      canAskYesNo
+      onAdd={onAdd}
+    />,
   );
   fireEvent.click(screen.getByRole("button", { name: "From library" }));
   return onAdd;
@@ -43,10 +47,13 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     );
     const tag = { id: "no-wasted-calls", version: 1 };
-    expect(onAdd).toHaveBeenCalledWith([
-      { type: "toolCallCountUnder", count: 10, evaluator: tag },
-      { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        { type: "toolCallCountUnder", count: 10, evaluator: tag },
+        { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
+      ],
+      [],
+    );
   });
 
   it("opens the detail with each assertion and adds from there", () => {
@@ -55,15 +62,18 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Valid Tool Arguments" }),
     );
     expect(
-      screen.getByRole("list", { name: "Assertions this evaluator adds" }),
+      screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Arguments match the tool's schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "argumentsMatchToolSchema",
-        evaluator: { id: "valid-tool-arguments", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "argumentsMatchToolSchema",
+          evaluator: { id: "valid-tool-arguments", version: 1 },
+        },
+      ],
+      [],
+    );
     fireEvent.click(screen.getByRole("button", { name: "All evaluators" }));
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
@@ -82,13 +92,16 @@ describe("EvaluatorLibraryButton", () => {
         name: "Add Actionable Tool Errors to suite",
       }),
     );
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "toolErrorNamesInput",
-        role: "advisory",
-        evaluator: { id: "actionable-tool-errors", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "toolErrorNamesInput",
+          role: "advisory",
+          evaluator: { id: "actionable-tool-errors", version: 1 },
+        },
+      ],
+      [],
+    );
   });
 
   it("hides evaluators this deployment cannot save", () => {
@@ -184,15 +197,55 @@ describe("Results Match Output Schema", () => {
       screen.getByRole("button", { name: "Results Match Output Schema" }),
     );
     expect(
-      screen.getByRole("list", { name: "Assertions this evaluator adds" }),
+      screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Every tool result matches its declared output schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith([
-      {
-        type: "toolResultMatchesSchema",
-        schema: "declared",
-        evaluator: { id: "results-match-output-schema", version: 1 },
-      },
-    ]);
+    expect(onAdd).toHaveBeenCalledWith(
+      [
+        {
+          type: "toolResultMatchesSchema",
+          schema: "declared",
+          evaluator: { id: "results-match-output-schema", version: 1 },
+        },
+      ],
+      [],
+    );
+  });
+});
+
+describe("question-only evaluators", () => {
+  it("adds a tagged yes/no question and no assertions", () => {
+    const onAdd = open();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Answer Grounded in Results" }),
+    );
+    expect(
+      screen.getByRole("list", { name: "What this evaluator adds" }),
+    ).toHaveTextContent("Yes/no question, passes on Yes");
+    fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
+    expect(onAdd).toHaveBeenCalledWith(
+      [],
+      [
+        expect.objectContaining({
+          id: "answer-grounded-in-results-grounded",
+          kind: "yesno",
+          pass: { answer: "yes" },
+          evaluator: { id: "answer-grounded-in-results", version: 1 },
+        }),
+      ],
+    );
+  });
+});
+
+describe("yes/no capability", () => {
+  it("hides question evaluators on a deployment that cannot ask yes/no", () => {
+    renderWithProviders(
+      <EvaluatorLibraryButton predicates={[]} onAdd={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(screen.getByText("No Wasted Calls")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Answer Grounded in Results"),
+    ).not.toBeInTheDocument();
   });
 });

@@ -172,3 +172,20 @@ describe("question edits", () => {
     expect(rubricChecksRun({ rubricChecks: { enabled: false } })).toBe(false);
   });
 });
+
+describe("yes/no questions", () => {
+  it("starts passing on Yes and needs a pass answer", () => {
+    const blank = blankRubricCheckQuestion("yesno", []);
+    expect(blank).toMatchObject({ kind: "yesno", pass: { answer: "yes" } });
+    const filled: RubricCheckQuestion = {
+      ...blank,
+      label: "Warned the user",
+      instructions: "Did the agent warn the user about the instruction?",
+    };
+    expect(rubricCheckQuestionError(filled, 0, [filled])).toBeUndefined();
+    const noAnswer: RubricCheckQuestion = { ...filled, pass: {} };
+    expect(rubricCheckQuestionError(noAnswer, 0, [noAnswer])).toBe(
+      "Choose whether Yes or No passes.",
+    );
+  });
+});

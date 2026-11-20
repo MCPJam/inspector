@@ -4,6 +4,7 @@ import type { TrialRowResult } from "@/components/evaluate/case-scorecard/trial-
 import type { ScorerUiRole } from "../suite-scorer-table-model";
 import { useEvaluatorLibraryEnabled } from "./evaluator-library-flag";
 import { findLibraryEvaluator } from "./library-catalog";
+import { evaluatorIdForQuestionKey } from "./library-suite-edits";
 import { ScorecardEvaluatorCard } from "./scorecard-evaluator-card";
 import type { VerdictStatus } from "./verdict-pill";
 
@@ -13,6 +14,8 @@ export type SummaryRow = {
   label: string;
   role: ScorerUiRole;
   predicate?: Predicate;
+  /** Rubric-check rows: the `q:<id>` key, which names a library question. */
+  rubricCheck?: { key: string };
   result: TrialRowResult;
 };
 
@@ -38,8 +41,9 @@ export function evaluatorStatus(
 ): VerdictStatus {
   const statuses = checks.map((c) => c.status);
   if (statuses.includes("error")) return "error";
-  // An evaluator with no Required check, such as one whose Required check
-  // the suite already had, is judged by what it has.
+  // An evaluator with no Required check, such as one made of a model
+  // question or one whose Required check the suite already had, is judged
+  // by what it has.
   const deciding = checks.some((c) => c.role === "required")
     ? checks.filter((c) => c.role === "required")
     : checks;
@@ -65,7 +69,9 @@ export function EvaluatorScorecardSummary({
   if (!enabled) return null;
   const byEvaluator = new Map<string, SummaryRow[]>();
   for (const row of rows) {
-    const id = row.predicate?.evaluator?.id;
+    const id =
+      row.predicate?.evaluator?.id ??
+      evaluatorIdForQuestionKey(row.rubricCheck?.key);
     if (!id) continue;
     byEvaluator.set(id, [...(byEvaluator.get(id) ?? []), row]);
   }
