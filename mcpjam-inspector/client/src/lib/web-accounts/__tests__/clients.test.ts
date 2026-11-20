@@ -69,15 +69,21 @@ describe("web accounts helpers", () => {
     ).toBe("QA");
   });
 
-  it("calls the backend's webClients module", () => {
+  it("calls the backend's web client modules", () => {
     expect(getFunctionName(webAccountsApi.list)).toBe(
       "webClients:listWebAccounts",
     );
     expect(getFunctionName(webAccountsApi.setAllowLocalRuns)).toBe(
       "webClients:setWebAccountAllowLocalRuns",
     );
+    expect(getFunctionName(webAccountsApi.setDefault)).toBe(
+      "webClients:setDefaultWebAccount",
+    );
+    expect(getFunctionName(webAccountsApi.mySuiteChoices)).toBe(
+      "webClientSuites:getMySuiteWebAccountChoices",
+    );
     expect(getFunctionName(webAccountsApi.setSuiteSelection)).toBe(
-      "webClients:setSuiteWebAccountSelection",
+      "webClientSuites:setSuiteWebAccountSelection",
     );
   });
 });

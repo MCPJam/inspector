@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
 import type { WebAccount } from "@/lib/web-accounts/api";
+import { createWebAccountView } from "@/test/factories";
 import { WebAccountsSettings } from "../WebAccountsSettings";
 
 const mocks = vi.hoisted(() => ({
@@ -40,21 +41,14 @@ for (const name of [
     value: vi.fn(() => false),
   });
 
-const qa: WebAccount = {
-  webAccountId: "wa-qa",
-  vendor: "claude",
-  accountEmail: "qa@example.com",
-  status: "ready",
-  isDefault: true,
-  allowLocalRuns: false,
-};
-const evals: WebAccount = {
-  ...qa,
+const qa = createWebAccountView({ webAccountId: "wa-qa" });
+const evals = createWebAccountView({
   webAccountId: "wa-evals",
+  label: "Evals bot",
   accountEmail: "evals@example.com",
   status: "needs_sign_in",
   isDefault: false,
-};
+});
 
 function mount(isAdmin: boolean, accounts: WebAccount[] = [qa, evals]) {
   mocks.accounts.mockReturnValue({ accounts, loaded: true, isAdmin });
@@ -87,7 +81,7 @@ describe("WebAccountsSettings", () => {
     expect(document.body.textContent).not.toMatch(/token|Needs reconnect/i);
 
     await user.click(
-      screen.getByRole("button", { name: "Manage evals@example.com" }),
+      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
     );
     expect(
       await screen.findByRole("menuitem", { name: "Sign in again" }),
@@ -137,7 +131,7 @@ describe("WebAccountsSettings", () => {
     const user = userEvent.setup();
     mount(true, [qa, { ...evals, status: "ready" }]);
     await user.click(
-      screen.getByRole("button", { name: "Manage evals@example.com" }),
+      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
     );
     await user.click(
       await screen.findByRole("menuitem", { name: "Set as default" }),

@@ -6,6 +6,7 @@ import { ConvexError } from "convex/values";
 import { SuiteAccountsRow } from "../suite-accounts-row";
 import type { EvalSuite } from "../types";
 import type { SuiteAccountsView } from "@/lib/evals/eval-accounts";
+import { createWebAccountView } from "@/test/factories";
 
 const state = vi.hoisted(() => ({
   flag: true,
@@ -422,21 +423,14 @@ describe("SuiteAccountsRow", () => {
 });
 
 describe("SuiteAccountsRow web clients", () => {
-  const qa = {
-    webAccountId: "wa-qa",
-    vendor: "claude",
-    accountEmail: "qa@example.com",
-    status: "ready",
-    isDefault: true,
-    allowLocalRuns: false,
-  };
-  const evals = {
-    ...qa,
+  const qa = createWebAccountView({ webAccountId: "wa-qa" });
+  const evals = createWebAccountView({
     webAccountId: "wa-evals",
+    label: "Evals bot",
     accountEmail: "evals@example.com",
     status: "needs_sign_in",
     isDefault: false,
-  };
+  });
 
   it("adds a web clients group behind its own flag, even with server accounts off", async () => {
     state.flag = false;
@@ -483,7 +477,7 @@ describe("SuiteAccountsRow web clients", () => {
     renderRow();
     expect(screen.queryByTestId("suite-accounts-web")).toBeNull();
     expect(
-      state.queried.some(({ name }) => name.startsWith("webClients:")),
+      state.queried.some(({ name }) => name.startsWith("webClient")),
     ).toBe(false);
   });
 
