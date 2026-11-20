@@ -44,6 +44,7 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import { track } from "@/lib/analytics";
 import { ConformanceRunRequestContext } from "./conformance-run-request";
 import {
   probesAfterRun,
@@ -211,6 +212,9 @@ export function ConformanceTab({
     serverName: string;
     seconds: number | null;
   }>>({});
+  useEffect(() => {
+    track("conformance_tab_viewed", { location: "conformance_tab" });
+  }, []);
   useEffect(() => {
     setChangedTimeouts((previous) => {
       const pending = Object.fromEntries(

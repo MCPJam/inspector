@@ -93,7 +93,7 @@ import {
 } from "@/lib/app-navigation";
 import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
-import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
+import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-workspace";
 import { RepairableSwarmRunDetail } from "./swarm-rerun-repair";
 import { SwarmLiveStreamPane } from "@/components/swarms/journey-run-results";
 import { findAttemptForSelection } from "@/components/swarms/swarm-targets";
@@ -292,6 +292,7 @@ export function SwarmsTab({
   // authorization errors instead of holding the screen.
   const effectiveProjectId = isAuthenticated ? projectId : null;
   const navigate = useAppNavigate();
+  const [overviewRunId, setOverviewRunId] = useState<string>();
   const swarmId = swarmIdProp?.trim() ? swarmIdProp : null;
   const personas = usePersonas(effectiveProjectId);
   const hosts = useProjectHosts(effectiveProjectId);
@@ -1102,9 +1103,9 @@ export function SwarmsTab({
             <SwarmOverviewPanel
               projectId={effectiveProjectId}
               hosts={hosts}
-              hasPersonas={
-                personas === undefined ? undefined : personas.length > 0
-              }
+              personas={personas}
+              selectedId={overviewRunId}
+              onSelectRun={setOverviewRunId}
               onNewSwarm={() => navigate(swarmsCreatePath)}
               onOpenSwarm={handleOpenSwarm}
             />
