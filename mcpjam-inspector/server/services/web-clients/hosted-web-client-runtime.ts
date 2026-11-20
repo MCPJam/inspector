@@ -21,6 +21,7 @@ import {
 } from "./hosted-web-client-environment.js";
 import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { openWebProfile } from "./recovery/profile-cipher.js";
+import { logger } from "../../utils/logger.js";
 import type { WebClientEnvironmentFactory } from "./web-client-environment.js";
 
 /** The person a bearer names, as the backend's service calls name them. */
@@ -117,11 +118,19 @@ export function createHostedWebClientEnvironmentFactory(
         return {
           driver: browser.driver,
           close: async () => {
-            await new BrowserSessionService().agentRequest("close", {
-              bearer: /^Bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`,
-              projectId: turn.projectId,
-              body: { sessionId: browser.browserSessionId },
-            });
+            try {
+              await new BrowserSessionService().agentRequest("close", {
+                bearer: /^Bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`,
+                projectId: turn.projectId,
+                body: { sessionId: browser.browserSessionId },
+              });
+            } catch (error) {
+              // Closing runs after the turn's outcome is known, so a browser
+              // that won't close is reported here rather than failing the turn.
+              logger.warn("[web-clients] the turn's hosted browser did not close", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
           },
         };
       },
