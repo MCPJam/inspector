@@ -228,6 +228,9 @@ export class RelayConnection {
     });
     ws.on("close", (code, reasonBuf) => {
       clearTimeout(deadline);
+      // ws cannot reach a socket still waiting on CONNECT, so a close() during
+      // that wait would leave it open. After an upgrade it is already closed.
+      attempt.abort();
       this.stopHeartbeat();
       this.abortAllLocal();
       if (this.closedByUs) return;

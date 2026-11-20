@@ -229,6 +229,8 @@ describe.skipIf(!CAN_RUN)("relay WebSocket through HTTPS_PROXY", () => {
     vi.unstubAllEnvs();
     proxy.connects.length = 0;
     edge.authorizations.length = 0;
+    stalled.counts.accepted = 0;
+    stalled.counts.closed = 0;
   });
 
   afterAll(async () => {
@@ -290,5 +292,28 @@ describe.skipIf(!CAN_RUN)("relay WebSocket through HTTPS_PROXY", () => {
     await vi.advanceTimersByTimeAsync(2_000);
     await until(() => connection.isConnected, "the relay reconnects");
     expect(edge.authorizations).toHaveLength(2);
+  }, 20_000);
+
+  it("closes every socket to a stalled proxy when connecting times out", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    setProxyEnv(`http://127.0.0.1:${stalled.port}`);
+    const connection = relay(`wss://relay.test:${edge.port}/agent`);
+    open.push(connection);
+    const outcome = connection.connect().then(
+      () => "connected",
+      (error: Error) => error.message,
+    );
+
+    // The first dial hits its 10 s deadline and the retry starts at most
+    // 1 s later. Both hang at CONNECT.
+    await until(() => stalled.counts.accepted === 1, "the first dial");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await until(() => stalled.counts.accepted === 2, "the retry");
+
+    // connect() gives up at 15 s and closes the relay mid-CONNECT.
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(await outcome).toBe("Timed out connecting to the tunnel relay");
+    await until(() => stalled.counts.closed === 2, "both dials are dropped");
   }, 20_000);
 });
