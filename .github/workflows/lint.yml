@@ -143,6 +143,12 @@ jobs:
       - name: Typecheck releasable packages
         run: npm run typecheck
 
+      # A ratchet, not a clean gate: sdk/eslint-suppressions.json holds each
+      # file's existing error count per rule, so only new errors fail. Lock in
+      # a fix with: npx eslint src tests --prune-suppressions (from sdk/).
+      - name: Lint SDK
+        run: npm run lint -w @mcpjam/sdk
+
       - name: Typecheck inspector client
         run: npm run typecheck:client -w @mcpjam/inspector
 
