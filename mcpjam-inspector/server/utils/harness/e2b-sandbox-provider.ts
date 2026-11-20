@@ -371,6 +371,16 @@ export function createE2BHarnessSandboxProvider(
     // spends a minute of retries before failing — which is why the failure is
     // spelled out below rather than surfacing as E2B's bare "exit status 1".
     try {
+      // On its own, before the guard: a box too small for the harness fails
+      // here at once, not after the guard's install (up to its timeout).
+      // Only a harness with a floor sends a command.
+      if (!resuming) {
+        await assertBoxMemoryForHarness(
+          runInBox,
+          opts.harnessId,
+          connectSignal,
+        );
+      }
       // Preparation must finish before exposing the session. The read-only
       // hint and proxy socket cleanup are independent of the package guard.
       const preparation = await Promise.allSettled([
@@ -379,16 +389,6 @@ export function createE2BHarnessSandboxProvider(
           { harnessId: opts.harnessId, resuming },
           connectSignal,
         ),
-        // Before the guard, so a box too small for the harness says so first.
-        ...(resuming
-          ? []
-          : [
-              assertBoxMemoryForHarness(
-                runInBox,
-                opts.harnessId,
-                connectSignal,
-              ),
-            ]),
         ...(opts.skipPnpmGuard
           ? []
           : [

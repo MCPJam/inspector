@@ -104,7 +104,7 @@ describe("stderrWithStopReason", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("names an out-of-memory kill, with the box's size", async () => {
+  it("names a likely out-of-memory kill for a SIGKILL on a box whose kernel killed for memory", async () => {
     // The `pnpm install` E2B reported as `exit -1`: its stderr was empty.
     await expect(
       stderrWithStopReason(
@@ -112,13 +112,18 @@ describe("stderrWithStopReason", () => {
         answering(BASE_BOX),
       ),
     ).resolves.toBe(
-      "The box ran out of memory, and its kernel stopped this command " +
-        "(signal: killed). It has 473 MiB. Run this client on a computer with " +
-        "more memory, such as one built from the MCPJam computer template.",
+      "The sandbox killed this command (signal: killed). The box's kernel " +
+        "has stopped 1 process for lack of memory since it booted, so this " +
+        "command likely ran out of memory. The box has 473 MiB. Run this " +
+        "client on a computer with more memory, such as one built from the " +
+        "MCPJam computer template.",
     );
   });
 
-  it("reports the signal alone when no OOM kill was recorded, after the command's stderr", async () => {
+  it("never blames memory for a signal the OOM killer does not send, even after an earlier OOM kill", async () => {
+    // `oom_kill` is box-wide and only grows: an old kill says nothing about
+    // a command SIGTERM stopped.
+    const run = answering(BASE_BOX);
     await expect(
       stderrWithStopReason(
         {
@@ -126,10 +131,22 @@ describe("stderrWithStopReason", () => {
           error: "signal: terminated",
           stderr: "partial output\n",
         },
-        answering(ONE_GIB_BOX),
+        run,
       ),
     ).resolves.toBe(
       "partial output\nThe sandbox stopped this command before it finished (signal: terminated).",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("reports a SIGKILL alone on a box whose kernel never killed for memory", async () => {
+    await expect(
+      stderrWithStopReason(
+        { exitCode: -1, error: "signal: killed", stderr: "" },
+        answering(ONE_GIB_BOX),
+      ),
+    ).resolves.toBe(
+      "The sandbox stopped this command before it finished (signal: killed).",
     );
   });
 });

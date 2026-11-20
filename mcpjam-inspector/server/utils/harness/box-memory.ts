@@ -96,9 +96,17 @@ export async function assertBoxMemoryForHarness(
   );
 }
 
+/** What E2B reports for a command SIGKILL stopped: the only signal the OOM killer sends. */
+const SIGKILL = "signal: killed";
+
 /**
  * The stderr a command result carries, plus why E2B stopped it when a signal
- * did (exit `-1`). An out-of-memory kill is named as one, with the box's size.
+ * did (exit `-1`).
+ *
+ * The kernel's `oom_kill` counter is box-wide and only grows, so it cannot
+ * say which process was killed. A SIGKILL on a box whose kernel has killed
+ * for memory is reported as a likely out-of-memory kill, never as a certain
+ * one, and any other signal never mentions memory.
  */
 export async function stderrWithStopReason(
   result: { exitCode: number; error?: string | undefined; stderr: string },
@@ -106,12 +114,16 @@ export async function stderrWithStopReason(
   signal?: AbortSignal,
 ): Promise<string> {
   if (result.exitCode >= 0 || !result.error) return result.stderr;
-  const memory = await readBoxMemory(run, signal);
+  const memory =
+    result.error === SIGKILL ? await readBoxMemory(run, signal) : undefined;
+  const kills = memory?.oomKills ?? 0;
   const note =
-    memory?.oomKills && memory.totalMiB !== undefined
-      ? `The box ran out of memory, and its kernel stopped this command ` +
-        `(${result.error}). It has ${memory.totalMiB} MiB. Run this client on ` +
-        `a computer with more memory, such as one built from the MCPJam ` +
+    kills > 0 && memory?.totalMiB !== undefined
+      ? `The sandbox killed this command (${result.error}). The box's kernel ` +
+        `has stopped ${kills} ${kills === 1 ? "process" : "processes"} for ` +
+        `lack of memory since it booted, so this command likely ran out of ` +
+        `memory. The box has ${memory.totalMiB} MiB. Run this client on a ` +
+        `computer with more memory, such as one built from the MCPJam ` +
         `computer template.`
       : `The sandbox stopped this command before it finished (${result.error}).`;
   return result.stderr.trim() ? `${result.stderr.trimEnd()}\n${note}` : note;

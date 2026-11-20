@@ -652,7 +652,7 @@ describe("exec result normalization", () => {
     const result = await session.run({ command: "pnpm install" });
     expect(result).toMatchObject({ exitCode: -1, stdout: "Downloading" });
     expect(result.stderr).toMatch(
-      /ran out of memory.*signal: killed.*473 MiB/s,
+      /killed this command \(signal: killed\).*likely ran out of memory.*473 MiB/s,
     );
   });
 });
@@ -664,12 +664,17 @@ describe("box memory", () => {
       harnessId: "opencode",
     });
 
-  it("refuses OpenCode on a box under 1 GiB before the pnpm guard can fail", async () => {
+  it("refuses OpenCode on a box under 1 GiB without starting the pnpm guard", async () => {
+    // The guard installs pnpm when it is missing, for up to its timeout: the
+    // refusal must not wait on it.
     sandboxState.run.mockImplementation(async (command: string) => {
       if (command === BOX_MEMORY_COMMAND) {
         return { stdout: "MemTotal: 484444 kB\n" };
       }
-      throw new FakeCommandExitError(1, "", "offline");
+      if (command === harnessPnpmGuardCommand()) {
+        return new Promise(() => {});
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
     });
     const failure = await Promise.resolve(opencode().createSession()).catch(
       (error: unknown) => error,
@@ -678,6 +683,10 @@ describe("box memory", () => {
       source: "sandbox_setup",
       code: "box_memory_too_small",
     });
+    expect(sandboxState.run).not.toHaveBeenCalledWith(
+      harnessPnpmGuardCommand(),
+      expect.anything(),
+    );
   });
 
   it("starts OpenCode on a 1 GiB box, and never checks on resume", async () => {
