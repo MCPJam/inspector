@@ -248,6 +248,7 @@ export async function collectClientReadiness(
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
         signal: ctx.config.signal,
+        cacheMode: "bypass",
       });
       const orderWarning = toolOrderWarning(
         surface.toolNames,
