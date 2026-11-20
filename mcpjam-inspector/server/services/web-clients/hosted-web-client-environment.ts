@@ -208,6 +208,8 @@ export function createHostedWebClientEnvironment(
       return deps.openHostedBrowser({ profile, sites });
     },
 
+    restoredProfileVersion: (webAccountId) => restoredVersions.get(webAccountId),
+
     turnGate: {
       async open(window) {
         const answer = openAnswer.safeParse(
