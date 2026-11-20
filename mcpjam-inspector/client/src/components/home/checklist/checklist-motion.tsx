@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -14,17 +13,16 @@ import {
 } from "framer-motion";
 
 const EASE_OUT = [0, 0, 0.2, 1] as const;
-/** Step 1's status area eases to its new height over this long. */
-const SWAP_MS = 220;
+/** Step 1's old status fades out, then the new one fades in, each this long. */
+const SWAP_MS = 160;
 /** The checklist collapses, then today's Home rises, each this long. */
 const HANDOFF_MS = 280;
 /** Before growing on return, so the bar paints at the old count first. */
 const RETURN_GROW_DELAY_MS = 150;
 
 /**
- * Swaps Step 1's status (connecting, connected, failed) while the area eases
- * to its new height, so the panel doesn't jump. The new content fades in once
- * most of the height is there, so it isn't revealed half at a time.
+ * Swaps Step 1's status (connecting, connected, failed): the old status fades
+ * out rising 4 px, then the new one fades in settling up 4 px.
  */
 export function StatusSwap({
   swapKey,
@@ -34,47 +32,20 @@ export function StatusSwap({
   children: ReactNode;
 }) {
   const reduce = useReducedMotion() ?? false;
-  const inner = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number | "auto">("auto");
-  const [clip, setClip] = useState(false);
-  useLayoutEffect(() => {
-    const el = inner.current;
-    if (!el) return;
-    const observer = new ResizeObserver(() => setHeight(el.offsetHeight));
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
   if (reduce) return <div className="space-y-4">{children}</div>;
   return (
-    <motion.div
-      initial={false}
-      animate={{ height }}
-      transition={{ duration: SWAP_MS / 1000, ease: EASE_OUT }}
-      onAnimationStart={() => setClip(true)}
-      onAnimationComplete={() => setClip(false)}
-      className={clip ? "overflow-hidden" : undefined}
-    >
-      <div ref={inner}>
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={swapKey}
-            className="space-y-4"
-            initial={{ opacity: 0 }}
-            animate={{
-              opacity: 1,
-              transition: { duration: 0.14, delay: 0.08, ease: EASE_OUT },
-            }}
-            exit={{
-              opacity: 0,
-              pointerEvents: "none",
-              transition: { duration: 0.06, ease: EASE_OUT },
-            }}
-          >
-            {children}
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </motion.div>
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={swapKey}
+        className="space-y-4"
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4, pointerEvents: "none" }}
+        transition={{ duration: SWAP_MS / 1000, ease: EASE_OUT }}
+      >
+        {children}
+      </motion.div>
+    </AnimatePresence>
   );
 }
 
