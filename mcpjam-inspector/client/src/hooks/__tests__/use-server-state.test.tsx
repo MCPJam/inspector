@@ -3176,6 +3176,64 @@ describe("useServerState OAuth callback failures", () => {
     ).toBe(false);
   });
 
+  describe("removing a server while its save is in flight", () => {
+    const acme = { name: "Acme", type: "http", url: "https://mcp.acme.dev" };
+    const saves: Array<(serverId: string) => void> = [];
+    const render = () => {
+      saves.length = 0;
+      mockDeleteServer.mockReset();
+      mockDeleteServer.mockResolvedValue(undefined);
+      mockCreateServerIfMissing.mockImplementation(
+        () => new Promise<string>((resolve) => saves.push(resolve))
+      );
+      tryResolveProjectServerMock.mockReturnValue(null);
+      const appState = createCloudCliAppState();
+      return renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+      }).result;
+    };
+    const connect = (result: ReturnType<typeof render>) => {
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.handleConnect(acme as any);
+      });
+      return pending;
+    };
+
+    it("deletes the row the save creates", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).toHaveBeenCalledWith({ serverId: "srv_acme" });
+    });
+
+    it("keeps the row when a same-name connect started after the removal", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      connect(result);
+      await waitFor(() => expect(saves).toHaveLength(2));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).not.toHaveBeenCalledWith({
+        serverId: "srv_acme",
+      });
+    });
+  });
+
   it("applies project connection defaults on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
     const { ensureAuthorizedForReconnect } = await import(

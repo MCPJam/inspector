@@ -120,14 +120,14 @@ export function PlaygroundCenter({
         showPostConnectGuide={false}
         showPostConnectGuideCopy={isGuidedPostConnect}
         autoRunInput={homeAutorun?.prompt}
+        // Kept only for a mount that ended before trying it.
+        onAutoRunStarted={homeAutorun ? clearHomeChecklistAutorun : undefined}
         onAutoRunSent={
           homeAutorun
-            ? () => {
-                clearHomeChecklistAutorun();
+            ? () =>
                 updateChecklistProgress(homeAutorun.progressKey, {
                   chat: true,
-                });
-              }
+                })
             : undefined
         }
         // The copy needs the server up; retiring the run does not. A message
@@ -138,7 +138,6 @@ export function PlaygroundCenter({
             ? () => {
                 // A deferred auto-run is sent from the composer instead.
                 if (homeAutorun) {
-                  clearHomeChecklistAutorun();
                   updateChecklistProgress(homeAutorun.progressKey, {
                     chat: true,
                   });
