@@ -307,7 +307,7 @@ export function childComponents(graph, rootFiles) {
 }
 
 /** The whole map, read from the inspector tree at `root`. */
-export function buildFeatureMap(root, { withTests = true } = {}) {
+export function buildFeatureMap(root) {
   const read = (rel) => readFileSync(join(root, rel), "utf8");
   const surfaces = parseSurfaces(read(SOURCES.surfaces));
   const places = navigationPlaces(
@@ -316,9 +316,9 @@ export function buildFeatureMap(root, { withTests = true } = {}) {
     parseConnectTabs(read(SOURCES.connectTabs)),
   );
   const aliases = JSON.parse(read(SOURCES.aliases));
-  const tests = withTests ? readSurfaceTests(root, surfaces) : null;
+  const tests = readSurfaceTests(root, surfaces);
   return surfaces.map((s) => {
-    const roots = tests ? [...tests.roots.get(s.id)].sort() : [];
+    const roots = [...tests.roots.get(s.id)].sort();
     return {
       id: s.id,
       label: primaryLabel(s, places.get(s.id)),
@@ -336,9 +336,9 @@ export function buildFeatureMap(root, { withTests = true } = {}) {
       inAtlas: s.showInAtlas,
       aliases: aliases[s.id] ?? [],
       roots,
-      children: tests ? childComponents(tests.graph, roots) : [],
-      e2e: tests ? tests.e2e.get(s.id).sort() : [],
-      component: tests ? tests.component.get(s.id).sort() : [],
+      children: childComponents(tests.graph, roots),
+      e2e: tests.e2e.get(s.id).sort(),
+      component: tests.component.get(s.id).sort(),
     };
   });
 }

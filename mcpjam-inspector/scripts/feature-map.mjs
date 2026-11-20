@@ -6,8 +6,9 @@
  *   node scripts/feature-map.mjs find <words...> [--json]
  *   node scripts/feature-map.mjs show <surface id> [--json]
  *
- * `find` ranks surfaces by id, UI label, navigation place, alias, component
- * file and purpose, and exits 1 when no surface matches on more than prose.
+ * `find` ranks surfaces by id, UI label, navigation place, alias, route,
+ * component file and purpose, and exits 1 when the best match rests on one
+ * word of prose or a file name.
  * Aliases (words people use that the code does not) live in
  * `scripts/feature-map-aliases.json`; everything else comes from source. See
  * `scripts/lib/feature-map.mjs`.
@@ -68,7 +69,7 @@ function formatFind(result, map) {
     lines.push(`no surface mentions: ${result.unmatched.join(", ")}`);
   if (!result.confident) {
     lines.push(
-      "no confident match: nothing matched an id, label, alias or component name",
+      "no confident match: no id, label, alias or route matched, and no one phrase of a surface held two query words",
     );
     if (result.ranked.length) lines.push("closest:");
   }
