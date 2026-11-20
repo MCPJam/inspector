@@ -707,6 +707,7 @@ describe("ConformanceTab", () => {
       screen.getByText("Add a server to run conformance checks."),
     ).toBeInTheDocument();
     expect(mockRunProtocol).not.toHaveBeenCalled();
+    expect(window.location.search).toBe("");
   });
 
   it("asks for a server instead of running when none is selected", async () => {

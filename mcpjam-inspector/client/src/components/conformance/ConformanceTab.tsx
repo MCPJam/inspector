@@ -161,6 +161,17 @@ export function ConformanceTab({
   const [setupOpen, setSetupOpen] = useState(() =>
     new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM),
   );
+  // Dropped once read, so a refresh or a view change doesn't reopen setup.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (!params.has(CONFORMANCE_SETUP_PARAM)) return;
+    params.delete(CONFORMANCE_SETUP_PARAM);
+    const query = params.toString();
+    navigate(
+      `${location.pathname}${query ? `?${query}` : ""}${location.hash}`,
+      { replace: true },
+    );
+  }, [location.search]);
   const [start, setStart] = useState<{
     id: number;
     serverName: string;

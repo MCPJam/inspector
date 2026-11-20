@@ -10,7 +10,7 @@ import {
 import { copyToClipboard } from "@/lib/clipboard";
 import { AGENT_SETUPS, type AgentSetup } from "./agent-setups";
 
-const AGENT_DOCS_URL = "https://docs.mcpjam.com/hosted/claude-connector";
+const AGENT_DOCS_URL = "https://docs.mcpjam.com/hosted/mcp-server";
 const COPIED_RESET_MS = 1500;
 
 export function AgentStep({
@@ -80,14 +80,16 @@ export function AgentStep({
             </div>
             <p className="text-xs text-muted-foreground">
               {setup.after}{" "}
-              <a
-                href={setup.guideUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-foreground underline underline-offset-2"
-              >
-                {setup.label === "Other" ? "MCPJam guide" : `${setup.label} guide`}
-              </a>
+              {setup.guide ? (
+                <a
+                  href={setup.guide.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-foreground underline underline-offset-2"
+                >
+                  {setup.guide.label}
+                </a>
+              ) : null}
             </p>
           </TabsContent>
         ))}
