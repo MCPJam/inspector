@@ -70,6 +70,15 @@ describe("backend connector resolver", () => {
     expect(service.read).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps no unknown id longer than a connector id, so anonymous callers can't fill the cache with long ones", async () => {
+    const { service } = stubService({ read: () => null });
+    const resolver = createBackendConnectorResolver(service);
+    const long = "x".repeat(4096);
+    expect(await resolver.resolve(long)).toBeUndefined();
+    expect(await resolver.resolve(long)).toBeUndefined();
+    expect(service.read).toHaveBeenCalledTimes(2);
+  });
+
   it("reads an id the backend refuses to parse as unknown, and any other failure as a failure", async () => {
     const invalid = createBackendConnectorResolver(
       stubService({
