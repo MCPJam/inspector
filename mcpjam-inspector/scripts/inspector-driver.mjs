@@ -68,8 +68,17 @@ const OPTIONS = {
 };
 
 async function loadSurfaces() {
-  const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
-  return listAppSurfaces();
+  try {
+    const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
+    return listAppSurfaces();
+  } catch (error) {
+    // The package allows Node 22.0, but Node only strips TypeScript types
+    // without a flag from 22.18.0.
+    if (error.code !== "ERR_UNKNOWN_FILE_EXTENSION") throw error;
+    throw new Error(
+      `Reading shared/app-surfaces.ts needs Node 22.18.0 or later (this is ${process.version}), or 22.6.0 or later with NODE_OPTIONS=--experimental-strip-types.`,
+    );
+  }
 }
 
 function positiveInt(value, name, fallback) {
