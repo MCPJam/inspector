@@ -179,8 +179,9 @@ function policyProbed(key: UiPolicyKey) {
     const { probe } = read;
     const declared = probeBoolean(probe.values[key]);
     const readCount = probeNumber(probe.values.readCount) ?? 0;
+    // The read content declares the policy; no host was seen applying it.
     if (declared === true) {
-      return { kind: "present", via: "probed", count: readCount };
+      return { kind: "present", via: "detected", count: readCount };
     }
     if (
       declared === false &&
@@ -273,7 +274,8 @@ export const APPS_FEATURES: readonly FeatureDefinition[] = [
         const probe = probes["apps-ui-resources"];
         if (probe?.status !== "ok") return null;
         const count = probeNumber(probe.values.uiResourceCount) ?? 0;
-        return count > 0 ? { kind: "present", via: "probed", count } : null;
+        // Found by listing and tool links, the same hint the declared rule reads.
+        return count > 0 ? { kind: "present", via: "detected", count } : null;
       },
       requiresClientExtension: MCP_UI_EXTENSION_ID,
     },

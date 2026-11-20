@@ -254,6 +254,8 @@ function probeManager(
       id === serverId
         ? { url: new URL("http://probe.invalid/mcp") }
         : undefined,
+    getAllToolAnnotations: (id: string) =>
+      id === serverId ? { [toolName]: {} } : {},
     getToolsForAiSdk: async (ids: string[]) => {
       if (!ids.includes(serverId)) return {};
       const probe = tool({
@@ -563,7 +565,11 @@ describe.skipIf(!ENABLED)("hosted harness on a baked Docker box", () => {
         if (warmManager) admitWarmChatManager(warmManager, "org-e2e", false);
         const manager = warmManager ?? (harness === "codex"
           ? probeManager(spec.mcpServerId, spec.mcpToolName, probeCalls)
-          : { getServerConfig: (id: string) => id === spec.mcpServerId ? { url: mocks.mcpUrl } : undefined });
+          : {
+              getServerConfig: (id: string) => id === spec.mcpServerId ? { url: mocks.mcpUrl } : undefined,
+              // The server's tool list, which the turn maps Claude Code's renamed tools back to.
+              getAllToolAnnotations: (id: string) => (id === spec.mcpServerId ? { [spec.mcpToolName]: {} } : {}),
+            });
         const result = await runHarnessTurn(
           {
             messages,

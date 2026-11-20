@@ -253,7 +253,9 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
       options.pinnedSkillSource.pins.map((pin: RunPinnedSkill) => pin.name),
     ).toEqual(["deploy"]);
     expect(
-      options.pinnedHarnessSkills.map((skill: { name: string }) => skill.name),
+      options.pinnedSkillSource.harnessSkills.map(
+        (skill: { name: string }) => skill.name,
+      ),
     ).toEqual(["deploy"]);
   });
 
@@ -267,7 +269,7 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
 
     const options = runEvalSuiteWithAiSdkMock.mock.calls[0]![0] as any;
     expect(options.pinnedSkillSource.pins).toEqual([]);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.pinnedSkillSource.harnessSkills).toEqual([]);
   });
 
   it("stops before any model call when a frozen skill's file can't be read", async () => {

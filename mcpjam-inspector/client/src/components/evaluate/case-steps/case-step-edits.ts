@@ -83,8 +83,8 @@ export const chooseTools: DraftEdit = (draft) => {
   if (view.tools.length > 0 || draft.stashedTools.length === 0) {
     return { ...draft, toolsChoice: "tools" };
   }
-  const checks = draft.stashedTools.flatMap(({ step, preceding }) =>
-    step && preceding ? [{ step, preceding }] : [],
+  const checks = draft.stashedTools.flatMap(({ step, preceding, owner }) =>
+    step && preceding ? [{ step, preceding, owner }] : [],
   );
   return {
     ...draft,
@@ -247,8 +247,10 @@ export function addAfterRun(
         next = setCaseKind(next, "regression", suiteDefaultMatchOptions);
         if (readSimpleCase(next.steps).tools.length > 0) return next;
         const first = actionRows(next.steps).actions[0];
+        // With no step to follow, a leading check would lock the route.
+        if (!first) return { ...next, toolsChoice: "tools" };
         return insertAssertion(
-          first?.step.id ?? null,
+          first.step.id,
           blankPredicate("toolCalledWith"),
         ).edit({ ...next, toolsChoice: "tools" });
       },

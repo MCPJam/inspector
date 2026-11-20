@@ -174,7 +174,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
         const servers =
           probeStrings(summary.values.prmAuthorizationServers) ?? [];
         if (servers.length > 1) {
-          return present("probed", { count: servers.length });
+          return present("advertised", { count: servers.length });
         }
         return servers.length === 1
           ? notApplicable("The server names one authorization server.")
@@ -287,7 +287,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
         (probeStrings(summary.values.codeChallengeMethods) ?? []).includes(
           "S256"
         )
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },
@@ -311,7 +311,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
       declared: authStdio,
       probed: asMetadataProbe((summary) =>
         probeBoolean(summary.values.cimdSupported) === true
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },
@@ -338,7 +338,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
       declared: authStdio,
       probed: asMetadataProbe((summary) =>
         probeBoolean(summary.values.registrationEndpoint) === true
-          ? present("probed")
+          ? present("advertised")
           : probeAbsent(summary)
       ),
     },
@@ -371,7 +371,7 @@ export const AUTHORIZATION_FEATURES: readonly FeatureDefinition[] = [
     summary:
       "The operator registers a client ahead of time and gives the user its client ID and secret.",
     howTo:
-      "Add the client ID and secret from your authorization server to the server's OAuth settings in MCPJam, then reconnect.",
+      "Add the client ID and secret from your authorization server to the server's OAuth settings in MCPJam, then reconnect the account from the server's Auth tab.",
     owner: "authorization-server",
     spec: coreSpec("2026-07-28", REGISTRATION, "pre-registration"),
     stage: "stable",
