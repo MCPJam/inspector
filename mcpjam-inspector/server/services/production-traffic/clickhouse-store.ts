@@ -7,7 +7,11 @@
  * and counts are computed here at read time from the stored rows, under
  * rules version 1, so a rule change never rewrites history.
  */
-import { createClient, type ClickHouseClient } from "@clickhouse/client";
+import {
+  ClickHouseLogLevel,
+  createClient,
+  type ClickHouseClient,
+} from "@clickhouse/client";
 import {
   readClickHouseConnection,
   type ClickHouseConnection,
@@ -42,6 +46,9 @@ export function createTrafficClickHouseClient(
     application: "mcpjam-production-traffic",
     request_timeout: 10_000,
     max_open_connections: 8,
+    // The client logs failed queries to the console itself; this store
+    // reports its failures through the server logger instead.
+    log: { level: ClickHouseLogLevel.OFF },
     ...(connection.caCert ? { tls: { ca_cert: connection.caCert } } : {}),
   });
 }
