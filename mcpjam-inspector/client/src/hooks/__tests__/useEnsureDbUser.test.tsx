@@ -721,9 +721,11 @@ describe("useEnsureDbUser", () => {
   });
 
   it.each([
-    ["linkedin%2Ffall_launch", true],
-    ["linkedin%2Fwinter_launch", false],
-  ] as const)("clears only the campaign sent by the successful request (%s)", async (current, shouldClear) => {
+    ["linkedin%2Ffall_launch", true, false],
+    ["linkedin%2Fwinter_launch", false, false],
+    ["linkedin%2Ffall_launch", true, true],
+    ["linkedin%2Fwinter_launch", false, true],
+  ] as const)("clears only the campaign sent by the successful request (%s)", async (current, shouldClear, optOut) => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
     mockState.posthog = { is_capturing: () => true };
@@ -732,6 +734,7 @@ describe("useEnsureDbUser", () => {
       .mockReturnValue("mcpjam_signup_campaign=linkedin%2Ffall_launch");
     const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
     mockState.ensureUser.mockImplementationOnce(async () => {
+      if (optOut) localStorage.setItem("mcpjam-analytics-consent", "denied");
       cookie.mockReturnValue("mcpjam_signup_campaign=" + current);
       return "user-row";
     });
@@ -741,6 +744,7 @@ describe("useEnsureDbUser", () => {
       expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
       expect(write.mock.calls.some(([value]) => value.includes("Max-Age=0"))).toBe(shouldClear);
     } finally {
+      localStorage.removeItem("mcpjam-analytics-consent");
       vi.unstubAllGlobals();
     }
   });
