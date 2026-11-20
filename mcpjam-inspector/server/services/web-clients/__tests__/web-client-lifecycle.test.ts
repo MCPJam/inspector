@@ -55,6 +55,19 @@ describe.each(HOSTS)("$harness in the existing lifecycle", ({ harness, modelId, 
     });
   });
 
+  it("runs the catalog template's sentinel model", () => {
+    const sentinel = `${harness}/default`;
+    expect(
+      checkHarnessRuntimeAvailable({
+        harnessId: harness,
+        surface: "evals",
+        requireToolApproval: false,
+        hasSelectedMcpServers: true,
+        model: { id: sentinel },
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("refuses another vendor's model and the study and guest surfaces", () => {
     const base = { harnessId: harness, requireToolApproval: false, hasSelectedMcpServers: true };
     expect(
