@@ -106,11 +106,12 @@ export function createHostedWebClientEnvironmentFactory(
       ...(turn.runWebAccountIds ? { runWebAccountIds: turn.runWebAccountIds } : {}),
       profileForRun: createProfileForRunClient({ convexHttpUrl: convexUrl, serviceToken }),
       async openHostedBrowser({ profile }) {
+        // Each turn's browser is its own chat's: the person's chat browser keeps
+        // its own sign-ins, and a turn closing its browser never closes theirs.
         const browser = await openWebClientHostedBrowser({
           bearer,
           projectId: turn.projectId,
           vendor,
-          ...(turn.chatSessionId ? { chatSessionId: turn.chatSessionId } : {}),
           profileArchive: await restoreWebProfile(profile),
         });
         return {
