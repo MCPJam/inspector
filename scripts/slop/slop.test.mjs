@@ -6,6 +6,7 @@ import {
   mkdirSync,
   realpathSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1070,5 +1071,81 @@ describe("hooks in a worktree", async () => {
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 0);
     writeFileSync(join(wt, "sdk/src/a.ts"), "export const a = b as any;\n");
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
+  });
+});
+
+describe("ui change needs a driver run", async () => {
+  const { isUiSource, newestReport, checkEvidence } = await import(
+    "./ui-driver-run.mjs"
+  );
+  const client = (name) => `mcpjam-inspector/client/src/${name}`;
+
+  it("counts client source, not tests or other packages", () => {
+    assert.equal(isUiSource(client("App.tsx")), true);
+    assert.equal(isUiSource(client("lib/format.ts")), true);
+    for (const path of [
+      client("components/__tests__/A.test.tsx"),
+      client("lib/a.test.ts"),
+      client("lib/a.spec.tsx"),
+      client("test/factories.ts"),
+      client("test/mocks/servers.ts"),
+      "mcpjam-inspector/server/routes/a.ts",
+      "mcpjam-inspector/client/vite.config.ts",
+      "design-system/src/button.tsx",
+    ]) {
+      assert.equal(isUiSource(path), false, path);
+    }
+  });
+
+  it("finds the newest report, and none when the driver never ran", () => {
+    const runs = mkdtempSync(join(tmpdir(), "slop-driver-"));
+    try {
+      assert.equal(newestReport(join(runs, "missing")), 0);
+      mkdirSync(join(runs, "a"));
+      mkdirSync(join(runs, "b"));
+      writeFileSync(join(runs, "a", "servers.json"), "{}");
+      writeFileSync(join(runs, "b", "hosts.json"), "{}");
+      writeFileSync(join(runs, "b", "hosts.png"), "");
+      const at = (path, seconds) => utimesSync(path, seconds, seconds);
+      at(join(runs, "a", "servers.json"), 1000);
+      at(join(runs, "b", "hosts.json"), 2000);
+      at(join(runs, "b", "hosts.png"), 3000);
+      assert.equal(newestReport(runs), 2_000_000);
+      // Not a folder: unreadable, so the caller passes instead of reminding.
+      assert.throws(() => newestReport(join(runs, "a", "servers.json")));
+    } finally {
+      rmSync(runs, { recursive: true, force: true });
+    }
+  });
+
+  it("reminds when no report is newer than the change", () => {
+    const changed = [{ path: client("App.tsx"), mtimeMs: 2000 }];
+    assert.equal(checkEvidence(changed, 3000, ""), null);
+    const result = checkEvidence(changed, 1000, "");
+    assert.match(result.message, /client\/src\/App\.tsx/);
+    assert.match(result.message, /no inspector driver run has happened since/);
+    assert.match(
+      result.message,
+      /node mcpjam-inspector\/scripts\/inspector-driver\.mjs open <surface>/,
+    );
+    assert.equal(checkEvidence([], 0, ""), null);
+  });
+
+  it("names five files and counts the rest", () => {
+    const changed = Array.from({ length: 7 }, (_, i) => ({
+      path: client(`f${i}.tsx`),
+      mtimeMs: 10,
+    }));
+    const { message } = checkEvidence(changed, 0, "");
+    assert.match(message, /f4\.tsx\n {2}and 2 more/);
+    assert.doesNotMatch(message, /f5\.tsx/);
+  });
+
+  it("reminds once per change set", () => {
+    const changed = [{ path: client("App.tsx"), mtimeMs: 2000 }];
+    const first = checkEvidence(changed, 0, "");
+    assert.equal(checkEvidence(changed, 0, first.key), null);
+    const edited = [{ path: client("App.tsx"), mtimeMs: 2500 }];
+    assert.notEqual(checkEvidence(edited, 0, first.key), null);
   });
 });
