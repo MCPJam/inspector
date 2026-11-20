@@ -117,6 +117,19 @@ export interface DriverPage {
    * differently make an observation recorded on one meaningless on the other.
    */
   pageText(): Promise<string>;
+  /**
+   * The rendered text (`innerText`) of the first element `selector` matches,
+   * or `null` when nothing does. Found the way an act's selector is, by
+   * Playwright's engine, which reads CSS and also `role=`, `text=`, `>>`
+   * chains and `nth=`; read the way the local engine's `readText` reads it.
+   *
+   * Optional, with `elementNodeId`: an engine without Playwright's selector
+   * engine omits both. A text observation scoped to one element is refused
+   * there, and an a11y root that CDP can't parse matches nothing, as before.
+   */
+  elementText?(selector: string): Promise<string | null>;
+  /** The same element's backend node id, for a root CDP can't parse. */
+  elementNodeId?(selector: string): Promise<number | null>;
   /** The console ring buffer this page has accumulated, oldest first. */
   consoleEntries(): readonly ConsoleEntry[];
   /**

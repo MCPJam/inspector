@@ -101,8 +101,9 @@ export async function driveRealUiTurn(
       );
     }
     enter("connector");
+    const selected = input.connectors.map((connector) => connector.name);
     for (const connector of input.connectors) {
-      await module.ensureConnector(driver, connector, ctx);
+      await module.ensureConnector(driver, connector, ctx, selected);
     }
 
     let conversationUrl: string | undefined;

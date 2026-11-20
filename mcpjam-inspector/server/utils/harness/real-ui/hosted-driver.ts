@@ -92,16 +92,16 @@ export function createHostedPageDriver(
     type: (selector, text) => act("type", selector, text),
     press: (key, selector) => act("press", selector, key),
     async readText(selector) {
-      // The accessibility tree scoped to the element is the closest the API
-      // has to an element's text: its names are the text a person sees.
-      const result = await run({
-        op: "observe",
-        mode: "a11y",
-        rootSelector: selector,
-        filter: "all",
-      });
-      if (!result.ok) return undefined;
-      return result.page?.pageContent.a11y?.trim();
+      // The element's `innerText`, found by Playwright's engine in the
+      // browser: the same element and text the Playwright driver reads.
+      const result = await run({ op: "observe", mode: "text", rootSelector: selector });
+      if (result.ok) return result.page?.pageContent.text?.trim();
+      if (result.error?.code === "unknown_selector") return undefined;
+      // Anything else is a read that failed, never an element that is absent.
+      throw new PageDriverError(
+        result.error?.code === "origin_not_allowed" ? "site_blocked" : "failed",
+        result.error?.message ?? "The browser could not read the page.",
+      );
     },
     async readPageText() {
       const result = await run({ op: "observe", mode: "text" });

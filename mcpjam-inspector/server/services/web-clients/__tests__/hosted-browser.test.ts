@@ -24,10 +24,14 @@ describe("the session transport", () => {
     bootId: "boot-1",
   };
 
+  /** The daemon's status, announcing `features`. */
+  const statusWith = (features: string[]) =>
+    vi.fn(async () => ({ kind: "ok" as const, bootId: "boot-1", features }));
+
   it("maps a page module's command onto the session's daemon", async () => {
     const sendCommand = vi.fn(async () => okResponse);
     const send = sessionBrowserTransport({
-      handle: { client: { sendCommand }, bootId: "boot-1" },
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
       sessionId: "browser-session-1",
       policy,
     });
@@ -44,11 +48,12 @@ describe("the session transport", () => {
   });
 
   it("refuses another site before the daemon and reports a lost command as unknown", async () => {
-    const sendCommand = vi.fn(async () => {
+    const sendCommand = vi.fn(async (command: { action: { kind: string } }) => {
+      if (command.action.kind === "observe") return okResponse;
       throw new Error("socket closed");
     });
     const send = sessionBrowserTransport({
-      handle: { client: { sendCommand }, bootId: "boot-1" },
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
       sessionId: "s",
       policy,
     });
@@ -60,6 +65,85 @@ describe("the session transport", () => {
     expect(await send({ op: "act", verb: "click", target: { selector: "#x" } })).toMatchObject({
       status: "unknown",
     });
+  });
+
+  it("reads one element's text only from a daemon that says it can", async () => {
+    // An older daemon ignores `rootSelector` on a text read and answers with
+    // the whole page's text, which a page module would take for the element's.
+    const read = { op: "observe", mode: "text", rootSelector: "role=dialog" } as const;
+    const sendCommand = vi.fn(async () => okResponse);
+    const older = statusWith(["navigation-stop"]);
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: older }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await send(read)).toMatchObject({
+      status: "refused",
+      refusal: { code: "unsupported_target" },
+    });
+    expect(await send({ op: "observe", mode: "text" })).toMatchObject({ status: "executed" });
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+
+    const current = statusWith(["element-text"]);
+    const upToDate = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: current }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await upToDate(read)).toMatchObject({ status: "executed", ok: true });
+    expect(await upToDate(read)).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: { kind: "observe", mode: "text", rootSelector: "role=dialog" },
+      }),
+      "boot-1",
+    );
+    // Asked once per browser, not once per read.
+    expect(current).toHaveBeenCalledTimes(1);
+
+    // A daemon that didn't answer is asked again rather than taken as either.
+    const silent = vi.fn(async () => {
+      throw new Error("socket closed");
+    });
+    const unsure = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: silent }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await unsure(read)).toMatchObject({ status: "refused" });
+    expect(await unsure(read)).toMatchObject({ status: "refused" });
+    expect(silent).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends nothing that could change a page off the vendor's sites, until a navigate brings it back", async () => {
+    let page: string | Error = "https://elsewhere.example/";
+    const sendCommand = vi.fn(async (_command: { action: { kind: string } }) => {
+      if (page instanceof Error) throw page;
+      return { status: "ok" as const, result: { ok: true, output: { url: page } }, bootId: "boot-1" };
+    });
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    const typed = { op: "act", verb: "type", target: { selector: "#prompt" }, value: "the prompt" } as const;
+    for (const command of [typed, { op: "act", verb: "press", value: "Enter" } as const]) {
+      expect(await send(command)).toMatchObject({ status: "refused", refusal: { code: "origin_not_allowed" } });
+    }
+    // A page the browser can't place counts as off the sites.
+    page = new Error("socket closed");
+    expect(await send(typed)).toMatchObject({ status: "refused", refusal: { code: "origin_not_allowed" } });
+    expect(sendCommand.mock.calls.map(([command]) => command.action.kind)).toEqual(["observe", "observe", "observe"]);
+
+    page = "https://chatgpt.com/";
+    expect(await send({ op: "navigate", url: "https://chatgpt.com/" })).toMatchObject({ status: "executed", ok: true });
+    expect(await send(typed)).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand.mock.calls.slice(3).map(([command]) => command.action.kind)).toEqual([
+      "navigate",
+      "observe",
+      "act",
+    ]);
   });
 
   it("keeps each vendor's browser to its own sites and MCPJam's sign-in page", () => {

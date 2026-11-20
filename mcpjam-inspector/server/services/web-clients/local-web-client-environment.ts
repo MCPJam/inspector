@@ -19,6 +19,7 @@ import {
   type WebClientVendor,
 } from "@/shared/web-clients";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
+import { logger } from "../../utils/logger.js";
 import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
@@ -122,8 +123,10 @@ export function createLocalWebClientEnvironment(deps: {
         });
       }
       openProfiles.add(deps.profileDir);
+      let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;
       try {
         const browser = await (deps.launch ?? launchPersistent)(deps.profileDir, { headless: deps.headless });
+        launched = browser;
         return {
           driver: await createPlaywrightDriver(browser.page, { sites }),
           async close() {
@@ -135,6 +138,13 @@ export function createLocalWebClientEnvironment(deps: {
           },
         };
       } catch (error) {
+        // A browser that launched but couldn't be driven still has the profile
+        // open, so it closes before another turn may open the profile.
+        await launched?.close().catch((closeError: unknown) => {
+          logger.warn("[web-clients] a local browser that failed to start did not close", {
+            error: closeError instanceof Error ? closeError.message : String(closeError),
+          });
+        });
         openProfiles.delete(deps.profileDir);
         throw error;
       }
