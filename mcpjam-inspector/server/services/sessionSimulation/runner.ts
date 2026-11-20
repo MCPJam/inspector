@@ -2387,6 +2387,9 @@ export async function drainAssistantTurn(
     // Ephemeral harness box (B-isolation phase 6) — present ⇒ the harness turn
     // runs on it instead of reserving the acting member's personal computer.
     ...(harnessSandboxBinding ? { harnessSandboxBinding } : {}),
+    // A web client session's leased account and its loss callback. Without
+    // it the turn would run on the project's default account.
+    ...(args.webClientRun ? { webClientRun: args.webClientRun } : {}),
     // No ceiling for a harness host: its model broker clamps `max_tokens` to it
     // without touching the model's thinking budget, so one below the broker's
     // own default (64,000) can make Anthropic refuse every thinking turn. The

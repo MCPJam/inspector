@@ -12,7 +12,7 @@ import { Hono, type Context } from "hono";
 import { WEB_CLIENT_VENDORS } from "@/shared/web-clients";
 import { verifiedFlagSubject } from "../../utils/flag-identity.js";
 import { getInternalBackendConfig } from "../internal-backend.js";
-import { createWebAccountRoutes } from "./account-routes.js";
+import { createWebAccountRoutes, SignInBrowserNotFoundError } from "./account-routes.js";
 import { webClientService } from "./backend-connector-resolver.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
 import { openWebClientHostedBrowser } from "./hosted-browser.js";
@@ -115,11 +115,13 @@ export function createDefaultWebAccountRoutes(): Hono {
   }
 }
 
+/**
+ * The person's own sign-in browser for this account. One this replica doesn't
+ * hold answers 409, so the person starts the sign-in again.
+ */
 function signInBrowserOf(args: Parameters<typeof findSignInBrowser>[0]) {
   const browser = findSignInBrowser(args);
-  if (!browser) {
-    throw new Error("This sign-in browser was started elsewhere or has closed. Start the sign-in again.");
-  }
+  if (!browser) throw new SignInBrowserNotFoundError();
   return browser;
 }
 

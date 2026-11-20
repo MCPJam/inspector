@@ -176,7 +176,9 @@ export function createWebRecoveryCoordinator(
   async function resumeWaiting(webAccountId: string): Promise<ResumedRun[]> {
     const claimed = await backend.claimResumableWebRuns({ webAccountId });
     const started = await Promise.allSettled(
-      claimed.map((run) => deps.resumeRun(run.runId, run.pendingStep)),
+      // Async, so a resumeRun that throws before it returns a promise fails
+      // only its own run: the backend has already claimed all of them.
+      claimed.map(async (run) => deps.resumeRun(run.runId, run.pendingStep)),
     );
     return claimed.map((run, index): ResumedRun => {
       const result = started[index];
@@ -283,14 +285,19 @@ export function createWebRecoveryCoordinator(
       if (signedIn === "here") return { status: "signed_in" };
       if (signedIn === "elsewhere") return { status: "reload_profile" };
     }
-    const { requestId } = await backend.reportWebSignInRequired({
+    const reported = await backend.reportWebSignInRequired({
       webAccountId,
       runId,
       ...(iterationId ? { iterationId } : {}),
       pendingStep: report.pendingStep,
       reason,
+      ...(report.restoredProfileVersion !== undefined
+        ? { restoredProfileVersion: report.restoredProfileVersion }
+        : {}),
     });
-    return { status: "paused", requestId };
+    // A handback can land between the read above and this report.
+    if ("reloadProfile" in reported) return { status: "reload_profile" };
+    return { status: "paused", requestId: reported.requestId };
   }
 
   async function handback(input: HandbackInput): Promise<HandbackOutcome> {
@@ -309,10 +316,17 @@ export function createWebRecoveryCoordinator(
         logger.warn("[web-recovery] Handback refused for another seat", {
           requestId,
         });
-        await backend.markWebAccountNeedsSignIn({
-          webAccountId: account.webAccountId,
-          reason: "wrong_account",
-        });
+        // Checking this browser can outlast a valid handback of the same
+        // request, and the account that one made ready stays ready.
+        const still = (
+          await backend.listWebReconnectRequests({ projectId })
+        ).find((one) => one.requestId === requestId);
+        if (still?.status === "open") {
+          await backend.markWebAccountNeedsSignIn({
+            webAccountId: account.webAccountId,
+            reason: "wrong_account",
+          });
+        }
       }
       if (session.status !== "saved") return session;
       const { accountEmail, workspaceName } = session.identity;

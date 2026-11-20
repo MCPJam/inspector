@@ -64,6 +64,14 @@ export function createInMemoryWebReconnectBackend(
     },
     async reportWebSignInRequired({ webAccountId, runId, ...report }) {
       const account = accountById(webAccountId);
+      const { restoredProfileVersion } = report;
+      if (
+        account.status === "ready" &&
+        restoredProfileVersion !== undefined &&
+        account.profileVersion > restoredProfileVersion
+      ) {
+        return { reloadProfile: true };
+      }
       account.status = "needs_sign_in";
       let request = [...requests.values()].find(
         (one) => one.webAccountId === webAccountId && one.status === "open",
