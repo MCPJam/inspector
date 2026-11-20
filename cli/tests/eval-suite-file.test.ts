@@ -1564,6 +1564,30 @@ describe("eval export", () => {
 
 // ── eval run --file ──────────────────────────────────────────────────────────
 
+/** A refusal the fixture answers with, such as the per-key rate limit. */
+type FixtureRefusal = {
+  status: number;
+  code: string;
+  message: string;
+  retryAfter?: string;
+};
+
+function refuse(
+  res: { statusCode: number; setHeader(name: string, value: string): unknown; end(body: string): unknown },
+  refusal: FixtureRefusal
+): void {
+  res.statusCode = refusal.status;
+  if (refusal.retryAfter) res.setHeader("Retry-After", refusal.retryAfter);
+  res.end(JSON.stringify({ code: refusal.code, message: refusal.message }));
+}
+
+const RATE_LIMITED: FixtureRefusal = {
+  status: 429,
+  code: "RATE_LIMITED",
+  message: "API key rate limit exceeded. Slow down and retry.",
+  retryAfter: "1",
+};
+
 function runFileArgv(baseUrl: string, ...args: string[]): string[] {
   return [
     "node",
@@ -1686,8 +1710,8 @@ async function startFileRunFixture(options?: {
    * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
    */
   failCreateIndexes?: readonly number[];
-  failUpdates?: boolean;
-  failRun?: boolean;
+  failUpdates?: boolean | FixtureRefusal;
+  failRun?: boolean | FixtureRefusal;
 }): Promise<{
   baseUrl: string;
   authHeaders: string[];
@@ -1933,6 +1957,10 @@ async function startFileRunFixture(options?: {
       updateBodies.push(raw ? JSON.parse(raw) : {});
       updateQueries.push(Object.fromEntries(url.searchParams));
       if (options?.failUpdates) {
+        if (typeof options.failUpdates === "object") {
+          refuse(res, options.failUpdates);
+          return;
+        }
         res.statusCode = 500;
         res.end(
           JSON.stringify({
@@ -2092,6 +2120,10 @@ async function startFileRunFixture(options?: {
       const body = raw ? JSON.parse(raw) : {};
       runBodies.push(body);
       if (options?.failRun) {
+        if (typeof options.failRun === "object") {
+          refuse(res, options.failRun);
+          return;
+        }
         res.statusCode = 503;
         res.end(
           JSON.stringify({
@@ -2740,6 +2772,46 @@ describe("eval run --file", () => {
     }
   });
 
+  test("a rate-limited launch keeps its code and when to retry", async () => {
+    const fixture = await startFileRunFixture({ failRun: RATE_LIMITED });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.notEqual(run.result.exitCode, 0);
+        const errorLine = run.stderr
+          .split("\n")
+          .find((line) => line.startsWith("{"));
+        assert.ok(errorLine, run.stderr);
+        const payload = JSON.parse(errorLine) as {
+          error: {
+            code: string;
+            message: string;
+            details: {
+              idempotencyKey: string;
+              refusal?: { retryAfterSeconds?: number };
+            };
+          };
+        };
+        // It used to arrive as INTERNAL_ERROR, which no script can retry on.
+        assert.equal(payload.error.code, "RATE_LIMITED");
+        assert.equal(payload.error.details.refusal?.retryAfterSeconds, 1);
+        const key = (fixture.runBodies[0] as { idempotencyKey: string })
+          .idempotencyKey;
+        assert.equal(payload.error.details.idempotencyKey, key);
+        assert.match(payload.error.message, new RegExp(key));
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("human output says when an explicit retry key reused a run", async () => {
     const fixture = await startFileRunFixture();
     try {
@@ -3006,6 +3078,56 @@ describe("eval run --file", () => {
         };
         assert.equal(payload.error.details.created, 0);
         assert.equal(payload.error.details.updated, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a sync the platform rate-limited is not an invalid suite file", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+      failUpdates: RATE_LIMITED,
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--wait"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        // 4, the setup failure the --wait table names for a rate limit; never
+        // 2, which tells CI the file itself needs fixing.
+        assert.equal(run.result.exitCode, 4, run.stderr);
+        const jsonLine = run.stderr
+          .split("\n")
+          .reverse()
+          .find((line) => line.startsWith("{"));
+        assert.ok(jsonLine, run.stderr);
+        const payload = JSON.parse(jsonLine) as {
+          error: {
+            code: string;
+            message: string;
+            details: { retryable?: boolean; failed: Array<{ rateLimited?: boolean }> };
+          };
+        };
+        assert.equal(payload.error.code, "CASE_SYNC_FAILED");
+        assert.equal(payload.error.details.retryable, true);
+        assert.equal(payload.error.details.failed[0]?.rateLimited, true);
+        assert.match(payload.error.message, /retry in a moment/);
         assert.equal(fixture.runBodies.length, 0);
       });
     } finally {

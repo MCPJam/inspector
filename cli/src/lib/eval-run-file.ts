@@ -21,6 +21,7 @@ import {
   MAX_IMPORT_NOTE_CHARS,
 } from "@mcpjam/sdk/contract";
 import {
+  isPlatformApiError,
   projectResolutionError,
   resolveProject,
   runEvalSuiteOperation,
@@ -45,12 +46,51 @@ import {
   type EvalVocabulary,
 } from "./eval-vocabulary.js";
 import { CliError, cliError, normalizeCliError, usageError } from "./output.js";
+import { toCliError } from "./platform-client.js";
 
 /** Hosted runs refuse more than this many iterations — named, not clamped. */
 export const HOSTED_ITERATIONS_CAP = 10;
 
 /** Invalid file on `eval run --file`. Distinct from validate's exit 1. */
 export const SUITE_FILE_RUN_INVALID_EXIT_CODE = 2;
+
+/**
+ * A sync step the platform turned away for the caller's request rate. The
+ * suite file is fine and a retry in a moment works, so a sync that failed
+ * only this way must not exit as an invalid file.
+ */
+function isRateLimited(error: unknown): boolean {
+  return (
+    isPlatformApiError(error) &&
+    (error.code === "RATE_LIMITED" || error.status === 429)
+  );
+}
+
+/**
+ * The error for a sync that failed: an invalid file (exit 2) unless every
+ * failure was a rate limit, which exits 1 so `--wait` reads it as the setup
+ * failure it is (4) rather than a file to fix.
+ */
+function caseSyncError(
+  message: string,
+  failed: Array<{ rateLimited?: boolean }>,
+  details: Record<string, unknown>
+): CliError {
+  if (failed.length > 0 && failed.every((entry) => entry.rateLimited)) {
+    return cliError(
+      "CASE_SYNC_FAILED",
+      `${message} The platform rate-limited the sync, so the file is fine: retry in a moment.`,
+      1,
+      { ...details, retryable: true }
+    );
+  }
+  return cliError(
+    "CASE_SYNC_FAILED",
+    message,
+    SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    details
+  );
+}
 
 export function sha256HexOfBuffer(buffer: Uint8Array): string {
   return createHash("sha256").update(buffer).digest("hex");
@@ -583,6 +623,7 @@ export async function syncFileOwnedCases(
     declaredId?: string;
     code: string;
     message: string;
+    rateLimited?: boolean;
   }> = [];
   const createdCases: Array<{ id: string; declaredId: string; title: string }> =
     [];
@@ -631,6 +672,7 @@ export async function syncFileOwnedCases(
         ...(chunk[0] ? { declaredId: chunk[0].id } : {}),
         code: "CREATE_FAILED",
         message: error instanceof Error ? error.message : String(error),
+        ...(isRateLimited(error) ? { rateLimited: true } : {}),
       });
     }
   }
@@ -660,15 +702,15 @@ export async function syncFileOwnedCases(
         declaredId: file.id,
         code: "UPDATE_FAILED",
         message: error instanceof Error ? error.message : String(error),
+        ...(isRateLimited(error) ? { rateLimited: true } : {}),
       });
     }
   }
 
   if (failed.length > 0) {
-    throw cliError(
-      "CASE_SYNC_FAILED",
+    throw caseSyncError(
       `Failed to sync ${failed.length} case(s) from the suite file; the run was not started.`,
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      failed,
       {
         failed,
         created: createdCases.length,
@@ -697,15 +739,15 @@ export async function syncFileOwnedCases(
         ...(row.declaredId ? { declaredId: row.declaredId } : {}),
         code: "DELETE_FAILED",
         message: error instanceof Error ? error.message : String(error),
+        ...(isRateLimited(error) ? { rateLimited: true } : {}),
       });
     }
   }
 
   if (failed.length > 0) {
-    throw cliError(
-      "CASE_SYNC_FAILED",
+    throw caseSyncError(
       `Failed to remove ${failed.length} stale case(s) from the suite file; the run was not started.`,
-      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      failed,
       {
         failed,
         created: createdCases.length,
@@ -1261,7 +1303,11 @@ export async function executeEvalRunFromFile(
       }
     );
   } catch (error) {
-    const normalized = normalizeCliError(error);
+    // A platform refusal keeps its wire code (RATE_LIMITED, FORBIDDEN, ...) and
+    // its retry hint: the generic normalizer files every one as INTERNAL_ERROR.
+    const normalized = isPlatformApiError(error)
+      ? toCliError(error, { command: "cloud eval run" })
+      : normalizeCliError(error);
     const details =
       normalized.details &&
       typeof normalized.details === "object" &&
