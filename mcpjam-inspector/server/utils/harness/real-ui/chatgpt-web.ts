@@ -23,8 +23,10 @@ import {
   cssString,
   needsSignIn,
   pageChanged,
+  waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
+  type RealUiStep,
   type StepContext,
 } from "./page-module.js";
 import { list, readVendorJson, record, text } from "./vendor-json.js";
@@ -45,27 +47,17 @@ const PLAN_LIMIT =
 const role = (kind: string, name: string) =>
   `role=${kind}[name="${cssString(name)}"]`;
 
-async function waitVisible(
-  driver: PageDriver,
-  selector: string,
-  ctx: StepContext,
-  what: string,
-) {
-  await driver.waitFor(async () => (await driver.readText(selector)) !== undefined, {
-    timeoutMs: ctx.timeoutMs,
-    signal: ctx.signal,
-    what,
-  });
-}
+const waitVisible = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
+  waitVisibleUnlessBlocked(driver, selector, ctx, { what, step, challengeSelectors: [CHALLENGE] });
 
 /** ChatGPT's own API takes the session's access token, read from the page. */
 async function session(driver: PageDriver): Promise<Record<string, unknown>> {
   return record(await readVendorJson(driver, `${ORIGIN}/api/auth/session`));
 }
 
-async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string) {
+async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string, step: RealUiStep) {
   await driver.click(PLUS);
-  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`);
+  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`, step);
   await driver.click(role("menuitem", item));
 }
 
@@ -82,7 +74,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
     if (url.origin !== ORIGIN || (await driver.readText('[data-testid="login-button"]')) !== undefined) {
       throw needsSignIn("signed_out", "sign_in_check", "The ChatGPT account is signed out.");
     }
-    await waitVisible(driver, COMPOSER, ctx, "the chat composer");
+    await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
     const current = await session(driver);
     const user = record(current.user);
     if (!text(user.email)) {
@@ -110,8 +102,8 @@ export const chatgptWebPageModule: RealUiPageModule = {
     // Plugins, then +, then "Add custom MCP server": the walkthrough's path.
     // A server already added under this name is reused, never added twice.
     await driver.navigate(`${ORIGIN}/`);
-    await waitVisible(driver, COMPOSER, ctx, "the chat composer");
-    await openPlusMenuItem(driver, ctx, "Plugins");
+    await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
+    await openPlusMenuItem(driver, ctx, "Plugins", "connector");
     const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
     const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
     await driver.waitFor(
@@ -131,10 +123,10 @@ export const chatgptWebPageModule: RealUiPageModule = {
       });
     }
     await driver.click(add);
-    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item");
+    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item", "connector");
     await driver.click(role("menuitem", "Add custom MCP server"));
     const dialog = "role=dialog";
-    await waitVisible(driver, dialog, ctx, "the add server form");
+    await waitVisible(driver, dialog, ctx, "the add server form", "connector");
     await driver.type(`${dialog} >> role=textbox[name=/name/i]`, connector.name);
     await driver.type(`${dialog} >> role=textbox[name=/url/i]`, connector.url);
     await driver.click(`${dialog} >> role=button[name=/^(Create|Add|Connect)$/]`);
@@ -151,7 +143,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async openNewChat(driver, ctx) {
     await driver.navigate(`${ORIGIN}/`);
-    await waitVisible(driver, COMPOSER, ctx, "a new chat");
+    await waitVisible(driver, COMPOSER, ctx, "a new chat", "new_chat");
     if ((await driver.readText(USER_MESSAGE)) !== undefined) {
       throw pageChanged("new_chat", "chatgpt.com did not open an empty chat.");
     }
@@ -159,8 +151,8 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async enableConnector(driver, name, ctx) {
     const toggle = role("menuitemcheckbox", name);
-    await openPlusMenuItem(driver, ctx, "More");
-    await waitVisible(driver, toggle, ctx, "the server in the tools menu");
+    await openPlusMenuItem(driver, ctx, "More", "enable_connector");
+    await waitVisible(driver, toggle, ctx, "the server in the tools menu", "enable_connector");
     if ((await driver.readText(`${toggle}[checked=true]`)) === undefined) {
       await driver.click(toggle);
     }

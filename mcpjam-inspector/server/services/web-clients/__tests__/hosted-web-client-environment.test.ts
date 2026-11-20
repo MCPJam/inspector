@@ -268,5 +268,7 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
     const report = calls.at(-1)!.command;
     expect(report).toMatchObject({ webAccountId: "acct-default", runId: "run-1", iterationId: "iteration-1", reason: "human_check" });
     expect(JSON.parse(String(report.pendingStep))).toMatchObject({ stepId: "sign_in_check" });
+    // Both name the profile the run restored, so an account signed in again since stays as it is.
+    expect(calls.slice(-2).map((call) => call.command.restoredProfileVersion)).toEqual([3, 3]);
   });
 });
