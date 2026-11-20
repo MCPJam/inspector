@@ -2911,9 +2911,12 @@ export async function ensureHostedConversationSession(args: {
   ownerKind: BrowserSessionOwnerKind;
   hostId?: string;
   browserProfileId?: string;
-  /** A profile archive to boot a fresh browser with, when no saved profile id
-   *  names one (a web account's restored session). */
-  profileArchive?: Uint8Array;
+  /**
+   * The profile a fresh boot runs on, whatever the session was opened with:
+   * this archive, or a blank profile without one. A web account's browser
+   * passes it, so it never boots on the person's own default profile.
+   */
+  ownProfile?: { archive?: Uint8Array };
   target?: {
     kind: "sandbox";
     sandboxRowId: string;
@@ -2942,20 +2945,20 @@ export async function ensureHostedConversationSession(args: {
       "This conversation already uses a browser on another engine.",
     );
   const logicalSessionId = logical.sessionId;
-  // A caller's own archive (a web account's restored session) is what a fresh
-  // boot runs on, ahead of the profile the session was opened with, which for
-  // a conversation is the person's default browser profile.
+  // A caller's own profile comes before the one the session was opened with,
+  // which for a conversation is the person's default browser profile.
   const profileArchive = logical.lastBootId
     ? null
-    : (args.profileArchive ??
-      (logical.profileId
+    : args.ownProfile
+      ? (args.ownProfile.archive ?? null)
+      : logical.profileId
         ? await new BrowserSessionService().downloadProfile({
             projectId: args.projectId,
             profileId: logical.profileId,
             bearer: args.bearer,
             ...(args.signal ? { signal: args.signal } : {}),
           })
-        : null));
+        : null;
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";
