@@ -17,8 +17,9 @@ import type {
 
 export interface ChatRewind {
   parentChatSessionId: string;
+  /** The edited message, or for a multi-model column the last message kept. */
   rewoundFromMessageId: string;
-  reason: "message_edit";
+  reason: "message_edit" | "multi_model_column";
 }
 
 /**

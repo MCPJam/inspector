@@ -13,3 +13,12 @@ export const MULTI_MODEL_SESSIONS_FEATURE_FLAG = "playground-multi-model-session
 export function useMultiModelSessionsEnabled(): boolean {
   return useFeatureFlagEnabled(MULTI_MODEL_SESSIONS_FEATURE_FLAG) === true;
 }
+
+/**
+ * True only once the flag has loaded as off. A saved column opened alone
+ * branches on send unless this is true, so a send while flags are still
+ * loading never writes into the saved column.
+ */
+export function useMultiModelSessionsDisabled(): boolean {
+  return useFeatureFlagEnabled(MULTI_MODEL_SESSIONS_FEATURE_FLAG) === false;
+}
