@@ -150,6 +150,44 @@ describe("claude.ai", () => {
       signals: ["no stop button", "nothing streaming", "an assistant message", "the composer is back"],
     });
   });
+
+  describe("on a plan with no room for another connector", () => {
+    const connector = { name: "MCPJam billing 5e6f7a8b", url: "https://inspector.example/mcp/billing" };
+    /** The add dialog asks for an upgrade, and the search shows one MCPJam connector. */
+    const walled = (shown: string) =>
+      cannedDriver({
+        url: "https://claude.ai/customize/connectors/yours",
+        texts: {
+          '.dframe-pane-primary [placeholder="Search"]': "",
+          "role=dialog": "Upgrade to add more connectors",
+          ".dframe-pane-primary role=button[name=/^View MCPJam/]": `View ${shown}`,
+        },
+      });
+
+    it("stops with plan_limit rather than remove a connector the turn selected", async () => {
+      const driver = walled("MCPJam orders 1a2b3c4d");
+      await expect(
+        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [
+          "MCPJam orders 1a2b3c4d",
+          connector.name,
+        ]),
+      ).rejects.toMatchObject({
+        failure: { kind: "plan_limit", step: "connector", message: expect.stringContaining("each server this run uses") },
+      });
+      expect(driver.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("still makes room by removing one another run added", async () => {
+      const driver = walled("MCPJam stale 9a8b7c6d");
+      // The canned dialog still asks for an upgrade, so the second add fails too.
+      await expect(
+        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [connector.name]),
+      ).rejects.toMatchObject({ failure: { kind: "plan_limit" } });
+      expect(driver.click).toHaveBeenCalledWith(
+        '.dframe-pane-primary role=button[name="More options for MCPJam stale 9a8b7c6d"]',
+      );
+    });
+  });
 });
 
 describe("chatgpt.com", () => {

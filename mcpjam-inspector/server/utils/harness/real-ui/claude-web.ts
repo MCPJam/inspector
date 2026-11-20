@@ -156,7 +156,7 @@ export const claudeWebPageModule: RealUiPageModule = {
       : undefined;
   },
 
-  async ensureConnector(driver, connector, ctx) {
+  async ensureConnector(driver, connector, ctx, keep = []) {
     await driver.navigate(CONNECTORS);
     await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list");
     await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
@@ -181,6 +181,14 @@ export const claudeWebPageModule: RealUiPageModule = {
       const other = await driver.readText(`${PANE} role=button[name=/^View ${MCPJAM_CONNECTOR_PREFIX}/]`);
       const otherName = other?.replace(/^View\s+/, "").trim();
       if (!otherName || otherName === connector.name) throw error;
+      // The turn's own: removing it would break the turn, so it can't fit here.
+      if (keep.includes(otherName)) {
+        throw new RealUiError({
+          kind: "plan_limit",
+          step: "connector",
+          message: "This Claude plan can't hold a connector for each server this run uses. Select fewer servers or use a paid plan.",
+        });
+      }
       await removeConnector(driver, otherName, ctx);
       await driver.navigate(CONNECTORS);
       await addConnector(driver, connector, ctx);
