@@ -2,6 +2,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { WebAccount } from "@/lib/web-accounts/api";
+import { createWebAccountView } from "@/test/factories";
 import { useWebClientPane } from "../WebClientPane";
 import { WebAccountChip } from "../WebAccountChip";
 import { SaveWebAccountBar } from "../SaveWebAccountBar";
@@ -20,14 +21,7 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
   navigateApp: mocks.navigate,
 }));
 
-const ready: WebAccount = {
-  webAccountId: "wa-1",
-  vendor: "claude",
-  accountEmail: "qa@example.com",
-  status: "ready",
-  isDefault: true,
-  allowLocalRuns: false,
-};
+const ready = createWebAccountView({ webAccountId: "wa-1" });
 const signedOut: WebAccount = { ...ready, status: "needs_sign_in" };
 
 /** The panel's layout: the chip in its top bar, the banner, then the body. */
