@@ -258,18 +258,46 @@ export function getEffectiveProjectConnectionDefaults(
   );
 }
 
+/**
+ * Merges multiple header maps case-insensitively. Later maps override earlier
+ * maps when header names match case-insensitively, and later keys within the
+ * same map override earlier keys. The surviving key retains the casing of the
+ * last-seen occurrence.
+ */
+export function mergeHeadersCaseInsensitive(
+  ...sources: (Record<string, string> | undefined)[]
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const lowerKeyMap = new Map<string, string>();
+
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [key, value] of Object.entries(source)) {
+      const lower = key.toLowerCase();
+      const existing = lowerKeyMap.get(lower);
+      if (existing !== undefined) {
+        delete merged[existing];
+      }
+      merged[key] = value;
+      lowerKeyMap.set(lower, key);
+    }
+  }
+
+  return merged;
+}
+
 export function mergeProjectConnectionHeaders(
   projectHeaders?: Record<string, string>,
   serverHeaders?: Record<string, string>,
 ): Record<string, string> {
-  return {
-    ...normalizeProjectConnectionHeaders(
-      projectHeaders as Record<string, unknown> | undefined,
-    ),
-    ...normalizeExplicitConnectionHeaders(
-      serverHeaders as Record<string, unknown> | undefined,
-    ),
-  };
+  const project = normalizeProjectConnectionHeaders(
+    projectHeaders as Record<string, unknown> | undefined,
+  );
+  const server = normalizeExplicitConnectionHeaders(
+    serverHeaders as Record<string, unknown> | undefined,
+  );
+
+  return mergeHeadersCaseInsensitive(project, server);
 }
 
 export function mergeProjectClientCapabilities(
