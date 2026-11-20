@@ -51,6 +51,7 @@ export const NOT_BACKEND_PREFIXES: Readonly<Record<string, string>> = {
   read: "OAuth scope names",
   route: "case scorecard and case spine keys",
   scenario: "raw data export section keys",
+  sm: "Tailwind breakpoint class names",
   style: "eval helper fallback labels",
   swarm: "raw data export section keys",
   toolCalls: "suite grading model keys",
