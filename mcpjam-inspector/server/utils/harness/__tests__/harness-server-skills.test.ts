@@ -57,9 +57,8 @@ describe("which turns serve server skills through the tools", () => {
       const adapter = getHarnessAdapter(id);
       expect(takesServerSkillsAsTools(adapter)).toBe(true);
       const turn = await harnessServerSkills(adapter, {
-        mode: "pinned",
         live: false,
-        pinnedHarnessSkills: run.pinnedHarnessSkills,
+        capturedServerSkills: run.pinnedSkillSource.set.serverSkills,
         manager: NO_SERVERS,
         serverIds: [],
         messages: [],
@@ -73,9 +72,9 @@ describe("which turns serve server skills through the tools", () => {
 describe("whether the gate holds the turn", () => {
   it("does when the turn offers server skills", async () => {
     const turn = await serve({
-      mode: "pinned",
       live: false,
-      pinnedHarnessSkills: (await preparedRunSkills()).pinnedHarnessSkills,
+      capturedServerSkills: (await preparedRunSkills()).pinnedSkillSource.set
+        .serverSkills,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],
@@ -95,8 +94,8 @@ describe("whether the gate holds the turn", () => {
       }),
     });
     const turn = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: NO_SERVERS,
       serverIds: [],
       messages: [{ role: "user", content: [{ type: "text", text: picked }] }],
@@ -107,8 +106,8 @@ describe("whether the gate holds the turn", () => {
 
   it("does not otherwise, and the runtime keeps its own mode", async () => {
     const turn = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: NO_SERVERS,
       serverIds: [],
       messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
@@ -122,9 +121,9 @@ describe("the turn's box report", () => {
 
   it("names the captured skills the tools served", async () => {
     const turn = await serve({
-      mode: "pinned",
       live: false,
-      pinnedHarnessSkills: (await preparedRunSkills()).pinnedHarnessSkills,
+      capturedServerSkills: (await preparedRunSkills()).pinnedSkillSource.set
+        .serverSkills,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],
@@ -137,8 +136,8 @@ describe("the turn's box report", () => {
 
   it("is the box writer's own when the tools served none", async () => {
     const turn = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],
@@ -157,9 +156,8 @@ describe("a pinned run's server skills", () => {
       serverPin({ contentHash: await sha256("# Search") }),
     ]);
     return serve({
-      mode: "pinned",
       live: false,
-      pinnedHarnessSkills: run.pinnedHarnessSkills,
+      capturedServerSkills: run.pinnedSkillSource.set.serverSkills,
       manager: NO_SERVERS,
       serverIds: [],
       messages,
@@ -235,9 +233,9 @@ describe("an environment turn's captured server skills", () => {
   it("serves them from the environment's set", async () => {
     const { spec, attribution } = evalEnvironment();
     const turn = await serve({
-      mode: "environment",
       live: false,
-      effectiveCapabilities: resolveEffectiveCapabilities(spec, attribution),
+      capturedServerSkills: resolveEffectiveCapabilities(spec, attribution)
+        .serverSkills,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],
@@ -250,14 +248,10 @@ describe("an environment turn's captured server skills", () => {
 
   it("adds the connected servers' own skills on a live turn only", async () => {
     const { spec, attribution } = evalEnvironment();
-    const effectiveCapabilities = resolveEffectiveCapabilities(
-      spec,
-      attribution,
-    );
+    const { serverSkills } = resolveEffectiveCapabilities(spec, attribution);
     const live = await serve({
-      mode: "environment",
       live: true,
-      effectiveCapabilities,
+      capturedServerSkills: serverSkills,
       manager: await makeServerSkillWire(),
       serverIds: ["srv1"],
       messages: [],
@@ -270,9 +264,8 @@ describe("an environment turn's captured server skills", () => {
     ]);
 
     const named = await serve({
-      mode: "environment",
       live: false,
-      effectiveCapabilities,
+      capturedServerSkills: serverSkills,
       manager: await makeServerSkillWire(),
       serverIds: ["srv1"],
       messages: [],
@@ -286,8 +279,8 @@ describe("a live turn's connected servers' skills", () => {
   it("serves what the servers list, addressed by server id", async () => {
     const wire = await makeServerSkillWire();
     const turn = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: wire,
       serverIds: ["srv1"],
       messages: [],
@@ -304,8 +297,8 @@ describe("a live turn's connected servers' skills", () => {
 
   it("serves nothing, and offers no tools, when no server serves skills", async () => {
     const turn = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: await makeServerSkillWire({ active: false }),
       serverIds: ["srv1"],
       messages: [],
@@ -316,8 +309,8 @@ describe("a live turn's connected servers' skills", () => {
 
   it("refuses a file read on a later turn once the server changed the skill", async () => {
     const first = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: await makeServerSkillWire(),
       serverIds: ["srv1"],
       messages: [],
@@ -346,8 +339,8 @@ describe("a live turn's connected servers' skills", () => {
       ],
     }));
     const next = await serve({
-      mode: "none",
       live: true,
+      capturedServerSkills: [],
       manager: changed,
       serverIds: ["srv1"],
       messages: first.transcript.messages(),
@@ -368,9 +361,8 @@ describe("joining the turn's host tools", () => {
   it("refuses a name another host tool holds", async () => {
     const run = await preparedRunSkills();
     const turn = await serve({
-      mode: "pinned",
       live: false,
-      pinnedHarnessSkills: run.pinnedHarnessSkills,
+      capturedServerSkills: run.pinnedSkillSource.set.serverSkills,
       manager: NO_SERVERS,
       serverIds: [],
       messages: [],

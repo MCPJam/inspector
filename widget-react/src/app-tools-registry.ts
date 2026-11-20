@@ -158,8 +158,8 @@ export interface AppToolsRegistryState {
 /**
  * Produce an opaque alias for a rendered app tool. SHA-256 hashed over stable
  * identity-bearing inputs and truncated to 8 hex chars so the wire
- * name is always 12 chars: well under Anthropic's 64-char tool-name limit
- * and never collides with the `getInvalidAnthropicToolNames` charset.
+ * name is always 12 chars: well under every provider's tool-name limit
+ * and only uses characters every provider accepts (`[a-zA-Z0-9_-]`).
  *
  * Deliberately exclude `bridgeId`: a live app can reconnect/re-register its
  * bridge without changing the rendered host tool call or raw app-tool name.
