@@ -17,8 +17,7 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
     flag === "web-clients-enabled" ? flags.webClients : undefined,
 }));
-// The runtime ids land with the web runtime; the picker only asks which rows
-// are web clients.
+// The picker asks only which rows are web clients.
 vi.mock("@/lib/web-accounts/clients", () => ({
   webClientVendorOfHost: ({ hostId }: { hostId: string }) =>
     hostId === "host-web" ? "claude" : undefined,
