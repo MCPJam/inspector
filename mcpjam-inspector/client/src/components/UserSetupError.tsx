@@ -5,9 +5,9 @@ export function UserSetupError() {
       data-testid="user-setup-error"
     >
       <div className="max-w-md space-y-2">
-        <h1 className="text-xl font-semibold">Could not finish setup</h1>
+        <h1 className="text-xl font-semibold">Refresh to finish account setup</h1>
         <p className="text-sm text-muted-foreground">
-          We could not create your MCPJam user record. Refresh and try again.
+          We couldn’t finish setting up your account.
         </p>
       </div>
       <button
