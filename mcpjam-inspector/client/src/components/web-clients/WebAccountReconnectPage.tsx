@@ -163,9 +163,13 @@ function Reconnect({
         chatSessionId: started.chatSessionId ?? started.browserSessionId,
       });
     }, `Couldn't open a browser to sign in to ${site}. Try again.`);
-  const finish = (handback: string) =>
+  const finish = (handback: string, signedInWith: string) =>
     run(async () => {
-      const result = await handBackWebReconnect(projectId, handback);
+      const result = await handBackWebReconnect(
+        projectId,
+        handback,
+        signedInWith,
+      );
       setOutcome(handbackOutcome(result, site, account.accountEmail));
     }, "Couldn't resume the waiting runs. Try again.");
 
@@ -268,7 +272,7 @@ function Reconnect({
                 type="button"
                 size="sm"
                 disabled={busy}
-                onClick={() => void finish(request.requestId)}
+                onClick={() => void finish(request.requestId, browserSessionId)}
               >
                 {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
                 Finish and resume runs
