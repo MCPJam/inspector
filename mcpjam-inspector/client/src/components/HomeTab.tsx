@@ -22,6 +22,11 @@ import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { SharedSlackChannelCard } from "./home/SharedSlackChannelCard";
 import { HomeChecklist } from "./home/checklist/HomeChecklist";
 import { useHomeChecklistVariant } from "./home/checklist/use-home-checklist-variant";
+import {
+  ChecklistPresence,
+  Rise,
+  useChecklistHandoff,
+} from "./home/checklist/checklist-motion";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 import {
@@ -142,12 +147,10 @@ export function HomeTab({
   const sessionParam = agentEnabled ? searchParams.get("session") : null;
   const composeParam = agentEnabled && searchParams.get("compose") === "1";
   const checklistVariant = useHomeChecklistVariant();
-  const [checklistFinished, setChecklistFinished] = useState(false);
-  const finishChecklist = useCallback(() => setChecklistFinished(true), []);
+  const handoff = useChecklistHandoff();
   const showChecklist =
-    checklistVariant === "treatment" &&
-    !checklistFinished &&
-    Boolean(projectId);
+    checklistVariant === "treatment" && !handoff.finished && Boolean(projectId);
+  const showHome = !showChecklist && handoff.homeVisible;
 
   // Re-arms whenever loading restarts; only fires while still loading.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -251,8 +254,7 @@ export function HomeTab({
   }, [setSearchParams]);
   const { user } = useAuth();
   const convexUser = useQuery("users:getCurrentUser" as any) as
-    | { name?: string }
-    | undefined;
+    { name?: string } | undefined;
 
   const data = useQuery(
     "home:getOrgHomeData" as any,
@@ -364,36 +366,42 @@ export function HomeTab({
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div
-        className={`mx-auto flex ${showChecklist ? "max-w-5xl" : "max-w-3xl"} flex-col gap-4 px-6 py-8 sm:px-8`}
+        className={`mx-auto flex ${showHome ? "max-w-3xl" : "max-w-5xl"} flex-col gap-4 px-6 py-8 sm:px-8`}
       >
         <header className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
             {greeting}, {firstName}
           </h1>
-          {showChecklist ? null : (
-            <OrgStatsStrip
-              memberCount={isLoading ? null : data!.memberCount}
-              projectCount={isLoading ? null : data!.projects.length}
-              totalServerCount={isLoading ? null : data!.totalServerCount}
-              evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
-              toolExecutionCount={toolExecutionCount?.value ?? null}
-              toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
-              messagesSentCount={messagesSentCount?.value ?? null}
-              messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
-            />
-          )}
+          {showHome ? (
+            <Rise active={handoff.rising}>
+              <OrgStatsStrip
+                memberCount={isLoading ? null : data!.memberCount}
+                projectCount={isLoading ? null : data!.projects.length}
+                totalServerCount={isLoading ? null : data!.totalServerCount}
+                evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
+                toolExecutionCount={toolExecutionCount?.value ?? null}
+                toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
+                messagesSentCount={messagesSentCount?.value ?? null}
+                messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+              />
+            </Rise>
+          ) : null}
         </header>
 
-        {showChecklist ? (
-          <ErrorBoundary
-            name="home-checklist"
-            fallback={null}
-            onError={finishChecklist}
-          >
-            <HomeChecklist onFinished={finishChecklist} />
-          </ErrorBoundary>
-        ) : (
-          <>
+        <ChecklistPresence handoff={handoff}>
+          {showChecklist ? (
+            <ErrorBoundary
+              name="home-checklist"
+              fallback={null}
+              onError={handoff.finishNow}
+            >
+              <HomeChecklist onFinished={handoff.finish} />
+            </ErrorBoundary>
+          ) : null}
+        </ChecklistPresence>
+
+        {showHome ? (
+          <Rise active={handoff.rising} className="flex flex-col gap-4">
             {agentEnabled ? (
               <McpjamAgentHero
                 surface="home"
@@ -416,8 +424,8 @@ export function HomeTab({
               />
               <RecommendedHosts projectId={projectId} />
             </div>
-          </>
-        )}
+          </Rise>
+        ) : null}
       </div>
     </div>
   );

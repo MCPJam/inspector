@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import { HomeTab } from "../HomeTab";
@@ -29,8 +29,8 @@ vi.mock("../home/checklist/use-home-checklist-variant", () => ({
   useHomeChecklistVariant: () => variant.value,
 }));
 vi.mock("../home/checklist/HomeChecklist", () => ({
-  HomeChecklist: ({ onFinished }: { onFinished: () => void }) => (
-    <button type="button" onClick={onFinished}>
+  HomeChecklist: ({ onFinished }: { onFinished: (shown: boolean) => void }) => (
+    <button type="button" onClick={() => onFinished(true)}>
       Setup checklist
     </button>
   ),
@@ -55,5 +55,9 @@ it("shows the checklist to treatment, then today's Home once it finishes", async
   renderHome();
   expect(screen.queryByText("Recommended servers")).toBeNull();
   screen.getByText("Setup checklist").click();
-  await expect(screen.findByText("Recommended servers")).resolves.toBeVisible();
+  // Today's Home rises in once the checklist has collapsed.
+  await waitFor(() =>
+    expect(screen.getByText("Recommended servers")).toBeVisible(),
+  );
+  expect(screen.queryByText("Setup checklist")).toBeNull();
 });

@@ -3,6 +3,11 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { ServerWithName } from "@/state/app-types";
 import { CONNECT_TYPING_PAUSE_MS, ConnectStep } from "../ConnectStep";
 
+// Status swaps render in place, so each step's content is there at once.
+vi.mock("framer-motion", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("framer-motion")>()),
+  useReducedMotion: () => true,
+}));
 vi.mock("@/components/ui/error-card", () => ({
   ErrorCard: ({ onRetry }: { onRetry?: () => void }) => (
     <button type="button" onClick={onRetry}>
