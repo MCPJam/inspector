@@ -1,5 +1,5 @@
 import { DialogDescription, DialogTitle } from "@mcpjam/design-system/dialog";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { Toaster } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,7 +61,12 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Unmount while the timers are still fake. Sonner defers a dismissal by an
+  // animation frame; asked for under real timers, it can land on the next
+  // test's toast with the same id and hide it.
+  cleanup();
+  await act(async () => vi.runOnlyPendingTimersAsync());
   vi.useRealTimers();
 });
 
