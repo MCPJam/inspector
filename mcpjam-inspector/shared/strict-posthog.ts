@@ -9,6 +9,12 @@ export const TELEMETRY_POLICY_HEADER = "x-mcpjam-telemetry-policy";
 
 /** A closed catalog, not a sanitizer: unlisted events and properties do not leave. */
 type Rule = readonly string[] | "count" | "boolean";
+const GITHUB_STAR_PROMPT = {
+  location: ["header"],
+  trigger: ["conformance", "oauth", "xaa"],
+  reason: ["completed", "return_visit"],
+  has_advice: "boolean",
+} as const satisfies Record<string, Rule>;
 const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
   extension_launch_completed: {
     location: ["host_workspace"],
@@ -60,6 +66,23 @@ const CATALOG: Readonly<Record<string, Readonly<Record<string, Rule>>>> = {
     ],
     run_source: ["ui"],
   },
+  conformance_tab_viewed: { location: ["conformance_tab"] },
+  conformance_run_completed: {
+    location: ["conformance_tab"],
+    run_source: ["ui"],
+    outcome: ["passed", "failed", "incomplete"],
+    has_advice: "boolean",
+  },
+  github_star_prompt_shown: GITHUB_STAR_PROMPT,
+  github_star_prompt_clicked: {
+    ...GITHUB_STAR_PROMPT,
+    cta: ["primary", "star_button"],
+  },
+  github_star_prompt_dismissed: {
+    ...GITHUB_STAR_PROMPT,
+    close_reason: ["not_now", "dismiss"],
+  },
+  github_star_button_clicked: { location: ["header", "settings"] },
   $pageview: {},
   $pageleave: {},
 };

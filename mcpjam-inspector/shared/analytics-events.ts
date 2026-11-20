@@ -62,6 +62,15 @@ export const ANALYTICS_EVENTS = {
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  conformance_tab_viewed: { source: "client" },
+  // A UI run this page saw finish; outcome is passed | failed | incomplete.
+  conformance_run_completed: { source: "client" },
+  // --- GitHub star ask (github-star-prompt.ts), once per browser ---
+  github_star_prompt_shown: { source: "client" },
+  github_star_prompt_clicked: { source: "client" },
+  github_star_prompt_dismissed: { source: "client" },
+  // The Star button itself; location is header | settings.
+  github_star_button_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },

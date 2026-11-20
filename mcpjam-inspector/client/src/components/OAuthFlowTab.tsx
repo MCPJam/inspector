@@ -12,6 +12,11 @@ import { OAuthSequenceDiagram } from "@/components/oauth/OAuthSequenceDiagram";
 import { OAuthAuthorizationModal } from "@/components/oauth/OAuthAuthorizationModal";
 import { OAuthFlowLayout, type OAuthView } from "./oauth/OAuthFlowLayout";
 import { track } from "@/lib/analytics";
+import {
+  recordGitHubStarPromptUse,
+  requestGitHubStarPrompt,
+  useGitHubStarPromptOnReturn,
+} from "@/lib/github-star-prompt";
 import { toast } from "@/lib/toast";
 import { reportCaught } from "@/lib/error-reporting";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -538,6 +543,7 @@ export const OAuthFlowTab = ({
       hasProfile,
       targetUrlConfigured: Boolean(profile.serverUrl),
     });
+    recordGitHubStarPromptUse("oauth");
 
     try {
       if (needsReauthorization(oauthFlowStateRef.current)) {
@@ -997,6 +1003,19 @@ export const OAuthFlowTab = ({
       location: "oauth_flow_tab",
     });
   }, []);
+  useGitHubStarPromptOnReturn("oauth");
+
+  // Only a flow finished here counts, not one restored already complete.
+  const previousStep = useRef(oauthFlowState.currentStep);
+  useEffect(() => {
+    const finished =
+      previousStep.current !== "complete" &&
+      oauthFlowState.currentStep === "complete";
+    previousStep.current = oauthFlowState.currentStep;
+    if (finished) {
+      requestGitHubStarPrompt({ trigger: "oauth", reason: "completed" });
+    }
+  }, [oauthFlowState.currentStep]);
 
   const headerDescription = hasProfile
     ? profile.serverUrl
