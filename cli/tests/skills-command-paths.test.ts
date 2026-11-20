@@ -67,6 +67,11 @@ function mentionedCommands(markdown: string): string[] {
     .filter((text) => text.startsWith("mcpjam "));
 }
 
+/** Splits on whitespace, keeping a quoted value such as `--header "X: a b"` whole. */
+function tokenize(command: string): string[] {
+  return command.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
+}
+
 /** `readiness start|status|list` names three commands; expand each one. */
 function expandAlternatives(words: string[]): string[][] {
   const index = words.findIndex((word) => ALTERNATIVES.test(word));
@@ -116,6 +121,12 @@ function resolvePath(
       }
       const option = findOption(current, flag);
       if (!option) return { ok: true };
+      if (option.variadic) {
+        while (index + 1 < words.length && !words[index + 1].startsWith("-")) {
+          index += 1;
+        }
+        continue;
+      }
       const takesValue = option.required || option.optional;
       if (takesValue && inlineValue === undefined) index += 1;
       continue;
@@ -149,7 +160,7 @@ test("every mcpjam command named in the skills and the CLI README exists", () =>
   let checked = 0;
   for (const file of sources) {
     for (const command of mentionedCommands(readFileSync(file, "utf8"))) {
-      for (const words of expandAlternatives(command.split(/\s+/).slice(1))) {
+      for (const words of expandAlternatives(tokenize(command).slice(1))) {
         checked += 1;
         const result = resolvePath(program, words);
         if (!result.ok) {
@@ -165,4 +176,23 @@ test("every mcpjam command named in the skills and the CLI README exists", () =>
 
   assert.ok(checked > 50, `expected many command mentions, found ${checked}`);
   assert.deepEqual(missing, []);
+});
+
+test("quoted option values and variadic options do not read as subcommands", () => {
+  const program = new Command("mcpjam");
+  registerCliCommands(program);
+
+  for (const command of [
+    'mcpjam tools list --url https://example.com/mcp --header "X-Note: hello world"',
+    "mcpjam tools list --command npm --args run start",
+  ]) {
+    assert.deepEqual(resolvePath(program, tokenize(command).slice(1)), {
+      ok: true,
+    });
+  }
+  assert.equal(
+    resolvePath(program, tokenize("mcpjam tools list --url u removed").slice(1))
+      .ok,
+    false,
+  );
 });

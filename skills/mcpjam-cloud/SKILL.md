@@ -108,10 +108,10 @@ Results the run completed before it stopped are saved. Do not relaunch on your o
 
 ### Swarms goals
 
-1. A goal needs a persona: `mcpjam cloud personas list`, or `personas create --project <p> --name <n> --role <r> --notes <text> --idempotency-key <key>`. `personas generate` drafts candidates and saves nothing.
+1. A goal needs a persona: `mcpjam cloud personas list --project <p>`, or `personas create --project <p> --name <n> --role <r> --notes <text> --idempotency-key <key>`. `personas generate` drafts candidates and saves nothing.
 2. `mcpjam cloud goals create --project <p> --persona <id> --goal <text> --environment <id> --iterations <n> --max-turns <n>` authors a goal. `--iterations` and `--max-turns` are both required. Creating does not run it.
 3. `mcpjam cloud goals get --goal-id <id>` shows how many conversations a run starts (targets × iterations), not a credit cost.
-4. `mcpjam cloud goals run --project <p> --goal-id <id> --idempotency-key <key>` **spends** and returns immediately. Poll `goals status --run <id>`.
+4. `mcpjam cloud goals run --project <p> --goal-id <id> --idempotency-key <key>` **spends** and returns immediately. Poll `goals status --project <p> --run <id>`.
 5. Explain results from `goals scorecard --run <id>` first; it is deterministic and free. `goals findings` lists criteria that keep failing. `goals request-insights` uses a daily quota, so read the scorecard before asking for it.
 
 ### Studies
@@ -137,13 +137,13 @@ Confirm with the user before the first of these in a conversation, naming the pr
 | `cloud sessions send` (every turn is a model call; `--tool-mode auto` can make the servers take real actions) | `cloud images use`, `images reset` (wipe the user's computer) |
 | `goals request-insights`, `studies request-insights`, `personas generate`, `goals generate` (daily quotas) | `cloud tunnel` on an existing server name (repoints it), `trace-destinations backfill` (a large window is a lot of vendor ingest) |
 
-- Pass `--idempotency-key` on every launch and create that takes one. Reuse the key while the launch outcome is unknown: a timeout does not prove the launch failed, and a fresh key can start and bill a second run. Use a new key only when the user asks to relaunch a run you know stopped.
+- Pass `--idempotency-key` on every launch and create that takes one. Use a new key for each distinct launch or create, and reuse it while that operation's outcome is unknown: a timeout does not prove the launch failed, and a fresh key can start and bill a second run. A relaunch of a run you know stopped is a distinct launch and needs the user's go-ahead.
 - Never launch in a loop or to poll. Poll the matching `status` command.
 - `environments archive` is undone by `environments restore`. `goals archive` and `swarms archive` keep past runs readable but have no CLI restore, and deletes are permanent. Prefer the reversible option when the user only wants something out of the way.
 
 ## Errors
 
-- Exit `2` and `3` mean the same on every `mcpjam cloud` command as in the `eval run --wait` table above.
+- Exit `2` and `3` mean the same on every `mcpjam cloud` command as in the `eval run --wait` table above, except `eval gate`, where `3` means the gate is incomplete (codes above).
 - Missing credentials fail before any network call with login guidance. Ask the user to run `mcpjam cloud login`; it opens a browser and needs them.
 - An internal error with a request ID ends with a suggested `mcpjam cloud feedback` command. That sends text to the MCPJam team outside the user's organization, so show it to the user and let them decide.
 
@@ -151,6 +151,6 @@ Confirm with the user before the first of these in a conversation, naming the pr
 
 - Never run `mcpjam cloud …` to test a server the user gave you by URL when a local command answers the question. Local commands reach it directly; Cloud commands act on the user's MCPJam projects.
 - Never act on the automatically chosen project for a write, publish, or spend. Name it.
-- Reuse the idempotency key while a launch outcome is unknown, and read its status first. Use a new key only when the user asks to relaunch a run you know stopped.
+- Reuse the idempotency key while a launch outcome is unknown; retrying with it returns the run if one started, even when the lost response took the run ID with it. Use a new key only when the user asks to relaunch a run you know stopped.
 - Never report a goal or eval failure from a single iteration without reading the scorecard or steps behind it.
 - Never pass secret values as positional or inline arguments.
