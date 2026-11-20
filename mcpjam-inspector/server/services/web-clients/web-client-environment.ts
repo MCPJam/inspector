@@ -57,6 +57,14 @@ export interface WebClientEnvironment {
   }): Promise<{ driver: PageDriver; close(): Promise<void> }>;
   /** Records how the turn ended on the account, after the browser closed. */
   onOutcome?(outcome: WebTurnOutcome): Promise<void>;
+  /**
+   * The durable turn gate, for a deployment with more than one replica: a
+   * call that lands on another replica still finds its turn.
+   */
+  turnGate?: {
+    open(window: { connectorId: string; runId: string; turnId: string }): Promise<void>;
+    close(turnId: string): Promise<void>;
+  };
 }
 
 let configured: WebClientEnvironment | undefined;

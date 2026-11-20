@@ -171,6 +171,7 @@ export async function runWebClientTurn(
     for (const connectorId of serverOfConnector.keys()) {
       windows.open({ connectorId, runId: input.runId, turnId, approve });
       opened.push(connectorId);
+      await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
     }
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
@@ -230,9 +231,11 @@ export async function runWebClientTurn(
 
   /** Closes this turn's windows and browser once, whichever way it ended. */
   async function closeAll() {
-    for (const connectorId of opened.splice(0)) {
+    const closing = opened.splice(0);
+    for (const connectorId of closing) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
+    if (closing.length > 0) await env.turnGate?.close(turnId);
     const open = browser;
     browser = undefined;
     await open?.close();

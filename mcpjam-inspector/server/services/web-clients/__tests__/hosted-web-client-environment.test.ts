@@ -13,11 +13,11 @@ import { startFixtureVendor } from "../../../test/support/web-clients/fixture-ve
 import { startStandInEndpoint } from "../../../test/support/web-clients/stand-in-endpoint";
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
+import type { WebClientService } from "../backend-connector-resolver";
 import {
   createHostedWebClientEnvironment,
   createProfileForRunClient,
   type ProfileForRun,
-  type WebClientService,
 } from "../hosted-web-client-environment";
 import { runWebClientTurn } from "../run-web-client-turn";
 import { createInMemoryToolCallLedger } from "../tool-call-ledger";
@@ -40,11 +40,15 @@ const ACCOUNTS = [
 
 function recordedService(accounts = ACCOUNTS) {
   const calls: Array<{ kind: string; command: Record<string, unknown> }> = [];
-  const service: WebClientService = async (kind, command) => {
+  const answer = async (kind: string, command: Record<string, unknown>) => {
     calls.push({ kind, command });
     if (command.action === "listWebAccounts") return accounts;
     if (command.action === "ensureWebConnector") return { connectorId: `conn-${String(command.serverId)}` };
     return null;
+  };
+  const service: WebClientService = {
+    read: (command) => answer("read", command),
+    apply: (command) => answer("apply", command),
   };
   return { service, calls };
 }
@@ -191,8 +195,12 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
     expect(calls.map((call) => call.command.action)).toEqual([
       "listWebAccounts",
       "ensureWebConnector",
+      "openWebTurnWindow",
+      "closeWebTurnWindow",
       "markWebAccountVerified",
     ]);
+    const opened = calls.find((call) => call.command.action === "openWebTurnWindow")!.command;
+    expect(opened).toMatchObject({ connectorId: "conn-orders", runId: "run-1", turnId: result.turnId });
     expect(calls.at(-1)!.command).toMatchObject({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",
@@ -206,6 +214,8 @@ describe("a hosted turn's outcome on the account", { timeout: 90_000 }, () => {
     expect(calls.map((call) => call.command.action)).toEqual([
       "listWebAccounts",
       "ensureWebConnector",
+      "openWebTurnWindow",
+      "closeWebTurnWindow",
       "markWebAccountNeedsSignIn",
       "reportWebSignInRequired",
     ]);
