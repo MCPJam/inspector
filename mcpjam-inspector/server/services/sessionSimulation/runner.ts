@@ -423,6 +423,8 @@ export interface SyntheticHostRuntime {
   harness?: Harness;
   agentLoop?: Harness;
   tasks?: MCPJamHandlerOptions["tasks"];
+  /** A web client session's account, held for all its turns, and its run's owner. */
+  webClientRun?: MCPJamHandlerOptions["webClientRun"];
   /**
    * Scenario-access version for the drain's `/stream/org/resolve` authorization
    * and the scenario-scoped widget capture. Set on the scenario surface; the
@@ -587,6 +589,7 @@ export async function runSyntheticHostSession(
     browserSandboxBinding,
     harnessSandboxBinding,
     harnessExecutionTarget,
+    webClientRun,
     accessVersion,
     scenarioId,
     environmentId,
@@ -1309,6 +1312,7 @@ export async function runSyntheticHostSession(
             ...(harness && harnessSandboxBinding
               ? { harnessSandboxBinding }
               : {}),
+            ...(harness && webClientRun ? { webClientRun } : {}),
             // The target's Project Environment — the GRANT BOUNDARY the harness
             // turn checks a BROKERED external-account credential against. Harness
             // only: the emulated engine resolves no such credential, and this

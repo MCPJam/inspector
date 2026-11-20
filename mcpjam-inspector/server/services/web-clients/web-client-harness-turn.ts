@@ -30,6 +30,7 @@ import type {
 } from "../../utils/mcpjam-stream-handler.js";
 import { runWebClientTurn } from "./run-web-client-turn.js";
 import { webClientEnvironmentFor } from "./web-client-environment.js";
+import { WebAccountUnavailableError, rotateRunAccounts } from "./web-client-run.js";
 import { webTurnMessages, webTurnSpans } from "./web-client-trace.js";
 
 /** A run that stopped on the vendor's page. Never a server failure. */
@@ -84,6 +85,7 @@ export async function runWebClientHarnessTurn(
     throw new Error(`${name} runs on a project's web account. Open a project, then send again.`);
   }
   const runId = options.evalIterationId ?? options.chatSessionId ?? options.journeyRunId ?? "playground";
+  const runContext = options.webClientRun;
   const environment = await webClientEnvironmentFor({
     runtimeId,
     projectId: options.projectId,
@@ -91,7 +93,17 @@ export async function runWebClientHarnessTurn(
     ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
     ...(options.chatSessionId ? { chatSessionId: options.chatSessionId } : {}),
     ...(options.authHeader ? { bearer: options.authHeader } : {}),
-    ...(options.webClientActor ? { actor: options.webClientActor } : {}),
+    mcpClientManager: options.mcpClientManager,
+    ...(runContext?.actor ? { actor: runContext.actor } : {}),
+    ...(runContext?.webAccountIds
+      ? {
+          runWebAccountIds: rotateRunAccounts({
+            runId: runContext.runId,
+            ...(options.evalIterationId ? { iterationId: options.evalIterationId } : {}),
+            webAccountIds: runContext.webAccountIds,
+          }),
+        }
+      : {}),
   });
   if (!environment) {
     throw new Error(`${name} isn't set up on this server. Ask an admin to turn on web clients, then send again.`);
@@ -99,21 +111,31 @@ export async function runWebClientHarnessTurn(
   const messages = options.messages;
   const promptIndex = Math.max(0, messages.filter((m) => m.role === "user").length - 1);
   const run = async (): Promise<ChatEngineLoopResult> => {
-    const result = await runWebClientTurn({
-      runtimeId,
-      projectId: options.projectId!,
-      serverIds: options.selectedServers ?? [],
-      prompt: lastUserText(messages),
-      runId,
-      approval: {
-        requireToolApproval: options.requireToolApproval === true,
-        answer: approvalAnswerOf(options.approvalMode),
-      },
-      environment,
-      ...(options.abortSignal ? { signal: options.abortSignal } : {}),
-    });
+    let result: Awaited<ReturnType<typeof runWebClientTurn>>;
+    try {
+      result = await runWebClientTurn({
+        runtimeId,
+        projectId: options.projectId!,
+        serverIds: options.selectedServers ?? [],
+        prompt: lastUserText(messages),
+        runId,
+        approval: {
+          requireToolApproval: options.requireToolApproval === true,
+          answer: approvalAnswerOf(options.approvalMode),
+        },
+        environment,
+        ...(options.abortSignal ? { signal: options.abortSignal } : {}),
+      });
+    } catch (error) {
+      // The run's account is gone, so the run's pool stops handing it out.
+      if (error instanceof WebAccountUnavailableError) runContext?.onAccountLost?.(error.message);
+      throw error;
+    }
     if (!result.ok) {
-      throw new WebClientRunError(result.failure, webClientFailureMessage(name, result.failure));
+      const message = webClientFailureMessage(name, result.failure);
+      // A signed-out account can't serve the run's later sessions either.
+      if (result.failure.kind === "needs_sign_in") runContext?.onAccountLost?.(message);
+      throw new WebClientRunError(result.failure, message);
     }
     const adapter = getHarnessAdapter(runtimeId);
     const plan = resolveHarnessMcpPlan({

@@ -8,7 +8,7 @@
  * Evidence: fixture. The end to end test with the real endpoint is
  * `web-client-e2e.test.ts`.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
@@ -31,7 +31,11 @@ import {
   type TurnWindowStore,
 } from "../turn-windows";
 import { runWebClientTurn, webTurnApprover, type WebTurnApproval } from "../run-web-client-turn";
-import { setWebClientEnvironment, type WebClientEnvironment } from "../web-client-environment";
+import {
+  setWebClientEnvironment,
+  type WebClientEnvironment,
+  type WebTurnContext,
+} from "../web-client-environment";
 import { WebClientRunError } from "../web-client-harness-turn";
 
 let browser: Browser;
@@ -256,6 +260,33 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       failure: { kind: "needs_sign_in", reason: "human_check" },
       message: expect.stringContaining("Sign in again"),
     });
+  });
+
+  it("acts as the eval run's owner on its frozen accounts, one account on per iteration", async () => {
+    const seen: WebTurnContext[] = [];
+    setWebClientEnvironment(async (turn) => {
+      seen.push(turn);
+      throw new Error("recorded");
+    });
+    const run = { runId: "run-7", actor: { actorUserId: "owner-1" }, webAccountIds: ["acct-1", "acct-2"] };
+    for (const evalIterationId of ["iteration-1", "iteration-1", "iteration-2"]) {
+      await expect(runHarnessTurn(options({ webClientRun: run, evalIterationId }), "none")).rejects.toThrow("recorded");
+    }
+    expect(seen.map((turn) => [turn.actor, turn.runWebAccountIds])).toEqual([
+      [{ actorUserId: "owner-1" }, ["acct-1", "acct-2"]],
+      [{ actorUserId: "owner-1" }, ["acct-1", "acct-2"]],
+      [{ actorUserId: "owner-1" }, ["acct-2", "acct-1"]],
+    ]);
+  });
+
+  it("tells the run's account pool when the account needs sign-in", async () => {
+    setWebClientEnvironment(environment());
+    vendor.challenge = true;
+    const onAccountLost = vi.fn();
+    await expect(
+      runHarnessTurn(options({ webClientRun: { runId: "swarm-1", webAccountIds: ["acct-1"], onAccountLost } }), "none"),
+    ).rejects.toBeInstanceOf(WebClientRunError);
+    expect(onAccountLost).toHaveBeenCalledWith(expect.stringContaining("needs sign-in"));
   });
 
   it("refuses to start when this server has no web client environment", async () => {

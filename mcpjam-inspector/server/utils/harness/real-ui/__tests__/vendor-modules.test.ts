@@ -16,6 +16,7 @@ import { chatgptWebPageModule } from "../chatgpt-web";
 import { claudeWebPageModule } from "../claude-web";
 import { createHostedPageDriver } from "../hosted-driver";
 import { pollUntil, type PageDriver } from "../page-driver";
+import { readVendorJson } from "../vendor-json";
 
 /**
  * A page that answers `readText` from a map, and runs `evaluate` for real
@@ -178,6 +179,34 @@ describe("chatgpt.com", () => {
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
   });
+
+  it("reads the chat from the page in a browser that runs no script", async () => {
+    const driver: PageDriver = {
+      ...cannedDriver({
+        url: `https://chatgpt.com/c/${id}`,
+        // The hosted browser reads an element as its accessibility tree.
+        texts: {
+          '[data-message-author-role="user"]': '- text "say hello"',
+          '[data-message-author-role="assistant"]': '- text "Calling echo"',
+          '[data-message-author-role="assistant"] >> nth=-1':
+            '- paragraph\n  - text "It said"\n  - strong\n    - text "\\"hello\\"."',
+        },
+      }),
+      kind: "hosted",
+      canEvaluate: false,
+    };
+    expect(
+      await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 }),
+    ).toEqual({
+      conversationId: id,
+      url: `https://chatgpt.com/c/${id}`,
+      userPrompt: "say hello",
+      replyText: 'It said "hello".',
+      toolCalls: [],
+    });
+    // The chat list needs the session's token, so an earlier send stays ambiguous.
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", { timeoutMs: 1_000 })).toBeUndefined();
+  });
 });
 
 describe("chatgpt.com's connector step", () => {
@@ -261,5 +290,27 @@ describe("the hosted driver", () => {
     await expect(driver.navigate("https://example.com")).rejects.toMatchObject({ code: "site_blocked" });
     await expect(driver.click("#send")).rejects.toMatchObject({ code: "unknown_outcome" });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a site's own JSON from the page text the browser shows, and says when it is cut short", async () => {
+    let shown = 'Pretty-print\n```\n{"user":{"email":"a@example.com"}}\n```';
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.mode === "text"
+        ? executed({ text: shown })
+        : executed({ url: "https://chatgpt.com/" }),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await readVendorJson(driver, "https://chatgpt.com/api/auth/session")).toEqual({
+      user: { email: "a@example.com" },
+    });
+    expect(send.mock.calls.map(([command]) => command.op)).toEqual(["observe", "navigate", "observe", "navigate"]);
+    shown = '{"user":{"email":"a@exa';
+    await expect(readVendorJson(driver, "https://chatgpt.com/api/auth/session")).rejects.toMatchObject({
+      code: "failed",
+    });
+    // The token-carrying API needs a script, which this browser can't run.
+    await expect(
+      readVendorJson(driver, "https://chatgpt.com/backend-api/conversations", { authorization: "Bearer t" }),
+    ).rejects.toMatchObject({ code: "unsupported" });
   });
 });

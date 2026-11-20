@@ -4,7 +4,9 @@
  * Inspector's public HTTPS origin for the connector URL, and the
  * Playground's hosted browser booted with the account's restored profile.
  */
+import { z } from "zod";
 import { webClientVendorForRuntime } from "@/shared/web-clients";
+import { createConvexClient } from "../../routes/v1/convex-client.js";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { getInternalBackendConfig } from "../internal-backend.js";
 import { AuthKitVerificationError, verifyAuthKitToken } from "../authkit-jwt.js";
@@ -19,6 +21,7 @@ import {
 } from "./hosted-web-client-environment.js";
 import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { openWebProfile } from "./recovery/profile-cipher.js";
+import { logger } from "../../utils/logger.js";
 import type { WebClientEnvironmentFactory } from "./web-client-environment.js";
 
 /** The person a bearer names, as the backend's service calls name them. */
@@ -34,6 +37,27 @@ export async function actorFromBearer(bearer: string): Promise<WebActor | undefi
     if (error instanceof AuthKitVerificationError) return undefined;
     throw error;
   }
+}
+
+const currentUser = z.object({ _id: z.string().min(1), isAnonymous: z.boolean().optional() });
+
+/**
+ * The person a run's bearer names. A person's own session is checked here.
+ * Anything else a run carries is the delegated session MCPJam mints for a
+ * scheduled, API or swarm run's owner (`testSuiteRun.createdBy`,
+ * `journeyRuns.createdByUserId`), so the backend that minted it is asked.
+ * Guests are nobody: web clients don't run for them.
+ */
+export async function actorForRun(
+  bearer: string,
+  whoIs: (token: string) => Promise<unknown> = (token) =>
+    createConvexClient(token).query("users:getCurrentUser" as never, {} as never),
+): Promise<WebActor | undefined> {
+  const person = await actorFromBearer(bearer);
+  if (person) return person;
+  const user = currentUser.safeParse(await whoIs(bearer.replace(/^Bearer\s+/i, "")));
+  if (!user.success || user.data.isAnonymous) return undefined;
+  return { actorUserId: user.data._id };
 }
 
 /** Downloads the sealed profile and opens it with the run's data key. */
@@ -59,7 +83,7 @@ export function createHostedWebClientEnvironmentFactory(
   return async (turn) => {
     const vendor = webClientVendorForRuntime(turn.runtimeId);
     if (!vendor) throw new Error(`Not a web client runtime: ${turn.runtimeId}`);
-    const actor = turn.actor ?? (turn.bearer ? await actorFromBearer(turn.bearer) : undefined);
+    const actor = turn.actor ?? (turn.bearer ? await actorForRun(turn.bearer) : undefined);
     if (!actor) {
       throw new Error("This run has no MCPJam user to act as. Start it again while signed in.");
     }
@@ -80,24 +104,33 @@ export function createHostedWebClientEnvironmentFactory(
       publicBaseUrl,
       runId: turn.runId,
       ...(turn.iterationId ? { iterationId: turn.iterationId } : {}),
-      ...(turn.chosenWebAccountId ? { chosenWebAccountId: turn.chosenWebAccountId } : {}),
+      ...(turn.runWebAccountIds ? { runWebAccountIds: turn.runWebAccountIds } : {}),
       profileForRun: createProfileForRunClient({ convexHttpUrl: convexUrl, serviceToken }),
       async openHostedBrowser({ profile }) {
+        // Each turn's browser is its own chat's: the person's chat browser keeps
+        // its own sign-ins, and a turn closing its browser never closes theirs.
         const browser = await openWebClientHostedBrowser({
           bearer,
           projectId: turn.projectId,
           vendor,
-          ...(turn.chatSessionId ? { chatSessionId: turn.chatSessionId } : {}),
           profileArchive: await restoreWebProfile(profile),
         });
         return {
           driver: browser.driver,
           close: async () => {
-            await new BrowserSessionService().agentRequest("close", {
-              bearer: /^Bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`,
-              projectId: turn.projectId,
-              body: { sessionId: browser.browserSessionId },
-            });
+            try {
+              await new BrowserSessionService().agentRequest("close", {
+                bearer: /^Bearer\s/i.test(bearer) ? bearer : `Bearer ${bearer}`,
+                projectId: turn.projectId,
+                body: { sessionId: browser.browserSessionId },
+              });
+            } catch (error) {
+              // Closing runs after the turn's outcome is known, so a browser
+              // that won't close is reported here rather than failing the turn.
+              logger.warn("[web-clients] the turn's hosted browser did not close", {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
           },
         };
       },

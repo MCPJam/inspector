@@ -56,6 +56,11 @@ export interface PageDriver {
   press(key: string, selector?: string): Promise<void>;
   /** The first match's text, or `undefined` when nothing matches. */
   readText(selector: string): Promise<string | undefined>;
+  /**
+   * The whole page's text as the browser renders it, where `readText` reads
+   * names rather than prose (the hosted browser). Bounded by the browser.
+   */
+  readPageText?(): Promise<string>;
 }
 
 /** Polls `condition` until it holds; the shared `waitFor` both drivers use. */

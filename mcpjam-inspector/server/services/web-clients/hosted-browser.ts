@@ -24,6 +24,7 @@ import {
   provisionConversationBrowser,
 } from "../../routes/v1/chat-session-browser.js";
 import { createConvexClient } from "../../routes/v1/convex-client.js";
+import { authkitAuthorizationServers } from "./endpoint-auth.js";
 import {
   refusedResult,
   toDaemonAction,
@@ -40,9 +41,16 @@ import {
 import { urlOnSites } from "../../utils/harness/real-ui/page-driver.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 
-/** The only sites a web account's hosted browser may open. */
-export function webClientBrowserPolicy(vendor: WebClientVendor): BrowserAgentSessionPolicy {
-  return { mode: "allowlist", originAllowlist: [...WEB_CLIENT_SITES[vendor]] };
+/**
+ * The only sites a web account's hosted browser may open: the vendor's own,
+ * and MCPJam's sign-in page, where the vendor's app sends a person to allow
+ * an OAuth connector while it adds one.
+ */
+export function webClientBrowserPolicy(
+  vendor: WebClientVendor,
+  mcpjamSignIn: readonly string[] = authkitAuthorizationServers(),
+): BrowserAgentSessionPolicy {
+  return { mode: "allowlist", originAllowlist: [...new Set([...WEB_CLIENT_SITES[vendor], ...mcpjamSignIn])] };
 }
 
 /** One command to the session's daemon, answered in the public contract. */
@@ -167,7 +175,8 @@ export async function openWebClientHostedBrowser(args: {
     bearer,
     projectId: args.projectId,
     wireUuid: chatSessionId,
-    ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+    // The account's own session, or a blank profile: never the person's.
+    ownProfile: args.profileArchive ? { archive: args.profileArchive } : {},
     signal,
   });
   const transport = sessionBrowserTransport({

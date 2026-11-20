@@ -185,6 +185,36 @@ describe("an unscoped hosted turn", () => {
 });
 
 
+describe("a caller's own profile", () => {
+  const ensure = (ownProfile: { archive?: Uint8Array }) =>
+    ensureHostedConversationSession({
+      bearer: "Bearer user",
+      projectId: "project-1",
+      logicalSessionId: "chat-a",
+      ownerKind: "conversation",
+      contextMode: "persistent",
+      ownProfile,
+      target: { kind: "sandbox", sandboxRowId: "row", sandboxId: "box" },
+    });
+
+  it("boots instead of the person's default profile, and only on a fresh boot", async () => {
+    const session = await hoisted.resolveSession();
+    const onDefault = { ...session, profileId: "default-profile" };
+    const archive = new Uint8Array([1, 2, 3]);
+    hoisted.resolveSession.mockResolvedValueOnce(onDefault);
+    await ensure({ archive });
+    expect(hoisted.ensureLive).toHaveBeenLastCalledWith(expect.objectContaining({ profileArchive: archive }));
+    // Without an archive the boot is blank, never the person's own profile.
+    hoisted.resolveSession.mockResolvedValueOnce(onDefault);
+    await ensure({});
+    expect(hoisted.ensureLive.mock.lastCall?.[0]).not.toHaveProperty("profileArchive");
+    // A browser that already booted keeps the state it has.
+    hoisted.resolveSession.mockResolvedValueOnce({ ...session, lastBootId: "boot-0" });
+    await ensure({ archive });
+    expect(hoisted.ensureLive.mock.lastCall?.[0]).not.toHaveProperty("profileArchive");
+  });
+});
+
 describe("unattended recording targets", () => {
   it.each(["eval_iteration", "swarm_attempt"] as const)("preserves recording opt-in for %s", async ownerKind => {
     await ensureHostedConversationSession({ bearer: "Bearer user", projectId: "project-1", logicalSessionId: "run", ownerKind, contextMode: "ephemeral", target: { kind: "sandbox", sandboxRowId: "row", sandboxId: "box", record: true } });

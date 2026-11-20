@@ -197,6 +197,7 @@ describe("every surface reads the same map", () => {
       ALL_OFF,
       { ...ALL_ON, cursorCli: false },
       { ...ALL_OFF, cursorCli: true },
+      { ...ALL_OFF, webClients: true },
     ]) {
       const excluded = excludedFlagGatedHostIds(visibility);
       const shown = new Set(
