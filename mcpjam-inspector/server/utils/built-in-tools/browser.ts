@@ -2942,17 +2942,20 @@ export async function ensureHostedConversationSession(args: {
       "This conversation already uses a browser on another engine.",
     );
   const logicalSessionId = logical.sessionId;
-  const profileArchive =
-    logical.profileId && !logical.lastBootId
-      ? await new BrowserSessionService().downloadProfile({
-          projectId: args.projectId,
-          profileId: logical.profileId,
-          bearer: args.bearer,
-          ...(args.signal ? { signal: args.signal } : {}),
-        })
-      : !logical.lastBootId
-        ? (args.profileArchive ?? null)
-        : null;
+  // A caller's own archive (a web account's restored session) is what a fresh
+  // boot runs on, ahead of the profile the session was opened with, which for
+  // a conversation is the person's default browser profile.
+  const profileArchive = logical.lastBootId
+    ? null
+    : (args.profileArchive ??
+      (logical.profileId
+        ? await new BrowserSessionService().downloadProfile({
+            projectId: args.projectId,
+            profileId: logical.profileId,
+            bearer: args.bearer,
+            ...(args.signal ? { signal: args.signal } : {}),
+          })
+        : null));
   let sandboxRowId: string | undefined = args.target?.sandboxRowId;
   let sandboxId: string | undefined = args.target?.sandboxId;
   const watched = args.ownerKind === "conversation";
