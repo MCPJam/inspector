@@ -4,7 +4,7 @@
  * session stops with the reason. Evidence: fixture.
  */
 import { describe, expect, it, vi } from "vitest";
-import { createSwarmWebAccounts, createWebAccountPool } from "../swarm-web-accounts";
+import { createSwarmWebAccounts, createWebAccountPool, type SwarmWebSession } from "../swarm-web-accounts";
 import { WebAccountUnavailableError } from "../web-client-run";
 
 const NONE = "No account is signed in.";
@@ -121,5 +121,45 @@ describe("a swarm's web accounts", () => {
     });
     const session = await accounts.acquire("claude-web");
     expect(session?.run.webAccountIds).toEqual(["local:claude"]);
+    session?.lease.release();
+  });
+
+  const localSwarm = () =>
+    createSwarmWebAccounts({ projectId: "project-1", runId: "swarm-run-2", getBearer: async () => "token", service: null });
+
+  it("makes a second local swarm wait for this machine's profile until the first is done with it", async () => {
+    const first = localSwarm();
+    const second = localSwarm();
+    const held = await first.acquire("chatgpt-web");
+    let waited: SwarmWebSession | undefined;
+    const waiting = second.acquire("chatgpt-web").then((session) => (waited = session));
+    await settled();
+    expect(waited).toBeUndefined();
+    held?.lease.release();
+    await waiting;
+    expect(waited?.run.webAccountIds).toEqual(["local:chatgpt"]);
+    // A session that loses the account still hands the profile on, and only
+    // its own swarm stops using it.
+    const third = localSwarm().acquire("chatgpt-web");
+    waited?.run.onAccountLost?.("ChatGPT needs sign-in.");
+    const next = await third;
+    expect(next?.run.webAccountIds).toEqual(["local:chatgpt"]);
+    await expect(second.acquire("chatgpt-web")).rejects.toThrow("ChatGPT needs sign-in.");
+    next?.lease.release();
+  });
+
+  it("gives the swarm its account back when a session stops waiting for the profile", async () => {
+    const first = localSwarm();
+    const second = localSwarm();
+    const held = await first.acquire("chatgpt-web");
+    const stop = new AbortController();
+    const waiting = second.acquire("chatgpt-web", stop.signal);
+    await settled();
+    stop.abort(new Error("The swarm was stopped."));
+    await expect(waiting).rejects.toThrow("The swarm was stopped.");
+    held?.lease.release();
+    const next = await second.acquire("chatgpt-web");
+    expect(next?.run.webAccountIds).toEqual(["local:chatgpt"]);
+    next?.lease.release();
   });
 });
