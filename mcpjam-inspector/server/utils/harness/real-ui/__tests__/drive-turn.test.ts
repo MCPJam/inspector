@@ -131,19 +131,19 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
   });
 
-  it("confirms a send whose prompt the page shows trimmed", async () => {
+  it("confirms a send whose prompt the page shows trimmed, with its spaces collapsed", async () => {
     const result = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver: await signedInDriver(),
       connector: { name: "MCPJam fixture", url: upstream.url },
-      prompt: "say hello ",
+      prompt: "say  hello ",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
       stepTimeoutMs: 10_000,
       replyTimeoutMs: 20_000,
     });
     expect(result.resumed).toBe(false);
-    expect(vendor.sends).toEqual(["say hello "]);
+    expect(vendor.sends).toEqual(["say  hello "]);
   });
 
   it("stops as send_ambiguous when the journal says sending and no chat holds the prompt", async () => {
@@ -222,10 +222,39 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const page = await context.newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
-    const away = `${vendor.url}/redirect?to=${encodeURIComponent(`${upstream.url}/`)}`;
-    await expect(driver.navigate(away)).rejects.toMatchObject({ code: "site_blocked" });
+    vendor.redirectTo = `${upstream.url}/`;
+    await expect(driver.navigate(`${vendor.url}/redirect`)).rejects.toMatchObject({ code: "site_blocked" });
     await expect.poll(() => page.url()).toBe("about:blank");
     await expect(driver.readText("body")).rejects.toMatchObject({ code: "site_blocked" });
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
+  it("keeps refusing when the way back fails before it lands", async () => {
+    const page = await context.newPage();
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    vendor.redirectTo = `${upstream.url}/`;
+    await expect(driver.navigate(`${vendor.url}/redirect`)).rejects.toMatchObject({ code: "site_blocked" });
+    await expect.poll(() => page.url()).toBe("about:blank");
+    // An aborted navigation never commits, so the page stays where it was.
+    await page.route(`${vendor.url}/new`, (route) => route.abort("aborted"));
+    await expect(driver.navigate(`${vendor.url}/new`)).rejects.toThrow(/ERR_ABORTED/);
+    await expect(driver.readText("body")).rejects.toMatchObject({ code: "site_blocked" });
+    await page.unroute(`${vendor.url}/new`);
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
+  it("reports a navigation that fails on its own site as that failure, not as leaving", async () => {
+    const page = await context.newPage();
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await page.route(`${vendor.url}/new`, (route) => route.abort("failed"));
+    const failure = await driver.navigate(`${vendor.url}/new`).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toMatchObject({ code: "site_blocked" });
+    // The browser's own error page isn't another site, so nothing is refused.
+    await expect.poll(() => driver.url()).toMatch(/^chrome-error:/);
+    await page.unroute(`${vendor.url}/new`);
     await driver.navigate(`${vendor.url}/new`);
     expect(await driver.url()).toBe(`${vendor.url}/new`);
   });
