@@ -44,6 +44,7 @@ const PLAN_LIMIT =
 /** MCPJam names its own connectors so it never removes one a person added. */
 export const MCPJAM_CONNECTOR_PREFIX = "MCPJam";
 
+/** Playwright's own role engine, not CSS: scope one with `>>`, never a space. */
 const role = (kind: string, name: string) =>
   `role=${kind}[name="${cssString(name)}"]`;
 
@@ -75,11 +76,11 @@ async function organizationId(driver: PageDriver): Promise<string> {
 }
 
 async function connectorRowVisible(driver: PageDriver, name: string) {
-  return (await driver.readText(`${PANE} ${role("button", `View ${name}`)}`)) !== undefined;
+  return (await driver.readText(`${PANE} >> ${role("button", `View ${name}`)}`)) !== undefined;
 }
 
 async function removeConnector(driver: PageDriver, name: string, ctx: StepContext) {
-  await driver.click(`${PANE} ${role("button", `More options for ${name}`)}`);
+  await driver.click(`${PANE} >> ${role("button", `More options for ${name}`)}`);
   await driver.click("role=menuitem[name=/^(Remove|Delete)/]");
   await driver.click("role=dialog >> role=button[name=/^(Remove|Delete)$/]");
   await driver.waitFor(async () => !(await connectorRowVisible(driver, name)), {
@@ -94,7 +95,7 @@ async function addConnector(
   connector: { name: string; url: string },
   ctx: StepContext,
 ): Promise<void> {
-  await driver.click(`${PANE} ${role("button", "Add connector")}`);
+  await driver.click(`${PANE} >> ${role("button", "Add connector")}`);
   await driver.click(role("menuitem", "Add custom connector"));
   const dialog = "role=dialog";
   const body = (await driver.readText(dialog)) ?? "";
@@ -161,9 +162,9 @@ export const claudeWebPageModule: RealUiPageModule = {
     await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list");
     await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
     if (await connectorRowVisible(driver, connector.name)) {
-      await driver.click(`${PANE} ${role("button", `View ${connector.name}`)}`);
+      await driver.click(`${PANE} >> ${role("button", `View ${connector.name}`)}`);
       const connected =
-        (await driver.readText(`${PANE} ${role("button", "Disconnect")}`)) !== undefined;
+        (await driver.readText(`${PANE} >> ${role("button", "Disconnect")}`)) !== undefined;
       if (connected && (await pointsAt(driver, connector.url))) return;
       // Never Reconnect: it only sends `initialize` again, so a connector
       // that broke stays broken. Remove it and add it fresh.
@@ -178,7 +179,7 @@ export const claudeWebPageModule: RealUiPageModule = {
       // Free allows one custom connector. Only one MCPJam added may make room.
       await driver.navigate(CONNECTORS);
       await driver.type(`${PANE} [placeholder="Search"]`, MCPJAM_CONNECTOR_PREFIX);
-      const other = await driver.readText(`${PANE} role=button[name=/^View ${MCPJAM_CONNECTOR_PREFIX}/]`);
+      const other = await driver.readText(`${PANE} >> role=button[name=/^View ${MCPJAM_CONNECTOR_PREFIX}/]`);
       const otherName = other?.replace(/^View\s+/, "").trim();
       if (!otherName || otherName === connector.name) throw error;
       // The turn's own: removing it would break the turn, so it can't fit here.
@@ -193,7 +194,7 @@ export const claudeWebPageModule: RealUiPageModule = {
       await driver.navigate(CONNECTORS);
       await addConnector(driver, connector, ctx);
     }
-    await waitVisible(driver, `${PANE} ${role("button", "Disconnect")}`, ctx, "the connector to connect");
+    await waitVisible(driver, `${PANE} >> ${role("button", "Disconnect")}`, ctx, "the connector to connect");
     if (!(await pointsAt(driver, connector.url))) {
       throw new RealUiError({
         kind: "connector_failed",
