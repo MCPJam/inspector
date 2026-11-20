@@ -89,3 +89,31 @@ export function readStoredRubricCheckResults(
   }
   return results;
 }
+
+export function readStoredCustomJudgeResults(
+  verdict: unknown,
+): StoredModelGraderResult[] {
+  const entries = record(verdict)?.judges;
+  if (!Array.isArray(entries)) return [];
+  const results: StoredModelGraderResult[] = [];
+  for (const value of entries) {
+    const entry = record(value);
+    if (
+      !entry ||
+      typeof entry.id !== "string" ||
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(entry.id) ||
+      typeof entry.label !== "string" ||
+      !entry.label
+    ) {
+      continue;
+    }
+    const output = record(entry.output);
+    const result = readResult(
+      entry,
+      typeof entry.reason === "string" ? entry.reason : undefined,
+      output?.kind === "passfail" ? 0.5 : output?.threshold,
+    );
+    if (result) results.push({ key: entry.id, label: entry.label, result });
+  }
+  return results;
+}

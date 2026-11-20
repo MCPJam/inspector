@@ -11,6 +11,7 @@ import { useSuggestedScorers } from "../case-scorecard/suggested-from-run-sectio
 import { TrialScorecard } from "../case-scorecard/trial-scorecard";
 import { JudgeVerdictPanel } from "@/components/evals/goal-completion-presentation";
 import { groupCaseIterations } from "@/components/evals/runs/group-case-iterations";
+import { computeIterationResult } from "@/components/evals/pass-criteria";
 import { authoredForTrial } from "../case-scorecard/trial-authored";
 import { buildCaseScorecard } from "../case-scorecard/case-scorecard-model";
 
@@ -47,6 +48,66 @@ const iteration: EvalIteration = {
 } as EvalIteration;
 
 describe("scorecard integration regressions", () => {
+  it("renders saved model graders on a completed trial without projected scores", () => {
+    const savedTrial: EvalIteration = {
+      ...iteration,
+      resultSource: "reported",
+      metadata: {
+        rubricChecksVerdict: {
+          questions: [
+            {
+              key: "q:grounded",
+              label: "Answer Grounded in Results",
+              status: "scored",
+              passed: false,
+              value: 0,
+              passThreshold: 0.5,
+              rationale: "No",
+            },
+          ],
+        },
+        customJudgesVerdict: {
+          judges: [
+            {
+              id: "answers-the-question",
+              label: "Answers the Question",
+              status: "scored",
+              passed: true,
+              value: 1,
+              output: { kind: "passfail" },
+            },
+            {
+              id: "includes-link",
+              label: "Includes a Link",
+              status: "scored",
+              passed: false,
+              value: 0.6,
+              output: { kind: "score", threshold: 0.8 },
+              reason: "No export link in the answer.",
+            },
+          ],
+        },
+      },
+    };
+
+    render(
+      <TrialScorecard authored={authored} iteration={savedTrial} steps={steps} />,
+    );
+    const rows = screen.getAllByTestId("trial-scorecard-row");
+    for (const [label, state] of [
+      ["Answer Grounded in Results", "failed"],
+      ["Answers the Question", "passed"],
+      ["Includes a Link", "failed"],
+    ] as const) {
+      const row = rows.find((candidate) =>
+        candidate.textContent?.includes(label),
+      );
+      expect(row).toHaveAttribute("data-state", state);
+      expect(row).toHaveAttribute("data-role", "advisory");
+    }
+    expect(computeIterationResult(savedTrial)).toBe("passed");
+  });
+
   it("does not offer requirements from an unjudged case with zero checks", async () => {
     const batch = groupCaseIterations([iteration])[0];
     const { result } = renderHook(() =>

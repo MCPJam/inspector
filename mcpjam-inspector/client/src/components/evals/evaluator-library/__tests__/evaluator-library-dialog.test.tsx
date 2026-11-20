@@ -8,8 +8,10 @@ import {
   LIBRARY_EVALUATORS,
   missingChecks,
   taggedChecks,
+  taggedJudges,
   withEvaluatorUpdated,
 } from "../library-catalog";
+import { judgeProblem } from "../custom-judges-model";
 
 const flag = vi.hoisted(() => ({ on: true as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
@@ -20,8 +22,8 @@ vi.mock("posthog-js/react", () => ({
 function open(onAdd = vi.fn(), predicates = []) {
   renderWithProviders(
     <EvaluatorLibraryButton
-      predicates={predicates}
-      canAskYesNo
+      suite={{ predicates }}
+      support={{ canAskYesNo: true, canJudge: true }}
       onAdd={onAdd}
     />,
   );
@@ -33,7 +35,11 @@ describe("EvaluatorLibraryButton", () => {
   it("renders nothing while the flag is off or loading", () => {
     flag.on = undefined;
     renderWithProviders(
-      <EvaluatorLibraryButton predicates={[]} onAdd={() => {}} />,
+      <EvaluatorLibraryButton
+        suite={{ predicates: [] }}
+        support={{}}
+        onAdd={() => {}}
+      />,
     );
     expect(
       screen.queryByRole("button", { name: "From library" }),
@@ -47,13 +53,14 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("button", { name: "Add No Wasted Calls to suite" }),
     );
     const tag = { id: "no-wasted-calls", version: 1 };
-    expect(onAdd).toHaveBeenCalledWith(
-      [
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [
         { type: "toolCallCountUnder", count: 10, evaluator: tag },
         { type: "noRepeatedIdenticalCall", role: "advisory", evaluator: tag },
       ],
-      [],
-    );
+      questions: [],
+      judges: [],
+    });
   });
 
   it("opens the detail with each assertion and adds from there", () => {
@@ -65,15 +72,16 @@ describe("EvaluatorLibraryButton", () => {
       screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Arguments match the tool's schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith(
-      [
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [
         {
           type: "argumentsMatchToolSchema",
           evaluator: { id: "valid-tool-arguments", version: 1 },
         },
       ],
-      [],
-    );
+      questions: [],
+      judges: [],
+    });
     fireEvent.click(screen.getByRole("button", { name: "All evaluators" }));
     expect(screen.getByText("Evaluator library")).toBeInTheDocument();
   });
@@ -82,7 +90,8 @@ describe("EvaluatorLibraryButton", () => {
     const onAdd = vi.fn();
     renderWithProviders(
       <EvaluatorLibraryButton
-        predicates={[{ type: "noToolErrors" }]}
+        suite={{ predicates: [{ type: "noToolErrors" }] }}
+        support={{}}
         onAdd={onAdd}
       />,
     );
@@ -92,23 +101,24 @@ describe("EvaluatorLibraryButton", () => {
         name: "Add Actionable Tool Errors to suite",
       }),
     );
-    expect(onAdd).toHaveBeenCalledWith(
-      [
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [
         {
           type: "toolErrorNamesInput",
           role: "advisory",
           evaluator: { id: "actionable-tool-errors", version: 1 },
         },
       ],
-      [],
-    );
+      questions: [],
+      judges: [],
+    });
   });
 
   it("hides evaluators this deployment cannot save", () => {
     renderWithProviders(
       <EvaluatorLibraryButton
-        predicates={[]}
-        authorableKinds={["noToolErrors", "toolErrorNamesInput"]}
+        suite={{ predicates: [] }}
+        support={{ authorableKinds: ["noToolErrors", "toolErrorNamesInput"] }}
         onAdd={() => {}}
       />,
     );
@@ -134,8 +144,8 @@ describe("library catalog", () => {
     const wasted = LIBRARY_EVALUATORS.find((e) => e.id === "no-wasted-calls");
     expect(wasted).toBeDefined();
     if (!wasted) return;
-    expect(isInSuite(wasted, [...wasted.checks])).toBe(true);
-    expect(isInSuite(wasted, [{ type: "noToolErrors" }])).toBe(false);
+    expect(isInSuite(wasted, { predicates: [...wasted.checks] })).toBe(true);
+    expect(isInSuite(wasted, { predicates: [{ type: "noToolErrors" }] })).toBe(false);
   });
 });
 
@@ -159,15 +169,17 @@ describe("library dedupe by criterion", () => {
       toolName: "get_order",
       schema: { type: "object" },
     } as const;
-    expect(isInSuite(schema, [authored])).toBe(false);
+    expect(isInSuite(schema, { predicates: [authored] })).toBe(false);
   });
 
   it("ignores role and origin when matching", () => {
     expect(
-      isInSuite(wasted, [
-        { type: "toolCallCountUnder", count: 10, role: "advisory" },
-        { type: "noRepeatedIdenticalCall" },
-      ]),
+      isInSuite(wasted, {
+        predicates: [
+          { type: "toolCallCountUnder", count: 10, role: "advisory" },
+          { type: "noRepeatedIdenticalCall" },
+        ],
+      }),
     ).toBe(true);
   });
 
@@ -200,16 +212,17 @@ describe("Results Match Output Schema", () => {
       screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Every tool result matches its declared output schema");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith(
-      [
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [
         {
           type: "toolResultMatchesSchema",
           schema: "declared",
           evaluator: { id: "results-match-output-schema", version: 1 },
         },
       ],
-      [],
-    );
+      questions: [],
+      judges: [],
+    });
   });
 });
 
@@ -223,9 +236,9 @@ describe("question-only evaluators", () => {
       screen.getByRole("list", { name: "What this evaluator adds" }),
     ).toHaveTextContent("Yes/no question, passes on Yes");
     fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
-    expect(onAdd).toHaveBeenCalledWith(
-      [],
-      [
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [],
+      questions: [
         expect.objectContaining({
           id: "answer-grounded-in-results-grounded",
           kind: "yesno",
@@ -233,19 +246,66 @@ describe("question-only evaluators", () => {
           evaluator: { id: "answer-grounded-in-results", version: 1 },
         }),
       ],
-    );
+      judges: [],
+    });
   });
 });
 
 describe("yes/no capability", () => {
   it("hides question evaluators on a deployment that cannot ask yes/no", () => {
     renderWithProviders(
-      <EvaluatorLibraryButton predicates={[]} onAdd={() => {}} />,
+      <EvaluatorLibraryButton
+        suite={{ predicates: [] }}
+        support={{}}
+        onAdd={() => {}}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "From library" }));
     expect(screen.getByText("No Wasted Calls")).toBeInTheDocument();
     expect(
       screen.queryByText("Answer Grounded in Results"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("judge evaluators", () => {
+  it("adds a tagged judge and nothing else", () => {
+    const onAdd = open();
+    fireEvent.click(screen.getByRole("button", { name: "Answers the Question" }));
+    expect(
+      screen.getByRole("list", { name: "What this evaluator adds" }),
+    ).toHaveTextContent("Judge prompt, pass or fail.");
+    fireEvent.click(screen.getByRole("button", { name: "Add to suite" }));
+    expect(onAdd).toHaveBeenCalledWith({
+      checks: [],
+      questions: [],
+      judges: [
+        expect.objectContaining({
+          id: "answers-the-question-answers",
+          output: { kind: "passfail" },
+          evaluator: { id: "answers-the-question", version: 1 },
+        }),
+      ],
+    });
+  });
+
+  it("hides judge evaluators where the backend cannot run them", () => {
+    renderWithProviders(
+      <EvaluatorLibraryButton
+        suite={{ predicates: [] }}
+        support={{ canAskYesNo: true }}
+        onAdd={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "From library" }));
+    expect(screen.queryByText("Answers the Question")).not.toBeInTheDocument();
+  });
+
+  it("only ships judges the backend's checks accept", () => {
+    for (const evaluator of LIBRARY_EVALUATORS) {
+      for (const judge of taggedJudges(evaluator)) {
+        expect(judgeProblem(judge, []), judge.id).toBeUndefined();
+      }
+    }
   });
 });

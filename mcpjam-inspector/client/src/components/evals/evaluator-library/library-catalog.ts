@@ -1,7 +1,13 @@
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import type { RubricCheckQuestion } from "@/components/shared/session-quality/judge-config";
+import type {
+  CustomJudge,
+  RubricCheckQuestion,
+} from "@/components/shared/session-quality/judge-config";
 import {
+  AlignLeft,
   Braces,
+  MessageSquareText,
+  Target,
   CircleCheck,
   MessageCircleWarning,
   Quote,
@@ -32,6 +38,37 @@ export type LibraryEvaluator = {
    * the goal-completion judge. Advisory, like every rubric check.
    */
   questions?: readonly LibraryQuestion[];
+  /** Judge prompts, each its own model call per trial. Advisory. */
+  judges?: readonly LibraryJudge[];
+};
+
+/** A library judge before it is given its id and tag. */
+export type LibraryJudge = {
+  slug: string;
+  label: string;
+  prompt: string;
+  output: CustomJudge["output"];
+};
+
+/** What a suite already has, for "In this suite" and for what to add. */
+export type LibrarySuiteParts = {
+  predicates: readonly Predicate[];
+  questions?: readonly RubricCheckQuestion[];
+  judges?: readonly CustomJudge[];
+};
+
+/** What one library evaluator adds that the suite does not have yet. */
+export type LibraryAddition = {
+  checks: Predicate[];
+  questions: RubricCheckQuestion[];
+  judges: CustomJudge[];
+};
+
+/** What this deployment can save. */
+export type LibrarySupport = {
+  authorableKinds?: readonly Predicate["type"][];
+  canAskYesNo?: boolean;
+  canJudge?: boolean;
 };
 
 /** A library question before it is given its id and tag. */
@@ -142,6 +179,60 @@ export const LIBRARY_EVALUATORS: readonly LibraryEvaluator[] = [
     ],
   },
   {
+    id: "answers-the-question",
+    version: 1,
+    name: "Answers the Question",
+    question: "Did the final answer address what the user asked?",
+    icon: MessageSquareText,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "answers",
+        label: "Answers what the user asked",
+        prompt:
+          "Judge only the content of the final answer: does it give the user what they asked for? Pass if the user would not need to ask again or rephrase. Do not judge how the agent got there, such as which tools it called; other checks cover that.\n\nUser's request:\n{{user_prompt}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "passfail" },
+      },
+    ],
+  },
+  {
+    id: "meets-expected-outcome",
+    version: 1,
+    name: "Meets the Expected Outcome",
+    question: "Did the run reach the outcome this case expects?",
+    icon: Target,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "meets",
+        label: "Reaches the expected outcome",
+        prompt:
+          "Compare the run with the expected outcome. Pass only if the tool results and the final answer show the outcome was reached, not just described.\n\nExpected outcome:\n{{expected_outcome}}\n\nTool results:\n{{tool_results}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "passfail" },
+      },
+    ],
+  },
+  {
+    id: "clear-concise-answer",
+    version: 1,
+    name: "Clear, Concise Answer",
+    question: "How clear and to the point was the final answer?",
+    icon: AlignLeft,
+    tone: "answer",
+    checks: [],
+    judges: [
+      {
+        slug: "clarity",
+        label: "Clear and concise",
+        prompt:
+          "Rate how clear and concise the final answer is for this request, from 0 (confusing, padded or off topic) to 1 (clear and to the point).\n\nRequest:\n{{user_prompt}}\n\nFinal answer:\n{{final_answer}}",
+        output: { kind: "score", threshold: 0.7 },
+      },
+    ],
+  },
+  {
     id: "avoids-risky-tools",
     version: 1,
     name: "Avoids Risky Tools",
@@ -188,6 +279,31 @@ export function taggedQuestions(
     pass: { answer: q.passOn },
     evaluator: { id: evaluator.id, version: evaluator.version },
   }));
+}
+
+/** The evaluator's judges, each with a stable id and its tag. */
+export function taggedJudges(evaluator: LibraryEvaluator): CustomJudge[] {
+  return (evaluator.judges ?? []).map((j) => ({
+    id: `${evaluator.id}-${j.slug}`,
+    label: j.label,
+    prompt: j.prompt,
+    output: j.output,
+    evaluator: { id: evaluator.id, version: evaluator.version },
+  }));
+}
+
+/** Everything the evaluator adds that the suite does not have yet. */
+export function missingParts(
+  evaluator: LibraryEvaluator,
+  suite: LibrarySuiteParts,
+): LibraryAddition {
+  const questionIds = new Set((suite.questions ?? []).map((q) => q.id));
+  const judgeIds = new Set((suite.judges ?? []).map((j) => j.id));
+  return {
+    checks: missingChecks(evaluator, suite.predicates),
+    questions: taggedQuestions(evaluator).filter((q) => !questionIds.has(q.id)),
+    judges: taggedJudges(evaluator).filter((j) => !judgeIds.has(j.id)),
+  };
 }
 
 /**
@@ -238,31 +354,34 @@ export function builtFrom(evaluator: LibraryEvaluator): BuiltFromPart[] {
       label: `${q} yes/no ${q === 1 ? "question" : "questions"}`,
     });
   }
+  const j = evaluator.judges?.length ?? 0;
+  if (j) {
+    parts.push({ kind: "judge", label: `${j} ${j === 1 ? "judge" : "judges"}` });
+  }
   return parts;
 }
 
-/** True when the suite already has every check this evaluator adds. */
+/** True when the suite already has everything this evaluator adds. */
 export function isInSuite(
   evaluator: LibraryEvaluator,
-  predicates: readonly Predicate[],
-  questions: readonly RubricCheckQuestion[] = [],
+  suite: LibrarySuiteParts,
 ): boolean {
-  const ids = new Set(questions.map((q) => q.id));
+  const missing = missingParts(evaluator, suite);
   return (
-    missingChecks(evaluator, predicates).length === 0 &&
-    taggedQuestions(evaluator).every((q) => ids.has(q.id))
+    missing.checks.length === 0 &&
+    missing.questions.length === 0 &&
+    missing.judges.length === 0
   );
 }
 
-/** True when this deployment accepts every check kind the evaluator adds. */
+/** True when this deployment can save everything the evaluator adds. */
 export function isAuthorable(
   evaluator: LibraryEvaluator,
-  authorableKinds: readonly Predicate["type"][] | undefined,
-  canAskYesNo = false,
+  support: LibrarySupport = {},
 ): boolean {
-  if (evaluator.questions?.length && !canAskYesNo) return false;
-  if (!authorableKinds) return true;
-  return evaluator.checks.every((check) =>
-    authorableKinds.includes(check.type),
-  );
+  if (evaluator.questions?.length && !support.canAskYesNo) return false;
+  if (evaluator.judges?.length && !support.canJudge) return false;
+  const kinds = support.authorableKinds;
+  if (!kinds) return true;
+  return evaluator.checks.every((check) => kinds.includes(check.type));
 }

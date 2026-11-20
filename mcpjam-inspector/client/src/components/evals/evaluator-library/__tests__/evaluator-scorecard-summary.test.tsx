@@ -96,6 +96,24 @@ describe("EvaluatorScorecardSummary", () => {
     expect(card).toHaveTextContent("Passed");
   });
 
+  it("groups a library judge row under its evaluator", () => {
+    renderWithProviders(
+      <EvaluatorScorecardSummary
+        rows={[
+          {
+            key: "judge:custom:answers-the-question-answers",
+            label: "Answers what the user asked",
+            role: "advisory",
+            customJudge: { id: "answers-the-question-answers" },
+            result: { state: "failed", source: "scoreRow", reason: "Off topic." },
+          },
+        ]}
+      />,
+    );
+    const card = screen.getByRole("region", { name: "Answers the Question" });
+    expect(card).toHaveTextContent("Failed");
+  });
+
   it("renders nothing with the flag off or no library checks", () => {
     flag.on = false;
     const { container, rerender } = renderWithProviders(

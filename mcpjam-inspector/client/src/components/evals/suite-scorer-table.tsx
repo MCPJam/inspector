@@ -38,6 +38,7 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import {
   hasRubricChecksCapability,
+  hasCustomJudgesCapability,
   hasYesNoRubricQuestionsCapability,
   type SuiteCapabilities,
 } from "@/hooks/use-suite-capabilities";
@@ -47,7 +48,11 @@ import { CheckRow, blankPredicate } from "./checks-section";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import { EvaluatorLibraryButton } from "./evaluator-library/evaluator-library-dialog";
 import { EvaluatorStageRows } from "./evaluator-library/evaluator-stage-rows";
-import { librarySuiteEdits } from "./evaluator-library/library-suite-edits";
+import { CustomJudgesSection } from "./evaluator-library/custom-judges-section";
+import {
+  libraryModelRows,
+  librarySuiteEdits,
+} from "./evaluator-library/library-suite-edits";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import { JudgeModelControl } from "./judges-section";
 import {
@@ -414,10 +419,16 @@ export function SuiteScorerTable({
             {headerActions}
             {library && scope.kind === "suite" ? (
               <EvaluatorLibraryButton
-                predicates={scope.predicates}
-                questions={judgeConfig?.rubricChecks?.questions}
-                authorableKinds={authorableKinds}
-                canAskYesNo={hasYesNoRubricQuestionsCapability(capabilities)}
+                suite={{
+                  predicates: scope.predicates,
+                  questions: judgeConfig?.rubricChecks?.questions,
+                  judges: judgeConfig?.customJudges?.judges,
+                }}
+                support={{
+                  authorableKinds,
+                  canAskYesNo: hasYesNoRubricQuestionsCapability(capabilities),
+                  canJudge: hasCustomJudgesCapability(capabilities),
+                }}
                 onAdd={library.add}
               />
             ) : null}
@@ -489,9 +500,12 @@ export function SuiteScorerTable({
                         ? rules[row.predicateIndex]?.predicate
                         : undefined
                     }
-                    questions={
+                    modelRows={
                       group.stage === "userValue"
-                        ? judgeConfig?.rubricChecks?.questions
+                        ? libraryModelRows(
+                            judgeConfig,
+                            library ? onJudgeConfigChange : undefined,
+                          )
                         : undefined
                     }
                     onRemoveEvaluator={library?.remove}
@@ -547,6 +561,13 @@ export function SuiteScorerTable({
                     )}
                   />
                 )}
+                {library && group.stage === "userValue" ? (
+                  <CustomJudgesSection
+                    judgeConfig={judgeConfig}
+                    onJudgeConfigChange={onJudgeConfigChange}
+                    capabilities={capabilities}
+                  />
+                ) : null}
                 {scope.kind === "suite" &&
                 onMatchOptionsChange &&
                 group.stage === "selection" ? (

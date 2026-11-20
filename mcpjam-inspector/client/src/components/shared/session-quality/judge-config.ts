@@ -114,10 +114,42 @@ export const MAX_RUBRIC_CHECK_LEVELS = 10;
 export const MAX_RUBRIC_CHECK_LABEL_LENGTH = 200;
 export const MAX_RUBRIC_CHECK_INSTRUCTIONS_LENGTH = 1000;
 
+/**
+ * An author-written judge: a grading prompt using `{{variable}}`s, run as its
+ * own model call per trial. Hand-mirrored from the backend's
+ * `convex/lib/customJudges/customJudgeConfig.ts`. Always advisory.
+ */
+export type CustomJudge = {
+  id: string;
+  label: string;
+  prompt: string;
+  output: { kind: "passfail" } | { kind: "score"; threshold: number };
+  /** Added unchanged from a library evaluator. */
+  evaluator?: { id: string; version: number };
+  /** A customized copy of a library evaluator. */
+  basedOn?: { id: string; version: number };
+};
+
+export type CustomJudgesSlot = {
+  enabled?: boolean;
+  judges?: CustomJudge[];
+};
+
+export const CUSTOM_JUDGE_VARIABLES = [
+  "user_prompt",
+  "final_answer",
+  "tool_calls",
+  "tool_results",
+  "expected_outcome",
+] as const;
+export const MAX_CUSTOM_JUDGES = 5;
+export const MAX_CUSTOM_JUDGE_PROMPT_LENGTH = 4000;
+
 export type GoalJudgeConfig = {
   goalCompletion?: GoalCompletionJudgeSlot;
   groundedness?: GroundednessJudgeSlot;
   rubricChecks?: RubricChecksJudgeSlot;
+  customJudges?: CustomJudgesSlot;
 };
 
 /**
@@ -125,7 +157,11 @@ export type GoalJudgeConfig = {
  * preserves an omitted slot too, but a client that DROPS a stored one sends an
  * envelope that looks like a deliberate clear to every other reader.
  */
-export const RESERVED_JUDGE_SLOTS = ["groundedness", "rubricChecks"] as const;
+export const RESERVED_JUDGE_SLOTS = [
+  "groundedness",
+  "rubricChecks",
+  "customJudges",
+] as const;
 
 /** Per-item judge override (per-case in Evals). Opt-out only in V1. */
 export type GoalJudgeConfigOverride = {
