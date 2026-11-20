@@ -79,9 +79,7 @@ export function SwarmOverviewReport({
             </Metadata>
           )}
           {row.targets.length > 0 && (
-            <Metadata label="Model">
-              <span className="font-mono text-xs">{formatWaveModelLabel(row.targets)}</span>
-            </Metadata>
+            <Metadata label="Model">{formatWaveModelLabel(row.targets)}</Metadata>
           )}
           {showEnvironment && row.environments.length > 0 && (
             <Metadata label="Environment">{row.environments.join(", ")}</Metadata>
