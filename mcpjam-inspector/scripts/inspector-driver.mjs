@@ -23,10 +23,10 @@
  *
  * Browser commands use --base-url / MCPJAM_DRIVER_BASE_URL and --token /
  * MCPJAM_SESSION_TOKEN (a token or the whole access link), falling back to
- * the instance `start` recorded. --checkout <dir> points start, status,
- * stop and the browser commands at another checkout's instance, for example
- * a worktree of the base ref. Exit codes: 0 clean, 1 an issue was found,
- * 2 the driver itself could not run.
+ * the instance `start` recorded (its token only ever goes to its own origin).
+ * --checkout <dir> points start, status, stop and the browser commands at
+ * another checkout's instance, for example a worktree of the base ref. Exit
+ * codes: 0 clean, 1 an issue was found, 2 the driver itself could not run.
  */
 
 import { spawnSync } from "node:child_process";
@@ -48,6 +48,7 @@ import {
   normalizeSteps,
   parseAccessToken,
   parseAllowlist,
+  recordedToken,
   resolveTarget,
   resultLine,
   withStartStep,
@@ -114,8 +115,17 @@ function commitOf(dir) {
 }
 
 async function loadSurfaces() {
-  const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
-  return listAppSurfaces();
+  try {
+    const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
+    return listAppSurfaces();
+  } catch (error) {
+    // The package allows Node 22.0, but Node only strips TypeScript types
+    // without a flag from 22.18.0.
+    if (error.code !== "ERR_UNKNOWN_FILE_EXTENSION") throw error;
+    throw new Error(
+      `Reading shared/app-surfaces.ts needs Node 22.18.0 or later (this is ${process.version}), or 22.6.0 or later with NODE_OPTIONS=--experimental-strip-types.`,
+    );
+  }
 }
 
 function positiveInt(value, name, fallback) {
@@ -137,7 +147,9 @@ async function connection(values) {
     );
   }
   const rawToken = values.token ?? process.env.MCPJAM_SESSION_TOKEN;
-  const token = rawToken ? parseAccessToken(rawToken) : (state?.token ?? null);
+  const token = rawToken
+    ? parseAccessToken(rawToken)
+    : recordedToken(baseUrl, state);
   if (rawToken && !token) {
     throw new Error("--token is neither an access token nor an access link.");
   }
@@ -497,14 +509,14 @@ async function cmdStart(values) {
 }
 
 async function cmdStatus(values) {
-  const { readState, isAlive } =
+  const { readState, isOurProcess } =
     await import("./lib/inspector-driver-instance.mjs");
   const state = readState(inspectorDir(values));
   if (!state) {
     process.stdout.write("no driver instance recorded for this checkout\n");
     return 0;
   }
-  const alive = isAlive(state.pid);
+  const alive = isOurProcess(state);
   process.stdout.write(
     `instance ${state.instance} ${alive ? "running" : "NOT running"} pid ${state.pid} ${state.baseUrl} log ${state.logPath}\n`,
   );

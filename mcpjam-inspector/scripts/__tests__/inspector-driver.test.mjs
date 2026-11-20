@@ -19,6 +19,7 @@ import {
   parseAccessToken,
   parseAllowlist,
   parseSelector,
+  recordedToken,
   redactLog,
   redactUrl,
   resolveNpmCli,
@@ -102,6 +103,14 @@ test("an access token is read bare or out of an access link", () => {
   );
   assert.equal(parseAccessToken("short"), null);
   assert.equal(parseAccessToken("http://localhost:5173/"), null);
+});
+
+test("the recorded token goes only to the instance that recorded it", () => {
+  const state = { baseUrl: "http://localhost:5174", token: TOKEN };
+  assert.equal(recordedToken("http://localhost:5174/servers", state), TOKEN);
+  assert.equal(recordedToken("https://app.mcpjam.com", state), null);
+  assert.equal(recordedToken("http://localhost:5175", state), null);
+  assert.equal(recordedToken(BASE, null), null);
 });
 
 test("steps normalize from an array or an object with a start", () => {

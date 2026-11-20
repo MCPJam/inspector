@@ -69,6 +69,18 @@ export function parseAccessToken(value) {
   return token && /^[A-Za-z0-9_-]{24,}$/.test(token) ? token : null;
 }
 
+/**
+ * The token `start` recorded, only when the driver is pointed at that same
+ * instance: the browser seeds it into the target's localStorage, so another
+ * origin must never receive it.
+ */
+export function recordedToken(baseUrl, state) {
+  if (!state?.token) return null;
+  return new URL(baseUrl).origin === new URL(state.baseUrl).origin
+    ? state.token
+    : null;
+}
+
 // ── steps ─────────────────────────────────────────────────────────────────
 
 const STEP_ACTIONS = {
