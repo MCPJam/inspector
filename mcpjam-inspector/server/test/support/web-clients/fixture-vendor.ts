@@ -174,6 +174,12 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
       response.writeHead(status, { "content-type": "application/json" });
       response.end(JSON.stringify(body));
     };
+    if (url.pathname === "/redirect") {
+      // A vendor link that sends the page wherever `to` says.
+      response.writeHead(302, { location: url.searchParams.get("to") ?? "/new" });
+      response.end();
+      return;
+    }
     if (url.pathname === "/sign-in") {
       const as = url.searchParams.get("as") ?? "person@example.com";
       response.writeHead(302, { "set-cookie": `${SESSION}=${encodeURIComponent(as)}; Path=/`, location: "/new" });
