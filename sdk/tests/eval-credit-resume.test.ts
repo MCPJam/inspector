@@ -3,14 +3,18 @@ import type { CreditRecovery } from "../src/contract/credit-recovery.js";
 import {
   INCOMPLETE_CASES_LIMIT,
   incompleteCasesOfIterations,
+  incompleteCasesOfRun,
   isCreditBlock,
   readEvalRunIncompleteCases,
-  refusedTargetResumeInstruction,
-  resumeIdempotencyKeyForTarget,
+  replayLaunchResumeInstruction,
   resumeSourceOfRun,
   stoppedRunResumeInstruction,
+  withGroupLaunchKey,
 } from "../src/eval-credit-resume.js";
-import { creditStopResumeFields } from "../src/platform/eval-credit-resume-fields.js";
+import {
+  creditStopResumeFields,
+  resumesOnSourceTarget,
+} from "../src/platform/eval-credit-resume-fields.js";
 
 function recovery(overrides: Partial<CreditRecovery> = {}): CreditRecovery {
   return {
@@ -65,85 +69,94 @@ describe("isCreditBlock", () => {
 });
 
 describe("resumeSourceOfRun", () => {
-  it("reads the suite and the run's own target", () => {
-    expect(
-      resumeSourceOfRun({
-        suiteId: "s1",
-        environment: { id: "env_1" },
-        client: { id: "host_1", source: "environment" },
-      })
-    ).toEqual({ suiteId: "s1", environmentId: "env_1" });
-    expect(
-      resumeSourceOfRun({
-        suiteId: "s1",
-        environment: null,
-        client: { id: "host_1", source: "attached_host" },
-      })
-    ).toEqual({ suiteId: "s1", hostId: "host_1" });
-    expect(
-      resumeSourceOfRun({
-        suiteId: "s1",
-        client: { id: "host_1", source: "suite_default" },
-      })
-    ).toEqual({ suiteId: "s1" });
+  it("reads only the suite, never the run's target", () => {
+    expect(resumeSourceOfRun({ suiteId: "s1" })).toEqual({ suiteId: "s1" });
+    expect(resumeSourceOfRun({})).toEqual({});
   });
 });
 
 describe("resume instructions", () => {
-  it("resumes a stopped run on its own suite and target", () => {
+  it("resumes a stopped run on its suite and names no target", () => {
     expect(
-      stoppedRunResumeInstruction("p1", {
-        id: "run_9",
-        suiteId: "s1",
-        environment: { id: "env_1" },
-      })
+      stoppedRunResumeInstruction("p1", { id: "run_9", suiteId: "s1" })
     ).toEqual({
       tool: "run_eval_suite",
-      arguments: {
-        project: "p1",
-        suite: "s1",
-        environment: "env_1",
-        resumeFromRunId: "run_9",
-      },
+      arguments: { project: "p1", suite: "s1", resumeFromRunId: "run_9" },
     });
   });
 
-  it("re-launches one refused target with the launch's knobs and a per-target key", () => {
-    const instruction = refusedTargetResumeInstruction(
-      {
-        projectId: "p1",
-        suiteId: "s1",
-        input: {
-          project: "Acme",
-          suite: "Smoke",
-          allAttached: true,
-          environments: ["a", "b"],
-          iterations: 3,
-          notes: undefined,
-          idempotencyKey: "k",
-        },
+  it("replays a refused launch with its selectors, knobs and group key", () => {
+    const instruction = replayLaunchResumeInstruction({
+      projectId: "p1",
+      suiteId: "s1",
+      input: {
+        project: "Acme",
+        suite: "Smoke",
+        allAttached: true,
+        compose: { host: "h1", models: ["m1", "m2"] },
+        iterations: 3,
+        notes: undefined,
+        idempotencyKey: "k",
       },
-      { hostId: "host_2" }
-    );
+    });
     expect(instruction).toEqual({
       tool: "run_eval_suite",
       arguments: {
         project: "p1",
         suite: "s1",
-        client: "host_2",
+        allAttached: true,
+        compose: { host: "h1", models: ["m1", "m2"] },
         iterations: 3,
-        idempotencyKey: "k:host_2",
+        idempotencyKey: "k",
       },
     });
   });
 
-  it("keeps per-target keys distinct and inside the key limit", () => {
-    const long = "k".repeat(256);
-    const a = resumeIdempotencyKeyForTarget(long, "env_a");
-    const b = resumeIdempotencyKeyForTarget(long, "env_b");
-    expect(a).not.toBe(b);
-    expect(a.length).toBe(256);
-    expect(a.endsWith(":env_a")).toBe(true);
+  it("mints a group key only when the caller gave none", () => {
+    expect(withGroupLaunchKey({ idempotencyKey: "k" })).toEqual({
+      idempotencyKey: "k",
+    });
+    const minted = withGroupLaunchKey<{ idempotencyKey?: string }>({});
+    expect(minted.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+    expect(withGroupLaunchKey<{ idempotencyKey?: string }>({})).not.toEqual(
+      minted
+    );
+  });
+
+  it("inherits the source target only when a resume names none", () => {
+    expect(resumesOnSourceTarget({ resumeFromRunId: "r" })).toBe(true);
+    expect(resumesOnSourceTarget({})).toBe(false);
+    expect(
+      resumesOnSourceTarget({ resumeFromRunId: "r", environment: "e" })
+    ).toBe(false);
+    expect(
+      resumesOnSourceTarget({ resumeFromRunId: "r", compose: { host: "h" } })
+    ).toBe(false);
+  });
+});
+
+describe("incompleteCasesOfRun", () => {
+  it("lists the backend's resume selection, titled from trials", () => {
+    expect(
+      incompleteCasesOfRun(
+        { resumeSelection: { caseIds: ["c9", "c2"], totalCaseCount: 5 } },
+        [trial("completed", "c2")]
+      )
+    ).toEqual({
+      cases: [
+        { testCaseId: "c9", title: null },
+        { testCaseId: "c2", title: "Case c2" },
+      ],
+      truncated: false,
+    });
+  });
+
+  it("falls back to unfinished trials without a selection", () => {
+    expect(
+      incompleteCasesOfRun({ resumeSelection: { caseIds: "bad" } }, [
+        trial("skipped", "c3"),
+      ])
+    ).toEqual({ cases: [{ testCaseId: "c3", title: "Case c3" }], truncated: false });
   });
 });
 
@@ -184,7 +197,7 @@ describe("incompleteCasesOfIterations", () => {
       { listEvalRunIterations },
       undefined,
       "p1",
-      "run_1"
+      { id: "run_1" }
     );
     expect(result).toEqual({
       cases: [{ testCaseId: "c1", title: "Case c1" }],
@@ -199,14 +212,14 @@ describe("incompleteCasesOfIterations", () => {
         { listEvalRunIterations },
         undefined,
         "p1",
-        "run_1"
+        { id: "run_1" }
       )
     ).toBeUndefined();
   });
 });
 
 describe("creditStopResumeFields (get_eval_run)", () => {
-  const run = { id: "run_9", suiteId: "s1", environment: { id: "env_1" } };
+  const run = { id: "run_9", suiteId: "s1" };
 
   it("adds the resume call and the unfinished cases for a block", async () => {
     const listEvalRunIterations = vi.fn().mockResolvedValue({

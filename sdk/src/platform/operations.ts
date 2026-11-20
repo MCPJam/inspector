@@ -61,7 +61,10 @@ import { readEvalRunCreditRecovery } from "../eval-credit-recovery.js";
 import {
   creditStopResumeFields,
   failedTargetCreditFields,
+  resumesOnSourceTarget,
+  withRefusalResume,
 } from "./eval-credit-resume-fields.js";
+import { withGroupLaunchKey } from "../eval-credit-resume.js";
 import type {
   EvalResumeInstruction,
   IncompleteEvalCases,
@@ -4164,7 +4167,7 @@ const runEvalSuiteInput = z
       .min(1)
       .optional()
       .describe(
-        "Resume a run MCPJam credits stopped partway: the new run executes only the source run's cases that did not finish. The source must be a terminal run of the same suite with unfinished cases, or the launch is refused."
+        "Resume a run MCPJam credits stopped partway: the new run executes only the source run's cases that did not finish, on the source run's own target, so name no target beside it. The source must be a terminal run of the same suite with unfinished cases, or the launch is refused."
       ),
     ...RUN_KNOB_FIELDS,
   })
@@ -4403,8 +4406,9 @@ export const runEvalSuiteOperation: PlatformOperation<
     // construction, and a composed stack has already PRODUCED its target — for
     // either of them the attachments are simply not consulted, so fetching
     // them would be a round trip spent on an answer nobody reads.
+    const inheritTarget = resumesOnSourceTarget(input);
     const detail =
-      overrideServers || composed
+      overrideServers || composed || inheritTarget
         ? undefined
         : await client.getEvalSuite(
             { projectId: project.id, suiteId: suite.id },
@@ -4443,7 +4447,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     // A composed stack IS the target set: one cell → a single launch, N
     // cells → one grouped launch under a single runGroupId. The attachment
     // axes are not consulted; the stack produced the environments.
-    const plan: RunTargetPlan = composed
+    const plannedTargets: RunTargetPlan = composed
       ? composed.environments.length > 1
         ? {
             kind: "group",
@@ -4483,6 +4487,9 @@ export const runEvalSuiteOperation: PlatformOperation<
             : {}),
         });
 
+    // A resume naming no target launches one run the backend puts on the
+    // source run's own target; see `resumesOnSourceTarget`.
+    const plan: RunTargetPlan = inheritTarget ? { kind: "single" } : plannedTargets;
     if (plan.kind === "target-required") {
       throw operationInputError(targetRequiredMessage(plan));
     }
@@ -4601,13 +4608,15 @@ export const runEvalSuiteOperation: PlatformOperation<
       );
     }
 
-    const knobs = runKnobBody(input, caseIds);
+    const launchInput = plan.kind === "group" ? withGroupLaunchKey(input) : input;
+    const knobs = runKnobBody(launchInput, caseIds);
     const projectInfo = toSelectedProjectInfo(project);
     const suiteInfo = { id: suite.id, name: suite.name };
 
     if (plan.kind === "single") {
+      const refused = { projectId: project.id, suiteId: suite.id, input };
       const created = await createEvalRunOrReportCompose(composed, () =>
-        client.createEvalRun(
+        withRefusalResume(refused, () => client.createEvalRun(
           {
             projectId: project.id,
             body: {
@@ -4630,7 +4639,7 @@ export const runEvalSuiteOperation: PlatformOperation<
             },
           },
           { signal }
-        )
+        ))
       );
       const servers =
         overrideServers?.map((server) => ({
@@ -4726,11 +4735,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           ...failedTargetCreditFields(entry.error, {
             projectId: project.id,
             suiteId: suite.id,
-            input,
-            target: {
-              environmentId: entry.target.environmentId,
-              hostId: entry.target.namedHostId,
-            },
+            input: launchInput,
           }),
         };
       }
@@ -4760,8 +4765,8 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
-      ...(typeof input.idempotencyKey === "string"
-        ? { idempotencyKey: input.idempotencyKey }
+      ...(typeof launchInput.idempotencyKey === "string"
+        ? { idempotencyKey: launchInput.idempotencyKey }
         : {}),
       ...(disclosure ? { disclosure } : {}),
       ...(composed ? { composed: composed.report } : {}),

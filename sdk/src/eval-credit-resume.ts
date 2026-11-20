@@ -23,51 +23,19 @@ export function isCreditBlock(
   return recovery !== undefined && recovery.action !== "wait";
 }
 
-/** Where a stopped run executed, read from its own record. */
+/** The suite a stopped run belongs to, read from its own record. */
 export interface EvalResumeSource {
   suiteId?: string;
-  environmentId?: string;
-  hostId?: string;
 }
 
 /**
- * The suite and target a stopped run executed on, from the run record (its
- * immutable config snapshot), so a resume lands on the same target even if the
- * suite's attachments changed since. A suite-default client is not a
- * selectable target, so it is omitted.
+ * The suite a stopped run belongs to. Its target is deliberately not read:
+ * a resume names no target, and the backend runs it on the source run's own
+ * target, including a composed or since-detached environment that no launch
+ * selector could name.
  */
-export function resumeSourceOfRun(run: {
-  suiteId?: string;
-  environment?: { id: string } | null;
-  client?: { id: string | null; source: string };
-}): EvalResumeSource {
-  const hostId =
-    run.client?.source === "attached_host" && run.client.id
-      ? run.client.id
-      : undefined;
-  return {
-    ...(run.suiteId ? { suiteId: run.suiteId } : {}),
-    ...(run.environment?.id ? { environmentId: run.environment.id } : {}),
-    ...(hostId ? { hostId } : {}),
-  };
-}
-
-const MAX_IDEMPOTENCY_KEY_LENGTH = 256;
-
-/**
- * The idempotency key to re-launch ONE refused target of a fan-out with.
- *
- * Distinct per target: re-launching two refused targets under the group's own
- * key would make the second dedupe onto the first one's run. Deterministic, so
- * running the same resume twice still starts the run once. The group key is
- * shortened, never the target id, to stay inside the key limit.
- */
-export function resumeIdempotencyKeyForTarget(
-  groupKey: string,
-  targetId: string
-): string {
-  const suffix = `:${targetId}`;
-  return `${groupKey.slice(0, MAX_IDEMPOTENCY_KEY_LENGTH - suffix.length)}${suffix}`;
+export function resumeSourceOfRun(run: { suiteId?: string }): EvalResumeSource {
+  return run.suiteId ? { suiteId: run.suiteId } : {};
 }
 
 /** The MCP tool call that resumes a credit-blocked eval once a person acts. */
@@ -77,89 +45,65 @@ export interface EvalResumeInstruction {
 }
 
 /**
- * Resume a run credits stopped partway: the same suite and target, with
- * `resumeFromRunId`, which reruns only the source run's unfinished cases.
- * Cases and target lists are left out because the backend refuses them beside
- * a resume.
+ * Resume a run credits stopped partway: the same suite with
+ * `resumeFromRunId`, which reruns only the source run's unfinished cases on
+ * the source run's own target. Cases and targets are left out because the
+ * backend refuses cases beside a resume and inherits the target itself.
  */
 export function stoppedRunResumeInstruction(
   projectId: string,
-  run: {
-    id: string;
-    suiteId: string;
-    environment?: { id: string } | null;
-    client?: { id: string | null; source: string };
-  }
+  run: { id: string; suiteId: string }
 ): EvalResumeInstruction {
-  const source = resumeSourceOfRun(run);
   return {
     tool: "run_eval_suite",
     arguments: {
       project: projectId,
       suite: run.suiteId,
-      ...(source.environmentId
-        ? { environment: source.environmentId }
-        : source.hostId
-          ? { client: source.hostId }
-          : {}),
       resumeFromRunId: run.id,
     },
   };
 }
 
-/** `run_eval_suite` fields that pick targets; a per-target resume replaces them. */
-const TARGET_SELECTOR_FIELDS: ReadonlySet<string> = new Set([
-  "servers",
-  "environment",
-  "environments",
-  "client",
-  "clients",
-  "host",
-  "hosts",
-  "allAttached",
-  "compose",
-  "saveTargets",
-  "idempotencyKey",
-  "resumeFromRunId",
-]);
-
 /**
- * Re-launch one target of a fan-out that credits refused before it created a
- * run: the same launch narrowed to that target. The group key, when there was
- * one, becomes a per-target key (see {@link resumeIdempotencyKeyForTarget}).
+ * Re-run a launch credits refused before it created a run: the same call
+ * again, with the suite and project by id and the same idempotency key. For
+ * a fan-out the server derives each target's run key from the group key, so
+ * the replay returns the targets that started as their existing runs and
+ * launches only the ones that were refused. Every selector, compose recipe
+ * and knob is kept, because changing any of them would be a different launch.
  */
-export function refusedTargetResumeInstruction(
-  launch: { projectId: string; suiteId: string; input: object },
-  target: { environmentId?: string; hostId?: string }
-): EvalResumeInstruction {
+export function replayLaunchResumeInstruction(launch: {
+  projectId: string;
+  suiteId: string;
+  input: object;
+}): EvalResumeInstruction {
   const knobs = Object.fromEntries(
     Object.entries(launch.input).filter(
       ([key, value]) =>
         value !== undefined &&
         key !== "project" &&
         key !== "suite" &&
-        !TARGET_SELECTOR_FIELDS.has(key)
+        key !== "resumeFromRunId"
     )
   );
-  const groupKey = (launch.input as { idempotencyKey?: unknown })
-    .idempotencyKey;
-  const targetId = target.environmentId ?? target.hostId ?? "";
   return {
     tool: "run_eval_suite",
-    arguments: {
-      project: launch.projectId,
-      suite: launch.suiteId,
-      ...(target.environmentId
-        ? { environment: target.environmentId }
-        : target.hostId
-          ? { client: target.hostId }
-          : {}),
-      ...knobs,
-      ...(typeof groupKey === "string" && groupKey
-        ? { idempotencyKey: resumeIdempotencyKeyForTarget(groupKey, targetId) }
-        : {}),
-    },
+    arguments: { project: launch.projectId, suite: launch.suiteId, ...knobs },
   };
+}
+
+/**
+ * The launch input a fan-out sends, with an idempotency key minted when the
+ * caller gave none. Without a key the server picks a random group id and no
+ * per-target keys, so a refused target's replay could not tell which siblings
+ * already started; a fresh key per launch keeps every launch distinct.
+ */
+export function withGroupLaunchKey<T extends { idempotencyKey?: string }>(
+  input: T
+): T {
+  return input.idempotencyKey
+    ? input
+    : { ...input, idempotencyKey: globalThis.crypto.randomUUID() };
 }
 
 /** One case a resume will run again. */
@@ -229,28 +173,79 @@ export function incompleteCasesOfIterations(
   return { cases, truncated };
 }
 
+/** The exact cases a resume of a stopped run will launch, as the backend chose them. */
+export interface EvalResumeSelection {
+  caseIds: string[];
+  totalCaseCount: number;
+}
+
+/** The run read's `resumeSelection`, or `undefined` when absent or malformed. */
+export function parseResumeSelection(
+  value: unknown
+): EvalResumeSelection | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { caseIds, totalCaseCount } = value as Record<string, unknown>;
+  if (
+    !Array.isArray(caseIds) ||
+    !caseIds.every((id): id is string => typeof id === "string") ||
+    typeof totalCaseCount !== "number"
+  ) {
+    return undefined;
+  }
+  return { caseIds, totalCaseCount };
+}
+
+/**
+ * The cases a resume of this run will rerun. The backend's own selection wins
+ * when the run read carries one, because it is the list the resume launches;
+ * trials only supply titles then. Without it (an older deployment) the
+ * preview falls back to the trials a credit stop left unfinished.
+ */
+export function incompleteCasesOfRun(
+  run: { resumeSelection?: unknown },
+  iterations: Parameters<typeof incompleteCasesOfIterations>[0],
+  pageTruncated = false
+): IncompleteEvalCases {
+  const selection = parseResumeSelection(run.resumeSelection);
+  if (!selection) return incompleteCasesOfIterations(iterations, pageTruncated);
+  const titles = new Map<string, string | null>();
+  for (const iteration of iterations) {
+    if (iteration.testCaseId) titles.set(iteration.testCaseId, iteration.title);
+  }
+  return {
+    cases: selection.caseIds.slice(0, INCOMPLETE_CASES_LIMIT).map((id) => ({
+      testCaseId: id,
+      title: titles.get(id) ?? null,
+    })),
+    truncated: selection.caseIds.length > INCOMPLETE_CASES_LIMIT,
+  };
+}
+
 const INCOMPLETE_CASES_PAGE_LIMIT = 200;
 
 /**
- * The unfinished cases of a credit-stopped run, from one page of trials, or
- * `undefined` when the read fails: the list is advisory and must not fail the
- * status read it rides on.
+ * The unfinished cases of a credit-stopped run, from its resume selection and
+ * one page of trials, or `undefined` when there is no selection and the read
+ * fails: the list is advisory and must not fail the status read it rides on.
  */
 export async function readEvalRunIncompleteCases(
   client: Pick<PlatformApiClient, "listEvalRunIterations">,
   signal: AbortSignal | undefined,
   projectId: string,
-  runId: string
+  run: { id: string; resumeSelection?: unknown }
 ): Promise<IncompleteEvalCases | undefined> {
   try {
     const page = await client.listEvalRunIterations(
-      { projectId, runId, limit: INCOMPLETE_CASES_PAGE_LIMIT },
+      { projectId, runId: run.id, limit: INCOMPLETE_CASES_PAGE_LIMIT },
       { signal }
     );
-    return incompleteCasesOfIterations(page.items, Boolean(page.nextCursor));
+    return incompleteCasesOfRun(run, page.items, Boolean(page.nextCursor));
   } catch {
     // Safe to drop: the caller still has the recovery and the resume
-    // instruction, which are what unblock the run; the list only previews it.
-    return undefined;
+    // instruction, which are what unblock the run. The selection, when the
+    // run read carried one, still lists the cases, only without titles.
+    return parseResumeSelection(run.resumeSelection)
+      ? incompleteCasesOfRun(run, [])
+      : undefined;
   }
 }

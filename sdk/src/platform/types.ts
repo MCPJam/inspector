@@ -1158,6 +1158,12 @@ export interface PlatformEvalRun {
    */
   creditRecovery?: CreditRecovery;
   /**
+   * On a terminal run, the exact cases a `resumeFromRunId` launch of it would
+   * run, chosen by the backend. ABSENT on deployments that do not serve it;
+   * the wire value is unvalidated, so read it with `parseResumeSelection`.
+   */
+  resumeSelection?: { caseIds: string[]; totalCaseCount: number };
+  /**
    * The project environment this run executed against, read from the run's
    * immutable config snapshot — NOT the suite's current attachments, which may
    * have changed since. `null` for a legacy (saved-server-selection) run, and

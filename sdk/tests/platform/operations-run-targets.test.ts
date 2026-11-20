@@ -96,6 +96,8 @@ interface Fixture {
     string,
     { code: string; message: string; recovery?: unknown }
   >;
+  /** Model a single launch credits refuse with this recovery. */
+  singleRefusal?: unknown;
   /** Model a server with no grouped-launch endpoint. */
   noRunGroupEndpoint?: boolean;
   /** Model the LIVE route answering 404 for a real reason (suite deleted). */
@@ -211,6 +213,16 @@ function makeClient(fixture: Fixture = {}) {
     }
     if (/\/eval-runs$/.test(path) && method === "POST") {
       fixture.callOrder?.push("createEvalRun");
+      if (fixture.singleRefusal) {
+        return Response.json(
+          {
+            code: "FORBIDDEN",
+            message: "Out of credits.",
+            details: { recovery: fixture.singleRefusal },
+          },
+          { status: 403 },
+        );
+      }
       const body = JSON.parse(String(init?.body)) as {
         environmentId?: string;
       };
@@ -517,6 +529,7 @@ describe("run_eval_suite target selection", () => {
           { namedHostId: "host-claude" },
           { namedHostId: "host-chatgpt" },
         ],
+        idempotencyKey: expect.any(String),
       },
     ]);
     // Never N single launches: those would each charge their own slot.
@@ -1004,7 +1017,7 @@ describe("run_eval_suite target selection", () => {
     });
   });
 
-  it("gives a credit-refused target its recovery and the call that re-launches it", async () => {
+  it("gives a credit-refused target its recovery and the call that replays the group", async () => {
     const recovery = {
       version: 1,
       reason: "allowance_exhausted",
@@ -1036,12 +1049,60 @@ describe("run_eval_suite target selection", () => {
         arguments: {
           project: "project-1",
           suite: "suite-1",
-          environment: "env-prod",
+          allAttached: true,
           iterations: 2,
-          idempotencyKey: "group-key:env-prod",
+          idempotencyKey: "group-key",
         },
       },
     });
+  });
+
+  it("mints a group key for a keyless fan-out so its replay dedupes", async () => {
+    const { client, fetchMock } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", allAttached: true },
+      { client },
+    );
+    const [body] = bodiesTo(fetchMock, "/eval-run-groups") as Array<{
+      idempotencyKey?: string;
+    }>;
+    expect(body?.idempotencyKey).toMatch(/^[0-9a-f-]{36}$/);
+    expect(result.idempotencyKey).toBe(body?.idempotencyKey);
+  });
+
+  it("puts the replay call on a refused single launch's error", async () => {
+    const recovery = {
+      version: 1,
+      reason: "allowance_exhausted",
+      action: "buy_credits",
+      actor: "caller",
+      url: "https://app.mcpjam.com/billing",
+    };
+    const { client } = makeClient({ singleRefusal: recovery });
+    const error = await runEvalSuiteOperation
+      .execute({ suite: "Smoke", iterations: 2 }, { client })
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).details?.resume).toEqual({
+      tool: "run_eval_suite",
+      arguments: { project: "project-1", suite: "suite-1", iterations: 2 },
+    });
+  });
+
+  it("launches a resume that names no target with no target, unplanned", async () => {
+    const { client, fetchMock } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", resumeFromRunId: "run-stopped" },
+      { client },
+    );
+    expect(result.outcome).toBe("started");
+    expect(bodiesTo(fetchMock, "/eval-runs")).toEqual([
+      { suiteId: "suite-1", resumeFromRunId: "run-stopped" },
+    ]);
+    expect(bodiesTo(fetchMock, "/eval-run-groups")).toHaveLength(0);
   });
 
   it("RESOLVES with outcome failed when every target failed — it does not throw", async () => {

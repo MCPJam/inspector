@@ -701,15 +701,17 @@ export { readEvalRunCreditRecovery } from "./eval-credit-recovery.js";
 export {
   INCOMPLETE_CASES_LIMIT,
   incompleteCasesOfIterations,
+  incompleteCasesOfRun,
   isCreditBlock,
+  parseResumeSelection,
   readEvalRunIncompleteCases,
-  refusedTargetResumeInstruction,
-  resumeIdempotencyKeyForTarget,
+  replayLaunchResumeInstruction,
   resumeSourceOfRun,
   stoppedRunResumeInstruction,
 } from "./eval-credit-resume.js";
 export type {
   EvalResumeInstruction,
+  EvalResumeSelection,
   EvalResumeSource,
   IncompleteEvalCase,
   IncompleteEvalCases,
