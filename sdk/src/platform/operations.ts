@@ -83,6 +83,10 @@ import {
   type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
+  latestFinishedRunFor,
+  resolveSuiteForRunListing,
+} from "./eval-suite-run-listing.js";
+import {
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
@@ -3520,7 +3524,14 @@ const evalSuiteScopedInput = z.object({
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  suite: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      `${SUITE_SELECTOR_DESCRIPTION} Omit it to list the suite holding the project's most recent run, so the first item is the project's newest run.`
+    ),
   limit: z
     .number()
     .int()
@@ -3536,6 +3547,8 @@ export type ListEvalSuiteRunsResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
   items: PlatformEvalRun[];
+  /** Present only when none of `items` has finished; see `latestFinishedRunFor`. */
+  latestFinishedRun?: PlatformEvalRun | null;
 };
 
 export const listEvalSuiteRunsOperation: PlatformOperation<
@@ -3545,12 +3558,13 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   name: "list_eval_suite_runs",
   title: "List MCPJam eval suite runs",
   description:
-    "List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. The suite is matched by name or ID within the project.",
+    "List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. The suite is matched by name or ID within the project; without one, the suite holding the project's most recent run is used. A run still in progress has no result yet: when none of the listed runs has finished, `latestFinishedRun` is the newest one that has.",
   readOnly: true,
   permalink: derivePermalinks((result) =>
-    result.items.map((run) =>
-      evalRunRef(run.id, result.suite.id, result.project?.id)
-    )
+    [
+      ...result.items,
+      ...(result.latestFinishedRun ? [result.latestFinishedRun] : []),
+    ].map((run) => evalRunRef(run.id, result.suite.id, result.project?.id))
   ),
   inputSchema: evalSuiteScopedInput,
   async execute(input, { client, signal, onScopeResolved }) {
@@ -3558,15 +3572,30 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
       { client, signal, onScopeResolved },
       input.project
     );
-    const suite = await resolveSuite(client, project, input.suite, signal);
-    const page = await client.listEvalSuiteRuns(
-      { projectId: project.id, suiteId: suite.id, limit: input.limit },
-      { signal }
+    const suite = await resolveSuiteForRunListing(
+      client,
+      project,
+      input.suite,
+      signal
+    );
+    const listRuns = async (limit: number | undefined) =>
+      (
+        await client.listEvalSuiteRuns(
+          { projectId: project.id, suiteId: suite.id, limit },
+          { signal }
+        )
+      ).items;
+    const items = await listRuns(input.limit);
+    const latestFinishedRun = await latestFinishedRunFor(
+      items,
+      input.limit,
+      listRuns
     );
     return {
       project: toSelectedProjectInfo(project),
       suite: { id: suite.id, name: suite.name },
-      items: page.items,
+      items,
+      ...(latestFinishedRun === undefined ? {} : { latestFinishedRun }),
     };
   },
 };
