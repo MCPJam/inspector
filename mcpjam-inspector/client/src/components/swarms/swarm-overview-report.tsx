@@ -194,7 +194,7 @@ function OverviewSessionFlow({ row, projectId }: { row: OverviewWave; projectId:
       onSelectNode={selectFlow}
       onSelectLink={selectFlow}
       rebuildBusy={false}
-      stageOrderKey="swarm-overview"
+      stageOrderKey={`swarm-overview:${projectId}`}
     />
   );
 }
