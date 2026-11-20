@@ -1,7 +1,9 @@
-import { judgeBacktestRequestSchema } from "../../../../sdk/src/contract/judge-backtest.js";
+import {
+  evalBacktestRequestSchema,
+  judgeBacktestRequestSchema,
+} from "@mcpjam/sdk/contract";
 import { Hono } from "hono";
 import { ConvexHttpClient } from "convex/browser";
-import { evalBacktestRequestSchema } from "../../../../sdk/src/contract/eval-backtest.js";
 import { runAssertionBacktest } from "../../services/evals/assertion-backtest.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1Error, v1Resource } from "./envelope.js";

@@ -9,7 +9,7 @@ import { resolveAppVersion, resolveEnvironment } from "./log-events.js";
 import {
   sentryBuildMetadata,
   sentryFrameAliases,
-} from "../../shared/sentry-build-metadata.js";
+} from "./sentry-build-metadata.js";
 import { isSentryBuildSurface } from "../../shared/sentry-config.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");

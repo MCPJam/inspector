@@ -23,15 +23,13 @@ import {
   toEvaluatorResult,
   scoreResultSchema,
   resolvedScoreDefinitionSchema,
+  type EvalBacktestContinuation,
+  type EvalBacktestDifference,
+  type EvalBacktestDraft,
+  type EvalBacktestReport,
   type ResolvedScoreDefinition,
   type ScoreResult,
 } from "@mcpjam/sdk/contract";
-import type {
-  EvalBacktestDraft,
-  EvalBacktestContinuation,
-  EvalBacktestReport,
-  EvalBacktestDifference,
-} from "../../../../sdk/src/contract/eval-backtest.js";
 
 type EvidenceRow = {
   iterationId: string;

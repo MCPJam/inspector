@@ -1192,6 +1192,11 @@ export {
   type EvalBacktestDifference,
   type EvalBacktestReport,
 } from "./eval-backtest.js";
+export {
+  judgeBacktestRequestSchema,
+  type JudgeBacktestRequest,
+  type JudgeBacktestReport,
+} from "./judge-backtest.js";
 export * from "./standard-check-ids.js";
 export * from "./standard-checks.js";
 export * from "./goal-completion.js";

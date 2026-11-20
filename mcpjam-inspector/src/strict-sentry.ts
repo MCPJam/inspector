@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/electron/main";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { sentryBuildMetadata } from "../shared/sentry-build-metadata.js";
+import { sentryBuildMetadata } from "../server/utils/sentry-build-metadata.js";
 import { telemetryOptedOut } from "../shared/sentry-identity.js";
 import {
   buildElectronSentryConfig,

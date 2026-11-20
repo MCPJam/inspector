@@ -8,7 +8,7 @@ import type { LocalHarnessRolloutFlag } from "../../shared/harness-descriptors.j
 import {
   rolloutActorId,
   rolloutPersonProperties,
-} from "../../shared/strict-server-analytics.js";
+} from "./strict-server-analytics.js";
 import {
   CLIENT_FEATURE_FLAG_KEYS,
   pickClientFeatureFlags,

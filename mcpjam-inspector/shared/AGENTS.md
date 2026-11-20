@@ -15,9 +15,6 @@ its subpaths by package name, and packages that run in both browser and Node.
   Tests are exempt.
 - No `node:` built-ins. Same lint rule. Bare specifiers (`fs`, `path`) are not
   caught: not enforced.
-- Existing violations in `sentry-build-metadata.ts` and
-  `strict-server-analytics.ts` are suppressed in `eslint-suppressions.json`;
-  do not add entries.
 - Prefer `@mcpjam/sdk` over raw `@modelcontextprotocol/sdk`. Not enforced here:
   `check:mcp-v1-runtime-imports` does not scan `shared/`.
 

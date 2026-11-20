@@ -5,7 +5,7 @@ import {
   rebuildServerAnalytics,
   rolloutActorId,
   rolloutPersonProperties,
-} from "../../shared/strict-server-analytics.js";
+} from "./strict-server-analytics.js";
 
 /** Check queued retries at the last network boundary as well as at capture. */
 export function analyticsTransport(

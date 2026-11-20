@@ -1,8 +1,8 @@
-import { RUNTIME_COMPAT } from "../server/utils/harness/local/runtime-compat.js";
+import { RUNTIME_COMPAT } from "./harness/local/runtime-compat.js";
 import {
   ANALYTICS_EVENTS,
   type ServerAnalyticsEventName,
-} from "./analytics-events";
+} from "../../shared/analytics-events.js";
 import { telemetryActorId } from "@mcpjam/sdk/internal/telemetry";
 import {
   HARNESS_TURN_BOOTSTRAPS,
@@ -10,8 +10,8 @@ import {
   HARNESS_TURN_FALLBACK_REASONS,
   HARNESS_TURN_KINDS,
   HARNESS_TURN_STARTS,
-} from "./harness-turn-event";
-import { isLogConvexIdShape } from "./strict-log";
+} from "../../shared/harness-turn-event.js";
+import { isLogConvexIdShape } from "../../shared/strict-log.js";
 
 const enums: Record<string, readonly string[]> = {
   origin: ["playground", "evals", "api", "scenario"],

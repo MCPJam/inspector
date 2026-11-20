@@ -20,7 +20,7 @@ import {
   uploadServerSourcemaps,
   verifyServerSourcemaps,
 } from "../../scripts/server-sourcemaps.mjs";
-import { sentryBuildMetadata } from "../../shared/sentry-build-metadata";
+import { sentryBuildMetadata } from "../utils/sentry-build-metadata";
 import { SENTRY_DSN } from "../../shared/sentry-config";
 import {
   INSPECTOR_SENTRY_CATALOG,

@@ -7,8 +7,8 @@
  *
  * Counts and closed vocabularies only. A skill's name, id, ref or content never
  * rides the event: they are a customer's own words, and the strict server
- * schema (`shared/strict-server-analytics.ts`) drops every field it does not
- * declare.
+ * schema (`server/utils/strict-server-analytics.ts`) drops every field it does
+ * not declare.
  *
  * The event is personless. Health needs counts, not people, and most reports
  * have no person to name: an eval iteration carries no request identity, and a
