@@ -173,6 +173,16 @@ export function harnessModelRefusal(args: {
   warning?: string;
 } {
   const { adapter } = args;
+  if (adapter.webAccount) {
+    // The vendor's app picks the model on the account; the host's model only
+    // has to be the vendor's own, so a run is never recorded under another's.
+    const verdict = adapter.modelSupport(
+      getCanonicalModelId(args.hostModelId ?? args.model.id, args.model.provider),
+    );
+    return verdict.status === "supported"
+      ? {}
+      : { refusal: { kind: "model-unsupported", reason: verdict.reason } };
+  }
   if (adapter.modelAccess === "external-account") {
     const reason = externalAccountHostModelRefusalReason({
       harnessId: adapter.id,
@@ -332,7 +342,7 @@ export function externalAccountHostModelRefusalReason(args: {
   requestedModelId?: string;
 }): string | undefined {
   const adapter = getHarnessAdapter(args.harnessId);
-  if (adapter.modelAccess !== "external-account") return undefined;
+  if (adapter.modelAccess !== "external-account" || adapter.webAccount) return undefined;
   const modelId = isRuntimeAccountModel(args.modelId) ? args.requestedModelId : args.modelId;
   if (modelId === undefined || isRuntimeAccountModel(modelId)) return undefined;
   return (

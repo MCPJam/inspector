@@ -40,12 +40,29 @@ export const WEB_CLIENT_SITES: Record<WebClientVendor, readonly string[]> = {
 };
 
 export function webClientVendorForRuntime(
-  runtimeId: string,
+  runtimeId: string | null | undefined,
 ): WebClientVendor | undefined {
   return WEB_CLIENT_VENDORS.find(
     (vendor) => WEB_CLIENT_RUNTIME_IDS[vendor] === runtimeId,
   );
 }
+
+export function isWebClientRuntimeId(
+  runtimeId: string | null | undefined,
+): runtimeId is WebClientRuntimeId {
+  return webClientVendorForRuntime(runtimeId) !== undefined;
+}
+
+/**
+ * The page module each runtime pins, by the date its selectors were last
+ * checked against the live site. MCPJam does not pin the vendor's website, so
+ * this is the version a run can be compared by: a run on a newer page module
+ * is a different client even when the site did not change.
+ */
+export const WEB_CLIENT_PAGE_MODULE_VERSIONS = {
+  claude: "page-2026-11-20",
+  chatgpt: "page-2026-11-20",
+} as const satisfies Record<WebClientVendor, string>;
 
 /**
  * The forwarding endpoint lives on a short path. A long path with a key in it
