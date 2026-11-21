@@ -9,11 +9,6 @@
       "count": 1
     }
   },
-  "client/src/components/ChatTabV2.tsx": {
-    "react-hooks/exhaustive-deps": {
-      "count": 2
-    }
-  },
   "client/src/components/CiEvalsTab.tsx": {
     "react-hooks/exhaustive-deps": {
       "count": 1
@@ -787,11 +782,6 @@
       "count": 3
     }
   },
-  "server/routes/v1/eval-backtest.ts": {
-    "no-restricted-imports": {
-      "count": 2
-    }
-  },
   "server/routes/v1/proposed-actions.ts": {
     "no-restricted-syntax": {
       "count": 4
@@ -922,11 +912,6 @@
       "count": 1
     }
   },
-  "server/services/evals/assertion-backtest.ts": {
-    "no-restricted-imports": {
-      "count": 1
-    }
-  },
   "server/services/plugins/run-plugin-servers.ts": {
     "@typescript-eslint/no-explicit-any": {
       "count": 1
@@ -987,12 +972,17 @@
       "count": 1
     }
   },
-  "shared/sentry-build-metadata.ts": {
+  "shared/plugin-icons.ts": {
     "no-restricted-imports": {
-      "count": 3
+      "count": 1
     }
   },
-  "shared/strict-server-analytics.ts": {
+  "shared/plugin-model-context.ts": {
+    "no-restricted-imports": {
+      "count": 1
+    }
+  },
+  "shared/plugin-resource-link.ts": {
     "no-restricted-imports": {
       "count": 1
     }

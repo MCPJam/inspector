@@ -53,7 +53,7 @@ describe("explainTelemetry: server analytics", () => {
     const { forwarded, dropped } = explainTelemetry(sample);
     expect(forwarded).toEqual({ event: "api_agent_turn_completed", outcome: "ok", duration_ms: 950 });
     expect(dropped.deduped).toBe("expects a boolean, got string");
-    expect(dropped.server_url).toMatch(/no field rule: declare it in shared\/strict-server-analytics\.ts/);
+    expect(dropped.server_url).toMatch(/no field rule: declare it in server\/utils\/strict-server-analytics\.ts/);
     expect(() => expectTelemetryFields(sample, ["server_url"])).toThrow(/server_url: no field rule/);
     expect(explainTelemetry({ ...sample, properties: { outcome: 1n } }).dropped.outcome).toMatch(/^1 is not an allowed value/);
   });

@@ -11,7 +11,7 @@ vi.mock("../../../utils/analytics.js", () => ({
   captureServerEventForActor: capture,
 }));
 
-import { rebuildServerAnalytics } from "../../../../shared/strict-server-analytics";
+import { rebuildServerAnalytics } from "../../../utils/strict-server-analytics";
 import { RunPluginSnapshotError } from "../../evals/run-plugin-snapshot";
 import {
   buildPinnedSkillSource,

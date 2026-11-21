@@ -6,8 +6,8 @@ import type { Harness } from "@mcpjam/sdk/host-config/internal";
  * builds it).
  *
  * Closed vocabularies and whole milliseconds only. The strict server analytics
- * boundary (`strict-server-analytics.ts`) reads these lists, forwards their
- * values and drops anything else.
+ * boundary (`server/utils/strict-server-analytics.ts`) reads these lists,
+ * forwards their values and drops anything else.
  */
 
 /** The route that ran the turn, or `local` for one on the person's machine. */

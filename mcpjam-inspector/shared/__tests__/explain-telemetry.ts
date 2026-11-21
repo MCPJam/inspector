@@ -10,7 +10,7 @@
  */
 import { ANALYTICS_EVENTS, type ServerAnalyticsEventName } from "../analytics-events";
 import { buildStrictLogRow, strictLogFieldRule } from "../strict-log";
-import { rebuildServerAnalytics, serverAnalyticsFieldRule } from "../strict-server-analytics";
+import { rebuildServerAnalytics, serverAnalyticsFieldRule } from "../../server/utils/strict-server-analytics";
 
 type Fields = Record<string, unknown>;
 export type TelemetrySample =
@@ -40,7 +40,7 @@ function show(value: unknown): string {
   }
 }
 const LOG_FIELDS = "server/utils/log-events.ts";
-const ANALYTICS_FIELDS = "shared/strict-server-analytics.ts";
+const ANALYTICS_FIELDS = "server/utils/strict-server-analytics.ts";
 
 function ruleReason(rule: Rule | undefined, value: unknown, declareIn: string) {
   if (!rule) return `no field rule: declare it in ${declareIn} (literal union, boolean or number)`;
