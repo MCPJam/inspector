@@ -108,6 +108,10 @@
                   "evaluate/read-results"
                 ]
               },
+              {
+                "group": "Grade and ship",
+                "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
+              },
               "inspector/evals",
               "inspector/eval-test-users"
             ]
