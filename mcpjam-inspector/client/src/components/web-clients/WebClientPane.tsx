@@ -23,6 +23,7 @@ import {
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
 import { PaneBlocked } from "./PaneBlocked";
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebAccountChip } from "./WebAccountChip";
 import { WebSignInBrowser } from "./WebSignInBrowser";
@@ -199,6 +200,7 @@ export function useWebClientPane({
         vendor={vendor}
         expectedEmail={account?.accountEmail}
         onSave={async () => {
+          await releaseBrowserForChat(projectId, active.chatSessionId);
           const result = await saveWebAccountProfile(
             projectId,
             active.webAccountId,
