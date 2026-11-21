@@ -3933,9 +3933,22 @@ export function PlaygroundMain({
   ]);
 
   const isCurrentHistoryTarget = useHistoryTarget(chatSessionId, convexProjectId);
+  // A send belongs to the thread open when it started. A click on another
+  // thread or New chat bumps the epoch before any discard dialog; the other
+  // ways the open thread changes move the selection counter or the target.
+  const sendEpochRef = useRef(0);
+  const beginThreadSend = useCallback(() => {
+    const epoch = sendEpochRef.current;
+    const selection = historySelectionRequestIdRef.current;
+    const target = { chatSessionId, projectId: convexProjectId };
+    return () =>
+      sendEpochRef.current === epoch &&
+      historySelectionRequestIdRef.current === selection &&
+      isCurrentHistoryTarget(target);
+  }, [chatSessionId, convexProjectId, isCurrentHistoryTarget]);
 
   const refreshCurrentHistorySession = useCallback(
-    async ({ retries = 0, markRead = false } = {}) => {
+    async ({ retries = 0, markRead = false, isCurrent = () => true } = {}) => {
       if (!activeHistorySessionId && !chatSessionId) return null;
       for (let attempt = 0; attempt <= retries; attempt += 1) {
         try {
@@ -3946,6 +3959,7 @@ export function PlaygroundMain({
           // A previous thread's request (or its still-rendered row id) must
           // never attach its persistence cursor to the newly opened chat.
           if (
+            !isCurrent() ||
             !isCurrentHistoryTarget({ chatSessionId, projectId: convexProjectId }) ||
             detail.session.chatSessionId !== chatSessionId
           )
@@ -4024,11 +4038,16 @@ export function PlaygroundMain({
       return true;
     }
 
-    const target = { chatSessionId, projectId: convexProjectId };
+    // The sender checked its thread just before this call, so a check taken
+    // here covers the read: a thread picked meanwhile is not this send's.
+    const isCurrent = beginThreadSend();
     let detail: Awaited<ReturnType<typeof refreshCurrentHistorySession>> = null;
     try {
-      detail = await withPresendSyncTimeout(refreshCurrentHistorySession());
+      detail = await withPresendSyncTimeout(
+        refreshCurrentHistorySession({ isCurrent }),
+      );
     } catch (error) {
+      if (!isCurrent()) return false;
       console.error(
         "[PlaygroundMain] Failed to sync chat history before send",
         error,
@@ -4039,7 +4058,7 @@ export function PlaygroundMain({
     if (detail) return true;
     // Another thread opened while the read was in flight: this send belonged
     // to the one that closed, so drop it rather than detach the open thread.
-    if (!isCurrentHistoryTarget(target)) return false;
+    if (!isCurrent()) return false;
 
     detachHistorySession(
       "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
@@ -4047,10 +4066,9 @@ export function PlaygroundMain({
     return false;
   }, [
     activeHistorySessionId,
+    beginThreadSend,
     chatSessionId,
-    convexProjectId,
     detachHistorySession,
-    isCurrentHistoryTarget,
     pendingDirectVisibility,
     reactiveHistorySession,
     refreshCurrentHistorySession,
@@ -4060,6 +4078,7 @@ export function PlaygroundMain({
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
+      sendEpochRef.current += 1;
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
@@ -4283,6 +4302,7 @@ export function PlaygroundMain({
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean; isCurrent?: () => boolean }) => {
       if (isStreaming) return false;
+      sendEpochRef.current += 1;
       if (!(await ensureDiscardDraftConfirmed())) return false;
       // An App's new-chat action can lapse while the person decides; a reset
       // for it then would discard their draft for nothing.
@@ -4984,10 +5004,11 @@ export function PlaygroundMain({
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
+        const isCurrent = beginThreadSend();
         if (conversationSendBlockedRef.current) {
           return;
         }
-        if (!(await ensureSelectedServerReadyForChat())) {
+        if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
           return;
         }
         // Every send entry point takes the same thread preflight, not just the
@@ -4995,7 +5016,7 @@ export function PlaygroundMain({
         // would otherwise send with a stale `expectedVersion`, and now that the
         // hosted route honors it, the turn runs in full and only THEN takes a
         // 409 and a conflict detach. A no-op when no history thread is open.
-        if (!(await ensureThreadReadyForSend())) {
+        if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
           return;
         }
         // The local-execution gate runs at EVERY send entry point, exactly as
@@ -5010,13 +5031,13 @@ export function PlaygroundMain({
           // saying "press Send to continue" over an empty composer, with the
           // prompt it was talking about gone. Putting it there is what makes
           // that instruction true.
-          composer.setInput(text);
+          if (isCurrent()) composer.setInput(text);
           return;
         }
         // The first check is stale once the gates above have yielded. A study
         // block, a target disclosure, or a history restore that landed in that
         // window has to win, or the follow-up still goes out.
-        if (conversationSendBlockedRef.current) {
+        if (!isCurrent() || conversationSendBlockedRef.current) {
           return;
         }
         const sentContext = modelContextQueue;
@@ -5025,8 +5046,9 @@ export function PlaygroundMain({
           metadata: outgoingSenderMetadata,
           widgetModelContext: sentContext,
           // The gates above can finish and this call can still await server
-          // preparation. The study block has to be read again at dispatch.
-          isCurrent: () => !conversationSendBlockedRef.current,
+          // preparation. The thread and the study block are read again at
+          // dispatch.
+          isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
         // A refusal keeps the queue. A success drops only the objects this
         // request carried: a widget can replace or add entries during the
@@ -5046,6 +5068,7 @@ export function PlaygroundMain({
       })();
     },
     [
+      beginThreadSend,
       composer,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
@@ -5628,6 +5651,7 @@ export function PlaygroundMain({
   // through `performComposerSubmit`, one submit at a time.
 
   const submitComposer = useCallback(async (): Promise<boolean> => {
+    const isCurrent = beginThreadSend();
     if (isCompareMode && !ensureCompareReady()) return false;
     if (!composerHasContent || sendBlocked) {
       return false;
@@ -5647,16 +5671,16 @@ export function PlaygroundMain({
     if (conversationSendBlockedRef.current) {
       return false;
     }
-    if (!(await ensureSelectedServerReadyForChat())) {
+    if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
       return false;
     }
-    if (!(await ensureThreadReadyForSend())) {
+    if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
       return false;
     }
     // AFTER the other gates and before anything is consumed: a dialog that
     // opened and was cancelled must leave the draft, the attachments and the
     // prompt/skill results exactly as they were.
-    if (!(await ensureLocalHarnessReadyForSend())) {
+    if (!(await ensureLocalHarnessReadyForSend()) || !isCurrent()) {
       return false;
     }
 
@@ -5688,6 +5712,7 @@ export function PlaygroundMain({
           file_count: entries.length,
         });
       } catch (err) {
+        if (!isCurrent()) return false;
         if (isComputerStartLimitError(err)) {
           track("computer_start_limit_hit", {
             location: "playground_attachments",
@@ -5709,6 +5734,7 @@ export function PlaygroundMain({
       fileAttachments.length > 0
         ? await attachmentsToFileUIParts(fileAttachments)
         : undefined;
+    if (!isCurrent()) return false;
 
     // Re-read after server prep, thread sync, and attachment work. Those
     // awaits can outlive the check at the top, and a study that blocked in
@@ -5756,7 +5782,7 @@ export function PlaygroundMain({
         extraParts: draftItems.map((item) => item.part),
         prependMessages:
           prependMessages.length > 0 ? prependMessages : undefined,
-        isCurrent: () => !conversationSendBlockedRef.current,
+        isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
       });
       if (!sent) return false;
       composerMentions.clear();
@@ -5796,6 +5822,7 @@ export function PlaygroundMain({
     onFirstMessageSent,
     computerAttachmentsActive,
     computerAttachmentUpload,
+    beginThreadSend,
   ]);
   // An App draft is refused for the whole submit, which captures the composer
   // first and clears it last. One submit at a time: the gates above await the
@@ -6095,26 +6122,36 @@ export function PlaygroundMain({
       // clicked while a submit is being prepared would wipe that submit's
       // attachments and the submit would still send its draft.
       void composerSend.run(async () => {
-        if (!(await ensureSelectedServerReadyForChat())) {
-          composer.setInput(prompt);
+        const isCurrent = beginThreadSend();
+        // A prompt whose thread was left is not put in the new one.
+        const refuse = () => {
+          if (isCurrent()) composer.setInput(prompt);
+        };
+        if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
+          refuse();
           return;
         }
-        if (!(await ensureThreadReadyForSend())) {
-          composer.setInput(prompt);
+        if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
+          refuse();
           return;
         }
         // Same gate as the composer's, and the same restore on refusal: a
         // cancelled dialog must leave the prompt where the user can see it.
-        if (!(await ensureLocalHarnessReadyForSend())) {
-          composer.setInput(prompt);
+        if (!(await ensureLocalHarnessReadyForSend()) || !isCurrent()) {
+          refuse();
           return;
         }
         if (isCompareMode) {
-          if (!queueBroadcastRequest({
-            text: prompt,
-            prependMessages: [],
-            widgetModelContext: modelContextQueue,
-          })) { composer.setInput(prompt); return; }
+          if (
+            !queueBroadcastRequest({
+              text: prompt,
+              prependMessages: [],
+              widgetModelContext: modelContextQueue,
+            })
+          ) {
+            refuse();
+            return;
+          }
         } else {
           trackSendMessage({ single_model_send: true });
           // Held until dispatch: the chips stay on screen through the hosted
@@ -6123,9 +6160,10 @@ export function PlaygroundMain({
             text: prompt,
             metadata: outgoingSenderMetadata,
             widgetModelContext: modelContextQueue,
+            isCurrent,
           });
           if (!sent) {
-            composer.setInput(prompt);
+            refuse();
             return;
           }
         }
@@ -6142,6 +6180,7 @@ export function PlaygroundMain({
       });
     },
     [
+      beginThreadSend,
       composer,
       composerSend.run,
       composerDisabled,
@@ -6178,16 +6217,21 @@ export function PlaygroundMain({
         composer.setInput(text);
         return;
       }
-      if (!(await ensureSelectedServerReadyForChat())) {
-        composer.setInput(text);
+      const isCurrent = beginThreadSend();
+      // A prompt whose thread was left is not put in the new one.
+      const refuse = () => {
+        if (isCurrent()) composer.setInput(text);
+      };
+      if (!(await ensureSelectedServerReadyForChat()) || !isCurrent()) {
+        refuse();
         return;
       }
-      if (!(await ensureThreadReadyForSend())) {
-        composer.setInput(text);
+      if (!(await ensureThreadReadyForSend()) || !isCurrent()) {
+        refuse();
         return;
       }
-      if (!(await ensureLocalHarnessReadyForSend())) {
-        composer.setInput(text);
+      if (!(await ensureLocalHarnessReadyForSend()) || !isCurrent()) {
+        refuse();
         return;
       }
       if (isCompareMode) {
@@ -6196,7 +6240,7 @@ export function PlaygroundMain({
           prependMessages: [],
           widgetModelContext: modelContextQueue,
         })) {
-          composer.setInput(text);
+          refuse();
           return;
         }
         setModelContextQueue([]);
@@ -6206,12 +6250,14 @@ export function PlaygroundMain({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
+          isCurrent,
         });
         setModelContextQueue([]);
       }
       onFirstMessageSent?.();
     },
     [
+      beginThreadSend,
       composer,
       composerDisabled,
       sendBlocked,
