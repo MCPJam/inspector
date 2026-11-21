@@ -4,7 +4,7 @@ description: "What each run status, comparison label, platform value, cost state
 icon: "history"
 ---
 
-These are the words and values the Evaluate tab uses for runs. For how to read a run page, see [Read results](/evaluate/read-results).
+The words and values the Evaluate tab uses for runs. To read a run page, see [Read results](/evaluate/read-results).
 
 ## Run status
 
@@ -14,12 +14,12 @@ Shown in the run page header while a client and model pairing has no pass or fai
 | --- | --- |
 | Pending | The run is launched but has not started executing. |
 | Running | Iterations are executing. |
-| Grading | Every iteration finished, and the run is waiting for its Required judge before it is decided. It is not done yet. |
+| Grading | Every iteration finished, and the run is waiting for its Required judge before it is decided. |
 | Cancelled | Someone clicked **Cancel run**. Stopped iterations are recorded as cancelled, not as failures. |
 | Inconclusive | A per-case suite measured too little to decide, under its evidence requirements. It is neither a pass nor a failure. |
 | Completed | The run finished without a stored pass or fail result. |
 
-The run's verdict at the top of the page reads Passed, Failed, Inconclusive or No verdict. **Cancel run** is offered while a run is Pending, Running or Grading; afterwards the button is **Run again**.
+The verdict at the top of the page reads Passed, Failed, Inconclusive or No verdict. **Cancel run** is offered while a run is Pending, Running or Grading; after that the button is **Run again**.
 
 ## Result column
 
@@ -64,10 +64,7 @@ The **Platform** column says where a run came from. The **Platform** filter abov
 | CLI | Launched by the `mcpjam` CLI. Declared. |
 | GitHub | Launched by the CLI inside a GitHub Actions job. Declared. See [CI](/cli/ci). |
 
-The platform records two kinds of origin:
-
-- Stamped: the platform sets a run's source itself, and a caller cannot change it. Everything launched through the public API is stamped API, because a CLI run and a GitHub Actions job are both API calls from the server's side.
-- Declared: the launching process names itself. The CLI declares CLI, or GitHub inside an Actions job. Hovering a declared value shows "declared by the launching client". A declared origin is a label, not proof, and nothing is authorized on the strength of it.
+A stamped origin is set by the platform, and a caller cannot change it: everything launched through the public API is stamped API, because CLI runs and GitHub Actions jobs reach the server as API calls. A declared origin is named by the launching process: the CLI declares CLI, or GitHub inside an Actions job. Hovering a declared value shows "declared by the launching client". A declared origin is a label, not proof, and nothing is authorized on the strength of it.
 
 ## Cost
 
@@ -80,7 +77,7 @@ Cost is the MCPJam-billed cost of the model work in a run. It shows in the heade
 | ` · partial` after the amount | Only some iterations were priced. Hover for "N iterations priced". |
 | A tooltip that mentions your runner | Part of the cost was reported by your SDK runner. It is real, but MCPJam neither computed nor verified it. |
 
-A run that looks cheaper may simply be one with fewer iterations priced, so check for `partial` before comparing costs. To fail CI on a cost increase, see `--max-cost-increase-percent` in [CI](/cli/ci).
+A run that looks cheaper may have fewer iterations priced, so check for `partial` before comparing costs. To fail CI on a cost increase, see `--max-cost-increase-percent` in [CI](/cli/ci).
 
 ## Runs table columns
 
