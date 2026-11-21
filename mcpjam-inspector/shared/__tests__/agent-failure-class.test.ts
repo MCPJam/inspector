@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { agentFingerprint, agentPageClass } from "../agent-failure-class";
+import {
+  PROJECT_ACCESS_REFUSED_CODE,
+  agentFingerprint,
+  agentPageClass,
+} from "../agent-failure-class";
 
 /**
  * The rule both halves of Ask MCPJam's capture classify with. `routine` pings
@@ -57,6 +61,10 @@ describe("agentPageClass", () => {
     [
       "the org's provider throttling",
       { source: "s", httpStatus: 503, code: "provider_unavailable" },
+    ],
+    [
+      "the caller asking for a project they are not a member of",
+      { source: "s", httpStatus: 403, code: PROJECT_ACCESS_REFUSED_CODE },
     ],
   ])("is routine for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("routine");
@@ -116,6 +124,11 @@ describe("agentPageClass", () => {
       "the backend failing closed on the org's AI policy",
       { source: "s", httpStatus: 503, code: "ai_key_policy_unavailable" },
     ],
+    // Our own platform server's scope refusal and the v1 agent's lease checks
+    // answer FORBIDDEN too; only the explicit membership code is routine.
+    ["a bare FORBIDDEN", { source: "s", httpStatus: 403, code: "FORBIDDEN" }],
+    // Inside a turn or a web search this is Convex missing a route: ours.
+    ["a 404 with no code", { source: "s", httpStatus: 404 }],
   ])("is an incident for %s", (_label, facts) => {
     expect(agentPageClass(facts)).toBe("incident");
   });

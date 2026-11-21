@@ -71,6 +71,9 @@ function captureUnreportedAgentFailure(
         source: "request-log.agent-backstop",
         httpStatus: status,
         ...(meta?.code ? { code: meta.code } : {}),
+        // No route answered: a method or path Ask MCPJam does not serve, which
+        // its own client never sends. A route's 404 sets `webErrorMeta`.
+        ...(status === 404 && !meta ? { pageClass: "routine" as const } : {}),
       }),
     }).captured;
   } catch {

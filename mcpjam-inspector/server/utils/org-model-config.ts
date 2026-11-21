@@ -22,6 +22,11 @@ import type { BaseUrls, CustomProviderConfig } from "./chat-helpers";
 import { HOSTED_MODE } from "../config.js";
 import { logger } from "./logger";
 import { backendFailureText } from "./backend-failure-text.js";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
+import { PROJECT_ACCESS_REFUSED_CODE } from "@/shared/agent-failure-class";
+
+const PROJECT_ACCESS_REFUSED_MESSAGE =
+  "You don't have access to this project. Ask a project owner for access.";
 import {
   getServiceCredential,
   INSPECTOR_SERVICE_TOKEN_HEADER,
@@ -311,6 +316,29 @@ export async function resolveOrgModelConfig(
       // neither would — the hosted-only answer, not a route-not-found error.
       if (!inspectorServiceToken && response.status === 404 && !parsed) {
         throw new ServiceCredentialUnavailableError(ORG_MODEL_CONFIG_FEATURE);
+      }
+      // The caller is not a member of the project: the one JSON 403 the
+      // handler writes with no `code`. Its others, the org's provider key
+      // refused (`provider_secret_…`) and `credential_not_allowed`, stay
+      // untyped. Matched on shape, not text, which production may mask.
+      if (
+        response.status === 403 &&
+        parsed &&
+        !Array.isArray(parsed) &&
+        !("code" in parsed) &&
+        !String(parsed.error ?? "").startsWith("provider_secret_")
+      ) {
+        throw new WebRouteError(
+          403,
+          ErrorCode.FORBIDDEN,
+          backendFailureText({
+            source: "org-model-config",
+            status: response.status,
+            detail: parsed.error,
+            fallback: PROJECT_ACCESS_REFUSED_MESSAGE,
+          }),
+          { code: PROJECT_ACCESS_REFUSED_CODE },
+        );
       }
       const fallback = `Org model config resolution failed (${response.status})`;
       throw new Error(
