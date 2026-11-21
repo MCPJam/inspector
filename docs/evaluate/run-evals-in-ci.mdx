@@ -10,13 +10,17 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
 ## Choose how to run
 
+<Warning>
+  Every job that runs a suite spends model tokens. Hosted runs use your organization's MCPJam credits or its configured provider keys; SDK runs use the provider key in the job's environment, or credits for an `mcpjam/` model.
+</Warning>
+
 <Tabs>
   <Tab title="GitHub Action">
     The evals action runs a hosted suite, waits for its result and uploads reports to GitHub. It tests the suite's saved server, not your PR's code.
 
     Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
 
-    ```yaml
+    ```yaml .github/workflows/mcpjam.yml
     name: MCPJam evals
 
     on:
@@ -53,7 +57,29 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
   <Tab title="CLI in any CI">
     `cloud eval run --wait` runs a hosted suite to completion and writes a JSON report; `cloud eval gate` then applies a gate and writes JUnit XML. The syntax is GitHub Actions; the commands work in any CI with Node.
 
-    ```yaml
+    Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
+
+    ```yaml .github/workflows/mcpjam.yml
+    name: MCPJam evals
+
+    on:
+      workflow_dispatch:
+      pull_request:
+
+    permissions:
+      contents: read
+
+    jobs:
+      evals:
+        # Fork PRs do not receive this repo's secrets.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        steps:
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+
           - name: Run hosted eval
             env:
               MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
@@ -62,6 +88,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
                 --suite "Nightly regression" \
                 --project "My project" \
                 --wait \
+                --idempotency-key "eval-${{ github.run_id }}" \
                 --out eval-report.json \
                 --format json > eval-result.json
               echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
@@ -92,12 +119,34 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
     Keep `if: always()` on the gate step. The run step exits nonzero on a failed verdict, and without it the gate and its JUnit report would be skipped exactly when the run failed.
 
-    Before retrying a job, pass a stable `--idempotency-key` so the retry resumes the launched run instead of starting a second paid one. The [`cloud eval run` reference](/cli/reference#cloud-eval-run) covers the wait timeout, reporters and every other flag.
+    `github.run_id` stays the same when you re-run a job, so the `--idempotency-key` makes a retry resume the launched run instead of starting a second paid one. The [`cloud eval run` reference](/cli/reference#cloud-eval-run) covers the wait timeout, reporters and every other flag.
   </Tab>
   <Tab title="SDK upload">
-    If you run evals with [`@mcpjam/sdk`](/sdk/concepts/running-evals) in your own test job, set `MCPJAM_API_KEY` and results upload automatically:
+    If you run evals with [`@mcpjam/sdk`](/sdk/concepts/running-evals) in your own test job, set `MCPJAM_API_KEY` and results upload automatically. Save this as `.github/workflows/mcpjam.yml`; it runs the tests in `evals/`, such as the [notes suite](/evaluate/run-a-suite#start-a-run):
 
-    ```yaml
+    ```yaml .github/workflows/mcpjam.yml
+    name: MCPJam evals
+
+    on:
+      workflow_dispatch:
+      pull_request:
+
+    permissions:
+      contents: read
+
+    jobs:
+      evals:
+        # Fork PRs do not receive this repo's secrets.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+          - run: npm ci
+
           - name: Run SDK evals
             env:
               MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
@@ -105,7 +154,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
             run: npx vitest run evals/
     ```
 
-    To run without a provider key, prefix the model with `mcpjam/` so it runs on your organization's credits:
+    To run without a provider key, prefix the model with `mcpjam/` so it runs on your organization's credits. Have the test read the model from the environment, for example `model: process.env.EVAL_MODEL ?? "anthropic/claude-sonnet-5"`, and replace the last step with:
 
     ```yaml
           - name: Run SDK evals
@@ -117,32 +166,44 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
     To post results on the pull request, hand the same command to the evals action. Each PR gets one comment, updated on every push, plus a checks summary:
 
-    ```yaml
+    ```yaml .github/workflows/mcpjam.yml
+    name: MCPJam evals
+
+    on:
+      pull_request:
+
     permissions:
       contents: read
       pull-requests: write
 
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm ci
-      - name: Start the MCP server
-        run: |
-          npm run serve &
-          npx wait-on http://localhost:3000
-      - uses: MCPJam/inspector/actions/evals@evals-v1
-        with:
-          api-key: ${{ secrets.MCPJAM_API_KEY }}
-          command: npm run eval
-          comment: true
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    jobs:
+      evals:
+        # Fork PRs do not receive this repo's secrets.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        steps:
+          - uses: actions/checkout@v4
+          - uses: actions/setup-node@v4
+            with:
+              node-version: 22
+          - run: npm ci
+          - name: Start the MCP server
+            run: |
+              npm run serve &
+              npx wait-on http://localhost:3000
+          - uses: MCPJam/inspector/actions/evals@evals-v1
+            with:
+              api-key: ${{ secrets.MCPJAM_API_KEY }}
+              command: npm run eval
+              comment: true
+            env:
+              ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     ```
 
     `command` replaces `project` and `suite`. The action finds the uploaded runs through a receipt that `@mcpjam/sdk` 8.8.0 and newer writes. [Save results to MCPJam](/sdk/concepts/saving-results) covers CI metadata and artifact upload.
   </Tab>
 </Tabs>
-
-Hosted runs consume your organization's credits or its configured provider keys.
 
 ## Gate the merge
 

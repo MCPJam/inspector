@@ -35,6 +35,70 @@ When your organization runs out of MCPJam credits, a run whose models all use cr
 
 Every iteration also counts against your organization's eval iteration allowance, whichever model it uses.
 
+### Keys for CLI and SDK runs
+
+A hosted run started from the CLI uses the same models and credits as one started in the app; the CLI only needs an MCPJam credential to start it. A local `mcpjam test` run and an SDK run call the model from your machine, with the keys in your environment.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash Hosted runs (mcpjam cloud eval)
+    # Sign in once on your machine...
+    mcpjam cloud login
+    # ...or, in CI, use an organization API key from Settings → API keys
+    export MCPJAM_API_KEY=sk_...
+    ```
+
+    ```bash Local runs (mcpjam test)
+    # The provider key for the suite's model (BYOK)
+    export ANTHROPIC_API_KEY=sk-ant-...
+    # Any of: OPENAI_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY (or GEMINI_API_KEY),
+    # DEEPSEEK_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY, XAI_API_KEY
+
+    # The MCPJam identity every run starts with (or a saved mcpjam cloud login)
+    export MCPJAM_API_KEY=sk_...
+
+    mcpjam test .mcpjam/evals/notes.yaml
+    ```
+
+    A model written `mcpjam/provider/model`, or `--inference mcpjam`, runs on your organization's MCPJam credits instead of a provider key. `--api-key` overrides `MCPJAM_API_KEY`, which overrides the saved login. Server credentials come from the `env` and `headers` in your MCP config, not from the auth saved in the app. See [Inference](/cli/local-evals#inference).
+
+    <Note>
+      There is no fallback between the two. A provider key the provider rejects fails the run with exit `3`; it never spends MCPJam credits instead.
+    </Note>
+  </Tab>
+  <Tab title="SDK">
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...   # read by HostRunner below
+    export MCPJAM_API_KEY=sk_...          # run identity; also uploads results
+    ```
+
+    ```ts evals/notes-keys.ts
+    import { HostRunner, MCPClientManager } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    await manager.connectToServer("notes");
+
+    // Your own provider key
+    const byok = new HostRunner({
+      tools: await manager.getTools(),
+      model: "anthropic/claude-sonnet-5",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    });
+
+    // MCPJam credits: the mcpjam/ prefix, with apiKey falling back to MCPJAM_API_KEY
+    const hosted = new HostRunner({
+      tools: await manager.getTools(),
+      model: "mcpjam/anthropic/claude-sonnet-4.5",
+      apiKey: process.env.MCPJAM_API_KEY!,
+    });
+    ```
+
+    Hosted `mcpjam/` models are `mcpjam/anthropic/claude-*` and `mcpjam/openai/gpt-5*`. An `apiKey` or `mcpjamAuth` passed in run options takes precedence over `MCPJAM_API_KEY`, which takes precedence over the saved CLI login. Server credentials are whatever you pass to `MCPClientManager`. See [LLM providers](/sdk/reference/llm-providers) and [eval identity](/cli/local-evals#eval-identity-and-local-data).
+  </Tab>
+</Tabs>
+
 ## What leaves MCPJam
 
 | Recipient | What it receives | When |

@@ -8,6 +8,96 @@ A run page reads top to bottom: how each client and model did, what broke, which
 
 {/* Screenshot: run page for Run #12 of Weather suite, finished, showing the header, two pairing rows, the Findings block and the top of the results matrix */}
 
+## Get a run's results
+
+<Tabs>
+  <Tab title="Inspector">
+    Open the run from the **Runs** table on **Overview** or from the suite's run history. The sections below follow the run page from the header down.
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    # Start a run and keep its ID (or copy it from the View: link)
+    RUN_ID=$(mcpjam cloud eval run --suite "My eval suite" --project "My project" --wait --format json | jq -r '.runs[0].id')
+
+    # Verdict, decision summary, and all six chain stages for each failing iteration
+    mcpjam cloud eval status --run "$RUN_ID" --project "My project" --stages
+
+    # Every iteration: pass or fail, tool calls, tokens and latency
+    mcpjam cloud eval iterations --run "$RUN_ID" --project "My project" --limit 200
+
+    # One iteration's full message history and spans; take its ID from the list above
+    mcpjam cloud eval trace --run "$RUN_ID" --project "My project" --iteration "$ITERATION_ID"
+    ```
+
+    <Note>
+      `cloud eval status` lists failure diagnostics 20 at a time. When `decisionSummary.diagnostics.complete` is `false`, pass `decisionSummary.diagnostics.nextCursor` to `--diagnostics-cursor` for the next page. See [`cloud eval status`](/cli/reference#cloud-eval-status).
+    </Note>
+  </Tab>
+  <Tab title="SDK">
+    `suite.run()` returns the aggregate; each `EvalTest` keeps its own iterations, and each iteration keeps its `PromptResult`s.
+
+    ```ts evals/notes-results.test.ts
+    import { afterAll, beforeAll, test } from "vitest";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    });
+
+    afterAll(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    test("read notes suite results", async () => {
+      const suite = new EvalSuite({ name: "Notes server" });
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "reads the note it was asked about",
+        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+      }));
+
+      const result = await suite.run(agent, { iterations: 3 });
+
+      // The whole run
+      const { successes, iterations, accuracy, latency, tokenUsage } = result.aggregate;
+      console.log(`${successes}/${iterations} passed (${(accuracy * 100).toFixed(1)}%)`);
+      console.log(`p95 ${latency.e2e.p95} ms, ${tokenUsage.total} tokens`);
+
+      // Each case, then what each failed iteration called and answered
+      for (const evalTest of suite.getAll()) {
+        console.log(`${evalTest.getName()}: ${(evalTest.accuracy() * 100).toFixed(1)}%`);
+        for (const iteration of evalTest.getFailedIterations()) {
+          console.log("  error:", iteration.error);
+          for (const prompt of iteration.prompts ?? []) {
+            console.log("  called:", prompt.toolsCalled(), "answered:", prompt.text);
+          }
+        }
+        if (evalTest.getFailedIterations().length > 0) {
+          console.log(evalTest.getFailureReport());
+        }
+      }
+
+      // Whether the results reached MCPJam, and the run they created
+      const receipt = suite.getReportingReceipt();
+      console.log(receipt.state, receipt.report?.runId);
+    }, 600_000);
+    ```
+
+    With `MCPJAM_API_KEY` set, the suite uploads when it finishes and prints `[mcpjam/sdk] View run:` with a link to the same run page. See [`EvalTest` results](/sdk/reference/eval-test#getresults), [`PromptResult`](/sdk/reference/prompt-result) and [Saving eval results](/sdk/reference/eval-reporting).
+  </Tab>
+</Tabs>
+
 ## The header
 
 The title reads "Run #N of" and the suite name, for example "Run #12 of Weather suite". The line under it counts what the run measured, for example "3 cases · 12 iterations · 2 client-model combos", followed by the server group the run connected. While a client and model pair has no pass or fail verdict, a pill beside the title names its [status](/evaluate/reference/runs-and-results#run-status).
