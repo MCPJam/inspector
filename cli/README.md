@@ -14,6 +14,15 @@ Or run without installing:
 npx -y @mcpjam/cli@latest --help
 ```
 
+## Agent skills
+
+Coding agents should install a skill before driving the CLI. `mcp-inspector` covers the local commands; `mcpjam-cloud` covers `mcpjam cloud`, including hosted eval runs, polling, triage and credit limits.
+
+```bash
+npx skills add mcpjam/inspector --skill mcp-inspector
+npx skills add mcpjam/inspector --skill mcpjam-cloud
+```
+
 ## Commands
 
 Local MCP testing stays at the top level. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the root-level exception. See the [4.0 migration guide](https://docs.mcpjam.com/cli/migration).
