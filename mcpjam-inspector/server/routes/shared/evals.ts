@@ -1819,6 +1819,30 @@ async function composableEnvironmentTargets(args: {
 }
 
 /**
+ * Whether a run launch may write the suite it runs. It may on every launch
+ * that is not a rerun (it upserts the suite's cases and, outside an
+ * environment launch, rewrites its server snapshot), and on `refreshSnapshot`
+ * outside an environment launch. `authorEvalSuite` writes only on these
+ * launches and the v1 CI-owned pre-check (PLB-238) refuses them, so both read
+ * it from here.
+ *
+ * "May": an environment launch that is not a rerun, sends no name or
+ * description and carries the tests already stored writes nothing, yet is
+ * refused. Telling it apart would mean diffing the stored cases before the
+ * pre-check.
+ */
+export function evalLaunchWritesSuite(args: {
+  suiteRerun: boolean | undefined;
+  refreshSnapshot: boolean | undefined;
+  environmentLaunch?: boolean;
+}): boolean {
+  return (
+    !args.suiteRerun ||
+    (args.refreshSnapshot === true && !args.environmentLaunch)
+  );
+}
+
+/**
  * Author phase of a suite run: persist the suite + its test cases (create or
  * upsert), WITHOUT creating a run record or executing anything. Extracted from
  * `prepareEvalRun` so the author-only public surface
@@ -1964,7 +1988,7 @@ export async function authorEvalSuite(args: {
     // frozen execution snapshot. Only update when explicitly refreshing or
     // on first-run (non-rerun) writes.
     const shouldUpdateSnapshot =
-      !args.environmentLaunch && (!suiteRerun || refreshSnapshot === true);
+      !args.environmentLaunch && evalLaunchWritesSuite(args);
     // …and when there is nothing to update, DON'T CALL AT ALL.
     //
     // A plain rerun carries no snapshot (above) and no name or description of

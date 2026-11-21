@@ -1407,7 +1407,7 @@
         "operationId": "createEvalRun",
         "tags": ["Eval runs"],
         "summary": "Create an eval run (async)",
-        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
+        "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nIf the suite is CI-owned (see `EvalSuiteDetail.managedBy`), a launch that would write it returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before any server connects. These launches write the suite:\n\n- Inline `tests` without `suiteRerun: true`.\n- `refreshSnapshot` outside a project environment.\n\nA bare `suiteId` rerun still runs.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.\n\nTo make the run readable as something more specific than `API` in the Runs table, send `x-mcpjam-launcher` (and `x-mcpjam-ci` from a CI job). Both are labels: `source` is stamped `api` either way.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -1500,6 +1500,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -2563,7 +2566,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Enable, repoint, or disable a suite's schedule",
-        "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.",
+        "description": "A schedule fires exactly ONE run per interval, so an environment-based suite must pin exactly one of its attached environments. Omitting `environmentId` on a single-environment suite means that environment; omitting it on a multi-environment suite is a VALIDATION_ERROR. Disabling preserves the existing pin. Responds with the full updated suite.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -3537,7 +3540,7 @@
         "operationId": "attachEvalSuiteEnvironment",
         "tags": ["Eval suites"],
         "summary": "Attach one environment to a suite (atomic append)",
-        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. Use this route to add one environment without detaching an environment that another caller attached at the same time.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as the replace door: growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.",
+        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. Use this route to add one environment without detaching an environment that another caller attached at the same time.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as `PATCH` with `environmentIds`: growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, even for an environment it already has. This route takes no `declaredSuiteId`. To change a CI-owned suite's environments from its suite file, send the full list as `environmentIds` to `PATCH /eval-suites/{suiteId}` with `declaredSuiteId`. That call replaces the list instead of appending to it.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -3584,6 +3587,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -3966,7 +3972,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Update an eval suite's settings",
-        "description": "Partial update: omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.",
+        "description": "Partial update: omitted fields are left as they are. `environmentIds` is tri-state: a non-empty array sets/replaces, `null` clears (reverting the suite to legacy config), and `[]` is rejected rather than silently treated as a clear. Responds with the full updated suite.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, even when the request would change nothing. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4140,7 +4146,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Create an eval case",
-        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.",
+        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4232,7 +4238,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Create several eval cases",
-        "description": "Adds up to 100 cases to the suite in one call: the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused. Read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
+        "description": "Adds up to 100 cases to the suite in one call: the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused. Read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4337,6 +4343,9 @@
           "404": {
             "$ref": "#/components/responses/NotFound"
           },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
           "429": {
             "$ref": "#/components/responses/RateLimited"
           },
@@ -4357,7 +4366,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
-        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them: the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them: the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4437,7 +4446,7 @@
         "operationId": "importEvalCases",
         "tags": ["Eval runs"],
         "summary": "Author eval cases from a document",
-        "description": "The sibling of `cases/generate`: generation invents cases from the suite's tools, import reads them out of something a person already wrote: a test plan, a spreadsheet of scenarios, a JSON export. MCPJam's own model turns the document into full cases (ordered steps, tool calls, assertions), so the caller does not have to guess the case shape. No format is declared: the model reads the document's shape itself, so Markdown, JSON, CSV and plain notes all work.\n\n**Spends the organization's credits**, unlike generation, which is on MCPJam. Pass an idempotency key so a retry replays the same job instead of authoring (and billing) the document twice.\n\nLike `cases/generate`, this discovers the suite's tools over a live MCP connection first, so the authored cases are grounded in tools the suite can actually call.\n\nAnswers `200` when the job finishes inside the wait window and `202` with a `jobId` when it does not. Poll the job, then commit it. A case the commit could not write comes back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts.",
+        "description": "The sibling of `cases/generate`: generation invents cases from the suite's tools, import reads them out of something a person already wrote: a test plan, a spreadsheet of scenarios, a JSON export. MCPJam's own model turns the document into full cases (ordered steps, tool calls, assertions), so the caller does not have to guess the case shape. No format is declared: the model reads the document's shape itself, so Markdown, JSON, CSV and plain notes all work.\n\n**Spends the organization's credits**, unlike generation, which is on MCPJam. Pass an idempotency key so a retry replays the same job instead of authoring (and billing) the document twice.\n\nLike `cases/generate`, this discovers the suite's tools over a live MCP connection first, so the authored cases are grounded in tools the suite can actually call.\n\nAnswers `200` when the job finishes inside the wait window and `202` with a `jobId` when it does not. Poll the job, then commit it. A case the commit could not write comes back under `skipped`, with a `reviewUrl` that opens the app on exactly those drafts.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server or spending credits. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4579,7 +4588,7 @@
         "operationId": "commitEvalAuthoringJob",
         "tags": ["Eval runs"],
         "summary": "Write a finished authoring job's cases into the suite",
-        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.",
+        "description": "Writes the job's drafts into the suite. A draft carrying unresolved blocking issues or proposed additions is **skipped** rather than written, and comes back under `skipped` with a `reviewUrl` for finishing it in the app.\n\nA job whose `source` is `markdown` (the in-app upload) is not committable here and answers `404`: those drafts exist so a person decides on them, and an API commit would decide on their behalf.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) has no job to commit: `cases/generate` and `cases/import` refuse it with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before a job starts.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -4721,7 +4730,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Update an eval case",
-        "description": "Partial update: omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.",
+        "description": "Partial update: omitted fields are left as they are. Supplying `steps` REPLACES the case's definition rather than merging into it. `matchOptions` and `checks` accept `null` to clear the case-level override and fall back to the suite's.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -33600,7 +33609,7 @@
         }
       },
       "Conflict": {
-        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, or an environment that cannot currently be launched. The request was well-formed; re-read the resource and retry.",
+        "description": "The resource is not in a state that accepts this write: a stale `expectedRevision`, a duplicate name, an environment that cannot currently be launched, or a CI-owned eval suite. The request was well-formed. For the first three, re-read the resource and retry. A CI-owned suite answers with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`, and retrying does not change that: edit the suite file and send its `suite.id` as `declaredSuiteId`, or duplicate the suite to get an editable copy (see `EvalSuiteDetail.managedBy`).",
         "content": {
           "application/json": {
             "schema": {
