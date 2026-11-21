@@ -1,7 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PromoRedemptionPage } from "../PromoRedemptionPage";
 import { savePromoIntent, clearPromoIntent } from "@/lib/promo-intent";
+import { useWorkosAuthUnavailableStore } from "@/stores/workos-auth-unavailable-store";
+import { WorkosAuthUnavailableDialog } from "@/components/auth/WorkosAuthUnavailableDialog";
 
 const mocks = vi.hoisted(() => ({
   user: { id: "account-1" } as { id: string } | null,
@@ -32,6 +34,7 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 }));
 beforeEach(() => {
   vi.clearAllMocks();
+  useWorkosAuthUnavailableStore.getState().dismiss();
   mocks.user = { id: "account-1" };
   mocks.context.organizations = [
     { organizationId: "org-1", name: "My organization" },
@@ -43,6 +46,7 @@ beforeEach(() => {
   window.history.replaceState(null, "", "/redeem");
   savePromoIntent("SYNTH-ETIC1");
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("redemption confirmation", () => {
   it("requires an explicit named submit and shows authenticated email as context", async () => {
@@ -83,6 +87,40 @@ describe("redemption confirmation", () => {
     expect(
       sessionStorage.getItem("mcpjam_app_signin_return_path_v1"),
     ).toContain('"path":"/redeem"');
+  });
+  it("explains where to sign in at an HTTP address instead of calling WorkOS", async () => {
+    mocks.user = null;
+    const assign = vi.fn();
+    vi.stubGlobal(
+      "location",
+      Object.assign(new URL("http://192.168.1.50:6274/redeem"), { assign }),
+    );
+    render(
+      <>
+        <PromoRedemptionPage />
+        <WorkosAuthUnavailableDialog />
+      </>,
+    );
+    const authDialog = { name: "Sign in on app.mcpjam.com" };
+    for (const close of [
+      () => fireEvent.click(screen.getByRole("button", { name: "Cancel" })),
+      () => fireEvent.keyDown(document.activeElement!, { key: "Escape" }),
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name: "Sign in to claim" }));
+      expect(await screen.findByRole("dialog", authDialog)).toBeVisible();
+      close();
+      await waitFor(() =>
+        expect(screen.queryByRole("dialog", authDialog)).toBeNull(),
+      );
+      // The auth dialog stacks over the page's own dialog, whose close clears
+      // the claim and leaves /redeem.
+      expect(
+        screen.getByRole("button", { name: "Sign in to claim" }),
+      ).toBeVisible();
+    }
+    expect(assign).not.toHaveBeenCalled();
+    expect(mocks.signIn).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
   it("resets form data when the signed-in account changes", () => {
     const { rerender } = render(<PromoRedemptionPage />);

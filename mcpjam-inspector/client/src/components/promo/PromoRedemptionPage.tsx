@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
+import { useInspectorAuth } from "@/hooks/use-inspector-auth";
 import { useMutation, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { readStoredActiveOrganizationId } from "@/lib/active-organization-storage";
@@ -133,7 +133,7 @@ function ClaimForm({
 }
 
 function SignedInClaim({ campaignId }: { campaignId: string }) {
-  const { user } = useAuth();
+  const { user } = useInspectorAuth();
   const ready = useDbUserReady();
   const context = useQuery(contextQuery, ready ? { campaignId } : "skip");
   if (!context || context.accountExternalId !== user?.id)
@@ -152,7 +152,7 @@ function SignedInClaim({ campaignId }: { campaignId: string }) {
 }
 
 export function PromoRedemptionPage() {
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useInspectorAuth();
   const [error, setError] = useState("");
   const [campaignId] = useState(() => readPromoCampaign());
   async function login() {
