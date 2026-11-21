@@ -12,11 +12,13 @@ const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   create: vi.fn(),
   signIn: vi.fn(),
+  release: vi.fn(),
   save: vi.fn(),
   navigate: vi.fn(),
   copy: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: mocks.release }));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-web-accounts", () => ({ useWebAccounts: mocks.accounts }));
 vi.mock("convex/react", () => ({ useMutation: () => mocks.create }));
@@ -202,6 +204,8 @@ describe("useWebClientPane", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Save for the project" }),
     );
+    expect(mocks.release).toHaveBeenCalledWith("project-1", "chat-1");
+    expect(mocks.release.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]);
     expect(mocks.save).toHaveBeenCalledWith("project-1", "wa-1", "session-1");
     await waitFor(() =>
       expect(mocks.toast.success).toHaveBeenCalledWith(
@@ -209,6 +213,19 @@ describe("useWebClientPane", () => {
       ),
     );
     expect(screen.queryByTestId("sign-in-browser")).toBeNull();
+  });
+
+  it("keeps the sign-in open and lets the admin retry a failed handback", async () => {
+    mocks.release.mockRejectedValueOnce(new Error("disconnected"));
+    mocks.save.mockResolvedValue({ ok: true, accountEmail: "qa@example.com" });
+    mount({ isAdmin: true, accounts: [signedOut] });
+    await userEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+    const save = await screen.findByRole("button", { name: "Save for the project" });
+    await userEvent.click(save);
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(screen.getByTestId("sign-in-browser")).toBeInTheDocument();
+    await userEvent.click(save);
+    expect(mocks.save).toHaveBeenCalledTimes(1);
   });
 
   it("says the browser couldn't open and keeps the button", async () => {

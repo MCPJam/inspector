@@ -26,6 +26,7 @@ import {
   startWebAccountSignIn,
   type HandbackResult,
 } from "@/lib/web-accounts/routes";
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
 import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebSignInBrowser } from "./WebSignInBrowser";
 
@@ -111,7 +112,6 @@ function Reconnect({
     browserSessionId: string;
     chatSessionId: string;
   }>();
-  const browserSessionId = signIn?.browserSessionId;
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
 
@@ -163,12 +163,13 @@ function Reconnect({
         chatSessionId: started.chatSessionId ?? started.browserSessionId,
       });
     }, `Couldn't open a browser to sign in to ${site}. Try again.`);
-  const finish = (handback: string, signedInWith: string) =>
+  const finish = (handback: string, browser: NonNullable<typeof signIn>) =>
     run(async () => {
+      await releaseBrowserForChat(projectId, browser.chatSessionId);
       const result = await handBackWebReconnect(
         projectId,
         handback,
-        signedInWith,
+        browser.browserSessionId,
       );
       setOutcome(handbackOutcome(result, site, account.accountEmail));
     }, "Couldn't resume the waiting runs. Try again.");
@@ -250,7 +251,7 @@ function Reconnect({
             Copy link for an admin
           </Button>
         </div>
-      ) : !browserSessionId ? (
+      ) : !signIn ? (
         <Button
           type="button"
           size="sm"
@@ -272,7 +273,7 @@ function Reconnect({
                 type="button"
                 size="sm"
                 disabled={busy}
-                onClick={() => void finish(request.requestId, browserSessionId)}
+                onClick={() => void finish(request.requestId, signIn)}
               >
                 {busy ? <Loader2 className="animate-spin" aria-hidden /> : null}
                 Finish and resume runs
@@ -282,15 +283,16 @@ function Reconnect({
             <SaveWebAccountBar
               vendor={account.vendor}
               expectedEmail={account.accountEmail}
-              onSave={() =>
-                saveWebAccountProfile(projectId, webAccountId, browserSessionId)
-              }
+              onSave={async () => {
+                await releaseBrowserForChat(projectId, signIn.chatSessionId);
+                return saveWebAccountProfile(projectId, webAccountId, signIn.browserSessionId);
+              }}
             />
           )}
           <div className="flex h-[520px] flex-col">
             <WebSignInBrowser
               projectId={projectId}
-              chatSessionId={signIn?.chatSessionId ?? browserSessionId}
+              chatSessionId={signIn.chatSessionId}
             />
           </div>
         </div>

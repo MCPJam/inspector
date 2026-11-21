@@ -12,11 +12,13 @@ const state = vi.hoisted(() => ({
   isAdmin: true,
   data: {} as Record<string, unknown>,
   signIn: vi.fn(),
+  release: vi.fn(),
   save: vi.fn(),
   handback: vi.fn(),
   copy: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
+vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: state.release }));
 vi.mock("sonner", () => ({ toast: state.toast }));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
@@ -118,6 +120,8 @@ describe("WebAccountReconnectPage", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Finish and resume runs" }),
     );
+    expect(state.release).toHaveBeenCalledWith("project-1", "chat-1");
+    expect(state.release.mock.invocationCallOrder[0]).toBeLessThan(state.handback.mock.invocationCallOrder[0]);
     expect(state.handback).toHaveBeenCalledWith(
       "project-1",
       "req-1",
@@ -168,6 +172,8 @@ describe("WebAccountReconnectPage", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "Save for the project" }),
     );
+    expect(state.release).toHaveBeenCalledWith("project-1", "chat-1");
+    expect(state.release.mock.invocationCallOrder[0]).toBeLessThan(state.save.mock.invocationCallOrder[0]);
     expect(state.save).toHaveBeenCalledWith("project-1", "wa-1", "session-1");
     expect(state.handback).not.toHaveBeenCalled();
   });
