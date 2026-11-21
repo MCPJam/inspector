@@ -7,6 +7,7 @@
 
 import { checksForFeature } from "./check-map/index.js";
 import { isBackgroundSafeCheck } from "./check-intrusiveness.js";
+import { protocolEra } from "./context.js";
 import type {
   ConformanceCheckRef,
   ConformanceSuiteKey,
@@ -91,7 +92,7 @@ function stepFor(
           }
         : null;
     case "observed":
-      return rules.observable
+      return rules.observable && observableHere(feature, input)
         ? {
             reason: "Seen only when it is used. Try it in the Playground.",
             nextAction: "use-in-playground",
@@ -104,6 +105,19 @@ function stepFor(
         ? { reason: "Recorded the next time you sign in to this server with OAuth." }
         : null;
   }
+}
+
+/** False only when the connection's era is known and is not the one traffic can show. */
+function observableHere(
+  feature: FeatureDefinition,
+  input: ServerFeatureEvidenceInput,
+): boolean {
+  const only = feature.assessment.observableEra;
+  if (!only) return true;
+  const era = protocolEra(
+    input.context?.protocolVersion ?? input.declared?.surface.protocolVersion,
+  );
+  return era === "unknown" || era === only;
 }
 
 const FALLBACK_ORDER: readonly StepSource[] = [

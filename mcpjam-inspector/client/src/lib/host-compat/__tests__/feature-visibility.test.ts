@@ -52,16 +52,25 @@ describe("which hosts are gated at all", () => {
     expect(isHostVisibleByFeatureFlags("opencode", withoutOpenCode)).toBe(false);
   });
 
-  it("gates Claude web and ChatGPT web behind the web clients flag, hidden where a surface does not pass it", () => {
-    for (const id of ["web-claude", "web-chatgpt"]) {
-      expect(FLAG_GATED_HOST_IDS.has(id)).toBe(true);
-      expect(isHostVisibleByFeatureFlags(id, ALL_ON)).toBe(true);
+  it("gates Claude web and ChatGPT web behind one flag, hidden where it isn't passed", () => {
+    const { webClients: _unpassed, ...withoutWebClients } = ALL_ON;
+    for (const hostId of ["web-claude", "web-chatgpt"]) {
+      expect(FLAG_GATED_HOST_IDS.has(hostId)).toBe(true);
+      expect(isHostVisibleByFeatureFlags(hostId, withoutWebClients)).toBe(false);
       expect(
-        isHostVisibleByFeatureFlags(id, { ...ALL_ON, webClients: false }),
+        isHostVisibleByFeatureFlags(hostId, { ...ALL_ON, webClients: false }),
       ).toBe(false);
-      const { webClients: _unpassed, ...withoutWebClients } = ALL_ON;
-      expect(isHostVisibleByFeatureFlags(id, withoutWebClients)).toBe(false);
+      expect(
+        isHostVisibleByFeatureFlags(hostId, { ...ALL_OFF, webClients: true }),
+      ).toBe(true);
+      expect(
+        hostFeatureFlagState(hostId, { ...ALL_ON, webClients: undefined }),
+      ).toBeUndefined();
     }
+    // The Claude Code and Codex clients keep their own flags.
+    expect(
+      isHostVisibleByFeatureFlags("claude-code", { ...ALL_OFF, webClients: true }),
+    ).toBe(false);
   });
 
   it("gates Codex CLI behind the Codex flag, since it runs on the Codex harness", () => {
