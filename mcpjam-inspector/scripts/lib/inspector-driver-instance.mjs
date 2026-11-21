@@ -95,8 +95,10 @@ export function readState(inspectorDir) {
 
 /**
  * When the OS says `pid` started, as an opaque string to compare for
- * equality, or null when it cannot tell. Paired with the pid it names one
- * process, where a pid alone may by now belong to anything.
+ * equality, or null when no process has that pid. Paired with the pid it names
+ * one process, where a pid alone may by now belong to anything. Throws when the
+ * process exists but the lookup failed, so callers keep the record instead of
+ * mistaking it for stale.
  */
 export function processStartTime(pid) {
   if (process.platform === "linux") {
@@ -125,7 +127,12 @@ export function processStartTime(pid) {
     encoding: "utf8",
     windowsHide: true,
   });
-  return (result.status === 0 && result.stdout.trim()) || null;
+  const startTime = result.status === 0 && result.stdout.trim();
+  if (startTime) return startTime;
+  if (!isAlive(pid)) return null;
+  throw new Error(
+    `Could not read when pid ${pid} started (${command} exited ${result.status ?? result.error?.code}); kept the driver record.`,
+  );
 }
 
 /**
@@ -234,7 +241,13 @@ export async function startInstance({
   );
   closeSync(logFd);
   child.unref();
-  const processStart = startTimeOf(child.pid);
+  let processStart;
+  try {
+    processStart = startTimeOf(child.pid);
+  } catch (error) {
+    killTree(child.pid);
+    throw error;
+  }
   if (!processStart) {
     killTree(child.pid);
     throw new Error(

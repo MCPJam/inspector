@@ -85,6 +85,24 @@ test("stop leaves a reused pid alone and clears the stale record", async (t) => 
   assert.match(lines.join("\n"), /cleared the record without stopping/);
 });
 
+test("stop keeps the record when it cannot read the start time", async (t) => {
+  const child = spawnSleeper();
+  t.after(() => child.kill());
+  writeState(child.pid, "t0");
+  await assert.rejects(
+    stopInstance({
+      inspectorDir: INSPECTOR_DIR,
+      log: () => {},
+      startTimeOf: () => {
+        throw new Error("lookup failed");
+      },
+    }),
+    /lookup failed/,
+  );
+  assert.equal(isAlive(child.pid), true);
+  assert.equal(existsSync(statePath(INSPECTOR_DIR)), true);
+});
+
 test("start refuses while the recorded launcher is still running", async () => {
   writeState(process.pid, "t0");
   await assert.rejects(
