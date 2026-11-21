@@ -150,7 +150,10 @@ function SuiteWebAccountsGroup({
   projectId: string;
   frame: (group: ReactNode) => ReactNode;
 }) {
-  const { accounts, selections } = useSuiteWebAccounts(suiteId, projectId);
+  const { accounts, selections, selectionsLoaded } = useSuiteWebAccounts(
+    suiteId,
+    projectId,
+  );
   const save = useMutation(webAccountsApi.setSuiteSelection);
   const [pending, setPending] = useState<Partial<Record<string, string[]>>>({});
   const servers: SuiteAccountsServer[] = WEB_CLIENT_VENDORS.map((vendor) => ({
@@ -203,7 +206,9 @@ function SuiteWebAccountsGroup({
               server={server}
               serverName={webClientName(vendor)}
               checked={pending[vendor] ?? checkedAccountIds(server)}
-              saving={vendor in pending}
+              // Until the saved choice loads the default shows as checked,
+              // and a click would save over the person's real choice.
+              saving={vendor in pending || !selectionsLoaded}
               onChange={(next) => void choose(vendor, next)}
               needsReauthLabel="Needs sign-in"
             />
