@@ -206,6 +206,7 @@ import {
 } from "@/lib/chat-error-reporting";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { trackChatToolCallsCompleted } from "@/lib/tool-call-telemetry";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
 import {
   prepareLocalHarnessSendRequest,
@@ -2424,6 +2425,9 @@ export function useChatSession(
     Record<string, Record<string, unknown>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  // Read by the stream's finish handler, which can outlive this render.
+  const toolServerMapRef = useRef(toolServerMap);
+  toolServerMapRef.current = toolServerMap;
   const [serializedTools, setSerializedTools] = useState<
     Record<string, SerializedModelRequestTool>
   >({});
@@ -4492,6 +4496,7 @@ export function useChatSession(
     onFinish: ({ isAbort, message, finishReason }) => {
       turnAuthorizationRenewal.stop();
       turnAbortedRef.current = isAbort;
+      trackChatToolCallsCompleted(message, toolServerMapRef.current);
       lastFinishRef.current = {
         chatSessionId: chatSessionIdRef.current,
         finishReason,

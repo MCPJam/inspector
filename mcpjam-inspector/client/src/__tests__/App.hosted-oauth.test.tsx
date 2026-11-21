@@ -3913,7 +3913,8 @@ describe("App hosted OAuth callback handling", () => {
     });
     expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        firstRunPrompt: "What can this server do?",
+        firstRunPrompt:
+          "Call each of your tools once and summarize what they returned.",
       }),
     );
 
@@ -4725,7 +4726,8 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/playground");
     expect(mockPlaygroundTabProps).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        firstRunPrompt: "What can this server do?",
+        firstRunPrompt:
+          "Call each of your tools once and summarize what they returned.",
       }),
     );
     expect(

@@ -33,6 +33,7 @@ import {
   type McpModelVisibleToolResultPolicy,
 } from "@mcpjam/sdk/browser";
 import { track } from "@/lib/analytics";
+import { trackToolCallCompleted } from "@/lib/tool-call-telemetry";
 import { useToolAuthChallengePresentation } from "./useToolAuthChallengeReplay";
 
 // Result metadata type for tool responses
@@ -355,6 +356,7 @@ export function useToolExecution({
         );
 
         if ("error" in response) {
+          trackToolCallCompleted({ source: "tools_tab", isError: true });
           // Log tool execution failure
           track("app_builder_tool_executed", {
             location: "app_builder_tab",
@@ -433,6 +435,10 @@ export function useToolExecution({
           modelOutput,
         );
 
+        trackToolCallCompleted({
+          source: "tools_tab",
+          isError: result.isError === true,
+        });
         // Log successful tool execution
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
@@ -477,6 +483,7 @@ export function useToolExecution({
         const errorMessage =
           err instanceof Error ? err.message : "Tool execution failed";
 
+        trackToolCallCompleted({ source: "tools_tab", isError: true });
         track("app_builder_tool_executed", {
           location: "app_builder_tab",
           toolName: effectiveToolName,
