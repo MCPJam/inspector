@@ -1322,8 +1322,13 @@ export {
   lookupToolIdByModelName,
   parseProgressiveToolsEnv,
   resolveActiveToolNames,
+  notLoadedToolMessage,
   shouldForceInitialToolSearch,
 } from "./progressive-discovery/discovery.js";
+export {
+  offersOnlyMetaTools,
+  singleToolCallProviderOptions,
+} from "./progressive-discovery/single-tool-call.js";
 export type {
   ProgressiveDiscoveryOptions,
   ProgressiveToolPlan,

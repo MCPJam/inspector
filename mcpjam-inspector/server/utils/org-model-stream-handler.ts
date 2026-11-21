@@ -681,6 +681,8 @@ export function handleLocalOrgChatModel(
     turnAuthorization: options.turnAuthorization,
     llmModel,
     modelId,
+    // Which provider options apply per step (and span metadata).
+    provider: provider.providerKey,
     messageHistory: messages,
     systemPrompt,
     temperature,

@@ -590,6 +590,18 @@ export function shouldForceInitialToolSearch(
 }
 
 /**
+ * What the model reads when it calls a cataloged tool that is not loaded in
+ * this step, on every chat path.
+ */
+export function notLoadedToolMessage(name: string): string {
+  return (
+    `Tool '${name}' is not loaded in this step, so it did not run. ` +
+    `Call load_mcp_tools with names=[${JSON.stringify(name)}] if you have ` +
+    `not yet, then call the tool in your next reply.`
+  );
+}
+
+/**
  * Wrap a tools map so that out-of-subset tools throw a structured "not
  * loaded" error when invoked, while in-subset tools (meta-tools, loaded,
  * pending, newly-loaded) execute normally. In non-progressive mode this
@@ -639,9 +651,7 @@ export function gateToolsToActiveSubset<T extends Record<string, unknown>>(
         if (state && catalogNames.has(name)) {
           const activeNames = new Set(resolveActiveToolNames(plan, state));
           if (!activeNames.has(name)) {
-            throw new Error(
-              `Tool '${name}' is not loaded in this step. Call load_mcp_tools with names=[${JSON.stringify(name)}] first, then retry.`,
-            );
+            throw new Error(notLoadedToolMessage(name));
           }
         }
         return execute(input, ctx);

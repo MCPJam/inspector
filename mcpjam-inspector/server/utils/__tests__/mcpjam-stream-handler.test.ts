@@ -401,6 +401,176 @@ describe("mcpjam-stream-handler", () => {
     ).toEqual(["search_mcp_tools", "load_mcp_tools"]);
   });
 
+  describe("while only search and load are offered", () => {
+    const toolDef = (description: string) => ({
+      description,
+      inputSchema: { type: "object" } as any,
+    });
+    const runTurn = async ({
+      loaded = false,
+      progressive = true,
+      hideShowSquad = false,
+      steps,
+    }: {
+      loaded?: boolean;
+      progressive?: boolean;
+      hideShowSquad?: boolean;
+      steps: any[][];
+    }) => {
+      vi.mocked(serializeToolsForConvex).mockReturnValue([
+        { name: "search_mcp_tools", inputSchema: { type: "object" } },
+        { name: "load_mcp_tools", inputSchema: { type: "object" } },
+        { name: "show_squad", inputSchema: { type: "object" } },
+      ]);
+      const fetchMock = vi.fn();
+      for (const chunks of steps) {
+        fetchMock.mockResolvedValueOnce(createSseResponse(chunks));
+      }
+      global.fetch = fetchMock;
+      await handleMCPJamFreeChatModel({
+        messages: [{ role: "user", content: "show me barca" }] as any,
+        modelId: "anthropic/claude-haiku-4.5",
+        systemPrompt: "You are helpful",
+        tools: {
+          search_mcp_tools: toolDef("Search MCP tools"),
+          load_mcp_tools: toolDef("Load MCP tools"),
+          show_squad: toolDef("Show squad"),
+        },
+        mcpClientManager: {
+          getAllToolsMetadata: vi.fn().mockReturnValue({}),
+        } as any,
+        ...(hideShowSquad
+          ? {
+              prepareAdvertisedTools: ({ defaultToolNames }) =>
+                defaultToolNames.filter((name) => name !== "show_squad"),
+            }
+          : {}),
+        ...(progressive
+          ? {
+              progressivePlan: {
+                enabled: true,
+                reasons: ["test"],
+                policy: {
+                  thresholdPct: 0.03,
+                  maxToolTokens: 10_000,
+                  maxToolCount: 30,
+                  searchLimit: 8,
+                },
+                catalog: [
+                  {
+                    toolId: "sports::show_squad",
+                    modelName: "show_squad",
+                    serverId: "sports",
+                    originalName: "show_squad",
+                    description: "Show squad",
+                    fields: [],
+                    inputSchema: {},
+                    tokenEstimate: 10,
+                  },
+                ],
+                totalTokenEstimate: 10,
+              } as any,
+              discoveryState: {
+                loadedToolIds: new Set<string>(
+                  loaded ? ["sports::show_squad"] : [],
+                ),
+                newlyLoadedToolIds: new Set<string>(),
+                pendingApprovalToolIds: new Set<string>(),
+              } as any,
+            }
+          : {}),
+      });
+      await lastExecution;
+      vi.mocked(serializeToolsForConvex).mockReset();
+      vi.mocked(serializeToolsForConvex).mockReturnValue([]);
+      return fetchMock.mock.calls.map((call) =>
+        JSON.parse((call[1]?.body as string) ?? "{}"),
+      );
+    };
+    const textStep = [
+      { type: "text-start", id: "t1" },
+      { type: "text-delta", id: "t1", delta: "Done." },
+      { type: "text-end", id: "t1" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    const refusedShowSquad = [
+      { type: "tool-input-start", toolCallId: "call-1", toolName: "show_squad" },
+      {
+        type: "tool-input-error",
+        toolCallId: "call-1",
+        toolName: "show_squad",
+        input: { team: "Barcelona" },
+        errorText: JSON.stringify({
+          code: "unknown_error",
+          message:
+            "Model tried to call unavailable tool 'show_squad'. Available tools: search_mcp_tools, load_mcp_tools.",
+        }),
+      },
+      { type: "finish", finishReason: "tool-calls" },
+    ];
+
+    it("asks the backend for one tool call per step", async () => {
+      const [body] = await runTurn({ steps: [textStep] });
+
+      expect(body.parallelToolCalls).toBe(false);
+    });
+
+    it("allows several tool calls again once a tool is loaded", async () => {
+      const [body] = await runTurn({ loaded: true, steps: [textStep] });
+
+      expect(body).not.toHaveProperty("parallelToolCalls");
+    });
+
+    it("tells the model and the UI that a called tool was not loaded yet", async () => {
+      const bodies = await runTurn({ steps: [refusedShowSquad, textStep] });
+
+      const notLoaded =
+        "Tool 'show_squad' is not loaded in this step, so it did not run. " +
+        'Call load_mcp_tools with names=["show_squad"] if you have not yet, ' +
+        "then call the tool in your next reply.";
+      const uiError = writtenChunks.find(
+        (chunk) =>
+          chunk?.type === "tool-input-error" && chunk.toolCallId === "call-1",
+      );
+      expect(uiError?.errorText).toBe(notLoaded);
+      const modelResult = (JSON.parse(bodies[1].messages) as any[])
+        .flatMap((m) => (Array.isArray(m.content) ? m.content : []))
+        .find((part) => part.type === "tool-result");
+      expect(modelResult?.output).toEqual({
+        type: "error-text",
+        value: notLoaded,
+      });
+    });
+
+    it("keeps the backend's sentence for a loaded tool hidden this step", async () => {
+      await runTurn({
+        loaded: true,
+        hideShowSquad: true,
+        steps: [refusedShowSquad, textStep],
+      });
+
+      const uiError = writtenChunks.find(
+        (chunk) =>
+          chunk?.type === "tool-input-error" && chunk.toolCallId === "call-1",
+      );
+      expect(uiError?.errorText).toBe(
+        "Model tried to call unavailable tool 'show_squad'. Available tools: search_mcp_tools, load_mcp_tools.",
+      );
+    });
+
+    it("shows the backend's sentence, not its JSON, for other refused calls", async () => {
+      await runTurn({ progressive: false, steps: [refusedShowSquad, textStep] });
+
+      const uiError = writtenChunks.find(
+        (chunk) =>
+          chunk?.type === "tool-input-error" && chunk.toolCallId === "call-1",
+      );
+      expect(uiError?.errorText).toBe(
+        "Model tried to call unavailable tool 'show_squad'. Available tools: search_mcp_tools, load_mcp_tools.",
+      );
+    });
+  });
+
   it("sends the backend provider-safe tool names and restores them in its reply", async () => {
     const toolDef = {
       description: "Add",
