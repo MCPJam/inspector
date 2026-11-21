@@ -446,7 +446,7 @@ const describeBurstRetry = (retryAfterMs: number | undefined): string => {
   return `Too many Ask MCPJam turns in a row. Try again in ${seconds}s.`;
 };
 
-/** For a size refusal the next message can't fix, because its turn must stay. */
+/** For a size refusal the next message can't fix: its turn must stay, or the chat is too large without it. */
 export const CONVERSATION_TOO_LARGE_MESSAGE =
   "This conversation is too large to continue. Start a new chat to keep going.";
 
@@ -457,6 +457,50 @@ export function isGuestInputTooLargeMessage(
   const codes = new Set<string>();
   collectCodes(message, codes);
   return codes.has("guest_input_too_large");
+}
+
+type GuestInputTooLargeNumbers = {
+  limit: number;
+  estimatedInputTokens: number;
+};
+
+/** Read from the object that carries the code, nested or not, like `collectCodes`. */
+const findGuestInputTooLargeNumbers = (
+  value: unknown,
+  seen: WeakSet<object>,
+): GuestInputTooLargeNumbers | null => {
+  if (typeof value === "string") {
+    for (const parsed of collectJsonCandidates(value)) {
+      const found = findGuestInputTooLargeNumbers(parsed, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return null;
+  seen.add(value);
+  const { code, limit, estimatedInputTokens } = value as Record<
+    string,
+    unknown
+  >;
+  if (
+    code === "guest_input_too_large" &&
+    typeof limit === "number" &&
+    typeof estimatedInputTokens === "number"
+  ) {
+    return { limit, estimatedInputTokens };
+  }
+  for (const item of Array.isArray(value) ? value : Object.values(value)) {
+    const found = findGuestInputTooLargeNumbers(item, seen);
+    if (found) return found;
+  }
+  return null;
+};
+
+/** The guest size refusal's numbers, when its body carries them. */
+export function guestInputTooLargeNumbers(
+  message: string,
+): GuestInputTooLargeNumbers | null {
+  return findGuestInputTooLargeNumbers(message, new WeakSet());
 }
 
 /** Plain copy for an Ask MCPJam refusal, not its transport envelope. */

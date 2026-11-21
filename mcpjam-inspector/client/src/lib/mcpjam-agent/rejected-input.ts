@@ -1,5 +1,8 @@
 import type { UIMessage } from "ai";
-import { isGuestInputTooLargeMessage } from "@/lib/mcpjam-limit";
+import {
+  guestInputTooLargeNumbers,
+  isGuestInputTooLargeMessage,
+} from "@/lib/mcpjam-limit";
 
 function lastUserTurn(messages: UIMessage[]): number {
   let index = messages.length - 1;
@@ -37,12 +40,24 @@ export function rejectedInputTurn(
   };
 }
 
-/** A size refusal whose turn has to stay, so any next request is refused too. */
+/** A size refusal the next message can't fix, so any next request is refused too. */
 export function conversationTooLarge(
   messages: UIMessage[],
   errorMessage: string | undefined,
 ): boolean {
-  if (!isGuestInputTooLargeMessage(errorMessage)) return false;
+  if (!errorMessage || !isGuestInputTooLargeMessage(errorMessage)) return false;
   const index = lastUserTurn(messages);
-  return index >= 0 && toolsRanAfter(messages, index);
+  if (index < 0) return false;
+  // The refused turn has to stay.
+  if (toolsRanAfter(messages, index)) return true;
+  // Dropping it may still leave too much, as when a reload brings an earlier
+  // paste back. The backend counts JSON characters / 3
+  // (mcpjam-backend convex/lib/streamCostEstimate.ts); the client only sees
+  // UI messages, so this is close, not exact.
+  const numbers = guestInputTooLargeNumbers(errorMessage);
+  return (
+    numbers !== null &&
+    numbers.estimatedInputTokens - JSON.stringify(messages[index]).length / 3 >
+      numbers.limit
+  );
 }

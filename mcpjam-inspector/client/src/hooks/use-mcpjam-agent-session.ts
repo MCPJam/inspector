@@ -534,7 +534,8 @@ export function useMcpjamAgentSession(
       if (!trimmed) return;
       // A refused turn must not ride on the next request, even when the user
       // types a replacement instead of using Edit message. One that has to
-      // stay (its tools already ran) would be refused again, so don't send.
+      // stay (its tools already ran), or a chat still too large without it,
+      // would be refused again, so don't send.
       if (conversationTooLarge(chat.messages, chat.error?.message)) return;
       editRejectedMessage();
       // Typing instead of answering IS an answer to the clarifying question:
