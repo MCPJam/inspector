@@ -92,7 +92,25 @@
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
+              {
+                "group": "Run and review",
+                "pages": [
+                  "evaluate/run-a-suite",
+                  "evaluate/what-a-run-can-access",
+                  "evaluate/read-results"
+                ]
+              },
+              "inspector/evals",
+              "inspector/eval-test-users"
+            ]
           },
           {
             "group": "Configure",
