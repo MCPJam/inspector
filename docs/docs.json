@@ -112,7 +112,15 @@
                 "group": "Grade and ship",
                 "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
               },
-              "inspector/evals",
+              {
+                "group": "Reference",
+                "pages": [
+                  "evaluate/reference/assertions",
+                  "evaluate/reference/suite-settings",
+                  "evaluate/reference/runs-and-results"
+                ]
+              },
+              "evaluate/troubleshooting",
               "inspector/eval-test-users"
             ]
           },
@@ -281,6 +289,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/inspector/evals",
+      "destination": "/evaluate/overview"
+    },
     {
       "source": "/hosted/claude-connector",
       "destination": "/hosted/mcp-server"
@@ -503,7 +515,7 @@
     },
     {
       "source": "/inspector/test-cases",
-      "destination": "/inspector/evals"
+      "destination": "/evaluate/overview"
     },
     {
       "source": "/inspector/xaa-test-idp",
