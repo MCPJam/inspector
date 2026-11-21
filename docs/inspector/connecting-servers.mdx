@@ -1,180 +1,98 @@
 ---
-title: "Multi-server connections"
-sidebarTitle: "Connect a server"
-description: "Connect to multiple MCP servers with different transport methods"
+title: "Connect a server"
+description: "Add your own MCP server to a project over STDIO or HTTP and check that it connects. About 3 minutes."
 icon: "plug"
+hideFooterPagination: true
 ---
 
-You can connect to MCP servers over **STDIO** or **Streamable HTTP**, with OAuth 2 and Dynamic Client Registration (DCR) support. Multiple servers can be connected at once within a project.
+Add your own MCP server to the Inspector. MCPJam connects over **STDIO** or **Streamable HTTP**, and a project can have several servers connected at once.
 
-## Manage connections
+New to MCPJam? [Get started](/getting-started) connects a demo server and sends a first prompt.
 
-You can connect to multiple MCP servers simultaneously. To manage connections, go to the **Servers** tab in the MCPJam sidebar.
+## Before you start
 
-<Frame>
-  <img
-    className="block"
-    src="/images/connection/multiple.png"
-    alt="Multiple"
-    width="300"
-  />
-</Frame>
+- **The Inspector open.** See [Installation](/installation).
+- **Your server's start command or URL.** The [web app](/hosted/overview) connects to HTTPS URLs only. A local STDIO server or a plain HTTP URL needs the desktop app, the terminal or Docker.
 
-- Toggle MCP servers to enable or temporarily deactivate a server.
-- Hit the 3 dots. You can reconnect, edit, or disconnect to a server.
-- Click "View server info" to open a detailed modal showing server metadata, protocol version, capabilities, and instructions.
+<Steps titleSize="h3">
+  <Step title="Choose the transport" id="choose-the-transport">
+    <span id="stdio-servers"></span><span id="http-servers"></span>
 
-### Server info modal
+    - **STDIO** if MCPJam starts your server with a command, for example `node /path/to/your/server.js`. Use the desktop app or the terminal.
+    - **HTTP** if your server is already running at a URL, typically ending in `/mcp`. Any option works for HTTPS; plain HTTP needs the desktop app, the terminal or Docker.
+  </Step>
+  <Step title="Open the Add MCP Server dialog" id="open-the-dialog">
+    In the sidebar, select **Connect**, then **Servers**, and select **Add Server**.
+  </Step>
+  <Step title="Enter the connection details" id="enter-the-details">
+    Enter a **Server Name**. Under **Connection Type**, pick **STDIO** and enter the command, or pick **HTTP** and paste the URL. In the web app, **Connection Type** shows **HTTPS** selected; **HTTP** and **STDIO** are greyed out with the hint *Available locally (npx / desktop)*. A URL that doesn't start with `https://` shows *HTTPS is required*.
 
-View server details in a dedicated modal dialog:
+    For a STDIO server, use absolute paths (for example `/Users/yourname/project/server.py`) to avoid path resolution issues.
 
-- **Server metadata**: Name, title, version, protocol version, and transport type
-- **Capabilities**: Tools, prompts, and resources supported by the server
-- **Instructions**: Server-provided instructions for AI assistants
-- **Raw capabilities**: Full JSON of server and client capabilities (with copy button)
-- **OpenAI Apps SDK**: For servers using the OpenAI Apps SDK, view widget metadata in a separate tab
+    <Frame>
+      <img className="block" src="/images/connection/streamable.png" alt="The HTTP connection form with a URL field" width="300" />
+    </Frame>
 
-### History tab
+    Does your server need more? Add [environment variables](#environment-variables) (STDIO only), [custom headers](#custom-headers) or [authentication](#authentication) in the same dialog.
+  </Step>
+  <Step title="Add the server" id="add-the-server">
+    Select **Add Server**.
 
-The **History** tab in the server detail modal shows a timeline of every revision recorded for that server. Each row displays the revision number, a tool-count delta relative to the previous revision, and a timestamp.
+    <Check>The server appears in the **Servers** list, and its card shows **Connected**. If it shows **Failed**, check the command or URL, then reconnect from the card's ⋯ menu.</Check>
+  </Step>
+</Steps>
 
-Click any revision row to expand it. The expanded panel shows:
+## What you did
 
-- **Diff view** (default for revisions 2 and later): lists tools added, removed, or changed compared to the previous revision. A changed tool opens to a git-style diff of each field that changed: description lines with the changed words highlighted, and schemas and annotations as JSON. Server info changes show their old and new values, such as the version and the instructions.
-- **Snapshot view**: lists all tools captured at that revision, with each tool's name and description.
+You added your server to the project and confirmed it connects.
 
-A **Diff / Snapshot** toggle appears at the top of the expanded panel when a previous revision exists. Revision 1 opens directly in Snapshot view since there is nothing to diff against.
+**Next:** [Chat and inspect tool calls](/inspector/playground) with your server's tools.
 
-The same revisions can be read without opening the Inspector, so a script or an agent can check what changed. The [API](/reference/public-api#endpoints) lists them at `GET /projects/{projectId}/servers/{serverId}/revisions`, with each revision and its diff under that path. The [CLI](/cli/reference#cloud-projects-servers-revisions) has `cloud projects servers revisions`, `revision` and `revision-diff`, and the hosted MCP server and Playground chat have the `list_server_revisions`, `get_server_revision` and `diff_server_revisions` tools. These read stored revisions and never connect to the server, so they work for stdio servers too.
+## Connection options
 
-### Multiple OAuth accounts
-
-Personal OAuth servers support connecting more than one account. When a server uses OAuth, the server detail modal's **Config** tab shows a **Connected accounts** section under Authentication that lists every connected credential.
-
-Each row shows the account's email address (or name) on the first line, and a caption on the second line: the name you gave it, plus **Default** when chat uses that account, or **Needs reconnect** when the tokens are expired or revoked.
-
-Open the row menu (⋯) to act on an account:
-
-- **Rename**: opens an inline field to give the account a name. The name appears in chat when the model picks an account.
-- **Use in chat**: promotes the row to the default. The default account is used by non-chat consumers and as the fallback when no account is specified. This option is hidden on the row that is already the default.
-- **Reconnect**: re-runs the OAuth flow for that row, replacing only that credential.
-- **Remove**: deletes the credential. If the removed row was the default, the next available account becomes the default.
-
-To add another account, click **Connect another account** at the bottom of the list. Up to 8 accounts per server.
-
-When two or more accounts are live, chat exposes a required `link_id` selector so you (or the model) can choose which credential each tool call uses. The selector is named to match what ChatGPT injects, so servers have one reserved argument name to avoid rather than one per host. If a tool's own schema already declares `link_id`, chat exposes per-account variants of that tool instead of merging them. Changing the default mid-conversation does not redirect tool calls that are already in flight.
-
-Rerunning a tool call from the trace view is disabled for calls that ran on a specific account, because rerun resolves a server rather than a connection and would replay through the default credential instead.
-
-### Server information
-
-Each connected server card displays:
-
-- **Server icon and version**: If provided by the server, the icon and version number appear in the card header
-- **Connection status**: Real-time indicator showing connected, connecting, or failed status with retry count
-- **Transport type**: Shows whether the server uses STDIO or Streamable HTTP
-
-Click "Show details" to expand additional server information:
-
-- **Server capabilities**: Lists available features (Tools, Prompts, Resources)
-- **MCP protocol version**: The protocol version the server implements
-- **Instructions**: Server-provided instructions for AI assistants
-- **Documentation link**: Direct link to the server's documentation if available
-
-### OpenAI app metadata
-
-Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
-
-- **Info tab**: Standard server information and capabilities
-- **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
-
-<Note>
-  Using the [hosted app](https://app.mcpjam.com)? Only HTTPS connections are available. STDIO and plain HTTP connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
-</Note>
-
-## STDIO servers
-
-Connect to STDIO with commands. Commands vary based on what language your MCP server is built with. For example, connecting to an MCP server built with Node might look like:
-
-```bash
-node /path/to/your/server.js
-```
-
-<Info>
-  For local development, always use absolute paths (e.g.,
-  `/Users/yourname/project/server.py`) to avoid path resolution issues.
-</Info>
-
-<Frame>
-  <img
-    className="block"
-    src="/images/connection/stdio.png"
-    alt="STDIO"
-    width="300"
-  />
-</Frame>
+Use these only if your server needs them.
 
 ### Environment variables
 
-You can configure environment variables with STDIO. Click "Add Variable" in the Environment Variables section. This is often used to pass dynamic values like API tokens to a STDIO server.
-
-## HTTP servers
-
-Connect to any Streamable HTTP MCP server by selecting **HTTP** in the transport dropdown and pasting in the URL, typically ending in `/mcp`.
+For a STDIO server, select **Add variable** in the **Environment Variables** section to pass values such as API tokens.
 
 <Frame>
-  <img
-    className="block"
-    src="/images/connection/streamable.png"
-    alt="Streamable HTTP"
-    width="300"
-  />
+  <img className="block" src="/images/connection/stdio.png" alt="The STDIO connection form with a command field and an Environment Variables section" width="300" />
 </Frame>
 
 ### Custom headers
 
-Expand **Custom Headers** to add arbitrary request headers (for example, proxy auth or tenant identifiers). Headers are sent on every request to the server.
+Expand **Connection overrides** and select **Add header** under **Headers** to add request headers (for example, proxy auth or tenant identifiers). Headers are sent on every request to the server.
 
 ### Authentication
 
-MCPJam is compliant with the MCP authorization spec and supports Dynamic Client Registration (DCR), client pre-registration, and Client ID Metadata Documents (CIMD). You can:
+MCPJam follows the MCP authorization spec, with Dynamic Client Registration (DCR), client pre-registration and Client ID Metadata Documents (CIMD). Under **Authentication**, choose:
 
-1. Choose **No Authentication**
-2. Choose **Bearer Token**: use this if you already have an API token and don't need to register an OAuth client.
-3. Choose **OAuth**: follow [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to obtain a bearer token. You can optionally set scopes or a custom client ID and secret. For step-by-step debugging, see the [OAuth Debugger](/inspector/guided-oauth).
+1. **Auto** (the default): connects anonymously first, then uses OAuth if the server requires it.
+2. **No Authentication**.
+3. **Bearer Token**, if you already have an API token and don't need to register an OAuth client.
+4. **OAuth**, to obtain a token through [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization). You can optionally set scopes or a custom client ID and secret. To step through the flow, see the [OAuth Debugger](/inspector/guided-oauth).
+5. **Cross-App Access (XAA)**. See the [XAA debugger](/inspector/xaa-debugger).
 
 ### Request timeout
 
-Expand **Additional Configuration** to override the request timeout (default `10000` ms). Increase this when talking to slow or cold-start servers.
+Expand **Connection overrides** and set **Timeout** (in milliseconds). The field shows the default this server inherits from the active client, `10000` ms unless the client sets another. Increase it for slow or cold-start servers.
 
-## Tunneling
+## Related
 
-Expose your local MCP servers over HTTPS for remote access. This lets you share your servers with external clients and applications without deploying them.
+- [Servers reference](/inspector/connecting-servers/reference): manage connections, server info, revision history, several OAuth accounts, and tunnels.
+- [OAuth debugger](/inspector/guided-oauth): step through authorization.
 
-Each tunnel is scoped to a single server and secured at the network edge: the tunnel URL contains a secret key (`?k=…`) that is enforced before any traffic reaches your machine. Requests without the correct key are rejected with a 401 at the edge.
+**Looking for a section that moved?**
 
-### Create a tunnel
-
-1. Go to the **MCP Servers** tab.
-2. Click **Create Tunnel** on the server card you want to expose.
-3. Copy the tunnel URL from the server card and paste it into your MCP client (for example, ChatGPT's custom connector settings).
-
-The tunnel URL is stable. The base domain stays the same across sessions. If you close and recreate a tunnel for the same server, you get the same domain with a new secret key.
-
-### Rotate the secret
-
-Click the **Rotate** button (refresh icon) on the tunnel pill to issue a new secret key. The base domain does not change, but the old URL stops working immediately. Use this if you shared the URL with someone who should no longer have access.
-
-### Recent requests
-
-Click the **log icon** on the tunnel pill to open the recent-requests panel. It shows the last 20 JSON-RPC method calls that arrived through the tunnel, refreshing every 4 seconds. The panel closes automatically when you close the tunnel.
-
-### Close a tunnel
-
-Click the **close (×) button** on the tunnel pill to stop remote access. The tunnel closes immediately and all remote connections are terminated. The domain is reserved so a future tunnel for the same server reuses it.
-
-<Warning>
-  Anyone with the full tunnel URL, including its secret key, can access this
-  server. Share it carefully, rotate it if it leaks, and close the tunnel when
-  you are done.
-</Warning>
+- <span id="manage-connections"></span>Manage connections: now in [Connect a server reference](/inspector/connecting-servers/reference#manage-connections)
+- <span id="server-info-modal"></span>Server info modal: now in [Connect a server reference](/inspector/connecting-servers/reference#server-info)
+- <span id="server-information"></span>Server information: now in [Connect a server reference](/inspector/connecting-servers/reference#server-cards)
+- <span id="history-tab"></span>History tab: now in [Connect a server reference](/inspector/connecting-servers/reference#revision-history)
+- <span id="multiple-oauth-accounts"></span>Multiple OAuth accounts: now in [Connect a server reference](/inspector/connecting-servers/reference#several-oauth-accounts)
+- <span id="openai-app-metadata"></span>OpenAI app metadata: now in [Connect a server reference](/inspector/connecting-servers/reference#openai-app-metadata)
+- <span id="tunneling"></span>Tunneling: now in [Connect a server reference](/inspector/connecting-servers/reference#tunnels)
+- <span id="create-a-tunnel"></span>Create a tunnel: now in [Connect a server reference](/inspector/connecting-servers/reference#create-a-tunnel)
+- <span id="rotate-the-secret"></span>Rotate the secret: now in [Connect a server reference](/inspector/connecting-servers/reference#rotate-the-secret)
+- <span id="recent-requests"></span>Recent requests: now in [Connect a server reference](/inspector/connecting-servers/reference#recent-requests)
+- <span id="close-a-tunnel"></span>Close a tunnel: now in [Connect a server reference](/inspector/connecting-servers/reference#close-a-tunnel)

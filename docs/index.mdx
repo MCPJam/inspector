@@ -1,136 +1,58 @@
 ---
 title: "MCPJam Docs"
-description: "Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client."
+description: "Test, debug and evaluate MCP servers, MCP Apps and ChatGPT apps."
 icon: "book-open"
 mode: "wide"
 ---
 
-MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible. Run evals on test cases, track accuracy over time, and gate regressions before they reach production.
+MCPJam is an open-source platform for testing and evaluating **MCP servers, MCP Apps and ChatGPT apps**. Call your server's tools by hand or through a model, see every JSON-RPC message, and run evals to catch regressions before they ship.
 
 <Frame>
-  <img
-    className="block dark:hidden"
-    src="/images/playground-hero.webp"
-    alt="MCPJam Inspector playground comparing one prompt across Claude, ChatGPT, and Copilot"
-    width="1000"
-  />
-  <img
-    className="hidden dark:block"
-    src="/images/playground-hero-dark.webp"
-    alt="MCPJam Inspector playground comparing one prompt across Claude, ChatGPT, and Copilot"
-    width="1000"
-  />
+  <img className="block dark:hidden" src="/images/playground-hero.webp" alt="The MCPJam Playground comparing one prompt across Claude, ChatGPT and Copilot" width="1000" />
+  <img className="hidden dark:block" src="/images/playground-hero-dark.webp" alt="The MCPJam Playground comparing one prompt across Claude, ChatGPT and Copilot" width="1000" />
 </Frame>
+
+<Card title="Get started" icon="rocket" href="/getting-started" horizontal>
+  Open MCPJam, connect a server and send your first prompt. About 5 minutes.
+</Card>
+
+## What you can do
+
+| Goal | Start here |
+| --- | --- |
+| Call tools and see every JSON-RPC message | [Chat and inspect tool calls](/inspector/playground) |
+| Build an MCP App or ChatGPT app view | [First MCP App](/guides/first-mcp-app) · [First ChatGPT app in React](/guides/first-chatgpt-app-react) |
+| Check how a specific host calls your server | [Clients](/inspector/clients) |
+| Step through MCP authorization | [OAuth debugger](/inspector/guided-oauth) · [CLI OAuth conformance](/cli/oauth-conformance) |
+| Run evals and block regressions in CI | [Evaluate](/inspector/evals) · [SDK evals](/sdk/concepts/running-evals) · [CI](/cli/ci) |
+| Start the Inspector from your dev script | [Launch from code](/inspector/launch-from-code) |
+| Share servers with your team | [Projects](/inspector/projects) · [Use the web app](/hosted/overview) |
 
 ## Choose your tool
 
-MCPJam comes as three tools: **Inspector**, an interactive app for testing and debugging servers by hand; the **CLI**, for your shell and CI; and the **SDK**, for your test suite.
-
-### Inspector
-
-Open the Inspector in your browser, from your terminal, as a desktop app, or in Docker. The web app needs no install but only reaches HTTPS servers; the other options also run local STDIO and HTTP servers.
-
-<Card title="Start with Inspector" icon="binoculars" href="/getting-started">
-  New to MCPJam? Open the Inspector, connect a server, and send your first prompt.
-</Card>
-
-<CardGroup cols={2}>
-  <Card title="Web" icon="globe" href="https://app.mcpjam.com">
-    Runs at app.mcpjam.com. No install. HTTPS servers only. Share servers with your team.
+<CardGroup cols={3}>
+  <Card title="Inspector" icon="binoculars" href="/installation">
+    **Test by hand.** An app in your browser, on your desktop, from your terminal or in Docker.
   </Card>
-  <Card title="Terminal" icon="terminal" href="/installation#terminal">
-    Requires Node.js. HTTP/S and local STDIO servers.
-    ```bash
-    npx @mcpjam/inspector@latest
-    ```
-  </Card>
-  <Card title="macOS" icon="laptop" href="/installation#desktop-app">
-    Desktop app (`.dmg`). HTTP/S and local STDIO servers. No Node.js needed.
-  </Card>
-  <Card title="Windows" icon="monitor" href="/installation#desktop-app">
-    Desktop app (`.exe` installer). HTTP/S and local STDIO servers. No Node.js needed.
-  </Card>
-  <Card title="Docker" icon="container" href="/installation#docker">
-    Pull from Docker Hub. Reach host servers through `host.docker.internal`.
-  </Card>
-</CardGroup>
-
-### CLI and SDK
-
-<CardGroup cols={2}>
   <Card title="CLI" icon="terminal" href="/cli/overview">
-    **In your shell or CI.** Connectivity, OAuth, conformance, and tool runs with JUnit/JSON output. Tests local servers over STDIO (`--command`) and HTTP (`--url`).
-    ```bash
-    npm i -g @mcpjam/cli
-    ```
+    **In your shell or CI.** Connectivity, OAuth and conformance checks with JUnit or JSON output.
   </Card>
   <Card title="SDK" icon="code" href="/sdk">
-    **In your test suite.** Unit tests, e2e tests, and evals in TypeScript with Jest or Vitest. Spawns local STDIO servers or connects over HTTP.
-    ```bash
-    npm install @mcpjam/sdk
-    ```
+    **In your test suite.** Unit tests, end-to-end tests and evals in TypeScript with Jest or Vitest.
   </Card>
 </CardGroup>
-
-## What you can build
-
-<AccordionGroup>
-  <Accordion title="Debug an MCP server end-to-end" icon="bug">
-    Connect any HTTP, HTTPS, or STDIO server, watch every JSON-RPC message live in the Playground, and inspect tool input/output, widget state, and CSP activity per call.
-
-    [Open the Playground →](/inspector/playground) · [JSON-RPC logger →](/inspector/playground#json-rpc-logger)
-  </Accordion>
-  <Accordion title="Build an MCP App or ChatGPT App widget" icon="layout-dashboard">
-    The unified widget renderer handles both `_meta.ui.resourceUri` (MCP Apps) and `openai/outputTemplate` (ChatGPT Apps). The `window.openai` shim is always injected, so you can iterate without a real host.
-
-    [First MCP App →](/guides/first-mcp-app) · [First ChatGPT App in React →](/guides/first-chatgpt-app-react)
-  </Accordion>
-  <Accordion title="Validate OAuth conformance across protocol versions" icon="shield-check">
-    Step through every stage of the MCP authorization flow against protocol versions 03-26, 06-18, 11-25, and 2026-07-28 (Latest), with DCR, pre-registration, and CIMD coverage.
-
-    [Guided OAuth →](/inspector/guided-oauth) · [CLI OAuth conformance →](/cli/oauth-conformance)
-  </Accordion>
-  <Accordion title="Run evals across LLMs and gate CI on regressions" icon="flask-conical">
-    Author cases with expected tool calls, optional expected outputs, and deterministic checks. Run across Claude, GPT, Gemini, and your own providers, or move the same suite into Jest/Vitest with `@mcpjam/sdk`.
-
-    [Evaluate in Inspector →](/inspector/evals) · [Run evals from the SDK →](/sdk/concepts/running-evals) · [CI integration →](/cli/ci)
-  </Accordion>
-  <Accordion title="Auto-launch Inspector from your dev workflow" icon="code">
-    Launch the Inspector with a prefilled server URL, bearer token, and starting tab via CLI flags; wire it into your dev script or a framework integration.
-
-    [Launch from code →](/inspector/launch-from-code)
-  </Accordion>
-  <Accordion title="Share a server with your team" icon="users">
-    In the hosted app, share a server URL the same way you'd share a Google Doc. Teammates connect with one click and pick up where you left off.
-
-    [Hosted overview →](/hosted/overview)
-  </Accordion>
-</AccordionGroup>
-
-## Capabilities at a glance
-
-| Capability | Description |
-| --- | --- |
-| Playground | IDE-style workspace combining chat, manual tool calls, widget rendering, Chat/Trace/Raw views, and multi-model and multi-host compare. OpenAI Apps SDK and MCP App UIs, text tools, Chrome DevTools-style widget emulator. [Read more](/inspector/playground) |
-| OAuth Debugger | Guided MCP OAuth conformance checks: protocol versions 03-26, 06-18, 11-25, 2026-07-28 (Latest); DCR, client pre-registration, CIMD. [Read more](/inspector/guided-oauth) |
-| MCP Server Debugging | Manually run tools, resources, templates, and elicitation; full JSON-RPC logs. |
-| Skills | Skills in the Playground, read from your local filesystem or served by connected MCP servers. [Read more](/inspector/skills) |
-| Projects | Shared server groups with real-time team sync. [Read more](/inspector/projects) |
-| Evals | Test cases with expected tool calls, run across LLMs, metrics. [Read more](/inspector/evals) |
-| CLI | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](/cli/overview) |
-| SDK | Programmatic access to MCPJam for custom tooling, scripting, and integrations. [Read more](/sdk) |
-| CI/CD | Run MCPJam checks and evals in GitHub Actions and other CI systems to gate PRs on regressions. [Read more](/cli/ci) |
 
 ## Get help
 
 <CardGroup cols={3}>
-  <Card title="Discord" icon="discord" href="https://discord.gg/JEnDtz8X6z">
-    Ask the team and the community.
-  </Card>
-  <Card title="GitHub" icon="github" href="https://github.com/MCPJam/inspector">
-    File an issue or open a PR.
-  </Card>
-  <Card title="Changelog" icon="newspaper" href="/changelog/overview">
-    What shipped, and when.
-  </Card>
+  <Card title="Discord" icon="discord" href="https://discord.gg/JEnDtz8X6z">Ask the team and the community.</Card>
+  <Card title="GitHub" icon="github" href="https://github.com/MCPJam/inspector">File an issue or open a PR.</Card>
+  <Card title="Changelog" icon="newspaper" href="/changelog/overview">What shipped, and when.</Card>
 </CardGroup>
+
+**Looking for a section that moved?**
+
+- <span id="inspector"></span>Inspector: renamed, [see it here](#choose-your-tool)
+- <span id="cli-and-sdk"></span>CLI and SDK: renamed, [see it here](#choose-your-tool)
+- <span id="what-you-can-build"></span>What you can build: renamed, [see it here](#what-you-can-do)
+- <span id="capabilities-at-a-glance"></span>Capabilities at a glance: renamed, [see it here](#what-you-can-do)

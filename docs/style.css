@@ -782,3 +782,15 @@ footer [class*="powered" i],
 .card-group:has(a[href="/inspector/playground"]):has(a[href="https://app.mcpjam.com"]) [data-component-part="card-title"] {
   font-size: 1.25rem !important;
 }
+
+/* Getting Started: filled action button and the fact row under a card */
+.mcj-btn{display:inline-flex;align-items:center;gap:8px;margin-top:16px;padding:10px 18px;border-radius:10px;background:var(--mcj-orange);color:#fff!important;font-weight:600;font-size:15px;text-decoration:none!important;border:0!important}
+.mcj-btn:hover{background:var(--mcj-orange-edge)}
+.mcj-btn + .mcj-btn{margin-left:10px}
+.mcj-meta{display:flex;flex-wrap:wrap;gap:10px 28px;margin-top:20px;padding-top:14px;border-top:1px solid var(--mcj-rule);font-size:14px;color:var(--mcj-ink-muted)}
+.mcj-meta span{display:inline-flex;align-items:center;gap:8px}
+.mcj-meta span + span{padding-left:28px;border-left:1px solid var(--mcj-rule)}
+.card:has(.mcj-meta) [data-component-part="card-content-container"]{align-items:flex-start}
+.card:has(.mcj-meta) [data-component-part="card-icon"]{margin-top:2px}
+.card:has(.mcj-meta) [data-component-part="card-title"]{font-size:1.125rem}
+.mcj-meta{margin-left:-2.5rem}

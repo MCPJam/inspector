@@ -53,9 +53,12 @@
               "getting-started",
               {
                 "group": "Choose where to run",
-                "pages": ["installation", "hosted/overview"]
+                "pages": ["installation", "hosted/overview", "installation/reference"]
               },
-              "inspector/connecting-servers"
+              {
+                "group": "Connect a server",
+                "pages": ["inspector/connecting-servers", "inspector/connecting-servers/reference"]
+              }
             ]
           },
           {
