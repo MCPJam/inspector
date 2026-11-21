@@ -1,0 +1,86 @@
+---
+title: "Troubleshooting"
+description: "Causes and fixes for the errors and surprises you are most likely to hit in Evaluate."
+icon: "life-buoy"
+---
+
+Each heading is the message you see, or the symptom when there is no message.
+
+<AccordionGroup>
+  <Accordion title="Out of MCPJam credits · resets in …">
+    **Cause:** every model the run would use is billed to MCPJam credits, and your organization has none left, so **Start run** is disabled.
+
+    **Fix:** switch the run to a model from your own provider key, or wait for the reset time shown; to keep credits topped up, see [auto-reload](/hosted/overview#auto-reload). See [Run a suite](/evaluate/run-a-suite).
+  </Accordion>
+
+  <Accordion title="Managed by CI — edit the test file, or duplicate to edit here">
+    **Cause:** the suite was created from a suite file or by the MCPJam SDK, so its configuration lives in your repository and an edit made here would be overwritten. The API refuses the same edits with `409` and `details.reason: "CI_OWNED_SUITE_READ_ONLY"`.
+
+    **Fix:** edit the test file and run it again, or click **Duplicate to edit** for an app-owned copy that CI never touches. An API call that writes as the suite file sends the suite's id as `declaredSuiteId`. See [Run evals in CI](/evaluate/run-evals-in-ci).
+  </Accordion>
+
+  <Accordion title="A run connected no servers, and cases that expect a tool call fail">
+    **Cause:** the client the run used has no server group, so the run had no tools to call.
+
+    **Fix:** pick a server group for that client in **Suite settings**; the run sheet refuses to start such a run with "A selected client has no server group, so its run would connect no servers. Pick a server group in suite settings." See [What a run can access](/evaluate/what-a-run-can-access).
+  </Accordion>
+
+  <Accordion title="No rubric — the judge grades against the request itself, with its score capped at 0.85.">
+    **Cause:** the case has no **Expected outcome**, no route and no suite grading criteria, so the judge grades against the prompt alone and its score cannot exceed 0.85.
+
+    **Fix:** write an **Expected outcome** on the case saying what a good answer contains. See [Configure grading](/evaluate/configure-grading).
+  </Accordion>
+
+  <Accordion title="Cost shows a dash (—)">
+    **Cause:** no cost was observed, because the model ran on your own provider key or reported no token usage; a dash never means free.
+
+    **Fix:** nothing is wrong. Models billed to MCPJam credits show a cost. See [Cost](/evaluate/reference/runs-and-results#cost).
+  </Accordion>
+
+  <Accordion title="The run is Inconclusive">
+    **Cause:** a per-case suite measured too little to decide: too few iterations finished, too many hit evaluator errors, or too few were gradeable under its evidence requirements.
+
+    **Fix:** open the iterations that did not finish or errored, fix the cause and run again, or relax the evidence requirements in **Suite settings**. See [Evidence requirements](/evaluate/reference/suite-settings#evidence-requirements).
+  </Accordion>
+
+  <Accordion title="An SDK suite appeared twice after renaming it">
+    **Cause:** the SDK reporter identifies a suite by its `suiteName`, so a renamed suite is reported as a new one and the old one stays behind.
+
+    **Fix:** delete the suite you no longer report into; its run history goes with it. See [Run evals in CI](/evaluate/run-evals-in-ci).
+  </Accordion>
+
+  <Accordion title="No tools are marked read-only on these servers. Choose Read and write or add read-only tool annotations, then try again.">
+    **Cause:** generation was scoped to read-only tools, and none of the servers' tools declares a read-only annotation, so retrying fails the same way.
+
+    **Fix:** click **Change generation settings** and choose Read and write, or add `readOnlyHint: true` to the annotations of your read-only tools. See [Generate cases](/evaluate/generate-cases).
+  </Accordion>
+
+  <Accordion title="The Run button is disabled">
+    **Cause:** something blocks the run, and the button's tooltip says what.
+
+    **Fix:** act on the tooltip:
+
+    | Tooltip | What to do |
+    | --- | --- |
+    | Eval iteration limit reached. Resets … | Wait for the reset time shown. |
+    | Configure suite servers before running the full suite. | Attach a server to the suite. |
+    | Add a test case first. | Add a case. See [Write a case](/evaluate/write-a-case). |
+    | N generated drafts are waiting to be added. Use “Add all to suite” on the suite page before running. | Save or discard the generated drafts. |
+    | A suite or replay is already in progress. | Wait for it to finish, or click **Cancel run**. |
+    | Finish the in-progress test case run first. | Wait for the case run to finish. |
+
+    In the run sheet, **Start run** can also be disabled by "Out of MCPJam credits · resets in …" (above) or "Fix the setup problem above before running."; the notice above the button names the problem.
+  </Accordion>
+</AccordionGroup>
+
+<CardGroup cols={3}>
+  <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
+    Start a run and pick clients and models.
+  </Card>
+  <Card title="Runs and results" icon="history" href="/evaluate/reference/runs-and-results">
+    Statuses, comparison labels and cost.
+  </Card>
+  <Card title="Suite settings" icon="settings-2" href="/evaluate/reference/suite-settings">
+    Every settings row and its default.
+  </Card>
+</CardGroup>
