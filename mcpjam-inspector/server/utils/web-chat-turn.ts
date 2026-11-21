@@ -1964,7 +1964,7 @@ export async function streamChatTurn(
     // The vendor receives only the user message. Its settings check needs
     // the project prompt, before MCPJam adds instructions for its own model.
     systemPrompt: harnessRunsOnWebAccount(persist.harness)
-      ? persist.systemPrompt
+      ? (persist.systemPrompt ?? "")
       : effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its

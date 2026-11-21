@@ -97,13 +97,21 @@ describe("streamWebChatTurn — execution binding", () => {
   });
 
   it.each([
-    ["chatgpt-web", undefined],
-    ["claude-web", "User-configured prompt"],
-  ] as const)("passes the original prompt to the %s settings check", async (harness, systemPrompt) => {
-    const turn = args();
-    await streamWebChatTurn({ ...turn, persist: { ...turn.persist, harness, systemPrompt } });
-    expect(m.mcpjamFree).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt }));
-  });
+    ["chatgpt-web", undefined, ""],
+    ["claude-web", "User-configured prompt", "User-configured prompt"],
+  ] as const)(
+    "passes the original prompt to the %s settings check",
+    async (harness, systemPrompt, expected) => {
+      const turn = args();
+      await streamWebChatTurn({
+        ...turn,
+        persist: { ...turn.persist, harness, systemPrompt },
+      });
+      expect(m.mcpjamFree).toHaveBeenCalledWith(
+        expect.objectContaining({ systemPrompt: expected }),
+      );
+    },
+  );
 
   it("awaits the check the route already started instead of a second one", async () => {
     const started = vi.fn(async () => {});
