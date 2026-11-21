@@ -551,10 +551,7 @@ function SortableServerCard({
 interface ServersTabProps {
   projectServers: Record<string, ServerWithName>;
   pendingDashboardOAuth?: PendingDashboardOAuthState | null;
-  onConnect: (
-    formData: ServerFormData,
-    options?: { onConfigSaved?: () => void }
-  ) => void | Promise<void>;
+  onConnect: import("@/lib/server-connection-submission").ServerConnectionSubmit;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -1306,6 +1303,7 @@ export function ServersTab({
         throw error;
       }
       finishRename(result.ok);
+      if (!result.ok) return result;
 
       setDetailModalState((prev) => {
         if (
@@ -1389,7 +1387,7 @@ export function ServersTab({
   };
 
   const handleConnectServer = useCallback(
-    (formData: ServerFormData) => {
+    (formData: ServerFormData, options?: import("@/lib/server-connection-submission").ServerConnectionSubmissionOptions) => {
       if (isAppBootstrapping) {
         toast.error(
           appReadyMessage ?? "App is still loading. Try again in a moment."
@@ -1397,7 +1395,7 @@ export function ServersTab({
         return;
       }
       focusLoggerOnServer(formData.name);
-      onConnect(formData);
+      return onConnect(formData, options);
     },
     [focusLoggerOnServer, onConnect, isAppBootstrapping, appReadyMessage]
   );
@@ -2335,20 +2333,25 @@ export function ServersTab({
             setIsAddingServer(false);
             setPrefilledServerDraft(undefined);
           }}
-          onSubmit={(formData) => {
+          onSubmit={(formData, options) => {
             track("connecting_server", {
               location: "servers_tab",
             });
             // The wire-version pin can't be written until the hosted server
             // row exists — stash it and let the watcher effect apply it once
             // the Convex sync surfaces the row, then reconnect with the pin.
-            if (formData.mcpProtocolVersionOverride) {
-              setPendingAddProtocolPin({
-                serverName: formData.name,
-                version: formData.mcpProtocolVersionOverride,
-              });
-            }
-            handleConnectServer(formData);
+            // Stash only once the save is accepted: a rejected draft must not
+            // leave a pin for whichever server later takes this name.
+            const version = formData.mcpProtocolVersionOverride;
+            return handleConnectServer(formData, {
+              ...options,
+              onAccepted: () => {
+                if (version) {
+                  setPendingAddProtocolPin({ serverName: formData.name, version });
+                }
+                options?.onAccepted?.();
+              },
+            });
           }}
           projectClientConfig={selectedProject?.clientConfig}
           organizationId={selectedProject?.organizationId ?? null}

@@ -87,6 +87,33 @@ describe("validateBearerTargetUrl", () => {
   });
 });
 
+describe("validateRequestTimeout", () => {
+  it.each(["", "  ", "1000", "600000", "30000", "1e3"])(
+    "accepts %j",
+    async (value) => {
+      const { validateRequestTimeout } = await import("../server-form-validation");
+      expect(validateRequestTimeout(value)).toBeNull();
+    },
+  );
+
+  it.each([
+    "0",
+    "-1000",
+    "999",
+    "600001",
+    "1500",
+    "1000.5",
+    "NaN",
+    "Infinity",
+    "1000ms",
+  ])("rejects %j", async (value) => {
+    const { validateRequestTimeout } = await import("../server-form-validation");
+    expect(validateRequestTimeout(value)).toBe(
+      "Enter a timeout from 1000 to 600000 ms in steps of 1000, or leave it blank to use the default.",
+    );
+  });
+});
+
 describe("shared OAuth credential validation", () => {
   it("uses the same client ID and secret rules in both server forms", async () => {
     const { validateOAuthClientId, validateOAuthClientSecret } =

@@ -322,9 +322,10 @@ describe("useServerDetailController", () => {
       expect.objectContaining({ message: "vault unavailable" }),
       expect.objectContaining({ source: "server_detail_save_reveal_headers" }),
     );
-    expect(mockToastError).toHaveBeenCalledWith(
+    expect(controller().form.saveError).toBe(
       "Couldn't load this server's saved headers to apply this change. Reveal saved headers in Advanced settings and try again.",
     );
+    expect(mockToastError).not.toHaveBeenCalled();
     expect(options.onSubmit).not.toHaveBeenCalled();
     expect(controller().form.isSaving).toBe(false);
   });

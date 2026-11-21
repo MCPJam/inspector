@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { track } from "@/lib/analytics";
-import type { ServerFormData } from "@/shared/types";
+import { submitServerDraft, type ServerConnectionSubmit } from "@/lib/server-connection-submission";
 import { PlaygroundLeftRail } from "../PlaygroundLeftRail";
 import { useComparePaneStore } from "@/stores/compare-pane-store";
 import { createServer } from "@/test/factories";
@@ -22,7 +22,7 @@ import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
  */
 
 const playgroundState = vi.hoisted(() => ({
-  onConnect: undefined as ((formData: ServerFormData) => void) | undefined,
+  onConnect: undefined as ServerConnectionSubmit | undefined,
   activeServerNames: [] as string[],
   onSelectMultipleServers: vi.fn(),
   paneServers: vi.fn(),
@@ -143,15 +143,21 @@ vi.mock("@/components/connection/AddServerModal", () => ({
   AddServerModal: ({
     isOpen,
     onSubmit,
+    onClose,
   }: {
     isOpen: boolean;
-    onSubmit: (formData: ServerFormData) => void;
+    onSubmit: ServerConnectionSubmit;
+    onClose: () => void;
   }) =>
     isOpen ? (
       <div role="dialog">
         <button
           type="button"
-          onClick={() => onSubmit({ name: "local" } as ServerFormData)}
+          onClick={() => {
+            void submitServerDraft(onSubmit, { name: "local", type: "http", url: "https://example.com/mcp" }).then((accepted) => {
+              if (accepted) onClose();
+            });
+          }}
         >
           Save server
         </button>
@@ -170,8 +176,8 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
     vi.mocked(track).mockClear();
   });
 
-  it("connects from the empty state without leaving the Playground", () => {
-    const onConnect = vi.fn();
+  it("connects from the empty state without leaving the Playground", async () => {
+    const onConnect = vi.fn<ServerConnectionSubmit>((_data, options) => options?.onAccepted?.());
     playgroundState.onConnect = onConnect;
 
     render(<PlaygroundLeftRail />);
@@ -183,11 +189,13 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /save server/i }));
 
-    expect(onConnect).toHaveBeenCalledWith({ name: "local" });
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ name: "local" }), {
+      onAccepted: expect.any(Function), suppressErrorToast: true,
+    });
     expect(track).toHaveBeenCalledWith("connecting_server", {
       location: "playground_tools_rail",
     });
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   // Names the handler, not the fallback: the mock button is disabled purely
@@ -217,6 +225,53 @@ describe("PlaygroundLeftRail — zero-server Tools body", () => {
       ready("stateless-mcp"),
     );
   };
+
+  it.each([false, true])(
+    "retains a rejected server draft and permits retry with saved servers: %s",
+    async (hasSavedServers) => {
+      if (hasSavedServers) withSavedServer();
+      const onConnect = vi.fn<ServerConnectionSubmit>()
+        .mockRejectedValueOnce(new Error("save refused"))
+        .mockImplementationOnce((_data, options) => options?.onAccepted?.());
+      playgroundState.onConnect = onConnect;
+      render(<PlaygroundLeftRail />);
+      fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+      if (hasSavedServers) {
+        fireEvent.click(screen.getByRole("button", { name: "Add server" }));
+      }
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save server" }));
+      });
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      expect(onConnect).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "local" }),
+        { onAccepted: expect.any(Function), suppressErrorToast: true },
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Save server" }));
+      });
+      expect(onConnect).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    },
+  );
+
+  it("keeps the add modal mounted while its save changes the active server set", async () => {
+    let reject!: (error: Error) => void;
+    playgroundState.onConnect = vi.fn<ServerConnectionSubmit>(
+      () => new Promise<void>((_resolve, rejectSave) => { reject = rejectSave; }),
+    );
+    const { rerender } = render(<PlaygroundLeftRail />);
+    fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save server" }));
+    playgroundState.activeServerNames = ["local"];
+    rerender(<PlaygroundLeftRail />);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByTestId("multi-server-pane")).not.toBeInTheDocument();
+    playgroundState.activeServerNames = [];
+    await act(async () => reject(new Error("save refused")));
+    rerender(<PlaygroundLeftRail />);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
 
   it("offers saved servers and Add server without asking for configuration again", async () => {
     withSavedServer();

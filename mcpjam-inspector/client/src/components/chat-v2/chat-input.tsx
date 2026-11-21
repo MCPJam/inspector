@@ -81,7 +81,8 @@ import {
   ExecutionTargetChip,
   type ExecutionTargetChipData,
 } from "@/components/chat-v2/chat-input/execution-target-chip";
-import { ModelDefinition, ServerFormData } from "@/shared/types";
+import { ModelDefinition } from "@/shared/types";
+import type { ServerConnectionSubmit } from "@/lib/server-connection-submission";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
@@ -439,7 +440,7 @@ interface ChatInputProps {
    */
   onDisconnectServer?: (serverName: string) => void;
   /** Add a new server (opens the add-server modal). */
-  onAddServer?: (formData: ServerFormData) => void;
+  onAddServer?: ServerConnectionSubmit;
   /** Server-side context used to bill voice transcription to MCPJam credits. */
   voiceInputContext?: VoiceInputBackendContext;
   /** WorkOS/guest bearer used by local inspector routes to resolve provider keys. */
@@ -2507,10 +2508,7 @@ export function ChatInput({
         <AddServerModal
           isOpen={addServerModalOpen}
           onClose={() => setAddServerModalOpen(false)}
-          onSubmit={(formData) => {
-            onAddServer(formData);
-            setAddServerModalOpen(false);
-          }}
+          onSubmit={onAddServer}
         />
       )}
 

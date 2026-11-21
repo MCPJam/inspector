@@ -288,6 +288,7 @@ function ProjectServerDetailModal({
         <form
           data-settings-layout
           onSubmit={form.submit}
+          noValidate
           className="flex min-h-0 flex-col"
         >
           <Tabs

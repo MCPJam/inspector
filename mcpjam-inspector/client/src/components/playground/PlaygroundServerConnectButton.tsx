@@ -12,13 +12,13 @@ import { getConnectionStatusMeta } from "@/components/connection/server-card-uti
 import { SearchInput } from "@/components/ui/search-input";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import { track } from "@/lib/analytics";
-import type { ServerFormData } from "@/shared/types";
+import type { ServerConnectionSubmit } from "@/lib/server-connection-submission";
 import type { ServerWithName } from "@/state/app-types";
 
 interface PlaygroundServerConnectButtonProps {
   servers: Record<string, ServerWithName>;
   catalogKnown: boolean;
-  onAddServer: (formData: ServerFormData) => void;
+  onAddServer: ServerConnectionSubmit;
   ensureServersReady?: (
     names: string[],
     options?: { allowInteractiveOAuthFlow?: boolean },
@@ -209,10 +209,14 @@ export function PlaygroundServerConnectButton({
       <AddServerModal
         isOpen={adding}
         onClose={() => setAdding(false)}
-        onSubmit={(formData) => {
+        onSubmit={async (formData, options) => {
           track("connecting_server", { location: "playground_tools_rail" });
-          onAddServer(formData);
-          setAdding(false);
+          onPendingChange(true);
+          try {
+            await onAddServer(formData, options);
+          } finally {
+            onPendingChange(false);
+          }
         }}
       />
     </>

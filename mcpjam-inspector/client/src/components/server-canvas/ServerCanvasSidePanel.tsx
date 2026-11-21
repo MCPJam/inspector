@@ -64,6 +64,7 @@ export function ServerCanvasSidePanel({
         <div role="tabpanel" aria-label={label?.ariaLabel ?? label?.label}>
           <form
             onSubmit={submit}
+            noValidate
             hidden={shown !== "configuration"}
             className={bodyClass}
           >
