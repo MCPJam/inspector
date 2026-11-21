@@ -966,7 +966,7 @@ export function OrganizationBillingSection({
     if (!billingStatus.billingConfigured || !canStartCheckout) {
       toast.error(
         !canStartCheckout
-          ? "Only organization owners and admins can start checkout."
+          ? "You don't have permission to start checkout for this organization. Ask an owner."
           : "Checkout isn't available in this environment.",
       );
       onCheckoutIntentConsumed?.();

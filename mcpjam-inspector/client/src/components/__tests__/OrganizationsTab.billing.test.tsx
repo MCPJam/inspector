@@ -865,6 +865,34 @@ describe("OrganizationsTab billing", () => {
     ).toBeDisabled();
   });
 
+  it("tells an admin without checkout permission to ask an owner", async () => {
+    signInAsAdmin();
+    const startPlanChange = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          catalogPlanId: "free",
+          priceModel: "free",
+          canManageBilling: false,
+          isOwner: false,
+        }),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    const consumed = vi.fn();
+    renderAutoCheckoutTab({ onCheckoutIntentConsumed: consumed });
+
+    await waitFor(() => expect(consumed).toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalledWith(
+      errorToastMessage(
+        "You don't have permission to start checkout for this organization. Ask an owner.",
+      ),
+      { duration: 8000 },
+    );
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
   it("does not call a cadence the bundle does not sell the current plan", () => {
     const base = createV2PlanCatalog();
     const catalog = {
