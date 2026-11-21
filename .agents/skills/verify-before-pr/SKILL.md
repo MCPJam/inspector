@@ -63,6 +63,9 @@ Internal-only changes (tests, CI, refactors with no behavior change) do not.
 ## 5. Before pushing
 
 - `npm run slop:check` passes: no rule in `scripts/slop/rules.mjs` may go up.
+- Inspector change: `npm run lint -w @mcpjam/inspector` passes. The
+  `AGENTS.md` in `client/`, `server/` or `shared/` lists that layer's rules
+  and the check behind each.
 - Every behavior change has a test in a `__tests__/` directory next to the source.
 - No `console.*` in `server/`; use `logger` (see `mcpjam-inspector/AGENTS.md`).
 - No literal color values; use role tokens (see `DESIGN.md`).

@@ -790,6 +790,53 @@ describe("hook paths", async () => {
   });
 });
 
+describe("lint on stop", async () => {
+  const { lintTargets, trimOutput, repeatCheck, MAX_LINES } = await import(
+    "./lint-stop.mjs"
+  );
+
+  it("lints only what the inspector's lint script covers", () => {
+    assert.deepEqual(
+      lintTargets([
+        "mcpjam-inspector/client/src/App.tsx",
+        "mcpjam-inspector/client/src/lib/a.test.ts",
+        "mcpjam-inspector/server/routes/a.ts",
+        "mcpjam-inspector/shared/types.ts",
+        "mcpjam-inspector/server/routes/a.ts",
+        "mcpjam-inspector/client/vite.config.ts",
+        "mcpjam-inspector/client/src/index.css",
+        "mcpjam-inspector/server/views/a.tsx",
+        "mcpjam-inspector/scripts/a.mjs",
+        "sdk/src/index.ts",
+        "",
+      ]),
+      [
+        "client/src/App.tsx",
+        "client/src/lib/a.test.ts",
+        "server/routes/a.ts",
+        "shared/types.ts",
+      ],
+    );
+    assert.deepEqual(lintTargets(["README.md", "sdk/src/a.ts"]), []);
+  });
+
+  it("keeps a short report whole and cuts a long one", () => {
+    assert.equal(trimOutput("a\nb\n"), "a\nb");
+    const long = Array.from({ length: MAX_LINES + 5 }, (_, i) => `line ${i}`);
+    const trimmed = trimOutput(long.join("\n")).split("\n");
+    assert.equal(trimmed.length, MAX_LINES + 1);
+    assert.equal(trimmed[MAX_LINES - 1], `line ${MAX_LINES - 1}`);
+    assert.match(trimmed[MAX_LINES], /^\.\.\. 5 more lines\. Run `npm run lint/);
+  });
+
+  it("reports the same failure once, and a new one again", () => {
+    const first = repeatCheck("a.ts:1 error", "");
+    assert.equal(first.repeat, false);
+    assert.equal(repeatCheck("a.ts:1 error", first.seen).repeat, true);
+    assert.equal(repeatCheck("a.ts:2 error", first.seen).repeat, false);
+  });
+});
+
 describe("repo hygiene", async () => {
   const { checkChange, parseNameStatus } = await import("./repo-hygiene.mjs");
   const { FILE_BUDGET, GROWTH_ALLOWANCE } = await import("./hook.mjs");
