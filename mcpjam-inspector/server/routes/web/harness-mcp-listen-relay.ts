@@ -31,6 +31,7 @@
  * without the relay would take every turn into the stall.
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 export function harnessListenRelayEnabled(
