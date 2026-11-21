@@ -10,6 +10,21 @@
       "kind": "*",
       "match": "api.github.com/repos/MCPJam/inspector",
       "reason": "The header's star count calls GitHub without a token, and GitHub refuses it with 403 once the per-IP allowance is spent, which a sweep does."
+    },
+    {
+      "kind": "http-400",
+      "match": "^POST \\S+/user_management/authenticate$",
+      "reason": "The chat session asks AuthKit for a WorkOS token on mount (use-chat-session.ts). A guest has no WorkOS session cookie, so the AuthKit proxy answers the refresh with 400 \"No local WorkOS session\" (server/routes/workos-authkit.ts) and the hook falls back to the guest bearer."
+    },
+    {
+      "kind": "console-error",
+      "match": "^Failed to load resource: the server responded with a status of 400 \\(Bad Request\\) @ \\S+/user_management/authenticate$",
+      "reason": "Chromium's own console line for the guest's refused AuthKit refresh above. The app logs nothing for it."
+    },
+    {
+      "kind": "request-failed",
+      "match": "^GET \\S+/api/(web|mcp)/xaa(/[go]/[^/\\s]+)?/\\.well-known/openid-configuration net::ERR_ABORTED$",
+      "reason": "XAAFlowTab and XAAIdpCard fetch the issuer's discovery document in an effect that aborts the fetch on cleanup. Dev StrictMode runs each effect twice, and the guest's organization id arrives after first render, so the first fetch is cancelled and a second one replaces it."
     }
   ]
 }
