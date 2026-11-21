@@ -4,7 +4,7 @@ description: "Add a test case by hand, say which tool should handle the prompt, 
 icon: "file-pen-line"
 ---
 
-A case is one scenario you want to verify: what the user asks, which tool should handle it, and the assertions that grade the result. Each time the case runs counts as one iteration.
+A case is one scenario: what the user asks, which tool should handle it, and the assertions that grade the result. Each run of a case is one iteration.
 
 ## Add a case
 
@@ -13,26 +13,23 @@ A case is one scenario you want to verify: what the user asks, which tool should
     In the Evaluate tab, open **Suites** and pick a suite.
   </Step>
   <Step title="Start a blank case">
-    On the **Test Cases** card, click **Add case**, then **Add manually**. A suite with no cases shows "No cases yet" instead; click **Describe** there. It opens the same case form beside a chat, and you can fill the form in yourself.
+    On the **Test Cases** card, click **Add case**, then **Add manually**. In an empty suite ("No cases yet"), click **Describe**, which opens the same form beside a chat; you can fill it in yourself.
   </Step>
-  <Step title="Write the prompt">
-    Type what the user asks in the first **User prompt**.
-  </Step>
-  <Step title="Add what to check">
-    Click **Add assertion or action** and pick from the list. The sections below explain the choices.
+  <Step title="Write the prompt and checks">
+    Type what the user asks in the first **User prompt**, then click **Add assertion or action** to add checks.
   </Step>
   <Step title="Save and run">
     Click **Save**, then **Run**.
   </Step>
 </Steps>
 
-A new case is a draft until you save it. Leaving without saving adds nothing to the suite, and **Run** stays disabled on an unsaved draft.
+A new case is a draft until you save it: leaving without saving adds nothing to the suite, and **Run** stays disabled. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
 
 {/* Screenshot: case editor with one User prompt, a "Tool was called with…" row under it, the Expected outcome box, and the Add assertion or action button */}
 
 ## Actions and assertions
 
-**Add assertion or action** opens one list with two kinds of entry. Actions add a step to the run:
+**Add assertion or action** lists two kinds of entry. Actions add a step to the run:
 
 | Action | What it adds |
 | --- | --- |
@@ -40,31 +37,24 @@ A new case is a draft until you save it. Leaving without saving adds nothing to 
 | **Interact** | A step that acts on a rendered MCP App view. |
 | **Call tool** | A tool call on a named server with arguments you set, made without the model. |
 
-Assertions grade the run. Each entry in the list says where it applies:
-
-- **After this action**: graded at that point in the run, over the turn it sits in. Tool-selection and response assertions, such as "Tool was called with…" and "Response contains…", work this way.
-- **After the run**: graded once over the finished transcript, and listed under "After run checks". "Token budget under N", "Fewer than N user turns" and the tool-result assertions work this way.
-
-The assertion's kind decides which of the two it is. Some kinds are marked "Advisory only" in the list. See [Assertions](/evaluate/reference/assertions) for every kind and its fields.
+Assertions grade the run. The kind decides where each applies: **After this action** grades the turn it sits in, and **After the run** grades the finished transcript once, listed under "After run checks". Some kinds are marked "Advisory only". See [Assertions](/evaluate/reference/assertions) for every kind, its fields and where it applies.
 
 ## Which tool should handle it?
 
-The route is the case's answer to "Which tool should handle it?". There are three answers, and a named tool comes in two strictness levels. Set each from **Add assertion or action**:
+The route answers "Which tool should handle it?". Set it from **Add assertion or action**:
 
 | Answer | How to set it | Passes when |
 | --- | --- | --- |
-| A named tool: reach it | Add "Tool was called with…" under the prompt, then pick the tool and its arguments. | The model calls that tool with matching arguments. Other calls, in any order, are allowed. |
+| A named tool: reach it | Add "Tool was called with…" under the prompt; pick the tool and arguments. | That tool is called with matching arguments. Other calls, in any order, are allowed. |
 | A named tool: exact route | Also add "Tools must be called in this exact order". | The calls happen in the listed order, with no extra calls. |
-| No tool should be called | Add "No tools should be called". | The model calls no tool. This makes the case negative. |
-| Any route | Add no "Tool was called with…", but add another assertion or an **Expected outcome**. | Every assertion passes. The route itself is not graded. |
+| No tool should be called | Add "No tools should be called". | No tool is called. The case is negative. |
+| Any route | Add no "Tool was called with…"; add another assertion or an **Expected outcome**. | Every assertion passes. The route is not graded. |
 
-When you inspect a past iteration, its route row names the answer that was in effect, such as "Reach read_note", "Exact route: read_note → update_note", **No tool should be called**, or "Any route — graded by the evaluators below". On a read-only case, such as one managed in code, **Matching options** shows which strictness the route uses: **Reach the tool** or **Exact route**.
-
-A new case with no tool assertion, no other assertion and no expected outcome would pass without checking anything. **Save** stays disabled with "Choose which tool should handle it, or that no tool should be called."
+A case with no assertion and no expected outcome would check nothing, so **Save** stays disabled with "Choose which tool should handle it, or that no tool should be called." On a read-only case, such as one managed in code, **Matching options** shows whether the route uses **Reach the tool** or **Exact route**.
 
 ### Argument values
 
-Arguments compare under the suite's argument matching. In the default partial mode, an expected value of `"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`, `"null"` or `"any"` matches any value of that type, so you can check the shape of a call without pinning a literal:
+Under the default partial argument matching, `"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`, `"null"` or `"any"` matches any value of that type, so you can check a call's shape without pinning a literal:
 
 ```json
 { "query": "string", "limit": "number" }
@@ -72,36 +62,34 @@ Arguments compare under the suite's argument matching. In the default partial mo
 
 ## Negative cases
 
-A negative case is one whose route says **No tool should be called**. It passes only if the model answers without calling a tool. Good negative cases are prompts a careless model would turn into a tool call:
+A negative case has the route **No tool should be called** and passes only if the model calls no tool. Pick prompts a careless model would turn into a tool call:
 
 | Prompt | Why no tool should fire |
 | --- | --- |
-| "What parameters does `search` take?" | A question about the tool, answerable from its description. |
+| "What parameters does `search` take?" | Answerable from the tool's description. |
 | "Thanks, that's all I needed." | A thank-you with nothing to do. |
 | "Delete it." (with nothing selected earlier) | Ambiguous; the model should ask which item. |
 
-A case that names no tool is not negative. It is an "Any route" case, graded by its other assertions. If a negative case also carries an assertion that requires a tool call, from the case or from the suite, the editor flags the conflict: "This check conflicts with another check that requires a tool call."
+A case that names no tool is "Any route", not negative. If a negative case also carries an assertion that requires a tool call, from the case or the suite, the editor flags it: "This check conflicts with another check that requires a tool call."
 
 ## Multi-turn cases
 
 Add a second **User prompt** from **Add assertion or action** at the end of the first turn. The run plays both prompts as one conversation.
 
-An assertion placed under a prompt sees only that prompt's turn: its tool calls, its final message and its tool errors. A "Tool was called with…" under the second prompt passes only if the call happens in the second turn. "No tool errors" placed under a prompt is labelled "No tool errors so far", because it sees only what has happened by that point. Put an assertion after the run when it should cover the whole conversation.
+An assertion under a prompt sees only that turn: its tool calls, final message and tool errors. A "Tool was called with…" under the second prompt passes only if the call happens in the second turn, and "No tool errors" there reads "No tool errors so far". To cover the whole conversation, put the assertion after the run.
 
-Removing a prompt that has assertions under it asks first, because those assertions would move under the previous step and grade that turn instead.
+Removing a prompt with assertions under it asks first: they would move to the previous step and grade that turn.
 
 ## Required and Advisory
-
-Every assertion has a role, shown on its row:
 
 | Role | What a miss does |
 | --- | --- |
 | Required | The iteration fails. |
-| Advisory | The miss is shown on the result. The iteration does not fail. |
+| Advisory | The miss shows on the result; the iteration does not fail. |
 
-Assertions are Required unless set otherwise. When your workspace supports editing roles, open an assertion's row to change it.
+Each assertion's row shows its role. Assertions are Required by default; when your workspace supports editing roles, open the row to change it.
 
-A Required assertion under a prompt stops the run when it fails. The steps after it do not run, and the result marks them Skipped. An Advisory miss never stops the run.
+A failed Required assertion under a prompt also stops the run: later steps do not run and show as Skipped. An Advisory miss never stops the run.
 
 ## Expected outcome
 
@@ -112,23 +100,16 @@ A Required assertion under a prompt stops the run when it fails. The steps after
 3. The suite's grading criteria.
 4. The user's request itself. With nothing else to grade against, the judge caps the score at 0.85.
 
-Turn on **Skip the judge for this case** to stop the judge grading this case. The switch appears when the suite's judge is not off. See [Configure grading](/evaluate/configure-grading) for the judge's model, threshold and role.
-
-## Invalid JSON
-
-Fields that take JSON, such as tool arguments and result schemas, are checked as you type. While any of them holds invalid JSON, the field is highlighted, and **Save** and **Run** are disabled with a tooltip asking you to complete the highlighted fields. Fix the JSON to enable them again.
+Turn on **Skip the judge for this case** to exclude this case from the judge. The switch appears when the suite's judge is not off. See [Configure grading](/evaluate/configure-grading) for the judge's model, threshold and role.
 
 ## Inspect a past iteration
 
 <Steps>
   <Step title="Open History">
-    In the case editor, click **History** to list the case's past iterations.
+    In the case editor, click **History** and pick a past iteration.
   </Step>
-  <Step title="Pick one">
-    The form switches to the case as it was when that iteration ran, read-only. A banner reads "Viewing run · Iteration #N".
-  </Step>
-  <Step title="Compare with your draft">
-    If the case has changed since, the banner shows **Changed**.
+  <Step title="Read it">
+    The form shows the case as it was for that iteration, read-only, under the banner "Viewing run · Iteration #N". **Changed** means the case was edited since. Its route row names the answer in effect, such as "Reach read_note", "Exact route: read_note → update_note", **No tool should be called**, or "Any route — graded by the evaluators below".
   </Step>
   <Step title="Return to editing">
     Click **Edit case** to go back to the current draft.
@@ -139,14 +120,12 @@ Fields that take JSON, such as tool arguments and result schemas, are checked as
 
 ## The same case in a suite file
 
-A case written in the app has the same shape as one in a suite file run by `mcpjam test`: a list of steps, each a `prompt` or an `assert`. This case asks two questions in one conversation and checks each turn.
+A case in a suite file run by `mcpjam test` has the same shape: a list of steps, each a `prompt` or an `assert`. This one checks each turn of a two-prompt conversation.
 
 <Tabs>
   <Tab title="Inspector">
-    1. First **User prompt**: "What does note 7 say?"
-    2. Under it, add "Tool was called at least once" with the tool `read_note`.
-    3. Add a second **User prompt**: "Thanks, that's all."
-    4. Under it, add "Tool was never called" with the tool `delete_note`.
+    1. **User prompt** "What does note 7 say?", with "Tool was called at least once" for `read_note` under it.
+    2. A second **User prompt** "Thanks, that's all.", with "Tool was never called" for `delete_note` under it.
   </Tab>
   <Tab title="Suite file">
     ```yaml
