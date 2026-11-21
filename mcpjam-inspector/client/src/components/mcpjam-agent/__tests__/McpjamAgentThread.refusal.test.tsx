@@ -125,6 +125,7 @@ describe("McpjamAgentThread refusal copy", () => {
     sessionState.submit.mockClear();
     sessionState.onNewChat.mockClear();
     sessionState.messages = [];
+    transcript.sendFollowUpMessage = undefined;
     useEvalAgentScopes.setState({ scopes: {} });
     useDescribeFlow.setState({ sessions: {} });
     takeKeptDraft();
@@ -191,7 +192,9 @@ describe("McpjamAgentThread refusal copy", () => {
     renderWithError({ code: "guest_input_too_large" });
     const composer = screen.getByRole("textbox");
     fireEvent.change(composer, { target: { value: "My own question" } });
-    act(() => transcript.sendFollowUpMessage?.("Widget follow-up"));
+    const send = transcript.sendFollowUpMessage;
+    expect(send).toBeTypeOf("function");
+    act(() => send?.("Widget follow-up"));
     expect(sessionState.submit).not.toHaveBeenCalled();
     expect(composer).toHaveValue("My own question");
   });

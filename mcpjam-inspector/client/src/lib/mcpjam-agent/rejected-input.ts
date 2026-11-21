@@ -7,7 +7,9 @@ function lastUserTurn(messages: UIMessage[]): number {
   return index;
 }
 
-// A later model step can hit the same size limit after tools have acted.
+// A later model step can hit the same size limit after tools have acted. That
+// exchange has to stay: removing it would hide the tools' actions from the
+// next request.
 function toolsRanAfter(messages: UIMessage[], index: number): boolean {
   return messages
     .slice(index + 1)
@@ -25,7 +27,6 @@ export function rejectedInputTurn(
   if (!isGuestInputTooLargeMessage(errorMessage)) return null;
   const index = lastUserTurn(messages);
   if (index < 0) return null;
-  // Keep that exchange: removing it would hide actions from the next request.
   if (toolsRanAfter(messages, index)) return null;
   return {
     messages: messages.slice(0, index),
