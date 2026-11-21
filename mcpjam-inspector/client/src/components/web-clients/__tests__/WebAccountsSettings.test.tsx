@@ -129,9 +129,7 @@ describe("WebAccountsSettings", () => {
   it("signs a chosen account in again on its own page, not the default's", async () => {
     const user = userEvent.setup();
     mount(true);
-    await user.click(
-      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
     await user.click(
       await screen.findByRole("menuitem", { name: "Sign in again" }),
     );
