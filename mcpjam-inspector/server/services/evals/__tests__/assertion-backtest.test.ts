@@ -1,4 +1,5 @@
 import { hostedPredicateScoreDefinition } from "../score-definitions";
+import { hostedPlatformGateDefinitions } from "../platform-gate-rows";
 import { it, expect, vi } from "vitest";
 import { backtestIteration, runAssertionBacktest } from "../assertion-backtest";
 import {
@@ -202,6 +203,34 @@ it("joins unchanged hosted content-derived identities without renumbering them",
   ]);
   expect(changed.every((item) => !item.comparable)).toBe(true);
 });
+it("does not list the platform's checks as removed by an assertion draft", () => {
+  const hosted = resolveScoreDefinition(
+    hostedPredicateScoreDefinition({ predicate: oldRule }),
+  );
+  const stored = scoreResultFromPredicateResult(
+    hosted,
+    evaluatePredicates({ toolCalls: [], finalAssistantMessage: "hello" }, [
+      oldRule,
+    ])[0],
+  );
+  const platform = hostedPlatformGateDefinitions({ failOnToolError: true }).map(
+    resolveScoreDefinition,
+  );
+  const differences = backtestIteration(
+    {
+      ...row,
+      evaluationConfig: { definitions: [hosted, ...platform] },
+      results: [stored],
+    },
+    { assertions: { mode: "replace", list: [oldRule] } },
+  );
+  expect(differences).toHaveLength(1);
+  expect(differences[0]).toMatchObject({
+    evaluatorId: hosted.scorerId,
+    change: "unchanged",
+  });
+});
+
 it("returns a resumable cursor after bounded pages and binds continuation to the draft", async () => {
   let page = 0;
   const readPage = vi.fn(async () => ({
@@ -408,7 +437,7 @@ it("does not compare a tool match graded before the split with the draft's", asy
   ).toMatchObject({ change: "added", comparable: false });
 });
 
-it("declares no hosted tool scorer for a case the runner grades with none", () => {
+it("declares the hosted tool scorers the runner grades a case with", () => {
   // A hosted case: its stored config holds a platform predicate.
   const hosted = resolveScoreDefinition(
     hostedPredicateScoreDefinition({ predicate: oldRule }),
@@ -432,8 +461,8 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
     differences
       .map((item) => item.evaluatorId)
       .filter((id) => id.startsWith("toolCalls:"));
-  // The first pass declares `toolCalls:*` only when the matcher reports
-  // expected calls. It reports none for a case that expects none…
+  // A case that expects no call and caps no extras makes no claim about its
+  // calls, so the first pass declares no `toolCalls:*` scorer…
   expect(
     toolIds(
       backtestIteration(
@@ -442,7 +471,17 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
       ),
     ),
   ).toEqual([]);
-  // …and none for a negative test, whatever it lists.
+  // …while a cap on extra calls is a claim: selection only, nothing to
+  // compare arguments against.
+  expect(
+    toolIds(
+      backtestIteration(
+        { ...source, expectedToolCalls: [], isNegativeTest: false },
+        { ...draftWithMatch, matchOptions: { maxExtraToolCalls: 0 } },
+      ),
+    ),
+  ).toEqual(["toolCalls:match"]);
+  // So is a negative test, whatever it lists.
   expect(
     toolIds(
       backtestIteration(
@@ -454,7 +493,7 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
         draftWithMatch,
       ),
     ),
-  ).toEqual([]);
+  ).toEqual(["toolCalls:match"]);
   // Nor are they ungradable there when the transcript is missing: there is
   // nothing for them to grade.
   expect(
@@ -486,10 +525,11 @@ it("declares no hosted tool scorer for a case the runner grades with none", () =
   ).toEqual(["toolCalls:arguments", "toolCalls:match"]);
 });
 
-it("declares no hosted tool scorer when half the evidence already rules them out", () => {
-  // Either half alone is enough: a case that lists no expected call, or a
-  // negative test, is graded with neither scorer whatever the other field
-  // says. Only when NEITHER half settles it is the case an unknown.
+it("settles the hosted tool scorers from half the evidence when it can", () => {
+  // Either half alone can settle it: a case that lists no expected call (and
+  // caps no extras) is graded with neither scorer, and a negative test with
+  // `toolCalls:match` alone, whatever the other field says. Only when NEITHER
+  // half settles it is the case an unknown.
   const hosted = resolveScoreDefinition(
     hostedPredicateScoreDefinition({ predicate: oldRule }),
   );
@@ -526,15 +566,13 @@ it("declares no hosted tool scorer when half the evidence already rules them out
       ),
     ),
   ).toEqual([]);
-  // A negative test, expectations unknown.
-  expect(
-    toolIds(
-      backtestIteration(
-        { ...withoutExpectations, isNegativeTest: true },
-        draftWithMatch,
-      ),
-    ),
-  ).toEqual([]);
+  // A negative test, expectations unknown: selection only, not comparable.
+  const negative = backtestIteration(
+    { ...withoutExpectations, isNegativeTest: true },
+    draftWithMatch,
+  ).filter((item) => item.evaluatorId.startsWith("toolCalls:"));
+  expect(negative.map((item) => item.evaluatorId)).toEqual(["toolCalls:match"]);
+  expect(negative.every((item) => item.comparable === false)).toBe(true);
   // Expected calls with polarity unknown is still an unknown: both scorers
   // are reported, as not comparable, never as a flip.
   const unknown = backtestIteration(

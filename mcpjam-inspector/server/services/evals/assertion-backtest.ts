@@ -3,7 +3,11 @@ import {
   HOSTED_TOOL_ARGUMENTS_SCORER_ID,
   HOSTED_TOOL_MATCH_SCORER_ID,
 } from "./score-definitions.js";
-import { buildHostedScoreContract } from "./score-rows.js";
+import {
+  buildHostedScoreContract,
+  claimsToolSelectionWithoutExpectations,
+} from "./score-rows.js";
+import { HOSTED_PLATFORM_GATE_SCORER_IDS } from "./platform-gate-rows.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
   buildIterationTranscript,
@@ -228,6 +232,9 @@ export function backtestIteration(
   }
   for (const definition of definitions) {
     if (seen.has(definition.scorerId)) continue;
+    // The platform's own checks are never authored, so a draft can't remove
+    // them; listing them would show a removal on every run graded with them.
+    if (HOSTED_PLATFORM_GATE_SCORER_IDS.has(definition.scorerId)) continue;
     const previous = stored.find(
       (item) => item.definitionHash === definitionHash(definition),
     );
@@ -265,21 +272,22 @@ function frozenToolEvidenceMissing(
 }
 
 /**
- * Whether the runner's first pass declares the hosted tool scorers for this
- * frozen case. It does only when the matcher reports expected calls, which is
- * a positive case expecting at least one: `evaluateMultiTurnResults` reports
- * none for a negative test. `undefined` only when neither half of the frozen
- * case settles it.
+ * Whether the runner's first pass declares a hosted tool scorer for this
+ * frozen case: when the matcher reports expected calls, or when the case makes
+ * a claim about its calls without any
+ * (`claimsToolSelectionWithoutExpectations`). `undefined` only when neither
+ * half of the frozen case settles it.
  */
-function hostedToolScorersDeclared(row: EvidenceRow): boolean | undefined {
-  // Either half rules them out alone: a negative test, or a case that lists
-  // no expected call, whatever the other field says.
-  if (row.isNegativeTest === true) return false;
+function hostedToolScorersDeclared(
+  row: EvidenceRow,
+  matchOptions: Record<string, unknown>,
+): boolean | undefined {
+  if (row.isNegativeTest === true) return true;
   if (
     Array.isArray(row.expectedToolCalls) &&
     row.expectedToolCalls.length === 0
   ) {
-    return false;
+    return claimsToolSelectionWithoutExpectations(false, matchOptions);
   }
   if (
     !Array.isArray(row.expectedToolCalls) ||
@@ -371,13 +379,21 @@ function hostedToolCallDifferences(
 ): EvalBacktestDifference[] {
   // A case the runner grades with neither scorer gets neither here. A stored
   // one, should there be any, is then reported as outside the draft.
-  if (hostedToolScorersDeclared(row) === false) return [];
   const matchOptions = resolveMatchOptions(draftMatchOptions);
+  const scorerMatchOptions = matchOptions as unknown as Record<string, unknown>;
+  if (hostedToolScorersDeclared(row, scorerMatchOptions) === false) return [];
   const unavailable = frozenToolEvidenceMissing(row, context.missing);
   if (unavailable) {
+    // The arguments scorer only where some expected call could be compared.
+    const comparesCalls =
+      row.isNegativeTest !== true &&
+      !(
+        Array.isArray(row.expectedToolCalls) &&
+        row.expectedToolCalls.length === 0
+      );
     const ids = [
       HOSTED_TOOL_MATCH_SCORER_ID,
-      ...(matchOptions.argumentMatching !== "ignore"
+      ...(comparesCalls && matchOptions.argumentMatching !== "ignore"
         ? [HOSTED_TOOL_ARGUMENTS_SCORER_ID]
         : []),
     ];
@@ -391,8 +407,7 @@ function hostedToolCallDifferences(
     isNegativeTest: row.isNegativeTest,
   });
   const contract = buildHostedScoreContract({
-    // Declared from the frozen case's expected calls, as the runner declares
-    // it; `hostedToolScorersDeclared` has already required some.
+    // Declared from the frozen case, as the runner declares it.
     evaluation: {
       passed: result.passed,
       expectedToolCalls: expected,
@@ -400,7 +415,7 @@ function hostedToolCallDifferences(
       unexpected: result.extra,
       argumentMismatches: result.argumentMismatches,
     },
-    matchOptions: matchOptions as unknown as Record<string, unknown>,
+    matchOptions: scorerMatchOptions,
     ...(row.isNegativeTest ? { isNegativeTest: true } : {}),
   });
   return contract.evaluationConfig.definitions.flatMap((definition) => {
