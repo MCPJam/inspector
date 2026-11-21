@@ -1,0 +1,118 @@
+---
+title: "Generate cases"
+description: "Get test cases without writing each one: describe a behavior, generate from your servers' tools, import a test plan, or promote a chat session."
+icon: "sparkles"
+---
+
+Writing every case by hand is slow when a server has dozens of tools. Evaluate can draft cases for you from a description, from your servers' tools, from a test plan you already have, or from a chat session you ran. Each gives you a starting case to review and tighten.
+
+## Where cases can come from
+
+On a suite page, the **Test Cases** card has an **Add case** menu. A suite with no cases shows **Describe**, **Generate** and **Import** as cards under "No cases yet".
+
+| Source | What it does |
+| --- | --- |
+| **Describe** | Opens a new case beside the MCPJam chat. Tell the chat the behavior you want to test and it fills in the case; you edit it and click **Save case**. |
+| **Generate** | Discovers the suite's servers and drafts a batch of cases from their tools. Signed in only. |
+| **Import** | Reads one text document, such as a test plan in Markdown, CSV or JSON, and drafts cases from it. |
+| **Add manually** | Opens a blank case. See [Write a case](/evaluate/write-a-case). |
+| **Promote to test case** | Turns a chat session from the Playground or Swarms into a case. Signed in only. |
+
+<Warning>
+  Generated and imported cases are drafts written by a model. Their prompts can read unlike your users, and their assertions can be loose enough to pass almost anything. Tighten the checks before you trust a suite's pass rate.
+</Warning>
+
+## Generate from your tools
+
+<Steps>
+  <Step title="Open the dialog">
+    On the suite page, click **Add case**, then **Generate**. The dialog is titled "Generate test cases".
+  </Step>
+  <Step title="Choose the batch">
+    Under **Test set**, pick **Quick set** (5–10 cases) or **Comprehensive** (20 cases). Under **Tool coverage**, pick **Read-only** for retrieval and discovery, or **Read and write** to include workflows that change data.
+  </Step>
+  <Step title="Generate">
+    Click **Generate cases**. Drafts appear one by one as they are written.
+  </Step>
+  <Step title="Review each draft">
+    Click **Review case** to open a draft in the case editor and change its prompt, route or assertions. Click **Add to suite** to save it, or the trash icon to discard it. **Add all to suite** saves every draft that is ready.
+  </Step>
+</Steps>
+
+Generate needs the suite's servers. When it is disabled, the menu says why, for example that a suite server is not connected. Guests see "Sign in to generate test cases. You can still add test cases manually."
+
+{/* Screenshot: suite page during generation, with three drafts listed, one expanded in the case editor, and the Add to suite and Review case buttons */}
+
+Drafts are not in the suite yet, so they do not run. A draft marked **Check before saving** has a problem found while it was written, such as a tool your server does not have or arguments the tool does not take. Hover the badge for the reason, fix the steps, or click **Save anyway** if the draft is right.
+
+When every draft has been saved or discarded, the page reads "Every generated case has been reviewed." If generation finished without writing any case, it reads "No cases were generated." Either way, **Back to {suite}** returns to the suite page.
+
+## Import a test plan
+
+<Steps>
+  <Step title="Open the dialog">
+    Click **Add case**, then **Import**. The dialog is titled "Import test cases".
+  </Step>
+  <Step title="Choose a document">
+    Drop one text file, or click to select it. It can be up to 100 KB; split a longer plan into several files.
+  </Step>
+  <Step title="Extract">
+    Click **Extract cases**. The drafts open for review, the same way generated drafts do.
+  </Step>
+</Steps>
+
+The file can be written in any shape, since a model reads it, but it must be text: a PDF or an image is refused with "This file is not text. Choose a text document." If you leave the review before finishing, **Review N draft cases** on the suite page brings the drafts back.
+
+## Promote a chat session
+
+A session you already ran by hand makes a case whose prompts a person actually typed. Unlike generated drafts, a promoted case is saved straight to the suite, so open it and check its assertions before you rely on it.
+
+<Tabs>
+  <Tab title="Playground">
+    1. Open the **Sessions** rail in the Playground.
+    2. Hover a session and click **Promote to test case**.
+    3. Name the case, then add it to an **Existing suite** or a **New suite**.
+    4. Click **Promote to test case**. The case is saved to the suite and opens in the editor.
+  </Tab>
+  <Tab title="Swarms">
+    1. Open a session from a swarm run.
+    2. Click **Promote to test case**.
+    3. Name the case and pick its suite, as in the Playground.
+
+    Only sessions from runs that finished can be promoted. A session from a run that is still going, failed or hit a rate limit has an incomplete conversation, and the button says why it is unavailable.
+  </Tab>
+</Tabs>
+
+## Review checklist
+
+Check each draft against this list before you add it.
+
+| Check | Why |
+| --- | --- |
+| The prompt sounds like one of your users. | A drafted prompt is often more complete than what a person types. Rewrite it with the vagueness and missing details your users bring. |
+| Argument checks use type placeholders such as `"string"` or `"number"` where the exact value does not matter. | A literal like `"limit": 10` fails when the model reasonably picks 20. Placeholders work under the default partial argument matching. |
+| Every destructive tool has at least one negative case. | Without one, the suite never checks that the model leaves the tool alone when the user only asked to read. See [Negative cases](/evaluate/write-a-case#negative-cases). |
+| The route matches what you expect. | A draft may name a tool you would not use, or none at all. |
+
+## When generation fails
+
+The failure shows on the generation page, with one button to recover.
+
+| Failure | What to do |
+| --- | --- |
+| "No tools are marked read-only on these servers." | Retrying sends the same request and fails the same way. Click **Change generation settings** and pick **Read and write**, or add read-only annotations to your tools. |
+| Any other failure, including "No read-only cases matched the selected scope." | Sending the request again can succeed. Click **Retry generation**. |
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Write a case" icon="file-pen-line" href="/evaluate/write-a-case">
+    Edit a draft's route, assertions and expected outcome.
+  </Card>
+  <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
+    Run the reviewed cases across clients and models.
+  </Card>
+  <Card title="Assertions" icon="list-checks" href="/evaluate/reference/assertions">
+    Every assertion kind you can tighten a draft with.
+  </Card>
+</CardGroup>
