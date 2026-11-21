@@ -27,6 +27,12 @@ describe("review rules", () => {
     assert.equal(stripComments('"a" /* b */', {}), '"a"        ');
   });
 
+  it("reads a slash after postfix ++ or an identifier named of as division", () => {
+    assert.equal(fetches("const x = n++ / 2; fetch(u); const y = 1 / 3;\n"), 1);
+    assert.equal(fetches("const z = of / 2; fetch(u); const w = 6 / 3;\n"), 1);
+    assert.equal(fetches("for (const m of /fetch(x)/g.exec(s)) go(m);\n"), 0);
+  });
+
   it("counts fetch calls whose missing signal is visible", () => {
     assert.equal(fetches("const r = await fetch(url);\n"), 1);
     assert.equal(fetches('await fetch(`${base}/x`, { method: "POST" });\n'), 1);

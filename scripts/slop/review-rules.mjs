@@ -58,15 +58,25 @@ function commentEnd(text, start) {
   return end === -1 ? text.length : end + 2;
 }
 
-/** A `/` opens a regex literal after an operator or a keyword, and only if it closes on its line. */
+/**
+ * A `/` opens a regex literal after an operator or a keyword, and only if it
+ * closes on its line. Same decision as `regexCanStart` in the effects/timers
+ * ratchet: fold the two lexers into one module once both are on main.
+ */
 function isRegexStart(code, text, i) {
   if (text[i] !== "/") return false;
-  const before = code.slice(-24).replace(/[ \t]+$/, "");
-  const last = before[before.length - 1];
-  const opens =
-    last === undefined ||
-    "(,=:[!&|?{};\n".includes(last) ||
-    /\b(?:return|typeof|case|in|of|void|yield|await)$/.test(before);
+  const line = code.slice(code.lastIndexOf("\n") + 1).replace(/\s+$/, "");
+  // A prefix update cannot take a regex operand, so `++` or `--` here is
+  // postfix and the slash divides; odd runs end in a binary operator.
+  const run = /(?:\++|-+)$/.exec(line)?.[0].length ?? 0;
+  let opens;
+  if (run > 1) opens = run % 2 === 1;
+  else if (line === "" || "(,=:[!&|?{};+-*%~^".includes(line.at(-1)))
+    opens = true;
+  // `of` is only a keyword in a for-of head; elsewhere it is an identifier.
+  else if (/\bof$/.test(line))
+    opens = /\bfor\s*(?:await\s*)?\([^;()=]*of$/.test(line);
+  else opens = /\b(?:return|typeof|case|in|void|yield|await)$/.test(line);
   return opens && regexClose(text, i) !== -1;
 }
 
