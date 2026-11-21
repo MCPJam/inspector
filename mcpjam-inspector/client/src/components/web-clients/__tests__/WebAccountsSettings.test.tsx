@@ -76,13 +76,12 @@ describe("WebAccountsSettings", () => {
     expect(
       screen.getByText("The claude.ai accounts this client's runs sign in as."),
     ).toBeInTheDocument();
-    expect(screen.getByText("qa@example.com")).toBeInTheDocument();
+    expect(screen.getByText("QA team")).toBeInTheDocument();
+    expect(screen.getByText("qa@example.com · Default")).toBeInTheDocument();
     expect(screen.getByText("Needs sign-in")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/token|Needs reconnect/i);
 
-    await user.click(
-      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
     expect(
       await screen.findByRole("menuitem", { name: "Sign in again" }),
     ).toBeInTheDocument();
@@ -130,9 +129,7 @@ describe("WebAccountsSettings", () => {
   it("sets the default and renames through the web account functions", async () => {
     const user = userEvent.setup();
     mount(true, [qa, { ...evals, status: "ready" }]);
-    await user.click(
-      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
-    );
+    await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
     await user.click(
       await screen.findByRole("menuitem", { name: "Set as default" }),
     );
@@ -145,7 +142,8 @@ describe("WebAccountsSettings", () => {
 
   it("shows a member the list without menus or the local runs switch", () => {
     mount(false);
-    expect(screen.getByText("qa@example.com")).toBeInTheDocument();
+    expect(screen.getByText("QA team")).toBeInTheDocument();
+    expect(screen.getByText("qa@example.com · Default")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Manage / })).toBeNull();
     expect(screen.queryByRole("switch")).toBeNull();
     expect(screen.queryByText("Connect another account")).toBeNull();

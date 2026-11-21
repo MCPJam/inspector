@@ -4,7 +4,10 @@ import type {
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type { MCPServerConfig } from "../mcp-client-manager/index.js";
-import type { MCPReadinessWarning } from "../mcp-conformance/types.js";
+import type {
+  MCPPassedAdvice,
+  MCPReadinessWarning,
+} from "../mcp-conformance/types.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 
 export const MCP_TASKS_CHECK_CATEGORIES = [
@@ -121,6 +124,11 @@ export interface MCPTasksUncheckedAdvice {
   id: MCPTasksReadinessId;
   title: string;
   reason: string;
+}
+
+/** Advice the run checked and the server already meets. */
+export interface MCPTasksPassedAdvice extends Omit<MCPPassedAdvice, "id"> {
+  id: MCPTasksReadinessId;
 }
 
 export type MCPTasksCheckStatus = "passed" | "failed" | "skipped";
@@ -252,6 +260,8 @@ export interface MCPTasksConformanceResult {
   readiness?: MCPTasksReadinessWarning[];
   /** Picked advice this run could not judge. Absent when there is none. */
   uncheckedAdvice?: MCPTasksUncheckedAdvice[];
+  /** Advice the run checked and found nothing to change. Absent when none. */
+  passedAdvice?: MCPTasksPassedAdvice[];
   summary: string;
   durationMs: number;
   categorySummary: Record<

@@ -1,5 +1,25 @@
 # `@mcpjam/sdk` changelog
 
+## 10.12.0
+
+### Minor Changes
+
+- [#7964](https://github.com/MCPJam/inspector/pull/7964) [`afa4639`](https://github.com/MCPJam/inspector/commit/afa46392e1c68761cc10abd931ff8a0cc5705ca8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `list_eval_suite_runs` now answers "what was the latest eval run in this project" in one call. `suite` is optional: without it, the listing reads the suite holding the project's most recent run, so the first item is the newest run in the project. Before, a call without a suite was refused as invalid input. And when none of the listed runs has finished, the result adds `latestFinishedRun`, the newest run of that suite that has, or `null` when none of its last 25 runs has. A run still in progress has no verdict, so before this a caller asking about the latest result learned only that it was pending. Naming a suite works as before.
+
+- [#7229](https://github.com/MCPJam/inspector/pull/7229) [`80bdccd`](https://github.com/MCPJam/inspector/commit/80bdccd3b75b169520b26e22b0a40f50bd15ad12) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Local eval reports in HTML and JUnit now show each iteration's tool calls with their arguments, tokens, scorer results and duration for every case, including cases that passed. Before, they showed only each case's verdict. HTML lists this under "Iteration evidence", one collapsed section per case below the summary. JUnit puts it in each test case's `<system-out>`. Long values are cut with a note: tool arguments after 2,000 characters in HTML and 500 in JUnit, scorer reasons and errors after 1,000, and tool calls after 25 per iteration. The JSON report and the terminal summary are unchanged. This applies to `mcpjam test --reporter html|junit-xml` and to `renderStructuredRunHtml` / `renderStructuredRunJUnitXml` for an `eval-local-run` report.
+
+- [#7888](https://github.com/MCPJam/inspector/pull/7888) [`e24282e`](https://github.com/MCPJam/inspector/commit/e24282ee4239399ca1d3051f7a10121a916f978e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Move the CLI's start-or-attach logic for a local Inspector into `@mcpjam/sdk/internal/inspector`, an internal, Node-only entry, so `@mcpjam/inspector`'s launcher can share it. The CLI behaves as before.
+
+- [#7818](https://github.com/MCPJam/inspector/pull/7818) [`6d1460c`](https://github.com/MCPJam/inspector/commit/6d1460c75db44f987e7eeef89429d1f76833b233) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export the server feature model behind MCPJam's server canvas: the feature catalog and its evaluator, conformance check maps and intrusiveness levels, a frame classifier with feature observation on `MCPClientManager`, and a Server Card probe. Also export `gradeMCPApps`, `discoverAuthorizationMetadata`, `readServerSkillCatalog` and `readServerEventTypes`, and let `collectConnectedServerDoctorState` list without reading skill files and stop when a signal fires.
+
+### Patch Changes
+
+- [#7957](https://github.com/MCPJam/inspector/pull/7957) [`ea544a2`](https://github.com/MCPJam/inspector/commit/ea544a260c29e9bff759129901eec01d2b7735f5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `diagnose_server` returns a diagnosis instead of failing when hosted MCPJam won't connect to a saved server: a plain `http://` URL, a stdio command, or no URL. The report fails the connection check, gives the reason and the next step, and skips the other checks. The descriptions of `list_server_tools`, `call_server_tool` and `list_server_resources` now say that a saved server's tools, such as a documentation server's search, are how it does work, and that `call_server_tool` runs one.
+
+- [#7866](https://github.com/MCPJam/inspector/pull/7866) [`1c68c79`](https://github.com/MCPJam/inspector/commit/1c68c79bc0a78eac2d5d62865be54fcd18df6a72) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Flag explicit directions to call an unlisted snake_case tool before or after another call in Claude directory readiness.
+
+- [#7868](https://github.com/MCPJam/inspector/pull/7868) [`3377de6`](https://github.com/MCPJam/inspector/commit/3377de6c5b43233a29526c00a77853dd251806bd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Detect empty and HTML fallback responses when checking the OpenAI domain challenge.
+
 ## 10.11.0
 
 ### Minor Changes
