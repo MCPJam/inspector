@@ -20,6 +20,8 @@ import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
 import { SharedSlackChannelCard } from "./home/SharedSlackChannelCard";
+import { HomeChecklist } from "./home/checklist/HomeChecklist";
+import { useHomeChecklistVariant } from "./home/checklist/use-home-checklist-variant";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 import {
@@ -139,6 +141,13 @@ export function HomeTab({
   const agentEnabled = isPlatformAgentEnabled();
   const sessionParam = agentEnabled ? searchParams.get("session") : null;
   const composeParam = agentEnabled && searchParams.get("compose") === "1";
+  const checklistVariant = useHomeChecklistVariant();
+  const [checklistFinished, setChecklistFinished] = useState(false);
+  const finishChecklist = useCallback(() => setChecklistFinished(true), []);
+  const showChecklist =
+    checklistVariant === "treatment" &&
+    !checklistFinished &&
+    Boolean(projectId);
 
   // Re-arms whenever loading restarts; only fires while still loading.
   const [loadingTimedOut, setLoadingTimedOut] = useState(false);
@@ -354,45 +363,61 @@ export function HomeTab({
 
   return (
     <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8 sm:px-8">
+      <div
+        className={`mx-auto flex ${showChecklist ? "max-w-5xl" : "max-w-3xl"} flex-col gap-4 px-6 py-8 sm:px-8`}
+      >
         <header className="space-y-2">
           <h1 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
             {greeting}, {firstName}
           </h1>
-          <OrgStatsStrip
-            memberCount={isLoading ? null : data!.memberCount}
-            projectCount={isLoading ? null : data!.projects.length}
-            totalServerCount={isLoading ? null : data!.totalServerCount}
-            evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
-            toolExecutionCount={toolExecutionCount?.value ?? null}
-            toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
-            messagesSentCount={messagesSentCount?.value ?? null}
-            messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
-          />
+          {showChecklist ? null : (
+            <OrgStatsStrip
+              memberCount={isLoading ? null : data!.memberCount}
+              projectCount={isLoading ? null : data!.projects.length}
+              totalServerCount={isLoading ? null : data!.totalServerCount}
+              evalSuiteCount={isLoading ? null : data!.evalSuiteCount}
+              toolExecutionCount={toolExecutionCount?.value ?? null}
+              toolExecutionWindowDays={toolExecutionCount?.windowDays ?? 30}
+              messagesSentCount={messagesSentCount?.value ?? null}
+              messagesSentWindowDays={messagesSentCount?.windowDays ?? 30}
+            />
+          )}
         </header>
 
-          {agentEnabled ? (
-            <McpjamAgentHero
-              surface="home"
-              onSessionStart={handleSessionStart}
-              onResumeSession={handleResumeSession}
-              ready={Boolean(projectId)}
-            />
-          ) : null}
+        {showChecklist ? (
+          <ErrorBoundary
+            name="home-checklist"
+            fallback={null}
+            onError={finishChecklist}
+          >
+            <HomeChecklist onFinished={finishChecklist} />
+          </ErrorBoundary>
+        ) : (
+          <>
+            {agentEnabled ? (
+              <McpjamAgentHero
+                surface="home"
+                onSessionStart={handleSessionStart}
+                onResumeSession={handleResumeSession}
+                ready={Boolean(projectId)}
+              />
+            ) : null}
 
-        <ProductUpdatesRow />
+            <ProductUpdatesRow />
 
-        <ErrorBoundary name="home-shared-slack-channel" fallback={null}>
-          <SharedSlackChannelCard organizationId={organizationId} />
-        </ErrorBoundary>
+            <ErrorBoundary name="home-shared-slack-channel" fallback={null}>
+              <SharedSlackChannelCard organizationId={organizationId} />
+            </ErrorBoundary>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <RecommendedServers
-            servers={data?.recommendedServers}
-            projectId={projectId}
-          />
-          <RecommendedHosts projectId={projectId} />
-        </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <RecommendedServers
+                servers={data?.recommendedServers}
+                projectId={projectId}
+              />
+              <RecommendedHosts projectId={projectId} />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -379,6 +379,7 @@ import {
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { shouldAutoRunPreview, shouldRunPreview } from "./preview-autorun";
+import { useCompareAutoRun } from "./use-compare-auto-run";
 import {
   chatHistoryAction,
   getChatHistoryState,
@@ -619,6 +620,10 @@ interface PlaygroundMainProps {
    * Used by the eval preview to "run on open" when the case renders a widget.
    */
   autoRunInput?: string;
+  /** Fires once this mount commits to the `autoRunInput` send. */
+  onAutoRunStarted?: () => void;
+  /** Fires once the `autoRunInput` prompt is actually sent. */
+  onAutoRunSent?: () => void;
   /**
    * Increment to re-run the case in the live preview from outside (eval Quick
    * Run). Each new value resets the thread and re-sends the case prompt
@@ -735,6 +740,8 @@ export function PlaygroundMain({
   hideWelcomeHero = false,
   hideCenterHeaderChrome = false,
   autoRunInput,
+  onAutoRunStarted,
+  onAutoRunSent,
   runPreviewRequest,
   onMessagesChange,
   onStreamingChange,
@@ -2798,21 +2805,32 @@ export function PlaygroundMain({
   const compareReadiness = useRef(
     new Map<string, { ready: boolean; error?: string }>(),
   );
+  const [compareReadyCount, setCompareReadyCount] = useState(0);
   const reportCompareReadiness = useCallback(
     (id: string, ready: boolean, error?: string) => {
-      compareReadiness.current.set(`${multiModelSessionGeneration}:${id}`, {
-        ready,
-        error,
-      });
+      const key = `${multiModelSessionGeneration}:${id}`;
+      const wasReady = compareReadiness.current.get(key)?.ready === true;
+      compareReadiness.current.set(key, { ready, error });
+      if (ready && !wasReady) setCompareReadyCount((count) => count + 1);
     },
     [multiModelSessionGeneration],
   );
+  const compareLanesReady = useCallback(
+    () =>
+      !retainedClientsPaused &&
+      compareLanes.length > 0 &&
+      compareLanes.every(
+        ({ id }) =>
+          compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`)
+            ?.ready === true,
+      ),
+    [retainedClientsPaused, compareLanes, multiModelSessionGeneration],
+  );
   const ensureCompareReady = () => {
-    if (retainedClientsPaused) return false;
+    if (compareLanesReady()) return true;
     const states = compareLanes.map(({ id }) =>
       compareReadiness.current.get(`${multiModelSessionGeneration}:${id}`),
     );
-    if (states.every((state) => state?.ready)) return true;
     toast.error(
       states.find((state) => state?.error)?.error ??
         "Wait for all comparison clients to finish setup.",
@@ -4985,10 +5003,10 @@ export function PlaygroundMain({
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
         if (conversationSendBlockedRef.current) {
-          return;
+          return false;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
-          return;
+          return false;
         }
         // Every send entry point takes the same thread preflight, not just the
         // composer: a resumed session that moved between subscription updates
@@ -4996,7 +5014,7 @@ export function PlaygroundMain({
         // hosted route honors it, the turn runs in full and only THEN takes a
         // 409 and a conflict detach. A no-op when no history thread is open.
         if (!(await ensureThreadReadyForSend())) {
-          return;
+          return false;
         }
         // The local-execution gate runs at EVERY send entry point, exactly as
         // the thread preflight above does. Reaching the transport without it
@@ -5011,13 +5029,13 @@ export function PlaygroundMain({
           // prompt it was talking about gone. Putting it there is what makes
           // that instruction true.
           composer.setInput(text);
-          return;
+          return false;
         }
         // The first check is stale once the gates above have yielded. A study
         // block, a target disclosure, or a history restore that landed in that
         // window has to win, or the follow-up still goes out.
         if (conversationSendBlockedRef.current) {
-          return;
+          return false;
         }
         const sentContext = modelContextQueue;
         const sent = await sendMessage({
@@ -5043,6 +5061,8 @@ export function PlaygroundMain({
             ),
           );
         }
+        // `sendMessage` resolves false when it refuses the send.
+        return sent !== false;
       })();
     },
     [
@@ -5061,6 +5081,8 @@ export function PlaygroundMain({
   // empty. `handleSendFollowUp` ensures the server is connected first. The ref
   // makes it fire exactly once per mount even as deps change.
   const autoRanRef = useRef(false);
+  const compareAutoRun = useCompareAutoRun(onAutoRunSent);
+  const sendCompareAutoRun = compareAutoRun.send;
   useEffect(() => {
     if (
       !shouldAutoRunPreview({
@@ -5074,7 +5096,10 @@ export function PlaygroundMain({
     ) {
       return;
     }
+    // Wait for every comparison card and for model settings: a send is refused.
+    if (submitBlocked || (isCompareMode && !compareLanesReady())) return;
     autoRanRef.current = true;
+    onAutoRunStarted?.();
     // The prompt is auto-sent, so clear it out of the composer. The composer is
     // otherwise seeded with the same `initialInput` (so it mirrors the eval
     // editor's left-pane prompt); leaving the sent text behind would both look
@@ -5092,7 +5117,24 @@ export function PlaygroundMain({
     // be there. `autoRanRef` is already set, so the only send that can follow
     // is the user's own.
     composer.setInput("");
-    handleSendFollowUp(autoRunInput as string);
+    if (isCompareMode) {
+      const prompt = autoRunInput as string;
+      const turn = { text: prompt, widgetModelContext: modelContextQueue };
+      void (async () => {
+        const gated =
+          (await ensureSelectedServerReadyForChat()) &&
+          (await ensureThreadReadyForSend()) &&
+          (await ensureLocalHarnessReadyForSend());
+        if (!gated) return composer.setInput(prompt);
+        const queued = { ...turn, prependMessages: [] };
+        if (!sendCompareAutoRun(queued, broadcastSequence))
+          autoRanRef.current = false;
+      })();
+      return;
+    }
+    void handleSendFollowUp(autoRunInput as string).then((sent) => {
+      if (sent) onAutoRunSent?.();
+    });
   }, [
     autoRunInput,
     composer,
@@ -5101,7 +5143,18 @@ export function PlaygroundMain({
     isSessionBootstrapComplete,
     isThreadEmpty,
     isStreaming,
+    isCompareMode,
+    compareReadyCount,
+    compareLanesReady,
+    sendCompareAutoRun,
+    submitBlocked,
+    modelContextQueue,
+    ensureSelectedServerReadyForChat,
+    ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
     handleSendFollowUp,
+    onAutoRunStarted,
+    onAutoRunSent,
   ]);
 
   // Surface the live conversation to embedders (eval preview captures it back
@@ -5479,6 +5532,7 @@ export function PlaygroundMain({
     );
     return true;
   };
+  compareAutoRun.queueRef.current = queueBroadcastRequest;
 
   const mergedToolRenderOverrides = useMemo(
     () => ({
@@ -7567,10 +7621,11 @@ export function PlaygroundMain({
                           }
                           broadcastRequest={broadcastRequest?.request ?? null}
                           claimBroadcastDelivery={(request) =>
-                            broadcastRequest?.claim(
-                              request,
-                              broadcastRecipient("host", column.compareId),
-                            ) ?? false
+                              compareAutoRun.claim(
+                                broadcastRequest,
+                                request,
+                                broadcastRecipient("host", column.compareId),
+                              )
                           }
                           deterministicExecutionRequest={
                             deterministicExecutionRequest
@@ -7715,10 +7770,11 @@ export function PlaygroundMain({
                             selectedServers={selectedServers}
                             broadcastRequest={broadcastRequest?.request ?? null}
                             claimBroadcastDelivery={(request) =>
-                              broadcastRequest?.claim(
+                              compareAutoRun.claim(
+                                broadcastRequest,
                                 request,
                                 broadcastRecipient("model", compareId),
-                              ) ?? false
+                              )
                             }
                             deterministicExecutionRequest={
                               deterministicExecutionRequest
