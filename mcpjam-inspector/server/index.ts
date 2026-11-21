@@ -27,6 +27,10 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
 import {
+  applyInspectorUserAgent,
+  withDefaultUserAgent,
+} from "./utils/outbound-user-agent.js";
+import {
   getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
@@ -437,10 +441,13 @@ const strictModeResponse = (c: any, path: string) =>
     410,
   );
 
+applyInspectorUserAgent();
+
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
 const mcpClientManager = new MCPClientManager(
   {},
   {
+    baseFetch: withDefaultUserAgent(),
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     // Observed server features, filed under each connection's own context.
     featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
