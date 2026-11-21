@@ -80,6 +80,7 @@ import { HOSTED_MODE } from "../../config.js";
 import { requirePersonaInProject } from "./personas.js";
 import { requireSwarmInProject } from "./swarms.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
+import { routeParam } from "./route-param.js";
 import {
   goalJudgeWriteSchema,
   judgeConfigForWrite,
@@ -119,7 +120,7 @@ function both(
 
 /** The route parameter the surface addresses a goal by. */
 function goalIdParam(c: Context, surface: Surface): string {
-  return c.req.param(surface.legacy ? "journeyId" : "goalId");
+  return routeParam(c, surface.legacy ? "journeyId" : "goalId");
 }
 
 /** Default page size for the paginated reads. Matches the Convex UI's. */
@@ -778,7 +779,7 @@ both(
   "/projects/:projectId/goals/:goalId",
   "/projects/:projectId/journeys/:journeyId",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     return v1Resource(
       c,
@@ -813,7 +814,7 @@ both(
   "/projects/:projectId/goals",
   "/projects/:projectId/journeys",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const body = await parseJsonBody(
       c,
       surface.legacy ? CREATE_SCHEMAS.legacy : CREATE_SCHEMAS.canonical,
@@ -889,7 +890,7 @@ both(
   "/projects/:projectId/goals/:goalId",
   "/projects/:projectId/journeys/:journeyId",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const goalId = goalIdParam(c, surface);
     const body = await parseJsonBody(
       c,
@@ -978,7 +979,7 @@ both(
   "/projects/:projectId/goals/:goalId",
   "/projects/:projectId/journeys/:journeyId",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const goalId = goalIdParam(c, surface);
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireGoalInProject(client, projectId, goalId, surface);
@@ -1005,7 +1006,7 @@ both(
   "/projects/:projectId/goals/:goalId/runs",
   "/projects/:projectId/journeys/:journeyId/runs",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const goalId = goalIdParam(c, surface);
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // Preflight, not decoration: `listJourneyRuns` takes a journeyRefId alone
@@ -1042,8 +1043,8 @@ both(
   "/projects/:projectId/goal-runs/:runId",
   "/projects/:projectId/journey-runs/:runId",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const projectId = routeParam(c, "projectId");
+    const runId = routeParam(c, "runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const run = await requireRunInProject(client, projectId, runId, surface);
 
@@ -1075,8 +1076,8 @@ both(
   "/projects/:projectId/goal-runs/:runId/sessions",
   "/projects/:projectId/journey-runs/:runId/sessions",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const projectId = routeParam(c, "projectId");
+    const runId = routeParam(c, "runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     const run = await requireRunInProject(client, projectId, runId, surface);
     // Per-session verdicts live on the RUN row (`attempts[].status`), keyed by
@@ -1131,8 +1132,8 @@ both(
   "/projects/:projectId/goal-runs/:runId/cancel",
   "/projects/:projectId/journey-runs/:runId/cancel",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
+    const projectId = routeParam(c, "projectId");
+    const runId = routeParam(c, "runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // Same preflight as the reads: `cancelJourneyRun` checks membership but
     // not the project in the path, so without this a member of two projects
@@ -1203,7 +1204,7 @@ both(
   "/projects/:projectId/goals/:goalId/runs",
   "/projects/:projectId/journeys/:journeyId/runs",
   async (c, surface) => {
-    const projectId = c.req.param("projectId");
+    const projectId = routeParam(c, "projectId");
     const goalId = goalIdParam(c, surface);
     const client = createConvexClient(await getConvexBearerForRequest(c));
     // Same scoping preflight as the reads, and it matters MORE here: the
