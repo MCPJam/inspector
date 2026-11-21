@@ -45,8 +45,7 @@ const DEPRECATED_MODERN_CAPABILITIES: Array<{
 }> = [
   {
     key: "logging",
-    advice:
-      "the logging capability advertises the removed logging/setLevel handshake; modern clients carry the log level per request",
+    advice: "logging is deprecated as of protocol version 2026-07-28",
   },
 ];
 
@@ -98,6 +97,15 @@ function toolOrderWarning(
   second: string[]
 ): MCPReadinessWarning | undefined {
   if (first.length === 0 || first.join("\u0000") === second.join("\u0000")) {
+    return undefined;
+  }
+
+  // The spec asks for the same order only "when the underlying set of tools
+  // has not changed". A tool added or removed between the two listings is a
+  // different set, and the rule says nothing about its order.
+  const sameTools =
+    [...first].sort().join("\u0000") === [...second].sort().join("\u0000");
+  if (!sameTools) {
     return undefined;
   }
 
@@ -249,6 +257,7 @@ export async function collectClientReadiness(
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
         signal: ctx.config.signal,
+        cacheMode: "bypass",
       });
       const orderWarning = toolOrderWarning(
         surface.toolNames,

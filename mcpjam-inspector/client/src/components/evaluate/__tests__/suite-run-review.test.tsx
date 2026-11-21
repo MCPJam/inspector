@@ -69,7 +69,7 @@ describe("suite run review", () => {
     render(<SuiteRunReview suite={suite}
       cases={[cases[0]]} caseTitle={caseTitle} initialIterations={2}
       environments={environments} hostNamesById={names} onStart={onStart} onClose={vi.fn()} />);
-    expect(screen.getByRole("dialog", { name: "Setup Run" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Set up run" })).toBeVisible();
     expect(screen.getByText(caseTitle || "Untitled test case")).toBeVisible();
     expect(screen.getByText("Each client/model combination runs this test case.")).toBeVisible();
     expect(screen.queryByText(/runs the whole suite/)).toBeNull();

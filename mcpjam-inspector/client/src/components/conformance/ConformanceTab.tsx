@@ -43,6 +43,8 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import { track } from "@/lib/analytics";
+import { ConformanceRunRequestContext } from "./conformance-run-request";
 import {
   probesAfterRun,
   useConformanceProbeStore,
@@ -195,6 +197,9 @@ export function ConformanceTab({
     serverName: string;
     seconds: number | null;
   }>>({});
+  useEffect(() => {
+    track("conformance_tab_viewed", { location: "conformance_tab" });
+  }, []);
   useEffect(() => {
     setChangedTimeouts((previous) => {
       const pending = Object.fromEntries(
@@ -547,18 +552,17 @@ export function ConformanceTab({
   if (!server || !server.name || server.name === "none" || !server.config) {
     if (setup) return setup;
     // Same pre-run page as with a server; running just asks for one first.
+    const noServerRunRequest = {
+      run: openSetup
+        ? () => {
+            setRunFrom(activeView);
+            openSetup();
+          }
+        : () => toast.info(NO_SERVERS_MESSAGE),
+      disabled: false,
+    };
     const noServerRunButton = (
-      <Button
-        size="sm"
-        onClick={
-          openSetup
-            ? () => {
-                setRunFrom(activeView);
-                openSetup();
-              }
-            : () => toast.info(NO_SERVERS_MESSAGE)
-        }
-      >
+      <Button size="sm" onClick={noServerRunRequest.run}>
         {RUN_LABEL}
       </Button>
     );
@@ -573,8 +577,12 @@ export function ConformanceTab({
         </ConformanceHeader>
         <ConformanceTabPanel view={activeView}>
           {activeView === "history" ? (
-            <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-              {history}
+            // The same column and run request as with a server, so History
+            // centers its states and offers the same Run.
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-6">
+              <ConformanceRunRequestContext.Provider value={noServerRunRequest}>
+                {history}
+              </ConformanceRunRequestContext.Provider>
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 pt-6 pb-8">

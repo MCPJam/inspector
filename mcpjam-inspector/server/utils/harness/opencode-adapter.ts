@@ -10,6 +10,7 @@
  * gateway's own name as is). Title and compaction agents use that same model
  * so the broker never needs to admit a second model.
  */
+import type { HarnessV1 } from "@ai-sdk/harness";
 import { createOpenCode } from "@ai-sdk/harness-opencode";
 import type { HarnessCreateArgs } from "./registry.js";
 import { toOpenCodeNativeModel } from "./runtime-model-ids.js";
@@ -18,6 +19,15 @@ import { toOpenCodeNativeModel } from "./runtime-model-ids.js";
 // default timeout otherwise resumes its model loop after our lease is revoked.
 const HOST_TOOL_APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 
+/**
+ * OpenCode also loads skills from `~/.claude/skills`, `~/.agents/skills` and
+ * those folders in its working directory and every parent, where other
+ * clients' turns on the same box leave theirs. With this set it reads only
+ * the folder the bridge names in `skills.paths` (the adapter's write folder)
+ * and its own config folders: the read folders its skills descriptor lists.
+ */
+const OWN_SKILLS_ONLY = { OPENCODE_DISABLE_EXTERNAL_SKILLS: "1" };
+
 export function createOpenCodeHarness(
   args: Pick<
     HarnessCreateArgs,
@@ -25,7 +35,7 @@ export function createOpenCodeHarness(
   >,
 ) {
   const nativeModel = toOpenCodeNativeModel(args.modelId, args.upstream);
-  return createOpenCode({
+  const harness = createOpenCode({
     provider: "anthropic",
     auth: args.auth,
     ...(args.startupTimeoutMs
@@ -42,5 +52,50 @@ export function createOpenCodeHarness(
           }
         : {}),
     },
+  });
+  return withOwnSkillsOnly(harness);
+}
+
+/** Every process the adapter spawns starts with {@link OWN_SKILLS_ONLY}: the
+ *  bridge, which passes its environment on to the OpenCode server it starts. */
+function withOwnSkillsOnly<T extends HarnessV1>(harness: T): T {
+  return {
+    ...harness,
+    doStart(options) {
+      return harness.doStart({
+        ...options,
+        sandboxSession: withSpawnEnv(options.sandboxSession),
+      });
+    },
+  };
+}
+
+/**
+ * A view of the session whose spawns carry {@link OWN_SKILLS_ONLY}. The proxy
+ * stands in front of an empty object rather than the session: a local
+ * session's restricted view is frozen, and a proxy over a frozen object may
+ * not answer a property with anything but the object's own value.
+ *
+ * That makes this a view for named reads and calls only. The pinned adapter
+ * reads `id`, `ports`, `getPortEndpoint` and `addRequestTransformations` by
+ * name and uses `spawn` and `restricted`; it never spreads the session, lists
+ * its keys or checks its prototype, and the proxy would answer each of those
+ * as an empty object. Re-check this when the adapter version changes.
+ */
+function withSpawnEnv<S extends object>(session: S): S {
+  return new Proxy(Object.create(null) as S, {
+    get(_, key) {
+      const value = Reflect.get(session, key);
+      if (key === "restricted" && typeof value === "function")
+        return () => withSpawnEnv(value.call(session));
+      if (key === "spawn" && typeof value === "function")
+        return (request: { env?: Record<string, string> }) =>
+          value.call(session, {
+            ...request,
+            env: { ...request.env, ...OWN_SKILLS_ONLY },
+          });
+      return typeof value === "function" ? value.bind(session) : value;
+    },
+    has: (_, key) => Reflect.has(session, key),
   });
 }

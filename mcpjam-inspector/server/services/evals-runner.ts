@@ -1,3 +1,4 @@
+import { credentialFailureMessage } from "../routes/web/errors.js";
 import { assertNativeDiscovery } from "../utils/harness/native-discovery.js";
 import { mergeViewToolEvidence } from "./evals/view-tool-evidence.js";
 import { evalWidgetServerCall } from "./evals/view-tool-policy.js";
@@ -28,6 +29,7 @@ import {
 } from "./browserd/page-tools-peek.js";
 import { webmcpPageToolsMode } from "../config.js";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import { appliedToolApproval } from "@/shared/tool-approval";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -161,21 +163,27 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
-import type { LegacyModelSelection, ModelSelection } from "@mcpjam/sdk";
+import type {
+  LegacyModelSelection,
+  ModelCallCostEvidence,
+  ModelSelection,
+} from "@mcpjam/sdk";
 import {
   decideTurnRail,
   routingSelectionForModel,
   withSelectionRouting,
 } from "../utils/selection-rail.js";
 import {
+  azureDeploymentRefusal,
   backendModelSelection,
+  isOrgConfigurationRefusal,
   ModelResolutionRefusalError,
   ORG_KEYS_REQUIRED_REASON,
   policyIneligibleRefusal,
   resolveLocalModelSelection,
 } from "../utils/model-resolution-local.js";
-import { isOrgKeyPolicyRefusalCode } from "../../shared/ai-execution-refusal.js";
 import { connectionPolicyEligibility } from "@/shared/org-ai-key-policy";
+import { hasAzureConnection } from "@/shared/azure-deployment";
 import {
   resolveEffectiveModelSettings,
   type DirectProviderOptions,
@@ -202,7 +210,6 @@ import {
   type ProgressiveToolPlan,
   type ToolDiscoveryState,
 } from "@mcpjam/sdk";
-import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -512,62 +519,6 @@ export type EvalTestCase = {
 };
 
 /**
- * How a run's FROZEN skills reach one case — both channels, together.
- *
- * There are two, and they are not interchangeable:
- *   - `pinnedSkillSource` is what each iteration plans its skills from
- *     (`iterationTurnSkills`): MCPJam's agent's tools, and what a turn records.
- *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
- *     as SKILL.md files on the box.
- *
- * They are bundled here because forwarding one without the other is a silent
- * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
- * does not error, it leaves the harness's box with whatever skills it already
- * holds — so a frozen run quietly stops being frozen, and the
- * `skillsOverride: "exclude"` arm quietly runs with an earlier turn's skills.
- * That is exactly the bug this helper exists to make structurally impossible:
- * one place decides, and both channels leave together or not at all.
- *
- * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
- * the "this run delivers no skills" answer and must survive.
- */
-export function runFrozenSkillOptions(run: {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-}): {
-  pinnedSkillSource?: PinnedSkillSource;
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
-} {
-  // Presence selects the pinned source at every hop below, so a non-array that
-  // is not `undefined` would sail through all of them and only fail inside
-  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
-  // a sandbox has been provisioned and paid for. The type forbids it, but the
-  // value crosses a route boundary and a persisted-data conversion on the way
-  // here, so it is worth one loud check at the seam rather than a confusing
-  // crash later. `undefined` stays legal: it means "this run pinned nothing".
-  if (
-    run.pinnedHarnessSkills !== undefined &&
-    !Array.isArray(run.pinnedHarnessSkills)
-  ) {
-    throw new Error(
-      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
-        run.pinnedHarnessSkills === null
-          ? "null"
-          : typeof run.pinnedHarnessSkills
-      })`,
-    );
-  }
-  return {
-    ...(run.pinnedSkillSource
-      ? { pinnedSkillSource: run.pinnedSkillSource }
-      : {}),
-    ...(run.pinnedHarnessSkills !== undefined
-      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
-      : {}),
-  };
-}
-
-/**
  * The match options the `toolCalls:match` score definition hashes over.
  *
  * RESOLVED, not authored. The matcher applies `MATCH_OPTIONS_DEFAULTS` to
@@ -715,27 +666,13 @@ export type RunEvalSuiteOptions = {
   /**
    * The run's frozen skills, prepared once at the boundary (`prepareEvalRun`)
    * and forwarded verbatim; every iteration plans its turn's skills from them
-   * (`iterationTurnSkills`). Absent ⇒ no skills (eval runs never use local-FS
-   * skills — decision 10); a quick run without an environment stays absent
-   * (no run row = no pinning carrier).
+   * (`iterationTurnSkills`), and a harness iteration carries that plan out on
+   * its box, an empty frozen set clearing it. Absent ⇒ no skills (eval runs
+   * never use local-FS skills — decision 10), and a harness box stays as it is;
+   * a quick run without an environment stays absent (no run row = no pinning
+   * carrier).
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /**
-   * The run's frozen skills in HARNESS shape, materialized ON BOX.
-   *
-   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
-   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
-   * become in-memory tool definitions; a harness turn writes SKILL.md files
-   * into the runtime's skills root instead, so it needs complete artifacts
-   * (identity, complete-envelope hash, preserved frontmatter, inline file
-   * bodies) rather than the body-only projection that path takes.
-   *
-   * Presence, not length, is what selects the pinned source in the harness. An
-   * empty list says "this run delivers no skills"; ABSENT leaves the box with
-   * whatever skills it already holds, which would unfreeze the run. So the
-   * boundary sets this for every runId-bearing run, empty included.
-   */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   toolPolicy?: EvalSuiteFileToolPolicy;
   /**
    * Extra headers stamped on every per-step Convex request of this run.
@@ -1303,6 +1240,8 @@ function throwSetupPhaseError(args: {
   /** The observer's explanation, when it recorded one for this failure. */
   detail?: SetupFailureDetail;
 }): never {
+  const credentialFailure = credentialFailureMessage(args.error);
+  const failureLine = credentialFailure ?? args.detail?.line;
   const serverLabel = getServerLabelForEvalError(
     args.serverId,
     args.environment,
@@ -1314,15 +1253,15 @@ function throwSetupPhaseError(args: {
     const setupError = new EvalSetupPhaseError({
       status: 409,
       code: ErrorCode.SERVER_UNREACHABLE,
-      message: args.detail
-        ? `Could not start eval because "${serverLabel}" is not connected: ${args.detail.line}`
+      message: failureLine
+        ? `Could not start eval because "${serverLabel}" is not connected: ${failureLine}`
         : `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
       serverId: args.serverId,
       phase: args.phase,
       details: {
         serverId: args.serverId,
         serverName: serverLabel,
-        ...(args.detail ? { cause: args.detail.line } : {}),
+        ...(failureLine ? { cause: failureLine } : {}),
       },
     });
     setupError.cause = args.error;
@@ -2324,7 +2263,7 @@ type RunIterationBaseParams = {
    * Suite-level raw tool set, kept for `toolSignals` telemetry only.
    * Iteration runners route the actual tool prep through `prepareChatV2`
    * (per PR 1 of the engine consolidation) so eval gets skill tools,
-   * progressive-discovery meta-tools, Anthropic name validation, and the
+   * progressive-discovery meta-tools, the harness tool-name check, and the
    * system-prompt assembly chat already applies. Removed in a later PR.
    */
   tools: ToolSet;
@@ -2448,9 +2387,6 @@ type RunIterationBaseParams = {
    * Eval runs NEVER use local-FS skills (decision 10): absent means none.
    */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /**
    * The run's resolved MCP Tasks seam (`resolveToolTaskSeam`, surface
    * `"eval"`), or absent for tasks-off.
@@ -2489,7 +2425,7 @@ type RunIterationBackendParams = RunIterationBaseParams & {
   convexHttpUrl: string;
   convexAuthToken: string;
   modelId: string;
-  /** Resolved model definition — fed to `prepareChatV2` for Anthropic name validation. */
+  /** Resolved model definition, fed to `prepareChatV2`. */
   modelDefinition: ModelDefinition;
   endpointPath?: "/stream" | "/stream/org";
   extraBodyFields?: Record<string, unknown>;
@@ -2727,9 +2663,10 @@ export function resolveEvalCaseSettings(args: {
  * `/stream/org/local-usage` for one model turn of an eval iteration on a
  * local-runtime org connection: the backend never saw the call, so this is
  * its usage row, and, under a saved `org` selection, the execution record it
- * merges onto the iteration (`evalIterationId`). Fire-and-forget, like the
- * chat and swarm writebacks; an aborted call is not written back (the same
- * rule those follow: an aborted turn is not billed as completed usage).
+ * merges onto the iteration (`evalIterationId`). Resolves with the backend's
+ * price for each call, or undefined; it never rejects. An aborted call is not
+ * written back (the same rule the chat and swarm writebacks follow: an
+ * aborted turn is not billed as completed usage).
  */
 function postEvalOrgLocalUsage(args: {
   context: EvalOrgLocalUsageContext;
@@ -2740,9 +2677,9 @@ function postEvalOrgLocalUsage(args: {
   runId: string | null;
   convexAuthToken: string | undefined;
   selectedServers: string[];
-}): void {
+}): Promise<Record<string, ModelCallCostEvidence> | undefined> | undefined {
   const { context, event } = args;
-  if (event.outcome === "aborted") return;
+  if (event.outcome === "aborted") return undefined;
   const execution = buildLocalExecutionRecord({
     selection: context.modelSelection,
     providerKey: context.providerKey,
@@ -2755,11 +2692,12 @@ function postEvalOrgLocalUsage(args: {
     at: event.at,
     ...(event.upstreamModel ? { upstreamModel: event.upstreamModel } : {}),
   });
-  void postLocalUsage({
+  return postLocalUsage({
     projectId: context.projectId,
     providerKey: context.providerKey,
     model: args.modelId,
     ...(event.usage ? { usage: event.usage } : {}),
+    ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
     ...(args.convexAuthToken
@@ -2775,6 +2713,7 @@ function postEvalOrgLocalUsage(args: {
     logger.warn("[evals] Failed to post local usage", {
       error: error instanceof Error ? error.message : String(error),
     });
+    return undefined;
   });
 }
 
@@ -3254,9 +3193,6 @@ const executeTestCase = async (params: {
   projectEnvironmentUnresolvedReason?: string;
   /** The run's frozen skills (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: PinnedSkillSource;
-  /** The run's frozen skills in harness shape (see
-   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
-  pinnedHarnessSkills?: PinnedSkillArtifact[];
   /** The run's resolved Tasks seam — see RunIterationBaseParams.tasks. */
   tasks?: ToolTaskSeamOptions;
   toolPolicy?: EvalSuiteFileToolPolicy;
@@ -3303,7 +3239,6 @@ const executeTestCase = async (params: {
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -3516,7 +3451,6 @@ const executeTestCase = async (params: {
         harnessRuntimeVenue,
         environment,
         pinnedSkillSource,
-        pinnedHarnessSkills,
         ...(toolPolicy
           ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
           : {}),
@@ -3684,6 +3618,21 @@ const executeTestCase = async (params: {
       ]);
     }
   }
+  // Azure runs only a named deployment. A case without a saved org selection
+  // (written as `{ model, provider }`, saved before selections, or a legacy
+  // one) reaches `/stream/org` too, so the rule applies to the id it sends.
+  // After the policy check, in `resolveLocalModelSelection`'s order. Skipped
+  // only when the organization's config is known and has no Azure connection:
+  // then the missing connection is the problem, as on the run sheet. A config
+  // that failed to load is not that.
+  const azureRefusal =
+    orgByokRuntime?.kind === "cloud" &&
+    (!orgModelConfig || hasAzureConnection(orgModelConfig.providers))
+      ? azureDeploymentRefusal(orgByokRuntime.providerKey, {
+          modelId: String(modelDefinition.id),
+        })
+      : undefined;
+  if (azureRefusal) throw new ModelResolutionRefusalError([azureRefusal]);
   // The case's settings, resolved ONCE for every iteration below on the
   // route it takes (per-run override > saved selection > host defaults).
   // Legacy cases (no selection) keep the runners' own host/override rule.
@@ -3868,7 +3817,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -3945,7 +3893,6 @@ const executeTestCase = async (params: {
           ? { projectEnvironmentUnresolvedReason }
           : {}),
         pinnedSkillSource,
-        pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
         // rebuild its MCP tools under the same seam the emulated tool set was
         // already built with (`getEvalToolsForAiSdkOrThrow`).
@@ -4011,7 +3958,6 @@ const executeTestCase = async (params: {
       environment,
       convexAuthToken,
       pinnedSkillSource,
-      pinnedHarnessSkills,
       ...(toolPolicy
         ? { toolPolicy, toolAnnotations, toolPolicyWarnings }
         : {}),
@@ -4116,7 +4062,6 @@ export const runEvalSuiteWithAiSdk = async ({
   projectEnvironmentId,
   projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
-  pinnedHarnessSkills,
   toolPolicy,
   benchmarkWriteGuard,
   extraHeaders,
@@ -4459,10 +4404,7 @@ export const runEvalSuiteWithAiSdk = async ({
             }
           : {}),
         ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
-        // BOTH frozen-skill channels, from one place — see
-        // `runFrozenSkillOptions`: forwarding only the emulated one would
-        // leave the harness's box with whatever skills it already holds.
-        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
+        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
         // The run's ONE Tasks seam — the same object `getEvalToolsForAiSdkOrThrow`
         // built the emulated tool set with, so the harness (which rebuilds its
         // own MCP tools) cannot end up on a different row of the policy matrix.
@@ -4682,14 +4624,13 @@ export const runEvalSuiteWithAiSdk = async ({
         ) {
           throw result.reason;
         }
-        // Test failed entirely - log error but continue. A refusal by the
-        // organization's AI-key policy is the org's own configuration working
-        // as designed (choose an org model): recorded, never paged.
+        // Test failed entirely - log error but continue. A refusal the
+        // organization fixes in its own settings is recorded, never paged.
         if (
           result.reason instanceof ModelResolutionRefusalError &&
-          isOrgKeyPolicyRefusalCode(result.reason.code)
+          isOrgConfigurationRefusal(result.reason)
         ) {
-          logger.warn("[evals] Test case refused by the organization AI-key policy:", {
+          logger.warn("[evals] Test case refused by the organization's AI configuration:", {
             code: result.reason.code,
             message: result.reason.message,
           });
@@ -5273,6 +5214,10 @@ const runLocalIteration = async ({
         modelDefinition,
         systemPrompt: system,
         temperature,
+        requireToolApproval: appliedToolApproval(
+          "eval",
+          resolvedExecution.requireToolApproval,
+        ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
@@ -5297,7 +5242,6 @@ const runLocalIteration = async ({
               },
             }
           : {}),
-        customProviders: modelRuntime!.customProviders,
         priorMessages: [],
       });
       // PR 4d review fix (CodeRabbit "Use the dedicated system: field in
@@ -6348,7 +6292,6 @@ const runHostedIterationWithBrowser = async (
     convexAuthToken,
     modelId,
     modelDefinition,
-    orgModelConfig,
     endpointPath = "/stream",
     extraBodyFields,
     modelSelection,
@@ -6379,7 +6322,6 @@ const runHostedIterationWithBrowser = async (
     projectEnvironmentId,
     projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
-    pinnedHarnessSkills,
     tasks,
     toolPolicy,
     toolAnnotations,
@@ -6567,19 +6509,12 @@ const runHostedIterationWithBrowser = async (
 
   // Adopt the chat-side tool/system/temperature pipeline. Same change as the
   // local-AI-SDK runner: pulls in skill tools, progressive-discovery meta-
-  // tools, Anthropic name validation, and the assembled system prompt. The
+  // tools, the harness tool-name check, and the assembled system prompt. The
   // backend path serializes `prepared.allTools` to `toolDefs` below and
   // executes them locally on tool-call events. Run AFTER iteration creation
   // and inside a try/catch so prep failures persist as a failed iteration row
   // rather than rejecting the test case with no iteration record.
   //
-  // `customProviders` is derived from `orgModelConfig` so Anthropic name
-  // validation fires for hosted-org BYOK runs that use Anthropic-compatible
-  // custom providers (matches the local-AI-SDK runner, which threads the same
-  // shape via `resolveEvalModelRuntime`).
-  const backendCustomProviders = orgModelConfig
-    ? buildLlmRuntimeConfigFromOrgConfig(orgModelConfig).customProviders
-    : undefined;
   // PR 4d review fix (Codex P2 / Cursor Medium): hoisted up-front (above
   // the `prepareChatV2` try) so the catch path and the assignment
   // inside the try are both in scope. Stays `undefined` if prepareChatV2
@@ -6687,6 +6622,10 @@ const runHostedIterationWithBrowser = async (
         ? {
             authHeader: convexAuthToken,
             projectId: builtInTarget.projectId,
+            requireToolApproval: appliedToolApproval(
+              "eval",
+              resolvedExecution.requireToolApproval,
+            ),
             ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
             ...(browserSecrets.length > 0
               ? {
@@ -6761,25 +6700,6 @@ const runHostedIterationWithBrowser = async (
           annotations: toolAnnotations ?? new Map(),
         })
       : undefined;
-  // The run's PINNED skills, in the shape the harness materializes on box.
-  //
-  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
-  // where the full pin rows and their signed file URLs are in hand, so the
-  // supporting-file download happens before any model call rather than N times
-  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
-  // preserved frontmatter and file bodies all come off the pin.
-  //
-  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
-  // `runtimeSkillsOverride`, which is the live-environment channel one rank
-  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
-  // an eval run must deliver exactly what it pinned, and must not consult
-  // anything live.
-  //
-  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
-  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
-  // dropping it would leave the without-skills arm with whatever skills its box
-  // already holds.
-
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -7028,6 +6948,10 @@ const runHostedIterationWithBrowser = async (
       modelDefinition,
       systemPrompt,
       temperature,
+      requireToolApproval: appliedToolApproval(
+        "eval",
+        resolvedExecution.requireToolApproval,
+      ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
@@ -7050,9 +6974,6 @@ const runHostedIterationWithBrowser = async (
               enabled: resolvedExecution.progressiveToolDiscovery,
             },
           }
-        : {}),
-      ...(backendCustomProviders?.length
-        ? { customProviders: backendCustomProviders }
         : {}),
       skills: turnSkills.skills,
       priorMessages: [],
@@ -7408,11 +7329,13 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
-    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
-    // not when truthy: `[]` says "this run delivers no skills" (the
-    // `skillsOverride: "exclude"` arm), while absent leaves the box with
-    // whatever skills it already holds, an earlier turn's included.
-    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // The iteration's skill plan, which a harness turn carries out: a frozen
+    // run's skills on its box, `[]` for the without-skills arm, and an
+    // unpinned turn's box left as it is. MCPJam's agent builds its tools from
+    // the same plan.
+    ...(turnSkills.skills.runtime.kind === "harness"
+      ? { skillPlan: turnSkills.skills }
+      : {}),
     // Each harness turn's skills event, from what its box writer wrote.
     ...(turnSkills.skills.runtime.kind === "harness"
       ? {

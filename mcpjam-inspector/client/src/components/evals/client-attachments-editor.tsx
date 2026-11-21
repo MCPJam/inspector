@@ -5,7 +5,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
-import { resolveHostLogoByName } from "@/lib/host-logo";
+import { resolveHostLogo } from "@/lib/host-logo";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
@@ -87,6 +87,7 @@ export function ClientAttachmentsEditor({
                   : undefined
               }
               hostRawName={hostsById.get(attachment.namedHostId)?.name}
+              hostStyle={hostsById.get(attachment.namedHostId)?.hostStyle}
               onRemove={() => handleRemoveAttachment(index)}
               disabled={disabled}
             />
@@ -143,6 +144,7 @@ type HostAttachmentRowProps = {
   attachment: HostAttachmentDraft;
   hostName: string | undefined;
   hostRawName: string | undefined;
+  hostStyle: string | null | undefined;
   onRemove: () => void;
   disabled: boolean;
 };
@@ -151,11 +153,15 @@ function HostAttachmentRow({
   attachment,
   hostName,
   hostRawName,
+  hostStyle,
   onRemove,
   disabled,
 }: HostAttachmentRowProps) {
   const displayName = hostName ?? attachment.namedHostId;
-  const logoSrc = resolveHostLogoByName(hostRawName ?? displayName);
+  const logoSrc = resolveHostLogo({
+    name: hostRawName ?? displayName,
+    hostStyle,
+  });
 
   return (
     <div className="rounded-xl border bg-card/60">

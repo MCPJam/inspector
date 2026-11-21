@@ -27,6 +27,9 @@
 export const ANALYTICS_EVENTS = {
   // One outcome per logical plugin App launch (closed vocabulary, no content).
   extension_launch_completed: { source: "client" },
+  // One outcome per form response, Settings save or App message
+  // (closed vocabulary, no content; shared/extension-operation-event.ts).
+  extension_operation_completed: { source: "client" },
   // Launch discovery funnel; action is a closed vocabulary (launch-engagement.ts).
   platform_launch_engagement: { source: "client" },
   // One-time feature callouts (FeatureSpotlight); action is shown | closed.
@@ -49,11 +52,25 @@ export const ANALYTICS_EVENTS = {
   eval_suite_run_started: { source: "client" },
   eval_suite_run_started_server: { source: "server" },
 
+  // --- Evals navigation ---
+  // eval_nav_page_viewed: page ("suite"), tab (null outside Suite settings),
+  //   ui ("nav" on a new page), project_id. Ids only, never names.
+  eval_nav_page_viewed: { source: "client" },
+
   // --- Conformance runs (one name everywhere; no server twin) ---
   // The CLI and the SDK send this same name from their own clients, with
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  conformance_tab_viewed: { source: "client" },
+  // A UI run this page saw finish; outcome is passed | failed | incomplete.
+  conformance_run_completed: { source: "client" },
+  // --- GitHub star ask (github-star-prompt.ts), once per browser ---
+  github_star_prompt_shown: { source: "client" },
+  github_star_prompt_clicked: { source: "client" },
+  github_star_prompt_dismissed: { source: "client" },
+  // The Star button itself; location is header | settings.
+  github_star_button_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
@@ -319,6 +336,11 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  evaluate_tour_completed: { source: "client" },
+  evaluate_tour_handoff_ended: { source: "client" },
+  evaluate_tour_opened: { source: "client" },
+  evaluate_tour_skipped: { source: "client" },
+  evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
@@ -416,6 +438,7 @@ export const ANALYTICS_EVENTS = {
    */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
+  oauth_flow_completed: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
   ollama_running: { source: "client" },
@@ -439,6 +462,10 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
+  playground_repeat_tip_shown: { source: "client" },
+  playground_repeat_tip_clicked: { source: "client" },
+  playground_repeat_tip_dismissed: { source: "client" },
+  playground_test_case_saved: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },
@@ -590,6 +617,14 @@ export const ANALYTICS_EVENTS = {
   ui_tool_native_published: { source: "client" },
   ui_tool_native_registration_failed: { source: "client" },
   ui_tool_native_call_completed: { source: "client" },
+
+  // --- Header: "Onboard your agent to MCPJam" popover ---
+  // Props: location ("header"). `onboard_agent_command_copied` adds command
+  // (install | login) and copied (false when the clipboard refused);
+  // `onboard_agent_link_clicked` adds link (reference).
+  onboard_agent_opened: { source: "client" },
+  onboard_agent_command_copied: { source: "client" },
+  onboard_agent_link_clicked: { source: "client" },
 
   // --- Home: shared Slack Connect channel card ---
   // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),

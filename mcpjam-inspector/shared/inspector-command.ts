@@ -371,7 +371,7 @@ export interface OpenEvalSuiteFormInspectorCommand {
 export interface RunEvalSuiteInspectorCommand {
   id: string;
   type: "runEvalSuite";
-  /** `iterations` per case; omitted means the count Setup Run would start at. */
+  /** `iterations` per case; omitted means the count the Set up run sheet would start at. */
   payload: { suite: string; iterations?: number };
   timeoutMs?: number;
 }

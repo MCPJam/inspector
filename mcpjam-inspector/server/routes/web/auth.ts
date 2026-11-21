@@ -59,6 +59,7 @@ import type {
 } from "@mcpjam/sdk";
 import { HOSTED_MODE, WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { observeConnectionFetch } from "../../services/connection-failure-context.js";
+import { hostedFeatureObserver } from "../../services/server-canvas/observation-recorders.js";
 import { hostedMcpBackpressureFetch } from "../../utils/mcp-backpressure.js";
 import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import {
@@ -68,6 +69,7 @@ import {
 } from "../../utils/delivered-oauth-credential.js";
 import { BlockedEgressTargetError } from "../../utils/hosted-egress-guard.js";
 import { HOSTED_TASK_BATCH_MAX as HOSTED_TASK_BATCH_MAX_SHARED } from "../../../shared/hosted-tasks.js";
+import { CREDENTIAL_EXPORT_SETTING_HINT } from "../../../shared/credential-export-setting.js";
 import {
   attachHostedRpcLogs,
   createHostedRpcLogCollector,
@@ -800,21 +802,50 @@ export function buildConvexAuthHeaders(
   return headers;
 }
 
+type AuthorizeServerOptions = {
+  connectionId?: string;
+  connectionIds?: Record<string, string>;
+  includeConnections?: boolean;
+  accessScope?: "project_member" | "chat_v2";
+  scenarioId?: string;
+  accessVersion?: number;
+  /** Ends the request, for a caller that stops waiting for the answer. */
+  signal?: AbortSignal;
+};
+
 export async function authorizeServer(
   c: Context,
   bearerToken: string,
   projectId: string,
   serverId: string,
-  options?: {
-    connectionId?: string;
-    connectionIds?: Record<string, string>;
-    includeConnections?: boolean;
-    accessScope?: "project_member" | "chat_v2";
-    scenarioId?: string;
-    accessVersion?: number;
-    /** Ends the request, for a caller that stops waiting for the answer. */
-    signal?: AbortSignal;
+  options?: AuthorizeServerOptions,
+): Promise<ClientSafeAuthorizeResponse> {
+  return authorizeServerAs(
+    {
+      caller: callerContextFromHono(c),
+      onLogContext: (log) => setRequestLogContext(c, log),
+    },
+    bearerToken,
+    projectId,
+    serverId,
+    options,
+  );
+}
+
+/**
+ * `authorizeServer` for work that outlives its request, such as a readiness
+ * run authorizing the reviewer account it connected: the caller as the
+ * request named it, captured while the request existed.
+ */
+export async function authorizeServerAs(
+  who: {
+    caller: ManagerCallerContext;
+    onLogContext?: (log: ReturnType<typeof mapInternalToRequestContext>) => void;
   },
+  bearerToken: string,
+  projectId: string,
+  serverId: string,
+  options?: AuthorizeServerOptions,
 ): Promise<ClientSafeAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -829,7 +860,7 @@ export async function authorizeServer(
   try {
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
-      headers: buildConvexAuthHeaders(callerContextFromHono(c), bearerToken),
+      headers: buildConvexAuthHeaders(who.caller, bearerToken),
       body: JSON.stringify({
         projectId,
         ...(options?.connectionId
@@ -888,7 +919,7 @@ export async function authorizeServer(
 
   const { internalLogContext, ...clientSafe } = body as ConvexAuthorizeResponse;
   if (internalLogContext) {
-    setRequestLogContext(c, mapInternalToRequestContext(internalLogContext));
+    who.onLogContext?.(mapInternalToRequestContext(internalLogContext));
   }
   return stripStdioFieldsFromHostedConfig(
     clientSafe,
@@ -1750,6 +1781,13 @@ export async function createAuthorizedManager(
      * its plugins' servers, so a server the member chose still fails it.
      */
     tolerateServerRefusals?: boolean | readonly string[];
+    /**
+     * Record the server features this manager's traffic uses as observed use
+     * on the server canvas. Only for a user's own interactive session (chat,
+     * and the Inspector's own tool, resource and prompt calls); evals, checks,
+     * bench, simulations and other automated runs are MCPJam's own traffic.
+     */
+    observeFeatures?: boolean;
   },
 ): Promise<AuthorizedManagerResult> {
   const serverNamesById =
@@ -2105,7 +2143,7 @@ export async function createAuthorizedManager(
           hostedOnly
             ? (auth.oauthUnavailableMessage ??
                 `"${displayServerName}" uses an account that only MCPJam-hosted runs can use, so its token can't be used from here. Run it as a hosted run, or connect a separate account for local use.`)
-            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they cannot be used from here. Ask an organization admin to change the credential export policy.`,
+            : `Your organization keeps saved credentials for "${displayServerName}" inside MCPJam-hosted connections, so they can't be used from here. ${CREDENTIAL_EXPORT_SETTING_HINT}`,
           {
             exportDenied: true,
             policy: hostedOnly ? "hostedOnlyAccount" : "credentialExportPolicy",
@@ -2283,7 +2321,7 @@ export async function createAuthorizedManager(
   const credentialBindings = new Map<string, CredentialHeaderBinding>();
   // Tokens the backend delivered, by connection key. In local mode they stay
   // in this process: held to their bound origins and never replayed.
-  const deliveredTokens = new Map<string, { token: string; bound: unknown }>();
+  const deliveredTokens = new Map<string, { token: string; bound: unknown; accountKind?: string; accountUploaded?: boolean }>();
 
   // PASS 2 — connect/mint concurrently. Every server reaching this point has
   // already cleared the batch-wide validation above.
@@ -2747,6 +2785,8 @@ export async function createAuthorizedManager(
           deliveredTokens.set(serverId, {
             token: connectToken,
             bound: auth.oauthBoundOrigins,
+            accountKind: auth.oauthAccountKind,
+            accountUploaded: auth.oauthAccountUploaded,
           });
         }
 
@@ -2803,6 +2843,8 @@ export async function createAuthorizedManager(
           deliveredTokens.set(connection.key, {
             token: credential.accessToken,
             bound: credential.boundOrigins,
+            accountKind: credential.accountKind,
+            accountUploaded: credential.accountUploaded,
           });
         }
         return [
@@ -2949,10 +2991,21 @@ export async function createAuthorizedManager(
       ];
     }),
   );
-  const manager = new MCPClientManager(observedConfigs, {
+  const manager: MCPClientManager = new MCPClientManager(observedConfigs, {
     ...(options?.lazyConnect ? { lazyConnect: true } : {}),
     defaultTimeout: timeoutMs,
     rpcLogger: options?.rpcLogger,
+    // Observed server features, filed under each connection's own context.
+    ...(options?.observeFeatures
+      ? {
+          featureObserver: hostedFeatureObserver(
+            projectId,
+            bearerToken,
+            () => manager,
+            authorizedUserId,
+          ),
+        }
+      : {}),
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     extensionRequestHandlers: options?.extensionRequestHandlers,
@@ -3306,6 +3359,8 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     connectionIdSetsForBody?: (
       rawBody: Record<string, unknown>,
     ) => Promise<ConnectionIdSets | undefined>;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
   },
 ): Promise<T> {
   const { manager, body, refusedServers } = await createManualHostedConnection(
@@ -3367,6 +3422,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       serverId: string,
       organizationId?: string | null,
     ) => MrtrInputCollector | undefined;
+    mrtrInputOptionsForServer?: (
+      serverId: string,
+    ) => Parameters<MCPClientManager["setMrtrInputCollector"]>[2];
     /** See `createAuthorizedManager`'s option of the same name. */
     advertiseSkillsExtension?: boolean;
     /**
@@ -3397,6 +3455,8 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     ) => Promise<ConnectionIdSets | undefined>;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
   },
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -3596,9 +3656,11 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       ...(options?.mrtrInputCollectorForServer
         ? { mrtrInputCollectorForServer: options.mrtrInputCollectorForServer }
         : {}),
+      mrtrInputOptionsForServer: options?.mrtrInputOptionsForServer,
       ...(options?.tolerateServerRefusals
         ? { tolerateServerRefusals: true }
         : {}),
+      ...(options?.observeFeatures ? { observeFeatures: true } : {}),
     },
   );
 
@@ -3735,6 +3797,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     guestUnsupportedMessage?: string;
     /** See `createAuthorizedManager`'s option of the same name. */
     tolerateServerRefusals?: boolean;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    observeFeatures?: boolean;
     /** See `createManualHostedConnection`'s option of the same name. */
     hostConfigForBody?: (
       rawBody: Record<string, unknown>,
@@ -3801,6 +3865,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         pluginComputerRuntime: options?.pluginComputerRuntime,
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         tolerateServerRefusals: options?.tolerateServerRefusals,
+        observeFeatures: options?.observeFeatures,
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
         hostConfigForBody: options?.hostConfigForBody,

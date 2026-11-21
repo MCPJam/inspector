@@ -13,6 +13,7 @@ resources.post("/list", async (c) =>
   withEphemeralConnection(c, resourcesListSchema, (manager, body) =>
     // Hosted direct-ops read the server's live surface — never a cached body.
     listResources(manager, { ...body, cacheMode: "bypass" }),
+    { observeFeatures: true },
   ),
 );
 
@@ -23,6 +24,7 @@ resources.post("/templates/list", async (c) =>
       body.cursor !== undefined ? { cursor: body.cursor } : undefined,
       { cacheMode: "bypass" },
     ),
+    { observeFeatures: true },
   ),
 );
 

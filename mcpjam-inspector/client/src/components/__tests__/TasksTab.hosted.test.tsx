@@ -59,12 +59,14 @@ vi.mock("@/lib/task-tracker", () => ({
   getRespondedInputKeys: vi.fn().mockReturnValue([]),
 }));
 
+const mockUseTaskElicitation = vi.fn((_enabled?: boolean) => ({
+  elicitation: null,
+  isResponding: false,
+  respond: vi.fn(),
+}));
+
 vi.mock("@/hooks/use-task-elicitation", () => ({
-  useTaskElicitation: () => ({
-    elicitation: null,
-    isResponding: false,
-    respond: vi.fn(),
-  }),
+  useTaskElicitation: (enabled?: boolean) => mockUseTaskElicitation(enabled),
 }));
 
 vi.mock("../ElicitationDialog", () => ({ ElicitationDialog: () => null }));
@@ -185,5 +187,15 @@ describe("TasksTab (hosted mode)", () => {
 
     await waitFor(() => expect(mockGetTasksBatch).toHaveBeenCalled());
     expect(mockGetLatestProgress).not.toHaveBeenCalled();
+  });
+
+  it("never opens the local elicitation stream", async () => {
+    render(<TasksTab serverConfig={serverConfig()} serverName="test-server" />);
+
+    await waitFor(() => expect(mockGetTasksBatch).toHaveBeenCalled());
+    expect(mockUseTaskElicitation).toHaveBeenCalled();
+    for (const [enabled] of mockUseTaskElicitation.mock.calls) {
+      expect(enabled).toBe(false);
+    }
   });
 });

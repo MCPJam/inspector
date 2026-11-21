@@ -42,6 +42,17 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));
 
+// The reveal waits for the account list, so the modal needs one that loads.
+vi.mock("@/lib/apis/web/oauth-connections", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/lib/apis/web/oauth-connections")
+  >()),
+  listOAuthConnections: vi.fn().mockResolvedValue({
+    connections: [],
+    shared: false,
+    localDeliveryAllowed: false,
+  }),
+}));
 vi.mock("@/lib/apis/hosted-oauth-tokens-api", () => ({
   fetchHostedOAuthTokens: (...args: unknown[]) =>
     mockFetchHostedOAuthTokens(...args),
@@ -67,9 +78,7 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
 
 import { ServerDetailModal } from "../ServerDetailModal";
 
-function createServer(
-  overrides: Partial<ServerWithName> = {},
-): ServerWithName {
+function createServer(overrides: Partial<ServerWithName> = {}): ServerWithName {
   return {
     name: "test-server",
     lastConnectionTime: new Date(),
@@ -164,11 +173,13 @@ describe("ServerDetailModal hosted reconnect", () => {
       screen.queryByText(/OAuth credential is stored in Vault/),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Reveal tokens" }),
+      await screen.findByRole("button", { name: "Reveal tokens" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("hosted-access-token")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reveal tokens" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Reveal tokens" }),
+    );
 
     await waitFor(() => {
       expect(mockFetchHostedOAuthTokens).toHaveBeenCalledWith({
@@ -213,7 +224,9 @@ describe("ServerDetailModal hosted reconnect", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Reveal tokens" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Reveal tokens" }),
+    );
 
     expect(
       await screen.findByText("No hosted OAuth credential found"),

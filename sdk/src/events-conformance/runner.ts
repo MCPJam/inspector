@@ -27,8 +27,11 @@ import {
   type EventsProfileId,
 } from "../events/profiles.js";
 import type { EventsConformanceReceiver } from "./receiver.js";
+import { captureConformanceRun } from "../telemetry.js";
+import { readServerEventTypes } from "../server-list-reads.js";
 import {
   EVENTS_CHECK_IDS,
+  EVENTS_WEBHOOK_CHECK_IDS,
   type EventsCheckId,
   type EventsCheckResult,
   type EventsCheckStrength,
@@ -51,6 +54,8 @@ export interface EventsConformanceConfig {
   checkIds?: EventsCheckId[];
   /** `events-push-heartbeat` wait window. Default 65 s. */
   pushHeartbeatWaitMs?: number;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
 }
 
 const TITLES: Record<EventsCheckId, string> = {
@@ -112,6 +117,8 @@ function errorCode(error: unknown): number | undefined {
 export async function runEventsConformance(
   config: EventsConformanceConfig
 ): Promise<EventsConformanceResult> {
+  if (!config.__suppressTelemetry)
+    void captureConformanceRun("sdk", { suite: "events", mode: "single" });
   const started = Date.now();
   const selected = new Set(config.checkIds ?? DEFAULT_CHECKS);
   const results = new Map<EventsCheckId, EventsCheckResult>();
@@ -216,16 +223,10 @@ export async function runEventsConformance(
     return finish();
   }
 
-  const descriptors: EventDescriptorWire[] = [];
   const listStarted = Date.now();
-  try {
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await manager.listServerEvents(serverId, cursor !== undefined ? { cursor } : undefined);
-      descriptors.push(...result.events);
-      if (result.nextCursor === undefined || result.nextCursor === cursor) break;
-      cursor = result.nextCursor;
-    }
+  const listing = await readServerEventTypes(manager, serverId);
+  const descriptors = listing.events;
+  if (listing.status === "listed") {
     const unknownModes = descriptors.flatMap((d) =>
       d.delivery.filter((mode) => !(EVENT_DELIVERY_MODES as readonly string[]).includes(mode))
     );
@@ -236,10 +237,13 @@ export async function runEventsConformance(
         (unknownModes.length ? `; unrecognized delivery modes: ${unknownModes.join(", ")}` : ""),
       { startedAt: listStarted }
     );
-  } catch (error) {
-    record("events-list-shape", "violation", error instanceof Error ? error.message : String(error), {
-      startedAt: listStarted,
-    });
+  } else {
+    record(
+      "events-list-shape",
+      "violation",
+      listing.error instanceof Error ? listing.error.message : String(listing.error),
+      { startedAt: listStarted }
+    );
   }
 
   if (isChatgptProfileId(profile)) {
@@ -292,24 +296,7 @@ export async function runEventsConformance(
   }
 
   // ---- webhook ---------------------------------------------------------------
-  const webhookChecks: EventsCheckId[] = [
-    "events-subscribe-rejects-http-callback",
-    "events-subscribe-rejects-invalid-secret",
-    "events-subscribe-result-shape",
-    "events-subscribe-idempotent",
-    "events-granted-lifetime",
-    "events-no-expiry-only-when-requested",
-    "events-receiver-consent",
-    "events-consent-failure-blocks-delivery",
-    "events-no-redirect-follow",
-    "events-private-callback-rejected",
-    "events-delivery-signature",
-    "events-webhook-id-equals-event-id",
-    "events-subscription-id-header",
-    "events-delivery-content-type",
-    "events-delivery-body-size",
-    "events-unsubscribe-twice",
-  ];
+  const webhookChecks: EventsCheckId[] = [...EVENTS_WEBHOOK_CHECK_IDS];
   const webhookType = usable("webhook");
   if (!webhookType) {
     const note = missingNote("webhook");

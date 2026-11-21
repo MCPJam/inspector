@@ -20,7 +20,8 @@ export class MCPTasksConformanceTest {
     this.suppressTelemetry = config.__suppressTelemetry === true;
   }
   async run(): Promise<MCPTasksConformanceResult> {
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "tasks", mode: "single" });
     const started = Date.now();
     const results: MCPTasksConformanceResult[] = [];
     for (const group of planTasksConformance(this.config)) {

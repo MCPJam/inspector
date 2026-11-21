@@ -989,6 +989,43 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"])(
+    "asks to prepare a new %s chat's computer",
+    (harnessId) => {
+      const { result, unmount } = renderHook(() =>
+        useChatSession({
+          selectedServers: ["server-1"],
+          hostedContext: {
+            projectId: "project-1",
+            hostId: "host-1",
+            selectedServerIds: ["server-id-1"],
+          },
+          harnessModelTarget: { harnessId },
+        }),
+      );
+      expect(result.current.harnessBoxPreparation).toMatchObject({
+        chatSessionId: expect.any(String),
+        body: { projectId: "project-1", hostId: "host-1" },
+      });
+      unmount();
+    },
+  );
+
+  it("asks nothing for a chat on MCPJam's own agent", () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedContext: {
+          projectId: "project-1",
+          hostId: "host-1",
+          selectedServerIds: ["server-id-1"],
+        },
+      }),
+    );
+    expect(result.current.harnessBoxPreparation).toBeNull();
+    unmount();
+  });
+
   it("does not report a selection resolved before the saved one is read", () => {
     mockState.persistedModelInitialized = false;
     mockState.selectedModelId = null as unknown as string;
@@ -1466,6 +1503,76 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: initialChatSessionId,
       selectedServerIds: ["server-id-2"],
     });
+  });
+
+  it("writes prompt turns only after a send is admitted", async () => {
+    let resolvePreflight!: (value: Array<{ serverId: string }>) => void;
+    const ensureServerIds = vi.fn(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolvePreflight = resolve;
+        }),
+    );
+    const skillTurn = {
+      id: "skill-context-1",
+      role: "user" as const,
+      parts: [{ type: "text" as const, text: "skill body" }],
+    };
+    let admitted = true;
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-a"],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+          ensureServerIds,
+        },
+      }),
+    );
+
+    mockState.setMessages.mockClear();
+    mockState.authFetch.mockClear();
+    let sendPromise: Promise<boolean> | undefined;
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    expect(ensureServerIds).toHaveBeenCalledTimes(1);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+
+    admitted = false;
+    resolvePreflight([{ serverId: "id-a" }]);
+    const refused = await act(async () => await sendPromise);
+    expect(refused).toBe(false);
+    expect(mockState.setMessages).not.toHaveBeenCalled();
+    expect(mockState.authFetch).not.toHaveBeenCalled();
+
+    admitted = true;
+    let resolveAgain!: (value: Array<{ serverId: string }>) => void;
+    ensureServerIds.mockImplementationOnce(
+      () =>
+        new Promise<Array<{ serverId: string }>>((resolve) => {
+          resolveAgain = resolve;
+        }),
+    );
+    act(() => {
+      sendPromise = result.current.sendMessage({
+        text: "hi",
+        prependMessages: [skillTurn],
+        isCurrent: () => admitted,
+      });
+    });
+    resolveAgain([{ serverId: "id-a" }]);
+    const sent = await act(async () => await sendPromise);
+    expect(sent).toBe(true);
+    const written = mockState.setMessages.mock.calls.map(([update]) =>
+      typeof update === "function" ? update([]) : update,
+    );
+    expect(written).toContainEqual([skillTurn]);
   });
 
   it("fails closed when the server selection changes mid-preflight", async () => {
