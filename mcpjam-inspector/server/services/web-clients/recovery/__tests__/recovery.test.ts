@@ -367,7 +367,7 @@ describe("web account recovery", () => {
     await coordinator.handback({
       projectId: PROJECT,
       requestId: request?.requestId ?? "",
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     // A run that restored the expired profile before the handback reaches a
@@ -401,7 +401,7 @@ describe("web account recovery", () => {
       coordinator.handback({
         projectId: PROJECT,
         requestId: request?.requestId ?? "",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       });
 
     const outcomes = [...(await Promise.all([handback(), handback()]))];
@@ -450,7 +450,7 @@ describe("web account recovery", () => {
         coordinator.handback({
           projectId: PROJECT,
           requestId: request?.requestId ?? "",
-          browser: browserSignedInAs(SEAT),
+          browserFor: () => browserSignedInAs(SEAT),
         });
       await expect(handback(first)).rejects.toThrow("process stopped");
       expect(runOf(world, "run-1").log).toEqual(PAUSED);
@@ -501,7 +501,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: intruder,
+        browserFor: () => intruder,
       }),
     ).toEqual({
       status: "wrong_identity",
@@ -513,21 +513,21 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: browserSignedInAs(otherWorkspace),
+        browserFor: () => browserSignedInAs(otherWorkspace),
       }),
     ).toMatchObject({ status: "wrong_identity" });
     expect(
       await coordinator.handback({
         projectId: PROJECT,
         requestId,
-        browser: browserSignedInAs(undefined),
+        browserFor: () => browserSignedInAs(undefined),
       }),
     ).toEqual({ status: "not_signed_in" });
     expect(
       await coordinator.handback({
         projectId: PROJECT,
         requestId: "no-such-request",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       }),
     ).toEqual({ status: "not_found" });
 
@@ -548,7 +548,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     expect(accepted).toMatchObject({ status: "resumed" });
@@ -650,7 +650,7 @@ describe("web account recovery", () => {
     const refused = coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: slowIntruder,
+      browserFor: () => slowIntruder,
     });
     await vi.waitFor(() =>
       expect(slowIntruder.verifyAccount).toHaveBeenCalled(),
@@ -658,7 +658,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId,
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     finishCheck();
     expect(await refused).toMatchObject({ status: "wrong_identity" });
@@ -686,7 +686,7 @@ describe("web account recovery", () => {
         await coordinator.handback({
           projectId: PROJECT,
           requestId: request?.requestId ?? "",
-          browser: browserSignedInAs(SEAT),
+          browserFor: () => browserSignedInAs(SEAT),
         });
         return world.backend.reportWebSignInRequired(args);
       },

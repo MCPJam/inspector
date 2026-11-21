@@ -59,6 +59,11 @@ export interface WebClientEnvironment {
   /** Records how the turn ended on the account, after the browser closed. */
   onOutcome?(outcome: WebTurnOutcome): Promise<void>;
   /**
+   * The saved profile version `openBrowser` restored for the account, so
+   * recovery can tell a sign-in that lapsed from one replaced since.
+   */
+  restoredProfileVersion?(webAccountId: string): number | undefined;
+  /**
    * The durable turn gate, for a deployment with more than one replica: a
    * call that lands on another replica still finds its turn.
    */
