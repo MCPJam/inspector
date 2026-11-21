@@ -39,6 +39,78 @@ Edits are drafts until you click **Save settings**; **Discard** drops them. A sa
     ```
     See [`cloud eval update`](/cli/reference#cloud-eval-update) for every flag.
   </Tab>
+  <Tab title="SDK">
+    In code, grading is set on the suite and its tests. `mcpjam.passCriteria` is the pass threshold of the uploaded run, `matchOptions` is tool-call matching, `judge()` adds an LLM judge, and `assertGate` fails the process locally.
+
+    ```ts evals/notes-grading.test.ts
+    import { afterAll, beforeAll, test } from "vitest";
+    import {
+      EvalSuite,
+      EvalTest,
+      HostRunner,
+      MCPClientManager,
+      assertGate,
+      gateInputFromSuiteResult,
+      judge,
+    } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    });
+
+    afterAll(async () => {
+      await manager.disconnectAllServers();
+    });
+
+    test("notes suite meets its bar", async () => {
+      const suite = new EvalSuite({
+        name: "Notes server",
+        // Tool-call matching for every test that sets expectedToolCalls
+        matchOptions: { argumentMatching: "partial", toolCallOrder: "ignore", maxExtraToolCalls: null },
+        defaults: {
+          evaluators: [
+            // Scored 0 to 1; passes at or above threshold; advisory unless role is "required"
+            judge({
+              id: "answers-from-the-note",
+              model: "anthropic/claude-sonnet-5",
+              apiKey: process.env.ANTHROPIC_API_KEY!,
+              rubric: ["The answer quotes the text that read_note returned."],
+              threshold: 0.7,
+              role: "advisory",
+            }),
+          ],
+        },
+        // Pass threshold (0-100) recorded on the run uploaded to MCPJam
+        mcpjam: { passCriteria: { minimumPassRate: 90 } },
+      });
+
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "reads the note it was asked about",
+        expectedToolCalls: [{ toolName: "read_note", arguments: { id: 7 } }],
+        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+      }));
+
+      const result = await suite.run(agent, { iterations: 5 });
+
+      // Throws when under 90% of iterations passed (a fraction here, not a percentage)
+      assertGate(gateInputFromSuiteResult(result), { minimumPassRate: 0.9 });
+    }, 600_000);
+    ```
+
+    `assertGate` asks the **Suite accuracy** question. For the **Per-case pass rate** question, check each `EvalTest` instead; see [CI gate on per-case pass rates](/sdk/reference/eval-suite#ci-gate-on-per-case-pass-rates). The [`matchOptions` table](/sdk/reference/eval-test#matchoptions) lists every matching option.
+  </Tab>
 </Tabs>
 
 Suites managed by CI are read-only here. See [Run evals in CI](/evaluate/run-evals-in-ci#suites-managed-in-code). The [suite settings reference](/evaluate/reference/suite-settings) lists the API field behind each setting.
