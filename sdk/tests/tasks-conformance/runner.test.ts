@@ -3,6 +3,7 @@ import {
   MCPTasksConformanceTest,
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
+  failedTaskLacksStatusMessage,
   findDeclarationViolations,
   findRawTaskStates,
   sentRequestIds,
@@ -474,6 +475,18 @@ describe("completion acknowledgements", () => {
 });
 
 describe("shape validators", () => {
+  it("reads a failed task without a readable statusMessage as lacking one", () => {
+    for (const statusMessage of [undefined, null, 42, "", "  "]) {
+      expect(
+        failedTaskLacksStatusMessage({ status: "failed", statusMessage })
+      ).toBe(true);
+    }
+    expect(
+      failedTaskLacksStatusMessage({ status: "failed", statusMessage: "boom" })
+    ).toBe(false);
+    expect(failedTaskLacksStatusMessage({ status: "completed" })).toBe(false);
+  });
+
   it("requires a flat CreateTaskResult; extra fields are not judged", () => {
     expect(
       validateCreateTaskShape({ resultType: "task", taskId: "t" })
@@ -1323,14 +1336,49 @@ describe("MCPTasksConformanceTest", () => {
       "passed"
     );
     expect(mutatedIds).toEqual([]);
+    // Not asked, so neither warned about nor claimed as met.
+    expect(unpicked.passedAdvice).toBeUndefined();
 
-    await runAgainst(manager, {
+    const picked = await runAgainst(manager, {
       config: {
         ...config,
         readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
       },
     });
     expect(mutatedIds).toHaveLength(2);
+    // Both mutations answered -32602, so the advice is met.
+    expect(picked.readiness).toBeUndefined();
+    expect(picked.passedAdvice).toEqual([
+      {
+        id: "tasks-readiness-unknown-task-id-mutations",
+        title: "Unknown Task Id On Update And Cancel",
+        specStrength: "SHOULD",
+      },
+    ]);
+  });
+
+  it("claims no unknown-id pass when one mutation never got an answer", async () => {
+    const manager = extensionManager({
+      updateTask: async () => {
+        throw rpcErrorValue(-32602, "unknown task");
+      },
+      cancelTaskExt: async () => {
+        // No JSON-RPC code: the call failed locally, so cancel judged nothing.
+        throw new Error("socket hang up");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: {
+        toolName: "long_job",
+        pollTimeoutMs: 1000,
+        checkIds: ["tasks-invalid-task-id-rejected"],
+        readinessIds: ["tasks-readiness-unknown-task-id-mutations"],
+      },
+    });
+
+    expect(result.readiness).toBeUndefined();
+    expect(result.passedAdvice).toBeUndefined();
   });
 
   it("reports a connection failure as a failed run", async () => {

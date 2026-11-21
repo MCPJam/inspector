@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
   flag: true,
   webFlag: false,
   webAccounts: [] as unknown[],
-  webSelections: [] as unknown[],
+  webSelections: [] as unknown[] | undefined,
   view: undefined as unknown,
   save: vi.fn(),
   queried: [] as Array<{ name: string; args: unknown }>,
@@ -462,6 +462,21 @@ describe("SuiteAccountsRow web clients", () => {
       vendor: "claude",
       webAccountIds: ["wa-qa", "wa-evals"],
     });
+  });
+
+  it("keeps the choices disabled until the saved choice loads", () => {
+    state.flag = false;
+    state.webFlag = true;
+    state.webAccounts = [qa, evals];
+    state.webSelections = undefined;
+    renderRow();
+    // The default shows checked meanwhile; a click would save over the
+    // person's real choice.
+    expect(
+      within(screen.getByTestId("suite-accounts-web")).getByRole("checkbox", {
+        name: "Claude web evals@example.com",
+      }),
+    ).toBeDisabled();
   });
 
   it("sits beside the servers' accounts when both flags are on", () => {
