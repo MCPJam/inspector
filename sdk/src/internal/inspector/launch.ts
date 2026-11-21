@@ -8,8 +8,35 @@ import { isInspectorHealthy } from "./health.js";
 
 const STARTUP_LOG_MAX_BYTES = 1024 * 1024;
 
-export function getNpxExecutable(platform = process.platform): string {
-  return platform === "win32" ? "npx.cmd" : "npx";
+export interface NpxInvocation {
+  command: string;
+  args: string[];
+  shell: boolean;
+}
+
+/**
+ * How to spawn npx. On Windows `npx` is the `npx.cmd` shim, and since Node's
+ * CVE-2024-27980 hardening spawning a `.cmd` without a shell throws EINVAL.
+ * cmd.exe then re-reads the joined command line, so each argument is quoted,
+ * and characters cmd.exe still expands inside quotes are refused.
+ */
+export function npxInvocation(
+  args: readonly string[],
+  platform = process.platform,
+): NpxInvocation {
+  if (platform !== "win32") {
+    return { command: "npx", args: [...args], shell: false };
+  }
+  return { command: "npx.cmd", args: args.map(quoteCmdArgument), shell: true };
+}
+
+function quoteCmdArgument(arg: string): string {
+  if (/["%!\r\n]/.test(arg)) {
+    throw operationalError(
+      `Cannot pass ${JSON.stringify(arg)} to npx through cmd.exe safely.`,
+    );
+  }
+  return /^[\w@./:=-]+$/.test(arg) ? arg : `"${arg}"`;
 }
 
 export async function startInspector(
@@ -22,18 +49,28 @@ export async function startInspector(
   const startScriptPath = resolveStartScriptPath?.();
   const localStartScriptPath =
     startScriptPath && existsSync(startScriptPath) ? startScriptPath : undefined;
-  const args = localStartScriptPath
-    ? [localStartScriptPath, "--port", port, "--no-open"]
-    : ["-y", "@mcpjam/inspector@latest", "--port", port, "--no-open"];
-  const executable = localStartScriptPath
-    ? process.execPath
-    : getNpxExecutable();
+  const invocation: NpxInvocation = localStartScriptPath
+    ? {
+        command: process.execPath,
+        args: [localStartScriptPath, "--port", port, "--no-open"],
+        shell: false,
+      }
+    : npxInvocation([
+        "-y",
+        "@mcpjam/inspector@latest",
+        "--port",
+        port,
+        "--no-open",
+      ]);
   const logPath = getInspectorStartupLogPath();
   const logFd = openStartupLogFile(logPath);
 
   let child: ReturnType<typeof spawn>;
   try {
-    child = spawn(executable, args, {
+    child = spawn(invocation.command, invocation.args, {
+      shell: invocation.shell,
+      // Detached Windows children get their own console window otherwise.
+      windowsHide: true,
       cwd: localStartScriptPath
         ? path.dirname(localStartScriptPath)
         : process.cwd(),

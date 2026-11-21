@@ -9,6 +9,12 @@ export type JsonInputReadFile = (
 const readTextFile: JsonInputReadFile = (path, encoding) =>
   readFileSync(path, encoding);
 
+// Editors on Windows (Notepad, PowerShell's `Out-File -Encoding utf8`) save
+// UTF-8 with a byte-order mark, which JSON.parse rejects as an unexpected token.
+function stripByteOrderMark(text: string): string {
+  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+}
+
 export class JsonInputContext {
   private stdinConsumer: string | undefined;
 
@@ -25,7 +31,7 @@ export class JsonInputContext {
       try {
         const contents = this.readFile(0, "utf8");
         this.stdinConsumer = label;
-        return contents;
+        return stripByteOrderMark(contents);
       } catch (error) {
         throw usageError(`Failed to read ${label} from stdin.`, {
           source: error instanceof Error ? error.message : String(error),
@@ -43,7 +49,7 @@ export class JsonInputContext {
     }
 
     try {
-      return this.readFile(filePath, "utf8");
+      return stripByteOrderMark(this.readFile(filePath, "utf8"));
     } catch (error) {
       throw usageError(`Failed to read ${label} file "${filePath}".`, {
         source: error instanceof Error ? error.message : String(error),
