@@ -2437,6 +2437,99 @@ describe("target setup before claims", () => {
       }),
     ]);
   });
+  // INSPECTOR-HONO-6F: a self-hosted swarm whose MCP server refused the
+  // connection paged as an MCPJam error. The target still fails; it just
+  // stops reaching Sentry when the cause is the user's own server or config.
+  it("warns instead of capturing when setup could not reach the user's server", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    const warnLog = vi.spyOn(logger, "warn").mockImplementation(() => {});
+    const refused = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:3001"),
+      {
+        code: "ECONNREFUSED",
+      },
+    );
+    setupTurnMock.mockImplementation(async () => {
+      throw new SwarmSetupError(
+        {
+          ...record,
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        },
+        undefined,
+        new Error(
+          'Failed to connect to MCP server "local" using HTTP transports.',
+          {
+            cause: refused,
+          },
+        ),
+      );
+    });
+
+    try {
+      await startJourneyRun(
+        baseOpts({
+          hosts: [{ ...HOST, targetId: "t" }],
+          setupWrites: true,
+          sessionsPerTarget: 1,
+        }),
+      );
+
+      expect(errorLog).not.toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(warnLog).toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        expect.objectContaining({
+          runId: "run-1",
+          setupReason: "transport_failed",
+        }),
+      );
+    } finally {
+      errorLog.mockRestore();
+      warnLog.mockRestore();
+    }
+  });
+
+  it("still captures a setup failure whose cause is not the user's", async () => {
+    const { SwarmSetupError } = await import("../swarm-setup-turn");
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => {});
+    setupTurnMock.mockImplementation(async () => {
+      throw new SwarmSetupError(
+        {
+          ...record,
+          status: "failed",
+          readiness: "unavailable",
+          reason: "transport_failed",
+        },
+        undefined,
+        new TypeError("Cannot read properties of undefined (reading 'tools')"),
+      );
+    });
+
+    try {
+      await startJourneyRun(
+        baseOpts({
+          hosts: [{ ...HOST, targetId: "t" }],
+          setupWrites: true,
+          sessionsPerTarget: 1,
+        }),
+      );
+
+      expect(errorLog).toHaveBeenCalledWith(
+        "[swarm.runner] target worker failed; finalizing its attempts",
+        expect.any(SwarmSetupError),
+        expect.objectContaining({ runId: "run-1" }),
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
   it("stores a setup that could not sign in to the server as that sign-in failure, and does not retry it", async () => {
     const { SwarmSetupError } = await import("../swarm-setup-turn");
     const message =
