@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   seedHostTemplate,
   HOST_TEMPLATES,
+  HOST_TEMPLATE_IDS,
   DEFAULT_HOST_TEMPLATE_ID,
   DEFAULT_TEMPLATE_MODEL_ID,
   emptyHostConfigInputV2,
@@ -13,41 +14,14 @@ import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 import { BUNDLED_HOST_COMPAT_CATALOG } from "../src/host-compat/catalog.generated.js";
 import { getCatalogTemplate } from "../src/host-compat/catalog.js";
 
-const ALL_IDS: HostTemplateId[] = [
-  "mcpjam",
-  "claude",
-  "claude-desktop",
-  "claude-code",
-  "claude-code-desktop",
-  "claude-code-web",
-  "chatgpt",
-  "chatgpt-desktop",
-  "chatgpt-work",
-  "chatgpt-work-desktop",
-  "mistral",
-  "goose",
-  "slack",
-  "cursor",
-  "cursor-cli",
-  "copilot-cli",
-  "codex",
-  "codex-cli",
-  "opencode",
-  "copilot",
-  "vscode",
-  "agentcore",
-  "n8n",
-  "gemini",
-  "perplexity",
-  "cline",
-  "notion",
-  "muse",
-  "grokbot",
-];
-
 describe("seedHostTemplate", () => {
   it("exposes one HOST_TEMPLATES entry per id", () => {
-    expect(HOST_TEMPLATES.map((t) => t.id).sort()).toEqual([...ALL_IDS].sort());
+    // seedFromHostTemplate falls back to the first template for an id with no
+    // entry, so a missing entry would otherwise seed MCPJam without failing.
+    expect(
+      HOST_TEMPLATES.map((t) => t.id).sort(),
+      "HOST_TEMPLATE_IDS and HOST_TEMPLATES in sdk/src/host-config/templates/seed-host-template.ts must list the same ids"
+    ).toEqual([...HOST_TEMPLATE_IDS].sort());
   });
 
   it("pins DEFAULT_TEMPLATE_MODEL_ID, a dotted hosted id, on the default template", () => {
@@ -121,7 +95,7 @@ describe("seedHostTemplate", () => {
       "chatgpt-work": { toolResultAuthChallenge: "prompt" },
       "chatgpt-work-desktop": { toolResultAuthChallenge: "prompt" },
     };
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       const seeded = seedHostTemplate(id);
       const written: Record<string, unknown> = {};
       for (const key of KEYS) {
@@ -139,7 +113,7 @@ describe("seedHostTemplate", () => {
   });
 
   it("seeds a usable config for every template id and theme", () => {
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       for (const theme of ["light", "dark"] as const) {
         const config = seedHostTemplate(id, { theme });
         expect(typeof config.hostStyle).toBe("string");
@@ -168,7 +142,7 @@ describe("seedHostTemplate", () => {
       "goose",
     ]);
 
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       const expected = autoHosts.has(id) ? undefined : onHosts.has(id);
       for (const config of [
         seedHostTemplate(id),
@@ -179,9 +153,7 @@ describe("seedHostTemplate", () => {
         const serialized = JSON.parse(JSON.stringify(config));
         expect(serialized.progressiveToolDiscovery, id).toBe(expected);
         if (autoHosts.has(id)) {
-          expect(serialized, id).not.toHaveProperty(
-            "progressiveToolDiscovery"
-          );
+          expect(serialized, id).not.toHaveProperty("progressiveToolDiscovery");
         }
       }
     }
@@ -193,7 +165,7 @@ describe("seedHostTemplate", () => {
   // into inheriting templates (claude/chatgpt/cursor/copilot/vscode all
   // derive their clientCapabilities from the empty-input base) fails here.
   it("advertises EMA on the mcpjam template and on no other", () => {
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       const config = seedHostTemplate(id, { theme: "dark" });
       const exts = (config.clientCapabilities as { extensions?: unknown })
         ?.extensions;
@@ -219,7 +191,7 @@ describe("seedHostTemplate", () => {
   // the policy; this guards against a future seed change enabling
   // enforcement-by-default.
   it("seeds the enterprise-managed policy on NO persona", () => {
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       const state = readXaaEnterprisePolicy(seedHostTemplate(id).mcpProfile);
       expect(state.kind, `template ${id}`).toBe("off");
     }
@@ -754,7 +726,7 @@ describe("seedHostTemplate", () => {
 
   it("seed output matches the committed golden snapshot", () => {
     const golden: Record<string, unknown> = {};
-    for (const id of ALL_IDS) {
+    for (const id of HOST_TEMPLATE_IDS) {
       for (const theme of ["light", "dark"] as const) {
         golden[`${id}/${theme}`] = seedHostTemplate(id, {
           theme,
