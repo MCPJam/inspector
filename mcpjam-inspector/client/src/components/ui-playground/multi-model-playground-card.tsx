@@ -255,8 +255,7 @@ interface MultiModelPlaygroundCardProps {
   hostStyle: ScenarioHostStyle;
   effectiveThreadTheme: ThreadThemeMode;
   deviceType: DeviceType;
-  /** The pane's own Device and Theme, from its settings. */
-  displayOverrides?: PaneDisplay;
+  displayDeviceOverride?: DeviceType;
   hideInlineEdit?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
@@ -374,7 +373,7 @@ export function MultiModelPlaygroundCard({
   hostStyle,
   effectiveThreadTheme,
   deviceType,
-  displayOverrides,
+  displayDeviceOverride,
   hideInlineEdit = false,
   onWidgetStateChange,
   toolRenderOverrides = {},
@@ -1026,7 +1025,14 @@ export function MultiModelPlaygroundCard({
     deviceType === "tablet" && displayMode === "fullscreen";
   const shellHeightClass =
     isMobileFullTakeover || isTabletFullscreenTakeover ? "min-h-[34rem]" : "";
-  const shellMaxWidth = paneDeviceWidth(displayOverrides?.deviceType);
+  const shellMaxWidth = paneDeviceWidth(displayDeviceOverride);
+  const paneDisplay = useMemo<PaneDisplay | null>(
+    () =>
+      compareKind === "host"
+        ? { deviceType: displayDeviceOverride, theme: effectiveThreadTheme }
+        : null,
+    [compareKind, displayDeviceOverride, effectiveThreadTheme],
+  );
 
   useEffect(() => {
     onSummaryChangeRef.current = onSummaryChange;
@@ -1484,7 +1490,7 @@ export function MultiModelPlaygroundCard({
       >
         <ScenarioChatUiOverrideProvider value={effectiveChatUiOverride}>
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
-            <PaneDisplayProvider value={displayOverrides ?? null}>
+            <PaneDisplayProvider value={paneDisplay}>
               {cardBody}
             </PaneDisplayProvider>
           </ScenarioHostThemeProvider>

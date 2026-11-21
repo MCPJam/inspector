@@ -306,7 +306,10 @@ describe("Compare pane settings", () => {
       screen.getByRole("button", { name: "Pane settings for codex" }),
     );
     expect(screen.getByTestId("compare-pane-device")).toHaveTextContent("Fill");
-    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    const theme = screen.getByRole("combobox", { name: "Theme for codex" });
+    expect(theme).toHaveTextContent("Match MCPJam");
+    await user.click(theme);
+    await user.click(screen.getByRole("option", { name: "Dark" }));
     expect(useComparePaneDisplayStore.getState().byPane).toEqual({
       codex: { theme: "dark" },
     });
@@ -319,10 +322,13 @@ describe("Compare pane settings", () => {
     expect(screen.getByTestId("compare-pane-summary")).toHaveTextContent(
       "Phone",
     );
-    expect(screen.getByRole("radio", { name: "Dark" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(theme).toHaveTextContent("Dark");
+    await user.click(theme);
+    await user.click(screen.getByRole("option", { name: "Match MCPJam" }));
+    expect(theme).toHaveTextContent("Match MCPJam");
+    expect(useComparePaneDisplayStore.getState().byPane).toEqual({
+      codex: { deviceType: "mobile", theme: "app" },
+    });
     useComparePaneDisplayStore.setState({ byPane: {} });
   });
 
