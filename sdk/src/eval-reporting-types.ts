@@ -12,6 +12,7 @@ export type {
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import type { EvalMatchOptions } from "./matchers.js";
 import type { IterationStatus } from "./contract/chain.js";
+import type { EvalRunStatus } from "./contract/eval-lifecycle.js";
 import type { EvalSuiteFileValidity } from "./contract/suite-file.js";
 import type {
   EvalExecutionVariant,
@@ -320,14 +321,7 @@ export type ReportEvalResultsOutput = {
    * `?project=`, and the app has to guess which project to open.
    */
   projectId?: string;
-  status:
-    | "pending"
-    | "running"
-    | "grading"
-    | "completed"
-    | "failed"
-    | "cancelled"
-    | "timed_out";
+  status: EvalRunStatus;
   /**
    * The run's verdict.
    *
