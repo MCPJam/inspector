@@ -11,7 +11,8 @@
  * `convex/http.ts`). Authenticated with `INSPECTOR_SERVICE_TOKEN` via the
  * `x-inspector-service-token` header — the same channel `workos-key-bindings.ts`
  * uses for its sibling routes. Returns `null` only on the route's own
- * "User not found" 404 so the caller can translate to a 401; throws on
+ * "User not found" 404 so the caller can translate to a 401; throws a 403
+ * `WebRouteError` when the backend reports the account suspended; throws on
  * transport errors, unexpected statuses, and routing-level 404s (route not
  * deployed / wrong `CONVEX_HTTP_URL`).
  */
@@ -20,6 +21,7 @@ import {
   getInternalBackendConfig,
   isEntityNotFound,
 } from "./internal-backend.js";
+import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 
 const USERS_LOOKUP_PATH = "/internal/v1/users/lookup-by-external-id";
 
@@ -45,6 +47,19 @@ export async function resolveUserByExternalId(
     }
     throw new Error(
       `User lookup route not found at ${convexUrl}${USERS_LOOKUP_PATH} — is the backend lookup route deployed?`
+    );
+  }
+  // The route's own JSON answer, as opposed to a 403 from anything in front
+  // of it, which stays a plain failure below.
+  if (
+    response.status === 403 &&
+    (await isEntityNotFound(response, "Account suspended"))
+  ) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "This account is suspended. Contact support.",
+      { reason: "ACCOUNT_SUSPENDED" },
     );
   }
   if (!response.ok) {
