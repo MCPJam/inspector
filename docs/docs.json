@@ -92,7 +92,13 @@
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              "inspector/evals",
+              "inspector/eval-test-users"
+            ]
           },
           {
             "group": "Configure",
