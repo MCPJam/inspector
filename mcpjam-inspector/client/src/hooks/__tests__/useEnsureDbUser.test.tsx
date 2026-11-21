@@ -1,3 +1,4 @@
+import { readSignupCampaign } from "@/lib/signup-campaign";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,6 +35,7 @@ const mockState = vi.hoisted(() => ({
   sentrySetUser: vi.fn(),
   sentrySetTag: vi.fn(),
   posthog: null as {
+    is_capturing?: () => boolean;
     get_property?: (key: string) => unknown;
     get_distinct_id?: () => string;
   } | null,
@@ -704,6 +706,71 @@ describe("useEnsureDbUser", () => {
     expect(mockState.revokeGuestSessionAndCookie).not.toHaveBeenCalled();
   });
 
+  function websiteVisit(expiresAt: number, label = "linkedin/fall_launch") {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      status: 200, json: async () => ({ expiresAt, label }),
+    })));
+  }
+
+  it.each([false, true])("acknowledges only the visit passed to the mutation (opt-out during signup: %s)", async (optOut) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    mockState.posthog = { is_capturing: () => true };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    const expiresAt = Date.now() + 900_000;
+    websiteVisit(expiresAt);
+    let receipt = "";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => receipt);
+    vi.spyOn(document, "cookie", "set").mockImplementation((value) => { receipt = value.split(";")[0]; });
+    mockState.ensureUser.mockImplementationOnce(async () => {
+      if (optOut) localStorage.setItem("mcpjam-analytics-consent", "denied");
+      websiteVisit(expiresAt + 1000, "linkedin/winter_launch");
+      return "user-row";
+    });
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureUser).toHaveBeenCalledWith({ signupCampaign: "linkedin/fall_launch" });
+      expect(receipt).toBe("__Host-mcpjam_signup_consumed=" + expiresAt);
+      localStorage.removeItem("mcpjam-analytics-consent");
+      expect(await readSignupCampaign(() => true)).toMatchObject({label: "linkedin/winter_launch"});
+      websiteVisit(expiresAt);
+      expect(await readSignupCampaign(() => true)).toBeUndefined();
+    } finally {
+      localStorage.removeItem("mcpjam-analytics-consent");
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each(["revoked session", "opt-out before retry"])("retains the campaign after %s", async (scenario) => {
+    mockState.auth.user = { id: "workos-user-1" };
+    mockState.actorKey = "workos-user-1";
+    const capturing = vi.fn(() => true);
+    mockState.posthog = { is_capturing: capturing };
+    vi.stubGlobal("location", new URL("https://app.mcpjam.com/"));
+    websiteVisit(Date.now() + 900_000);
+    const write = vi.spyOn(document, "cookie", "set").mockImplementation(() => {});
+    if (scenario === "revoked session") {
+      mockState.ensureUser.mockResolvedValueOnce(null);
+    } else {
+      mockState.ensureUser.mockImplementationOnce(async () => {
+        capturing.mockReturnValue(false);
+        throw new Error('Documents read from or written to the "users" table changed while this mutation was being run');
+      }).mockResolvedValueOnce("user-row");
+    }
+    try {
+      const { result } = renderHook(() => useEnsureDbUser());
+      await waitFor(() => expect(result.current.isUserReady).toBe(true));
+      expect(mockState.ensureUser.mock.calls[0][0]).toEqual({ signupCampaign: "linkedin/fall_launch" });
+      if (scenario === "opt-out before retry") {
+        expect(mockState.ensureUser.mock.calls[1][0]).toEqual({});
+      }
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("sends posthogAnonDistinctId ($device_id) for WorkOS auth", async () => {
     mockState.auth.user = { id: "workos-user-1" };
     mockState.actorKey = "workos-user-1";
@@ -845,6 +912,8 @@ describe("useEnsureDbUser", () => {
         await vi.advanceTimersByTimeAsync(delayMs);
       });
     }
+
+    expect(result.current.setupFailed).toBe(true);
 
     // Budget spent: setup is genuinely finished and failed, so the error
     // screen is now the right thing to show.

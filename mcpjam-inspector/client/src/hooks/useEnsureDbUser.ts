@@ -1,3 +1,5 @@
+import { readSignupCampaign, acknowledgeSignupCampaign, type SignupCampaign } from "@/lib/signup-campaign";
+import { getRuntimeDoNotTrack } from "@/lib/runtime-config";
 import { guestTabRecovery } from "@/lib/auth/guest-tab-recovery";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
@@ -31,6 +33,7 @@ const ENSURE_USER_RETRY_DELAYS_MS = [50, 150];
 const ENSURE_USER_RECOVERY_DELAYS_MS = [1_000, 5_000, 15_000];
 
 type EnsureUserArgs = {
+  signupCampaign?: string;
   guestProofJwt?: string;
   /**
    * The browser's pre-signup anonymous PostHog id ($device_id — stable even
@@ -123,13 +126,19 @@ function retryDelayMs(retryIndex: number) {
 async function ensureUserWithRetry(
   ensureUser: EnsureUserMutation,
   args: EnsureUserArgs,
-  shouldContinue: () => boolean
+  shouldContinue: () => boolean,
+  getCampaign: () => Promise<SignupCampaign | undefined>
 ) {
   for (let attempt = 0; ; attempt++) {
     if (!shouldContinue()) return;
 
     try {
-      await ensureUser(args);
+      const signupCampaign = await getCampaign();
+      if (!shouldContinue()) return;
+      const id = await ensureUser(signupCampaign ? { ...args, signupCampaign: signupCampaign.label } : args);
+      if (typeof id === "string" && signupCampaign && shouldContinue()) {
+        acknowledgeSignupCampaign(signupCampaign);
+      }
       return;
     } catch (err) {
       if (
@@ -193,6 +202,7 @@ export function useEnsureDbUser() {
     identityKey: string;
     promise: Promise<void>;
   } | null>(null);
+  const [failedIdentity, setFailedIdentity] = useState<string | null>(null);
   const [isEnsuringUser, setIsEnsuringUser] = useState(false);
   const [ensuredIdentityKey, setEnsuredIdentityKey] = useState<string | null>(
     null
@@ -287,6 +297,7 @@ export function useEnsureDbUser() {
     }
 
     activeEnsureIdentityRef.current = identityKey;
+    setFailedIdentity(null);
     setIsEnsuringUser(true);
     let cancelled = false;
 
@@ -388,6 +399,9 @@ export function useEnsureDbUser() {
         return;
       }
 
+      const getCampaign = () => readSignupCampaign(
+        () => isWorkOsAuth && !getRuntimeDoNotTrack() && !!posthog?.is_capturing?.()
+      );
       const ensureArgs: EnsureUserArgs = {
         ...(guestProofJwt ? { guestProofJwt } : {}),
         ...(posthogAnonDistinctId ? { posthogAnonDistinctId } : {}),
@@ -400,7 +414,7 @@ export function useEnsureDbUser() {
       if (inFlightEnsureRef.current?.identityKey !== identityKey) {
         ensurePromise = ensureUserWithRetry(ensureUser, ensureArgs, () => {
           return activeEnsureIdentityRef.current === identityKey;
-        });
+        }, getCampaign);
         inFlightEnsureRef.current = {
           identityKey,
           promise: ensurePromise,
@@ -427,6 +441,7 @@ export function useEnsureDbUser() {
           // so dropping it here flashes "Could not finish setup" in the gap
           // between attempts, for a session that goes on to recover.
           if (!scheduleRecovery()) {
+            setFailedIdentity(identityKey);
             setIsEnsuringUser(false);
             // Setup failed for good, so the cleanup after ready never runs;
             // an incidental cookie left here is what sign-out falls back to.
@@ -502,5 +517,7 @@ export function useEnsureDbUser() {
 
   // `hasIdentity` lets the load-stall report tell an actor that never
   // resolved from a user record that is still being set up.
-  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null };
+  return { isEnsuringUser, isUserReady, hasIdentity: identityKey !== null,
+    setupFailed: identityKey !== null && failedIdentity === identityKey,
+  };
 }
