@@ -78,6 +78,7 @@ import directorySubmissionHandoff from "./directory-submission-handoff.js";
 import directoryTestPlans from "./directory-test-plans.js";
 import directorySubmissionEvals from "./directory-submission-evals.js";
 import conformanceRuns from "./conformance-runs.js";
+import productionTrafficOtlp from "./production-traffic-otlp.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -89,6 +90,11 @@ const v1 = new Hono();
 // share-link previews. GET-only router; no project/user data.
 v1.route("/", hostCatalog);
 v1.route("/", publicModels);
+// The production traffic OTLP receiver also mounts BEFORE the bearer
+// middleware: its caller is an OpenTelemetry exporter holding a producer
+// credential, which is not a user, and the route verifies that credential
+// against Convex itself on every batch. POST-only, one exact path.
+v1.route("/", productionTrafficOtlp);
 
 // Every v1 live-op route requires bearer auth + guest rate limiting, matching
 // the /api/web/* MCP operation routes.
