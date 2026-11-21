@@ -3,6 +3,7 @@ import { getFunctionName } from "convex/server";
 import { WEB_CLIENTS_FLAG } from "@/hooks/useWebClientsEnabled";
 import { WEB_CLIENTS_FEATURE_FLAG } from "@/shared/web-clients";
 import { CLIENT_FEATURE_FLAG_KEYS } from "@/shared/client-feature-flags";
+import { createWebAccountView } from "@/test/factories";
 import { webAccountsApi, type WebAccount } from "../api";
 import {
   newWebAccountLabel,
@@ -15,15 +16,8 @@ import {
   webClientVendorOfHost,
 } from "../clients";
 
-const account = (over: Partial<WebAccount> = {}): WebAccount => ({
-  webAccountId: "wa-1",
-  vendor: "claude",
-  accountEmail: "qa@example.com",
-  status: "ready",
-  isDefault: false,
-  allowLocalRuns: false,
-  ...over,
-});
+const account = (over: Partial<WebAccount> = {}): WebAccount =>
+  createWebAccountView({ webAccountId: "wa-1", isDefault: false, ...over });
 
 describe("web accounts helpers", () => {
   it("reads the client flag by the shared contract's key", () => {

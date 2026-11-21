@@ -23,6 +23,7 @@ import { useHostedOAuthConnections } from "@/hooks/use-hosted-oauth-connections"
 import { updateOAuthConnection } from "@/lib/apis/web/oauth-connections";
 import { useSignInSharing } from "@/hooks/use-sign-in-sharing";
 import {
+  connectionLabel,
   type ConnectionIntent,
   type OAuthConnection,
 } from "@/shared/oauth-connections";
@@ -34,23 +35,22 @@ import {
 } from "@/lib/evals/run-account-credentials";
 
 /**
- * The account a credential reaches, named the way the server named it, with
- * anything the user renamed it to underneath — two lines carrying two
- * different facts. They used to carry the same one: the row's editable field
- * fell back to the profile email and the line under it WAS the profile email,
- * so an unlabelled account printed its address twice.
+ * Who the server says the account is, for the line under its name: under a
+ * rename, the email or name the server shared, so a renamed account still
+ * shows which login it is; under an email, the profile name, which tells two
+ * accounts on one address apart. Nothing that would repeat the name.
  */
-function identityOf(connection: OAuthConnection, index: number): string {
+function serverIdentityOf(
+  connection: OAuthConnection,
+  name: string,
+): string | undefined {
   const profile = connection.profile;
-  return (
-    profile?.email ||
-    profile?.name ||
-    profile?.nickname ||
-    // No profile, as with a test user's uploaded token: its name is all that
-    // tells the accounts apart, and it is what suite settings call it.
-    connection.label ||
-    `Account ${index + 1}`
-  );
+  const detail = connection.label
+    ? profile?.email || profile?.name || profile?.nickname
+    : name === profile?.email
+      ? profile?.name || profile?.nickname
+      : undefined;
+  return detail && detail !== name ? detail : undefined;
 }
 
 /**
@@ -65,16 +65,15 @@ function expiryOf(connection: OAuthConnection): string | undefined {
   return `${expiresAt <= Date.now() ? "Expired" : "Expires"} ${formatAccountTime(expiresAt)}`;
 }
 
-/** The user's own words for this account, whether chat uses it, and its expiry. */
+/** Who the account is on the server, whether it is the default, and its expiry. */
 function captionOf(
   connection: OAuthConnection,
-  identity: string,
+  name: string,
 ): string | undefined {
   if (connection.needsReauth) return undefined;
-  const named = connection.label || connection.profile?.name;
   return (
     [
-      named === identity ? undefined : named,
+      serverIdentityOf(connection, name),
       connection.isDefault ? "Default" : null,
       expiryOf(connection),
     ]
@@ -291,7 +290,9 @@ export function ConnectionAccountsList({
 
       <div className="space-y-1">
         {connections.map((connection, index) => {
-          const identity = identityOf(connection, index);
+          // The user's name for the account, else the server's, else its
+          // stored number: one name per account, the same as chat's.
+          const identity = connectionLabel(connection, index);
           const caption = captionOf(connection, identity);
           return (
             <div
