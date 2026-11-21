@@ -75,14 +75,56 @@ describe("ConnectionAccountsSection", () => {
   });
   afterEach(cleanup);
 
-  it("names each account once, and captions it with what the user called it", () => {
+  it("names a renamed account by its new name, with the server's email under it", () => {
     mount();
-    // Both accounts share an email, so the address identifies each row and the
-    // caption carries the DIFFERENT fact. It used to carry the same one twice.
+    // The unnamed account is its email; the renamed one is "Side", and its
+    // caption still says which login it is, so the two never read the same.
     expect(screen.getAllByText("same@example.com")).toHaveLength(2);
     expect(screen.getByText("Default")).toBeTruthy();
     expect(screen.getByText("Side")).toBeTruthy();
     expect(screen.queryByText("opaque-a")).toBeNull();
+  });
+
+  it("keeps each unnamed account's number when the default moves (PUR-111)", () => {
+    const unnamed = (defaultId: string) => [
+      { connectionId: "a", accountNumber: 1, isDefault: defaultId === "a" },
+      { connectionId: "b", accountNumber: 2, isDefault: defaultId === "b" },
+    ];
+    const names = () =>
+      screen
+        .getAllByRole("button", { name: /^Manage / })
+        .map((button) => button.getAttribute("aria-label"));
+    mocks.hook.mockReturnValue({
+      connections: unnamed("a"),
+      shared: false,
+      loaded: true,
+    });
+    const { unmount } = mount();
+    expect(names()).toEqual(["Manage Account 1: Default", "Manage Account 2"]);
+    unmount();
+
+    mocks.hook.mockReturnValue({
+      connections: unnamed("b"),
+      shared: false,
+      loaded: true,
+    });
+    mount();
+    expect(names()).toEqual(["Manage Account 1", "Manage Account 2: Default"]);
+  });
+
+  it("names accounts by their stored numbers after one is removed", () => {
+    mocks.hook.mockReturnValue({
+      connections: [
+        { connectionId: "b", accountNumber: 2, isDefault: true },
+        { connectionId: "c", accountNumber: 3, isDefault: false },
+      ],
+      shared: false,
+      loaded: true,
+    });
+    mount();
+    expect(screen.getByText("Account 2")).toBeTruthy();
+    expect(screen.getByText("Account 3")).toBeTruthy();
+    expect(screen.queryByText("Account 1")).toBeNull();
   });
 
   it("distinguishes two accounts that share an email", () => {
@@ -109,15 +151,16 @@ describe("ConnectionAccountsSection", () => {
     expect(screen.getByText("Side Project")).toBeTruthy();
   });
 
-  it("captions a stale account as needing reconnection instead of a label", () => {
+  it("captions a stale account as needing reconnection, keeping its name", () => {
     mocks.hook.mockReturnValue({
       connections: [{ ...rows[1], needsReauth: true, label: "Side" }],
       shared: false,
       loaded: true,
     });
     mount();
+    expect(screen.getByText("Side")).toBeTruthy();
     expect(screen.getByText("Needs reconnect")).toBeTruthy();
-    expect(screen.queryByText("Side")).toBeNull();
+    expect(screen.queryByText("same@example.com")).toBeNull();
   });
 
   it("captions a shared or uploaded account with its token's expiry, or says it is unknown", () => {
@@ -161,10 +204,10 @@ describe("ConnectionAccountsSection", () => {
     const user = userEvent.setup();
     mocks.update.mockResolvedValue(undefined);
     mount();
-    const label = "Name for same@example.com: Side";
+    const label = "Name for Side: same@example.com";
     expect(screen.queryByLabelText(label)).toBeNull();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
+      screen.getByRole("button", { name: "Manage Side: same@example.com" }),
     );
     // `findBy` on BOTH hops. Radix mounts the menu content in a portal a tick
     // after the trigger click, and mounts the rename field a tick after the
@@ -188,9 +231,11 @@ describe("ConnectionAccountsSection", () => {
     const user = userEvent.setup();
     mount();
     await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com: Side" }),
+      screen.getByRole("button", { name: "Manage Side: same@example.com" }),
     );
-    expect(screen.getByRole("menuitem", { name: "Set as default" })).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: "Set as default" }),
+    ).toBeTruthy();
     cleanup();
     mocks.hook.mockReturnValue({
       connections: [rows[0]],
@@ -201,7 +246,9 @@ describe("ConnectionAccountsSection", () => {
     await user.click(
       screen.getByRole("button", { name: "Manage same@example.com: Default" }),
     );
-    expect(screen.queryByRole("menuitem", { name: "Set as default" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Set as default" }),
+    ).toBeNull();
   });
 
   it("starts an explicit add flow", async () => {
@@ -254,9 +301,7 @@ describe("ConnectionAccountsSection", () => {
       loaded: true,
     });
     mount({ onAuthenticate: auth });
-    await user.click(
-      screen.getByRole("button", { name: "Manage same@example.com" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Manage Side" }));
     await user.click(
       await screen.findByRole("menuitem", { name: "Reconnect" }),
     );
@@ -343,7 +388,10 @@ describe("ConnectionAccountsSection", () => {
     });
 
     it.each([
-      [true, /^Shared with the project\. Your runs, including your local app's/],
+      [
+        true,
+        /^Shared with the project\. Your runs, including your local app's/,
+      ],
       [false, /ask a project admin to turn on Allow local runs\.$/],
     ])(
       "shows a member no switch, and whether local runs are allowed (%s)",
