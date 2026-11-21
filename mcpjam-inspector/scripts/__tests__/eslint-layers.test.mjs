@@ -15,6 +15,7 @@ async function ruleIds(filePath, code) {
 test("a dynamic import across a layer fails like a static one", async () => {
   const cases = [
     ["server/utils/x.ts", 'await import("../../client/src/lib/y");'],
+    ["server/utils/x.ts", 'await import(".././../client/src/lib/y");'],
     ["server/utils/x.ts", "await import(`../../../sdk/src/y.js`);"],
     ["client/src/lib/x.ts", 'await import("../../../server/y.js");'],
     ["shared/x.ts", 'await import("node:fs");'],
