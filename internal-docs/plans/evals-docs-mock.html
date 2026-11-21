@@ -1,0 +1,683 @@
+<title>MCPJam Evals Docs Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: Mintlify-style docs frame (top bar, left nav, page, right TOC) in MCPJam's own docs tokens; placeholders are dashed/hatched so mock vs. real is obvious */
+:root{
+  --bg:#faf9f5; --surface:#ffffff; --sunk:#f2efe7; --fg:#262624; --muted:#6e6a62; --faint:#a29d93;
+  --line:#e6e1d6; --accent:#e07856; --accent-strong:#c96442; --accent-soft:#fbe9e1;
+  --ok:#3f8f5a; --ok-soft:#e3f1e7; --warn:#b7791f; --warn-soft:#fbf0dc; --info:#3a6ea5; --info-soft:#e4edf7; --bad:#c0453a; --bad-soft:#f8e3e0;
+  --ph:#ebe6db; --ph-stripe:#e2dccf;
+  --f-body:"Geist",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#262624; --surface:#2f2e2b; --sunk:#1f1e1c; --fg:#ece9e2; --muted:#a8a398; --faint:#7a766d;
+  --line:#3d3b37; --accent:#f08c6b; --accent-strong:#f4a487; --accent-soft:#3e2f28;
+  --ok:#6fbf87; --ok-soft:#24352a; --warn:#e0b25a; --warn-soft:#3a3122; --info:#7fa9d6; --info-soft:#24303d; --bad:#e8857b; --bad-soft:#3d2724;
+  --ph:#33312d; --ph-stripe:#3a3834; color-scheme:dark;}}
+:root[data-theme="dark"]{
+  --bg:#262624; --surface:#2f2e2b; --sunk:#1f1e1c; --fg:#ece9e2; --muted:#a8a398; --faint:#7a766d;
+  --line:#3d3b37; --accent:#f08c6b; --accent-strong:#f4a487; --accent-soft:#3e2f28;
+  --ok:#6fbf87; --ok-soft:#24352a; --warn:#e0b25a; --warn-soft:#3a3122; --info:#7fa9d6; --info-soft:#24303d; --bad:#e8857b; --bad-soft:#3d2724;
+  --ph:#33312d; --ph-stripe:#3a3834; color-scheme:dark;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.6;}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--bg)}
+a{color:inherit}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* top bar */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.top-inner{max-width:1360px;margin:0 auto;display:flex;align-items:center;gap:20px;height:56px}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap}
+.brand-mark{width:22px;height:22px;border-radius:6px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:12px;font-weight:600}
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+.tabs span{padding:16px 10px;font-size:14px;color:var(--muted);border-bottom:2px solid transparent;white-space:nowrap}
+.tabs span.on{color:var(--fg);border-bottom-color:var(--accent);font-weight:500}
+.tabs .new{font-size:10px;letter-spacing:.06em;text-transform:uppercase;background:var(--accent-soft);color:var(--accent-strong);padding:1px 6px;border-radius:99px;margin-left:6px;font-weight:600}
+.top-right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.mock-tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border:1px dashed var(--faint);padding:3px 8px;border-radius:6px;white-space:nowrap}
+
+/* frame */
+.frame{max-width:1360px;margin:0 auto;display:grid;grid-template-columns:272px minmax(0,1fr) 220px;gap:40px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));}
+.side{position:sticky;top:calc(56px + env(safe-area-inset-top,0px));align-self:start;max-height:calc(100vh - 56px);overflow-y:auto;padding-block:24px 40px;font-size:14px}
+.side-plan{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);text-decoration:none;margin-bottom:22px}
+.side-plan.on{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.side-plan b{font-weight:600;display:block;font-size:14px}
+.side-plan small{color:var(--muted);font-size:12px}
+.grp{margin-bottom:18px}
+.grp h4{margin:0 0 6px;font-size:12px;font-weight:600;color:var(--fg);display:flex;align-items:center;gap:8px}
+.grp h4 i{font-style:normal;color:var(--faint);font-weight:400}
+.nav a{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--muted);padding:5px 10px;border-radius:8px;border-left:0;margin-left:-2px}
+.nav a:hover{color:var(--fg);background:var(--sunk)}
+.nav a.on{color:var(--accent-strong);background:var(--accent-soft);font-weight:500}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.d-migrate{background:var(--info)} .d-new{background:var(--accent)} .d-move{background:var(--ok)} .d-held{background:var(--warn)}
+.chip.s-held{background:var(--warn-soft);border-color:transparent;color:var(--warn)}
+.grp.collapsed h4{color:var(--muted);font-weight:500}
+.grp.collapsed h4 i{margin-left:auto}
+.evgrp{border:1px solid var(--line);border-radius:12px;padding:10px 8px 6px;background:var(--surface)}
+.evgrp>h4{padding:0 4px}
+.sub{margin:6px 0 8px}
+.sub h5{margin:8px 0 2px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.legend{border-top:1px solid var(--line);padding-top:14px;margin-top:8px;display:grid;gap:6px;font-size:12px;color:var(--muted)}
+.legend div{display:flex;align-items:center;gap:8px}
+.mobile-nav{display:none}
+
+/* page */
+.page{padding-block:32px 96px;min-width:0;max-width:760px}
+.crumb{font-size:13px;color:var(--accent-strong);font-weight:500;margin-bottom:6px}
+h1{font-size:32px;line-height:1.2;font-weight:600;letter-spacing:-.015em;margin:0 0 8px;text-wrap:balance}
+.desc{font-size:17px;color:var(--muted);margin:0 0 18px;max-width:62ch}
+.meta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px;padding-bottom:22px;border-bottom:1px solid var(--line)}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:3px 10px;border-radius:99px;border:1px solid var(--line);background:var(--surface);color:var(--muted);max-width:100%}
+.chip.long{display:inline-block;border-radius:10px;line-height:1.45}
+.chip b{color:var(--fg);font-weight:500}
+.chip.s-migrate{background:var(--info-soft);border-color:transparent;color:var(--info)}
+.chip.s-new{background:var(--accent-soft);border-color:transparent;color:var(--accent-strong)}
+.chip.s-move{background:var(--ok-soft);border-color:transparent;color:var(--ok)}
+.chip.s-link{background:var(--sunk);border-color:transparent}
+h2{font-size:21px;font-weight:600;letter-spacing:-.01em;margin:40px 0 12px;scroll-margin-top:80px;text-wrap:balance}
+h3{font-size:16px;font-weight:600;margin:24px 0 8px}
+.page>p,.page .ptxt{max-width:66ch}
+
+/* placeholder copy */
+.copy{border-left:2px dashed var(--faint);padding:4px 0 4px 14px;margin:12px 0}
+.copy .what{font-size:13px;color:var(--muted);margin-bottom:8px}
+.copy .what b{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:500;margin-right:6px}
+.bars{display:grid;gap:7px}
+.bars span{height:9px;border-radius:5px;background:var(--ph)}
+.draft{font-size:15px;margin:0 0 4px}
+
+/* placeholder block label */
+.lbl{position:absolute;top:8px;left:10px;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint)}
+
+.shot{position:relative;border-radius:12px;border:1px dashed var(--faint);margin:18px 0;aspect-ratio:16/8.5;max-width:100%;
+  background:repeating-linear-gradient(135deg,var(--ph) 0 12px,var(--ph-stripe) 12px 24px);display:grid;place-items:center;text-align:center;padding:28px}
+.shot .cap{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;max-width:440px;font-size:13.5px;color:var(--fg)}
+.shot .cap small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.shot.short{aspect-ratio:16/6}
+
+.code{position:relative;margin:16px 0;border-radius:12px;border:1px solid var(--line);background:var(--sunk);overflow:hidden}
+.code-h{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--line);padding:0 6px;background:var(--surface);overflow-x:auto}
+.code-h button,.code-h span{font:inherit;font-size:12.5px;background:none;border:0;color:var(--muted);padding:9px 10px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+.code-h span{cursor:default}
+.code-h button.on{color:var(--fg);border-bottom-color:var(--accent)}
+.code pre{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--f-mono);font-size:12.8px;line-height:1.6;color:var(--fg)}
+.code .cm{color:var(--faint)}
+.code .k{color:var(--accent-strong)}
+
+.call{display:flex;gap:12px;border-radius:12px;padding:12px 14px;margin:16px 0;font-size:14px;border:1px solid transparent}
+.call .ic{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:600;color:#fff;margin-top:1px}
+.call.note{background:var(--info-soft)} .call.note .ic{background:var(--info)}
+.call.tip{background:var(--ok-soft)} .call.tip .ic{background:var(--ok)}
+.call.warning{background:var(--warn-soft)} .call.warning .ic{background:var(--warn)}
+.call b{font-weight:600}
+
+.steps{margin:18px 0;display:grid;gap:0;counter-reset:s}
+.step{position:relative;padding:0 0 22px 44px;counter-increment:s}
+.step::before{content:counter(s);position:absolute;left:0;top:0;width:28px;height:28px;border-radius:50%;background:var(--surface);border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.step::after{content:"";position:absolute;left:13.5px;top:32px;bottom:4px;width:1px;background:var(--line)}
+.step:last-child::after{display:none}
+.step h5{margin:3px 0 4px;font-size:15px;font-weight:600}
+.step p{margin:0;color:var(--muted);font-size:14px}
+.step .shot{aspect-ratio:16/6;margin:10px 0 0;padding:16px}
+
+.tbl{overflow-x:auto;margin:16px 0;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font-weight:600;font-size:12.5px;color:var(--muted);background:var(--sunk);padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+td code{background:var(--sunk);padding:1px 5px;border-radius:4px}
+
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:16px 0}
+.card{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface);text-decoration:none;display:block}
+a.card:hover{border-color:var(--accent)}
+.card h5{margin:0 0 4px;font-size:14.5px;font-weight:600}
+.card p{margin:0;font-size:13.5px;color:var(--muted)}
+.card .arrow{color:var(--accent-strong);font-size:13px;margin-top:8px;display:inline-block}
+
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px;margin:18px 0}
+.flow .n{flex:1 1 100px;min-width:96px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px;font-size:12.5px;text-align:center;display:grid;place-items:center;line-height:1.35}
+.flow .n small{display:block;color:var(--muted);font-size:11px;margin-top:2px}
+.flow .a{align-self:center;color:var(--faint);font-size:14px}
+.flow .n.hl{border-color:var(--accent);background:var(--accent-soft)}
+
+.nest{margin:18px 0;font-size:13.5px}
+.nest .box{border:1px solid var(--line);border-radius:12px;padding:10px 12px 12px;background:var(--surface)}
+.nest .box .box{margin-top:8px;background:var(--bg)}
+.nest .box .box .box{background:var(--surface)}
+.nest .t{font-weight:600}
+.nest .t small{font-weight:400;color:var(--muted);margin-left:6px}
+.nest .row{display:flex;gap:8px;flex-wrap:wrap}
+.nest .row>.box{flex:1 1 140px}
+
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:16px 0}
+.col{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--surface)}
+.col h5{margin:0 0 8px;font-size:14.5px;font-weight:600;display:flex;gap:8px;align-items:center}
+.col ul{margin:0;padding-left:18px;font-size:13.5px;color:var(--muted)}
+.col li{margin:3px 0}
+
+.faq details{border:1px solid var(--line);border-radius:10px;background:var(--surface);margin:8px 0;padding:0 14px}
+.faq summary{cursor:pointer;padding:11px 0;font-weight:500;font-size:14.5px}
+.faq details p{margin:0 0 12px;color:var(--muted);font-size:14px}
+
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:99px}
+.p-ok{background:var(--ok-soft);color:var(--ok)} .p-bad{background:var(--bad-soft);color:var(--bad)} .p-warn{background:var(--warn-soft);color:var(--warn)} .p-info{background:var(--info-soft);color:var(--info)} .p-mute{background:var(--sunk);color:var(--muted)}
+
+.pager{display:flex;justify-content:space-between;gap:12px;margin-top:48px;border-top:1px solid var(--line);padding-top:20px}
+.pager a{flex:1;border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;background:var(--surface)}
+.pager a:hover{border-color:var(--accent)}
+.pager small{display:block;color:var(--muted);font-size:12px}
+.pager .nx{text-align:right}
+
+/* toc */
+.toc{position:sticky;top:calc(56px + env(safe-area-inset-top,0px));align-self:start;padding-block:32px;font-size:13px;max-height:calc(100vh - 56px);overflow-y:auto}
+.toc h6{margin:0 0 10px;font-size:12px;font-weight:600}
+.toc a{display:block;color:var(--muted);text-decoration:none;padding:3px 0 3px 10px;border-left:1px solid var(--line)}
+.toc a:hover{color:var(--fg);border-left-color:var(--accent)}
+
+/* plan page specifics */
+.track{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;margin:18px 0 8px}
+.track div{border-radius:10px;padding:10px;font-size:12.5px;border:1px solid var(--line);background:var(--surface);line-height:1.35}
+.track div small{display:block;font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px;color:var(--faint)}
+.track .done{background:var(--ok-soft);border-color:transparent}
+.track .done small{color:var(--ok)}
+.track .now{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.track .now small{color:var(--accent-strong)}
+.ba{display:grid;grid-template-columns:1fr auto 1.25fr;gap:14px;align-items:stretch;margin:16px 0}
+.ba .side-box{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--surface)}
+.ba .side-box h5{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.ba .big{font-size:30px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+.ba .big small{font-size:13px;font-weight:400;color:var(--muted);letter-spacing:0;margin-left:4px}
+.ba .arrow{align-self:center;color:var(--accent);font-size:22px}
+.wall{margin-top:10px;display:grid;gap:3px}
+.wall span{height:4px;border-radius:2px;background:var(--ph)}
+.mini-grid{margin-top:10px;display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.mini-grid span{height:22px;border-radius:5px;background:var(--accent-soft);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent)}
+.recipe{display:grid;gap:6px;margin:16px 0}
+.recipe div{display:grid;grid-template-columns:28px 160px 1fr;gap:12px;align-items:center;border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:var(--surface);font-size:13.5px}
+.recipe div b{font-weight:600}
+.recipe div span:first-child{font-family:var(--f-mono);color:var(--faint);font-size:12px}
+.recipe div span:last-child{color:var(--muted)}
+.dec{border:1px solid var(--line);border-radius:12px;background:var(--surface);padding:14px 16px;margin:10px 0}
+.dec h5{margin:0 0 6px;font-size:15px;font-weight:600}
+.dec p{margin:0;font-size:14px;color:var(--muted)}
+.dec .rec{margin-top:8px;font-size:13.5px;color:var(--fg)}
+.dec .rec b{color:var(--accent-strong)}
+td a{color:var(--accent-strong);text-decoration:none}
+td a:hover{text-decoration:underline}
+
+@media (max-width:1180px){.frame{grid-template-columns:248px minmax(0,1fr)}.toc{display:none}}
+@media (max-width:820px){
+  .frame{grid-template-columns:minmax(0,1fr);gap:0}
+  .side{display:none}
+  .mobile-nav{display:block;padding-top:16px}
+  .mobile-nav select{width:100%;font:inherit;font-size:14px;padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--fg)}
+  .tabs{display:none}
+  .mock-tag{display:none}
+  h1{font-size:26px}
+  .track{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ba{grid-template-columns:1fr}.ba .arrow{transform:rotate(90deg);justify-self:center}
+  .recipe div{grid-template-columns:22px 1fr}.recipe div span:last-child{grid-column:2}
+  .shot{aspect-ratio:4/3}
+}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+</style>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand"><span class="brand-mark">J</span>MCPJam Docs</div>
+    <nav class="tabs" aria-label="Docs tabs"><span class="on">Docs</span><span>CLI</span><span>SDK</span><span>API</span></nav>
+    <div class="top-right"><span class="mock-tag">Structure mock · placeholders</span></div>
+  </div>
+</header>
+
+<div class="frame">
+  <aside class="side" id="side" aria-label="Evals navigation"></aside>
+  <main class="page" id="page">
+    <div class="mobile-nav"><label for="mnav" class="mono" style="font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase">Jump to page</label><select id="mnav"></select></div>
+    <div id="content"></div>
+  </main>
+  <aside class="toc" id="toc" aria-label="On this page"></aside>
+</div>
+
+<script>
+const STATUS = {
+  migrate:{label:"Migrate", long:"Rewrite from today's Evaluate page"},
+  new:{label:"New", long:"New content to write"},
+  move:{label:"Move", long:"Existing page, moved in"},
+  held:{label:"Held", long:"Check in the app before publishing"}
+};
+
+/* Docs-tab groups around Evaluate are shown collapsed; only Evaluate is in scope */
+const OTHER_BEFORE = ["Get started","Test and debug"];
+const OTHER_AFTER = ["Configure","Troubleshoot"];
+const GROUPS = [
+  {name:"", pages:["overview","first-eval","how-it-works"]},
+  {name:"Author cases", pages:["write-case","generate"]},
+  {name:"Run and review", pages:["run-suite","access","test-users","read-results","compare"]},
+  {name:"Grade and ship", pages:["grading","ci"]},
+  {name:"Reference", pages:["ref-assertions","ref-grading","ref-runs","troubleshooting"]}
+];
+
+const CHAIN = [["Session connected","Connection"],["Tools discovered","Discovery"],["Tool selected","Selection"],["Tool called","Tool call"],["Response returned","Response"],["Request satisfied","User value"]];
+
+const P = {
+"overview":{title:"Overview",status:"new",fig:"(new)",pf:"Intro",from:"Opening paragraph of evals.mdx",
+ desc:"Find out whether real models use your MCP server the way you intended, before your users do.",
+ blocks:[
+  {t:"copy",what:"Two sentences: an eval sends a real prompt to a real model connected to your server, then checks which tools fired, with what arguments, and whether the user got what they asked for.",lines:2},
+  {t:"call",kind:"note",text:"<b>This page is for</b> server authors who want repeatable checks. To poke at a server by hand, use the <b>Playground</b>. To check the server follows the MCP spec, use <b>conformance checks</b> in the CLI."},
+  {t:"shot",kind:"GIF",cap:"A run finishing across Claude, GPT and Gemini, with HOLD / SHIP settling per model",sub:"8–10s loop"},
+  {t:"h2",text:"What an eval measures"},
+  {t:"chain"},
+  {t:"h2",text:"When to use evals"},
+  {t:"cards",items:[["Catch routing regressions","A renamed tool or vaguer description sends models to the wrong tool. Evals catch it on the PR."],["Compare the models your users run","Same case across Claude, ChatGPT and Gemini: pass rate, latency, tokens, cost."],["Gate releases","Fail CI when the pass rate drops or the suite gets more expensive."]]},
+  {t:"h2",text:"Pick where you run them"},
+  {t:"table",head:["Surface","Best for","Suites live in"],rows:[["<b>Inspector app</b>","Exploring, authoring, reading traces","Your MCPJam project"],["<b>CLI</b> <code>mcpjam test</code>","Local runs and CI from YAML","<code>.mcpjam/evals/*.yaml</code>"],["<b>SDK</b> <code>@mcpjam/sdk</code>","Evals inside Vitest or Jest","Test files in your repo"]]},
+  {t:"call",kind:"warning",text:"<b>Evals call real models.</b> Each iteration spends MCPJam credits or your own provider tokens. See <a href='#how-it-works'>How evals work</a> for the cost math."},
+  {t:"next",items:["first-eval","how-it-works","write-case"]}
+ ]},
+
+"first-eval":{title:"Run your first eval",status:"migrate",fig:"Run your first eval",pf:"Getting started",from:"“What to author first” + “Requirements”",
+ desc:"Generate cases from your server's tools, run them on two models, and open the first failure. About five minutes.",
+ blocks:[
+  {t:"call",kind:"note",text:"<b>Before you start:</b> connect a server. No sign-in needed; guests can generate and run evals."},
+  {t:"tabs",tabs:[["Inspector app","text","1  Evaluate tab → Eval my server: <server>\n2  Review the generated cases → keep the ones that sound like your users\n3  Pick two models → Run\n4  Open a red cell → the scorecard opens where it broke"],["CLI","bash","mcpjam test .mcpjam/evals/example.yaml\n# placeholder: generate-first CLI path, if one exists"],["SDK","ts","import { EvalSuite, EvalTest } from \"@mcpjam/sdk\";\n// placeholder: smallest suite from sdk/quickstart"]]},
+  {t:"steps",items:[
+    ["Click Eval my server","The empty state opens the create-suite form with your server and a name filled in.","Evaluate empty state, “Eval my server” highlighted"],
+    ["Review the generated cases","Delete prompts no user would type. Keep at least one “no tool should be called” case.","Generated drafts: one positive, one negative annotated"],
+    ["Pick models and run","The review sheet shows clients and iteration count before anything launches.","Run review sheet with two models"],
+    ["Read the summary","What each column means: pass rate, P50, tokens, cost.","Run header with pairing rows"],
+    ["Open the first failure","Click a red cell, then an iteration.","Scorecard opened on the broken stage"]]},
+  {t:"call",kind:"tip",text:"<b>Most common first finding:</b> the model picked a neighbouring tool because two tool descriptions overlap. Suggested fixes gives you a prompt to tighten them."},
+  {t:"next",items:["how-it-works","write-case","read-results"]}
+ ]},
+
+"how-it-works":{title:"How evals work",status:"migrate",fig:"(new; was “How it's organized”)",pf:"Configuration guide",from:"“How it's organized” + pinned evals vocabulary + new scoring/cost section",
+ desc:"Suites, cases and iterations; how one iteration is scored; what a run costs.",
+ blocks:[
+  {t:"nest"},
+  {t:"h2",text:"What happens in a run"},
+  {t:"flow",items:[["Connect servers","from the environment"],["Send prompt","per case × model"],["Model calls tools",""],["Record trace",""],["Grade","assertions, then judge"],["Verdict","per suite policy",1]]},
+  {t:"h2",text:"How an iteration is scored"},
+  {t:"copy",what:"Required assertions decide pass/fail; Advisory ones are shown, not counted. The judge is advisory unless gating is enabled. A case's pass rate is across its iterations; the suite's pass criterion turns that into a verdict.",lines:2},
+  {t:"h2",text:"Compare against a baseline"},
+  {t:"cols",items:[["Model A vs. model B",["Same cases, two models in one run"]],["This change vs. last run",["Compare runs: Regressed / Fixed"]],["Host vs. host",["By host matrix"]]]},
+  {t:"copy",what:"A high pass rate alone doesn't prove a change helped. Always read it against a baseline.",lines:1},
+  {t:"h2",text:"What a run costs"},
+  {t:"code",lang:"text",title:"Rough math",code:"iterations = cases × models × iterations per case\ncost ≈ iterations × (model turns + tool calls) + judge calls per graded iteration"},
+  {t:"h2",text:"Glossary"},
+  {t:"table",head:["Term","Meaning"],rows:[["Suite","Cases plus shared servers, models, defaults and pass criterion"],["Case","One scenario with its prompts and checks"],["Run","One launch of a suite"],["Iteration","One case on one model, once"],["Assertion","Deterministic check on the transcript"],["Judge","Model-graded score against a goal"],["Verdict","The decision the suite's policy derives"]]},
+  {t:"next",items:["write-case","grading","ref-assertions"]}
+ ]},
+
+"write-case":{title:"Write a case",status:"migrate",fig:"Write a case",pf:"Test cases",from:"“Authoring a case”, “Case workspace”, “History inspect”, “Next run sheet”",
+ desc:"Write a prompt, say which tool should handle it, and add the checks that decide pass or fail.",
+ blocks:[
+  {t:"shot",kind:"Annotated screenshot",cap:"Case editor: ① steps ② Add assertion or action ③ Expected outcome ④ trial scorecard ⑤ Model / Trials / Host chips"},
+  {t:"h2",text:"Which tool should handle it?"},
+  {t:"cards",items:[["A named tool","Choose Reach the tool (extra calls OK) or Exact route."],["No tool should be called","Passes only if the model calls nothing."],["Any route","Graded only by its assertions."]]},
+  {t:"h2",text:"Add checks"},
+  {t:"copy",what:"Add assertion or action → pick a check. Required fails the trial; Advisory only shows. Full list in the Assertions reference.",lines:1},
+  {t:"h2",text:"Write negative cases"},
+  {t:"cols",items:[["Good",["“What params does search take?”","“Thanks, that's all.”"]],["Not negative",["A case that names no tool. It's “Any route”."]]]},
+  {t:"h2",text:"Multi-turn and starting state"},
+  {t:"copy",what:"Add a second prompt; checks on a turn only see that turn. New: how to start from an earlier conversation or seeded server state, if supported.",lines:2},
+  {t:"h2",text:"Write the expected outcome"},
+  {t:"table",head:["You provide","The judge grades against"],rows:[["A goal sentence","That sentence"],["A named tool only","The expected route"],["Nothing","The request, score capped at 0.85"]]},
+  {t:"h2",text:"Widget steps",held:1},
+  {t:"call",kind:"warning",text:"<b>Held.</b> Figma's Docs v2 holds widget interactions back until they're confirmed in the app. Write this section only after that check passes."},
+  {t:"next",items:["generate","run-suite","ref-assertions"]}
+ ]},
+
+"generate":{title:"Generate cases",status:"migrate",fig:"(part of Write a case)",pf:"Dataset generation",from:"“Generating cases from your tools” + “Promoting sessions”",
+ desc:"Draft cases from your tool catalog, or turn a real chat into a regression test.",
+ blocks:[
+  {t:"cols",items:[["From your tools",["Positive and negative drafts","Cross-server cases for server groups"]],["From a session",["Playground or Swarms","Becomes a multi-turn case"]]]},
+  {t:"steps",items:[["Click Generate","",null],["Review each draft","Save or discard; edit prompts to sound like users.","Generated draft with Save / Discard"],["Back to the suite","",null]]},
+  {t:"call",kind:"warning",text:"<b>Drafts, not tests.</b> Tighten checks before you trust a pass rate built on them."},
+  {t:"h2",text:"Promote a session"},
+  {t:"shot",kind:"Screenshot",cap:"Promote to test case dialog",short:true},
+  {t:"h2",text:"When generation fails"},
+  {t:"table",head:["Message","Do this"],rows:[["No tools marked read-only","Change generation settings"],["No cases were generated","Check the server exposes tools"]]},
+  {t:"next",items:["write-case","run-suite","first-eval"]}
+ ]},
+
+"run-suite":{title:"Run a suite",status:"migrate",fig:"Run a suite",pf:"Command line",from:"“Running”, “Run review”, “Frozen snapshots”, “Suite execution config”, cancel",
+ desc:"Choose servers, models and hosts, then launch, watch and cancel runs.",
+ blocks:[
+  {t:"table",head:["A run needs","From"],rows:[["Servers","The environment's server group"],["Models","Multi-model picker"],["Launch","Run all, or Run on one case"]]},
+  {t:"shot",kind:"Screenshot",cap:"Run review sheet",short:true},
+  {t:"h2",text:"Defaults for every case"},
+  {t:"copy",what:"Model, system prompt, temperature, tool approval. A case's own value wins.",lines:1},
+  {t:"h2",text:"Server snapshots"},
+  {t:"flow",items:[["First run","saves servers"],["Reruns","reuse them"],["Update snapshot","re-save",1]]},
+  {t:"h2",text:"Cancel a run"},
+  {t:"copy",what:"Stopped iterations record as cancelled, not failed.",lines:1},
+  {t:"h2",text:"Why is Run all disabled?"},
+  {t:"table",head:["Cause","Fix"],rows:[["No models selected","Pick one"],["A run is in progress","Wait or cancel"],["Out of MCPJam credits","Use a model from your own providers"]]},
+  {t:"next",items:["access","read-results","grading"]}
+ ]},
+
+"access":{title:"What a run can access",status:"new",fig:"(new)",pf:"(none; from Claude Code “What a run can access”)",from:"Data-sent notes from LLM as judge and Rubric checks + new",
+ desc:"Which credentials reach a run, what leaves MCPJam, and when a run can change real data.",
+ blocks:[
+  {t:"table",head:["Reaches the run","Where it comes from"],rows:[["Server URL and headers","The environment's server group"],["OAuth tokens","Shared sign-in or a test user's token"],["Provider keys","MCPJam credits or your own providers"]]},
+  {t:"call",kind:"warning",text:"<b>Evals call your real server.</b> A case that says “delete” can delete. Point suites at staging, or use a test user without write access."},
+  {t:"h2",text:"What leaves MCPJam"},
+  {t:"table",head:["Feature","Sent to","What"],rows:[["LLM as judge","OpenRouter → judge provider","Full conversation, trace, tool definitions"],["Rubric checks","Vercel AI Gateway → classifier","Request, outcome, answer, clipped trajectory"],["Trace export","Your file","Content only if you tick it"]]},
+  {t:"next",items:["test-users","run-suite","grading"]}
+ ]},
+
+"test-users":{title:"Run as test users",status:"move",fig:"(existing page)",pf:"(none)",from:"inspector/eval-test-users.mdx",
+ desc:"Share a server's sign-in, upload each test user's token from CI, and choose which account a suite runs as.",
+ blocks:[
+  {t:"call",kind:"note",text:"Existing page, moved under Run and review. Add the diagram below; keep the content."},
+  {t:"flow",items:[["Share sign-in",""],["Upload tokens","per test user"],["Pick account","per suite",1],["Run","identity recorded"]]},
+  {t:"next",items:["access","run-suite","ci"]}
+ ]},
+
+"read-results":{title:"Read results",status:"migrate",fig:"Read results",pf:"Web viewer",from:"“Reading results”, “Run view”, “Cost”, “Exporting traces”",
+ desc:"Read a run from the top down, from the verdict to the exact turn that broke.",
+ blocks:[
+  {t:"shot",kind:"Annotated screenshot",cap:"① HOLD / SHIP ② pairing rows ③ Findings ④ case grid ⑤ iteration scorecard",sub:"Read top-down, in this order"},
+  {t:"h2",text:"Find where it broke"},
+  {t:"chain",broke:3},
+  {t:"h2",text:"The scorecard"},
+  {t:"copy",what:"Expected / Actual per check, grouped by stage. Summary counts Required only. “Not measured” isn't a pass.",lines:1},
+  {t:"h2",text:"Findings and suggested fixes"},
+  {t:"copy",what:"Lead finding, Build findings, Copy a fix prompt for your coding agent.",lines:1},
+  {t:"h2",text:"Cost"},
+  {t:"copy",what:"Priced at finish. A dash means no cost observed, never free.",lines:1},
+  {t:"h2",text:"Export traces"},
+  {t:"copy",what:"OTLP JSON for Phoenix, Datadog. Content off by default.",lines:1},
+  {t:"next",items:["compare","grading","ref-runs"]}
+ ]},
+
+"compare":{title:"Compare runs",status:"migrate",fig:"(part of Read results)",pf:"Web viewer: compare",from:"“Comparing two runs”, “Cross-host matrix”, “Case view”, “Run insights”",
+ desc:"Check whether a change helped: diff two runs, two models or two hosts.",
+ blocks:[
+  {t:"table",head:["Status","Meaning"],rows:[["<span class='pill p-ok'>Fixed</span>","Fail → pass"],["<span class='pill p-bad'>Regressed</span>","Pass → fail"],["<span class='pill p-warn'>Still failing</span>","Both failed"],["<span class='pill p-info'>New / Removed / Changed</span>","Case added, removed, or config differed"]]},
+  {t:"shot",kind:"Screenshot",cap:"Compare view",short:true},
+  {t:"h2",text:"Compare hosts"},
+  {t:"shot",kind:"Screenshot",cap:"By host matrix",short:true},
+  {t:"h2",text:"Track a case over time"},
+  {t:"copy",what:"Stable, flaky or trending down. Leave cancelled and inconclusive runs out of trends.",lines:1},
+  {t:"next",items:["ci","read-results","grading"]}
+ ]},
+
+"grading":{title:"Configure grading",status:"migrate",fig:"Configure grading",pf:"Assertions & metrics: model-graded",from:"“LLM as judge”, “Rubric checks”, “Grading”",
+ desc:"Choose how strict a pass is: judge, rubric questions, pass criterion and iteration count.",
+ blocks:[
+  {t:"flow",items:[["Pass criterion","what must pass"],["Iterations","how many times"],["Judge","answer quality"],["Quality gate","block the merge?",1]]},
+  {t:"h2",text:"Turn on the judge"},
+  {t:"shot",kind:"Screenshot",cap:"LLM as Judge panel",short:true},
+  {t:"h2",text:"Write rubrics that give a stable signal"},
+  {t:"cols",items:[["Do",["Concrete PASS / FAIL criteria","One result check + one process check per case"]],["Avoid",["“Is the answer good?”","Judging long output a regex could check"]]]},
+  {t:"h2",text:"Add rubric questions"},
+  {t:"copy",what:"Choice or score; always advisory.",lines:1},
+  {t:"h2",text:"Pick a pass criterion"},
+  {t:"call",kind:"warning",text:"<b>Not two units of one number.</b> 90% suite accuracy and a 0.9 per-case rate decide differently. Ten-dot visual here."},
+  {t:"h2",text:"How many iterations?"},
+  {t:"copy",what:"Start at 3 per model; one iteration is noisy.",lines:1},
+  {t:"next",items:["ci","ref-grading","read-results"]}
+ ]},
+
+"ci":{title:"Run evals in CI",status:"migrate",fig:"(was CLI tab → CI / CD)",pf:"CI/CD + GitHub Actions",from:"cli/ci.mdx “Evals in CI” + “CI suites” + quality gate",
+ desc:"Run suites on every pull request and fail the build when quality regresses.",
+ blocks:[
+  {t:"tabs",tabs:[["GitHub Action","yaml","- uses: MCPJam/inspector/actions/evals@evals-v1\n  with:\n    # placeholder: suite, project, key"],["CLI","bash","npx -y @mcpjam/cli@latest cloud eval run \\\n  --suite <name> --project <name> --wait --out reports/eval.json"],["SDK upload","bash","npx vitest run evals/\n# placeholder: upload step"]]},
+  {t:"h2",text:"Gate the merge"},
+  {t:"table",head:["Condition","Needs a baseline?"],rows:[["Any required evaluator errored","No"],["Pass-rate drop","Yes"],["Deterministic regressions","Yes"],["p95 latency increase","Yes"],["Cost increase %","Yes"]]},
+  {t:"h2",text:"Exit codes"},
+  {t:"table",head:["Code","Meaning"],rows:[["0","Passed"],["1","Failed the gate"],["…","placeholder: from the CLI reference"]]},
+  {t:"h2",text:"Waive a gate"},
+  {t:"code",lang:"bash",title:"Terminal",code:"mcpjam cloud eval gate waive --run \"$RUN_ID\" --reason \"…\" --expires-in 3d"},
+  {t:"h2",text:"Suites managed in code"},
+  {t:"copy",what:"Read-only in the app. Edit the file, or Duplicate to edit. SDK suites match by name.",lines:1},
+  {t:"next",items:["grading","ref-grading","troubleshooting"]}
+ ]},
+
+"ref-assertions":{title:"Assertions",status:"migrate",fig:"Reference › Cases and assertions",pf:"Expected outputs",from:"“Assertions”, “Argument matching”, “Validator settings”",
+ desc:"Every check, what it passes on, and how tool calls are matched.",
+ blocks:[
+  {t:"table",head:["Check","Passes when","Scope"],rows:[["Tool was called with…","Arguments match (per matching mode)","Turn or case"],["Tool was called at least once","Fired at least once","Turn or case"],["Tool was never called","Didn't fire","Turn or case"],["First tool called was…","First call matched","Turn or case"],["Response contains / matches regex","Final message matches","Turn or case"],["No tool errors","No call returned an error","Turn or case"],["Final message non-empty","A final message exists","Turn or case"],["Token budget under N","Total tokens below N","Case only"]]},
+  {t:"h2",text:"Argument matching"},
+  {t:"match"},
+  {t:"h2",text:"Suite defaults: inherit, replace, extend"},
+  {t:"cols",items:[["Inherit",["Suite defaults only"]],["Replace",["This case's list only"]],["Extend",["Suite, then case"]]]},
+  {t:"next",items:["ref-grading","write-case","ref-runs"]}
+ ]},
+
+"ref-grading":{title:"Grading",status:"migrate",fig:"Reference › Grading",pf:"Configuration reference",from:"“Grading”, “Evidence requirements”, judge defaults",
+ desc:"Pass criteria, iterations, evidence requirements, judge defaults and gate conditions, with API fields.",
+ blocks:[
+  {t:"table",head:["On screen","API field","Default"],rows:[["Suite accuracy","<code>settings.minimumAccuracy</code>","70"],["Per-case pass rate","<code>settings.passThreshold</code>","—"],["Minimum iterations per case","<code>settings.minimumIterations</code>","Off"],["Iterations per case","<code>settings.repetitions</code>","—"],["Judge model","—","<code>openai/gpt-5.4-mini</code>"],["Judge threshold","—","0.7"],["Grading instructions","<code>settings.judge.rubric</code>","—"]]},
+  {t:"h2",text:"Evidence requirements"},
+  {t:"table",head:["Field","Default"],rows:[["Minimum completion rate","80%"],["Maximum evaluator error rate","10%"]]},
+  {t:"h2",text:"Execution budgets",held:1},
+  {t:"call",kind:"warning",text:"<b>Held.</b> Figma notes execution budgets aren't in the app yet. Keep them out until confirmed."},
+  {t:"next",items:["ref-runs","grading","ci"]}
+ ]},
+
+"ref-runs":{title:"Runs and results",status:"migrate",fig:"Reference › Runs and results",pf:"Output formats",from:"Run statuses, origin badges, cost table, export options",
+ desc:"Run and iteration statuses, origin badges, cost states and export format.",
+ blocks:[
+  {t:"table",head:["Badge","Set by"],rows:[["UI, API","Platform"],["CLI, GitHub, MCP","Launching process (declared)"],["SDK","SDK report"]]},
+  {t:"h2",text:"Cost states"},
+  {t:"table",head:["You see","Why"],rows:[["—","BYOK, or no token usage"],["runner","Reported by your SDK, not verified"],["Partial","Some iterations unpriced"]]},
+  {t:"h2",text:"Export format"},
+  {t:"copy",what:"OTLP JSON, OpenInference + mcp.app.*, file name pattern, scope options.",lines:1},
+  {t:"next",items:["troubleshooting","read-results","ref-grading"]}
+ ]},
+
+"troubleshooting":{title:"Troubleshooting",status:"new",fig:"(new)",pf:"Troubleshooting",from:"Notes and tips across evals.mdx",
+ desc:"Fixes for the errors and surprises people hit in their first week.",
+ blocks:[
+  {t:"call",kind:"note",text:"Headings are the exact error string or symptom, so search lands on the answer."},
+  {t:"faq",items:[["“Out of MCPJam credits · resets in …”","Switch a case to a model from your own providers."],["409 CI_OWNED_SUITE_READ_ONLY","The suite is managed in code. Edit the file or Duplicate to edit."],["Run started with zero servers","The environment has no server group selected."],["Judge score stuck at 0.85","No goal sentence. Add an Expected outcome."],["Cost shows a dash","BYOK or no token usage. Never means free."],["Run is Inconclusive","Per-case suite without enough evidence."],["My SDK suite appeared twice","SDK suites match by name; renaming creates a new one."]]},
+  {t:"next",items:["first-eval","run-suite","ci"]}
+ ]}
+};
+
+const ORDER = GROUPS.flatMap(g=>g.pages);
+const groupOf = id => GROUPS.find(g=>g.pages.includes(id));
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"");
+function bars(n){const w=[96,88,92,70,84,60];let h="";for(let i=0;i<n*2;i++){h+=`<span style="width:${i===n*2-1?Math.max(40,w[i%6]-30):w[i%6]}%"></span>`}return `<div class="bars">${h}</div>`}
+function hl(code,lang){
+  let h=esc(code);
+  if(lang==="yaml"||lang==="bash"){h=h.replace(/(^|\n)(\s*#.*)/g,'$1<span class="cm">$2</span>')}
+  if(lang==="ts"||lang==="json"){h=h.replace(/(\/\/.*|\/\*.*?\*\/)/g,'<span class="cm">$1</span>')}
+  if(lang==="yaml"){h=h.replace(/(^|\n)(\s*-?\s*)([a-zA-Z_]+):/g,'$1$2<span class="k">$3</span>:')}
+  if(lang==="bash"){h=h.replace(/\b(mcpjam|npx|export)\b/g,'<span class="k">$1</span>')}
+  if(lang==="ts"){h=h.replace(/\b(import|from|const|new)\b/g,'<span class="k">$1</span>')}
+  return h;
+}
+function chainHTML(broke){
+  return `<div class="flow" role="list" aria-label="User-value chain">`+CHAIN.map((c,i)=>{
+    let cls="n", extra="";
+    if(broke!=null){ if(i<broke){extra=`<small style="color:var(--ok)">passed</small>`} else if(i===broke){cls+=" hl";extra=`<small style="color:var(--bad)">broke here</small>`} else {extra=`<small>never ran</small>`} }
+    else extra=`<small>${c[1]}</small>`;
+    return (i?`<span class="a" aria-hidden="true">→</span>`:"")+`<div class="${cls}" role="listitem">${c[0]}${extra}</div>`}).join("")+`</div>`;
+}
+function nestHTML(){
+  return `<div class="nest" aria-label="Hierarchy diagram"><div class="box"><div class="t">Project <small>servers, environments, suites</small></div>
+   <div class="box"><div class="t">Suite <small>shared servers, models, defaults, pass criterion</small></div>
+    <div class="row"><div class="box"><div class="t">Case <small>prompts, checks</small></div></div><div class="box"><div class="t">Case</div></div><div class="box"><div class="t">Case</div></div></div>
+    <div class="box"><div class="t">Run <small>iterations = cases × models × count</small></div><div class="mini-grid" aria-hidden="true">${"<span></span>".repeat(18)}</div></div>
+   </div></div></div>`;
+}
+function matchHTML(){
+  const ex=`expected: { query: "bugs", limit: 5 }<br>actual: &nbsp;&nbsp;{ query: "bugs", limit: 5, sort: "new" }`;
+  const modes=[["partial","default","Expected keys match; extras ignored","p-ok","pass"],["exact","","Key for key","p-bad","fail"],["ignore","","Tool name only","p-ok","pass"]];
+  return `<div class="code"><div class="code-h"><span>Same call, three modes</span></div><pre>${ex}</pre></div><div class="cols">`+modes.map(m=>`<div class="col"><h5><code>${m[0]}</code>${m[1]?`<span class="pill p-mute">${m[1]}</span>`:""}<span class="pill ${m[3]}" style="margin-left:auto">${m[4]}</span></h5><ul style="list-style:none;padding:0"><li>${m[2]}</li></ul></div>`).join("")+`</div>`;
+}
+let tabCounter=0;
+function block(b){
+  switch(b.t){
+    case "h2": return `<h2 id="${slug(b.text)}">${b.text}${b.held?` <span class="pill p-warn" style="vertical-align:middle">held</span>`:""}</h2>`;
+    case "copy": return `<div class="copy"><div class="what"><b>Copy</b>${b.what}</div>${bars(b.lines||1)}</div>`;
+    case "shot": return `<div class="shot${b.short?" short":""}"><span class="lbl">${b.kind}</span><div class="cap">${b.cap}${b.sub?`<small>${b.sub}</small>`:""}</div></div>`;
+    case "code": return `<div class="code"><div class="code-h"><span>${esc(b.title||b.lang)}</span></div><pre>${hl(b.code,b.lang)}</pre></div>`;
+    case "tabs": { const id="tb"+(tabCounter++);
+      return `<div class="code" data-tabs="${id}"><div class="code-h" role="tablist">`+b.tabs.map((t,i)=>`<button role="tab" aria-selected="${i===0}" class="${i===0?"on":""}" data-i="${i}">${t[0]}</button>`).join("")+`</div>`+b.tabs.map((t,i)=>`<pre ${i?"hidden":""} data-p="${i}">${hl(t[2],t[1])}</pre>`).join("")+`</div>`; }
+    case "call": { const ic={note:"i",tip:"✓",warning:"!"}[b.kind]; return `<div class="call ${b.kind}"><span class="ic" aria-hidden="true">${ic}</span><div>${b.text}</div></div>`; }
+    case "steps": return `<div class="steps">`+b.items.map(s=>`<div class="step"><h5>${s[0]}</h5>${s[1]?`<p>${s[1]}</p>`:""}${s[2]?`<div class="shot"><span class="lbl">Screenshot</span><div class="cap">${s[2]}</div></div>`:""}</div>`).join("")+`</div>`;
+    case "table": return `<div class="tbl"><table><thead><tr>${b.head.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${b.rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    case "cards": return `<div class="cards">`+b.items.map(c=>`<div class="card"><h5>${c[0]}</h5><p>${c[1]}</p></div>`).join("")+`</div>`;
+    case "cols": return `<div class="cols">`+b.items.map(c=>`<div class="col"><h5>${c[0]}</h5><ul>${c[1].map(x=>`<li>${x}</li>`).join("")}</ul></div>`).join("")+`</div>`;
+    case "flow": return `<div class="flow">`+b.items.map((n,i)=>(i?`<span class="a" aria-hidden="true">→</span>`:"")+`<div class="n${n[2]?" hl":""}">${n[0]}${n[1]?`<small>${n[1]}</small>`:""}</div>`).join("")+`</div>`;
+    case "chain": return chainHTML(b.broke);
+    case "nest": return nestHTML();
+    case "match": return matchHTML();
+    case "faq": return `<div class="faq">`+b.items.map(q=>`<details><summary>${q[0]}</summary><p>${q[1]}</p></details>`).join("")+`</div>`;
+    case "next": return `<h2 id="next-steps">Next steps</h2><div class="cards">`+b.items.map(id=>`<a class="card" href="#${id}"><h5>${P[id].title}</h5><p>${P[id].desc}</p><span class="arrow">Read →</span></a>`).join("")+`</div>`;
+  }
+  return "";
+}
+
+function renderSide(cur){
+  let h=`<a class="side-plan${cur==="plan"?" on":""}" href="#plan"><span class="brand-mark" style="background:var(--fg)">✎</span><span><b>Plan &amp; progress</b><small>Start here · v2</small></span></a>`;
+  OTHER_BEFORE.forEach(n=>h+=`<div class="grp collapsed"><h4>${n}<i>›</i></h4></div>`);
+  h+=`<div class="grp evgrp"><h4>Evaluate <span class="pill p-info" style="font-weight:600">in scope</span></h4>`;
+  GROUPS.forEach(g=>{
+    h+=`<div class="sub">${g.name?`<h5>${g.name}</h5>`:""}<nav class="nav">`+g.pages.map(id=>`<a href="#${id}" class="${cur===id?"on":""}"><span class="dot d-${P[id].status}" title="${STATUS[P[id].status].long}"></span>${P[id].title}</a>`).join("")+`</nav></div>`;
+  });
+  h+=`</div>`;
+  OTHER_AFTER.forEach(n=>h+=`<div class="grp collapsed"><h4>${n}<i>›</i></h4></div>`);
+  h+=`<div class="legend">`+Object.entries(STATUS).map(([k,v])=>`<div><span class="dot d-${k}"></span><span><b style="color:var(--fg);font-weight:500">${v.label}</b> · ${v.long}</span></div>`).join("")+`</div>`;
+  document.getElementById("side").innerHTML=h;
+  const sel=document.getElementById("mnav");
+  sel.innerHTML=`<option value="plan">Plan &amp; progress</option>`+GROUPS.map(g=>`<optgroup label="Evaluate${g.name?" · "+g.name:""}">`+g.pages.map(id=>`<option value="${id}">${P[id].title}</option>`).join("")+`</optgroup>`).join("");
+  sel.value=cur;
+}
+function renderTOC(){
+  const hs=[...document.querySelectorAll("#content h2")];
+  document.getElementById("toc").innerHTML=hs.length?`<h6>On this page</h6>`+hs.map(h=>`<a href="javascript:void 0" data-to="${h.id}">${h.textContent}</a>`).join(""):"";
+}
+
+const TAB_OPTIONS = [
+  ["A · Surface tabs, Evaluate as a group <span class='pill p-ok'>recommended</span>","Docs · CLI · SDK · API","Matches Figma rev 2 and today's docs.json. One axis for tabs: <i>where</i> you work. Evaluate is a top-level group in Docs, next to Test and debug. No URL churn outside Evaluate.","CLI and SDK tabs still carry eval guides, so eval content is split across tabs until those move."],
+  ["B · Evals as its own tab (v1 mock)","Docs · Evals · CLI · SDK · API","Room for many pages; evals look like a flagship.","Mixes two axes: Evals is a job, CLI/SDK/API are surfaces. “Run evals from the CLI” has two plausible homes. Tabs reset the sidebar, so Get started → first eval crosses a tab."],
+  ["C · Job tabs + one Reference tab","Debug · Evaluate · Reference","Cleanest end state (Stripe and Supabase organize by product area, with reference kept separate). Surfaces become page-level tabs.","Big move: every CLI/SDK guide gets re-homed, and most URLs change. Not worth it before the Figma plan ships."]
+];
+const PATTERNS = [
+  ["Promptfoo","Evals are the product, so the docs are organized around the eval lifecycle. CLI and the web viewer are “Usage” pages inside it, not tabs."],
+  ["Claude Code","Plugin evals are one page in Plugins → Create plugins, between “Add components” and “Publish”. No eval tab; other pages link in."],
+  ["Stripe, Supabase","Top level by product area; API, CLI and SDK reference kept separate from guides."],
+  ["MCPJam today","Docs · CLI · SDK · API (surfaces). Figma's CLI plan already regroups CLI guides into Inspect and debug / Conformance and auth / Evals and CI, so the job axis is repeating inside a surface tab."]
+];
+const FIGMA_MAP = [["Run your first eval","first-eval"],["Write a case","write-case,generate"],["Run a suite","run-suite,access,test-users"],["Read results","read-results,compare"],["Configure grading","grading,ci"],["Reference › Cases and assertions","ref-assertions"],["Reference › Grading","ref-grading"],["Reference › Runs and results","ref-runs"],["(not in Figma)","overview,how-it-works,troubleshooting"]];
+const MIGRATION = [
+  ["Intro, Requirements, What to author first","overview","first-eval"],
+  ["How it's organized","how-it-works"],
+  ["Authoring a case · Case workspace · History · Next run sheet","write-case"],
+  ["Widget interactions (held)","write-case"],
+  ["Assertions · Argument matching · Validator settings","ref-assertions"],
+  ["LLM as judge · Rubric checks","grading","access"],
+  ["Grading: pass criteria, iterations, evidence","grading","ref-grading"],
+  ["Quality gate","ci","ref-grading"],
+  ["Running · Run review · Snapshots · Execution config","run-suite"],
+  ["Execution budgets (held)","ref-grading"],
+  ["CI suites","ci"],
+  ["Reading results · Run view · Origin badges","read-results","ref-runs"],
+  ["Comparing two runs · Cross-host · Case view","compare"],
+  ["Cost · Exporting traces","read-results","ref-runs"],
+  ["Promoting sessions · Generating cases","generate"]
+];
+const link = id => `<a href="#${id}">${P[id].title}</a>`;
+function renderPlan(){
+  const counts={};ORDER.forEach(id=>counts[P[id].status]=(counts[P[id].status]||0)+1);
+  return `<div class="crumb">Evals docs restructure · v2</div>
+  <h1>Evals docs: proposed structure</h1>
+  <p class="desc">Evaluate stays a group in the Docs tab, as in Figma's Docs v2. Inside it, ${ORDER.length} pages in five sub-groups, built from Figma's five task pages and three reference pages, with Promptfoo's and Claude Code's eval docs filling the gaps.</p>
+  <div class="meta"><span class="chip s-migrate"><b>${counts.migrate}</b> migrate</span><span class="chip s-new"><b>${counts.new}</b> new</span><span class="chip s-move"><b>${counts.move}</b> move</span><span class="chip"><b>2</b> held sections</span></div>
+
+  <h2 id="progress">Progress</h2>
+  <div class="track">
+   <div class="done"><small>Done</small>Audit evals.mdx, CLI and SDK eval pages</div>
+   <div class="done"><small>Done</small>v1 outline from Promptfoo</div>
+   <div class="done"><small>Done</small>v2: Figma Docs v2 + Claude Code plugin evals</div>
+   <div class="now"><small>You are here</small>Review in the draft PR</div>
+   <div><small>Next</small>Write pages, one sub-group at a time</div>
+   <div><small>Then</small>Screenshots, docs.json, redirects</div>
+  </div>
+
+  <h2 id="top-level-tabs">Top-level tabs</h2>
+  <p class="ptxt" style="margin:0 0 6px">The v1 mock put Evals next to CLI and SDK. That mixes two kinds of tab. CLI, SDK and API say <b>where</b> you work. Evals says <b>what</b> you're doing. With both, a reader who wants “run evals from the CLI” has two plausible tabs. Keep tabs on one axis and make Evaluate a first-class group.</p>
+  ${TAB_OPTIONS.map(o=>`<div class="dec"><h5>${o[0]}</h5><p class="mono" style="font-size:12.5px;margin-bottom:6px;color:var(--fg)">${o[1]}</p><p><b style="color:var(--ok)">For:</b> ${o[2]}</p><p style="margin-top:4px"><b style="color:var(--bad)">Against:</b> ${o[3]}</p></div>`).join("")}
+  <div class="tbl"><table><thead><tr><th>How others do it</th><th>Pattern</th></tr></thead><tbody>${PATTERNS.map(r=>`<tr><td><b>${r[0]}</b></td><td>${r[1]}</td></tr>`).join("")}</tbody></table></div>
+  <div class="call tip"><span class="ic" aria-hidden="true">✓</span><div><b>Recommendation:</b> A now. Over time, move the eval guides out of the CLI and SDK tabs into Evaluate pages, using App / CLI / SDK tabs within each page. That leaves CLI, SDK and API as reference tabs, which gets most of C's benefit without the URL churn.</div></div>
+
+  <h2 id="what-changed">What changed from v1</h2>
+  <div class="tbl"><table><thead><tr><th>Change</th><th>Why</th></tr></thead><tbody>
+   <tr><td>Evals tab → Evaluate group in Docs</td><td>One axis for tabs; matches Figma rev 2</td></tr>
+   <tr><td>22 pages → ${ORDER.length}, in sub-groups of ≤ 5</td><td>Figma's rule: no group over 7 top-level entries. Claude Code covers its whole eval system on one page, so 22 was too thin per page</td></tr>
+   <tr><td>Assertions + Tool-call matching → one reference page</td><td>One check table, one matching section (Claude Code's graders table)</td></tr>
+   <tr><td>Judge + Rubric checks + Pass criteria → Configure grading</td><td>Figma's task page; reference tables move to Grading</td></tr>
+   <tr><td>Quality gate moves to Run evals in CI</td><td>A gate only matters next to exit codes</td></tr>
+   <tr><td>Cost + Export fold into Read results</td><td>Read top-down; details in Runs and results reference</td></tr>
+   <tr><td>New: What a run can access</td><td>Credentials, real side effects, data sent to judge providers (Claude Code has an equivalent section)</td></tr>
+   <tr><td>Generate-first quickstart, App / CLI / SDK tabs</td><td>Claude Code's quickstart leads with <code>init</code>; surfaces are tabs, not separate pages</td></tr>
+   <tr><td>Widget steps and Execution budgets marked held</td><td>Figma holds them until they're confirmed in the app</td></tr>
+   <tr><td>Dropped “route question” and “case spine”</td><td>Figma's vocabulary: “Which tool should handle it”</td></tr>
+  </tbody></table></div>
+
+  <h2 id="figma-mapping">Mapping to Figma Docs v2</h2>
+  <div class="tbl"><table><thead><tr><th>Figma page</th><th>Pages here</th></tr></thead><tbody>${FIGMA_MAP.map(r=>`<tr><td>${r[0]}</td><td>${r[1].split(",").map(link).join(" · ")}</td></tr>`).join("")}</tbody></table></div>
+
+  <h2 id="where-content-goes">Where today's content goes</h2>
+  <div class="tbl"><table><thead><tr><th>Current section in evals.mdx</th><th>New page</th></tr></thead><tbody>${MIGRATION.map(r=>`<tr><td>${r[0]}</td><td>${r.slice(1).map(link).join(" + ")}</td></tr>`).join("")}</tbody></table></div>
+
+  <h2 id="page-recipe">Page recipe</h2>
+  <div class="recipe">
+   <div><span>1</span><b>Title + one line</b><span>What you can do after reading</span></div>
+   <div><span>2</span><b>Who it's for</b><span>One line, with “use X instead” for neighbouring tools</span></div>
+   <div><span>3</span><b>Visual first</b><span>Screenshot, GIF or diagram before prose</span></div>
+   <div><span>4</span><b>Do it</b><span>Steps, with App / CLI / SDK tabs where all three can</span></div>
+   <div><span>5</span><b>Reference</b><span>Tables with Field / Default / Purpose</span></div>
+   <div><span>6</span><b>Next steps</b><span>Three cards</span></div>
+  </div>
+
+  <h2 id="decisions">Still open</h2>
+  <div class="dec"><h5>1. Tabs: A, B or C?</h5><p>Recommend A. Option C is worth revisiting once the CLI and SDK tabs hold only reference.</p></div>
+  <div class="dec"><h5>2. Move CLI “Local evals” and SDK “Running evals” into Evaluate?</h5><p>Recommend yes, as App / CLI / SDK tabs within pages, in a follow-up PR with redirects.</p></div>
+  <div class="dec"><h5>3. Starting state and mocks</h5><p>Claude Code supports seeding the workspace, starting from earlier conversation history, and mock servers. Is there an MCPJam equivalent worth documenting?</p></div>
+  <div class="dec"><h5>4. Where are Figma's Evaluate drafts?</h5><p>Figma marks “Evaluate (5 pages + 3 reference)” as validation pending, but I couldn't find the drafts in the repo. If they exist, this PR should build on them.</p></div>`;
+}
+
+function renderPage(id){
+  const p=P[id], g=groupOf(id), i=ORDER.indexOf(id);
+  const prev=ORDER[i-1], next=ORDER[i+1];
+  return `<div class="crumb">Evaluate${g.name?" · "+g.name:""}</div><h1>${p.title}</h1><p class="desc">${p.desc}</p>
+   <div class="meta"><span class="chip s-${p.status}"><span class="dot d-${p.status}"></span><b style="color:inherit">${STATUS[p.status].label}</b></span><span class="chip long">Figma: <b>${p.fig}</b></span><span class="chip long">Promptfoo: <b>${p.pf}</b></span><span class="chip long">From: <b>${p.from}</b></span></div>
+   ${p.blocks.map(block).join("")}
+   <div class="pager">${prev?`<a href="#${prev}"><small>Previous</small>${P[prev].title}</a>`:`<a href="#plan"><small>Previous</small>Plan &amp; progress</a>`}${next?`<a class="nx" href="#${next}"><small>Next</small>${P[next].title}</a>`:"<span></span>"}</div>`;
+}
+
+function route(){
+  let id=(location.hash||"").slice(1);
+  if(!P[id]) id="plan";
+  tabCounter=0;
+  document.getElementById("content").innerHTML = id==="plan"?renderPlan():renderPage(id);
+  renderSide(id); renderTOC();
+  window.scrollTo(0,0);
+}
+document.addEventListener("click",e=>{
+  const b=e.target.closest("[data-tabs] .code-h button");
+  if(b){const w=b.closest("[data-tabs]");w.querySelectorAll(".code-h button").forEach(x=>{x.classList.toggle("on",x===b);x.setAttribute("aria-selected",x===b)});w.querySelectorAll("pre").forEach(p=>p.hidden=p.dataset.p!==b.dataset.i);return;}
+  const t=e.target.closest("[data-to]");
+  if(t){e.preventDefault();const el=document.getElementById(t.dataset.to);if(el)el.scrollIntoView({behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});}
+});
+document.getElementById("mnav").addEventListener("change",e=>{location.hash=e.target.value});
+window.addEventListener("hashchange",route);
+route();
+</script>
