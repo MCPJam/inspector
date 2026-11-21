@@ -45,7 +45,8 @@ export function createMemorySendJournal(): SendJournal {
 export type RealUiTurnInput = {
   module: RealUiPageModule;
   driver: PageDriver;
-  connector: { name: string; url: string };
+  /** One per server the turn uses, each pointed at the forwarding endpoint. */
+  connectors: ReadonlyArray<{ name: string; url: string }>;
   prompt: string;
   journal: SendJournal;
   /** Stable for the turn across restarts: the journal's key. */
@@ -100,7 +101,10 @@ export async function driveRealUiTurn(
       );
     }
     enter("connector");
-    await module.ensureConnector(driver, input.connector, ctx);
+    const selected = input.connectors.map((connector) => connector.name);
+    for (const connector of input.connectors) {
+      await module.ensureConnector(driver, connector, ctx, selected);
+    }
 
     let conversationUrl: string | undefined;
     let resumed = false;
@@ -128,7 +132,9 @@ export async function driveRealUiTurn(
       enter("new_chat");
       await module.openNewChat(driver, ctx);
       enter("enable_connector");
-      await module.enableConnector(driver, input.connector.name, ctx);
+      for (const connector of input.connectors) {
+        await module.enableConnector(driver, connector.name, ctx);
+      }
       enter("send");
       await input.journal.write(input.turnKey, {
         state: "sending",

@@ -5,8 +5,11 @@
  * Evidence: fixture. The claude.ai and chatgpt.com shapes here are the ones
  * the modules expect; no live vendor run has checked them yet.
  */
-import { describe, expect, it, vi } from "vitest";
-import type { BrowserAgentResult } from "@/shared/browser-agent-contract";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type {
+  BrowserAgentCommand,
+  BrowserAgentResult,
+} from "@/shared/browser-agent-contract";
 import { WEB_CLIENT_PAGE_MODULE_VERSIONS, WEB_CLIENT_SITES } from "@/shared/web-clients";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { chatgptWebPageModule } from "../chatgpt-web";
@@ -15,13 +18,26 @@ import { createHostedPageDriver } from "../hosted-driver";
 import { pollUntil, type PageDriver } from "../page-driver";
 import { readVendorJson } from "../vendor-json";
 
-/** A page that answers `readText` from a map and `fetch` from canned JSON. */
+/**
+ * A page that answers `readText` from a map, and runs `evaluate` for real
+ * against a `fetch` that serves canned JSON by path.
+ */
 function cannedDriver(options: {
   url: string;
   texts?: Record<string, string>;
   json?: Record<string, unknown>;
 }): PageDriver {
   let url = options.url;
+  vi.stubGlobal("fetch", async (target: string) => {
+    const parsed = new URL(target);
+    const path = parsed.pathname + parsed.search;
+    const body = Object.entries(options.json ?? {}).find(([prefix]) =>
+      path.startsWith(prefix),
+    )?.[1];
+    return new Response(JSON.stringify(body ?? {}), {
+      status: body === undefined ? 404 : 200,
+    });
+  });
   return {
     kind: "playwright",
     canEvaluate: true,
@@ -31,11 +47,8 @@ function cannedDriver(options: {
     async url() {
       return url;
     },
-    async evaluate<T, A>(_fn: (arg: A) => T | Promise<T>, arg: A): Promise<T> {
-      const target = (arg as { url: string }).url;
-      const path = new URL(target).pathname + new URL(target).search;
-      const body = Object.entries(options.json ?? {}).find(([prefix]) => path.startsWith(prefix))?.[1];
-      return { status: body === undefined ? 404 : 200, text: JSON.stringify(body ?? {}) } as T;
+    async evaluate(fn, arg) {
+      return fn(arg);
     },
     waitFor: pollUntil,
     click: vi.fn(async () => undefined),
@@ -46,6 +59,10 @@ function cannedDriver(options: {
     },
   };
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("page module pins", () => {
   it("pins each vendor module to the version its runtime declares", () => {
@@ -141,6 +158,44 @@ describe("claude.ai", () => {
       signals: ["no stop button", "nothing streaming", "an assistant message", "the composer is back"],
     });
   });
+
+  describe("on a plan with no room for another connector", () => {
+    const connector = { name: "MCPJam billing 5e6f7a8b", url: "https://inspector.example/mcp/billing" };
+    /** The add dialog asks for an upgrade, and the search shows one MCPJam connector. */
+    const walled = (shown: string) =>
+      cannedDriver({
+        url: "https://claude.ai/customize/connectors/yours",
+        texts: {
+          '.dframe-pane-primary [placeholder="Search"]': "",
+          "role=dialog": "Upgrade to add more connectors",
+          ".dframe-pane-primary >> role=button[name=/^View MCPJam/]": `View ${shown}`,
+        },
+      });
+
+    it("stops with plan_limit rather than remove a connector the turn selected", async () => {
+      const driver = walled("MCPJam orders 1a2b3c4d");
+      await expect(
+        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [
+          "MCPJam orders 1a2b3c4d",
+          connector.name,
+        ]),
+      ).rejects.toMatchObject({
+        failure: { kind: "plan_limit", step: "connector", message: expect.stringContaining("each server this run uses") },
+      });
+      expect(driver.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("still makes room by removing one another run added", async () => {
+      const driver = walled("MCPJam stale 9a8b7c6d");
+      // The canned dialog still asks for an upgrade, so the second add fails too.
+      await expect(
+        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [connector.name]),
+      ).rejects.toMatchObject({ failure: { kind: "plan_limit" } });
+      expect(driver.click).toHaveBeenCalledWith(
+        '.dframe-pane-primary >> role=button[name="More options for MCPJam stale 9a8b7c6d"]',
+      );
+    });
+  });
 });
 
 describe("chatgpt.com", () => {
@@ -187,7 +242,9 @@ describe("the hosted driver", () => {
   });
 
   it("sends the command API's own commands and runs no script", async () => {
-    const send = vi.fn(async () => executed({ url: "https://claude.ai/new", a11y: "textbox" }));
+    const send = vi.fn(async (_command: BrowserAgentCommand) =>
+      executed({ url: "https://claude.ai/new", a11y: "textbox" }),
+    );
     const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
     await driver.navigate("https://claude.ai/new");
     await driver.click('[data-testid="chat-input-send"]');
@@ -202,7 +259,7 @@ describe("the hosted driver", () => {
       { op: "observe", mode: "a11y", rootSelector: '[data-testid="chat-input"]', filter: "all" },
     ]);
     expect(driver.canEvaluate).toBe(false);
-    await expect(driver.evaluate(() => 1, undefined)).rejects.toMatchObject({ code: "unsupported" });
+    await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
   });
 
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {

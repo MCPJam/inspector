@@ -17,7 +17,7 @@ import {
 } from "../../../../test/support/web-clients/fixture-vendor";
 import { createMemorySendJournal, driveRealUiTurn } from "../drive-turn";
 import { createFixtureWebPageModule } from "../fixture-web";
-import { RealUiError } from "../page-module";
+import { RealUiError, type RealUiPageModule } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
 
 let browser: Browser;
@@ -52,7 +52,7 @@ function turn(driver: Awaited<ReturnType<typeof signedInDriver>>, journal = crea
   return driveRealUiTurn({
     module: createFixtureWebPageModule(vendor.url),
     driver,
-    connector: { name: "MCPJam fixture", url: upstream.url },
+    connectors: [{ name: "MCPJam fixture", url: upstream.url }],
     prompt: "say hello",
     journal,
     turnKey: "turn-1",
@@ -69,7 +69,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const result = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver,
-      connector: { name: "MCPJam fixture", url: upstream.url },
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
       prompt: "say hello",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
@@ -135,7 +135,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const result = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver: await signedInDriver(),
-      connector: { name: "MCPJam fixture", url: upstream.url },
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
       prompt: "say  hello ",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
@@ -171,7 +171,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     const failure = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
       driver: await signedInDriver(),
-      connector: { name: "MCPJam fixture", url: upstream.url },
+      connectors: [{ name: "MCPJam fixture", url: upstream.url }],
       prompt: "say hello",
       journal: createMemorySendJournal(),
       turnKey: "turn-1",
@@ -257,5 +257,38 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     await page.unroute(`${vendor.url}/new`);
     await driver.navigate(`${vendor.url}/new`);
     expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
+  it("tells each connector step the turn's whole selection, and sends nothing when one can't fit", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const kept: Array<readonly string[] | undefined> = [];
+    const module: RealUiPageModule = {
+      ...fixture,
+      async ensureConnector(driver, connector, ctx, keep) {
+        kept.push(keep);
+        if (connector.name === "MCPJam billing") {
+          throw new RealUiError({ kind: "plan_limit", step: "connector", message: "The plan holds one connector." });
+        }
+        return fixture.ensureConnector(driver, connector, ctx, keep);
+      },
+    };
+    const failure = await driveRealUiTurn({
+      module,
+      driver: await signedInDriver(),
+      connectors: [
+        { name: "MCPJam fixture", url: upstream.url },
+        { name: "MCPJam billing", url: upstream.url },
+      ],
+      prompt: "say hello",
+      journal: createMemorySendJournal(),
+      turnKey: "turn-1",
+      stepTimeoutMs: 10_000,
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({ kind: "plan_limit", step: "connector" });
+    expect(kept).toEqual([
+      ["MCPJam fixture", "MCPJam billing"],
+      ["MCPJam fixture", "MCPJam billing"],
+    ]);
+    expect(vendor.sends).toEqual([]);
   });
 });
