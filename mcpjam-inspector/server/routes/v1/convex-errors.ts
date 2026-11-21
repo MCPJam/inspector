@@ -699,6 +699,18 @@ export function translateConvexWriteError(
     return new WebRouteError(404, ErrorCode.NOT_FOUND, notFoundMessage);
   }
 
+  // A Required judge the suite cannot honour (mcpjam-backend
+  // lib/judgeGateRun.ts): a well-formed launch the suite's settings forbid.
+  // `details.code` is the shape callers got from the unclassified branch below.
+  if (code === "JUDGE_GATE_NOT_AVAILABLE") {
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      structuredMessage ?? fallbackMessage,
+      { code },
+    );
+  }
+
   // ── A structured code with no branch of its own. ─────────────────────────
   //
   // The backend raised `ConvexError({ code, message })` DELIBERATELY: it chose

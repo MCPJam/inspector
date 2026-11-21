@@ -10,6 +10,7 @@ import {
   openLocalEvalRun,
 } from "../../services/evals/local-run-manager.js";
 import "../../types/hono";
+import { translateStructuredConvexRefusal } from "../v1/convex-errors.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   GenerateNegativeTestsRequestSchema,
@@ -127,13 +128,15 @@ evals.post("/run", async (c) => {
       202,
     );
   } catch (error) {
-    reportRouteFailure("[Error running evals]", error, {
+    // A backend refusal is the caller's to fix, not a fault to report.
+    const failure = translateStructuredConvexRefusal(error) ?? error;
+    reportRouteFailure("[Error running evals]", failure, {
       // Starting a suite is our orchestration; per-test failures are
       // reported from inside the run.
       source: "mcp.evals.run",
       hop: "mcpjam_internal",
     });
-    return jsonRouteError(c, error);
+    return jsonRouteError(c, failure);
   }
 });
 
@@ -177,11 +180,12 @@ evals.post("/replay-run", async (c) => {
       throw err;
     }
   } catch (error) {
-    reportRouteFailure("[Error replaying eval run]", error, {
+    const failure = translateStructuredConvexRefusal(error) ?? error;
+    reportRouteFailure("[Error replaying eval run]", failure, {
       source: "mcp.evals.replay-run",
       hop: "mcpjam_internal",
     });
-    return jsonRouteError(c, error);
+    return jsonRouteError(c, failure);
   }
 });
 

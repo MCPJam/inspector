@@ -623,6 +623,21 @@ describe("v1 capture boundary — a backend's structured refusal", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("answers a gating judge the suite cannot honour with a 409 conflict", () => {
+    const message =
+      "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
+    const result = mapErrorToV1(
+      convexError({ code: "JUDGE_GATE_NOT_AVAILABLE", message }),
+      INTERNAL,
+    );
+
+    // CONFLICT is the v1 code its envelope answers with HTTP 409.
+    expect(result.code).toBe("CONFLICT");
+    expect(result.message).toBe(message);
+    expect(result.details).toEqual({ code: "JUDGE_GATE_NOT_AVAILABLE" });
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
   it("still pages for an unstructured throw on the same path", () => {
     // The guard rail: only a `{ code, message }` payload is treated as
     // deliberate. Everything else keeps the opaque 500 AND the page.

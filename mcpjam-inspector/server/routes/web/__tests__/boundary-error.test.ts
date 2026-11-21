@@ -45,6 +45,18 @@ describe("web boundary errors", () => {
     expect(text).not.toContain("Uncaught ConvexError");
   });
 
+  it("answers a gating judge the suite cannot honour with 409, its sentence and code", async () => {
+    const message =
+      "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
+    const response = await responseFor(
+      refusal("JUDGE_GATE_NOT_AVAILABLE", message),
+    );
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.message).toBe(message);
+    expect(body.details).toEqual({ code: "JUDGE_GATE_NOT_AVAILABLE" });
+  });
+
   it("retains actionable copy from a wrapped structured refusal", async () => {
     const response = await responseFor(
       new Error("wrapped failure", {
