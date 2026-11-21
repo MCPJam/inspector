@@ -37,6 +37,10 @@ describe("the session transport", () => {
     });
     const result = await send({ op: "act", verb: "click", target: { selector: "#send" }, observeAfter: "none" });
     expect(result).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand).toHaveBeenCalledTimes(2);
+    for (const call of sendCommand.mock.calls) {
+      expect(call).toEqual([expect.objectContaining({ responsiveViewport: true }), "boot-1"]);
+    }
     expect(sendCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "agent",
@@ -45,6 +49,17 @@ describe("the session transport", () => {
       }),
       "boot-1",
     );
+  });
+
+  it("keeps coordinate actions on a fixed viewport", async () => {
+    const sendCommand = vi.fn(async () => okResponse);
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    await send({ op: "act", verb: "click", target: { coordinates: [10, 10] } });
+    expect(sendCommand).toHaveBeenLastCalledWith(expect.objectContaining({ responsiveViewport: false }), "boot-1");
   });
 
   it("refuses another site before the daemon and reports a lost command as unknown", async () => {
