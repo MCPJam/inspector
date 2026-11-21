@@ -5,6 +5,7 @@ import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js"
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 import { bridgeInitializeResult } from "./bridge-initialize.js";
+import { encodeModernResult, isModernRequest } from "./bridge-modern-result.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
 // while preserving their minor response-shape differences.
@@ -316,7 +317,15 @@ export async function handleJsonRpc(
     return null;
   }
 
-  const respond = (payload: any) => ({ jsonrpc: "2.0", id, ...payload });
+  const modernClient = isModernRequest(params, options.downstreamProtocolVersion);
+  const respond = (payload: any) => ({
+    jsonrpc: "2.0",
+    id,
+    ...payload,
+    ...(modernClient && "result" in payload
+      ? { result: encodeModernResult(method, payload.result) }
+      : {}),
+  });
 
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
@@ -508,6 +517,11 @@ export async function handleJsonRpc(
               ...(metadata === undefined ? {} : { metadata }), },
           );
 
+          // Both modes answer with the call-tool result as it came back
+          // (adapter mode for compatibility). Built before the evidence so the
+          // record is what the harness receives, fields a 2026-07-28 client
+          // gets included.
+          const response = respond({ result: exec });
           if (evidence) {
             // Awaited BEFORE the result goes back, so a turn that ends
             // normally cannot have settlement still in flight. Failure here
@@ -517,15 +531,10 @@ export async function handleJsonRpc(
             await settleToolCallEvidence(evidence, {
               serverId: targetServerId,
               toolName,
-              outcome: { kind: "result", result: exec },
+              outcome: { kind: "result", result: response.result },
             });
           }
-
-          if (mode === "manager") {
-            return respond({ result: exec });
-          }
-          // adapter mode returns raw call-tool result for compatibility
-          return respond({ result: exec });
+          return response;
         } catch (e: any) {
           try {
             await options.onToolCallError?.({
@@ -567,6 +576,7 @@ export async function handleJsonRpc(
               ],
               isError: true,
             };
+            const response = respond({ result });
             if (evidence && evidenceStarted) {
               // What the harness sees in manager mode IS a CallToolResult
               // with `isError: true`, so that is what the evidence records —
@@ -574,10 +584,10 @@ export async function handleJsonRpc(
               await settleToolCallEvidence(evidence, {
                 serverId: targetServerId,
                 toolName: observedToolName ?? "",
-                outcome: { kind: "result", result },
+                outcome: { kind: "result", result: response.result },
               });
             }
-            return respond({ result });
+            return response;
           }
           const errorEnvelope = {
             code: -32000,
