@@ -308,11 +308,12 @@ and the difference between the two rules is the word in the label:
 | On screen | What it does to a case that sets its own count | API field |
 | --- | --- | --- |
 | **Minimum iterations per case** | RAISES it to the floor. A case configured for more keeps its own count. `Off` means no floor: the suite's real state, not a stand-in for 1. | `settings.minimumIterations` |
-| **Iterations per case** | REPLACES it with the suite default. A case that sets its own count uses that instead. | `settings.repetitions` |
+| **Iterations per case** | Nothing. The suite default applies only to cases that set no count of their own; a case that sets its own count uses that instead. | `settings.repetitions` |
 
-So a case configured for 7 iterations runs **7** times under a floor of 3, and
-**3** times under a default count of 3. A per-run iteration override wins
-outright under either rule.
+So a case configured for 2 iterations runs **3** times under a minimum of 3,
+and **2** times under a default count of 3. A case configured for 7 runs **7**
+times under either rule. A per-run iteration override wins outright under
+either rule.
 
 ### Evidence requirements
 
