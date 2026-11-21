@@ -181,6 +181,7 @@ export async function acquirePlaygroundHarnessBox(args: {
           ...(result.value.retainUntil
             ? { retainUntil: result.value.retainUntil }
             : {}),
+          ...(prepared ? { unused: true as const } : {}),
         },
       };
     },
