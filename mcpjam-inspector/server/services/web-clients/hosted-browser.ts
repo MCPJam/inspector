@@ -85,6 +85,9 @@ export function sessionBrowserTransport(args: {
     args.handle.client.sendCommand(
       {
         commandId,
+        // The page modules locate elements by selector. Coordinate actions still
+        // need a fixed viewport because their target carries no dimensions.
+        responsiveViewport: !(action.kind === "act" && action.target && "coordinates" in action.target),
         source: "agent",
         sessionId: args.sessionId,
         actor: { kind: "agent", id: "web-client-runtime" },
