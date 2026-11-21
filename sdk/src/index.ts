@@ -729,6 +729,7 @@ export {
 export type {
   ConformanceReport,
   ConformanceReportAdvisory,
+  ConformanceReportPassedAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
@@ -1481,6 +1482,7 @@ export type {
   MCPReadinessId,
   MCPReadinessSpecStrength,
   MCPReadinessWarning,
+  MCPPassedAdvice,
   MCPServerSurfaceSnapshot,
 } from "./mcp-conformance/index.js";
 export {

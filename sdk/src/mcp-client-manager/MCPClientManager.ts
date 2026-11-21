@@ -911,6 +911,20 @@ export class MCPClientManager {
   }
 
   /**
+   * {@link getManagedClient} once the server's connection attempt is done.
+   * A manager built with servers queues their connects, so a read right
+   * after construction can find the attempt still running. Rejects when the
+   * connection fails, as `listTools` would.
+   */
+  async ensureManagedClient(
+    serverId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<import("./managed-mcp-client.js").ManagedMcpClient | undefined> {
+    await this.ensureConnected(serverId, options?.signal);
+    return this.getManagedClient(serverId);
+  }
+
+  /**
    * Gets initialization information for a connected server.
    */
   getInitializationInfo(serverId: string) {
