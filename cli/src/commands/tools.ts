@@ -2,6 +2,7 @@ import { Command } from "commander";
 import {
   buildToolCallValidationReport,
   isCallToolResultError,
+  isMCPTasksWireError,
   validateToolCallResult,
 } from "@mcpjam/sdk";
 import type { HttpExchangeLogEvent, MCPServerConfig } from "@mcpjam/sdk";
@@ -408,7 +409,17 @@ async function runTaskAugmentedToolCall(args: {
                   request: { signal },
                 });
         } catch (error) {
-          if (!signal.aborted) throw error;
+          if (!signal.aborted) {
+            // The manager refused the call before sending it (for example, a
+            // 2025-11-25 tool with no taskSupport). A server condition, not
+            // an internal error, the same mapping `tasks result` uses.
+            if (isMCPTasksWireError(error)) {
+              throw cliError("TASKS_UNSUPPORTED", error.message, 1, {
+                wire: error.wire,
+              });
+            }
+            throw error;
+          }
           // No task exists yet, so there is no watch envelope to report and no
           // task id to name. `phase` says where the interrupt landed.
           return {

@@ -30,6 +30,8 @@ function seedManager(options: {
   capabilities?: Record<string, unknown>;
   requestResult?: unknown;
   callToolResult?: unknown;
+  /** What `tools/list` returns. Not recorded in `calls`. */
+  tools?: Array<Record<string, unknown>>;
 }): { manager: MCPClientManager; calls: Recorded[]; serverId: string } {
   const serverId = options.serverId ?? "srv";
   const calls: Recorded[] = [];
@@ -55,6 +57,17 @@ function seedManager(options: {
       );
       return options.callToolResult ?? { content: [] };
     },
+    // A task call first checks the tool's `taskSupport` (2025-11-25
+    // tasks.mdx:115); by default the probed tool allows it.
+    listTools: async () => ({
+      tools: options.tools ?? [
+        {
+          name: "long_tool",
+          inputSchema: {},
+          execution: { taskSupport: "optional" },
+        },
+      ],
+    }),
   } as unknown as ManagedMcpClient;
 
   (manager as any).registeredServers.set(serverId, {
@@ -184,6 +197,52 @@ describe("executeTool legacy task wire", () => {
     await expect(attempt).rejects.toThrow(/tasks\.requests\.tools\.call/);
     expect(calls).toEqual([]);
   });
+
+  // 2025-11-25 tasks.mdx:115: a tool whose taskSupport is missing or
+  // "forbidden" MUST NOT be called as a task, even on a server that accepts
+  // task tool calls. Nothing may be sent.
+  for (const [label, tools, reason] of [
+    [
+      "has no taskSupport",
+      [{ name: "long_tool", inputSchema: {} }],
+      /"long_tool" on server "srv" has no taskSupport/,
+    ],
+    [
+      'has taskSupport "forbidden"',
+      [
+        {
+          name: "long_tool",
+          inputSchema: {},
+          execution: { taskSupport: "forbidden" },
+        },
+      ],
+      /has taskSupport "forbidden"/,
+    ],
+    [
+      "is not listed",
+      [],
+      /is not listed by the server, so its taskSupport is unknown/,
+    ],
+  ] as const) {
+    it(`throws (and sends nothing) when the tool ${label}`, async () => {
+      const { manager, calls, serverId } = seedManager({
+        protocolVersion: "2025-11-25",
+        capabilities: LEGACY_TASK_CAPS as never,
+        tools: tools as unknown as Array<Record<string, unknown>>,
+      });
+
+      const attempt = manager.executeTool(
+        serverId,
+        "long_tool",
+        {},
+        undefined,
+        {}
+      );
+      await expect(attempt).rejects.toBeInstanceOf(MCPTasksWireError);
+      await expect(attempt).rejects.toThrow(reason);
+      expect(calls).toEqual([]);
+    });
+  }
 
   it("leaves non-task calls byte-identical on every version", async () => {
     for (const version of [
