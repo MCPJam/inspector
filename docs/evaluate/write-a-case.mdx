@@ -6,26 +6,145 @@ icon: "file-pen-line"
 
 A case is one scenario: what the user asks, which tool should handle it, and the assertions that grade the result. Each run of a case is one iteration.
 
+<Note>
+  To draft cases from your server's tools or a test plan instead of writing each one, see [Generate cases](/evaluate/generate-cases).
+</Note>
+
 ## Add a case
 
-<Steps>
-  <Step title="Open the suite">
-    In the Evaluate tab, open **Suites** and pick a suite.
-  </Step>
-  <Step title="Start a blank case">
-    On the **Test Cases** card, click **Add case**, then **Add manually**. In an empty suite ("No cases yet"), click **Describe**, which opens the same form beside a chat; you can fill it in yourself.
-  </Step>
-  <Step title="Write the prompt and checks">
-    Type what the user asks in the first **User prompt**, then click **Add assertion or action** to add checks.
-  </Step>
-  <Step title="Save and run">
-    Click **Save**, then **Run**.
-  </Step>
-</Steps>
+Each tab adds the same two cases to a notes server: one that should read a note, and a negative one that should call no tool.
 
-A new case is a draft until you save it: leaving without saving adds nothing to the suite, and **Run** stays disabled. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite">
+        In the Evaluate tab, open **Suites** and pick a suite.
+      </Step>
+      <Step title="Start a blank case">
+        On the **Test Cases** card, click **Add case**, then **Add manually**. In an empty suite ("No cases yet"), click **Describe**, which opens the same form beside a chat; you can fill it in yourself.
+      </Step>
+      <Step title="Write the prompt and checks">
+        Type what the user asks in the first **User prompt**, then click **Add assertion or action** to add checks. For the negative case, type "What parameters does read_note take?" and add "No tools should be called".
+      </Step>
+      <Step title="Save and run">
+        Click **Save**, then **Run**.
+      </Step>
+    </Steps>
 
-{/* Screenshot: case editor with one User prompt, a "Tool was called with…" row under it, the Expected outcome box, and the Add assertion or action button */}
+    A new case is a draft until you save it: leaving without saving adds nothing to the suite, and **Run** stays disabled. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
+
+    {/* Screenshot: case editor with one User prompt, a "Tool was called with…" row under it, the Expected outcome box, and the Add assertion or action button */}
+  </Tab>
+  <Tab title="CLI">
+    In a suite file, a case is a list of steps, each a `prompt` or an `assert`. `onlyToolsCalled` with an empty `toolNames` list passes only when no tool is called:
+
+    ```yaml .mcpjam/evals/example.yaml
+    cases:
+      - id: c_reads_a_note
+        title: reads the note it was asked about
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: What does note 7 say?
+          - id: a1
+            kind: assert
+            assertion:
+              type: toolCalledAtLeastOnce
+              toolName: read_note
+      - id: c_params_question_no_tool
+        title: answers a parameters question without a tool
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: What parameters does read_note take?
+          - id: a1
+            kind: assert
+            assertion:
+              type: onlyToolsCalled
+              toolNames: []
+    ```
+
+    Run only the new case. The rest of the file (`schemaVersion`, `suite`, `target`, `defaults`) is in [Local evals](/cli/local-evals#1-write-a-suite).
+
+    ```bash
+    mcpjam test .mcpjam/evals/example.yaml --case c_params_question_no_tool
+    ```
+
+    To add a case to a suite in your MCPJam project instead, pass the same `steps` as JSON to `mcpjam cloud eval cases create`, then run it:
+
+    ```json case.json
+    {
+      "title": "answers a parameters question without a tool",
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "What parameters does read_note take?" },
+        { "id": "a1", "kind": "assert", "assertion": { "type": "onlyToolsCalled", "toolNames": [] } }
+      ]
+    }
+    ```
+
+    ```bash
+    mcpjam cloud eval cases create --suite "Notes server" --file case.json
+    mcpjam cloud eval cases run --suite "Notes server" --case "answers a parameters question without a tool"
+    ```
+  </Tab>
+  <Tab title="SDK">
+    `expectedToolCalls` and `predicates` are checked on every iteration, alongside the boolean your `test` function returns. [Validators](/sdk/reference/validators) such as `matchNoToolCalls` build that boolean.
+
+    ```ts evals/notes-cases.test.ts
+    import { afterAll, beforeAll, expect, test } from "vitest";
+    import { EvalTest, HostRunner, MCPClientManager, matchNoToolCalls } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-haiku-4.5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      await manager.disconnectServer("notes");
+    });
+
+    test("reads the note it was asked about", async () => {
+      const readsNote = new EvalTest({
+        id: "c_reads_a_note",
+        name: "reads the note it was asked about",
+        expectedToolCalls: [{ toolName: "read_note" }],
+        predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+      });
+      await readsNote.run(agent, { iterations: 3 });
+      expect(readsNote.accuracy()).toBe(1);
+    }, 300_000);
+
+    test("answers a parameters question without a tool", async () => {
+      const noTool = new EvalTest({
+        id: "c_params_question_no_tool",
+        name: "answers a parameters question without a tool",
+        predicates: [{ type: "onlyToolsCalled", toolNames: [] }],
+        test: async (a) =>
+          matchNoToolCalls((await a.run("What parameters does read_note take?")).toolsCalled()),
+      });
+      await noTool.run(agent, { iterations: 3 });
+      expect(noTool.accuracy()).toBe(1);
+    }, 300_000);
+    ```
+
+    ```bash
+    npx vitest run evals/notes-cases.test.ts
+    ```
+
+    See [EvalTest](/sdk/reference/eval-test) for `matchOptions` and every option.
+  </Tab>
+</Tabs>
 
 ## Actions and assertions
 
@@ -120,14 +239,14 @@ Turn on **Skip the judge for this case** to exclude this case from the judge. Th
 
 ## The same case in a suite file
 
-A case in a suite file run by `mcpjam test` has the same shape: a list of steps, each a `prompt` or an `assert`. This one checks each turn of a two-prompt conversation.
+A case in a suite file run by `mcpjam test` has the same shape: a list of steps, each a `prompt` or an `assert`. In the SDK, each step is a line of the `test` function. This one checks each turn of a two-prompt conversation.
 
 <Tabs>
   <Tab title="Inspector">
     1. **User prompt** "What does note 7 say?", with "Tool was called at least once" for `read_note` under it.
     2. A second **User prompt** "Thanks, that's all.", with "Tool was never called" for `delete_note` under it.
   </Tab>
-  <Tab title="Suite file">
+  <Tab title="CLI">
     ```yaml
     cases:
       - id: c_read_then_thanks
@@ -152,6 +271,25 @@ A case in a suite file run by `mcpjam test` has the same shape: a list of steps,
     ```
 
     The rest of the file (`schemaVersion`, `suite`, `target`, `defaults`) is in [Local evals](/cli/local-evals#1-write-a-suite).
+  </Tab>
+  <Tab title="SDK">
+    Each turn is a `run` call that passes the earlier result as `context`. This reuses `agent` from the test file in [Add a case](#add-a-case):
+
+    ```ts
+    import { EvalTest } from "@mcpjam/sdk";
+
+    const readThenThanks = new EvalTest({
+      id: "c_read_then_thanks",
+      name: "reads a note, then does nothing on thanks",
+      test: async (a) => {
+        const r1 = await a.run("What does note 7 say?");
+        const r2 = await a.run("Thanks, that's all.", { context: r1 });
+        return r1.hasToolCall("read_note") && !r2.hasToolCall("delete_note");
+      },
+    });
+
+    await readThenThanks.run(agent, { iterations: 3 });
+    ```
   </Tab>
 </Tabs>
 

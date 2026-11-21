@@ -37,20 +37,101 @@ MCPJam grades every iteration along six stages, in order, and reports the first 
 
 Pick the surface by where you want the suite to live.
 
-| Surface | How you start a run | Where the suite lives |
-|---|---|---|
-| Inspector app | **Run** on the **Evaluate** tab | In your MCPJam project |
-| CLI, on your machine | `mcpjam test <file>` | A suite file in your repository, such as `.mcpjam/evals/example.yaml`. Results stay on your machine. See [Local evals](/cli/local-evals). |
-| CLI, hosted | `mcpjam cloud eval run --suite <name>`, or `--file <path>` | In your MCPJam project. `--file` uploads a suite file and runs it. See [Evals in CI](/cli/ci#evals-in-ci). |
-| SDK | `EvalTest` and `EvalSuite` from `@mcpjam/sdk` | In your test code. Results go to your project when you set `MCPJAM_API_KEY` and name a suite. See [Saving results](/sdk/concepts/saving-results). |
+<Tabs>
+  <Tab title="Inspector">
+    Click **Run** on the **Evaluate** tab. The suite lives in your MCPJam project. [Run your first eval](/evaluate/run-your-first-eval) creates one from a connected server and runs it.
+  </Tab>
+  <Tab title="CLI">
+    Install the CLI and sign in. In CI, set `MCPJAM_API_KEY` to an `sk_` key instead of signing in.
+
+    ```bash Install and sign in
+    npm i -g @mcpjam/cli
+    mcpjam cloud login
+    ```
+
+    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. See [Local evals](/cli/local-evals).
+
+    ```bash Local run
+    export ANTHROPIC_API_KEY=sk-ant-...
+    mcpjam test .mcpjam/evals/example.yaml
+    ```
+
+    `mcpjam cloud eval run` runs a suite in your MCPJam project. `--file` uploads a suite file and runs it; its servers must be saved in the project. See [Evals in CI](/cli/ci#evals-in-ci).
+
+    ```bash Hosted run
+    # A suite saved in your project
+    mcpjam cloud eval run --suite "Notes server" --wait
+
+    # Or upload a suite file and run it
+    mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
+    ```
+  </Tab>
+  <Tab title="SDK">
+    `EvalTest` and `EvalSuite` from `@mcpjam/sdk` keep the suite in your test code. Results go to your project when you set `MCPJAM_API_KEY` and name a suite. See [Saving results](/sdk/concepts/saving-results).
+
+    ```bash Install
+    npm install @mcpjam/sdk
+    ```
+
+    ```ts evals/notes.mts
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    await manager.connectToServer("notes");
+
+    const agent = new HostRunner({
+      tools: await manager.getTools(),
+      model: "anthropic/claude-haiku-4.5",
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      mcpClientManager: manager,
+    });
+
+    const suite = new EvalSuite({ name: "Notes server" });
+    suite.add(new EvalTest({
+      id: "c_reads_a_note",
+      name: "reads the note it was asked about",
+      test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+    }));
+
+    await suite.run(agent, { iterations: 3 });
+    console.log(`Accuracy: ${(suite.accuracy() * 100).toFixed(1)}%`);
+    await manager.disconnectServer("notes");
+    ```
+
+    ```bash Run
+    export ANTHROPIC_API_KEY=sk-ant-...
+    npx tsx evals/notes.mts
+    ```
+  </Tab>
+</Tabs>
 
 Suites created from a suite file or the SDK carry a **CI** badge in the app; change them in code, not in the app.
 
-Current CLI and SDK versions need an MCPJam login or an `sk_` API key for every eval, including runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
+<Info>
+  Current CLI and SDK versions need an MCPJam login or an `sk_` API key for every eval, including runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
+</Info>
 
 <Warning>
 Evals call real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. A run's size is cases × iterations per case × client/model pairs; the Inspector's run sheet shows that total before you start.
 </Warning>
+
+## Example suites
+
+Copy one of these to start a suite in code or in a file.
+
+<CardGroup cols={3}>
+  <Card title="Asana" icon="github" href="https://github.com/MCPJam/inspector/tree/main/examples/evals/asana">
+    SDK unit tests and evals for the Asana MCP server, run with Jest: tool choice, arguments, multi-turn conversations and token use.
+  </Card>
+  <Card title="Bright Data" icon="github" href="https://github.com/MCPJam/inspector/tree/main/examples/evals/brightdata">
+    SDK unit tests and evals for the Bright Data ecommerce MCP server, run with Vitest.
+  </Card>
+  <Card title="Suite file quick start" icon="file-code" href="/cli/local-evals#quick-start">
+    A two-case YAML suite for a notes server, run with `mcpjam test`.
+  </Card>
+</CardGroup>
 
 ## Next steps
 

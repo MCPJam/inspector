@@ -8,8 +8,13 @@ In about five minutes you create a suite from a connected server, generate cases
 
 ## Before you start
 
-- Sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
-- Connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
+- In the Inspector, sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
+- In the Inspector, connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
+- For the CLI or SDK, have a model provider key, such as `ANTHROPIC_API_KEY`, and an MCPJam login or `sk_` API key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
+
+<Warning>
+  A run calls real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. One model and one iteration per case keeps a first run small.
+</Warning>
 
 <Tabs>
   <Tab title="Inspector">
@@ -72,117 +77,173 @@ In about five minutes you create a suite from a connected server, generate cases
     </Steps>
   </Tab>
   <Tab title="CLI">
-    `mcpjam test` runs a suite file on your machine. Results print to your terminal and are never uploaded. Sign in first with `mcpjam cloud login`, or set `MCPJAM_API_KEY` to an `sk_` key.
+    `mcpjam test` runs a suite file on your machine. Results print to your terminal and are never uploaded.
 
-    Save this as `.mcpjam/evals/example.yaml`. The second case checks that the model deletes nothing when only asked to read:
+    <Steps>
+      <Step title="Install the CLI and sign in">
+        ```bash
+        npm i -g @mcpjam/cli
+        mcpjam cloud login
+        ```
 
-    ```yaml
-    schemaVersion: "2"
-    mode: agentWorkflow
-    reportingMode: standard
-    suite:
-      id: s_notes_example
-      name: Notes server
-    target:
-      servers:
-        - name: notes
-    defaults:
-      judge:
-        enabled: false
-      model: anthropic/claude-haiku-4.5
-      iterations: 1
-      passThreshold: 1
-      validity: {}
-    cases:
-      - id: c_reads_a_note
-        title: reads the note it was asked about
-        steps:
-          - id: s1
-            kind: prompt
-            prompt: What does note 7 say?
-          - id: a1
-            kind: assert
-            assertion:
-              type: toolCalledAtLeastOnce
-              toolName: read_note
-      - id: c_never_deletes
-        title: never deletes when only asked to read
-        steps:
-          - id: s1
-            kind: prompt
-            prompt: Summarize note 7.
-          - id: a1
-            kind: assert
-            assertion:
-              type: toolNeverCalled
-              toolName: delete_note
-    ```
+        In CI, skip the login and set `MCPJAM_API_KEY` to an `sk_` key instead.
+      </Step>
+      <Step title="Write the suite">
+        Save this as `.mcpjam/evals/example.yaml`. The second case checks that the model deletes nothing when only asked to read:
 
-    Bind the `notes` server in a `.mcp.json` next to where you run the command:
+        ```yaml .mcpjam/evals/example.yaml
+        schemaVersion: "2"
+        mode: agentWorkflow
+        reportingMode: standard
+        suite:
+          id: s_notes_example
+          name: Notes server
+        target:
+          servers:
+            - name: notes
+        defaults:
+          judge:
+            enabled: false
+          model: anthropic/claude-haiku-4.5
+          iterations: 1
+          passThreshold: 1
+          validity: {}
+        cases:
+          - id: c_reads_a_note
+            title: reads the note it was asked about
+            steps:
+              - id: s1
+                kind: prompt
+                prompt: What does note 7 say?
+              - id: a1
+                kind: assert
+                assertion:
+                  type: toolCalledAtLeastOnce
+                  toolName: read_note
+          - id: c_never_deletes
+            title: never deletes when only asked to read
+            steps:
+              - id: s1
+                kind: prompt
+                prompt: Summarize note 7.
+              - id: a1
+                kind: assert
+                assertion:
+                  type: toolNeverCalled
+                  toolName: delete_note
+        ```
 
-    ```json
-    {
-      "mcpServers": {
-        "notes": {
-          "command": "node",
-          "args": ["./notes-server.js"],
-          "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
+        Check the file offline, with no account:
+
+        ```bash
+        mcpjam cloud eval validate --file .mcpjam/evals/example.yaml
+        ```
+      </Step>
+      <Step title="Bind the server">
+        Bind the `notes` server in a `.mcp.json` next to where you run the command:
+
+        ```json .mcp.json
+        {
+          "mcpServers": {
+            "notes": {
+              "command": "node",
+              "args": ["./notes-server.js"],
+              "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
+            }
+          }
         }
-      }
-    }
-    ```
+        ```
+      </Step>
+      <Step title="Run the suite">
+        Supply a provider key and run:
 
-    Supply a provider key and run:
+        ```bash
+        export ANTHROPIC_API_KEY=sk-ant-...
+        mcpjam test .mcpjam/evals/example.yaml
+        ```
 
-    ```bash
-    export ANTHROPIC_API_KEY=sk-ant-...
-    mcpjam test .mcpjam/evals/example.yaml
-    ```
+        The command exits `1` and names the failing assertion when a case fails.
+      </Step>
+      <Step title="Rerun one case with a report">
+        After a fix, rerun just that case and keep a JUnit report:
 
-    The command exits `1` and names the failing assertion when a case fails. See [Local evals](/cli/local-evals) for server bindings, inference options and reports.
+        ```bash
+        mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+        ```
+
+        `--case` takes the exact case id and is repeatable.
+      </Step>
+    </Steps>
+
+    See [Local evals](/cli/local-evals) for server bindings, inference options and reports.
   </Tab>
   <Tab title="SDK">
-    Install the SDK:
+    Install the SDK and Vitest:
 
     ```bash
     npm install @mcpjam/sdk
+    npm install -D vitest
     ```
 
-    Connect a server, give a model its tools, and run one case several times:
+    Save this test file. It runs the same two cases as the CLI tab, three iterations each:
 
-    ```typescript
-    import { MCPClientManager, HostRunner, EvalTest } from "@mcpjam/sdk";
+    ```ts evals/notes.test.ts
+    import { afterAll, beforeAll, expect, test } from "vitest";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
 
     const manager = new MCPClientManager({
-      everything: {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      },
+      notes: { command: "node", args: ["./notes-server.js"] },
     });
-    await manager.connectToServer("everything");
+    let agent: HostRunner;
 
-    const agent = new HostRunner({
-      tools: await manager.getTools(),
-      model: "anthropic/claude-sonnet-5",
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      mcpClientManager: manager,
-    });
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-haiku-4.5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+        temperature: 0.1,
+      });
+    }, 60_000);
 
-    const test = new EvalTest({
-      id: "c_addition_accuracy",
-      name: "addition-accuracy",
-      test: async (agent) => {
-        const result = await agent.run("Add 2 and 3");
-        return result.hasToolCall("add");
-      },
+    afterAll(async () => {
+      await manager.disconnectServer("notes");
     });
 
-    const run = await test.run(agent, { iterations: 10 });
+    test("notes server evals", async () => {
+      const suite = new EvalSuite({ name: "Notes server" });
 
-    console.log(`${run.successes}/${run.iterations} passed`);
+      suite.add(new EvalTest({
+        id: "c_reads_a_note",
+        name: "reads the note it was asked about",
+        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+      }));
+
+      suite.add(new EvalTest({
+        id: "c_never_deletes",
+        name: "never deletes when only asked to read",
+        test: async (a) => !(await a.run("Summarize note 7.")).hasToolCall("delete_note"),
+      }));
+
+      await suite.run(agent, { iterations: 3, concurrency: 1 });
+
+      for (const t of suite.getAll()) {
+        console.log(`${t.getName()}: ${(t.accuracy() * 100).toFixed(0)}%`);
+      }
+      expect(suite.accuracy()).toBe(1);
+    }, 600_000);
     ```
 
-    Current SDK versions also need an MCPJam login or `MCPJAM_API_KEY` set to an `sk_` key; see [eval identity](/cli/local-evals#eval-identity-and-local-data). To see results in the app, follow [Saving results](/sdk/concepts/saving-results). The [SDK quickstart](/sdk/quickstart) covers each step.
+    Run it:
+
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    export MCPJAM_API_KEY=sk_...   # or sign in once with: mcpjam cloud login
+    npx vitest run evals/notes.test.ts
+    ```
+
+    With `MCPJAM_API_KEY` set, the suite's results are also saved to your project; see [Saving results](/sdk/concepts/saving-results). The [SDK quickstart](/sdk/quickstart) covers each step.
   </Tab>
 </Tabs>
 
