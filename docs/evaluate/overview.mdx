@@ -4,9 +4,9 @@ description: "Test how real models use your MCP server: which tools they call, w
 icon: "flask-conical"
 ---
 
-An eval sends a real prompt to a real model that is connected to your MCP server. MCPJam records what the model does, then checks it: which tools it called, the arguments it passed, and whether the user's request was satisfied.
+An eval sends a real prompt to a real model connected to your MCP server, records what the model does, and checks it: which tools it called, the arguments it passed, and whether the user's request was satisfied.
 
-One scenario is a case. Cases are grouped into a suite, and a suite runs against the clients and models you pick, so you can see where each model gets your server right and where it doesn't.
+One scenario is a case. A suite groups cases and runs them against the clients and models you pick, so you see where each model gets your server right and where it doesn't.
 
 <Note>
 This section is for testing how models use your server. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
@@ -14,7 +14,7 @@ This section is for testing how models use your server. To call tools by hand, u
 
 ## What an eval checks
 
-Every iteration of a case is graded along six stages, in order. MCPJam reports the stage where the chain stopped holding, so a failure points at a likely owner: the connection, the server's tool catalog, the model's choice, or the server's answer.
+MCPJam grades every iteration along six stages, in order, and reports the first stage that failed. That points at a likely owner: the connection, the server's tool catalog, the model's choice, or the server's answer.
 
 | Stage | The question it answers |
 |---|---|
@@ -29,13 +29,13 @@ Every iteration of a case is graded along six stages, in order. MCPJam reports t
 
 ## When to use evals
 
-- To catch routing regressions: after you rewrite a tool's description or change its input schema, rerun the suite. The run page counts the cases that regressed and the ones that were fixed since the previous run.
-- To compare models: run one suite across several client and model pairs. Results are broken out per pair, so a case that passes on one model and fails on another stands out.
-- To gate releases: run a suite in CI and fail the build when it doesn't pass. See [Run evals in CI](/evaluate/run-evals-in-ci).
+- Catch routing regressions: after you change a tool's description or input schema, rerun the suite. The run page counts cases regressed and fixed since the previous run.
+- Compare models: run one suite across several client and model pairs. Results are broken out per pair, so a case that fails on only one model stands out.
+- Gate releases: run a suite in CI and fail the build when it doesn't pass. See [Run evals in CI](/evaluate/run-evals-in-ci).
 
 ## Where to run evals
 
-Evals run from the Inspector, the CLI, or the SDK. Pick the surface that matches where you want the suite to live.
+Pick the surface by where you want the suite to live.
 
 | Surface | How you start a run | Where the suite lives |
 |---|---|---|
@@ -44,12 +44,12 @@ Evals run from the Inspector, the CLI, or the SDK. Pick the surface that matches
 | CLI, hosted | `mcpjam cloud eval run --suite <name>`, or `--file <path>` | In your MCPJam project. `--file` uploads a suite file and runs it. See [Evals in CI](/cli/ci#evals-in-ci). |
 | SDK | `EvalTest` and `EvalSuite` from `@mcpjam/sdk` | In your test code. Results go to your project when you set `MCPJAM_API_KEY` and name a suite. See [Saving results](/sdk/concepts/saving-results). |
 
-Suites created from a suite file or the SDK carry a **CI** badge in the app. You change them in code, not in the app.
+Suites created from a suite file or the SDK carry a **CI** badge in the app; change them in code, not in the app.
 
 Current CLI and SDK versions need an MCPJam login or an `sk_` API key for every eval, including runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
 
 <Warning>
-Evals call real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. A run's size is cases × iterations per case × client/model pairs, and the Inspector's run sheet shows that total before you start.
+Evals call real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. A run's size is cases × iterations per case × client/model pairs; the Inspector's run sheet shows that total before you start.
 </Warning>
 
 ## Next steps

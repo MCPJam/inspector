@@ -4,31 +4,33 @@ description: "The objects an eval is made of, what happens during a run, and how
 icon: "workflow"
 ---
 
-An eval run sends each case's prompt to each model you picked, records what the model and your server did, and grades the recording. This page names the objects involved, walks through one run, and explains what decides pass or fail.
+An eval run sends each case's prompt to each model you picked, records what the model and your server did, and grades the recording.
 
-## Projects, suites, cases, runs and iterations
+## The objects
 
 | Object | What it is |
 |---|---|
 | Project | Holds your servers, clients and suites. See [Projects](/inspector/projects). |
+| Client | A saved MCP client configuration a run emulates. See [Clients](/inspector/clients). |
 | Suite | A set of cases plus the settings they share: servers, clients and models, evaluators, and the pass criterion. |
 | Case | One scenario: a user prompt, or several turns, and the evaluators that decide whether the model handled it. |
 | Run | One execution of a suite against the clients and models chosen when it started. |
 | Iteration | One execution of one case on one client and model pair. |
+| Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing. |
 
-A model doesn't answer the same prompt the same way every time, so a case usually runs more than once. The number of iterations in a run is:
+A model doesn't answer the same prompt the same way every time, so a case usually runs more than once. A run's iteration count is:
 
 ```
 cases × iterations per case × client/model pairs
 ```
 
-For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, **Iterations per case** is set on the run sheet, and the sheet's footer shows the product before you start, worded as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
+For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, set **Iterations per case** on the run sheet; its footer shows the product as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
 
 ## What happens in a run
 
 <Steps>
   <Step title="Servers connect">
-    Each client connects to the suite's servers and lists their tools. These are the Connection and Discovery stages.
+    Each client connects to the suite's servers and lists their tools. These are the Connection and Discovery stages of the [user-value chain](/sdk/concepts/user-value-chain).
   </Step>
   <Step title="Prompts go out">
     For every iteration, the case's prompt goes to the model along with the tools the client discovered.
@@ -40,10 +42,10 @@ For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iter
     Every message, tool call, argument, result, token count and latency is saved as the iteration's trace.
   </Step>
   <Step title="Evaluators grade the iteration">
-    Assertions check the trace, and judges score it. A run whose iterations have finished but are still being scored shows **Grading**.
+    Assertions check the trace, and judges score it. While finished iterations are being scored, the run shows **Grading**.
   </Step>
   <Step title="The verdict is decided">
-    Each iteration passes or fails on its Required evaluators. The suite's pass criterion turns those results into the run's verdict.
+    Each iteration passes or fails on its Required evaluators. The suite's pass criterion turns those results into the run's verdict: passed, failed or inconclusive.
   </Step>
 </Steps>
 
@@ -56,7 +58,7 @@ Under a per-case pass rate, a run that did not record enough gradeable iteration
 
 ## Evaluators: assertions and judges
 
-An evaluator is anything that grades an iteration. There are two kinds.
+An evaluator grades an iteration. It is either an assertion or a judge.
 
 | | Assertion | Judge |
 |---|---|---|
@@ -73,18 +75,9 @@ A suite's judges are the **Goal completion judge**, which scores whether the req
 
 ## Comparing against a baseline
 
-Once a suite has an earlier completed run, the run page compares against it. A line under the summary reads like "vs run #4: 2 regressed · 1 fixed · 5 passing", and each case row carries one of these pills:
+Once a suite has an earlier completed run, the run page compares each new run against a baseline, the previous completed run. A line under the summary reads like "vs run #4: 2 regressed · 1 fixed · 5 passing", and each case row is marked Regressed, Fixed, Still failing, Unchanged, New or Reconfigured. [Read results](/evaluate/read-results) defines each label.
 
-| Pill | Meaning |
-|---|---|
-| Regressed | Passed in the baseline, fails now |
-| Fixed | Failed in the baseline, passes now |
-| Still failing | Failed in both |
-| Unchanged | Passed in both |
-| New | Not in the baseline |
-| Reconfigured | The case or its configuration changed between the two runs |
-
-The baseline is the previous completed run. To compare against a different one, click **Compare runs** on the run page and pick it.
+To compare against a different run, click **Compare runs** on the run page and pick it.
 
 ## What drives cost
 
@@ -92,26 +85,7 @@ The baseline is the previous completed run. To compare against a different one, 
 - The model work in each iteration: each round of tool calls is another model call, and every tool result is sent back to the model as input. Multi-turn cases and long tool results cost more.
 - Judges: each judge adds a model call for every iteration it grades.
 
-Each column header in the results grid shows that client and model's cost. " · partial" means only some of its iterations were priced. A dash means no cost was observed, because the run used your own provider key or reported no token usage. It never means the run was free.
-
-## Glossary
-
-| Term | Meaning |
-|---|---|
-| Suite | Cases plus shared settings and a pass criterion |
-| Case | One authored scenario with a stable identity |
-| Run | One execution of a suite |
-| Iteration | One execution of one case on one client and model pair |
-| Iterations per case | How many times each case runs in a run |
-| Client | A saved MCP client configuration a run emulates. See [Clients](/inspector/clients). |
-| Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing |
-| Evaluator | An assertion or a judge |
-| Assertion | A deterministic rule over the trace |
-| Judge | A model that scores the trace against a rubric or expected outcome |
-| Required, Advisory | An evaluator's role: whether a miss fails the iteration |
-| Verdict | The decision the pass criterion reaches for a run: passed, failed or inconclusive |
-| Stage | One of the six links of the [user-value chain](/sdk/concepts/user-value-chain), from Connection to User value |
-| Baseline | The earlier run a run is compared against |
+Each column header in the results grid shows that client and model's cost. A dash means no cost was observed, never that the run was free; [Read results](/evaluate/read-results) explains dashes and " · partial".
 
 ## Next steps
 
