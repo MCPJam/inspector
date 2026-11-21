@@ -20,7 +20,8 @@ Allowed: `@/shared/*`, and `@mcpjam/sdk` or its subpaths by package name.
 - In a `catch` under `routes/` (outside `routes/web/`), report with
   `reportRouteFailure` (`utils/route-error-report.ts`), not `logger.error`.
   Enforced by `no-restricted-syntax`: `npm run lint -w @mcpjam/inspector`.
-- In `routes/web/`, `logger.warn/error/info` fail lint; emit a typed
+- In `routes/web/`, `logger.warn/error/info` fail lint. Report a caught
+  failure with `reportRouteFailure`; emit anything else as a typed
   `logger.event()` from the `utils/LOGGING.md` catalog. Same lint command.
 - No raw `console.*`; use `logger` from `@/utils/logger`. Enforced by the
   `server-console` slop rule: `npm run slop:check`.

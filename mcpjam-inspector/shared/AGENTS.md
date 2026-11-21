@@ -31,7 +31,9 @@ its subpaths by package name, and packages that run in both browser and Node.
 ## Verify
 
 `shared/` compiles in both programs. `npm run typecheck:client -w @mcpjam/inspector`
-fails on any error in it. `npm run typecheck:server -w @mcpjam/inspector` only
-counts errors in `server/` files, so it catches a change that breaks a server
-caller. Then `npm run lint -w @mcpjam/inspector`, `npm run slop:check`, and
+fails on any error in it. `npm run typecheck:server -w @mcpjam/inspector` is a
+ratchet over `server/` files: it fails only when a file's error count rises
+above its baseline, so a change that swaps one server error for another
+passes. `npx tsc --noEmit -p server/tsconfig.json` shows the diagnostics.
+Then `npm run lint -w @mcpjam/inspector`, `npm run slop:check`, and
 `npm run test -w @mcpjam/inspector -- shared/<path>`.

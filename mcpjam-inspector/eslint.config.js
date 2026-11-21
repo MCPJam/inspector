@@ -5,18 +5,21 @@ import reactHooks from "eslint-plugin-react-hooks";
 // One layer per directory. `shared` is loaded by the browser and by Node, so
 // it can depend on neither side. The SDK is a package: a relative path into
 // its source skips the entry points its consumers are held to.
+// Any run of `./` and `../` segments with at least one `../`, so
+// `.././../client/` is caught like `../../client/`.
+const UP_PATH = "^(\\.\\.?/)*\\.\\./(\\./)*";
 const SDK_BY_PATH = {
-  regex: "^(\\.\\./)+sdk/src/",
+  regex: `${UP_PATH}sdk/src/`,
   message:
     "Import the SDK by package name (`@mcpjam/sdk` or `@mcpjam/sdk/<subpath>`), not by a relative path into sdk/src.",
 };
 const SERVER_BY_PATH = {
-  regex: "^(\\.\\./)+server/",
+  regex: `${UP_PATH}server/`,
   message:
     "Client and shared code cannot import the server. Move what both sides need into shared/.",
 };
 const CLIENT_BY_PATH = {
-  regex: "^(\\.\\./)+client/",
+  regex: `${UP_PATH}client/`,
   message:
     "Server and shared code cannot import the client. Move what both sides need into shared/.",
 };
