@@ -1,18 +1,30 @@
 /**
  * The web client runtime's place in the server: the account routes, and the
- * environment hosted turns build their account, connectors and browser from.
+ * environment each turn builds its account, connectors and browser from.
  * Both server entries (`index.ts`, `app.ts`) call this one function.
  *
- * A local Inspector gets no environment here: its runs need a public URL for
- * the vendor to reach and a browser profile source, which only the local
- * tracer provides today.
+ * Hosted, the environment is the backend's accounts and the hosted browser.
+ * A local Inspector gets one only with `web-clients-enabled` on in its flag
+ * file: its connectors answer to no backend, so the flag file is the switch
+ * (see `docs/web-clients-forwarding.md`).
  */
 import type { Hono } from "hono";
+import { rolloutAnswerWithoutPostHog } from "../../utils/feature-flag-source.js";
+import { WEB_CLIENTS_FEATURE_FLAG } from "@/shared/web-clients";
 import { createDefaultWebAccountRoutes } from "./account-routes-default.js";
 import { createHostedWebClientEnvironmentFactory } from "./hosted-web-client-runtime.js";
+import { createLocalWebClientEnvironmentFactory } from "./local-web-client-environment.js";
 import { setWebClientEnvironment } from "./web-client-environment.js";
 
-export function mountWebClientRuntime(app: Hono, options: { hosted: boolean }): void {
+export function mountWebClientRuntime(
+  app: Hono,
+  options: { hosted: boolean; flagOn?: () => boolean },
+): void {
   app.route("/api/web-clients", createDefaultWebAccountRoutes());
-  if (options.hosted) setWebClientEnvironment(createHostedWebClientEnvironmentFactory());
+  if (options.hosted) {
+    setWebClientEnvironment(createHostedWebClientEnvironmentFactory());
+    return;
+  }
+  const flagOn = options.flagOn ?? (() => rolloutAnswerWithoutPostHog(WEB_CLIENTS_FEATURE_FLAG) === true);
+  if (flagOn()) setWebClientEnvironment(createLocalWebClientEnvironmentFactory());
 }

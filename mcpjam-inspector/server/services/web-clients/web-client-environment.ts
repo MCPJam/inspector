@@ -8,6 +8,7 @@
  * they are local: a static connector set, a Playwright browser on a
  * persistent profile, a tunnel URL. The turn reads only this interface.
  */
+import type { MCPClientManager } from "@mcpjam/sdk";
 import type { WebClientVendor, WebConnectorAuth } from "@/shared/web-clients";
 import type { SendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
@@ -80,6 +81,8 @@ export type WebTurnContext = {
   actor?: { actorExternalId: string } | { actorUserId: string };
   /** The run's frozen accounts, in the order this turn tries them. */
   runWebAccountIds?: readonly string[];
+  /** How this Inspector reaches each server, for a local connector. */
+  mcpClientManager?: Pick<MCPClientManager, "getServerConfig">;
 };
 
 /** Hosted runs build their environment per turn: who to act as, which chat. */
