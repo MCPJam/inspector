@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useIsPresent } from "framer-motion";
+import { CircleCheck } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Progress } from "@mcpjam/design-system/progress";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
@@ -6,6 +8,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { track } from "@/lib/analytics";
 import {
   buildConformanceRunPath,
+  buildConformanceSetupPath,
   buildEvaluatePath,
   buildEvaluateSuiteRunPath,
   routePaths,
@@ -16,11 +19,13 @@ import { useSoftQuery } from "@/hooks/use-soft-query";
 import { PLAYGROUND_FIRST_RUN_PROMPT } from "@/components/ui-playground/hooks/use-playground-state";
 import type { ConformanceRunListItem } from "@/components/conformance/ConformanceHistory";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
+import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import type { EnsureServersReadyResult } from "@/hooks/use-server-state";
 import type { ServerWithName } from "@/state/app-types";
 import { AgentStep } from "./AgentStep";
 import { ChecklistStepRow } from "./ChecklistStepRow";
 import { ConnectStep } from "./ConnectStep";
+import { useProgressFromLastVisit } from "./checklist-motion";
 import {
   checklistProgressKey,
   useChecklistProgress,
@@ -51,8 +56,15 @@ function trackStep(step: StepId, action: string, extra: object = {}) {
   });
 }
 
-/** The treatment Home; renders nothing once done or skipped (`onFinished`). */
-export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
+/**
+ * The treatment Home; renders nothing once done or skipped (`onFinished`).
+ * `shown` says whether it was on screen, so Home can animate the handoff.
+ */
+export function HomeChecklist({
+  onFinished,
+}: {
+  onFinished: (shown: boolean) => void;
+}) {
   const navigate = useAppNavigate();
   const ctx = useAppRouteContext();
   const projectServers = (ctx.projectServers ?? {}) as Record<
@@ -72,9 +84,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
       : null;
   const { progress, update } = useChecklistProgress(progressKey);
 
-  const [provisional, setProvisional] = useState<string | null>(null);
+  const [provisional, setProvisional] = useState<string[]>([]);
   const confirmedServers = Object.keys(projectServers).filter(
-    (name) => name !== provisional,
+    (name) => !provisional.includes(name),
   );
   const selected: string | undefined = ctx.appState?.selectedServer;
   const serverName =
@@ -90,15 +102,25 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     "testSuites:getTestSuitesOverview",
     convexProjectId ? { projectId: convexProjectId } : "skip",
   );
+  const historyQuery = useSoftQuery<{ personal?: ChatHistorySession[] }>(
+    "directChatHistory:listCurrentHistory",
+    convexProjectId ? { projectId: convexProjectId, status: "active" } : "skip",
+  );
   const conformanceRuns = conformanceQuery.data;
   const suites = suitesQuery.data;
-  // Until both answer, steps 4 and 5 would read as not done.
+  const answered = (query: { data?: unknown; error?: unknown }) =>
+    query.data !== undefined || query.error !== undefined;
+  // Until all answer, steps 2, 4 and 5 would read as not done.
   const loaded =
     !convexProjectId ||
-    ((conformanceRuns !== undefined || conformanceQuery.error !== undefined) &&
-      (suites !== undefined || suitesQuery.error !== undefined));
+    (answered(conformanceQuery) &&
+      answered(suitesQuery) &&
+      answered(historyQuery));
   const signals = computeChecklistSignals({
     hasServer: confirmedServers.length > 0,
+    hasPlaygroundChat: (historyQuery.data?.personal ?? []).some(
+      (session) => session.messageCount > 0,
+    ),
     progress,
     userId,
     conformanceRuns: conformanceRuns ?? [],
@@ -108,7 +130,22 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const allDone = doneCount === STEP_ORDER.length;
   const handedBack = Boolean(progress.finished || progress.skippedAll);
   const doneOnArrival = useRef<boolean | null>(null);
-  if (loaded && doneOnArrival.current === null) doneOnArrival.current = allDone;
+  // Done before ever seeing the checklist (nothing reported yet), not a last
+  // step finished elsewhere, which still gets the "5 of 5" hold.
+  if (loaded && doneOnArrival.current === null)
+    doneOnArrival.current = allDone && !progress.reported;
+  const hidden = handedBack || (loaded && Boolean(doneOnArrival.current));
+  // Keeps the last frame on screen while Home collapses it after handing back.
+  const present = useIsPresent();
+  const wasShown = useRef(false);
+  if (loaded && !hidden) wasShown.current = true;
+  const saveShown = useCallback((shown: number) => update({ shown }), [update]);
+  const barCount = useProgressFromLastVisit(
+    doneCount,
+    loaded && !hidden,
+    progress.shown,
+    saveShown,
+  );
   // The last step holds on "5 of 5"; skipping or arriving done goes straight back.
   useEffect(() => {
     if (!loaded || handedBack) return;
@@ -124,7 +161,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   }, [loaded, handedBack, progress.reported, signals.done, update]);
   useEffect(() => {
     if (handedBack) {
-      onFinished();
+      onFinished(wasShown.current);
       return;
     }
     if (!loaded || !allDone) return;
@@ -136,7 +173,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
         already_done: Boolean(doneOnArrival.current),
       });
       update({ finished: true });
-      onFinished();
+      onFinished(wasShown.current);
     };
     if (doneOnArrival.current) {
       finish();
@@ -212,7 +249,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   const openConformance = (name: string) => {
     ctx.setSelectedServer(name);
     trackStep("check_server", "opened");
-    navigate(routePaths.conformance);
+    navigate(buildConformanceSetupPath());
   };
   const openEvals = () => {
     const suiteId = signals.eval.suiteId;
@@ -327,7 +364,9 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
         return (
           <AgentStep
             done={signals.done.onboard_agent}
-            onCopied={() => trackStep("onboard_agent", "copied")}
+            onCopied={(agent) =>
+              trackStep("onboard_agent", "copied", { agent })
+            }
             onConfirm={() => {
               update({ agent: true });
               trackStep("onboard_agent", "completed");
@@ -389,7 +428,7 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
     }
   };
 
-  if (handedBack || (loaded && doneOnArrival.current)) return null;
+  if (hidden && (present || !wasShown.current)) return null;
   if (!loaded) return <Skeleton className="h-[30rem] w-full rounded-xl" />;
 
   const shownIndex = STEP_ORDER.indexOf(shownStep);
@@ -398,18 +437,25 @@ export function HomeChecklist({ onFinished }: { onFinished: () => void }) {
   return (
     <section aria-labelledby="home-checklist-title" className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
-          Five steps from a server URL to your first eval.
-        </p>
+        {allDone ? (
+          <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <CircleCheck className="size-4 text-success" aria-hidden />
+            You&apos;re all set.
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Five steps from a server URL to your first eval.
+          </p>
+        )}
         <div className="flex items-center gap-2.5">
           <span
             className="text-xs font-medium text-muted-foreground"
             aria-live="polite"
           >
-            {doneCount} of {STEP_ORDER.length} set up
+            {barCount} of {STEP_ORDER.length} set up
           </span>
           <Progress
-            value={(doneCount / STEP_ORDER.length) * 100}
+            value={(barCount / STEP_ORDER.length) * 100}
             aria-label="Setup progress"
             tone="success"
             pace="gradual"

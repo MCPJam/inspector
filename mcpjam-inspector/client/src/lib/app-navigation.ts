@@ -965,6 +965,13 @@ export function buildConformanceRunServerPath(serverName: string): string {
   })}`;
 }
 
+/** The query key that opens the Conformance setup steps on arrival. */
+export const CONFORMANCE_SETUP_PARAM = "setup";
+
+export function buildConformanceSetupPath(): string {
+  return `${routePaths.conformance}?${CONFORMANCE_SETUP_PARAM}=1`;
+}
+
 export function buildConformanceSharePath(token: string): string {
   return `${routePaths.conformanceShared}/${encodeURIComponent(token)}`;
 }

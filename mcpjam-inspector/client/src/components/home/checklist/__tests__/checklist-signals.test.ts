@@ -25,6 +25,7 @@ const suite = (
 
 const base = {
   hasServer: false,
+  hasPlaygroundChat: false,
   progress: {},
   userId: "me",
   conformanceRuns: [],
@@ -40,6 +41,12 @@ describe("computeChecklistSignals", () => {
   it("checks Connect for a user who already has a server", () => {
     expect(
       computeChecklistSignals({ ...base, hasServer: true }).done.connect,
+    ).toBe(true);
+  });
+
+  it("checks Playground for a conversation from before the checklist", () => {
+    expect(
+      computeChecklistSignals({ ...base, hasPlaygroundChat: true }).done.chat,
     ).toBe(true);
   });
 

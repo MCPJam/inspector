@@ -5097,7 +5097,13 @@ export function PlaygroundMain({
       return;
     }
     // Wait for every comparison card and for model settings: a send is refused.
-    if (submitBlocked || (isCompareMode && !compareLanesReady())) return;
+    // A new project's comparison clients also arrive after load, switching modes.
+    if (
+      submitBlocked ||
+      clientInit.settling ||
+      (isCompareMode && !compareLanesReady())
+    )
+      return;
     autoRanRef.current = true;
     onAutoRunStarted?.();
     // The prompt is auto-sent, so clear it out of the composer. The composer is
@@ -5148,6 +5154,7 @@ export function PlaygroundMain({
     compareLanesReady,
     sendCompareAutoRun,
     submitBlocked,
+    clientInit.settling,
     modelContextQueue,
     ensureSelectedServerReadyForChat,
     ensureThreadReadyForSend,

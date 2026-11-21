@@ -458,7 +458,9 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_connection_started: { source: "client" },
   first_run_onboarding_connection_succeeded: { source: "client" },
   first_run_onboarding_connection_failed: { source: "client" },
-  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional `error_slug`.
+  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional
+  // `error_slug`, `already_done`, `rest`, and `agent` on onboard_agent copied.
+  // Connect actions include `demo_started` for the Excalidraw demo server.
   home_checklist_step: { source: "client" },
   // `outcome` completed | skipped, `done_count`, `already_done`.
   home_checklist_finished: { source: "client" },
