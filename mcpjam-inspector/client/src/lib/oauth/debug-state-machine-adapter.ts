@@ -26,6 +26,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import { fetchOAuthClientSecret } from "@/lib/apis/hosted-oauth-client-secret-api";
 import { sanitizeStepError } from "./trace-redaction";
+import { errorPageTitle, looksLikeErrorPage } from "@/shared/error-page";
 
 /**
  * Re-exported so the debugger's existing callers (and its tests) keep importing
@@ -116,6 +117,21 @@ function serializeProxyBody(
 
 /** Cap on the reason text, so no failure body can become the error message. */
 const MAX_PROXY_ERROR_CHARS = 300;
+const MAX_PAGE_TITLE_CHARS = 80;
+
+/**
+ * An HTML page in place of the route's JSON: a network gateway's sign-in page
+ * (INSPECTOR-CLIENT-2W5) or a CDN's error page (2T9). Its markup is no reason,
+ * but its title says who answered. A title holding markup is left out.
+ */
+function describeHtmlPage(html: string): string {
+  const title = errorPageTitle(html)?.replace(/\s+/g, " ").trim();
+  const named =
+    title && !/[<>]/.test(title)
+      ? ` ("${title.slice(0, MAX_PAGE_TITLE_CHARS).trimEnd()}")`
+      : "";
+  return `An HTML page${named} answered instead of MCPJam's server. Retry, and if it keeps happening, check for a firewall or sign-in page on your network.`;
+}
 
 /**
  * The proxy route answers a failure with `{ error }` naming the guard that
@@ -123,9 +139,9 @@ const MAX_PROXY_ERROR_CHARS = 300;
  * redirect cap. Dropping it leaves the flow log (and Sentry) with a bare status
  * line that says nothing about which one fired.
  *
- * Only the proxy hop's own failures land here: whenever the server under test
- * answers at all, the route wraps that response in a 200, so this never sees a
- * body from it.
+ * The route never passes on a body from the server under test: whenever that
+ * server answers at all, the route wraps the response in a 200. So a body here
+ * is the route's own failure, or a page from a hop in front of the route.
  */
 async function readProxyError(response: Response): Promise<string | undefined> {
   const text = await response.text().catch(() => "");
@@ -140,7 +156,8 @@ async function readProxyError(response: Response): Promise<string | undefined> {
     const message = body?.message ?? body?.error;
     if (typeof message === "string" && message) reason = message;
   } catch {
-    // Not JSON — a reverse proxy or dev-server error page. Report its text.
+    // Not JSON. A plain-text reverse-proxy error is readable as it is.
+    if (looksLikeErrorPage(text.trim())) return describeHtmlPage(text);
   }
   return reason.slice(0, MAX_PROXY_ERROR_CHARS);
 }
