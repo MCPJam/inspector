@@ -67,10 +67,17 @@ function content(
   return value === undefined ? null : String(value);
 }
 
+// OTLP times are unsigned 64-bit, and the JSON encoding can carry larger ones,
+// but DateTime64(9) stores nanoseconds as a signed Int64. A later time can't be
+// stored, and one that reached the insert could fail the whole batch, which
+// the exporter would then resend forever.
+const LATEST_STORABLE_UNIX_NANO = 2n ** 63n - 1n;
+
 function validTiming(span: NormalizedSpan): boolean {
   return (
     span.startTimeUnixNano > 0n &&
-    span.endTimeUnixNano >= span.startTimeUnixNano
+    span.endTimeUnixNano >= span.startTimeUnixNano &&
+    span.endTimeUnixNano <= LATEST_STORABLE_UNIX_NANO
   );
 }
 

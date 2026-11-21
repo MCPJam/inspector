@@ -166,6 +166,32 @@ describe("mapTraceBatch", () => {
     expect(batch.rejectionSummary).toMatch(/^Rejected 4 span\(s\)/);
   });
 
+  it("rejects a time ClickHouse can't store and keeps the rest of the batch", () => {
+    const latestStorable = 2n ** 63n - 1n;
+    const batch = map(
+      request([
+        call(),
+        call({
+          spanId: "eee19b7ec3c1b176",
+          endTimeUnixNano: String(latestStorable),
+        }),
+        call({
+          spanId: "eee19b7ec3c1b177",
+          endTimeUnixNano: String(latestStorable + 1n),
+        }),
+        outcome({ endTimeUnixNano: String(10n ** 30n) }),
+      ]),
+    );
+    expect(batch.calls.map((row) => row.spanId)).toEqual([
+      CALL,
+      "eee19b7ec3c1b176",
+    ]);
+    expect(batch.outcomes).toEqual([]);
+    expect(
+      Object.fromEntries(batch.drops.map((d) => [d.reason, d.count])),
+    ).toEqual({ invalid_span: 1, invalid_outcome: 1 });
+  });
+
   it("reads the environment a test copy reports", () => {
     const staging = request(
       [call()],
