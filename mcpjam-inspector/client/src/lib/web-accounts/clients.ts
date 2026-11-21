@@ -18,6 +18,18 @@ export function webClientVendorOfHost(host: {
   return target ? webClientVendorForRuntime(target.harnessId) : undefined;
 }
 
+/**
+ * The clients a person may pick. Claude web and ChatGPT web stay out while
+ * their flag is off, even in a project that made them while it was on.
+ */
+export function pickableHosts<
+  T extends Parameters<typeof webClientVendorOfHost>[0],
+>(hosts: readonly T[], webClientsEnabled: boolean): T[] {
+  return webClientsEnabled
+    ? [...hosts]
+    : hosts.filter((host) => !webClientVendorOfHost(host));
+}
+
 /** The vendor's site as people know it, such as claude.ai. */
 export function webClientSite(vendor: WebClientVendor): string {
   return new URL(WEB_CLIENT_SITES[vendor][0]).host;
@@ -50,6 +62,44 @@ export function runAccountOf(accounts: readonly WebAccount[]) {
 }
 
 /** How the chip and the suite name an account: its address, else its name. */
+/**
+ * Whether anyone ever signed this account in. A new account also reads
+ * `needs_sign_in`, but the site never signed it out, so it is told apart.
+ */
+export function webAccountWasSignedIn(account: WebAccount): boolean {
+  return account.hasProfile || account.lastVerifiedAt !== undefined;
+}
+
 export function webAccountName(account: WebAccount): string {
   return account.accountEmail || account.label;
+}
+
+/**
+ * A name for a new account before anyone has signed in, unused among the
+ * client's accounts, since the backend refuses a second account by one name.
+ */
+export function newWebAccountLabel(
+  vendor: WebClientVendor,
+  accounts: readonly WebAccount[],
+): string {
+  const taken = new Set(accounts.map(({ label }) => label.toLowerCase()));
+  const base = `${webClientName(vendor)} account`;
+  let label = base;
+  for (let n = 2; taken.has(label.toLowerCase()); n += 1)
+    label = `${base} ${n}`;
+  return label;
+}
+
+/** The page an admin signs an account in again on; the backend's email links here. */
+export function webAccountReconnectPath(
+  webAccountId: string,
+  projectId: string,
+  requestId?: string,
+): string {
+  const query = new URLSearchParams(
+    requestId
+      ? { request: requestId, project: projectId }
+      : { project: projectId },
+  );
+  return `/web-accounts/${encodeURIComponent(webAccountId)}/reconnect?${query}`;
 }
