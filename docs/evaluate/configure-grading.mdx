@@ -1,0 +1,181 @@
+---
+title: "Configure grading"
+description: "Set what a suite must pass, how many times each case runs, when a run blocks a merge, and which evaluators grade it."
+icon: "sliders-horizontal"
+---
+
+Grading lives in **Suite settings** on a suite page. The page asks its questions in order: **Pass criteria** (what must pass), **Iterations** (how many times each case runs), **Quality gate** (should a run block a merge), then **Evaluators** (what grades each iteration). Each is a separate setting, so raising the iteration count does not move the bar.
+
+Edits are drafts until you press **Save settings**; **Discard** drops them. A saved change applies to future runs. It does not re-decide runs that already finished.
+
+{/* Screenshot: Suite settings page scrolled to the Pass criteria, Iterations and Quality gate rows, with one unsaved change showing Save settings and Discard */}
+
+The same settings can be changed from the CLI:
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite">
+        In the Evaluate tab, open **Suites** and pick a suite.
+      </Step>
+      <Step title="Open its settings">
+        Click **Suite settings**.
+      </Step>
+      <Step title="Edit and save">
+        Change a row, then click **Save settings** in the header.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    # See which criterion and iteration rule the suite uses (settings.policy)
+    mcpjam cloud eval get --suite "My eval suite"
+
+    # Pass criteria and iterations (use the pair the suite's policy takes)
+    mcpjam cloud eval update --suite "My eval suite" --min-accuracy 90 --min-iterations 3
+    mcpjam cloud eval update --suite "My eval suite" --pass-threshold 0.9 --iterations 5
+
+    # Goal completion judge and argument matching
+    mcpjam cloud eval update --suite "My eval suite" --judge-model openai/gpt-5.4-mini --judge-threshold 0.7
+    mcpjam cloud eval update --suite "My eval suite" --arguments exact
+    ```
+    See [`cloud eval update`](/cli/reference#cloud-eval-update) for every flag.
+  </Tab>
+</Tabs>
+
+Suites managed by CI are read-only here. See [Run evals in CI](/evaluate/run-evals-in-ci#suites-managed-in-code).
+
+## Pass criteria
+
+A suite is decided by exactly one of two criteria. The row shows the one your suite uses, and the app has no control to switch between them.
+
+| On screen | What it asks | API field and units |
+| --- | --- | --- |
+| **Suite accuracy** | Does one rate across the whole run reach this percentage? Individual cases have no threshold of their own. | `minimumAccuracy`, a percentage from 0 to 100 |
+| **Per-case pass rate** | Does each case pass at least this share of its own iterations? A case that falls short fails, whatever the rest of the suite did. | `passThreshold`, a fraction from 0 to 1 |
+
+Both fields take a percentage on screen. Under **Per-case pass rate**, the line under the field shows the arithmetic for the current iteration count, for example "A case with 5 iterations needs 4 passes."
+
+A suite with no suite accuracy set is judged at 70%.
+
+<Warning>
+  The two criteria are not one number in two units. Take ten cases of equal size: nine always pass and one always fails. A 90% **Suite accuracy** passes that run, because nine of ten iterations passed. A 0.9 **Per-case pass rate** fails it, because case ten passed none of its own iterations.
+</Warning>
+
+Switching a suite from one criterion to the other re-decides every case in it, so neither the app nor the CLI offers it. The [suite settings reference](/evaluate/reference/suite-settings) lists the API fields.
+
+## Iterations
+
+How many times each case runs. The rule follows the criterion: a **Suite accuracy** suite sets a minimum, and a **Per-case pass rate** suite sets a default.
+
+| On screen | Values | What happens to a case that sets its own count |
+| --- | --- | --- |
+| **Minimum iterations per case** | `Off`, or 1 to 10 | The suite value is a floor. A case configured for fewer runs at the floor; a case configured for more keeps its own count. `Off` means no floor. |
+| **Iterations per case** | 1 to 100 | The suite value is a default. A case that sets its own count uses that instead, higher or lower. |
+
+So a case configured for 2 iterations runs 3 times under a minimum of 3, and 2 times under a default of 3. A case that sets no count runs 3 times under either.
+
+## Evidence requirements
+
+Only a **Per-case pass rate** suite has **Evidence requirements**. A run that measured too little is **Inconclusive** rather than passed or failed. An empty field is not "no minimum": it selects the default shown in the field.
+
+| Field | What it requires | Empty means |
+| --- | --- | --- |
+| **Minimum gradeable iterations** | At least this many iterations that can be graded. | Every configured iteration attempted, and at least one gradeable. This is stricter than any number. |
+| **Minimum completion rate** | This share of attempted iterations must finish. | 80% |
+| **Maximum evaluator error rate** | No more than this share of iterations may have an evaluator error. | 10% |
+
+A **Suite accuracy** suite shows no fields here. Its runs are always passed or failed, never inconclusive on evidence grounds.
+
+## Quality gate
+
+The pass criteria say whether a run met the bar. The quality gate says whether the run should fail a check, such as a merge check, when it regresses. `mcpjam cloud eval gate` applies it.
+
+The settings page offers one condition as a switch: **Any required evaluator errored**, which fails when a required evaluator errors. It needs no baseline run. If your role can't change it, the row says why.
+
+Conditions that compare against a baseline run (allowed pass-rate drop, deterministic regressions, p95 latency increase) are set through the API, or passed as flags to [`cloud eval gate`](/cli/reference#cloud-eval-gate). When a suite stores one, the row lists it read-only under "Also enforced, set outside this page:" so you can see what a run will be held to. See [Gate the merge](/evaluate/run-evals-in-ci#gate-the-merge).
+
+## Evaluators
+
+The **Evaluators** table lists what grades each iteration, grouped by **Stage of user value chain**. **Add assertion** adds a deterministic rule; **Edit evaluators** opens every row's settings at once. Assertions are covered in the [assertions reference](/evaluate/reference/assertions).
+
+The judges are listed under User value:
+
+| Row | What it grades | Settings |
+| --- | --- | --- |
+| **Goal completion judge** | Whether the iteration accomplished the case's goal, as a score from 0 to 1. | On or off, threshold, and role (Required or Advisory). The model is set under **Judge model**. |
+| **Groundedness judge** | Whether the final answer is supported by what the tools returned, rather than whether the goal was met. | None. Always advisory. It runs on demand, not after every iteration. |
+| **Rubric checks** | Each grading criterion, asked on its own as a yes or no question. | On or off. Always advisory. Shown when your deployment grades rubric checks. |
+
+{/* Screenshot: Evaluators table with the User value stage expanded, showing Goal completion judge, Groundedness judge and Rubric checks rows after Edit evaluators */}
+
+### Goal completion judge defaults
+
+| Setting | Default |
+| --- | --- |
+| Model | `openai/gpt-5.4-mini` |
+| Threshold | 0.7 (an iteration passes the judge at or above it) |
+| When it runs | Automatically; you don't need to request it |
+| Role | Advisory: the score is shown on the result and never fails the iteration |
+
+Set the role to Required to let the judge fail an iteration. A judge error then counts as an evaluator error, which **Any required evaluator errored** and **Maximum evaluator error rate** both read. Judge scores are not comparable across suites, so choose the threshold per suite.
+
+The judge sends the recorded conversation and trace to a model provider. See [What a run can access](/evaluate/what-a-run-can-access) for what is sent.
+
+### Turn a judge off
+
+Clear the **Goal completion judge** checkbox and save. **Rubric checks** run on the iterations the goal completion judge grades, so they pause while it is off. To skip the judge for one case only, use **Skip the judge for this case** in the case editor.
+
+### Rubric checks
+
+Rubric checks take the suite's grading criteria and ask each one separately. A criterion passes at a 50% or higher probability of yes. On the iteration scorecard, a criterion answered between 0.4 and 0.6 shows **Uncertain** beside its value: the classifier did not commit either way.
+
+Rubric checks never fail an iteration and never gate a run. The grading criteria come from the suite's `settings.judge.rubric`, which is set through the API; see the [suite settings reference](/evaluate/reference/suite-settings).
+
+### Edit tool-call matching
+
+**Edit tool-call matching**, under the Selection stage, sets how expected tool calls are compared with the calls the model made:
+
+| Control | Options | Default |
+| --- | --- | --- |
+| Arguments | **Partial**: every argument you set must match, extra arguments are allowed. **Exact**: arguments must match, with no extras. **Ignore**: only the tool name is checked. | Partial |
+| Tool call order | **Strict order**, **Allow gaps (superset)**, **Any order** | Any order |
+| Extra tool calls | A maximum, or **Unlimited** | Unlimited |
+
+The [assertions reference](/evaluate/reference/assertions) covers how each mode decides a match.
+
+## Write rubrics that give a stable signal
+
+A judge grades against the case's **Expected outcome** and the suite's grading criteria. Wording that two careful readers would grade differently gives scores that move between runs of the same server.
+
+| Do | Avoid |
+| --- | --- |
+| State one checkable fact per criterion: "The answer gives the order's delivery date." | Bundling facts: "The answer is accurate, complete and well formatted." A rubric check can only answer the whole bundle yes or no. |
+| Name what the trace can show: "The answer quotes the price that `get_quote` returned." | Facts the judge can't see, such as whether a record changed in a system the server didn't report on. |
+| Describe the result, not the route: "The reply confirms the refund amount." | Restating a tool sequence. Assert routes with tool-call matching instead, which is deterministic. |
+| Use concrete terms: "Lists at least the three most recent invoices." | Taste words with no anchor: "helpful", "good", "professional". |
+| Write the expected outcome for the case's own prompt. | One generic expected outcome copied across cases with different goals. |
+
+After changing criteria, compare the judge's scores on a run you have already read before trusting it as a gate.
+
+## How many iterations?
+
+One iteration per case is noisy. The model can pick a different tool or word on the next attempt, so a single pass or failure says little about the case.
+
+Start with a few iterations per case on each model you care about, and raise the count for cases that flip between runs. Under a **Per-case pass rate**, check the arithmetic line before saving: at 70%, a case with 3 iterations needs all 3 to pass (2 of 3 is 67%), while a case with 5 needs 4, so it tolerates one failure. Every iteration runs once per client and model combination, so cost grows with both numbers.
+
+The SDK guide's [Choosing Iteration Count](/sdk/concepts/running-evals#choosing-iteration-count) table gives starting points from smoke tests to benchmarking.
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Suite settings reference" icon="list" href="/evaluate/reference/suite-settings">
+    Every setting with its API field.
+  </Card>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    See how a run was decided.
+  </Card>
+  <Card title="Run evals in CI" icon="git-pull-request" href="/evaluate/run-evals-in-ci">
+    Gate merges on a suite.
+  </Card>
+</CardGroup>
