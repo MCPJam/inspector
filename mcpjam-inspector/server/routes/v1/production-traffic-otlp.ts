@@ -138,8 +138,10 @@ otlp.post(OTLP_TRACES_PATH, async (c) => {
     store = getProductionTrafficStore();
     verifier = getProducerVerifier();
   } catch (error) {
-    logger.error("Production traffic is misconfigured", error, {
-      event: "production_traffic.misconfigured",
+    reportRouteFailure("Production traffic is misconfigured", error, {
+      source: "v1.production-traffic.otlp.configuration",
+      hop: "mcpjam_internal",
+      context: { event: "production_traffic.misconfigured" },
     });
     store = null;
   }
