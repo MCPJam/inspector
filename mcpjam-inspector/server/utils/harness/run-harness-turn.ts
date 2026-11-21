@@ -4861,7 +4861,7 @@ export async function runHarnessTurn(
       // unconditionally and left no typed record (the response is a 200
       // stream the HTTP failure events never see). Classify first, page only
       // on origin=mcpjam, emit route.operation.failed.
-      failureReporter({
+      const report = failureReporter({
         message: "[harness] turn failed",
         error: err,
         source: "chat.harness-turn",
@@ -4916,6 +4916,10 @@ export async function runHarnessTurn(
         // failure then stays unclassified rather than being guessed from the
         // sentence above.
         ...(failureEvidence ? { infra: failureEvidence } : {}),
+        // Whether it paged, never its origin: the reporter had only the
+        // message, which reads our own broker's 401/429 as the user's. With
+        // no origin, the eval driver still captures what it declined.
+        reportedCaptured: report.captured,
       });
     } finally {
       if (!sessionEstablished) {
