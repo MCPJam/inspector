@@ -24,16 +24,24 @@
  * inspecting nothing while reporting success, which is the bug being fixed
  * rather than a lesser version of it.
  *
- * Usage: `node scripts/check-runtime-guards.mjs <check-name>`
+ * Usage: `node scripts/check-runtime-guards.mjs <check-name> [--root <dir>]`
+ * (`--root` points the scan at another tree; the tests use it.)
  */
 import { lstatSync, readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const repoRoot = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-);
+const rootFlag = process.argv.indexOf("--root");
+// A bare `--root` must not fall back to scanning this repository: that would
+// report on a tree the caller did not ask about.
+if (rootFlag !== -1 && !process.argv[rootFlag + 1]) {
+  console.error("check-runtime-guards: --root needs a directory.");
+  process.exit(1);
+}
+const repoRoot =
+  rootFlag !== -1
+    ? path.resolve(process.argv[rootFlag + 1])
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
  * Directories no check ever descends into. `dist` is NOT here: the
@@ -238,7 +246,10 @@ function* walk(dir, check) {
 
     if (!stat.isFile()) continue;
 
-    const relative = path.relative(repoRoot, fullPath).split(path.sep).join("/");
+    const relative = path
+      .relative(repoRoot, fullPath)
+      .split(path.sep)
+      .join("/");
     if ((check.skipPathPrefixes ?? []).some((p) => relative.startsWith(p))) {
       continue;
     }
