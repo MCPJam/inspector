@@ -224,7 +224,9 @@ export function registerProjectsCommands(program: Command): void {
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
   );
-  servers.action(async (_options: PlatformOptions, command) => {
+  // `servers` lists on its own, and `servers list` is the spelling every other
+  // group uses; both run this one action.
+  const listServers = async (_options: PlatformOptions, command: Command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const result = await runPlatformCommand(
@@ -242,7 +244,16 @@ export function registerProjectsCommands(program: Command): void {
     } else {
       writeResult(result, globalOptions.format);
     }
-  });
+  };
+  servers.action(listServers);
+  servers
+    .command("list")
+    .description("List the servers saved in a project")
+    .option(
+      "--project <id-or-name>",
+      "Project name or ID (defaults to the most recently updated project)"
+    )
+    .action(listServers);
 
   const parseBody = (raw: string): Record<string, unknown> => {
     const parsed: unknown = JSON.parse(raw);
