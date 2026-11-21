@@ -47,7 +47,8 @@ export interface SessionFlowSankeyProps {
   selection: InsightsSelection | null;
   onSelectNode: (selection: InsightsSelection) => void;
   onSelectLink: (selection: InsightsSelection) => void;
-  onRebuild: () => void;
+  onRebuild?: () => void;
+  hideTitle?: boolean;
   rebuildBusy: boolean;
   /**
    * Analyze now: treat the scope's sessions as finished instead of waiting
@@ -274,6 +275,7 @@ export function SessionFlowSankey({
   onSelectLink,
   onRebuild,
   rebuildBusy,
+  hideTitle,
   onAnalyzeNow,
   stageTitles,
   headerActions,
@@ -506,11 +508,13 @@ export function SessionFlowSankey({
             fills in once analysis groups {goalNoun}s, behaviors, outcomes, and
             sentiment.
           </span>
-          <RebuildButton
-            onRebuild={onRebuild}
-            busy={rebuildBusy}
-            label="Analyze sessions"
-          />
+          {onRebuild && (
+            <RebuildButton
+              onRebuild={onRebuild}
+              busy={rebuildBusy}
+              label="Analyze sessions"
+            />
+          )}
         </div>
       ) : null}
 
@@ -522,7 +526,7 @@ export function SessionFlowSankey({
         toolbar={
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 pb-2">
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-medium">Session flow</h3>
+              {!hideTitle && <h3 className="text-sm font-medium">Session flow</h3>}
               <Tooltip delayDuration={200}>
                 <TooltipTrigger asChild>
                   <button

@@ -152,4 +152,21 @@ describe("LocalRunsControl", () => {
       ),
     );
   });
+
+  it("speaks of a web client's saved sign-ins, not a server's tokens", async () => {
+    const user = userEvent.setup();
+    render(
+      <LocalRunsControl
+        allowed
+        noun="client"
+        onChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    expect(
+      screen.getByText("Members' local apps can use these accounts' saved sign-ins."),
+    ).toBeTruthy();
+    const dialog = await flip(user);
+    expect(dialog).toHaveTextContent("Stop local runs for this client?");
+    expect(dialog.textContent).not.toMatch(/token|server/i);
+  });
 });

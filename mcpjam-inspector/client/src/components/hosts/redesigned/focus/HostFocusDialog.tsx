@@ -276,6 +276,7 @@ export function HostFocusDialog({
             {activeTab === "browser" ? (
               <BrowserTab
                 projectId={projectId}
+                hostId={hostId}
                 draft={draft}
                 onDraftChange={onDraftChange}
               />

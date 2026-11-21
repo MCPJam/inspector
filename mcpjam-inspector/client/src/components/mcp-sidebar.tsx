@@ -499,7 +499,6 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * gone with the old layout.
    */
   onSwitchOrganization?: (organizationId: string) => void;
-  onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   isCreateProjectDisabled?: boolean;

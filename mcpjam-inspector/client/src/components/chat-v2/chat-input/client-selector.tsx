@@ -28,6 +28,8 @@ import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { useOpenAcrossRemount } from "./use-open-across-remount";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
+import { webClientVendorOfHost } from "@/lib/web-accounts/clients";
 
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
@@ -45,7 +47,7 @@ import { useOpenAcrossRemount } from "./use-open-across-remount";
 export interface ClientSelectorData {
   hosts: Pick<
     HostListItem,
-    "hostId" | "name" | "displayName" | "hostStyle"
+    "hostId" | "name" | "displayName" | "hostStyle" | "runtime"
   >[];
   /** Project the hosts belong to — required to create new hosts. May be a
    *  client-local project id (UUID) before the project is synced to Convex. */
@@ -106,7 +108,7 @@ function compactHostLabel(name: string): string {
 export function ClientSelector({
   trigger,
   inModal = false,
-  hosts,
+  hosts: listedHosts,
   projectId,
   currentHostId,
   selectedHostIds,
@@ -127,6 +129,16 @@ export function ClientSelector({
   themeMode,
   modalThemeMode = themeMode,
 }: ClientSelectorProps) {
+  // Claude web and ChatGPT web clients stay out of the list while their flag
+  // is off, even in a project that made them while it was on.
+  const webClientsEnabled = useWebClientsEnabled();
+  const hosts = useMemo(
+    () =>
+      webClientsEnabled
+        ? listedHosts
+        : listedHosts.filter((host) => !webClientVendorOfHost(host)),
+    [listedHosts, webClientsEnabled],
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
