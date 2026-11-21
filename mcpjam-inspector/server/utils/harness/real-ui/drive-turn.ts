@@ -1,0 +1,201 @@
+/**
+ * One turn on a vendor's website, in the same order for every site: check the
+ * account, make sure the connector is there, open a new chat, enable the
+ * connector, send the prompt exactly once, answer the app's own approval
+ * prompts until the reply has finished, then read the saved conversation.
+ *
+ * EXACTLY ONCE. The journal records the send before the click. A run that
+ * restarts and finds that record looks for the chat that already holds the
+ * prompt and continues there; when no chat holds it, the send may still have
+ * happened, so the turn stops as `send_ambiguous` rather than send again.
+ */
+import { PageDriverError, type PageDriver } from "./page-driver.js";
+import {
+  RealUiError,
+  needsSignIn,
+  type PendingStep,
+  type RealUiPageModule,
+  type RealUiStep,
+  type SavedConversation,
+  type WebAccountIdentity,
+} from "./page-module.js";
+
+export type SendJournalEntry =
+  | { state: "sending"; at: string }
+  | { state: "sent"; at: string; conversationUrl?: string };
+
+/** Where a turn records its send. Hosted runs need a durable one. */
+export interface SendJournal {
+  read(turnKey: string): Promise<SendJournalEntry | undefined>;
+  write(turnKey: string, entry: SendJournalEntry): Promise<void>;
+}
+
+export function createMemorySendJournal(): SendJournal {
+  const entries = new Map<string, SendJournalEntry>();
+  return {
+    async read(turnKey) {
+      return entries.get(turnKey);
+    },
+    async write(turnKey, entry) {
+      entries.set(turnKey, entry);
+    },
+  };
+}
+
+export type RealUiTurnInput = {
+  module: RealUiPageModule;
+  driver: PageDriver;
+  connector: { name: string; url: string };
+  prompt: string;
+  journal: SendJournal;
+  /** Stable for the turn across restarts: the journal's key. */
+  turnKey: string;
+  stepTimeoutMs?: number;
+  replyTimeoutMs?: number;
+  signal?: AbortSignal;
+  /** The email the project saved for this web account, when it has one. */
+  expectedEmail?: string;
+  /** Called when the turn starts a step, for progress, traces and recovery. */
+  onStep?: (step: RealUiStep, pending: PendingStep) => void;
+  /** Called the moment the prompt is about to be sent. */
+  beforeSend?: () => void;
+};
+
+export type RealUiTurnResult = {
+  account: WebAccountIdentity;
+  conversation: SavedConversation;
+  approvalsAnswered: number;
+  finishedSignals: string[];
+  /** The prompt was found already sent by an earlier attempt. */
+  resumed: boolean;
+};
+
+const STEP_TIMEOUT_MS = 60_000;
+const REPLY_TIMEOUT_MS = 5 * 60_000;
+const REPLY_POLL_MS = 500;
+
+export async function driveRealUiTurn(
+  input: RealUiTurnInput,
+): Promise<RealUiTurnResult> {
+  const { module, driver, signal } = input;
+  const ctx = { signal, timeoutMs: input.stepTimeoutMs ?? STEP_TIMEOUT_MS };
+  let step: RealUiStep = "sign_in_check";
+  let pending: PendingStep | undefined;
+  const enter = (next: RealUiStep) => {
+    step = next;
+    pending = { stepId: next, startedAt: new Date().toISOString(), turnId: input.turnKey };
+    input.onStep?.(next, pending);
+  };
+  try {
+    enter("sign_in_check");
+    const account = await module.signedIn(driver, ctx);
+    if (
+      input.expectedEmail &&
+      account.email?.toLowerCase() !== input.expectedEmail.toLowerCase()
+    ) {
+      throw needsSignIn(
+        "wrong_account",
+        "sign_in_check",
+        "The browser is signed in to a different account than the one saved for this project.",
+      );
+    }
+    enter("connector");
+    await module.ensureConnector(driver, input.connector, ctx);
+
+    let conversationUrl: string | undefined;
+    let resumed = false;
+    const journaled = await input.journal.read(input.turnKey);
+    if (journaled) {
+      enter("send");
+      // A sent entry names its own chat. Another turn may have sent the same
+      // prompt since, so the newest chat holding it can be someone else's.
+      const found =
+        journaled.state === "sent" && journaled.conversationUrl
+          ? { conversationUrl: journaled.conversationUrl }
+          : await module.findSent(driver, input.prompt, ctx);
+      if (!found) {
+        throw new RealUiError({
+          kind: "send_ambiguous",
+          step: "send",
+          message:
+            "An earlier attempt may have sent this prompt, and no chat shows it. It was not sent again.",
+        });
+      }
+      conversationUrl = found.conversationUrl;
+      resumed = true;
+      await driver.navigate(conversationUrl);
+    } else {
+      enter("new_chat");
+      await module.openNewChat(driver, ctx);
+      enter("enable_connector");
+      await module.enableConnector(driver, input.connector.name, ctx);
+      enter("send");
+      await input.journal.write(input.turnKey, {
+        state: "sending",
+        at: new Date().toISOString(),
+      });
+      input.beforeSend?.();
+      const sent = await module.send(driver, input.prompt, ctx);
+      conversationUrl = sent.conversationUrl;
+      await input.journal.write(input.turnKey, {
+        state: "sent",
+        at: new Date().toISOString(),
+        ...(conversationUrl ? { conversationUrl } : {}),
+      });
+    }
+
+    enter("reply");
+    let approvalsAnswered = 0;
+    let finishedSignals: string[] = [];
+    await driver.waitFor(
+      async () => {
+        const blocked = await module.blocker(driver);
+        if (blocked) throw new RealUiError({ ...blocked, step: "reply" });
+        if (await module.answerApproval(driver)) {
+          approvalsAnswered += 1;
+          return false;
+        }
+        const state = await module.replySignals(driver);
+        finishedSignals = state.signals;
+        return state.finished;
+      },
+      {
+        timeoutMs: input.replyTimeoutMs ?? REPLY_TIMEOUT_MS,
+        intervalMs: REPLY_POLL_MS,
+        signal,
+        what: "the reply to finish",
+      },
+    );
+    conversationUrl ??= await driver.url();
+
+    enter("read_conversation");
+    const conversation = await module.readConversation(
+      driver,
+      conversationUrl,
+      ctx,
+    );
+    return { account, conversation, approvalsAnswered, finishedSignals, resumed };
+  } catch (error) {
+    const typed = asRealUiError(error, step);
+    throw new RealUiError(typed.failure, typed.pendingStep ?? pending);
+  }
+}
+
+/** Every failure of a turn as a typed failure of the step it happened in. */
+export function asRealUiError(error: unknown, step: RealUiStep): RealUiError {
+  if (error instanceof RealUiError) return error;
+  if (error instanceof PageDriverError) {
+    if (error.code === "timeout" && step === "reply") {
+      return new RealUiError({ kind: "reply_timeout", step, message: error.message });
+    }
+    if (error.code === "unknown_outcome" && step === "send") {
+      return new RealUiError({ kind: "send_ambiguous", step, message: error.message });
+    }
+    if (error.code === "not_found" || error.code === "timeout") {
+      return new RealUiError({ kind: "page_changed", step, message: error.message });
+    }
+    return new RealUiError({ kind: "driver", step, message: error.message });
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return new RealUiError({ kind: "driver", step, message });
+}
