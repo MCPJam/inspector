@@ -1,0 +1,133 @@
+---
+title: "Run a suite"
+description: "Start a run of a suite or a single case, cancel it, and fix whatever keeps Run disabled."
+icon: "play"
+---
+
+A run executes every case in a suite once per iteration, on each client and model pair you pick. A run of 3 cases at 2 iterations on 2 pairs produces 12 iterations.
+
+## What a run needs
+
+| Need | Where it comes from |
+|---|---|
+| Cases | At least one saved case. Generated drafts don't run until you add them to the suite. |
+| Servers | The run connects each client's server group, set in **Suite settings** under **Where it runs**. A client with no server group would connect no servers, so the run won't start. |
+| Clients and models | The pairs saved on the suite. You can change them for one run in the **Set up run** sheet. |
+| Model access | MCPJam credits, or a model from your own provider. See [What a run can access](/evaluate/what-a-run-can-access). |
+| Eval iterations | Your organization's eval iteration allowance. Every iteration counts against it. |
+
+A suite saved without clients, such as one created by the SDK, shows a **Servers** picker in the sheet instead. Pick the server group the run should use; the suite itself is not changed.
+
+## Start a run
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite">
+        In the Evaluate tab, open **Suites** and pick a suite, then click **Run**. You can also click **Run** on **Overview** and choose the suite from the list. The Set up run sheet opens with the suite name in its title.
+      </Step>
+      <Step title="Set the iteration count">
+        **Iterations per case** takes 1 to 10. It starts at the count you last used for this suite, or the suite's default, and never below the suite's minimum.
+      </Step>
+      <Step title="Check the clients and models">
+        **Where it runs** lists each client with its models. Adding or removing one here changes this run only.
+      </Step>
+      <Step title="Start">
+        The footer multiplies it out, for example "3 cases × 2 repetitions × 2 client:model combos", with the total number of iterations. Click **Start run**.
+      </Step>
+    </Steps>
+
+    {/* Screenshot: Set up run · Weather suite sheet with Iterations per case at 2, the Where it runs table with two clients, and the footer reading 3 cases × 2 repetitions × 2 client:model combos = 12 iterations */}
+
+    **Suite settings** in the sheet closes it and opens the suite's saved clients, models and server groups.
+  </Tab>
+  <Tab title="CLI: local">
+    `mcpjam test` runs a suite file on your machine, not a suite saved in the app. It binds each server name to a local MCP config such as `./.mcp.json`. See [Local evals](/cli/local-evals).
+
+    ```bash
+    export ANTHROPIC_API_KEY=sk-ant-...
+    mcpjam test .mcpjam/evals/example.yaml
+    ```
+  </Tab>
+  <Tab title="CLI: hosted">
+    `mcpjam cloud eval run` runs a suite saved in your project. `--wait` polls until the run finishes and exits on its verdict.
+
+    ```bash
+    mcpjam cloud eval run \
+      --suite "My eval suite" \
+      --project "My project" \
+      --iterations 3 \
+      --wait
+    ```
+
+    See [`cloud eval run`](/cli/reference#cloud-eval-run) for target selection and exit codes.
+  </Tab>
+</Tabs>
+
+### Run one case
+
+<Tabs>
+  <Tab title="Inspector">
+    Open the case and click **Run** in the case editor. Pick the iterations and the clients and models in the "Set up run" sheet, then click **Run test case**. Unsaved edits are saved first; a new case has to be saved once before it can run.
+
+    Guests get a simpler sheet: the iteration count and one client with its models, with no **Suite settings** button.
+  </Tab>
+  <Tab title="CLI: local">
+    ```bash
+    mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note
+    ```
+
+    `--case` takes the case's authored id and can be repeated.
+  </Tab>
+  <Tab title="CLI: hosted">
+    ```bash
+    mcpjam cloud eval cases run --suite "My eval suite" --case "Reads a note"
+    ```
+  </Tab>
+</Tabs>
+
+To repeat a run, click **Run again** on its run page. It opens the same sheet, so you can change the iterations and models first.
+
+## Cancel a run
+
+While a run is pending, running or grading, **Cancel run** replaces **Run again** on the run page. It stops every client and model pair of that launch, including one whose iterations have finished but whose judge is still grading. On the suite page, **Cancel run** stops every run of the suite that is still going.
+
+Iterations that had not finished are recorded as cancelled, not failed. The run page counts them under **Cancelled** and leaves them out of the pass and fail counts, so a stopped run does not read as a broken server. `mcpjam cloud eval run --wait` exits `5` for a cancelled run, the code for a run with no valid verdict.
+
+## Why Run is disabled
+
+Hover the disabled button to see the reason. The suite page's **Run** and the sheet's **Start run** check different things.
+
+| Message | Cause | Fix |
+|---|---|---|
+| "Add a test case first." | The suite has no saved cases. | Add a case. If generated drafts are waiting, the message says so; add them to the suite. |
+| "A suite or replay is already in progress." | A run of this suite is still going. | Wait, or click **Cancel run**. |
+| "Finish the in-progress test case run first." | A single-case run is still going. | Wait for it to finish. |
+| "Configure suite servers before running the full suite." | A suite with no clients has no servers to connect. | Give the suite a server group in **Suite settings**. |
+| "Eval iteration limit reached. Resets …" | Your organization has used its eval iterations for this period. | Wait for the reset shown, or move to a plan with a larger allowance. |
+| "Choose at least one client and model." | Every client or model was removed in the sheet, or a client has no model. | Add a client and pick a model under **Where it runs**. |
+| "A selected client has no server group, so its run would connect no servers." | A client in the run has no server group. | Pick a server group for it in **Suite settings**. |
+| "Pick a server group to run this suite." | The suite has no clients and no group is picked. | Pick one in **Servers**. |
+| "Out of MCPJam credits · resets in …" | Every model in the run uses MCPJam credits and your organization has none left. | Switch to a model from your own provider, or wait for the reset. |
+| "Fix the setup problem above before running." | The sheet found a problem it can't work around, such as a server that is no longer in the project. | Follow the notice above: re-add the server or point the suite at another one. |
+| "Save the test case before running." | The case is a new, unsaved draft. | Click **Save** in the case editor. |
+
+A server that is in the project but not connected does not block the run. The sheet names it ("… isn't connected. Start tries to connect it.") and offers **Connect** if you want to connect it first.
+
+## Time and retry limits
+
+**Suite settings** caps how long a run may take with **Per-turn timeout**, **Per-tool-call timeout**, **Per-iteration timeout** and **Whole-run timeout**, and sets **Model call retries**. An empty field inherits the platform default. An iteration that runs out of time fails alone; the others keep going. Defaults, ranges and API fields are in the [suite settings reference](/evaluate/reference/suite-settings#time-and-retry-limits).
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    Find where a run broke.
+  </Card>
+  <Card title="What a run can access" icon="shield" href="/evaluate/what-a-run-can-access">
+    Servers, models and data sent out.
+  </Card>
+  <Card title="Run evals in CI" icon="git-pull-request" href="/evaluate/run-evals-in-ci">
+    Run a suite from your pipeline.
+  </Card>
+</CardGroup>
