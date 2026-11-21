@@ -1,4 +1,8 @@
-import { describeEvalIterationError } from "@/lib/eval-iteration-error";
+import {
+  describeEvalIterationError,
+  PLATFORM_FEE_ERROR_SLUG,
+} from "@/lib/eval-iteration-error";
+import { PlatformFeeRefusal } from "@/components/billing/PlatformFeeRefusal";
 import { ErrorCard } from "@/components/ui/error-card";
 import { TranscriptEmptyState } from "@/components/chat-v2/transcript-empty-state";
 import { useAction, useQuery } from "convex/react";
@@ -1282,7 +1286,13 @@ export function IterationDetails({
           )}
         </div>
       ) : null}
-      {iterationError && <ErrorCard key={iteration._id} error={iterationError} />}
+      {iterationError?.slug === PLATFORM_FEE_ERROR_SLUG ? (
+        <PlatformFeeRefusal key={iteration._id} />
+      ) : (
+        iterationError && (
+          <ErrorCard key={iteration._id} error={iterationError} />
+        )
+      )}
 
       {!hasTrace && !scorecard && !isProbe && (
         <TranscriptEmptyState {...(iteration.status === "running" || iteration.status === "pending"

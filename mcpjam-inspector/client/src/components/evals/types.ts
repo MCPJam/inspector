@@ -1154,7 +1154,8 @@ export type EvalSuiteRun = {
     | "user_cancelled"
     | "run_timeout"
     | "iteration_timeout"
-    | "stale_worker";
+    | "stale_worker"
+    | "platform_fee_required";
   /**
    * Run origin, STAMPED by the backend. Every launch that arrives over `/v1` —
    * the CLI, a GitHub Actions job, an MCP agent — is `"api"`, because from the
