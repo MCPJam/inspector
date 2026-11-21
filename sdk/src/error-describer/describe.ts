@@ -27,6 +27,10 @@ import {
   type ErrorCatalogEntry,
   type ErrorOrigin,
 } from "./catalog.js";
+import {
+  creditRecoveryOfRefusal,
+  formatCreditRecovery,
+} from "../contract/credit-recovery.js";
 import { extractNodeErrno } from "./node-errno.js";
 import { isTlsTrustFailure } from "../oauth-proxy-error.js";
 import { orgPolicyRefusal } from "./org-policy.js";
@@ -1034,6 +1038,33 @@ function retargetQuotaForSurface(
   return slug;
 }
 
+const CREDIT_SLUGS = new Set([
+  "provider/mcpjam_limit",
+  "provider/mcpjam_limit_daily",
+  "provider/mcpjam_limit_monthly",
+  "provider/mcpjam_limit_insufficient",
+  "provider/mcpjam_platform_budget",
+]);
+
+/**
+ * A credit refusal that carries `recovery` gives the step it names, link
+ * included, as its only next step: the catalog's other suggestions (BYOK,
+ * waiting) gave agents a second choice, and they took it.
+ */
+function applyCreditRecovery(
+  entry: ErrorCatalogEntry,
+  slug: string,
+  error: unknown,
+): ErrorCatalogEntry {
+  if (!CREDIT_SLUGS.has(slug)) return entry;
+  const recovery = creditRecoveryOfRefusal(error);
+  if (!recovery) return entry;
+  return {
+    ...entry,
+    nextSteps: [formatCreditRecovery(recovery)],
+  };
+}
+
 export function describeError(
   error: unknown,
   context?: DescribeContext,
@@ -1046,22 +1077,23 @@ export function describeError(
     const slug = retargetQuotaForSurface(resolved.slug, context);
     const rawCode =
       resolved.rawCode ?? (fromContext ? httpStatusOf(error) : undefined);
-    const entry = applyOriginContext(
-      annotateWithChallenge(
-        maybePromoteRawMessage(
-          lookupCatalog(slug),
-          slug,
-          rawMessage,
-          rawCode,
-          slug === "server/http_error"
-            ? combinedTransportStatuses(error)?.fallback
-            : undefined,
-        ),
+    const annotated = annotateWithChallenge(
+      maybePromoteRawMessage(
+        lookupCatalog(slug),
         slug,
-        context?.challenge
-          ? context
-          : { ...context, challenge: challengeSummaryFromError(error) }
+        rawMessage,
+        rawCode,
+        slug === "server/http_error"
+          ? combinedTransportStatuses(error)?.fallback
+          : undefined,
       ),
+      slug,
+      context?.challenge
+        ? context
+        : { ...context, challenge: challengeSummaryFromError(error) }
+    );
+    const entry = applyOriginContext(
+      applyCreditRecovery(annotated, slug, error),
       slug,
       context,
     );
