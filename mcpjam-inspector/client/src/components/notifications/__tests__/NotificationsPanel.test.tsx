@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type { Notification } from "@/hooks/useNotifications";
@@ -124,5 +124,30 @@ describe("NotificationsPanelContent", () => {
     ]);
     expect(container.querySelector(".bg-success\\/10")).not.toBeNull();
     expect(container.querySelector(".bg-destructive\\/10")).not.toBeNull();
+  });
+
+  it("opens the access request page from a project access request", () => {
+    const markAsRead = vi.fn();
+    mockUseNotificationMutations.mockReturnValue({
+      markAsRead,
+      markAllAsRead: vi.fn(),
+      clearAllNotifications: vi.fn(),
+    });
+    window.history.replaceState({}, "", "/");
+    const { container } = renderWith([
+      notification({
+        _id: "n-access",
+        type: "project_access_requested",
+        entityId: "req_1",
+        entityName: "Payments",
+        actorName: "Ada",
+      }),
+    ]);
+
+    const row = screen.getByText('Ada asked for access to project "Payments"');
+    expect(container.querySelector(".bg-primary\\/10")).not.toBeNull();
+    fireEvent.click(row);
+    expect(markAsRead).toHaveBeenCalledWith({ notificationId: "n-access" });
+    expect(window.location.pathname).toBe("/access-requests/req_1");
   });
 });

@@ -17,6 +17,15 @@ import {
   NotificationType,
 } from "@/hooks/useNotifications";
 import { cn } from "@/lib/utils";
+import { useAppNavigate } from "@/lib/app-navigation";
+import { accessRequestPath } from "@/components/access-requests/access-request-api";
+
+/** Notifications that ask the reader to act, and so open a page on click. */
+function actionPath(notification: Notification): string | null {
+  return notification.type === "project_access_requested"
+    ? accessRequestPath(notification.entityId)
+    : null;
+}
 
 function formatTimeAgo(timestamp: number): string {
   const now = Date.now();
@@ -56,6 +65,8 @@ function getNotificationMessage(notification: Notification): string {
   switch (type) {
     case "project_added":
       return `${actor} added you to project "${entityName}"`;
+    case "project_access_requested":
+      return `${actor} asked for access to project "${entityName}"`;
     case "project_removed":
       return `${actor} removed you from project "${entityName}"`;
     case "organization_added":
@@ -89,10 +100,13 @@ function NotificationItem({
   notification: Notification;
   onMarkAsRead: (id: string) => void;
 }) {
+  const navigate = useAppNavigate();
+  const path = actionPath(notification);
   const handleClick = () => {
     if (!notification.isRead) {
       onMarkAsRead(notification._id);
     }
+    if (path) navigate(path, { unscoped: true });
   };
 
   return (
@@ -106,7 +120,8 @@ function NotificationItem({
       <div
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
-          notification.type === "organization_seat_payment_required"
+          notification.type === "organization_seat_payment_required" ||
+            notification.type === "project_access_requested"
             ? "bg-primary/10 text-primary"
             : notification.type.includes("added")
               ? "bg-success/10 text-success"
