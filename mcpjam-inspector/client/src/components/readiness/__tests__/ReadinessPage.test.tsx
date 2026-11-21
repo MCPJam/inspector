@@ -29,16 +29,34 @@ function renderRoute(search = "") {
   );
 }
 
-const flag = vi.hoisted(() => ({ value: undefined as boolean | undefined }));
+/** Picks a server in the rehearsal bar's picker. */
+async function chooseServer(name: string) {
+  await userEvent.click(screen.getByRole("button", { name: "Server" }));
+  const rows = within(screen.getByRole("dialog")).getAllByRole("button", {
+    name: new RegExp(`${name}$`),
+  });
+  await userEvent.click(
+    rows.find(
+      (row) => !row.getAttribute("aria-label")?.startsWith("Connect"),
+    )!,
+  );
+}
+
+const flag = vi.hoisted(() => ({ plugins: true, value: undefined as boolean | undefined }));
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (key: string) =>
-    key === "mcpjam-directory-readiness" ? flag.value : undefined,
+    key === "plugins-enabled" ? true : key === "mcpjam-directory-readiness" ? flag.value : undefined,
 }));
 
 const context = vi.hoisted(() => ({
   convexProjectId: "proj_1" as string | null,
   isAuthenticated: true,
   displayServerConfigs: {
+    "Other server": {
+      name: "Other server",
+      config: { url: new URL("https://other.example.com/mcp") },
+      connectionStatus: "disconnected",
+    },
     "Sample server": {
       name: "Sample server",
       config: { url: new URL("https://mcp.example.com/mcp") },
@@ -53,7 +71,7 @@ vi.mock("@/lib/app-route-context", () => ({
 }));
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
-    serversByName: new Map([["Sample server", "srv_1"]]),
+    serversByName: new Map([["Sample server", "srv_1"], ["Other server", "srv_2"]]),
     isLoading: false,
   }),
 }));
@@ -85,13 +103,25 @@ const api = vi.hoisted(() => ({
   recordSubmissionEvent: vi.fn(),
 }));
 vi.mock("@/lib/apis/directory-submissions-api", () => api);
+vi.mock("@/components/plugins/AddPluginModal", () => ({
+  AddPluginModal: ({ isOpen, onInstalled }: {
+    isOpen: boolean;
+    onInstalled: (result: { pluginId: string; pluginVersionId: string }) => void;
+  }) => isOpen ? (
+    <button onClick={() => onInstalled({ pluginId: "plugin_one", pluginVersionId: "imported_version" })}>
+      Finish test import
+    </button>
+  ) : null,
+}));
 vi.mock("@/hooks/usePluginImportApi", () => ({
-  useProjectPlugins: () => [],
-  useProjectPlugin: () => undefined,
+  useProjectPlugins: () => [{ pluginId: "plugin_one", displayName: "QA plugin" }],
+  useProjectPlugin: (id?: string) => id === "plugin_one" ? {
+    versions: [{ pluginVersionId: "version_7", declaredVersion: "1.2.0", status: "ready" }],
+  } : undefined,
   usePluginVersion: () => undefined,
 }));
 vi.mock("@/hooks/usePluginsEnabled", () => ({
-  usePluginsEnabledState: () => true,
+  usePluginsEnabledState: () => flag.plugins,
 }));
 
 const TITLES: Record<string, string> = {
@@ -222,6 +252,7 @@ describe("ReadinessRoute", () => {
     api.listSubmissionEvents.mockResolvedValue([]);
     context.convexProjectId = "proj_1";
     context.selectedServerEntry = { name: "Sample server" };
+    flag.plugins = true;
     flag.value = true;
   });
 
@@ -231,6 +262,46 @@ describe("ReadinessRoute", () => {
     await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenCalledWith(expect.objectContaining({ submissionId: "sub_1", projectId: "proj_1" })));
     await waitFor(() => expect(context.setSelectedServer).toHaveBeenCalledWith("Sample server"));
     expect(await screen.findByRole("heading", { level: 1, name: "Connection" })).toBeVisible();
+  });
+
+  it("keeps the ChatGPT tab when picking the same server or switching to another saved submission", async () => {
+    const current = { ...pluginSubmission(), pluginId: "plugin_one" };
+    const next = { ...current, id: "sub_other", serverId: "srv_2" };
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.getDirectorySubmission.mockImplementation(async ({ submissionId }) => submissionId === next.id ? next : current);
+    api.listServerSubmissions.mockImplementation(async (_, serverId) => serverId === next.serverId
+      ? [next] : [current, { ...current, id: "newer", updatedAt: current.updatedAt + 100 }]);
+    renderRoute("?submission=sub_2");
+    const mcpTab = await screen.findByRole("tab", { name: /MCP/ });
+    await userEvent.click(mcpTab);
+    await chooseServer("Sample server");
+    expect(mcpTab).toHaveAttribute("aria-selected", "true");
+    expect(api.listServerSubmissions).not.toHaveBeenCalled();
+
+    await chooseServer("Other server");
+    await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenCalledWith({ projectId: "proj_1", submissionId: next.id }));
+    expect(await screen.findByRole("tab", { name: /MCP/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Server" })).toHaveTextContent("Other server");
+    expect(screen.queryByText("ChatGPT releases")).toBeNull();
+    await chooseServer("Sample server");
+    await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenLastCalledWith({ projectId: "proj_1", submissionId: current.id }));
+    expect(await screen.findByRole("tab", { name: /MCP/ })).toHaveAttribute("aria-selected", "true");
+    expect(api.createDirectorySubmission).not.toHaveBeenCalled();
+    expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
+  });
+
+  it("opens a new server's first Claude draft on the current step", async () => {
+    const next = { ...submission(), id: "new_draft", serverId: "srv_2" };
+    api.createDirectorySubmission.mockResolvedValue(next);
+    api.getDirectorySubmission.mockImplementation(async ({ submissionId }) => submissionId === next.id ? next : submission());
+    renderRoute("?submission=sub_1");
+    await userEvent.click(await screen.findByRole("button", { name: /^Listing/ }));
+    await chooseServer("Other server");
+    await waitFor(() => expect(api.getDirectorySubmission).toHaveBeenCalledWith({ projectId: "proj_1", submissionId: next.id }));
+    expect(await screen.findByRole("heading", { name: "Listing" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Server" })).toHaveTextContent("Other server");
+    expect(api.createDirectorySubmission).toHaveBeenCalledWith({ projectId: "proj_1", serverId: "srv_2", flowId: "claude-connector" }, expect.any(String));
+    expect(api.startDirectorySubmissionRun).not.toHaveBeenCalled();
   });
 
   it("sends a user without the flag back to Servers", () => {
@@ -249,30 +320,58 @@ describe("ReadinessRoute", () => {
     expect(screen.queryByTestId("navigate")).toBeNull();
   });
 
-  it("says it is a rehearsal and opens on the portal's first screen", async () => {
+  it("shows marketplace cards before the rehearsal and opens Claude", async () => {
     api.listServerSubmissions.mockResolvedValue([
       { ...submission(), id: "sub_0", updatedAt: Date.now() },
     ]);
     renderRoute();
-    expect(screen.getByText("Rehearsal")).toBeVisible();
-    expect(
-      screen.getByText(
-        "A copy of the Claude portal. Nothing here is sent to Claude.",
-      ),
-    ).toBeVisible();
-    expect(screen.getByRole("button", { name: "Run checks" })).toBeDisabled();
-    expect(screen.getByText("What would you like to submit?")).toBeVisible();
-    expect(
-      screen.getByText("MCPJam: rehearsal not available yet"),
-    ).toBeVisible();
-    expect(
-      await screen.findByText("Saved rehearsals for this server"),
-    ).toBeVisible();
-    expect(api.listServerSubmissions).toHaveBeenCalledWith(
-      "proj_1",
-      "srv_1",
-      expect.any(AbortSignal),
-    );
+    expect(screen.getByRole("heading", { name: "Readiness" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Claude" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "ChatGPT" })).toBeVisible();
+    expect((await screen.findAllByText("Status unknown"))).toHaveLength(2);
+    expect(screen.queryByText("Rehearsal")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+    expect(screen.getByText("Claude releases")).toBeVisible();
+    expect(await screen.findByText("Published release")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "All marketplaces" }));
+    expect(screen.getByRole("heading", { name: "Readiness" })).toBeVisible();
+  });
+
+  it("starts one run from the overview using the saved submission", async () => {
+    api.listServerSubmissions.mockResolvedValue([submission()]);
+    api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
+    renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start checks" }));
+    await waitFor(() => expect(api.startDirectorySubmissionRun).toHaveBeenCalledTimes(1));
+    expect(api.startDirectorySubmissionRun.mock.calls[0][0]).toEqual({ projectId: "proj_1", submissionId: "sub_1" });
+    expect(api.createDirectorySubmission).not.toHaveBeenCalled();
+  });
+
+  it("starts ChatGPT checks against the plugin version saved on the submission", async () => {
+    const plugin = { ...pluginSubmission(), pluginId: "plugin_one", pluginVersionId: "version_7" };
+    api.listServerSubmissions.mockResolvedValue([plugin]);
+    api.getDirectoryFlow.mockResolvedValue(CHATGPT_PLUGIN_FLOW);
+    api.getDirectorySubmission.mockResolvedValue(plugin);
+    api.startDirectorySubmissionRun.mockResolvedValue({ runId: "run_2" });
+    renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start checks" }));
+    await waitFor(() => expect(api.startDirectorySubmissionRun).toHaveBeenCalledWith(
+      { projectId: "proj_1", submissionId: "sub_2" }, expect.any(String), "version_7", undefined,
+    ));
+    expect(screen.getByRole("region", { name: "Readiness checks" })).toHaveTextContent(/ChatGPT plugin package\s*QA plugin · 1\.2\.0/);
+    expect(api.startDirectorySubmissionRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps ChatGPT release history available when plugin checks are disabled", async () => {
+    flag.plugins = false;
+    api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
+    renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
+    expect(await screen.findByRole("heading", { name: "Published release" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Start checks" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Go step by step" })).toBeNull();
   });
 
   describe("confirming a test plan revision before a run uses it", () => {
@@ -396,7 +495,9 @@ describe("ReadinessRoute", () => {
     /** Opens the rehearsal and presses the run button once it reads `label`. */
     async function pressRun(label: string) {
       const page = renderRoute();
-      const start = screen.queryByRole("button", { name: /MCP connector/ });
+      const marketplace = screen.queryByRole("button", { name: "Claude" });
+      if (marketplace) await userEvent.click(marketplace);
+      const start = screen.queryByRole("button", { name: "Go step by step" });
       if (start) await userEvent.click(start);
       const button = await screen.findByRole("button", { name: label });
       await waitFor(() => expect(button).toBeEnabled());
@@ -559,8 +660,9 @@ describe("ReadinessRoute", () => {
     it("sends no revision and asks nothing when no plan is saved", async () => {
       plans.getTestPlan.mockResolvedValue(null);
       renderRoute();
+      await userEvent.click(screen.getByRole("button", { name: "Claude" }));
       await userEvent.click(
-        screen.getByRole("button", { name: /MCP connector/ }),
+        screen.getByRole("button", { name: "Go step by step" }),
       );
       await waitFor(() => expect(plans.getTestPlan).toHaveBeenCalled());
       const button = await screen.findByRole("button", { name: "Run checks" });
@@ -573,8 +675,9 @@ describe("ReadinessRoute", () => {
 
   it("shows the test plan on Test & launch, marked as MCPJam's", async () => {
     renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     const rail = within(
       await screen.findByRole("navigation", {
@@ -592,18 +695,20 @@ describe("ReadinessRoute", () => {
     expect(plans.getToolTests).toHaveBeenCalled();
   });
 
-  it("asks for a saved server first", () => {
+  it("asks for a saved server after choosing a marketplace", async () => {
     context.selectedServerEntry = null;
     renderRoute();
-    expect(
-      screen.getByText("Choose a saved server to rehearse its submission."),
-    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Server" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+    expect(await screen.findByText("Choose a saved server to start a submission.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Server" })).toBeVisible();
   });
 
   it("starts a connector rehearsal and renders the Listing step from the flow", async () => {
     renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     expect(api.createDirectorySubmission).toHaveBeenCalledWith(
       { projectId: "proj_1", serverId: "srv_1", flowId: "claude-connector" },
@@ -616,7 +721,11 @@ describe("ReadinessRoute", () => {
     ).toBeVisible();
     expect(screen.getByText("https://mcp.example.com/mcp")).toBeVisible();
     expect(screen.getByText("The server URL uses https")).toBeVisible();
-    expect(screen.getByText(/Rules as of Nov 13, 2026/)).toBeVisible();
+    const header = within(screen.getByRole("region", { name: "Readiness checks" }));
+    expect(header.getByRole("status")).toHaveTextContent("1 blocker");
+    expect(header.getByRole("button", { name: "Server" })).toBeVisible();
+    expect(header.queryByRole("button", { name: "Details" })).toBeNull();
+    expect(header.getByText("Claude preview")).toHaveAttribute("title", expect.stringContaining("Rules as of Nov 13, 2026"));
 
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -634,7 +743,7 @@ describe("ReadinessRoute", () => {
     expect(
       screen.getByText("Add a one-liner of 200 characters or fewer."),
     ).toBeVisible();
-    expect(screen.getByText("1 blocker")).toBeVisible();
+    expect(header.getByRole("status")).toHaveTextContent("1 blocker");
   });
 
   it("renders Use cases from the flow, with marks and results under the answers they read", async () => {
@@ -649,8 +758,9 @@ describe("ReadinessRoute", () => {
     api.createDirectorySubmission.mockResolvedValue(useCases);
     api.getDirectorySubmission.mockResolvedValue(useCases);
     renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     await screen.findByRole("heading", { level: 1, name: "Connection" });
     const rail = within(
@@ -709,8 +819,9 @@ describe("ReadinessRoute", () => {
 
   it("ends on the portal's review page, with copy where the portal submits", async () => {
     renderRoute();
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     await screen.findByRole("heading", { level: 1, name: "Connection" });
     const rail = within(
@@ -774,26 +885,20 @@ describe("ReadinessRoute", () => {
       { ...submission(), id: "sub_0", updatedAt: Date.now() },
     ]);
     renderRoute();
-    expect(
-      await screen.findByText("Saved rehearsals for this server"),
-    ).toBeVisible();
-
+    await screen.findAllByText("Status unknown");
     await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
-    expect(screen.getByRole("button", { name: "ChatGPT" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
+    expect(screen.queryByRole("group", { name: "Directory" })).toBeNull();
     // The saved Claude rehearsal belongs to the other directory.
     expect(screen.queryByText("Saved rehearsals for this server")).toBeNull();
     await userEvent.click(
-      screen.getByRole("button", { name: "Upload new or existing plugin" }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     expect(api.createDirectorySubmission).toHaveBeenCalledWith(
       { projectId: "proj_1", serverId: "srv_1", flowId: "chatgpt-plugin" },
       expect.stringMatching(/^ui-srv_1-/),
     );
     expect(
-      await screen.findByText(/Choose the stored plugin to rehearse\./),
+      await screen.findByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
   });
 
@@ -804,23 +909,26 @@ describe("ReadinessRoute", () => {
     api.listServerSubmissions.mockResolvedValue([pluginSubmission()]);
     renderRoute();
     await userEvent.click(screen.getByRole("button", { name: "ChatGPT" }));
-    const saved = await screen.findByText("ChatGPT plugin");
-    const row = saved.closest("li");
-    if (!row) throw new Error("No saved rehearsal row");
-    await userEvent.click(within(row).getByRole("button", { name: "Open" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Go step by step" }));
 
     expect(
-      await screen.findByText(/Choose the stored plugin to rehearse\./),
+      await screen.findByText(/Choose a plugin ZIP, a source folder, or a saved plugin below\./),
     ).toBeVisible();
     expect(
       screen.getByText(
-        "A copy of the ChatGPT portal. Nothing here is sent to ChatGPT.",
+        "ChatGPT plugin package",
       ),
     ).toBeVisible();
     expect(
-      screen.getByText("Choose a plugin version to run checks."),
+      screen.getByText("Choose a plugin package to run checks."),
     ).toBeVisible();
     expect(screen.getByRole("button", { name: "Run checks" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Upload ZIP or folder" }));
+    await userEvent.click(screen.getByRole("button", { name: "Finish test import" }));
+    expect(api.updateDirectorySubmission).toHaveBeenCalledWith(
+      expect.objectContaining({ submissionId: "sub_2" }),
+      expect.objectContaining({ plugin: { pluginId: "plugin_one", pluginVersionId: "imported_version" } }),
+    );
   });
 });
 
@@ -867,26 +975,14 @@ describe("ReadinessPage", () => {
 
   /** Opens the rehearsal and types into the Listing step's Name. */
   async function editName() {
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     await screen.findByRole("heading", { level: 1, name: "Connection" });
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
     await userEvent.click(screen.getByRole("button", { name: "Next" }));
     await userEvent.type(screen.getByLabelText(/^Name/), " 2");
-  }
-
-  /** Picks a server in the rehearsal bar's picker. */
-  async function chooseServer(name: string) {
-    await userEvent.click(screen.getByRole("button", { name: "Server" }));
-    const rows = within(screen.getByRole("dialog")).getAllByRole("button", {
-      name: new RegExp(`${name}$`),
-    });
-    await userEvent.click(
-      rows.find(
-        (row) => !row.getAttribute("aria-label")?.startsWith("Connect"),
-      )!,
-    );
   }
 
   it("starts over on another server while a rehearsal is being created", async () => {
@@ -895,15 +991,16 @@ describe("ReadinessPage", () => {
       new Promise<SubmissionView>((resolve) => (finish = resolve)),
     );
     const { rerender } = render(page("Sample server"));
+    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
     await userEvent.click(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     );
     expect(
-      screen.getByRole("button", { name: /MCP connector/ }),
+      screen.getByRole("button", { name: "Go step by step" }),
     ).toBeDisabled();
 
     rerender(page("Other server"));
-    expect(screen.getByRole("button", { name: /MCP connector/ })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Go step by step" })).toBeEnabled());
     expect(api.listServerSubmissions).toHaveBeenLastCalledWith(
       "proj_1",
       "srv_2",
@@ -913,7 +1010,7 @@ describe("ReadinessPage", () => {
     // The first server's rehearsal is not opened when it arrives late.
     await act(async () => finish({ ...submission(), id: "sub_9" }));
     rerender(page("Sample server"));
-    expect(screen.getByText("What would you like to submit?")).toBeVisible();
+    expect(screen.getByText("Claude releases")).toBeVisible();
     expect(api.getDirectorySubmission).not.toHaveBeenCalled();
   });
 
@@ -993,7 +1090,7 @@ describe("ReadinessPage", () => {
     );
     expect(api.updateDirectorySubmission).toHaveBeenCalledTimes(1);
     expect(
-      await screen.findByText("What would you like to submit?"),
+      await screen.findByText("Claude releases"),
     ).toBeVisible();
   });
 });

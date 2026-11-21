@@ -10,10 +10,12 @@ import {
   type SnapshotFileSession,
 } from "../snapshot-bundle";
 import { sessionFileSpec, type SessionFileSpec } from "../session-files";
+import { HARNESS_CONVERSATION_STATE } from "../../conversation-state";
 
 const HOME = "/home/user";
 const SPEC = sessionFileSpec({
   harnessId: "claude-code",
+  conversationState: HARNESS_CONVERSATION_STATE["claude-code"],
   harnessSessionId: "hs-1",
   resumeState: { data: { claudeSessionId: "abc" } },
   home: HOME,

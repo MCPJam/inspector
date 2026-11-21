@@ -1,5 +1,63 @@
 # `@mcpjam/sdk` changelog
 
+## 10.12.0
+
+### Minor Changes
+
+- [#7964](https://github.com/MCPJam/inspector/pull/7964) [`afa4639`](https://github.com/MCPJam/inspector/commit/afa46392e1c68761cc10abd931ff8a0cc5705ca8) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `list_eval_suite_runs` now answers "what was the latest eval run in this project" in one call. `suite` is optional: without it, the listing reads the suite holding the project's most recent run, so the first item is the newest run in the project. Before, a call without a suite was refused as invalid input. And when none of the listed runs has finished, the result adds `latestFinishedRun`, the newest run of that suite that has, or `null` when none of its last 25 runs has. A run still in progress has no verdict, so before this a caller asking about the latest result learned only that it was pending. Naming a suite works as before.
+
+- [#7229](https://github.com/MCPJam/inspector/pull/7229) [`80bdccd`](https://github.com/MCPJam/inspector/commit/80bdccd3b75b169520b26e22b0a40f50bd15ad12) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Local eval reports in HTML and JUnit now show each iteration's tool calls with their arguments, tokens, scorer results and duration for every case, including cases that passed. Before, they showed only each case's verdict. HTML lists this under "Iteration evidence", one collapsed section per case below the summary. JUnit puts it in each test case's `<system-out>`. Long values are cut with a note: tool arguments after 2,000 characters in HTML and 500 in JUnit, scorer reasons and errors after 1,000, and tool calls after 25 per iteration. The JSON report and the terminal summary are unchanged. This applies to `mcpjam test --reporter html|junit-xml` and to `renderStructuredRunHtml` / `renderStructuredRunJUnitXml` for an `eval-local-run` report.
+
+- [#7888](https://github.com/MCPJam/inspector/pull/7888) [`e24282e`](https://github.com/MCPJam/inspector/commit/e24282ee4239399ca1d3051f7a10121a916f978e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Move the CLI's start-or-attach logic for a local Inspector into `@mcpjam/sdk/internal/inspector`, an internal, Node-only entry, so `@mcpjam/inspector`'s launcher can share it. The CLI behaves as before.
+
+- [#7818](https://github.com/MCPJam/inspector/pull/7818) [`6d1460c`](https://github.com/MCPJam/inspector/commit/6d1460c75db44f987e7eeef89429d1f76833b233) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export the server feature model behind MCPJam's server canvas: the feature catalog and its evaluator, conformance check maps and intrusiveness levels, a frame classifier with feature observation on `MCPClientManager`, and a Server Card probe. Also export `gradeMCPApps`, `discoverAuthorizationMetadata`, `readServerSkillCatalog` and `readServerEventTypes`, and let `collectConnectedServerDoctorState` list without reading skill files and stop when a signal fires.
+
+### Patch Changes
+
+- [#7957](https://github.com/MCPJam/inspector/pull/7957) [`ea544a2`](https://github.com/MCPJam/inspector/commit/ea544a260c29e9bff759129901eec01d2b7735f5) Thanks [@chelojimenez](https://github.com/chelojimenez)! - `diagnose_server` returns a diagnosis instead of failing when hosted MCPJam won't connect to a saved server: a plain `http://` URL, a stdio command, or no URL. The report fails the connection check, gives the reason and the next step, and skips the other checks. The descriptions of `list_server_tools`, `call_server_tool` and `list_server_resources` now say that a saved server's tools, such as a documentation server's search, are how it does work, and that `call_server_tool` runs one.
+
+- [#7866](https://github.com/MCPJam/inspector/pull/7866) [`1c68c79`](https://github.com/MCPJam/inspector/commit/1c68c79bc0a78eac2d5d62865be54fcd18df6a72) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Flag explicit directions to call an unlisted snake_case tool before or after another call in Claude directory readiness.
+
+- [#7868](https://github.com/MCPJam/inspector/pull/7868) [`3377de6`](https://github.com/MCPJam/inspector/commit/3377de6c5b43233a29526c00a77853dd251806bd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Detect empty and HTML fallback responses when checking the OpenAI domain challenge.
+
+## 10.11.0
+
+### Minor Changes
+
+- [#7793](https://github.com/MCPJam/inspector/pull/7793) [`44d9cd0`](https://github.com/MCPJam/inspector/commit/44d9cd0c3a2e9b811fc382d8c8ad289e729c250a) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Agents and scripts can run an eval run's analysis the way the run page does. `request_eval_run_insights`, `cancel_eval_run_insights` and `build_eval_run_findings` (MCP), `mcpjam cloud eval request-insights`, `cancel-insights` and `build-findings` (CLI), and `DELETE …/eval-runs/:runId/insights` and `POST …/eval-runs/:runId/findings/build` (REST) are new. `POST …/eval-runs/:runId/insights` and the SDK's `requestEvalRunInsights` now start the findings analysis the app runs instead of the older per-tool analysis; read the result from the run's `insights.currentFindings`, or on MCP, from `insights.findings` when `currentFindingsSameAsFindings` is `true`. Because the findings analysis explains a run's findings, such a request now answers 409 on a run whose findings are not built yet or are being rebuilt, where it used to start the older analysis; build them first with `build_eval_run_findings` or `mcpjam cloud eval build-findings`. The run page no longer shows "Waiting for analysis…" on a run whose findings analysis finished.
+
+- [#7850](https://github.com/MCPJam/inspector/pull/7850) [`0ce9aa9`](https://github.com/MCPJam/inspector/commit/0ce9aa91f500b753b3cb2d10ce243782ae15e247) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Eval runs read through the API now include `accounts`: the account each server used, whether it was personal or the project's, when its token was stored and by whom, when it expires, and whose it was. An account's email is included only when you may see it: a project account's for every project member, a personal account's only for the person who started the run, which for an API key is the key's owner. In human output, `mcpjam eval status`, `eval run --wait` and `eval rerun --wait` print one line per server naming those accounts.
+
+### Patch Changes
+
+- [#7831](https://github.com/MCPJam/inspector/pull/7831) [`6dcdaf2`](https://github.com/MCPJam/inspector/commit/6dcdaf2a41b06bef3f169266a80d15f950c9f648) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Accept the required JSON-RPC resource-not-found error without requiring HTTP 200. Clarify that modern logging is deprecated without implying support for the removed logging/setLevel method.
+
+## 10.10.0
+
+### Minor Changes
+
+- [#7737](https://github.com/MCPJam/inspector/pull/7737) [`688d1a6`](https://github.com/MCPJam/inspector/commit/688d1a61de8b6b4549cd51d421bb7076d66a5fde) Thanks [@chelojimenez](https://github.com/chelojimenez)! - New clients from the Claude Code, Codex CLI, Cursor CLI and GitHub Copilot CLI templates start with Tool Approval on and present their CLI's own MCP handshake (client name, version and capabilities). Where a turn doesn't forward, MCPJam's client shows the server that same identity. A GitHub Copilot CLI client's handshake no longer keeps it from native forwarding where that opens. A new OpenCode template appears for organizations with OpenCode enabled. Saved clients keep their settings.
+
+- [#7717](https://github.com/MCPJam/inspector/pull/7717) [`3608bcb`](https://github.com/MCPJam/inspector/commit/3608bcbc27405010c2c0277d72378b220746256e) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Eval trace llm spans now carry `cost` for their one provider call: the dollars the provider reported to the runner, such as OpenRouter's `usage.cost`, recorded as runner-reported (`source: "runner_reported"`), not provider-reported, because MCPJam cannot verify them; or "unavailable" with a reason when the provider reported none. The evidence marks its usage as runner-supplied and the call as customer-funded. The runner holds no rates, so it never estimates; MCPJam prices runner usage on its own side.
+
+- [#7708](https://github.com/MCPJam/inspector/pull/7708) [`7c6b4a8`](https://github.com/MCPJam/inspector/commit/7c6b4a8c5e9ed74863cc364a35cfa4247e9179dc) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add `parseModelCallCostEvidence` and `toModelCallCostEvidence`. The parser reads per-call cost evidence from a stream finish, a stored span or a usage row and returns undefined for anything incoherent, such as an unavailable result that carries an amount, a complete one without it, or an amount with no known source, so a malformed value shows as no cost rather than a wrong number. `toModelCallCostEvidence` attaches the usage, usage source and funding a priced call was computed from.
+
+- [#7692](https://github.com/MCPJam/inspector/pull/7692) [`50fb31b`](https://github.com/MCPJam/inspector/commit/50fb31b0527fd38536b338b64858ee7103d7d1e6) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add per-call model cost helpers. `normalizeModelUsage` turns one request's AI SDK usage into separate uncached-input, cache-read, cache-write, output and reasoning counts, and `extractReportedProviderCost` reads the dollar amount the Vercel AI Gateway or OpenRouter returned. `priceModelCall` prices the request from that amount or from a supplied rate, including context tiers, cache retention and web searches; a part it cannot price makes the result partial or unavailable instead of $0. `aggregateModelCallCosts` sums calls into a known subtotal with coverage counts. The helpers are pure and available from both `@mcpjam/sdk` and `@mcpjam/sdk/browser`.
+
+- [#7716](https://github.com/MCPJam/inspector/pull/7716) [`16febc2`](https://github.com/MCPJam/inspector/commit/16febc248956424f3ea52b89c881ed4f74354ee4) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Export `parseModelRates`, which reads a rate card from a public price row, an organization rate or a local override. It returns undefined unless the card is in US dollars with input and output rates, and drops invalid optional rates so the tokens they would price count as unpriced rather than free.
+
+### Patch Changes
+
+- [#7780](https://github.com/MCPJam/inspector/pull/7780) [`bdb43eb`](https://github.com/MCPJam/inspector/commit/bdb43ebc9b39f673dd338fcf031f84177dc99422) Thanks [@chelojimenez](https://github.com/chelojimenez)! - OAuth conformance no longer reports a server that requires sign-in as not applicable when the server is already signed in. The suite now ignores an `Authorization` custom header, because it signs in for itself, and a challenge the run already saw is no longer undone by a later 200.
+
+- [#7773](https://github.com/MCPJam/inspector/pull/7773) [`5951e1f`](https://github.com/MCPJam/inspector/commit/5951e1fb3b798112489bbe15fc3c0a7046d6425d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Grade saved ChatGPT rehearsal answers, including partial submissions, without treating unimported package fields as evidence.
+
+- [#7779](https://github.com/MCPJam/inspector/pull/7779) [`63a867a`](https://github.com/MCPJam/inspector/commit/63a867a2f33ee0d500be013f2c352af145d1971f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Grade ChatGPT rehearsal listing and review metadata from the selected plugin package, track package changes, and explain the evidence needed for remaining checks. Distinguish a verified reviewer organization from a verified account identity.
+
+- [#7743](https://github.com/MCPJam/inspector/pull/7743) [`a666251`](https://github.com/MCPJam/inspector/commit/a666251e8ad15291f904822e9fa9b2eb0765214d) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Reviewer sign-in fails closed. An attempt whose identity check was asked for but could not be made (the tool erred, its result lacked the field, or the reviewer's session failed) now fails instead of passing as unverified; only a submission that names no identity tool passes unverified. The sign-in stage passes only when MCPJam's callback carries a code, not when the page changes after the password.
+
+- [#7775](https://github.com/MCPJam/inspector/pull/7775) [`83da846`](https://github.com/MCPJam/inspector/commit/83da8465814bfff00666a811a5af610902f6f00b) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Recover rejected shared-account tokens on initial connections, preserve actionable run errors, and protect shared and uploaded account tokens from remote plaintext transport.
+
 ## 10.9.0
 
 ### Minor Changes

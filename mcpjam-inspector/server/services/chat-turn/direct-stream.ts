@@ -144,6 +144,7 @@ export function streamDirectChatWithLiveTrace(options: {
   onLiveTextDelta?: RunDirectChatTurnOptions["onLiveTextDelta"];
   onEngineError?: RunDirectChatTurnOptions["onEngineError"];
   transformStepMessages?: RunDirectChatTurnOptions["transformStepMessages"];
+  priceStepCall?: RunDirectChatTurnOptions["priceStepCall"];
   onPersistError?: RunDirectChatTurnOptions["onPersistError"];
   onStreamComplete?: () => void | Promise<void>;
   formatError?: (error: unknown) => string;

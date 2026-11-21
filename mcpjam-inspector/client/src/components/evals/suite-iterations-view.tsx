@@ -118,6 +118,11 @@ import {
   type RunResultCrumbs,
 } from "../evaluate/run-result-pages/run-result-page";
 import { useRunResultPagesEnabled } from "@/hooks/use-run-result-pages-enabled";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
+import {
+  CaseStepsPage,
+  opensInStepsEditor,
+} from "../evaluate/case-steps/case-steps-page";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
@@ -183,6 +188,7 @@ import {
 } from "./suite-settings-subsections";
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { SuiteSettingsDeleteButton } from "./suite-settings-delete-button";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import {
   useSuiteSettingsTabs,
@@ -524,6 +530,7 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
+  evaluateSettingsDelete = false,
   onGeneratingChange,
   onResultCrumbsChange,
   alwaysShowEditIterationRows = false,
@@ -578,7 +585,10 @@ export function SuiteIterationsView({
    * page cancel a whole client-model fan-out in one click.
    */
   onCancelRun: (runId: string | readonly string[]) => void;
-  onDelete: (suite: EvalSuite) => void;
+  onDelete: (
+    suite: EvalSuite,
+    options?: { hasUnsavedEdits?: boolean },
+  ) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
@@ -623,9 +633,9 @@ export function SuiteIterationsView({
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
   /**
-   * Whether this caller's ROLE may delete the suite. Ownership is a separate
-   * question and is answered inside — `suite.delete` is a CI-locked action, so
-   * the affordance is withheld on a CI-owned suite whatever the role says.
+   * Whether this caller's ROLE may delete the suite. `suite.delete` is not a
+   * CI-locked action, so this is the whole answer for most surfaces; see the
+   * note above `canDeleteSuite` inside for why.
    */
   canDeleteSuite: boolean;
   /** Whether the run selection + batch delete surface is shown at all. */
@@ -702,6 +712,12 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
+  /**
+   * Evaluate (New) only: a trash button in the Suite settings header that
+   * opens the shared delete dialog. OFF by default so `/evals` keeps its
+   * header as it is. Only `EvaluateTab` passes it.
+   */
+  evaluateSettingsDelete?: boolean;
   /** Passed through to {@link SuiteDetailOverview}; see its prop doc. */
   onGeneratingChange?: (
     state: { exit: () => void; label?: string } | null,
@@ -886,6 +902,16 @@ export function SuiteIterationsView({
           : route.type === "test-edit"
             ? "test-detail"
             : "overview";
+  // Evaluate's saved case: steps editor with the flag on; waits while it loads.
+  // Direct guests keep today's editor, which has their inline runner.
+  const stepsEditorFlag = useTestCaseStepsEditorEnabled();
+  const stepsEditorRoute =
+    evaluateCaseEditor &&
+    !isDirectGuest &&
+    viewMode === "test-edit" &&
+    opensInStepsEditor(route) &&
+    stepsEditorFlag !== false;
+  const showStepsEditor = stepsEditorRoute && stepsEditorFlag === true;
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -1006,6 +1032,9 @@ export function SuiteIterationsView({
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
+  // A save that lands while this suite is being deleted writes to a suite that
+  // is about to be gone, so saving waits for the delete to settle.
+  const deletingThisSuite = deletingSuiteId === suite._id;
   const dirtySettingKeys = useMemo(() => new Set(dirtyKeys(draft)), [draft]);
   const rowIsDirty = useCallback(
     (key: EvalSuiteSettingKey) =>
@@ -1062,7 +1091,9 @@ export function SuiteIterationsView({
     onDiscard: () => dispatchDraft({ type: "discard" }),
   });
   useUnsavedChangesGuard(
-    hasUnsavedSettings,
+    // Evaluate's settings delete: the navigation to the list after it must
+    // not ask about edits to a suite that is gone. Other mounts keep the guard.
+    hasUnsavedSettings && !(evaluateSettingsDelete && deletingThisSuite),
     () => dispatchDraft({ type: "discard" }),
     undefined,
     isCommitting,
@@ -1090,7 +1121,8 @@ export function SuiteIterationsView({
   }, [liveSettingsKey]);
 
   const handleCommitSettings = useCallback(async () => {
-    if (!draftCanCommit || isCommitting || editingDisabled) return;
+    if (!draftCanCommit || isCommitting || editingDisabled || deletingThisSuite)
+      return;
     const runsEnvironments = Boolean(suite.environmentIds?.length);
     const imageBlock = environmentImageSaveBlock({
       runsEnvironments,
@@ -1155,6 +1187,7 @@ export function SuiteIterationsView({
     dirtySettingKeys,
     draftChanges,
     environmentCapabilities,
+    deletingThisSuite,
   ]);
 
   // Save the same validated draft from the button or keyboard shortcut.
@@ -1247,7 +1280,10 @@ export function SuiteIterationsView({
   // A draft case has no row yet, so it has no history to read — and its
   // `draft:` id would fail the query's `v.id("testCase")` check.
   const historyTestCaseId =
-    perRunMode && selectedTestId && !isDraftTestCaseId(selectedTestId)
+    !stepsEditorRoute &&
+    perRunMode &&
+    selectedTestId &&
+    !isDraftTestCaseId(selectedTestId)
       ? selectedTestId
       : null;
   const caseRows = useQuery(
@@ -1739,14 +1775,8 @@ export function SuiteIterationsView({
       isVerdictPolicyV2,
       showComputerEnvironment: computerEnvironmentRowVisible,
       showSchedule: scheduledEvalsEnabled,
-      showDelete: canDeleteSuite,
     }),
-    [
-      isVerdictPolicyV2,
-      computerEnvironmentRowVisible,
-      scheduledEvalsEnabled,
-      canDeleteSuite,
-    ],
+    [isVerdictPolicyV2, computerEnvironmentRowVisible, scheduledEvalsEnabled],
   );
   // Scope changes are API-only until an explicit operation ships in a follow-up.
   const openSetting = useCallback(
@@ -2149,7 +2179,7 @@ export function SuiteIterationsView({
                     layout="inline"
                     changeCount={draftChanges.length}
                     conflictCount={draft.conflicts.length}
-                    canCommit={draftCanCommit}
+                    canCommit={draftCanCommit && !deletingThisSuite}
                     isCommitting={isCommitting}
                     onDiscard={() => dispatchDraft({ type: "discard" })}
                     onSave={() => void handleCommitSettings()}
@@ -2181,6 +2211,23 @@ export function SuiteIterationsView({
                     Save settings
                   </Button>
                 )}
+                {/* Not gated on `configLocked`: deleting a CI-owned suite edits
+                    nothing, and the dialog says the next sync brings it back. */}
+                {evaluateSettingsDelete &&
+                canDeleteSuite &&
+                !readOnlyConfig &&
+                !(
+                  capabilitiesReady &&
+                  capabilities.permissions?.["suite.delete"] === false
+                ) ? (
+                  <SuiteSettingsDeleteButton
+                    // Any delete in flight: `handleDelete` ignores a second one.
+                    disabled={deletingSuiteId !== null || isCommitting}
+                    onDelete={() =>
+                      onDelete(suite, { hasUnsavedEdits: hasUnsavedSettings })
+                    }
+                  />
+                ) : null}
               </div>
             }
             suite={suite}
@@ -2238,9 +2285,43 @@ export function SuiteIterationsView({
       {!isEditMode && (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
-            {(viewMode === "test-edit" || viewMode === "test-detail") &&
-            selectedTestId &&
-            caseRowsPending ? (
+            {stepsEditorRoute && !showStepsEditor ? (
+              <RowsLoading key={contentKey} label="Loading test case..." />
+            ) : showStepsEditor && selectedTestId ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <CaseStepsPage
+                  suiteId={suite._id}
+                  testCaseId={selectedTestId}
+                  projectId={projectId}
+                  readOnly={editingDisabled}
+                  projectServers={projectServers}
+                  launchReview={{
+                    projectId,
+                    suite,
+                    environments: projectEnvironments ?? undefined,
+                    hostNamesById,
+                    disabledReason:
+                      evalRunsDisabledReason ??
+                      (rerunningSuiteId ? "A run is already starting." : null),
+                  }}
+                  onRunCase={onRunCase}
+                  runOutOfCreditsReason={caseRunOutOfCreditsReason}
+                  onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                  navigation={navigation}
+                />
+              </motion.div>
+            ) : (viewMode === "test-edit" || viewMode === "test-detail") &&
+              selectedTestId &&
+              caseRowsPending ? (
               <RowsLoading key={contentKey} label="Loading case history..." />
             ) : viewMode === "test-edit" && selectedTestId ? (
               <motion.div

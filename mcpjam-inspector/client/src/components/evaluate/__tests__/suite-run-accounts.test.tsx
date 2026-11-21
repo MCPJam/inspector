@@ -154,7 +154,7 @@ describe("the Runs as you line", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("reads the suite's saved choice beside Setup Run", () => {
+  it("reads the suite's saved choice beside Set up run", () => {
     state.view = {
       servers: [
         {
@@ -182,7 +182,7 @@ describe("the Runs as you line", () => {
   });
 });
 
-describe("the Setup Run account checks", () => {
+describe("the Set up run account checks", () => {
   it("names an account that needs reconnecting and keeps Start run off", async () => {
     renderSheet({
       ...emptyPreflight,
@@ -281,7 +281,7 @@ describe("the Setup Run account checks", () => {
   });
 });
 
-describe("the Setup Run account checks, kept to what the run connects", () => {
+describe("the Set up run account checks, kept to what the run connects", () => {
   // Asana runs on its default; the Linear account chosen needs reconnecting.
   const twoServers = {
     servers: [

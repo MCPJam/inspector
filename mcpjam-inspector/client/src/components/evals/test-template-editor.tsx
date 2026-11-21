@@ -40,6 +40,7 @@ import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { useTestCaseStepsEditorEnabled } from "@/hooks/use-test-case-steps-editor-enabled";
 import { useEvalsStartRecordingEnabled } from "@/hooks/useEvalsStartRecordingEnabled";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import type { ModelSelection } from "@mcpjam/sdk/browser";
@@ -287,6 +288,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSpine } from "../evaluate/case-spine/case-spine";
+import { DescribeCaseSteps } from "../evaluate/case-steps/draft-case-steps";
 import { ToolErrorSwitch } from "../evaluate/tool-error-switch";
 import { CaseJudgeAnswer } from "../evaluate/case-scorecard/case-judge-answer";
 import {
@@ -1979,6 +1981,7 @@ export function TestTemplateEditor({
   const caseCapabilities = useSuiteCapabilities(
     useWorkspace ? (suiteId ?? null) : null,
   );
+  const stepsEditorEnabled = useTestCaseStepsEditorEnabled() === true;
 
   /**
    * The tool question as shown, resolved from the stored choice plus what the
@@ -4395,6 +4398,28 @@ export function TestTemplateEditor({
           onAsk={evalAgent.open}
           onSave={() => void handleSave()}
           saveDisabled={savePrimaryDisabled}
+          stepsForm={
+            stepsEditorEnabled ? (
+              <DescribeCaseSteps
+                form={editForm}
+                onFormChange={(update) =>
+                  setEditForm((current) =>
+                    current ? update(current) : current,
+                  )
+                }
+                toolsChoice={simpleToolsChoice}
+                onToolsChoiceChange={setSimpleToolsChoice}
+                stashedTools={simpleStashedTools}
+                onStashedToolsChange={setSimpleStashedTools}
+                suite={suite}
+                capabilities={caseCapabilities.capabilities}
+                availableTools={assertableTools}
+                projectServers={projectServers}
+                onOpenSuiteSettings={() => onOpenSuiteSettings?.()}
+                onDraftValidityChange={setHasInvalidFieldDraft}
+              />
+            ) : undefined
+          }
           caseForm={
             <CaseSpine
               steps={editForm.steps}
@@ -4535,7 +4560,7 @@ export function TestTemplateEditor({
                       disabled={!editForm}
                     >
                       <Code2 className="mr-2 h-3.5 w-3.5" />
-                      Setup SDK
+                      Set up SDK
                     </Button>
                   ) : null}
                   {hasUnsavedChanges ? (

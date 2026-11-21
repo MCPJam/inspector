@@ -8,6 +8,7 @@
  * `credentialSource: "mcpjam-backend"` keeps the connection out of replay.
  * Bindings wrap `hostedMcpBaseFetch()`, so the MJ-001 egress guard stays.
  */
+import { isLoopbackOAuthUrl } from "@mcpjam/sdk/oauth/node";
 import type {
   HttpServerConfig,
   MCPClientManager,
@@ -71,10 +72,20 @@ export function bindDeliveredToken(args: {
   token: string;
   /** `oauthBoundOrigins` or an account's `boundOrigins`, as received. */
   boundOrigins: unknown;
+  accountKind?: string;
+  accountUploaded?: boolean;
   target: Target;
 }): typeof fetch {
+  const secure = (origin: string) =>
+    origin.startsWith("https:") || isLoopbackOAuthUrl(origin);
   const target = credentialOrigin(args.url);
-  const bound = boundOriginsFrom(args.boundOrigins) ?? (target ? [target] : []);
+  const requiresHttps = args.accountKind === "shared" || args.accountKind === "uploaded" || args.accountUploaded === true;
+  if (requiresHttps && target && !secure(target)) {
+    throw new WebRouteError(403, ErrorCode.FORBIDDEN,
+      "This server needs HTTPS to use its saved sign-in. Ask a server administrator to configure HTTPS.",
+      { credentialRefusal: "insecure_transport", serverId: args.target.serverId });
+  }
+  const bound = (boundOriginsFrom(args.boundOrigins) ?? (target ? [target] : [])).filter((origin) => !requiresHttps || secure(origin));
   if (target === null || !bound.includes(target)) {
     throw tokenNotSent(args.url, args.target);
   }
@@ -96,7 +107,7 @@ export function bindDeliveredToken(args: {
 export function deliveredConnection(args: {
   config: HttpServerConfig;
   fetchFn: typeof fetch;
-  delivered: { token: string; bound: unknown };
+  delivered: { token: string; bound: unknown; accountKind?: string; accountUploaded?: boolean };
   target: Target;
 }): { config: HttpServerConfig; fetchFn: typeof fetch } {
   const { config, delivered } = args;
@@ -105,6 +116,8 @@ export function deliveredConnection(args: {
     url: config.url,
     token: delivered.token,
     boundOrigins: delivered.bound,
+    accountKind: delivered.accountKind,
+    accountUploaded: delivered.accountUploaded,
     target: args.target,
   });
   return {
@@ -182,6 +195,8 @@ export function deliveredCredentialFields(args: {
   token: string | null | undefined;
   /** `oauthBoundOrigins` or an account's `boundOrigins`, as received. */
   boundOrigins: unknown;
+  accountKind?: string;
+  accountUploaded?: boolean;
   stored: CredentialHeaderBinding | undefined;
   target: Target;
 }): DeliveredFields {
@@ -200,6 +215,8 @@ export function deliveredCredentialFields(args: {
       url: args.url,
       token: args.token,
       boundOrigins: args.boundOrigins,
+      accountKind: args.accountKind,
+      accountUploaded: args.accountUploaded,
       target: args.target,
     });
     fields.credentialSource = "mcpjam-backend";
@@ -277,6 +294,8 @@ export function deliveredAccountFields(args: {
     url: args.url,
     token: args.account.accessToken,
     boundOrigins: args.account.boundOrigins,
+    accountKind: args.account.accountKind,
+    accountUploaded: args.account.accountUploaded,
     stored: args.stored,
     target: args.target,
   });

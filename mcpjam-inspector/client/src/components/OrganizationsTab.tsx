@@ -93,6 +93,7 @@ import {
 } from "@/lib/billing-upsell";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
+import { OrganizationSecuritySection } from "./organization/OrganizationSecuritySection";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -602,8 +603,18 @@ export function OrganizationsTab({
 
   const myRole = organization.myRole;
   const hasAccess = myRole === "owner" || myRole === "admin";
+  // Every member may read Security: a member refused under the credential
+  // export policy can see how it is set before asking an admin to change it.
+  const sectionChild =
+    children ??
+    (section === "security" ? (
+      <OrganizationSecuritySection
+        organizationId={organization._id}
+        isAdmin={hasAccess}
+      />
+    ) : undefined);
 
-  if (!hasAccess && !children) {
+  if (!hasAccess && !sectionChild) {
     return <OrganizationAccessRestricted organization={organization} />;
   }
 
@@ -611,7 +622,7 @@ export function OrganizationsTab({
     <OrganizationPage
       organization={organization}
       section={section}
-      children={children}
+      children={sectionChild}
       checkoutIntent={
         checkoutIntent?.organizationId === organization._id
           ? checkoutIntent
@@ -735,7 +746,8 @@ function OrganizationPage({
   const activeSection: OrganizationRouteSection =
     section === "api-keys" ||
     section === "plans" ||
-    section === "data-management"
+    section === "data-management" ||
+    section === "security"
       ? section
       : section === "models"
         ? "models"

@@ -10,10 +10,23 @@ vi.mock("../../../utils/assistant-turn.js", () => ({
 }));
 
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
+import { buildLiveEffectiveCapabilities } from "../../environments/effective-capabilities";
+import { resolveTurnSkills } from "../../environments/turn-skills";
 import { driveHostedEvalTurn } from "../drive-hosted-eval-turn";
 import type { DriveHostedEvalTurnParams } from "../drive-hosted-eval-turn";
 import { buildHostedStepHandlers } from "../step-handlers";
 import { logger } from "../../../utils/logger";
+
+/** A run that froze no skills, planned for a harness: it clears the box. */
+const FROZEN_EMPTY_PLAN = resolveTurnSkills({
+  source: {
+    kind: "pins",
+    pins: [],
+    set: buildLiveEffectiveCapabilities({}),
+    harnessSkills: [],
+  },
+  runtime: { kind: "harness", harnessId: "claude-code" },
+});
 
 function baseParams(
   overrides: Partial<DriveHostedEvalTurnParams> = {},
@@ -223,46 +236,35 @@ describe("harness execution options reach the engine", () => {
     expect(options.environmentId).toBeUndefined();
   });
 
-  it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
-    // The one harness field gated on `!== undefined` rather than truthiness,
-    // and deliberately so: an empty array is how `skillsOverride: "exclude"`
-    // says "this arm runs with NO skills". A truthiness regression would drop
-    // it, the harness would fall back to its own project-wide skill fetch, and
-    // the skill-free arm would quietly run with skills — while every other
-    // assertion in this file still passed.
+  it("forwards the plan of an EMPTY frozen set — the A/B arm", async () => {
+    // An empty frozen set is how `skillsOverride: "exclude"` says "this arm
+    // runs with NO skills". The plan says it (`harness.skills` is `[]`, which
+    // clears the box), so dropping the plan would leave the skill-free arm with
+    // whatever skills its box already holds, while every other assertion in
+    // this file still passed.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
+    expect(options.skillPlan?.harness).toMatchObject({
+      mode: "pinned",
+      skills: [],
+    });
   });
 
-  it("delivers the run's pins on the FROZEN channel, not the live-environment one", async () => {
-    // `selectHarnessSkillSource` ranks pinned → environment → live, and only
-    // the top rank promises that nothing live is consulted. Sending a frozen
-    // run's skills as `runtimeSkillsOverride` would work in the happy case and
-    // be wrong in the one that matters: `runtimeSkillsOverride` is documented
-    // as the channel for a turn whose environment re-resolves each time.
+  it("delivers the run's plan, not the older inputs a live environment would send", async () => {
+    // The plan ranks a run's frozen copies above everything and promises that
+    // nothing live is consulted. Sending a frozen run's skills as
+    // `runtimeSkillsOverride` would work in the happy case and be wrong in the
+    // one that matters: that channel is for a turn whose environment
+    // re-resolves each time.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      pinnedHarnessSkills: [
-        {
-          name: "deploy",
-          description: "ship it",
-          content: "# Deploy",
-          contentHash: "sha-1",
-        },
-      ],
+      skillPlan: FROZEN_EMPTY_PLAN,
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
-    expect(options.pinnedHarnessSkills).toEqual([
-      {
-        name: "deploy",
-        description: "ship it",
-        content: "# Deploy",
-        contentHash: "sha-1",
-      },
-    ]);
+    expect(options.skillPlan).toBe(FROZEN_EMPTY_PLAN);
     expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 
@@ -306,7 +308,7 @@ describe("harness execution options reach the engine", () => {
       },
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: {} },
-      pinnedHarnessSkills: [],
+      skillPlan: FROZEN_EMPTY_PLAN,
       modelVisibleMcpToolResults: { directContent: { image: false } },
       respectToolVisibility: false,
       tasks: { mode: "await" },
@@ -316,7 +318,7 @@ describe("harness execution options reach the engine", () => {
     expect(options.harnessSandboxBinding).toBeUndefined();
     expect(options.harnessMcpProxy).toBeUndefined();
     expect(options.builtInTools).toBeUndefined();
-    expect(options.pinnedHarnessSkills).toBeUndefined();
+    expect(options.skillPlan).toBeUndefined();
     expect(options.modelVisibleMcpToolResults).toBeUndefined();
     expect(options.respectToolVisibility).toBeUndefined();
     expect(options.tasks).toBeUndefined();

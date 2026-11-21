@@ -43,79 +43,93 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "Get Started",
-        "pages": [
-          "index",
-          "getting-started",
-          "installation",
-          "hosted/overview",
-          "hosted/claude-connector",
-          "hosted/sso",
-          "hosted/network",
-          "troubleshooting/common-errors",
-          "troubleshooting/error-codes",
-          "changelog/overview"
-        ]
-      },
-      {
-        "tab": "Inspector",
+        "tab": "Docs",
         "groups": [
           {
-            "group": "Connect",
-            "icon": "plug",
+            "group": "Get started",
+            "icon": "rocket",
             "pages": [
-              "inspector/home",
-              "inspector/clients",
-              "inspector/connecting-servers",
-              "inspector/projects",
-              "inspector/protocol-versions",
-              "inspector/host-compat",
-              "inspector/skills"
+              "index",
+              "getting-started",
+              {
+                "group": "Choose where to run",
+                "pages": ["installation", "hosted/overview"]
+              },
+              "inspector/connecting-servers"
             ]
           },
           {
-            "group": "MCP Apps",
-            "icon": "layout-dashboard",
+            "group": "Test and debug",
+            "icon": "bug",
             "pages": [
               "inspector/playground",
-              "inspector/evals",
-              "inspector/view-origins",
-              "inspector/host-templates"
+              {
+                "group": "Test MCP Apps",
+                "pages": [
+                  "guides/first-mcp-app",
+                  "guides/first-chatgpt-app-react",
+                  "inspector/view-origins"
+                ]
+              },
+              {
+                "group": "Check host compatibility",
+                "pages": ["inspector/host-compat", "inspector/host-templates"]
+              },
+              {
+                "group": "Test authentication",
+                "pages": [
+                  "inspector/guided-oauth",
+                  "inspector/xaa-debugger",
+                  "inspector/lazy-authentication"
+                ]
+              },
+              {
+                "group": "Inspect your server",
+                "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
+              }
             ]
           },
           {
-            "group": "Authentication",
-            "icon": "shield-check",
-            "pages": [
-              "inspector/guided-oauth",
-              "inspector/xaa-debugger",
-              "inspector/lazy-authentication"
-            ]
+            "group": "Evaluate",
+            "icon": "flask-conical",
+            "pages": ["inspector/evals", "inspector/eval-test-users"]
           },
           {
-            "group": "Primitives",
-            "icon": "puzzle",
+            "group": "Configure",
+            "icon": "settings",
             "pages": [
-              "inspector/tools-prompts-resources",
-              "inspector/debugging"
-            ]
-          },
-          {
-            "group": "Privacy",
-            "icon": "eye-off",
-            "pages": [
+              "inspector/clients",
+              {
+                "group": "Manage your workspace",
+                "pages": ["inspector/projects", "inspector/home"]
+              },
+              "inspector/protocol-versions",
+              "inspector/skills",
+              {
+                "group": "Use with other tools",
+                "pages": [
+                  "hosted/mcp-server",
+                  "inspector/docs-server",
+                  "inspector/launch-from-code"
+                ]
+              },
+              {
+                "group": "Enterprise admin",
+                "pages": ["hosted/sso", "hosted/network"]
+              },
               "inspector/telemetry-privacy"
             ]
           },
           {
-            "group": "Embedding",
-            "icon": "code",
-            "pages": ["inspector/launch-from-code", "inspector/docs-server"]
+            "group": "Troubleshoot",
+            "icon": "life-buoy",
+            "pages": ["troubleshooting/common-errors", "troubleshooting/error-codes"]
           },
           {
-            "group": "Recipes",
-            "icon": "map",
-            "pages": ["guides/first-mcp-app", "guides/first-chatgpt-app-react"]
+            "group": "Changelog",
+            "hidden": true,
+            "searchable": true,
+            "pages": ["changelog/overview"]
           }
         ]
       },
@@ -231,6 +245,11 @@
           "anchor": "Website",
           "href": "https://mcpjam.com",
           "icon": "globe"
+        },
+        {
+          "anchor": "Changelog",
+          "href": "/changelog/overview",
+          "icon": "newspaper"
         }
       ]
     }
@@ -240,6 +259,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/hosted/claude-connector",
+      "destination": "/hosted/mcp-server"
+    },
     {
       "source": "/api-reference/agent-browsers/open-a-cloud-browser-session",
       "destination": "/reference/public-api"

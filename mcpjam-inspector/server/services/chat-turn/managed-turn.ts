@@ -298,7 +298,7 @@ export async function handleManagedChatTurn(
                 environmentSpec.servers.baseEffectiveServerIds?.length ??
                 environmentSpec.servers.effectiveServerIds.length,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: turnSkills.box?.skills.length ?? 0,
+              environment_skill_count: turnSkills.environmentSkillCount,
               environment_skill_delivery: skillDelivery,
               environment_plugin_version_ids: (
                 environmentSpec.pluginVersions ?? []
@@ -333,7 +333,7 @@ export async function handleManagedChatTurn(
               environment_id: scenarioEnvironment.environmentRef.environmentId,
               environment_revision: scenarioEnvironment.environmentRef.revision,
               environment_effective_server_count: effectiveServerIds.length,
-              environment_skill_count: turnSkills.box?.skills.length ?? 0,
+              environment_skill_count: turnSkills.environmentSkillCount,
             }
           : {}),
       });
@@ -534,28 +534,18 @@ export async function handleManagedChatTurn(
           ...(resolvedExecution.harness && harnessExecutionTarget
             ? { harnessExecutionTarget }
             : {}),
-          // Harness-engine delivery of the same plan's skills, with the set
-          // that carries their supporting files and the pinned plugin
-          // versions that fork an incompatible resumed sandbox. Presence
-          // (even empty) is what makes it authoritative downstream.
-          ...(turnSkills.box
-            ? {
-                runtimeSkillsOverride: turnSkills.box.skills,
-                ...(turnSkills.box.set
-                  ? { effectiveCapabilities: turnSkills.box.set }
-                  : {}),
-              }
+          // The pinned plugin versions that fork an incompatible resumed
+          // sandbox. The plan itself reaches the harness through `prepare`.
+          ...(turnSkills.capabilities
+            ? { effectiveCapabilities: turnSkills.capabilities }
             : {}),
-          // Its servers are connected now: a harness may offer their own
-          // skills, as MCPJam's agent does.
-          ...(turnSkills.live ? { liveTurn: true } : {}),
           ...(turnSkills.turnProvenance
             ? { turnProvenance: turnSkills.turnProvenance }
             : {}),
           ...(environmentSpec ? { setupEnvironment: environmentSpec } : {}),
           // A study whose Library could not be read ran with unknown skills.
           setupSkillProvenanceIncomplete:
-            turnMode === "recorded" && !turnSkills.box,
+            turnMode === "recorded" && turnSkills.skillsUnread === true,
           // Ad-hoc overrides are not represented by a saved client snapshot.
           setupConnectionPolicyIncomplete:
             !authoritativeConnectionPolicy &&

@@ -61,6 +61,8 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
+import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
@@ -284,6 +286,12 @@ interface MultiModelPlaygroundCardProps {
   compareEnterMessages?: UIMessage[];
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (compareId: string, messages: UIMessage[]) => void;
+  /** Called with this card's own session once a turn stops streaming. */
+  onTurnSettled?: (
+    compareId: string,
+    chatSessionId: string,
+    messages: UIMessage[],
+  ) => void;
   /**
    * Optional per-column host snapshot. Consolidates what Phase 3 had as
    * five separate optional props with `*Set` discriminator booleans
@@ -384,6 +392,7 @@ export function MultiModelPlaygroundCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
+  onTurnSettled,
   hostSnapshot,
   hostCapsResolver,
   modelPicked = false,
@@ -437,6 +446,9 @@ export function MultiModelPlaygroundCard({
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
   // Read when a restore fails, after the props it closed over may have moved.
   // Set at commit, so a render React discards never counts as received.
   const broadcastRequestRef = useRef(broadcastRequest);
@@ -567,6 +579,7 @@ export function MultiModelPlaygroundCard({
     harnessStartupPhase,
     loadChatSession,
     selectedModel,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     inheritedEnvironmentModel,
@@ -607,6 +620,7 @@ export function MultiModelPlaygroundCard({
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
       setInjectedToolRenderOverrides({});
+      setBroadcastId(undefined);
     },
   });
 
@@ -852,6 +866,19 @@ export function MultiModelPlaygroundCard({
   }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    if (isStreaming || messages.length === 0) return;
+    onTurnSettled?.(compareId, chatSessionId, messages);
+  }, [isStreaming, messages, compareId, chatSessionId, onTurnSettled]);
+
+  // An empty transcript tells the parent this lane's session is gone.
+  const onTurnSettledRef = useRef(onTurnSettled);
+  onTurnSettledRef.current = onTurnSettled;
+  useEffect(
+    () => () => onTurnSettledRef.current?.(compareId, chatSessionId, []),
+    [compareId, chatSessionId],
+  );
+
+  useEffect(() => {
     // A restored column loads its own history instead of any seed.
     if (recoveryColumn) return;
     if (compareKind === "host") {
@@ -936,6 +963,14 @@ export function MultiModelPlaygroundCard({
   const latestTurnDurationMs = latestTurn?.durationMs ?? null;
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
+  const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isBusy: isExecuting,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -946,21 +981,17 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
-      status: error
-        ? "error"
-        : isStreaming || isExecuting
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+      broadcastId,
+      ...(latestTurnCost ? { cost: latestTurnCost } : {}),
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
     [
+      broadcastId,
+      cardStatus,
       compareId,
-      error,
-      isExecuting,
-      isStreaming,
       isThreadEmpty,
+      latestTurnCost,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,
@@ -1045,6 +1076,7 @@ export function MultiModelPlaygroundCard({
     if (!claimBroadcastDelivery?.(broadcastRequest)) return;
     // A column whose restore failed runs the next turn as a fresh column.
     if (recoveryStatus === "failed") setRecoveryStatus("ready");
+    setBroadcastId(broadcastRequest.id);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -1202,6 +1234,7 @@ export function MultiModelPlaygroundCard({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       if (!canInvoke()) return;
+      setBroadcastId(undefined);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

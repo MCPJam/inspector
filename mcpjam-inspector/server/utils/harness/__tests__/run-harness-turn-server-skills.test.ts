@@ -72,6 +72,7 @@ vi.mock("../registry.js", async () => {
         baseUrl: "https://broker.example",
       },
     })),
+    harnessSupportsSkills: () => true,
     getHarnessAdapter: vi.fn(() => ({
       id: "codex",
       pinnedRuntimeVersion: "0.163.0",
@@ -137,7 +138,11 @@ import { renderUserContextText } from "@/shared/user-context-message";
 import { buildServerSkillToolOutput } from "@/shared/server-skill-banner";
 import { runHarnessTurn } from "../run-harness-turn";
 import { COMMAND_REFUSED_IN_USE } from "../server-skill-command-gate";
-import { preparedRunSkills } from "../../../test/support/skill-delivery";
+import {
+  frozenPlan,
+  preparedRunSkills,
+} from "../../../test/support/skill-delivery";
+import { resolveTurnSkills } from "../../../services/environments/turn-skills";
 
 const ASK = {
   role: "user",
@@ -196,7 +201,10 @@ async function evalTurn(overrides: Record<string, unknown> = {}) {
       sourceType: "eval",
       approvalMode: "auto-deny",
       harness: "codex",
-      pinnedHarnessSkills: run.pinnedHarnessSkills,
+      skillPlan: resolveTurnSkills({
+        source: run.pinnedSkillSource,
+        runtime: { kind: "harness", harnessId: "codex" },
+      }),
       ...overrides,
     } as never,
     "none",
@@ -291,7 +299,7 @@ describe("a harness turn with a server skill", () => {
 
 describe("a harness turn without one", () => {
   it("keeps the runtime's own mode and offers no skill tools", async () => {
-    const agent = await evalTurn({ pinnedHarnessSkills: [] });
+    const agent = await evalTurn({ skillPlan: frozenPlan("codex", []) });
     expect(agent.permissionMode).toBe("allow-all");
     expect(agent.tools ?? {}).not.toHaveProperty("loadSkill");
     expect(agent.instructions).toBe("You are Codex.");
@@ -347,5 +355,103 @@ describe("MCPJam's own bash on a turn with a server skill", () => {
       ).bash;
     await expect(approvalOf([ASK])).resolves.toBe("not-applicable");
     await expect(approvalOf([PICKED, ASK])).resolves.toBe("user-approval");
+  });
+});
+
+/**
+ * The turn's approval policy (`turnApprovalPolicy`), as a harness reads it
+ * from the two settings every caller derives from it: the switch as the
+ * surface applies it, and whether anyone answers.
+ */
+describe("a harness turn under the approval policy", () => {
+  const DENIAL = "approval-denied (synthetic session)";
+  const SWARM = {
+    sourceType: "swarm",
+    approvalMode: "auto-deny",
+    requireToolApproval: true,
+    journeyRunId: "run-1",
+    hostId: "host-1",
+    chatSessionId: "chat-1",
+    skillPlan: frozenPlan("codex", []),
+  };
+  const writes = () => ({
+    description: "Change a record",
+    needsApproval: true,
+    execute: vi.fn(async () => "written"),
+  });
+  const reads = () => ({
+    description: "Read a record",
+    needsApproval: false,
+    execute: vi.fn(async () => "read"),
+  });
+
+  it("asks in a swarm, and MCPJam denies each request with its engine's result", async () => {
+    const agent = await evalTurn(SWARM);
+    expect(agent.permissionMode).toBe("allow-reads");
+    const forwarded = await sendCommand(agent);
+    expect(runtime.submitToolApproval).toHaveBeenCalledExactlyOnceWith({
+      approvalId: "approval-cmd",
+      approved: false,
+      reason: DENIAL,
+    });
+    // Nothing reaches the turn to pause on, so the session carries on.
+    expect(forwarded.map((part) => part.type)).toEqual(["tool-call"]);
+  });
+
+  it("denies a swarm's gated host tool where it runs, and runs the rest", async () => {
+    const write = writes();
+    const read = reads();
+    const agent = await evalTurn({
+      ...SWARM,
+      builtInTools: { write_record: write, read_record: read },
+    });
+    const tools = agent.tools as Record<
+      string,
+      { execute: (input: unknown, options: unknown) => Promise<unknown> }
+    >;
+    expect(agent.toolApproval).toBeUndefined();
+    await expect(tools.write_record!.execute({}, {})).resolves.toEqual({
+      error: DENIAL,
+    });
+    expect(write.execute).not.toHaveBeenCalled();
+    await expect(tools.read_record!.execute({}, {})).resolves.toBe("read");
+  });
+
+  it("runs an eval as approval off, still denying a tool that always asks", async () => {
+    // The eval caller applies its policy before the turn: the switch is off.
+    const always = writes();
+    const read = reads();
+    const agent = await evalTurn({
+      requireToolApproval: false,
+      skillPlan: frozenPlan("codex", []),
+      builtInTools: { workspace_write: always, read_record: read },
+    });
+    expect(agent.permissionMode).toBe("allow-all");
+    const tools = agent.tools as Record<
+      string,
+      { execute: (input: unknown, options: unknown) => Promise<unknown> }
+    >;
+    await expect(tools.workspace_write!.execute({}, {})).resolves.toEqual({
+      error: DENIAL,
+    });
+    expect(always.execute).not.toHaveBeenCalled();
+    await expect(tools.read_record!.execute({}, {})).resolves.toBe("read");
+  });
+
+  it("leaves a chat turn's requests and gated tools to the person", async () => {
+    const write = writes();
+    const agent = await evalTurn({
+      ...MEMBER,
+      requireToolApproval: true,
+      skillPlan: frozenPlan("codex", []),
+      builtInTools: { write_record: write },
+    });
+    expect(agent.toolApproval).toEqual({ write_record: "user-approval" });
+    const forwarded = await sendCommand(agent);
+    expect(runtime.submitToolApproval).not.toHaveBeenCalled();
+    expect(forwarded.map((part) => part.type)).toEqual([
+      "tool-call",
+      "tool-approval-request",
+    ]);
   });
 });

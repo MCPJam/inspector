@@ -67,6 +67,34 @@ describe("the protocol version a proxy answers initialize with", () => {
     });
   });
 
+  it("answers in the requested version before the server has connected", async () => {
+    const unconnected = failingManager({
+      getInitializationInfo: vi.fn().mockReturnValue(undefined),
+    });
+    for (const mode of ["adapter", "manager"] as const) {
+      // A caller that worked out the version itself, and one that did not.
+      for (const options of [
+        { downstreamProtocolVersion: "2025-11-25" },
+        {},
+      ]) {
+        const response = await handleJsonRpc(
+          "orders",
+          initialize("2025-11-25"),
+          unconnected,
+          mode,
+          options,
+        );
+        expect(response).toMatchObject({
+          result: { protocolVersion: "2025-11-25", serverInfo: { name: "orders" } },
+        });
+      }
+      // Asked for one the bridge does not speak: its own default.
+      expect(
+        await handleJsonRpc("orders", initialize("2099-01-01"), unconnected, mode),
+      ).toMatchObject({ result: { protocolVersion: "2025-06-18" } });
+    }
+  });
+
   it("falls back to the upstream's for a version the bridge does not speak", () => {
     expect(downstreamProtocolVersionOf(initialize("2099-01-01"))).toBeUndefined();
     expect(downstreamProtocolVersionOf(initialize(7))).toBeUndefined();

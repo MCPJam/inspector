@@ -14,8 +14,8 @@
  *      modern wire an HTTP 400 arrives WITH a well-formed JSON-RPC error body,
  *      and the SDK surfaces that body in-band as a `ProtocolError` — so
  *      official-client evidence alone cannot tell "400 + -32020" from
- *      "200 + -32020". Each check asserts both from the capture and reports
- *      them independently, so a failure names which half is wrong.
+ *      "200 + -32020". Checks report both facts independently and only
+ *      assert a status when the spec requires one.
  *   2. **Hostile framing never goes through a client.**
  *      `TransportSendOptions.headers` skips reserved header names, so a probe
  *      that needs a wrong `Mcp-Method` / `Mcp-Name` / `MCP-Protocol-Version`
@@ -24,8 +24,8 @@
  * The spec's HTTP status mapping for ladder-produced errors (the statuses
  * asserted below) is: -32020 HeaderMismatch ⇒ 400, -32022
  * UnsupportedProtocolVersion ⇒ 400, -32021 MissingRequiredClientCapability ⇒
- * 400, -32601 MethodNotFound ⇒ 404. Handler-produced errors (e.g. -32602 for a
- * missing resource) stay in-band on HTTP 200.
+ * 400, -32601 MethodNotFound ⇒ 404. For a missing resource, the spec requires
+ * -32602 without specifying an HTTP status.
  */
 
 import type {
@@ -299,7 +299,7 @@ const MODERN_CHECK_METADATA = {
     category: "resources",
     title: "Resource Not Found",
     description:
-      "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+      "Reading an unknown resource answers with JSON-RPC error -32602.",
   },
   "modern-logs-require-log-level": {
     id: "modern-logs-require-log-level",
@@ -1723,7 +1723,9 @@ function alternatingCase(name: string): string {
  * The declared schema is validated with the same dialect-aware validator the
  * MCP client uses for tool inputs, so a tool declaring draft-07 (which
  * `zod-to-json-schema` emits by default) is judged under draft-07 rather than
- * rejected for not being 2020-12.
+ * rejected for not being 2020-12. A schema in any other dialect cannot be
+ * validated at all, so its result is reported as not checked instead of
+ * passing unseen.
  */
 async function runToolOutputSchemaCheck(
   ctx: RawHttpCheckContext,
@@ -1771,13 +1773,20 @@ async function runToolOutputSchemaCheck(
           }
         );
   }
+  // The validator accepts every value under a dialect it does not support, so
+  // a result "validated" against such a schema was never checked. Remember
+  // those dialects: the default handler would only console.warn, and a
+  // conformance run reports, it does not print.
+  const unsupportedDialects = new Set<string>();
   const validator = new DialectAwareJsonSchemaValidator({
-    // The default handler console.warns per unknown dialect. A conformance run
-    // reports, it does not print.
-    onUnknownDialect: () => undefined,
+    onUnknownDialect: (dialect) => {
+      unsupportedDialects.add(dialect);
+    },
   });
 
   const problems: string[] = [];
+  /** Results that an output schema binds but this check could not validate. */
+  const unvalidated: UnvalidatedToolResult[] = [];
   // `schemaBound` is the load-bearing field, not the prose: it records whether
   // an output schema actually GRADED this result. Deriving that from the
   // outcome text would make a reworded message silently change the verdict.
@@ -1892,6 +1901,16 @@ async function runToolOutputSchemaCheck(
     const validate = validator.getValidator(
       outputSchema as Parameters<typeof validator.getValidator>[0]
     );
+    const dialect = declaredDialect(outputSchema);
+    if (dialect !== undefined && unsupportedDialects.has(dialect)) {
+      unvalidated.push({ tool: fixture.toolName, dialect });
+      graded.push({
+        tool: fixture.toolName,
+        outcome: `outputSchema declares JSON Schema dialect ${dialect}, which this check cannot validate; result not checked`,
+        schemaBound: false,
+      });
+      continue;
+    }
     const outcome = validate(structured);
     if (!outcome.valid) {
       problems.push(
@@ -1923,6 +1942,19 @@ async function runToolOutputSchemaCheck(
       `Tool results do not honor their declared output schemas: ${problems.join("; ")}`,
       details
     );
+  }
+
+  // A result whose schema this check cannot read was never checked. The server
+  // did nothing wrong (a schema MAY declare another dialect), so it costs no
+  // point; and nothing showed the result conforms, so it is not a pass either,
+  // even when another fixture was graded.
+  if (unvalidated.length > 0) {
+    const text = unsupportedDialectMessage(unvalidated);
+    return couldNotRunResult(meta, text, {
+      ...details,
+      unsupportedDialects: unvalidated,
+      ...needsSetupDetails("toolCallProbe", text),
+    });
   }
 
   // Nothing was gradeable AND at least one fixture failed to execute: the
@@ -1969,6 +2001,32 @@ async function runToolOutputSchemaCheck(
   }
 
   return passedResult(meta, Date.now() - startedAt, details);
+}
+
+interface UnvalidatedToolResult {
+  tool: string;
+  dialect: string;
+}
+
+/** The `$schema` a tool's output schema declares, exactly as written. */
+function declaredDialect(outputSchema: unknown): string | undefined {
+  if (outputSchema === null || typeof outputSchema !== "object") {
+    return undefined;
+  }
+  const dialect = (outputSchema as { $schema?: unknown }).$schema;
+  return typeof dialect === "string" ? dialect : undefined;
+}
+
+/** The plain fix shown when a picked tool's output schema could not be read. */
+function unsupportedDialectMessage(
+  unvalidated: UnvalidatedToolResult[]
+): string {
+  const tools = unvalidated
+    .map(({ tool, dialect }) => `"${tool}" (${dialect})`)
+    .join(", ");
+  return `This check reads output schemas written in JSON Schema 2020-12 or draft-07. It could not read the output schema of ${tools}, so ${
+    unvalidated.length === 1 ? "that result was" : "those results were"
+  } not checked. Pick a tool whose output schema uses 2020-12 or draft-07, then run again.`;
 }
 
 /**
@@ -2176,13 +2234,6 @@ async function runResourceNotFoundCheck(
 
   const error = jsonRpcError(result);
   const problems: string[] = [];
-  // A handler-produced error stays in-band on HTTP 200 in the modern era; the
-  // status and the code are asserted as separate facts.
-  if (result.status !== 200) {
-    problems.push(
-      `expected HTTP 200 (in-band error), got HTTP ${result.status}`
-    );
-  }
   if (!error) {
     problems.push("expected an in-band JSON-RPC error object, got none");
   } else if (error.code !== INVALID_PARAMS) {

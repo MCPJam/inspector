@@ -273,7 +273,7 @@ export function convexErrMessage(error: unknown, fallback: string): string {
  * function failing. Only the DEV shapes are nameable: production redacts
  * every non-`ConvexError` message to "Server Error", so a caller that must
  * recognise a dark ship in production has to match on the function name in
- * the `[CONVEX Q(<name>)]` prefix instead (see `ServerUrlChangeHistory`).
+ * the `[CONVEX Q(<name>)]` prefix instead (see `isConvexQueryNotServed`).
  */
 export function isConvexQueryUnavailable(error: Error): boolean {
   const message = typeof error?.message === "string" ? error.message : "";
@@ -283,4 +283,25 @@ export function isConvexQueryUnavailable(error: Error): boolean {
     // No ConvexProvider above this tree.
     message.includes("Could not find Convex client")
   );
+}
+
+/**
+ * Whether a `useQuery` throw from `queryName` means the deployment does not
+ * serve that query, in dev or in production. Production redacts the dev
+ * message to `[CONVEX Q(<name>)] [Request ID: …] Server Error`, so a redacted
+ * failure of THIS query, named in that prefix, reads as not served. A
+ * `ConvexError` from it carries its own message, matches neither branch, and
+ * still reports.
+ */
+export function isConvexQueryNotServed(
+  error: Error,
+  queryName: string,
+): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  if (!message.includes(`Q(${queryName})`)) return false;
+  // The redacted branch hides every non-`ConvexError` failure of the query.
+  // `evalIterationModelCalls:list` needs it only until B4
+  // (MCPJam/mcpjam-backend#2712) is live in production; then that caller
+  // drops it (KES-905 follow-up).
+  return isConvexQueryUnavailable(error) || message.includes(REDACTED_BODY);
 }

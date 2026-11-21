@@ -770,6 +770,7 @@ export const APP_SURFACES = [
       "organizations/:orgId/sharing",
       "organizations/:orgId/audit-log",
       "organizations/:orgId/data-management",
+      "organizations/:orgId/security",
       "organizations/:orgId/api-keys",
       "organizations/:orgId/plans",
       "organizations/:orgId/billing",
@@ -799,6 +800,7 @@ export const APP_SURFACES = [
       "Manage organization members",
       "Review or change billing",
       "Configure allowed models and provider keys",
+      "Turn credential export on or off",
     ],
     agentTools: {
       kind: "none",

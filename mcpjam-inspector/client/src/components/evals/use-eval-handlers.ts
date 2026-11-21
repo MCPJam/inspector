@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useConvex } from "convex/react";
 import { DEFAULT_SUITE_WIDE_THRESHOLD_PERCENT } from "@mcpjam/sdk/contract";
+import {
+  isAwaitingFirstRunAfterTour,
+  takeFirstRunAfterTour,
+} from "@/components/evaluate/tour/tour-attribution";
 import { toast } from "sonner";
 import { convexErrMessage } from "@/lib/convex-error";
 import { aiLaunchRefusalSentence } from "@/lib/ai-launch-problems";
@@ -144,6 +148,11 @@ export function formatEnsureServersReadyError(
 
   if (result.failedServerNames.length > 0) {
     const names = result.failedServerNames;
+    const errors = names.flatMap((name) => result.failedServerErrors?.[name] ? [result.failedServerErrors[name]] : []);
+    if (errors.length > 0) {
+      const remaining = names.length - errors.length;
+      return errors.join("\n") + (remaining > 0 ? `\nWe couldn't connect to all required servers. Try again to ${actionLabel}.` : "");
+    }
     const opts = { remoteServers: projectServers };
     if (
       names.length > 0 &&
@@ -371,6 +380,8 @@ export function useEvalHandlers({
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
+  const [suiteToDeleteHasUnsavedEdits, setSuiteToDeleteHasUnsavedEdits] =
+    useState(false);
   const [duplicatingSuiteId, setDuplicatingSuiteId] = useState<string | null>(
     null,
   );
@@ -767,7 +778,7 @@ export function useEvalHandlers({
         skipJudge?: boolean;
         caseLaunchId?: string;
         /**
-         * Throw a launch failure instead of toasting it, so the Setup Run
+         * Throw a launch failure instead of toasting it, so the Set up run
          * sheet can show it inline and stay open. Unlike `stayOnPage`, the
          * launch still navigates and may still replay.
          */
@@ -1134,6 +1145,10 @@ export function useEvalHandlers({
           num_hosts: runPlans.length,
           fan_out_axis: fanOutAxis,
           num_environments: numEnvironments,
+          // A batch where every launch was rejected isn't the first run.
+          after_tour:
+            failures.length < runPlans.length &&
+            takeFirstRunAfterTour(suite._id),
         });
 
         track("eval_suite_run_start_requests_completed", {
@@ -1540,6 +1555,7 @@ export function useEvalHandlers({
           return null;
         }
 
+        const afterTour = isAwaitingFirstRunAfterTour(suite._id);
         const runResults = await Promise.all(
           preparedRuns.map(async (preparedRun) => {
             track("eval_test_case_run_started", {
@@ -1547,6 +1563,7 @@ export function useEvalHandlers({
               suite_id: suite._id,
               test_case_id: testCase._id,
               model: preparedRun.modelValue,
+              after_tour: afterTour,
             });
 
             try {
@@ -1602,6 +1619,7 @@ export function useEvalHandlers({
             data: any;
           } => result.ok,
         );
+        if (successfulRuns.length > 0) takeFirstRunAfterTour(suite._id);
         const failedRuns = runResults.filter(
           (
             result,
@@ -1701,8 +1719,9 @@ export function useEvalHandlers({
 
   // Delete handler - opens confirmation modal
   const handleDelete = useCallback(
-    (suite: EvalSuite) => {
+    (suite: EvalSuite, options?: { hasUnsavedEdits?: boolean }) => {
       if (deletingSuiteId) return;
+      setSuiteToDeleteHasUnsavedEdits(options?.hasUnsavedEdits === true);
       setSuiteToDelete(suite);
     },
     [deletingSuiteId],
@@ -2338,6 +2357,7 @@ export function useEvalHandlers({
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,
+    suiteToDeleteHasUnsavedEdits,
     setSuiteToDelete,
     duplicatingSuiteId,
     deletingRunId,

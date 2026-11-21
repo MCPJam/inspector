@@ -689,7 +689,7 @@ export function registerSwarmAuthoringCommands(
       goals
         .command("request-insights")
         .description(
-          "Ask a model to analyze a whole swarm run. Returns immediately as pending; poll `goals insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with user-testing insights. Read the scorecards first — they cost no quota and usually explain the failure."
+          "Ask a model to analyze a whole swarm run. Returns immediately as pending; poll `goals insights`. Included with MCPJam — no credits are consumed; it counts against a daily insight quota shared with study, user-testing and eval run insights. Read the scorecards first — they cost no quota and usually explain the failure."
         )
         .option("--swarm-run <id>", "Swarm run ID")
         .option("--wave <id>", "Deprecated alias for --swarm-run")
