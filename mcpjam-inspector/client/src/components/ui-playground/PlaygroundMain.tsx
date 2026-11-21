@@ -3801,6 +3801,11 @@ export function PlaygroundMain({
     (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
+      // Clearing `activeHistorySessionId` drops one restore guard and the
+      // fork's hydration briefly drops the other (`hasMessages`), so a
+      // `?conversation=` still naming the old thread reopened it over the fork
+      // and the user's reply vanished. A rewind's `onBeforeBranch` does the same.
+      clearConversationUrlRef.current();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
 
