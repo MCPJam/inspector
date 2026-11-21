@@ -10,7 +10,7 @@ description: Drive MCPJam Cloud from the `mcpjam cloud` CLI — sign in, pick a 
 ## Setup
 
 - Install with `npm i -g @mcpjam/cli`, or prefix commands with `npx -y @mcpjam/cli@latest` instead of `mcpjam`. `mcpjam cloud <group> <command> --help` is the authoritative flag list; read it before passing a flag this skill does not name. It does not prove a command exists: `<group> <unknown> --help` prints the parent group's help and exits `0`. Check that the command appears in the group's command list.
-- Top-level commands (`mcpjam server`, `mcpjam tools`, `mcpjam oauth`, …) are local and use no account. These use MCPJam credentials: `mcpjam cloud …`, `mcpjam registry …`, the hosted `mcpjam readiness start|status|list|cancel|report` commands, and `mcpjam test`, which needs an MCPJam login or `sk_` key for every run, BYOK included. `mcpjam conformance run` and the single-suite conformance commands with `--upload` also use it, to upload results.
+- Top-level commands (`mcpjam server`, `mcpjam tools`, `mcpjam oauth`, …) are local and use no account. These use MCPJam credentials: `mcpjam cloud …`, `mcpjam registry …`, the hosted `mcpjam readiness start|status|list|cancel|report` commands, and `mcpjam test`, which needs an MCPJam login or `sk_` key for every run, BYOK included. `mcpjam conformance run` uploads its results whenever `MCPJAM_API_KEY` is set. The single-suite conformance commands upload only with `--upload`.
 - `mcpjam cloud login` signs in to MCPJam. `mcpjam oauth login` signs in to an MCP server under test. They never stand in for each other.
 - Credentials, first match wins: `--api-key sk_…`, then `MCPJAM_API_KEY`, then the stored `mcpjam cloud login` session. Only `sk_` keys are accepted. `--api-key`, `--api-url`, and `--api-header` belong to `mcpjam cloud` and work before or after the subcommand.
 - Start every session with `mcpjam cloud status`. It makes no network call and reports which credential, server, and project the next command would use, with keys redacted. `mcpjam cloud whoami` confirms the account against the server.
@@ -21,7 +21,7 @@ description: Drive MCPJam Cloud from the `mcpjam cloud` CLI — sign in, pick a 
 
 Most commands act on one project, chosen in this order: `--project <id-or-name>`, a `project` field in `--file` / `--json`, `MCPJAM_PROJECT`, the nearest `.mcpjam/project.json` (written by `mcpjam cloud link`), then the most recently updated project you can see.
 
-- The last fallback is fine for reading. Before anything that creates, edits, deletes, publishes, or spends, pass `--project` explicitly, naming the project the user asked for. A link or `MCPJAM_PROJECT` can point at a different one. For writes that take `--file` or `--json`, also check that the document's `project` field matches.
+- The last fallback is fine for reading. Before anything that creates inside a project, edits, deletes, publishes, or spends, pass `--project` explicitly, naming the project the user asked for. `mcpjam cloud projects create` is the exception: it makes a new project, so it takes no `--project`. A link or `MCPJAM_PROJECT` can point at a different one. For writes that take `--file` or `--json`, also check that the document's `project` field matches.
 - `mcpjam cloud link [project]` pins the current Git worktree to a project (no secrets in the file). `mcpjam cloud link --remove` undoes it.
 - `mcpjam cloud projects capabilities --project <p>` reports the user's role, the organization's betas, plan limits, and a `can` block. Read it before scripting authoring, launches, or publishing; a `403` with `FEATURE_UNAVAILABLE` means the organization does not have that feature, so tell the user instead of retrying.
 - IDs do not travel between projects. A run, environment, or goal ID from one project is not found in another.
@@ -92,7 +92,7 @@ Exit codes for `eval run --wait` (without `--wait`, `eval run` exits `0` once th
 
 Several targets merge worst-of in the order `1 > 3 > 4 > 5 > 0`. `2` is not in the merge because a usage or policy refusal stops the command before any run starts. `eval gate` uses its own codes: `0` passed or waived, `1` the gate failed, `2` usage error, `3` incomplete (cancelled, timed out, network failure, or a run that cannot be gated).
 
-A run's decision summary can carry a `nextAction` that says to check the server connection when the real cause was a model or credit failure, even with the connection and discovery stages `passed`. Trust the stage states and the iteration's error over that line. This is a known bug, fixed by https://github.com/MCPJam/inspector/pull/7873.
+A run's decision summary carries a `nextAction` that can say to check the server connection when the cause was a model or credit failure, even with the `connection` and `discovery` stages `passed`. Trust the stage states and the iteration's error over that line. This is a known bug, fixed by https://github.com/MCPJam/inspector/pull/7873.
 
 `eval judge` and `eval judge-backtest` also spend. The `run-mcpjam-evals` skill covers the same loop through MCPJam's hosted MCP tools and has the triage decision tree; `mcpjam-eval-import` converts an existing test corpus into a suite file.
 
