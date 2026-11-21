@@ -5,6 +5,7 @@ import type { StreamFailureReporter } from "../utils/stream-failure-reporter.js"
 import { resolveBridgeToolCallTarget } from "./mcp-tool-call-target.js";
 import { bridgeRequestMetadata, bridgeRequestParams } from "./bridge-request-metadata.js";
 import { bridgeInitializeResult } from "./bridge-initialize.js";
+import { awaitBridgeConnect } from "./bridge-await-connect.js";
 import { encodeModernResult, isModernRequest } from "./bridge-modern-result.js";
 
 // Unify JSON-RPC handling used by adapter-http and manager-http routes
@@ -15,6 +16,15 @@ export type BridgeMode = "adapter" | "manager";
 export type JsonRpcBridgeOptions = {
   signal?: AbortSignal;
   downstreamProtocolVersion?: string;
+  /**
+   * The manager was built for this request, so its connect may still be
+   * running. `initialize` and the passthrough read the live connection
+   * directly; with this set they wait for the connect first. Otherwise a
+   * fresh manager answers `server/discover` with method-not-found and
+   * `initialize` with a stand-in, and a 2026-07-28 client drops to the 2025
+   * handshake. The hosted harness proxy sets it.
+   */
+  awaitConnect?: boolean;
   /**
    * Observation-only hook for a failed `tools/call`. Failures in the hook are
    * isolated so they can never change the JSON-RPC response.
@@ -326,6 +336,10 @@ export async function handleJsonRpc(
       ? { result: encodeModernResult(method, payload.result) }
       : {}),
   });
+  const settleConnect = () =>
+    options.awaitConnect
+      ? awaitBridgeConnect(clientManager, serverId, method, options.signal)
+      : Promise.resolve();
 
   /**
    * Whether a `-32020 HeaderMismatch` from this connection is MCPJam's bug.
@@ -416,6 +430,7 @@ export async function handleJsonRpc(
       case "ping":
         return respond({ result: {} });
       case "initialize":
+        await settleConnect();
         return respond({
           result: bridgeInitializeResult({
             serverId,
@@ -722,6 +737,7 @@ export async function handleJsonRpc(
         // shaping above is forwarded verbatim to the connected server
         // (resources/templates/list, resources/subscribe,
         // completion/complete, tasks/*, future spec methods, ...).
+        await settleConnect();
         const managed = clientManager.getManagedClient(serverId);
         if (managed) {
           try {
