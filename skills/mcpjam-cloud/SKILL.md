@@ -21,7 +21,7 @@ description: Drive MCPJam Cloud from the `mcpjam cloud` CLI — sign in, pick a 
 
 Most commands act on one project, chosen in this order: `--project <id-or-name>`, a `project` field in `--file` / `--json`, `MCPJAM_PROJECT`, the nearest `.mcpjam/project.json` (written by `mcpjam cloud link`), then the most recently updated project you can see.
 
-- The last fallback is fine for reading. Before anything that creates, edits, deletes, publishes, or spends, pass `--project` explicitly or confirm the link with `cloud status`. A `project` field in `--file` or `--json` outranks the link and `cloud status` does not read it, so for those writes check that field and pass the matching `--project`. Otherwise you can act on a project the user did not mean.
+- The last fallback is fine for reading. Before anything that creates, edits, deletes, publishes, or spends, pass `--project` explicitly, naming the project the user asked for. A link or `MCPJAM_PROJECT` can point at a different one. For writes that take `--file` or `--json`, also check that the document's `project` field matches.
 - `mcpjam cloud link [project]` pins the current Git worktree to a project (no secrets in the file). `mcpjam cloud link --remove` undoes it.
 - `mcpjam cloud projects capabilities --project <p>` reports the user's role, the organization's betas, plan limits, and a `can` block. Read it before scripting authoring, launches, or publishing; a `403` with `FEATURE_UNAVAILABLE` means the organization does not have that feature, so tell the user instead of retrying.
 - IDs do not travel between projects. A run, environment, or goal ID from one project is not found in another.
