@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   fail: false,
   projectsMissing: false,
   canManageBilling: true as boolean | undefined,
+  canUpgradePlan: undefined as boolean | undefined,
   authLoading: false,
   billingMissing: false,
   organizationId: "org",
@@ -28,6 +29,7 @@ vi.mock("convex/react", () => ({
           effectivePlan: state.plan,
           pricingVersion: state.pricingVersion,
           canManageBilling: state.canManageBilling,
+          canUpgradePlan: state.canUpgradePlan,
         };
   },
 }));
@@ -45,6 +47,7 @@ beforeEach(() => {
   state.pricingVersion = "v2";
   state.user = "viewer";
   state.canManageBilling = true;
+  state.canUpgradePlan = undefined;
   state.authLoading = false;
   state.billingMissing = false;
   state.organizationId = "org";
@@ -176,6 +179,22 @@ describe("shared settings access", () => {
       ).toBeDisabled();
     },
   );
+  it("offers Team plans to admins who can upgrade but not manage billing", () => {
+    state.canManageBilling = false;
+    state.canUpgradePlan = true;
+    render(
+      <SharedSettingsGate
+        projectId="project"
+        creatorId="creator"
+        resource="eval suite"
+      >
+        <button>Save settings</button>
+      </SharedSettingsGate>,
+    );
+    expect(
+      screen.getByRole("link", { name: "Review Team upgrade" }),
+    ).toHaveAttribute("href", "/organizations/org/plans");
+  });
   it("falls back to owner guidance when billing permission is missing", () => {
     state.canManageBilling = undefined;
     render(

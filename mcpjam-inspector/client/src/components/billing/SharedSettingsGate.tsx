@@ -3,6 +3,7 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { Button } from "@mcpjam/design-system/button";
 import type { OrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
+import { canUpgradeOrganizationPlan } from "@/lib/billing-entitlements";
 
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 
@@ -102,7 +103,7 @@ function SharedSettingsAccess({
           </div>
           {access === "upgrade" && organizationId && (
             <div className="flex min-w-0 flex-col items-start gap-2 @min-[640px]:shrink-0 @min-[640px]:items-end">
-              {billing?.canManageBilling === true ? (
+              {canUpgradeOrganizationPlan(billing) ? (
                 <>
                   <Button
                     asChild

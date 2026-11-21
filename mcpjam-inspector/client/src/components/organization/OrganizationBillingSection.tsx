@@ -61,6 +61,8 @@ import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import {
   canShowSubscriptionNotices,
+  canStartPlanChange,
+  canUpgradeOrganizationPlan,
   getAnnualDiscountPercent,
 } from "@/lib/billing-entitlements";
 import {
@@ -118,6 +120,7 @@ function getPlanColumnCta(params: {
   entry: NonNullable<PlanCatalog["plans"][OrganizationPlan]>;
   billingConfigured: boolean;
   canManageBilling: boolean;
+  canUpgradePlan: boolean;
   isBillingActionPending: boolean;
   scheduledCancellationDate: string | null;
   onDowngradePlan: (
@@ -147,6 +150,7 @@ function getPlanColumnCta(params: {
     entry,
     billingConfigured,
     canManageBilling,
+    canUpgradePlan,
     isBillingActionPending,
     scheduledCancellationDate,
     onDowngradePlan,
@@ -254,10 +258,16 @@ function getPlanColumnCta(params: {
     ) {
       return { label: "Unavailable", disabled: true, variant: "outline" };
     }
+    const canStart = canStartPlanChange({
+      isHigherTier,
+      currentInterval: currentBillingInterval,
+      targetInterval: billingInterval,
+      canUpgradePlan,
+      canManageBilling,
+    });
     return {
       label: currentPlan === plan ? "Change plan" : "Upgrade",
-      disabled:
-        !billingConfigured || !canManageBilling || isBillingActionPending,
+      disabled: !billingConfigured || !canStart || isBillingActionPending,
       variant: "default",
       onClick: () => void onStartPlanChange(plan, billingInterval),
     };
@@ -685,6 +695,7 @@ function FreePlanTeamUpsell({
   currentPlan,
   billingConfigured,
   canManageBilling,
+  canUpgradePlan,
   isBillingActionPending,
   pendingPlanChangeTarget,
   deferredTrialBillingCopy,
@@ -695,6 +706,7 @@ function FreePlanTeamUpsell({
   currentPlan: OrganizationPlan;
   billingConfigured: boolean;
   canManageBilling: boolean;
+  canUpgradePlan: boolean;
   isBillingActionPending: boolean;
   pendingPlanChangeTarget: "pro" | "team" | null;
   deferredTrialBillingCopy: string | null;
@@ -727,6 +739,7 @@ function FreePlanTeamUpsell({
     entry,
     billingConfigured,
     canManageBilling,
+    canUpgradePlan,
     isBillingActionPending,
     scheduledCancellationDate: null,
     onDowngradePlan,
@@ -952,10 +965,12 @@ export function OrganizationBillingSection({
       return;
     }
 
-    if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
+    // Deep links only reach Free and trial orgs, so every one is an upgrade.
+    const canStartCheckout = canUpgradeOrganizationPlan(billingStatus);
+    if (!billingStatus.billingConfigured || !canStartCheckout) {
       toast.error(
-        !billingStatus.canManageBilling
-          ? "Only organization owners can start checkout."
+        !canStartCheckout
+          ? "You don't have permission to start checkout for this organization. Ask an owner."
           : "Checkout isn't available in this environment.",
       );
       onCheckoutIntentConsumed?.();
@@ -1015,6 +1030,7 @@ export function OrganizationBillingSection({
   const isStaffPlan = isStaffSetPlan(billingStatus);
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
+  const canUpgradePlan = canUpgradeOrganizationPlan(billingStatus);
   const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
@@ -1032,6 +1048,17 @@ export function OrganizationBillingSection({
   const pendingPlanEntry = pendingPlanChange
     ? planCatalog?.plans[pendingPlanChange.plan]
     : undefined;
+  // The dialog can switch interval, so it re-applies the table's permission.
+  const canConfirmInterval = (interval: BillingInterval) =>
+    pendingPlanChange != null &&
+    canStartPlanChange({
+      isHigherTier:
+        getPlanRank(pendingPlanChange.plan) > getPlanRank(currentPlan),
+      currentInterval: billingStatus?.billingInterval,
+      targetInterval: interval,
+      canUpgradePlan,
+      canManageBilling,
+    });
 
   const requestPlanChange = (
     plan: "pro" | "team",
@@ -1056,6 +1083,7 @@ export function OrganizationBillingSection({
   const handleConfirmPlanChange = async () => {
     if (!pendingPlanChange || isStaffPlan) return;
     const { plan, interval } = pendingPlanChange;
+    if (!canConfirmInterval(interval)) return;
     track("plans_upgrade_confirm_submitted", {
       location: "org_plans",
       organization_id: organizationId,
@@ -1170,6 +1198,7 @@ export function OrganizationBillingSection({
           entry={pendingPlanEntry}
           currency={planCatalog.currency}
           interval={pendingPlanChange.interval}
+          isIntervalAllowed={canConfirmInterval}
           onIntervalChange={(nextInterval) => {
             setPendingPlanChange({
               plan: pendingPlanChange.plan,
@@ -1225,6 +1254,7 @@ export function OrganizationBillingSection({
             currentPlan={currentPlan}
             billingConfigured={billingConfigured}
             canManageBilling={canManageBilling}
+            canUpgradePlan={canUpgradePlan}
             isBillingActionPending={isBillingActionPending}
             pendingPlanChangeTarget={pendingPlanChangeTarget}
             deferredTrialBillingCopy={deferredTrialBillingCopy}
@@ -1291,8 +1321,9 @@ export function OrganizationBillingSection({
               ) : null}
               {!canManageBilling ? (
                 <p className="text-sm text-muted-foreground">
-                  Only organization owners can manage billing changes. Admins
-                  can review plan details here.
+                  {canUpgradePlan
+                    ? "Admins can upgrade to a higher plan. Downgrades, cancellation, and payment details stay with organization owners."
+                    : "Only organization owners can manage billing changes. Admins can review plan details here."}
                 </p>
               ) : null}
             </>
@@ -1399,6 +1430,7 @@ export function OrganizationBillingSection({
                                 entry,
                                 billingConfigured,
                                 canManageBilling,
+                                canUpgradePlan,
                                 isBillingActionPending,
                                 scheduledCancellationDate,
                                 onDowngradePlan: (

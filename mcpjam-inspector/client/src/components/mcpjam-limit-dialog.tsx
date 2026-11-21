@@ -300,10 +300,11 @@ export function MCPJamLimitDialog() {
     isBillingReady && creditsUpgrade.effectivePlan === "free";
   const showCreditWall =
     showTopupDialog && isBillingReady && !frontierOpen && !isLoading;
-  // Buying credits and upgrading the plan are two different permissions:
-  // admins can do the first, only owners the second. An admin who can't
-  // upgrade must not be pitched the upgrade with no way to act on it — they
-  // get a way to ask an owner plus BYOK information.
+  // Buying credits and upgrading the plan are two different permissions.
+  // Admins can upgrade too, except against a backend that predates
+  // `canUpgradePlan`. Whoever can't upgrade must not be pitched the upgrade
+  // with no way to act on it — they get a way to ask an owner plus BYOK
+  // information.
   const showCreditsUpgradeRequest =
     !isKnownNonManager &&
     isFreeEffectivePlan &&

@@ -79,6 +79,7 @@ import {
 import {
   formatPlanName,
   canShowSubscriptionNotices,
+  canUpgradeOrganizationPlan,
   getBillingErrorMessage,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
@@ -2010,7 +2011,7 @@ function OrganizationPage({
                                 {memberUpsellTeaser}
                               </p>
                             ) : null}
-                            {billingStatus?.canManageBilling ? (
+                            {canUpgradeOrganizationPlan(billingStatus) ? (
                               <Button
                                 type="button"
                                 size="sm"
