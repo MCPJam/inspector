@@ -973,7 +973,9 @@ Manage the MCP servers saved in a project and connect new ones. All `projects se
 
 ### `cloud projects servers connect`
 
-Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. When the server requires OAuth, the command prints a private authorization link and (by default) opens it in a browser. The command then polls until the request reaches a terminal status.
+Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. The command polls until the request reaches a terminal status. Once the request waits on a person (`awaiting_authorization`, or `awaiting_project` when no project was given), it prints a private link and, by default, opens it in a browser. A server that connects without anyone's help never prints the link. Pass `--project` to skip the project choice in the browser; `cloud projects list` lists the projects.
+
+The command exits 0 only when the request ends `ready` with an enabled server. It exits 1 when the request ends `failed`, `expired`, or `cancelled`, when it stops waiting before the request settles, and when the server it connected is a saved server that was disabled. The command leaves a disabled server disabled; enabling it is up to you. An invalid flag value such as a non-http(s) `--url` exits 2 with `USAGE_ERROR`.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -985,7 +987,7 @@ Start a connection request for an MCP server URL. Discovery, browser consent, an
 | `--no-browser` | No | Print the authorization link instead of opening it |
 | `--no-wait` | No | Return as soon as the request is created |
 
-With `--no-wait`, the command prints the request id and exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
+With `--no-wait`, the command prints the request id, and the link in case the server turns out to need sign-in or a project choice, then exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
 
 Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests; cancel the abandoned ones with `connect-cancel` to free slots.
 

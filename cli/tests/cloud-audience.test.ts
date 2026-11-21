@@ -282,7 +282,7 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
   const allowlist = [
     "commands/auth.ts",
     "commands/cloud-link.ts",
-    "commands/projects.ts",
+    "commands/server-connect.ts",
     "commands/environments.ts",
     // The `readiness submission` commands that print more than one result
     // keep hosted readiness silent, as bindOperation does for the rest.
