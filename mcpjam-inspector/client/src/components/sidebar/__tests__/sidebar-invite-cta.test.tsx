@@ -209,7 +209,6 @@ function renderSidebar(
       onSwitchProject={vi.fn()}
       onCreateProject={vi.fn(async () => "project-created")}
       onDeleteProject={vi.fn()}
-      onProjectShared={vi.fn()}
       {...overrides}
     />,
   );
@@ -437,7 +436,6 @@ describe("sidebar invite CTA", () => {
         onSwitchProject={vi.fn()}
         onCreateProject={vi.fn(async () => "project-created")}
         onDeleteProject={vi.fn()}
-        onProjectShared={vi.fn()}
       />,
     );
 
