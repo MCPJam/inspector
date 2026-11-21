@@ -1,0 +1,102 @@
+---
+title: "How evals work"
+description: "The objects an eval is made of, what happens during a run, and how evaluators and the pass criterion decide the verdict."
+icon: "workflow"
+---
+
+An eval run sends each case's prompt to each model you picked, records what the model and your server did, and grades the recording.
+
+## The objects
+
+| Object | What it is |
+|---|---|
+| Project | Holds your servers, clients and suites. See [Projects](/inspector/projects). |
+| Client | A saved MCP client configuration a run emulates. See [Clients](/inspector/clients). |
+| Suite | A set of cases plus the settings they share: servers, clients and models, evaluators, and the pass criterion. |
+| Case | One scenario: a user prompt, or several turns, and the evaluators that decide whether the model handled it. |
+| Run | One execution of a suite against the clients and models chosen when it started. |
+| Iteration | One execution of one case on one client and model pair. |
+| Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing. |
+
+A model doesn't answer the same prompt the same way every time, so a case usually runs more than once. A run's iteration count is:
+
+```
+cases × iterations per case × client/model pairs
+```
+
+For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, set **Iterations per case** on the run sheet; its footer shows the product as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
+
+## What happens in a run
+
+<Steps>
+  <Step title="Servers connect">
+    Each client connects to the suite's servers and lists their tools. These are the Connection and Discovery stages of the [user-value chain](/sdk/concepts/user-value-chain).
+  </Step>
+  <Step title="Prompts go out">
+    For every iteration, the case's prompt goes to the model along with the tools the client discovered.
+  </Step>
+  <Step title="The model calls tools">
+    The model picks tools and arguments, your server answers, and the exchange continues until the model gives its final reply or a timeout from the suite settings ends it. Multi-turn cases repeat this for each user turn.
+  </Step>
+  <Step title="The trace is recorded">
+    Every message, tool call, argument, result, token count and latency is saved as the iteration's trace.
+  </Step>
+  <Step title="Evaluators grade the iteration">
+    Assertions check the trace, and judges score it. While finished iterations are being scored, the run shows **Grading**.
+  </Step>
+  <Step title="The verdict is decided">
+    Each iteration passes or fails on its Required evaluators. The suite's pass criterion turns those results into the run's verdict: passed, failed or inconclusive.
+  </Step>
+</Steps>
+
+A suite has one pass criterion, set under **Pass criteria** in **Suite settings**:
+
+- Suite accuracy: the share of all iterations in the run that passed must reach a percentage, 70% when unset.
+- Per-case pass rate: each case must pass at least a set share of its own iterations. One case falling short fails the run.
+
+Under a per-case pass rate, a run that did not record enough gradeable iterations ends **Inconclusive** instead of passed or failed. [Configure grading](/evaluate/configure-grading) covers both criteria and their evidence requirements.
+
+## Evaluators: assertions and judges
+
+An evaluator grades an iteration. It is either an assertion or a judge.
+
+| | Assertion | Judge |
+|---|---|---|
+| How it grades | A deterministic rule over the trace, such as "this tool was called with these arguments" or "this tool was never called" | A model reads the trace and scores it against the case's expected outcome or the user's request |
+| Replaying the same trace | Always gives the same result | Can give a different score |
+| Role by default | Required | Advisory |
+
+The role says what a miss does:
+
+- **Required**: if this evaluator fails, the iteration fails.
+- **Advisory**: shown on the result, never fails the iteration.
+
+A suite's judges are the **Goal completion judge**, which scores whether the request was satisfied, the **Groundedness judge** and **Rubric checks**. The last two are always advisory. The goal completion judge passes when its score reaches its threshold, 0.7 by default. [Assertions reference](/evaluate/reference/assertions) lists every assertion type.
+
+## Comparing against a baseline
+
+Once a suite has an earlier completed run, the run page compares each new run against a baseline, the previous completed run. A line under the summary reads like "vs run #4: 2 regressed · 1 fixed · 5 passing", and each case row is marked Regressed, Fixed, Still failing, Unchanged, New or Reconfigured. [Read results](/evaluate/read-results) defines each label.
+
+To compare against a different run, click **Compare runs** on the run page and pick it.
+
+## What drives cost
+
+- The number of iterations: cost scales with cases × iterations per case × client/model pairs.
+- The model work in each iteration: each round of tool calls is another model call, and every tool result is sent back to the model as input. Multi-turn cases and long tool results cost more.
+- Judges: each judge adds a model call for every iteration it grades.
+
+Each column header in the results grid shows that client and model's cost. A dash means no cost was observed, never that the run was free; [Read results](/evaluate/read-results) explains dashes and " · partial".
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
+    Prompts, routes and assertions for one scenario.
+  </Card>
+  <Card title="Configure grading" icon="scale" href="/evaluate/configure-grading">
+    Pass criteria, iterations, judges and evaluator roles.
+  </Card>
+  <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
+    The run page, comparisons and the scorecard.
+  </Card>
+</CardGroup>

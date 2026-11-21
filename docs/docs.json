@@ -92,7 +92,17 @@
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
+              "inspector/evals",
+              "inspector/eval-test-users"
+            ]
           },
           {
             "group": "Configure",
