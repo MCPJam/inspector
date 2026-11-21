@@ -35,6 +35,10 @@ import {
   type ExtensionTasksFixtureOptions,
   type ServedExtensionTasksFixture,
 } from "../support/extension-tasks-fixture.js";
+import {
+  LEGACY_TASK_TOOL_NAME,
+  serveLegacyTasksFixture,
+} from "../support/legacy-tasks-fixture.js";
 
 /**
  * A lifecycle that reaches `completed` on the second poll with no elicitation
@@ -436,5 +440,45 @@ describe("MCPTasksConformanceTest against the extension fixture", () => {
     expect(result.checks.every((entry) => entry.status !== "passed")).toBe(
       true
     );
+  }, 20_000);
+});
+
+describe("MCPTasksConformanceTest against the 2025-11-25 legacy fixture", () => {
+  it("does not call a tool as a task when the server leaves out tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone resolves to the legacy wire, and the fixture's tool
+    // says `taskSupport: "required"`. 2025-11-25 tasks.mdx:113 still forbids
+    // the task call, so the checks that need a task are not applicable.
+    const fixture = await serveLegacyTasksFixture({
+      tasksCapability: { cancel: {} },
+    });
+    try {
+      const result = await new MCPTasksConformanceTest({
+        url: fixture.url,
+        mcpProtocolVersion: "2025-11-25",
+        timeout: 10_000,
+        toolName: LEGACY_TASK_TOOL_NAME,
+        pollTimeoutMs: 5_000,
+      } as never).run();
+
+      expect(check(result, "tasks-wire-resolvable").status).toBe("passed");
+      expect(
+        fixture.received.filter(
+          (entry) =>
+            entry.method === "tools/call" && entry.params?.task !== undefined
+        )
+      ).toEqual([]);
+      for (const id of [
+        "tasks-result-type-discipline",
+        "tasks-ttl-shape",
+        "tasks-inline-result",
+      ] as const) {
+        const entry = check(result, id);
+        expect(entry.status).toBe("skipped");
+        expect(entry.skipReason).toBe("not-applicable");
+        expect(entry.error?.message).toContain("tasks.requests.tools.call");
+      }
+    } finally {
+      await fixture.close();
+    }
   }, 20_000);
 });
