@@ -1,0 +1,8 @@
+{
+  "home": ["landing page"],
+  "host-compare": ["caniuse", "capability matrix"],
+  "conformance": ["spec compliance", "protocol tests"],
+  "oauth-flow": ["auth debugger"],
+  "evaluate": ["evals", "test suites"],
+  "tracing": ["logs"]
+}
