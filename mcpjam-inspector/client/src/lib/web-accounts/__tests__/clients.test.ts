@@ -5,9 +5,11 @@ import { WEB_CLIENTS_FEATURE_FLAG } from "@/shared/web-clients";
 import { CLIENT_FEATURE_FLAG_KEYS } from "@/shared/client-feature-flags";
 import { webAccountsApi, type WebAccount } from "../api";
 import {
+  newWebAccountLabel,
   runAccountOf,
   webAccountAsConnection,
   webAccountName,
+  webAccountReconnectPath,
   webClientSite,
   webClientVendorOfHost,
 } from "../clients";
@@ -69,6 +71,25 @@ describe("web accounts helpers", () => {
     ).toBe("QA");
   });
 
+  it("names a new account so it doesn't collide with the client's others", () => {
+    expect(newWebAccountLabel("claude", [])).toBe("Claude web account");
+    expect(
+      newWebAccountLabel("chatgpt", [
+        account({ label: "ChatGPT web account" }),
+        account({ label: "chatgpt web account 2" }),
+      ]),
+    ).toBe("ChatGPT web account 3");
+  });
+
+  it("links to the reconnect page the way the backend's email does", () => {
+    expect(webAccountReconnectPath("wa 1", "project-1", "req-1")).toBe(
+      "/web-accounts/wa%201/reconnect?request=req-1&project=project-1",
+    );
+    expect(webAccountReconnectPath("wa-1", "project-1")).toBe(
+      "/web-accounts/wa-1/reconnect?project=project-1",
+    );
+  });
+
   it("calls the backend's web client modules", () => {
     expect(getFunctionName(webAccountsApi.list)).toBe(
       "webClients:listWebAccounts",
@@ -84,6 +105,12 @@ describe("web accounts helpers", () => {
     );
     expect(getFunctionName(webAccountsApi.setSuiteSelection)).toBe(
       "webClientSuites:setSuiteWebAccountSelection",
+    );
+    expect(getFunctionName(webAccountsApi.create)).toBe(
+      "webClients:createWebAccount",
+    );
+    expect(getFunctionName(webAccountsApi.reconnectRequests)).toBe(
+      "webClientReconnect:listWebReconnectRequests",
     );
   });
 });

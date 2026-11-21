@@ -127,6 +127,21 @@ describe("WebAccountsSettings", () => {
     expect(mocks.navigate).toHaveBeenCalledWith("/playground");
   });
 
+  it("signs a chosen account in again on its own page, not the default's", async () => {
+    const user = userEvent.setup();
+    mount(true);
+    await user.click(
+      screen.getByRole("button", { name: /^Manage evals@example\.com/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Sign in again" }),
+    );
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/web-accounts/wa-evals/reconnect?project=project-1",
+    );
+    expect(mocks.savePreviewed).not.toHaveBeenCalled();
+  });
+
   it("sets the default and renames through the web account functions", async () => {
     const user = userEvent.setup();
     mount(true, [qa, { ...evals, status: "ready" }]);

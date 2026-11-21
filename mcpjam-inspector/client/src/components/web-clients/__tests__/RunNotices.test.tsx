@@ -4,6 +4,9 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { RealClientNotice } from "../RealClientNotice";
 import { RunPausedForPerson } from "../RunPausedForPerson";
 
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/app-navigation", () => ({ navigateApp: navigate }));
+
 afterEach(cleanup);
 
 const buttons = () =>
@@ -99,7 +102,6 @@ describe("RealClientNotice", () => {
 
 describe("RunPausedForPerson", () => {
   it("says what the page asked and who can finish a human check, in the warning color", async () => {
-    const onTakeOver = vi.fn();
     const onCopyLink = vi.fn();
     const onStop = vi.fn();
     render(
@@ -107,7 +109,7 @@ describe("RunPausedForPerson", () => {
         vendor="claude"
         ask="human_check"
         canFinish
-        onTakeOver={onTakeOver}
+        takeOverPath="/web-accounts/wa-1/reconnect?request=req-1&project=project-1"
         onCopyLink={onCopyLink}
         onStop={onStop}
       />,
@@ -130,7 +132,9 @@ describe("RunPausedForPerson", () => {
       screen.getByRole("button", { name: "Copy link for a teammate" }),
     );
     await userEvent.click(screen.getByRole("button", { name: "Stop run" }));
-    expect(onTakeOver).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith(
+      "/web-accounts/wa-1/reconnect?request=req-1&project=project-1",
+    );
     expect(onCopyLink).toHaveBeenCalledOnce();
     expect(onStop).toHaveBeenCalledOnce();
   });
@@ -141,7 +145,7 @@ describe("RunPausedForPerson", () => {
         vendor="chatgpt"
         ask="sign_in"
         canFinish={false}
-        onTakeOver={vi.fn()}
+        takeOverPath="/web-accounts/wa-1/reconnect?project=project-1"
         onCopyLink={vi.fn()}
         onStop={vi.fn()}
       />,
