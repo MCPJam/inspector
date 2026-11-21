@@ -47,7 +47,7 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
   const deps: WebAccountRouteDeps = {
     actorOf: async () => ACTOR,
     isEnabled: async () => true,
-    requireManage: async () => undefined,
+    mayManage: async () => true,
     service: {
       read: async () => [ROW],
       apply: async (command) => {
@@ -84,6 +84,7 @@ describe("POST /accounts/:id/sign-in", () => {
     expect(await response.json()).toEqual({ browserSessionId: "browser-session-1" });
     expect(deps.browser.start).toHaveBeenCalledWith({
       actor: ACTOR,
+      bearer: "",
       projectId: "p1",
       webAccountId: "acct-1",
       restoreProfile: true,
@@ -97,13 +98,11 @@ describe("POST /accounts/:id/sign-in", () => {
     expect((await post(routes({ isEnabled: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(404);
   });
 
-  it("leaves the admin check to the backend's refusal", async () => {
-    const { app } = routes({
-      requireManage: async () => {
-        throw new Error("FORBIDDEN");
-      },
-    });
-    expect((await post(app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(500);
+  it("refuses a member, and never restores a saved session when the role is unknown", async () => {
+    expect((await post(routes({ mayManage: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
+    const unknown = routes({ mayManage: async () => undefined });
+    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(200);
+    expect(unknown.deps.browser.start).toHaveBeenCalledWith(expect.objectContaining({ restoreProfile: false }));
   });
 });
 

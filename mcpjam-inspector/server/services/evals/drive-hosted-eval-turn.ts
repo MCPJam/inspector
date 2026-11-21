@@ -262,6 +262,8 @@ export interface DriveHostedEvalTurnParams {
   evalIterationId?: RunAssistantTurnOptions["evalIterationId"];
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
+  /** A web client's run: its owner to act as and the accounts it froze. */
+  webClientRun?: RunAssistantTurnOptions["webClientRun"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
@@ -897,6 +899,7 @@ export async function driveHostedEvalTurn(
             ...(params.evalIterationId
               ? { evalIterationId: params.evalIterationId }
               : {}),
+            ...(params.webClientRun ? { webClientRun: params.webClientRun } : {}),
             ...(params.harnessToolPolicy
               ? { harnessToolPolicy: params.harnessToolPolicy }
               : {}),

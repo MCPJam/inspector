@@ -15,7 +15,8 @@
  *     seals, uploads and saves the profile (compare-and-set on its version)
  *     and marks the account verified. Answers `{ok:true, accountEmail,
  *     workspaceName?}` or `{ok:false, reason}` with `not_signed_in`,
- *     `wrong_account` or `version_conflict`.
+ *     `wrong_account` or `version_conflict`. A browser this replica doesn't
+ *     hold for the person, project and account answers 409.
  *
  * Admins only, acting as the signed-in user: the backend checks the actor's
  * project role on every call these make.
@@ -53,28 +54,53 @@ const PAGE_MODULES: Record<WebClientVendor, RealUiPageModule> = {
 export interface SignInBrowser {
   start(args: {
     actor: WebActor;
+    /** The request's MCPJam bearer: the hosted browser is the person's. */
+    bearer: string;
     projectId: string;
     webAccountId: string;
     /** Restore the account's saved profile, when it has one. */
     restoreProfile: boolean;
     sites: readonly string[];
     startUrl: string;
-  }): Promise<{ browserSessionId: string }>;
-  driver(args: { actor: WebActor; projectId: string; browserSessionId: string }): Promise<PageDriver>;
+  }): Promise<{ browserSessionId: string; chatSessionId?: string }>;
+  /** The browser this person started for this account; refused otherwise. */
+  driver(args: {
+    actor: WebActor;
+    projectId: string;
+    webAccountId: string;
+    browserSessionId: string;
+  }): Promise<PageDriver>;
   /** The browser's profile as an archive. Never logged or kept. */
   captureProfile(args: {
     actor: WebActor;
     projectId: string;
+    webAccountId: string;
     browserSessionId: string;
   }): Promise<Uint8Array>;
+}
+
+/**
+ * No sign-in browser here for this person, project and account: it was
+ * opened on another replica, it closed, or it was opened for someone else.
+ * The same answer for each, so an id never says whose browser it is.
+ */
+export class SignInBrowserNotFoundError extends Error {
+  constructor() {
+    super("This sign-in browser was started elsewhere or has closed. Start the sign-in again.");
+    this.name = "SignInBrowserNotFoundError";
+  }
 }
 
 export type WebAccountRouteDeps = {
   /** The signed-in user the request's bearer names, verified. */
   actorOf(c: Context): Promise<WebActor | undefined>;
   isEnabled(c: Context): Promise<boolean>;
-  /** Refuses unless the actor manages the project's web accounts. */
-  requireManage(args: { actor: WebActor; projectId: string; webAccountId: string }): Promise<void>;
+  /**
+   * Whether the actor manages the project's web accounts, or undefined when
+   * the backend can't say yet. Unknown never restores a saved session into an
+   * interactive browser; the backend checks manage again on every save.
+   */
+  mayManage(args: { actor: WebActor; projectId: string; webAccountId: string }): Promise<boolean | undefined>;
   service: WebClientService;
   saveProfile(
     actor: WebActor,
@@ -92,6 +118,9 @@ const account = z.object({
 });
 const signInBody = z.object({ projectId: z.string().min(1) });
 const saveBody = signInBody.extend({ browserSessionId: z.string().min(1).max(256) });
+
+const forbidden = (c: Context) =>
+  c.json({ error: "Only a project admin can sign in a web account. Ask an admin to sign it in." }, 403);
 
 /** The request's JSON, or undefined when it sent none or not JSON. */
 async function jsonBody(c: Context): Promise<unknown> {
@@ -130,18 +159,23 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     if (!parsed.success) return c.json({ error: "Send the project id with the request." }, 400);
     const { projectId } = parsed.data;
     const webAccountId = c.req.param("webAccountId");
-    await deps.requireManage({ actor: checked.actor, projectId, webAccountId });
+    const manages = await deps.mayManage({ actor: checked.actor, projectId, webAccountId });
+    if (manages === false) return forbidden(c);
     const row = await accountOf(checked.actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
     const started = await deps.browser.start({
       actor: checked.actor,
+      bearer: c.req.header("authorization") ?? "",
       projectId,
       webAccountId,
-      restoreProfile: row.hasProfile === true,
+      restoreProfile: row.hasProfile === true && manages === true,
       sites: WEB_CLIENT_SITES[row.vendor],
       startUrl: WEB_CLIENT_SIGN_IN_URLS[row.vendor],
     });
-    return c.json({ browserSessionId: started.browserSessionId });
+    return c.json({
+      browserSessionId: started.browserSessionId,
+      ...(started.chatSessionId ? { chatSessionId: started.chatSessionId } : {}),
+    });
   });
 
   app.post("/accounts/:webAccountId/save-profile", async (c) => {
@@ -154,10 +188,16 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const { projectId, browserSessionId } = parsed.data;
     const actor = checked.actor;
     const webAccountId = c.req.param("webAccountId");
-    await deps.requireManage({ actor, projectId, webAccountId });
+    if ((await deps.mayManage({ actor, projectId, webAccountId })) === false) return forbidden(c);
     const row = await accountOf(actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
-    const driver = await deps.browser.driver({ actor, projectId, browserSessionId });
+    let driver: PageDriver;
+    try {
+      driver = await deps.browser.driver({ actor, projectId, webAccountId, browserSessionId });
+    } catch (error) {
+      if (error instanceof SignInBrowserNotFoundError) return c.json({ error: error.message }, 409);
+      throw error;
+    }
     let identity;
     try {
       identity = await PAGE_MODULES[row.vendor].signedIn(driver, { timeoutMs: 30_000 });
@@ -174,7 +214,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const saved = await deps.saveProfile(actor, {
       webAccountId,
       expectedProfileVersion: row.profileVersion ?? 0,
-      profile: await deps.browser.captureProfile({ actor, projectId, browserSessionId }),
+      profile: await deps.browser.captureProfile({ actor, projectId, webAccountId, browserSessionId }),
     });
     if (!saved.ok) return c.json({ ok: false, reason: saved.reason });
     await deps.service.apply({

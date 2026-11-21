@@ -99,6 +99,11 @@ import {
   harnessOfHostConfig,
   isModelFreeCase,
 } from "./evals/harness-admission.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import {
+  webClientRunOfEvalRun,
+  type WebClientRunContext,
+} from "./web-clients/web-client-run.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -4413,6 +4418,11 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
         ...(extraHeaders ? { extraHeaders } : {}),
       });
+    // A web client's account runs one turn per server at a time (a second
+    // is refused as turn_running), so its cases take turns.
+    const webClientCaseLimit = isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))
+      ? createConcurrencyLimiter(1)
+      : undefined;
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
       // (legacy widget_probe OR a unified case whose turns are all pinned),
@@ -4423,7 +4433,9 @@ export const runEvalSuiteWithAiSdk = async ({
         promptTurns: resolveEvalTestCase(test).promptTurns,
       })
         ? renderCheckLimit(() => runOne(test))
-        : runOne(test),
+        : webClientCaseLimit
+          ? webClientCaseLimit(() => runOne(test))
+          : runOne(test),
     );
 
     // Poll the run status: user cancellation, or a `timed_out` status set
@@ -6347,7 +6359,10 @@ const runHostedIterationWithBrowser = async (
   });
   browser.setWidgetToolCallPolicy(evalWidgetServerCall(toolPolicyGate, mcpClientManager));
 
-
+  // A web client's turns act as the run's owner on the accounts it froze.
+  let webClientRun: WebClientRunContext | undefined;
+  /** Set when a web client's run could not be read; the iteration stops on it. */
+  let webClientRunUnread: string | undefined;
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -6355,6 +6370,11 @@ const runHostedIterationWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId },
       );
+      webClientRun = webClientRunOfEvalRun({
+        harness: harnessOfHostConfig(suiteHostConfig),
+        runId,
+        run: currentRun,
+      });
       if (currentRun?.status === "cancelled") {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
@@ -6394,6 +6414,17 @@ const runHostedIterationWithBrowser = async (
           },
           iterationId: undefined,
         };
+      }
+      // Without the run's row a web client's turn would act as this
+      // request's bearer on the project's default account, not as the run's
+      // owner on the accounts the run froze, so it never starts.
+      if (isWebClientRuntimeId(harnessOfHostConfig(suiteHostConfig))) {
+        logger.warn("[evals] a web client iteration could not read its run", {
+          runId,
+          error: errorMessage,
+        });
+        webClientRunUnread =
+          "This run's web accounts couldn't be read, so this iteration stopped before any turn. Run it again.";
       }
     }
   }
@@ -6734,6 +6765,9 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
+    // First, so the failed read records as this iteration's setup failure
+    // before anything is provisioned and before any turn reaches the vendor.
+    if (webClientRunUnread) throw new Error(webClientRunUnread);
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
       resolvedExecution.harness,
@@ -6892,8 +6926,15 @@ const runHostedIterationWithBrowser = async (
     // NEVER A PERSONAL COMPUTER. A hosted harness turn with no box of its own
     // falls through to `resolveHarnessSandbox`, the acting member's computer.
     // Every path above boots one or throws; this is the last check before the
-    // first turn, so a future gap fails here instead of running there.
-    if (resolvedExecution.harness && !harnessExecutionTarget && !evalBox) {
+    // first turn, so a future gap fails here instead of running there. A web
+    // client has no box and no such fallback: `runHarnessTurn` hands its turn
+    // to the vendor's page before it resolves any sandbox.
+    if (
+      resolvedExecution.harness &&
+      !isWebClientRuntimeId(resolvedExecution.harness) &&
+      !harnessExecutionTarget &&
+      !evalBox
+    ) {
       throw new Error(
         "This eval runs on a harness but no disposable computer was " +
           "provisioned for it, so it was refused rather than run on a " +
@@ -7311,6 +7352,7 @@ const runHostedIterationWithBrowser = async (
           },
         }
       : {}),
+    ...(webClientRun ? { webClientRun } : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.
