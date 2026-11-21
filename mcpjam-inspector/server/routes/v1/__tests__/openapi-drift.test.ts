@@ -282,8 +282,16 @@ const KNOWN_UNDOCUMENTED = new Set([
   // off the public docs until its flag is on for everyone the page is for.
   // Document each group when its rollout finishes.
   // Production traffic (PT-1 pilot, production-traffic-enabled): the OTLP
-  // receiver an MCP server's exporter sends to.
+  // receiver an MCP server's exporter sends to, the members' review reads and
+  // the admins' credential and ingest routes.
   "post /projects/{projectId}/otlp/v1/traces",
+  "get /projects/{projectId}/production/counts",
+  "get /projects/{projectId}/production/calls",
+  "get /projects/{projectId}/production/credentials",
+  "post /projects/{projectId}/production/credentials",
+  "post /projects/{projectId}/production/credentials/{credentialId}/rotate",
+  "delete /projects/{projectId}/production/credentials/{credentialId}",
+  "put /projects/{projectId}/production/ingest",
   // Agent browsers and the API session browser (hosted-browser rollout).
   "post /browser-sessions/session",
   "post /browser-sessions/sessions",
