@@ -170,6 +170,8 @@ export function relayListenStream(args: {
   keepaliveMs?: number;
   /** A live check of the turn the listen belongs to; false ends the stream. */
   stillAuthorized?: () => Promise<boolean>;
+  /** Runs before a change is forwarded, which the harness lists again on. */
+  onChange?: () => void;
   /** Runs once the stream has ended, however it ended. */
   onEnd?: () => void;
 }): ReadableStream<Uint8Array> {
@@ -257,6 +259,7 @@ export function relayListenStream(args: {
         // Only what arrives on a listen: a 2026-07-28 upstream stamps every
         // change it sends there with that listen's id.
         if (meta[SUBSCRIPTION_ID] === undefined) return;
+        args.onChange?.();
         forwarded += 1;
         write(
           sse({
