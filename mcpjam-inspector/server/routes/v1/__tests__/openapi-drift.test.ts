@@ -281,6 +281,9 @@ const KNOWN_UNDOCUMENTED = new Set([
   // Features that are not yet on for everyone. docs/README.md keeps a feature
   // off the public docs until its flag is on for everyone the page is for.
   // Document each group when its rollout finishes.
+  // Production traffic (PT-1 pilot, production-traffic-enabled): the OTLP
+  // receiver an MCP server's exporter sends to.
+  "post /projects/{projectId}/otlp/v1/traces",
   // Agent browsers and the API session browser (hosted-browser rollout).
   "post /browser-sessions/session",
   "post /browser-sessions/sessions",

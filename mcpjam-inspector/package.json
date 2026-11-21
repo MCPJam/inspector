@@ -240,6 +240,7 @@
     "posthog-js": "^1.435.3",
     "posthog-node": "5.54.1",
     "proper-lockfile": "4.1.2",
+    "protobufjs": "^8.8.1",
     "radix-ui": "^1.6.7",
     "re2js": "^2.8.7",
     "react": "19.3.0",
