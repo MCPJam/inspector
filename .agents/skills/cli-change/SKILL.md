@@ -78,9 +78,8 @@ localhost Host-header check by design.
 
 Inline JSON works from bash. Windows PowerShell 5.1 strips the double quotes
 from inline JSON passed to a native program, so there pass a file
-(`--tool-args @<path>`) written outside the repo without a byte-order mark.
-`Set-Content -Encoding utf8` adds one and the CLI rejects the file; use
-`-Encoding ascii`.
+(`--tool-args @<path>`) written outside the repo. The CLI accepts the
+byte-order mark that `Set-Content -Encoding utf8` writes.
 
 ```bash
 node .agents/skills/cli-change/verify.mjs run tools-call -- tools call --command node --args cli/tests/fixtures/notifying-target-server.mjs --tool-name echo --tool-args '{"text":"hello"}' --format json
@@ -90,7 +89,7 @@ node .agents/skills/cli-change/verify.mjs run doctor-http -- server doctor --url
 ```powershell
 $argsFile = Join-Path $env:TEMP "mcpjam-cli-verify\echo-args.json"
 New-Item -ItemType Directory -Force (Split-Path $argsFile) | Out-Null
-Set-Content -Path $argsFile -Value '{"text":"hello"}' -Encoding ascii
+Set-Content -Path $argsFile -Value '{"text":"hello"}' -Encoding utf8
 node .agents/skills/cli-change/verify.mjs run tools-call -- tools call --command node --args cli/tests/fixtures/notifying-target-server.mjs --tool-name echo --tool-args "@$argsFile" --format json
 node .agents/skills/cli-change/verify.mjs run doctor-http -- server doctor --url "{http}" --format json
 ```

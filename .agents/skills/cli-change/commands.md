@@ -155,15 +155,15 @@ Generated from `mcpjam --help` by `npm run map:commands -w @mcpjam/cli`. Do not 
     - `mcpjam cloud sessions list`: List Playground chat sessions, newest first (one project; pass --all-projects to include every accessible project)
     - `mcpjam cloud sessions search`: Search a project's sessions by relevance. Searches titles and opening messages by default; pass --scope transcripts to search what was actually said inside the conversations. Every result carries a link you can open.
     - `mcpjam cloud sessions browser`: Drive the same hosted browser as an API Playground session. Uses metered desktop time.
-      - `mcpjam cloud sessions browser open`
-      - `mcpjam cloud sessions browser navigate <url>`
-      - `mcpjam cloud sessions browser act`
-      - `mcpjam cloud sessions browser invoke <toolKey>`
-      - `mcpjam cloud sessions browser note <text>`
-      - `mcpjam cloud sessions browser close`
-      - `mcpjam cloud sessions browser observe`
-      - `mcpjam cloud sessions browser trace`
-      - `mcpjam cloud sessions browser artifact`
+      - `mcpjam cloud sessions browser open`: Open the session browser, or create a session with one when --session is omitted
+      - `mcpjam cloud sessions browser navigate <url>`: Load a URL in the session browser
+      - `mcpjam cloud sessions browser act`: Run one action (click, type, scroll, ...) on the page
+      - `mcpjam cloud sessions browser invoke <toolKey>`: Call a tool the current page exposes
+      - `mcpjam cloud sessions browser note <text>`: Add a note to the session's browser history
+      - `mcpjam cloud sessions browser close`: Close the session browser
+      - `mcpjam cloud sessions browser observe`: Capture the page, a screenshot by default (wakes the desktop)
+      - `mcpjam cloud sessions browser trace`: List the commands run in the session browser
+      - `mcpjam cloud sessions browser artifact`: Get the screenshot URL for one command (needs --command-id)
     - `mcpjam cloud sessions send`: Send one message to a project's MCP servers and print the reply plus the raw tool calls, latency and token usage. SPENDS model credits. Omit --session to start a conversation; pass the sessionId it returns to continue one.
     - `mcpjam cloud sessions show`: Print a session's metadata and a window of its raw messages. Message indices are ABSOLUTE transcript positions — the same ones `sessions trace` spans reference.
     - `mcpjam cloud sessions trace`: Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript. Returns the LATEST turn by default — page older turns with --after-turn, or use --no-spans for cheap summaries.
