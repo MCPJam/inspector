@@ -1,5 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { TestStep } from "@/shared/steps";
+import {
+  createStepExecutionState,
+  executeSteps,
+  type StepEngineOutcome,
+  type StepExecutorHandlers,
+} from "../step-executor";
 import {
   bucketStepToolCallsByPrompt,
   buildStepCheckResults,
@@ -51,6 +57,95 @@ describe("buildStepResultRecords", () => {
     // prompt + interact (no failure) default to ok.
     expect(out.find((r) => r.stepId === "p0")?.status).toBe("ok");
     expect(out.find((r) => r.stepId === "i0")?.status).toBe("ok");
+  });
+});
+
+describe("buildStepResultRecords after executeSteps", () => {
+  const browser = {
+    setActivePromptIndex: vi.fn(),
+    setActiveAuthoredStepId: vi.fn(),
+    setKeepWidgetsMountedForSteps: vi.fn(),
+    replayInteractStep: vi.fn(async () => ({ ok: true })),
+    evaluateWidgetAssertion: vi.fn(async () => ({ ok: true })),
+    widgetRenderObservations: [],
+    drainFollowUps: vi.fn(() => []),
+  };
+  const answered = async (): Promise<StepEngineOutcome> => ({
+    messages: [{ role: "assistant", content: "done" }],
+    toolCalls: [],
+  });
+
+  async function run(steps: TestStep[], handlers: StepExecutorHandlers) {
+    const state = createStepExecutionState();
+    await executeSteps({ steps, state, browser, handlers });
+    return buildStepResultRecords(state, steps);
+  }
+
+  it("marks the only prompt failed with the model error when the model call fails", async () => {
+    const records = await run([{ id: "p0", kind: "prompt", prompt: "hi" }], {
+      onPrompt: async () => ({
+        iterationError: "credit balance too low",
+        errorSource: "model",
+        errorCode: "provider_error",
+      }),
+      onToolCall: answered,
+    });
+    expect(records).toEqual([
+      {
+        stepId: "p0",
+        stepIndex: 0,
+        kind: "prompt",
+        status: "fail",
+        reason: "credit balance too low",
+      },
+    ]);
+  });
+
+  it("marks a failing tool call mid-case failed and skips the steps after it", async () => {
+    const steps: TestStep[] = [
+      { id: "p0", kind: "prompt", prompt: "open the cart" },
+      {
+        id: "t1",
+        kind: "toolCall",
+        serverName: "store",
+        toolName: "view-cart",
+        arguments: {},
+      },
+      { id: "p2", kind: "prompt", prompt: "check out" },
+    ];
+    const records = await run(steps, {
+      onPrompt: answered,
+      onToolCall: async () => ({
+        iterationError: "server not connected",
+        setupFailure: true,
+      }),
+    });
+    expect(records.map((r) => [r.stepId, r.status, r.reason])).toEqual([
+      ["p0", "ok", undefined],
+      ["t1", "fail", "server not connected"],
+      ["p2", "skipped", "step 1 errored: server not connected"],
+    ]);
+  });
+
+  it("leaves every engine step ok when nothing fails", async () => {
+    const steps: TestStep[] = [
+      { id: "p0", kind: "prompt", prompt: "open the cart" },
+      {
+        id: "t1",
+        kind: "toolCall",
+        serverName: "store",
+        toolName: "view-cart",
+        arguments: {},
+      },
+    ];
+    const records = await run(steps, {
+      onPrompt: answered,
+      onToolCall: answered,
+    });
+    expect(records).toEqual([
+      { stepId: "p0", stepIndex: 0, kind: "prompt", status: "ok" },
+      { stepId: "t1", stepIndex: 1, kind: "toolCall", status: "ok" },
+    ]);
   });
 });
 

@@ -153,6 +153,12 @@ as one poisons every rate derived from it.
 | `userValue` | user value | Everything mechanical worked and the user still was not served. | review whether the response answered the user's goal |
 | `evaluator` | evaluator | The grader itself failed, so the run says nothing about the server. | check the evaluator configuration; the case was not graded |
 
+A `setup` trial with no first failed stage and an `infraError` on the
+iteration is one MCPJam's own infrastructure failed: the model provider, the
+sandbox or the platform. Its next action is chosen by `infraError.class`
+(`NEXT_ACTION_BY_INFRA_CLASS`) instead of the `setup` line above, because the
+server connection on such a trial may have worked.
+
 ## The four verdicts
 
 | Wire value | Words | What it means |

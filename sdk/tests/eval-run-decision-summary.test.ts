@@ -34,6 +34,9 @@ import {
   evalStageCoverageDetailSchema,
   EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+  NEXT_ACTION_BY_INFRA_CLASS,
+  deriveStageResults,
   STAGE_ANALYZER_VERSION,
   STAGE_REASON_LABELS,
   STAGE_STATE_LABELS,
@@ -1104,5 +1107,111 @@ describe("a run held for its gating judge", () => {
     });
     expect(terminal.verdict).toBe("passed");
     expect(terminal.verdictSource).toBe("policyV2");
+  });
+});
+
+describe("a trial MCPJam's own infrastructure failed", () => {
+  // The model call failed after the server connected and listed its tools:
+  // the chain files it under `setup` with no failed stage, and the iteration's
+  // `infraError.class` says what actually broke.
+  const derivation = deriveStageResults({
+    authored: {
+      mode: "model_driven",
+      expectsToolCall: true,
+      assertionCount: 1,
+    },
+    evidence: {
+      setupSignals: {
+        connection: { outcome: "ok" },
+        discovery: { outcome: "ok" },
+      },
+      prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
+      stepError: { source: "model" },
+    },
+    iteration: { status: "failed" },
+  });
+
+  const summarize = (infraError?: { class: string }) =>
+    assembleEvalRunDecisionSummary({
+      projectId: "project-1",
+      run: { id: "run-1", status: "completed", result: "failed" },
+      iterations: [
+        {
+          id: "iteration-1",
+          iterationNumber: 1,
+          status: "failed",
+          result: "failed",
+          error: "provider error",
+          stageResults: derivation.stageResults,
+          failureCategory: derivation.failureCategory,
+          stageAnalyzerVersion: derivation.stageAnalyzerVersion,
+          ...(infraError ? { infraError } : {}),
+        },
+      ],
+      page: { complete: true },
+    }).diagnostics.items[0]!.nextAction;
+
+  it("reaches the chain with connection and discovery passed and no failed stage", () => {
+    const state = (stage: string) =>
+      derivation.stageResults.find((row) => row.stage === stage)?.state;
+    expect(state("connection")).toBe("passed");
+    expect(state("discovery")).toBe("passed");
+    expect(derivation.firstFailedStage).toBeUndefined();
+    expect(derivation.failureCategory).toBe("setup");
+  });
+
+  it.each([
+    [
+      "provider_unavailable",
+      "the model provider was unavailable for this run; re-run the case",
+    ],
+    [
+      "rate_limited",
+      "the model provider rate-limited this run; wait a few minutes, then re-run",
+    ],
+    [
+      "capacity",
+      "MCPJam was at capacity when this ran; re-run in a few minutes",
+    ],
+    [
+      "auth",
+      "the model provider rejected the API key for this run; replace the key if it is your organization's, otherwise contact MCPJam support",
+    ],
+    [
+      "configuration",
+      "the model or provider settings for this run were refused; check the model id and the organization's model settings",
+    ],
+    [
+      "sandbox",
+      "MCPJam's eval sandbox failed before the server was measured; re-run the case",
+    ],
+    [
+      "account_limit",
+      "the MCPJam usage limit stopped this run; see the run notes for how to continue",
+    ],
+  ])("names what broke for %s", (infraClass, action) => {
+    expect(summarize({ class: infraClass })).toBe(action);
+  });
+
+  it("has one action per class it pins, and no others", () => {
+    expect(Object.keys(NEXT_ACTION_BY_INFRA_CLASS).sort()).toEqual([
+      "account_limit",
+      "auth",
+      "capacity",
+      "configuration",
+      "provider_unavailable",
+      "rate_limited",
+      "sandbox",
+    ]);
+  });
+
+  it("keeps the setup action without an infraError or with a class it does not know", () => {
+    expect(summarize()).toBe(NEXT_ACTION_BY_FAILURE_CATEGORY.setup);
+    expect(summarize({ class: "something_new" })).toBe(
+      NEXT_ACTION_BY_FAILURE_CATEGORY.setup
+    );
+    expect(summarize({ class: "toString" })).toBe(
+      NEXT_ACTION_BY_FAILURE_CATEGORY.setup
+    );
   });
 });
