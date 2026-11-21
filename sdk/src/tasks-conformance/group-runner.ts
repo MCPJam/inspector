@@ -31,6 +31,7 @@ import {
   type MCPTasksCheckId,
   type MCPTasksCheckResult,
   type MCPTasksConformanceResult,
+  type MCPTasksPassedAdvice,
   type MCPTasksReadinessWarning,
   type MCPTasksUncheckedAdvice,
 } from "./types.js";
@@ -72,6 +73,7 @@ export class TaskGroupRunner extends TaskOperations {
     // check's warnings.
     const readiness: MCPTasksReadinessWarning[] = [];
     const uncheckedAdvice: MCPTasksUncheckedAdvice[] = [];
+    const passedAdvice: MCPTasksPassedAdvice[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -621,6 +623,7 @@ export class TaskGroupRunner extends TaskOperations {
             rawCreation,
             readiness,
             uncheckedAdvice,
+            passedAdvice,
           };
           this.config.signal?.throwIfAborted();
           await runReadChecks(context);
@@ -672,6 +675,9 @@ export class TaskGroupRunner extends TaskOperations {
           const pickedUnchecked = uncheckedAdvice.filter(
             (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
           );
+          const pickedPassed = passedAdvice.filter(
+            (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
+          );
 
           for (const check of checks) {
             if (isTasksToolCheck(check.id))
@@ -697,6 +703,7 @@ export class TaskGroupRunner extends TaskOperations {
             ...(pickedUnchecked.length > 0
               ? { uncheckedAdvice: pickedUnchecked }
               : {}),
+            ...(pickedPassed.length > 0 ? { passedAdvice: pickedPassed } : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
