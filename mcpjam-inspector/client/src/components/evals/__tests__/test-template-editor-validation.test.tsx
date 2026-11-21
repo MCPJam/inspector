@@ -494,6 +494,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
             provider: "anthropic",
             disabled: true,
             disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+            disabledReasonCode: "out_of_credits",
           } as any,
         ]}
         outOfCreditsReason="Out of MCPJam credits · resets in 3h"

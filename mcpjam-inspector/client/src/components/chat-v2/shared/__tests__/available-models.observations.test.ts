@@ -177,7 +177,10 @@ describe("applyFreeTierLocks", () => {
     const broke = composeAvailableModels({
       ...base,
       freeTierOnly: true,
-      outOfCredits: true,
+      outOfCreditsLock: {
+        reason: "Out of MCPJam credits · resets in 3h",
+        belowCallMinimum: false,
+      },
     });
     expect(byId(broke, "anthropic/claude-opus-5").disabledReason).toBe(
       OUT_OF_CREDITS_MODEL_REASON,

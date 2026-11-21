@@ -755,6 +755,7 @@ describe("SuiteIterationsView out-of-credits gate", () => {
       provider: "anthropic",
       disabled: true,
       disabledReason: OUT_OF_CREDITS_MODEL_REASON,
+      disabledReasonCode: "out_of_credits",
     },
     { id: BYOK, name: "Acme", provider: "custom" },
   ];

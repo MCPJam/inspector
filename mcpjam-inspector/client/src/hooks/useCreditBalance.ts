@@ -279,14 +279,22 @@ export function useOutOfCredits(organizationId?: string | null): boolean {
   return (balance?.unlimitedCreditsUntil ?? 0) > Date.now() ? false : balanceOutOfCredits || locallyLimited;
 }
 
+/** Why MCPJam-provided models are locked for the organization. */
+export interface OutOfCreditsLock {
+  /** The run, send or launch button tooltip; see {@link useOutOfCreditsReason}. */
+  reason: string;
+  /** Credits remain, but fewer than one model call needs. */
+  belowCallMinimum: boolean;
+}
+
 /**
- * The tooltip of a run, send or launch button that would spend MCPJam credits,
- * while the organization has none ("Out of MCPJam credits · resets in 3h"), or
- * null while it can spend. The reset text is the sidebar's.
+ * {@link useOutOfCreditsReason} with whether the balance is below the
+ * per-call minimum rather than empty, or null while the organization can
+ * spend.
  */
-export function useOutOfCreditsReason(
+export function useOutOfCreditsLock(
   organizationId?: string | null,
-): string | null {
+): OutOfCreditsLock | null {
   const outOfCredits = useOutOfCredits(organizationId);
   const { user } = useAuth();
   const { balance } = useCreditBalance({
@@ -295,7 +303,9 @@ export function useOutOfCreditsReason(
     includeGuests: true,
   });
   if (!outOfCredits) return null;
-  if (!balance) return "Out of MCPJam credits";
+  if (!balance) {
+    return { reason: "Out of MCPJam credits", belowCallMinimum: false };
+  }
   const monthly =
     balance.billingModel === "monthly_per_seat" ||
     balance.billingModel === "monthly_flat";
@@ -307,9 +317,26 @@ export function useOutOfCreditsReason(
   // A latched refusal can lock while the balance still reads spendable; only
   // a balance that is itself short gets the per-call minimum in its copy.
   if (!monthly && hasSome && isOutOfCredits(balance)) {
-    return `Not enough MCPJam credits · a model call needs at least ${dailyCallMinimum(balance)} · ${resetText}`;
+    return {
+      reason: `Not enough MCPJam credits · a model call needs at least ${dailyCallMinimum(balance)} · ${resetText}`,
+      belowCallMinimum: true,
+    };
   }
-  return `Out of MCPJam credits · ${resetText}`;
+  return {
+    reason: `Out of MCPJam credits · ${resetText}`,
+    belowCallMinimum: false,
+  };
+}
+
+/**
+ * The tooltip of a run, send or launch button that would spend MCPJam credits,
+ * while the organization has none ("Out of MCPJam credits · resets in 3h"), or
+ * null while it can spend. The reset text is the sidebar's.
+ */
+export function useOutOfCreditsReason(
+  organizationId?: string | null,
+): string | null {
+  return useOutOfCreditsLock(organizationId)?.reason ?? null;
 }
 
 /**

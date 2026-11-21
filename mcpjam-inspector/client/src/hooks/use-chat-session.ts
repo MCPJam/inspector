@@ -147,18 +147,15 @@ import {
 } from "@/components/chat-v2/shared/model-helpers";
 import {
   GUEST_LOCKED_MODEL_REASON,
-  OUT_OF_CREDITS_MODEL_REASON,
   composeAvailableModels,
+  isOutOfCreditsLocked,
 } from "@/components/chat-v2/shared/available-models";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
 import {
   isOrgPolicyLockReason,
   ORG_KEYS_MODEL_REASON,
 } from "@/lib/org-keys-refusal";
-import {
-  useFreeTierOnly,
-  useOutOfCreditsReason,
-} from "@/hooks/useCreditBalance";
+import { useFreeTierOnly, useOutOfCreditsLock } from "@/hooks/useCreditBalance";
 import { isMCPJamGuestAllowedModel } from "@/shared/types";
 import {
   providerForModelId,
@@ -3207,8 +3204,8 @@ export function useChatSession(
   );
 
   // Shared picker composition; scenario embeds use a host-provided org context.
-  const outOfCreditsReason = useOutOfCreditsReason();
-  const outOfCredits = outOfCreditsReason !== null;
+  const outOfCreditsLock = useOutOfCreditsLock();
+  const outOfCreditsReason = outOfCreditsLock?.reason ?? null;
   const freeTierOnly = useFreeTierOnly();
   const { hostedCatalog } = useHostedModelCatalog();
   const composedModels = useMemo(
@@ -3222,7 +3219,7 @@ export function useChatSession(
         getOpenRouterSelectedModels,
         getAzureBaseUrl,
         customProviders,
-        outOfCredits,
+        outOfCreditsLock,
         freeTierOnly,
         hostedCatalog,
         savedModelIds,
@@ -3236,7 +3233,7 @@ export function useChatSession(
       isMemberActor,
       customProviders,
       hostedOrgModelConfig,
-      outOfCredits,
+      outOfCreditsLock,
       freeTierOnly,
       hostedCatalog,
       savedModelIds,
@@ -3337,7 +3334,7 @@ export function useChatSession(
           // a saved choice either. Other locks (guest, ollama-no-tools)
           // stay unselectable.
           !model.disabled ||
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON ||
+          isOutOfCreditsLocked(model) ||
           isOrgPolicyLockReason(model.disabledReason),
       );
 
@@ -3473,8 +3470,7 @@ export function useChatSession(
     return availableModels.some(
       (model) =>
         String(model.id) === selectedModelId &&
-        (!model.disabled ||
-          model.disabledReason === OUT_OF_CREDITS_MODEL_REASON),
+        (!model.disabled || isOutOfCreditsLocked(model)),
     );
   }, [
     availableModels,

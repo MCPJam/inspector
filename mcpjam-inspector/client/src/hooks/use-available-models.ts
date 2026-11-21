@@ -9,10 +9,7 @@ import { useHostedOrgModelConfig } from "@/hooks/use-hosted-org-model-config";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { composeAvailableModels } from "@/components/chat-v2/shared/available-models";
 import { orgRequiresOwnKeys } from "@/shared/org-ai-key-policy";
-import {
-  useFreeTierOnly,
-  useOutOfCreditsReason,
-} from "@/hooks/useCreditBalance";
+import { useFreeTierOnly, useOutOfCreditsLock } from "@/hooks/useCreditBalance";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { useOrgModelsHandoff } from "@/hooks/use-org-models-handoff";
 import { useModelSelectionsCapability } from "@/hooks/use-project-environment-capability";
@@ -107,8 +104,8 @@ export function useAvailableModels(options?: {
   const { isOllamaRunning, ollamaModels } =
     useDetectedOllamaModels(getOllamaBaseUrl);
   // Why the MCPJam rows are locked ("… · resets in 3h"), or null.
-  const outOfCreditsReason = useOutOfCreditsReason(organizationId);
-  const outOfCredits = outOfCreditsReason !== null;
+  const outOfCreditsLock = useOutOfCreditsLock(organizationId);
+  const outOfCreditsReason = outOfCreditsLock?.reason ?? null;
   const freeTierOnly = useFreeTierOnly(organizationId);
   const { hostedCatalog } = useHostedModelCatalog();
   const modelSelectionsCapability =
@@ -134,7 +131,7 @@ export function useAvailableModels(options?: {
         getOpenRouterSelectedModels,
         getAzureBaseUrl,
         customProviders,
-        outOfCredits,
+        outOfCreditsLock,
         freeTierOnly,
         hostedCatalog,
         savedModelIds,
@@ -148,7 +145,7 @@ export function useAvailableModels(options?: {
       getOpenRouterSelectedModels,
       getAzureBaseUrl,
       customProviders,
-      outOfCredits,
+      outOfCreditsLock,
       freeTierOnly,
       hostedCatalog,
       savedModelIds,

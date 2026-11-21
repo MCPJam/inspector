@@ -5,6 +5,7 @@ import {
   normalizeBalance,
   useCreditBalance,
   useOutOfCredits,
+  useOutOfCreditsLock,
   useOutOfCreditsReason,
 } from "@/hooks/useCreditBalance";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
@@ -452,6 +453,24 @@ describe("per-call credit minimum", () => {
       };
       const { result } = renderHook(() => useOutOfCreditsReason());
       expect(result.current).toMatch(/^Out of MCPJam credits · /);
+    });
+
+    it("flags a short balance, not an empty one, as below the minimum", () => {
+      mocks.queryResult = {
+        billingModel: "daily",
+        freeDailyCreditsRemaining: 4,
+        paidCreditsRemaining: 0,
+        freeDailyResetAt: Date.now() + 3 * 60 * 60 * 1000,
+        perCallMinimumCredits: 25,
+      };
+      const { result, rerender } = renderHook(() => useOutOfCreditsLock());
+      expect(result.current?.belowCallMinimum).toBe(true);
+      mocks.queryResult = {
+        ...(mocks.queryResult as Record<string, unknown>),
+        freeDailyCreditsRemaining: 0,
+      };
+      rerender();
+      expect(result.current?.belowCallMinimum).toBe(false);
     });
 
     it("unlocks once the bucket resets above the minimum", () => {

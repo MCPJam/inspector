@@ -62,10 +62,10 @@ describe("applyGuestModelLocks", () => {
 
 describe("applyOutOfCreditsLocks", () => {
   it("locks hosted (free) models but not BYOK when out of credits", () => {
-    const [hosted, byok] = applyOutOfCreditsLocks(
-      [HOSTED_GUEST_OK, BYOK],
-      true
-    );
+    const [hosted, byok] = applyOutOfCreditsLocks([HOSTED_GUEST_OK, BYOK], {
+      reason: "Out of MCPJam credits · resets in 3h",
+      belowCallMinimum: false,
+    });
     expect(hosted.disabled).toBe(true);
     expect(hosted.disabledReason).toBe(OUT_OF_CREDITS_MODEL_REASON);
     expect(byok.disabled).toBeUndefined();
@@ -73,7 +73,7 @@ describe("applyOutOfCreditsLocks", () => {
 
   it("no-ops when not out of credits", () => {
     const models = [HOSTED_GUEST_OK, BYOK];
-    expect(applyOutOfCreditsLocks(models, false)).toEqual(models);
+    expect(applyOutOfCreditsLocks(models, null)).toEqual(models);
   });
 });
 
@@ -132,7 +132,10 @@ describe("composeAvailableModels — never empty", () => {
     const models = composeAvailableModels({
       ...bareParams,
       orgConfig: undefined,
-      outOfCredits: true,
+      outOfCreditsLock: {
+        reason: "Out of MCPJam credits · resets in 3h",
+        belowCallMinimum: false,
+      },
     });
 
     expect(models.length).toBeGreaterThan(0);
