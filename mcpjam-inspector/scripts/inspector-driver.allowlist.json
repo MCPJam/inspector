@@ -1,0 +1,15 @@
+{
+  "about": "Known noise the inspector driver does not fail on. Each rule: kind (console-error, console-warning, page-error, request-failed, http-404, http-4xx, *), match (a regex over the one-line text), reason (why it is not a bug). Add a rule only for noise that is present on clean main.",
+  "rules": [
+    {
+      "kind": "console-error",
+      "match": "No sandbox origin is configured",
+      "reason": "A local dev profile sets no sandbox origin; the app says so on every page load."
+    },
+    {
+      "kind": "*",
+      "match": "api.github.com/repos/MCPJam/inspector",
+      "reason": "The header's star count calls GitHub without a token, and GitHub refuses it with 403 once the per-IP allowance is spent, which a sweep does."
+    }
+  ]
+}

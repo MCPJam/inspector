@@ -1,0 +1,395 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  artifactSlug,
+  classifyIssues,
+  displayPath,
+  findAllowRule,
+  formatPageReport,
+  formatSweepLine,
+  isFailingKind,
+  kindMatches,
+  normalizeSteps,
+  oneLine,
+  parseAccessToken,
+  parseAllowlist,
+  parseSelector,
+  recordedToken,
+  redactLog,
+  redactUrl,
+  resolveNpmCli,
+  resolveTarget,
+  withStartStep,
+} from "../lib/inspector-driver-core.mjs";
+
+const BASE = "http://localhost:5174";
+const SURFACES = [
+  {
+    id: "servers",
+    title: "Connect",
+    canonicalPath: "/servers",
+    navSegments: ["servers", "client-config"],
+  },
+  {
+    id: "hosts",
+    title: "Hosts",
+    canonicalPath: "/hosts",
+    navSegments: ["clients"],
+  },
+  {
+    id: "support",
+    title: "Support",
+    canonicalPath: "/settings/support",
+    navSegments: ["support"],
+  },
+];
+const TOKEN = "abcdefghijklmnopqrstuvwxyz012345";
+
+test("a surface resolves by id, nav segment or title", () => {
+  assert.deepEqual(resolveTarget("servers", SURFACES, BASE), {
+    url: `${BASE}/servers`,
+    surfaceId: "servers",
+  });
+  assert.equal(resolveTarget("clients", SURFACES, BASE).surfaceId, "hosts");
+  assert.equal(resolveTarget("Connect", SURFACES, BASE).surfaceId, "servers");
+  assert.equal(
+    resolveTarget("support", SURFACES, BASE).url,
+    `${BASE}/settings/support`,
+  );
+});
+
+test("a path or URL passes through without a surface", () => {
+  assert.deepEqual(resolveTarget("/p/abc/servers", SURFACES, BASE), {
+    url: `${BASE}/p/abc/servers`,
+    surfaceId: null,
+  });
+  assert.deepEqual(resolveTarget("https://example.test/x", SURFACES, BASE), {
+    url: "https://example.test/x",
+    surfaceId: null,
+  });
+});
+
+test("an unknown surface names the near misses", () => {
+  assert.throws(
+    () => resolveTarget("server", SURFACES, BASE),
+    /Did you mean: servers/,
+  );
+  assert.throws(
+    () => resolveTarget("zzz", SURFACES, BASE),
+    /Unknown surface "zzz"/,
+  );
+});
+
+test("every surface in the feature map resolves to its own canonical path", async () => {
+  const { listAppSurfaces } = await import("../../shared/app-surfaces.ts");
+  const surfaces = listAppSurfaces();
+  for (const surface of surfaces) {
+    const { url, surfaceId } = resolveTarget(surface.id, surfaces, BASE);
+    assert.equal(surfaceId, surface.id);
+    assert.equal(new URL(url).pathname, surface.canonicalPath);
+  }
+});
+
+test("an access token is read bare or out of an access link", () => {
+  assert.equal(parseAccessToken(TOKEN), TOKEN);
+  assert.equal(
+    parseAccessToken(`http://localhost:5173/#token=${TOKEN}&tab=servers`),
+    TOKEN,
+  );
+  assert.equal(parseAccessToken("short"), null);
+  assert.equal(parseAccessToken("http://localhost:5173/"), null);
+});
+
+test("the recorded token goes only to the instance that recorded it", () => {
+  const state = { baseUrl: "http://localhost:5174", token: TOKEN };
+  assert.equal(recordedToken("http://localhost:5174/servers", state), TOKEN);
+  assert.equal(recordedToken("https://app.mcpjam.com", state), null);
+  assert.equal(recordedToken("http://localhost:5175", state), null);
+  assert.equal(recordedToken(BASE, null), null);
+});
+
+test("steps normalize from an array or an object with a start", () => {
+  assert.deepEqual(
+    normalizeSteps([
+      { click: "testid=add" },
+      { fill: "label=URL", value: "x" },
+    ]),
+    {
+      start: undefined,
+      steps: [
+        { action: "click", target: "testid=add" },
+        { action: "fill", target: "label=URL", value: "x" },
+      ],
+    },
+  );
+  assert.deepEqual(
+    normalizeSteps({
+      start: "servers",
+      steps: [{ press: "Enter", on: "label=URL" }],
+    }),
+    {
+      start: "servers",
+      steps: [{ action: "press", target: "Enter", on: "label=URL" }],
+    },
+  );
+});
+
+test("a malformed step says which step and why", () => {
+  assert.throws(() => normalizeSteps([]), /non-empty array/);
+  assert.throws(
+    () => normalizeSteps([{ click: "a", hover: "b" }]),
+    /step 1: name exactly one action/,
+  );
+  assert.throws(
+    () => normalizeSteps([{ click: "a" }, { fill: "label=x" }]),
+    /step 2: "fill" needs a string "value"/,
+  );
+  assert.throws(
+    () => normalizeSteps([{ waitFor: "a", state: "gone" }]),
+    /"state" must be/,
+  );
+});
+
+test("a run without a leading goto needs a start surface", () => {
+  const steps = [{ action: "click", target: "a" }];
+  assert.deepEqual(withStartStep(steps, "servers"), [
+    { action: "goto", target: "servers" },
+    ...steps,
+  ]);
+  const opens = [{ action: "goto", target: "hosts" }];
+  assert.equal(withStartStep(opens, "servers"), opens);
+  assert.throws(() => withStartStep(steps, undefined), /first step must be/);
+});
+
+test("selector shorthands map to getBy calls and the rest pass through", () => {
+  assert.deepEqual(parseSelector("testid=app-shell"), {
+    by: "testid",
+    value: "app-shell",
+  });
+  assert.deepEqual(parseSelector("label=Server URL"), {
+    by: "label",
+    value: "Server URL",
+  });
+  assert.deepEqual(parseSelector('role=button[name="Add"]'), {
+    by: "selector",
+    value: 'role=button[name="Add"]',
+  });
+});
+
+test("allowlist rules need a match and a reason", () => {
+  assert.throws(
+    () => parseAllowlist({ rules: [{ match: "x" }] }),
+    /"reason" is required/,
+  );
+  assert.throws(
+    () => parseAllowlist({ rules: [{ reason: "r" }] }),
+    /"match" must be/,
+  );
+  assert.throws(() => parseAllowlist({}), /expected \{ "rules"/);
+  const [rule] = parseAllowlist({
+    rules: [{ match: "favicon", reason: "dev only" }],
+  });
+  assert.equal(rule.kind, "*");
+});
+
+test("allowlist kinds match exactly, by HTTP family, or all", () => {
+  assert.equal(kindMatches("*", "page-error"), true);
+  assert.equal(kindMatches("http-4xx", "http-404"), true);
+  assert.equal(kindMatches("http-4xx", "http-500"), false);
+  assert.equal(kindMatches("console-error", "console-warning"), false);
+  const rules = parseAllowlist({
+    rules: [{ kind: "http-4xx", match: "/api/optional", reason: "probe" }],
+  });
+  assert.ok(
+    findAllowRule(rules, {
+      kind: "http-401",
+      text: "GET http://x/api/optional",
+    }),
+  );
+  assert.equal(
+    findAllowRule(rules, {
+      kind: "http-500",
+      text: "GET http://x/api/optional",
+    }),
+    undefined,
+  );
+});
+
+test("the shipped allowlist parses and every rule says why", () => {
+  const path = join(
+    import.meta.dirname,
+    "..",
+    "inspector-driver.allowlist.json",
+  );
+  const rules = parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path);
+  for (const rule of rules) assert.ok(rule.reason.length > 10);
+});
+
+test("failing kinds are errors, failed requests and 4xx/5xx, never warnings", () => {
+  for (const kind of [
+    "console-error",
+    "page-error",
+    "request-failed",
+    "http-404",
+    "http-503",
+    "not-found",
+  ]) {
+    assert.equal(isFailingKind(kind), true, kind);
+  }
+  for (const kind of ["console-warning", "http-304", "http-200"]) {
+    assert.equal(isFailingKind(kind), false, kind);
+  }
+});
+
+test("events split into issues, warnings and allowed, with repeats counted", () => {
+  const rules = parseAllowlist({
+    rules: [
+      { kind: "http-4xx", match: "favicon", reason: "dev server has none" },
+    ],
+  });
+  const classified = classifyIssues(
+    [
+      { kind: "console-error", text: "boom\n  at x" },
+      { kind: "console-error", text: "boom   at x" },
+      { kind: "console-warning", text: "deprecated" },
+      { kind: "http-404", text: "GET http://x/favicon.ico" },
+    ],
+    rules,
+  );
+  assert.deepEqual(classified.issues, [
+    { kind: "console-error", text: "boom at x", count: 2 },
+  ]);
+  assert.deepEqual(classified.warnings, [
+    { kind: "console-warning", text: "deprecated", count: 1 },
+  ]);
+  assert.equal(classified.allowed[0].reason, "dev server has none");
+});
+
+test("report text is one line without terminal colors", () => {
+  assert.equal(
+    oneLine("Timeout.\n\u001b[2m - waiting for x\u001b[22m"),
+    "Timeout. - waiting for x",
+  );
+  assert.equal(oneLine("x".repeat(30), 10), "xxxxxxx...");
+});
+
+test("credentials in URLs and the launcher log are redacted", () => {
+  assert.equal(
+    redactUrl("http://x/cb?code=abc&state=1&access_token=t"),
+    "http://x/cb?code=REDACTED&state=1&access_token=REDACTED",
+  );
+  assert.equal(redactUrl(`http://x/#token=${TOKEN}`), "http://x/#REDACTED");
+  assert.equal(redactUrl("not a url"), "not a url");
+  assert.equal(
+    redactLog(`ready\nhttp://localhost:5173/#token=${TOKEN}\nbye`),
+    "ready\n[access link redacted]\nbye",
+  );
+});
+
+test("the page report is greppable and ends in RESULT", () => {
+  const text = formatPageReport({
+    label: "OPEN servers",
+    finalUrl: "http://localhost:5174/p/abc/servers",
+    title: "MCPJam",
+    seconds: 1.25,
+    steps: [
+      {
+        index: 1,
+        action: "click",
+        target: "testid=x",
+        ok: false,
+        error: "Timeout\nwaiting",
+      },
+    ],
+    classified: {
+      issues: [{ kind: "http-500", text: "GET /api/x", count: 2 }],
+      warnings: [],
+      allowed: [{ kind: "http-404", text: "favicon", count: 1, reason: "r" }],
+    },
+    artifacts: { shot: "/tmp/servers.png" },
+  });
+  const lines = text.split("\n");
+  assert.equal(
+    lines[0],
+    "OPEN servers -> http://localhost:5174/p/abc/servers  (1.3s)",
+  );
+  assert.match(text, /step {2}1 FAIL click testid=x {2}Timeout waiting/);
+  assert.match(text, /^ {2}ISSUE {3}http-500 {8}GET \/api\/x \(x2\)$/m);
+  assert.match(text, /allowed 1 \(http-404 x1\)/);
+  assert.match(text, /shot {4}\/tmp\/servers\.png/);
+  assert.equal(lines.at(-1), "RESULT fail issues=2 warnings=0 allowed=1");
+});
+
+test("a sweep row is one line with the first issue", () => {
+  const ok = formatSweepLine(
+    {
+      surfaceId: "home",
+      finalPath: "/p/<id>/home",
+      seconds: 2,
+      classified: { issues: [], warnings: [], allowed: [] },
+    },
+    8,
+  );
+  assert.match(ok, /^ok +home +\/p\/<id>\/home +issues=0 +warnings=0 +2\.0s$/);
+  const fail = formatSweepLine(
+    {
+      surfaceId: "hosts",
+      finalPath: null,
+      seconds: 1,
+      classified: {
+        issues: [{ kind: "page-error", text: "TypeError: x", count: 1 }],
+        warnings: [],
+        allowed: [],
+      },
+    },
+    8,
+  );
+  assert.match(
+    fail,
+    /^FAIL +hosts .*\(no page\).*first=page-error: TypeError: x$/,
+  );
+  assert.equal(fail.includes("\n"), false);
+});
+
+test("paths shorten the project id and slugs are file-safe", () => {
+  assert.equal(displayPath("http://x/p/k57abc/servers?x=1"), "/p/<id>/servers");
+  assert.equal(displayPath("http://x/settings"), "/settings");
+  assert.equal(displayPath(null), null);
+  assert.equal(artifactSlug("Step 2: Add server!"), "step-2-add-server");
+  assert.equal(artifactSlug("///"), "page");
+});
+
+test("npm runs through its JS entry point when one can be found", () => {
+  assert.equal(
+    resolveNpmCli({
+      env: { npm_execpath: "/x/npm/bin/npm-cli.js" },
+      exists: () => false,
+    }),
+    "/x/npm/bin/npm-cli.js",
+  );
+  const bundled = join("/node", "node_modules", "npm", "bin", "npm-cli.js");
+  assert.equal(
+    resolveNpmCli({
+      env: {},
+      execPath: join("/node", "node.exe"),
+      exists: (p) => p === bundled,
+    }),
+    bundled,
+  );
+  assert.equal(
+    resolveNpmCli({ env: { npm_execpath: "/x/yarn.js" }, exists: () => false }),
+    null,
+  );
+});
+
+test("a recorded base URL must be a local instance", async () => {
+  const { isLoopbackUrl } =
+    await import("../lib/inspector-driver-instance.mjs");
+  assert.equal(isLoopbackUrl("http://localhost:5173"), true);
+  assert.equal(isLoopbackUrl("http://127.0.0.1:6274"), true);
+  assert.equal(isLoopbackUrl("http://localhost.evil.test:5173"), false);
+  assert.equal(isLoopbackUrl("https://app.mcpjam.com"), false);
+  assert.equal(isLoopbackUrl("not a url"), false);
+});

@@ -1,11 +1,84 @@
 ---
 name: run-inspector
-description: Start the MCPJam Inspector locally, sign the browser in, and check a change in the running app with screenshots. Use for any UI change and whenever a fix needs to be seen working, not only tested.
+description: Start the MCPJam Inspector locally, drive it with the inspector driver (screenshots, ARIA snapshots, console and network errors), and check a change in the running app. Use for any UI change, to reproduce a UI bug before fixing it, and whenever a fix needs to be seen working, not only tested.
 ---
 
 # Run the inspector
 
-## Start it
+## Drive it with the inspector driver
+
+`mcpjam-inspector/scripts/inspector-driver.mjs` starts one instance, opens
+screens in headless Chromium signed in the way the e2e suite signs in, and
+prints a short report: final URL, title, every console error and warning,
+uncaught page error, and failed or 4xx/5xx request. Screenshots, ARIA
+snapshots and a JSON report go to disk, and their absolute paths are printed.
+Use it before you claim a UI change works; reading the diff is not evidence.
+
+From the repo root:
+
+```bash
+node mcpjam-inspector/scripts/inspector-driver.mjs start            # picks a free instance, waits until ready
+node mcpjam-inspector/scripts/inspector-driver.mjs surfaces         # surface ids and routes (shared/app-surfaces.ts)
+node mcpjam-inspector/scripts/inspector-driver.mjs open servers     # one screen: report + screenshot + ARIA snapshot
+node mcpjam-inspector/scripts/inspector-driver.mjs open hosts --theme dark
+node mcpjam-inspector/scripts/inspector-driver.mjs run steps.json   # an interaction, step by step
+node mcpjam-inspector/scripts/inspector-driver.mjs sweep            # every surface, one line each
+node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only what `start` started
+```
+
+- `open` takes a surface id, nav segment or sidebar title (`servers`,
+  `clients`, `Connect`), a path (`/p/<id>/servers`) or a URL. Project screens
+  load from their logical path and the app adds `/p/<projectId>` itself.
+- Exit code 0 means clean, 1 means an ISSUE line was printed, 2 means the
+  driver could not run. `grep -E '^(RESULT|FAIL)|ISSUE'` pulls the verdict.
+- Warnings never fail a run. Known noise on clean main goes in
+  `mcpjam-inspector/scripts/inspector-driver.allowlist.json`, one rule per
+  message with a `reason`; never allowlist an error your change introduced.
+- To drive an instance you started yourself, pass `--base-url
+  http://localhost:<client-port>` and `--token '<access link>'` (or set
+  `MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`).
+- `--fresh` keeps the first-run onboarding (it is marked done by default),
+  `--headed` shows the browser, `--out <dir>` picks the artifact folder.
+- `start` runs `npm run dev:hosted -- <N> --no-worker` (`--worker` adds the
+  platform MCP worker, `--skip-prepare` skips the SDK and bundle builds,
+  `--env-file <profile>` picks the backend profile, for example
+  `.env.development`) with a token it chose, and logs to the file it prints. It stops the
+  instance again if it is not ready within `--ready-timeout` seconds. Use
+  `--skip-prepare` only when `npm run bundle:all -w @mcpjam/inspector` has
+  run in this worktree: without the bundles the server crashes, and under
+  `tsx watch` a crash waits silently instead of exiting.
+
+Steps are JSON. Each step names one action: `goto`, `click`, `hover`,
+`fill` (with `value`), `press` (a key, with optional `on`), `waitFor`
+(optional `state`: `visible` or `hidden`), or `screenshot` (a name).
+Selectors are Playwright selectors (`role=button[name="Add server"]`,
+`text=Connected`, `css=...`) plus `testid=`, `label=` and `placeholder=`.
+Take names from the `.aria.yml` an `open` wrote rather than guessing them;
+the file below shows the shape, not the current labels:
+
+```json
+{
+  "start": "servers",
+  "steps": [
+    { "click": "role=button[name=\"Add server\"]" },
+    { "fill": "label=URL", "value": "http://localhost:3001/mcp" },
+    { "press": "Enter", "on": "label=URL" },
+    { "waitFor": "text=Connected" },
+    { "screenshot": "connected" }
+  ]
+}
+```
+
+A run stops at the first failing step, prints it as `step N FAIL` with the
+reason, and still saves a screenshot of where it stopped.
+
+When every screen reports `no-app-shell` with a console error about the
+JWT's `kid` not matching the provider's JWKS, or `http-429` on
+`/api/web/guest-session`, guest sign-in is failing, not your change: see
+[When guest sign-in fails](#when-guest-sign-in-fails), and stop retrying,
+because each load mints a guest and the authority rate-limits by network.
+
+## Start it by hand
 
 From the repo root:
 
@@ -74,14 +147,37 @@ QA profile or member sign-in is unavailable, report which checks are blocked.
 
 ## Check the change
 
-1. Go to the screen the change affects.
-2. Exercise the change: the happy path, then one edge case (empty state, long
-   text, error).
-3. Take a screenshot in light mode, then switch to dark mode and take another.
-   Both themes must read correctly.
-4. Check the browser console for new errors.
-5. Attach the screenshots to the PR description. An agent that can't attach
-   images to a PR uploads them to the Kestral task and links them instead.
+1. Before you edit, `open` the screen the change affects (and `--theme dark`)
+   to record the before state. Keep that output folder.
+2. Make the change, then exercise it with `run`: the happy path, then one
+   edge case (empty state, long text, error).
+3. `open` the screen again in light and dark. Both themes must read
+   correctly, and the RESULT line must say `ok`.
+4. For a change that touches shared chrome (sidebar, routing, layout, auth),
+   `sweep` and compare its failures with a sweep on `main`.
+
+## Evidence a UI pull request attaches
+
+- Before and after screenshots of the changed screen, light and dark.
+- The driver's text output for the after `open`, showing `RESULT ok`, or
+  each remaining ISSUE line with why it is not caused by this change.
+- The steps JSON and output of the `run` that exercises the change.
+
+Attach the screenshots to the PR description. An agent that can't attach
+images to a PR uploads them to the Kestral task and links them instead.
+Never attach the launcher log or any URL carrying `#token=`.
+
+## Fixing a UI bug: reproduce first
+
+1. Write a steps file that reproduces the bug and run it on the unfixed code.
+   It must fail the way the report describes (a `step N FAIL`, an ISSUE line,
+   or a screenshot showing the bug). If it does not, you have not found the
+   bug yet; do not start fixing.
+2. Fix the bug.
+3. Run the same steps file again. It must pass, with no new ISSUE lines.
+4. Put both outputs in the PR. Add a unit or e2e test for the behavior as
+   well when one can cover it; the driver run is the evidence, not the
+   regression test.
 
 ## Something to connect to
 
