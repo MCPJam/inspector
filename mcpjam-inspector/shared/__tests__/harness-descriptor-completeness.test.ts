@@ -88,8 +88,9 @@ describe.each(HARNESS_IDS)("%s descriptor", (id) => {
       expect(descriptor.orgKeys).toBe(false);
       expect(descriptor.protocol).toBeNull();
       expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+      // Pinned by the backend's mirror, word for word.
       expect(harnessSurfaceRefusal(id, "user-testing")).toBe(
-        orgKeySurfaceRefusal(descriptor.displayName),
+        `${descriptor.displayName} runs on a project web account, so studies cannot use it. Choose a different client for this study.`,
       );
     } else {
       expect(descriptor.credential?.env.trim()).toBeTruthy();

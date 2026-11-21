@@ -59,7 +59,7 @@ import {
   type ToolCallRequest,
   type TurnWindowStore,
 } from "./turn-windows.js";
-import type { WebClientEnvironment } from "./web-client-environment.js";
+import type { WebClientEnvironment, WebTurnOutcome } from "./web-client-environment.js";
 import { matchWebToolCalls, type WebToolCall } from "./web-client-trace.js";
 
 /** The approval this turn applies, from the turn's policy (`turnApprovalPolicy`). */
@@ -216,6 +216,7 @@ export async function runWebClientTurn(
   const serverOfConnector = new Map<string, string>();
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
+  let webAccountId: string | undefined;
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
@@ -224,6 +225,7 @@ export async function runWebClientTurn(
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
+    webAccountId = account.webAccountId;
     const connectors: Array<{ name: string; url: string }> = [];
     for (const serverId of input.serverIds) {
       const { connectorId } = await env.ensureConnector({
@@ -245,6 +247,7 @@ export async function runWebClientTurn(
     for (const connectorId of serverOfConnector.keys()) {
       windows.open({ connectorId, runId: input.runId, turnId, approve });
       opened.push(connectorId);
+      await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
     }
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
@@ -262,6 +265,8 @@ export async function runWebClientTurn(
       ...(input.replyTimeoutMs ? { replyTimeoutMs: input.replyTimeoutMs } : {}),
       ...(input.signal ? { signal: input.signal } : {}),
     });
+    await closeAll();
+    await report({ ok: true, webAccountId: account.webAccountId, account: page.account });
     return {
       ok: true,
       turnId,
@@ -278,6 +283,20 @@ export async function runWebClientTurn(
       kind: error.failure.kind,
       step: error.failure.step,
     });
+    try {
+      await closeAll();
+    } finally {
+      // A durable close that fails is retried below; the account still
+      // hears how the turn ended.
+      if (webAccountId) {
+        await report({
+          ok: false,
+          webAccountId,
+          failure: error.failure,
+          ...(error.pendingStep ? { pendingStep: error.pendingStep } : {}),
+        });
+      }
+    }
     return {
       ok: false,
       turnId,
@@ -289,9 +308,41 @@ export async function runWebClientTurn(
       toolCalls: wireCalls([]),
     };
   } finally {
+    await closeAll();
+  }
+
+  /**
+   * Closes this turn's windows and browser, whichever way it ended. A durable
+   * close that fails stays pending so the next call retries it, and the
+   * browser closes either way.
+   */
+  async function closeAll() {
     for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    await browser?.close();
+    const open = browser;
+    browser = undefined;
+    try {
+      if (opened.length > 0) await env.turnGate?.close(turnId);
+      opened.length = 0;
+    } finally {
+      await open?.close();
+    }
+  }
+
+  /**
+   * Records how the turn ended on the account. The turn's result is the
+   * evidence, so a report that fails is logged and never replaces it.
+   */
+  async function report(outcome: WebTurnOutcome) {
+    try {
+      await env.onOutcome?.(outcome);
+    } catch (error) {
+      logger.warn("[web-clients] the turn's outcome could not be recorded on the account", {
+        runtimeId: input.runtimeId,
+        ok: outcome.ok,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

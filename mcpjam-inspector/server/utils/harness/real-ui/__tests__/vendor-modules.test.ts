@@ -233,6 +233,46 @@ describe("chatgpt.com", () => {
   });
 });
 
+describe("chatgpt.com's connector step", () => {
+  const connector = { name: "MCPJam orders", url: "https://inspector.example/mcp/abc" };
+  const base = {
+    '#prompt-textarea': "",
+    'role=menuitem[name="Plugins"]': "Plugins",
+    'role=menuitem[name="Add custom MCP server"]': "Add custom MCP server",
+  };
+
+  it("reuses a server already added under the name and address", async () => {
+    const driver = cannedDriver({
+      url: "https://chatgpt.com/",
+      texts: {
+        ...base,
+        'role=dialog >> text="MCPJam orders"': "MCPJam orders",
+        'role=dialog >> text="https://inspector.example/mcp/abc"': connector.url,
+      },
+    });
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
+    expect(driver.click).not.toHaveBeenCalledWith('role=menuitem[name="Add custom MCP server"]');
+    expect(driver.type).not.toHaveBeenCalled();
+  });
+
+  it("adds one through Plugins, then +, then Add custom MCP server", async () => {
+    const driver = cannedDriver({
+      url: "https://chatgpt.com/",
+      texts: { ...base, "role=dialog >> role=button[name=/^(\\+|Add)$/]": "+" },
+    });
+    // The form never closes in a canned page, so the step ends waiting.
+    await expect(
+      chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
+    ).rejects.toMatchObject({ code: "timeout" });
+    expect(vi.mocked(driver.click).mock.calls.map(([selector]) => selector)).toEqual([
+      '[data-testid="composer-plus-btn"]',
+      'role=menuitem[name="Plugins"]',
+      "role=dialog >> role=button[name=/^(\\+|Add)$/]",
+      'role=menuitem[name="Add custom MCP server"]',
+    ]);
+  });
+});
+
 describe("the hosted driver", () => {
   const executed = (page?: Record<string, unknown>): BrowserAgentResult => ({
     status: "executed",
