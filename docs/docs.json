@@ -100,6 +100,14 @@
                 "group": "Author cases",
                 "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
               },
+              {
+                "group": "Run and review",
+                "pages": [
+                  "evaluate/run-a-suite",
+                  "evaluate/what-a-run-can-access",
+                  "evaluate/read-results"
+                ]
+              },
               "inspector/evals",
               "inspector/eval-test-users"
             ]
