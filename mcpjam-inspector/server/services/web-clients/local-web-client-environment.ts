@@ -52,6 +52,12 @@ const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
 
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
+/**
+ * How long a turn waits for another turn's browser on the same profile, as
+ * it waits for a busy connector: compared runs and panes take turns.
+ */
+const PROFILE_WAIT_MS = 10 * 60_000;
+const PROFILE_POLL_MS = 1_000;
 /** Connectors this process registered, so later turns reuse the vendor's saved one. */
 const connectorsByUpstream = new Map<string, string>();
 
@@ -91,6 +97,8 @@ export function createLocalWebClientEnvironment(deps: {
   headless: boolean;
   registry?: LocalConnectorRegistry;
   launch?: LaunchLocalBrowser;
+  profileWaitMs?: number;
+  profilePollMs?: number;
 }): WebClientEnvironment {
   const registry = deps.registry ?? localWebConnectors;
   const name = WEB_CLIENT_DISPLAY_NAMES[deps.vendor];
@@ -115,12 +123,16 @@ export function createLocalWebClientEnvironment(deps: {
     },
 
     async openBrowser({ sites }) {
-      if (openProfiles.has(deps.profileDir)) {
-        throw new RealUiError({
-          kind: "turn_running",
-          step: "connector",
-          message: `Another turn is using this machine's ${name} browser.`,
-        });
+      const deadline = Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
+      while (openProfiles.has(deps.profileDir)) {
+        if (Date.now() >= deadline) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: `Another turn is using this machine's ${name} browser.`,
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, deps.profilePollMs ?? PROFILE_POLL_MS));
       }
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;

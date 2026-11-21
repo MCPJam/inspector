@@ -84,6 +84,8 @@ export type WebClientTurnInput = {
   serverIds: readonly string[];
   prompt: string;
   runId: string;
+  /** The eval iteration the turn belongs to, so a sign-in request names it. */
+  iterationId?: string;
   turnId?: string;
   approval: WebTurnApproval;
   toolPolicy?: WebTurnToolPolicy;
