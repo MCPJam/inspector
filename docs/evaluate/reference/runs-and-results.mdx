@@ -21,6 +21,11 @@ Shown in the run page header while a client and model pairing has no pass or fai
 
 The verdict at the top of the page reads Passed, Failed, Inconclusive or No verdict. **Cancel run** is offered while a run is Pending, Running or Grading; after that the button is **Run again**.
 
+<Frame caption="Pending, Running and Grading are in flight; the rest are where a run ends.">
+  <img className="block dark:hidden" src="/images/evaluate/run-status-light.svg" alt="States Pending, Running and Grading leading to Passed or Failed, Inconclusive or Completed; Cancel run from any of the first three leads to Cancelled" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-status-dark.svg" alt="States Pending, Running and Grading leading to Passed or Failed, Inconclusive or Completed; Cancel run from any of the first three leads to Cancelled" width="760" />
+</Frame>
+
 ## Result column
 
 The **Runs** tables on the Overview and on a suite page show one Result per launch. When a launch fans out across several clients or models, the first matching word below wins.

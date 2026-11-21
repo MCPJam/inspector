@@ -6,6 +6,11 @@ icon: "shield"
 
 An eval run sends real prompts to a real model, and the model calls tools on your real servers with the credentials saved for them. This page lists what a run can reach and what leaves MCPJam while it runs and is graded.
 
+<Frame caption="What crosses the MCPJam boundary during a run, to whom, and when.">
+  <img className="block dark:hidden" src="/images/evaluate/run-data-flow-light.svg" alt="The MCPJam boundary with four outbound flows: to your server, the model provider, the goal completion judge and the Jev classifier, each labeled with what is sent and when" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-data-flow-dark.svg" alt="The MCPJam boundary with four outbound flows: to your server, the model provider, the goal completion judge and the Jev classifier, each labeled with what is sent and when" width="760" />
+</Frame>
+
 ## Servers and their auth
 
 A run connects each client's server group (see [Run a suite](/evaluate/run-a-suite#what-a-run-needs)) and uses the auth saved on each HTTP server:

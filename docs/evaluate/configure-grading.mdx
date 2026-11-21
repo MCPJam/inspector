@@ -8,6 +8,11 @@ Grading lives in **Suite settings** on a suite page, in this order: **Pass crite
 
 Edits are drafts until you click **Save settings**; **Discard** drops them. A saved change applies to future runs only.
 
+<Frame caption="Required evaluators decide each iteration; the suite's one pass criterion decides the run.">
+  <img className="block dark:hidden" src="/images/evaluate/verdict-flow-light.svg" alt="Flowchart from a finished iteration to Passed, Failed or Inconclusive through Required evaluators and the pass criterion" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/verdict-flow-dark.svg" alt="Flowchart from a finished iteration to Passed, Failed or Inconclusive through Required evaluators and the pass criterion" width="760" />
+</Frame>
+
 {/* Screenshot: Suite settings page scrolled to the Pass criteria, Iterations and Quality gate rows, with one unsaved change showing Save settings and Discard */}
 
 <Tabs>
@@ -129,6 +134,11 @@ Both take a percentage on screen. Under **Per-case pass rate**, the line under t
 <Warning>
   The two criteria are not one number in two units. Take ten cases of equal size: nine always pass and one always fails. A 90% **Suite accuracy** passes that run, because nine of ten iterations passed. A 0.9 **Per-case pass rate** fails it, because case ten passed none of its own iterations.
 </Warning>
+
+<Frame caption="The same results at the same 90%: Suite accuracy passes the run, Per-case pass rate fails it.">
+  <img className="block dark:hidden" src="/images/evaluate/pass-criteria-compare-light.svg" alt="Two identical grids of 10 cases by 5 iterations in which case 10 always fails; Suite accuracy passes the run and Per-case pass rate fails it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/pass-criteria-compare-dark.svg" alt="Two identical grids of 10 cases by 5 iterations in which case 10 always fails; Suite accuracy passes the run and Per-case pass rate fails it" width="760" />
+</Frame>
 
 ## Iterations
 

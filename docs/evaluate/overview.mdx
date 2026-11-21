@@ -8,6 +8,11 @@ An eval sends a real prompt to a real model connected to your MCP server, record
 
 One scenario is a case. A suite groups cases and runs them against the clients and models you pick, so you see where each model gets your server right and where it doesn't.
 
+<Frame caption="Stages are checked in order, and the first one that fails points at a likely owner.">
+  <img className="block dark:hidden" src="/images/evaluate/user-value-chain-light.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/user-value-chain-dark.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
+</Frame>
+
 <Note>
 This section is for testing how models use your server. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
 </Note>

@@ -8,6 +8,11 @@ The GitHub Action and the CLI run a suite that already exists in your MCPJam pro
 
 All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret named `MCPJAM_API_KEY`. See [eval authentication](/cli/ci#eval-authentication) for credential precedence and failure behavior.
 
+<Frame caption="The job runs the suite, then asks for a gate decision; the gate's exit code is the merge check.">
+  <img className="block dark:hidden" src="/images/evaluate/ci-gate-light.svg" alt="A GitHub Actions job exchanging four numbered calls with the MCPJam project, then fanning out to exit 0, 1 and 3" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/ci-gate-dark.svg" alt="A GitHub Actions job exchanging four numbered calls with the MCPJam project, then fanning out to exit 0, 1 and 3" width="760" />
+</Frame>
+
 ## Choose how to run
 
 <Warning>

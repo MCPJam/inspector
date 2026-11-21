@@ -129,6 +129,11 @@ When no findings were built, the block falls back to the run's own results under
 
 Once a pair's run has finished, a line under the findings compares it with the previous completed run, for example "vs run #11: 1 regressed · 2 fixed · 4 passing". "reconfigured" means the case or its evaluation settings changed, so the two results aren't compared; "no case changed state" means every case kept its result. See [comparison labels](/evaluate/reference/runs-and-results#comparison-labels) for the rest.
 
+<Frame caption="Four comparison labels come from crossing the previous result with this one.">
+  <img className="block dark:hidden" src="/images/evaluate/comparison-labels-light.svg" alt="A 2 by 2 grid of the previous result against this run's result, giving Unchanged, Regressed, Fixed and Still failing, with New, Reconfigured and removed beside it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/comparison-labels-dark.svg" alt="A 2 by 2 grid of the previous result against this run's result, giving Unchanged, Regressed, Fixed and Still failing, with New, Reconfigured and removed beside it" width="760" />
+</Frame>
+
 ## The results matrix
 
 The matrix has one row per case and one column per client and model. Each column header shows "x/y iters passed", the p95 latency and the cost.

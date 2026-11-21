@@ -6,6 +6,11 @@ icon: "workflow"
 
 An eval run sends each case's prompt to each model you picked, records what the model and your server did, and grades the recording.
 
+<Frame caption="MCPJam sits between your server and the model, records every exchange as the trace, then grades the trace.">
+  <img className="block dark:hidden" src="/images/evaluate/run-flow-light.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-flow-dark.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+</Frame>
+
 ## The objects
 
 | Object | What it is |
@@ -18,6 +23,11 @@ An eval run sends each case's prompt to each model you picked, records what the 
 | Iteration | One execution of one case on one client and model pair. |
 | Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing. |
 
+<Frame caption="A suite and its cases live in a project. Each run makes iterations, and each iteration leaves a trace.">
+  <img className="block dark:hidden" src="/images/evaluate/eval-objects-light.svg" alt="A project holding servers, clients and a suite with settings and cases; a run holding iterations, each with a trace" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/eval-objects-dark.svg" alt="A project holding servers, clients and a suite with settings and cases; a run holding iterations, each with a trace" width="760" />
+</Frame>
+
 A model doesn't answer the same prompt the same way every time, so a case usually runs more than once. A run's iteration count is:
 
 ```
@@ -25,6 +35,11 @@ cases × iterations per case × client/model pairs
 ```
 
 For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, set **Iterations per case** on the run sheet; its footer shows the product as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
+
+<Frame caption="8 cases × 3 iterations per case × 2 client/model pairs = 48 iterations, and each one calls the model.">
+  <img className="block dark:hidden" src="/images/evaluate/iteration-count-light.svg" alt="Grid of 8 cases by 2 client and model pairs by 3 iterations, 48 circles" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/iteration-count-dark.svg" alt="Grid of 8 cases by 2 client and model pairs by 3 iterations, 48 circles" width="760" />
+</Frame>
 
 In a suite file and in the SDK, the suite, its cases and the iterations per case look like this. Each example is 1 case × 3 iterations × 1 model, so 3 iterations:
 
