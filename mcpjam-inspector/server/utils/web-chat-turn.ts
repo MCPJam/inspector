@@ -1429,7 +1429,7 @@ export async function streamChatTurn(
         });
         authorizationFailure = { status };
       }
-      return await persistChatSessionToConvex({
+      const persistOptions: Parameters<typeof persistChatSessionToConvex>[0] = {
         chatSessionId: hostedChatSessionId,
         authorizationFailure,
         retryOwner: persist.retryOwner,
@@ -1588,7 +1588,8 @@ export async function streamChatTurn(
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-      });
+      };
+      return await persistChatSessionToConvex(persistOptions, c);
     };
   };
 
