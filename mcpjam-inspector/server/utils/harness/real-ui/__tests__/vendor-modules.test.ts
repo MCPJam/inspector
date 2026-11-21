@@ -225,6 +225,33 @@ describe("chatgpt.com", () => {
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
   });
 
+  it("reads the chat from the page in a browser that runs no script", async () => {
+    const driver: PageDriver = {
+      ...cannedDriver({
+        url: `https://chatgpt.com/c/${id}`,
+        // The hosted browser reads an element's text, as the Playwright one does.
+        texts: {
+          '[data-message-author-role="user"]': "say hello",
+          '[data-message-author-role="assistant"]': "Calling echo",
+          '[data-message-author-role="assistant"] >> nth=-1': 'It said "hello".',
+        },
+      }),
+      kind: "hosted",
+      canEvaluate: false,
+    };
+    expect(
+      await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 }),
+    ).toEqual({
+      conversationId: id,
+      url: `https://chatgpt.com/c/${id}`,
+      userPrompt: "say hello",
+      replyText: 'It said "hello".',
+      toolCalls: [],
+    });
+    // The chat list needs the session's token, so an earlier send stays ambiguous.
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", { timeoutMs: 1_000 })).toBeUndefined();
+  });
+
   it("stops waiting for a control at a human check, as the account's sign-in, not a changed page", async () => {
     const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]': "" } });
     await expect(chatgptWebPageModule.openNewChat(driver, { timeoutMs: 1_000 })).rejects.toMatchObject({
@@ -236,10 +263,71 @@ describe("chatgpt.com", () => {
 describe("chatgpt.com's connector step", () => {
   const connector = { name: "MCPJam orders", url: "https://inspector.example/mcp/abc" };
   const base = {
-    '#prompt-textarea': "",
+    '[contenteditable="true"][aria-label="Ask ChatGPT"], #prompt-textarea': "",
     'role=menuitem[name="Plugins"]': "Plugins",
     'role=menuitem[name="Add custom MCP server"]': "Add custom MCP server",
   };
+
+  const composer = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
+  const current = { [composer]: "", [composer + ", #prompt-textarea"]: "" };
+  const installed = 'role=link[name="MCPJam orders"s]';
+  const pluginSettings = {
+    ...current, [installed]: connector.name,
+    'role=button[name="Add"s]': "Add", 'role=link[name="Settings"s]': "Settings",
+    'role=link[name="View details"s]': "View details",
+  };
+
+  it("reads the hosted account email from Settings with the sidebar collapsed", async () => {
+    const email = "review@example.org";
+    const controls = {
+      ...current,
+      'role=button[name="Show sidebar"s]': "",
+      'role=menuitem[name="Settings"s]': "",
+      'role=dialog >> role=button[name="Account"s]': "",
+      'role=dialog >> text=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/': email,
+    };
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: controls });
+    let expanded = false;
+    const driver: PageDriver = {
+      ...fixture, kind: "hosted", canEvaluate: false,
+      click: async (target) => { if (target === 'role=button[name="Show sidebar"s]') expanded = true; },
+      readText: async (target) => expanded && target === 'role=button[name="Open profile menu"s]'
+        ? "Profile" : fixture.readText(target),
+    };
+    await expect(chatgptWebPageModule.signedIn(driver, { timeoutMs: 500 })).resolves.toEqual({ email });
+    expect(await driver.url()).toBe("https://chatgpt.com/");
+  });
+
+  it("checks the installed plugin address in Settings before reusing it", async () => {
+    const shown = `main >> text="${connector.url}"`;
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...pluginSettings, [shown]: connector.url } });
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 });
+    expect(driver.click).toHaveBeenCalledWith('role=link[name="Settings"s]');
+    expect(driver.type).not.toHaveBeenCalled();
+    const other = cannedDriver({ url: "https://chatgpt.com/", texts: pluginSettings });
+    await expect(chatgptWebPageModule.ensureConnector(other, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "connector_failed" } });
+  });
+
+  it("leaves ChatGPT's trust checkbox for the person setting up the server", async () => {
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: {
+      ...current, 'role=button[name="Add"s]': "Add",
+      'role=menuitem[name="Add custom MCP server"s]': "Add custom MCP server",
+      'role=dialog >> role=textbox[name="Name"s]': "",
+      'role=dialog >> role=checkbox[name="I understand and want to continue"s][checked=false]': "",
+    } });
+    await expect(chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "needs_sign_in", reason: "consent" } });
+    expect(driver.type).toHaveBeenLastCalledWith('role=dialog >> role=textbox[name="Server URL"s]', connector.url);
+    expect(driver.click).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the named plugin in the current composer", async () => {
+    const item = 'role=button[name="MCPJam orders MCPJam orders"s]';
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...current, [item]: connector.name } });
+    await chatgptWebPageModule.enableConnector(driver, connector.name, { timeoutMs: 500 });
+    expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Add files and more"s]'], [item]]);
+  });
 
   it("reuses a server already added under the name and address", async () => {
     const driver = cannedDriver({
@@ -283,23 +371,41 @@ describe("the hosted driver", () => {
 
   it("sends the command API's own commands and runs no script", async () => {
     const send = vi.fn(async (_command: BrowserAgentCommand) =>
-      executed({ url: "https://claude.ai/new", a11y: "textbox" }),
+      executed({ url: "https://claude.ai/new", text: " hi\n" }),
     );
     const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
     await driver.navigate("https://claude.ai/new");
     await driver.click('[data-testid="chat-input-send"]');
     await driver.type('[data-testid="chat-input"]', "hi");
     expect(await driver.url()).toBe("https://claude.ai/new");
-    expect(await driver.readText('[data-testid="chat-input"]')).toBe("textbox");
+    expect(await driver.readText('[data-testid="chat-input"]')).toBe("hi");
     expect(send.mock.calls.map(([command]) => command)).toEqual([
       { op: "navigate", url: "https://claude.ai/new", observeAfter: "none" },
       { op: "act", verb: "click", target: { selector: '[data-testid="chat-input-send"]' }, observeAfter: "none" },
       { op: "act", verb: "type", target: { selector: '[data-testid="chat-input"]' }, value: "hi", observeAfter: "none" },
       { op: "observe", mode: "url" },
-      { op: "observe", mode: "a11y", rootSelector: '[data-testid="chat-input"]', filter: "all" },
+      { op: "observe", mode: "text", rootSelector: '[data-testid="chat-input"]' },
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("reads an element as absent only when nothing matches it, and fails any other read", async () => {
+    const failed = (code: string): BrowserAgentResult => ({
+      status: "executed",
+      commandId: "c",
+      ok: false,
+      error: { code, message: `${code} for this read` },
+    });
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.rootSelector === "role=dialog"
+        ? failed("unknown_selector")
+        : failed("unsupported_target"),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await driver.readText("role=dialog")).toBeUndefined();
+    // A read that failed is never taken for an element that isn't there.
+    await expect(driver.readText("main")).rejects.toMatchObject({ code: "failed" });
   });
 
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {
@@ -348,5 +454,27 @@ describe("the hosted driver", () => {
     await expect(driver.navigate("https://example.com")).rejects.toMatchObject({ code: "site_blocked" });
     await expect(driver.click("#send")).rejects.toMatchObject({ code: "unknown_outcome" });
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads a site's own JSON from the page text the browser shows, and says when it is cut short", async () => {
+    let shown = 'Pretty-print\n```\n{"user":{"email":"a@example.com"}}\n```';
+    const send = vi.fn(async (command: BrowserAgentCommand) =>
+      command.op === "observe" && command.mode === "text"
+        ? executed({ text: shown })
+        : executed({ url: "https://chatgpt.com/" }),
+    );
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.chatgpt });
+    expect(await readVendorJson(driver, "https://chatgpt.com/api/auth/session")).toEqual({
+      user: { email: "a@example.com" },
+    });
+    expect(send.mock.calls.map(([command]) => command.op)).toEqual(["observe", "navigate", "observe", "navigate"]);
+    shown = '{"user":{"email":"a@exa';
+    await expect(readVendorJson(driver, "https://chatgpt.com/api/auth/session")).rejects.toMatchObject({
+      code: "failed",
+    });
+    // The token-carrying API needs a script, which this browser can't run.
+    await expect(
+      readVendorJson(driver, "https://chatgpt.com/backend-api/conversations", { authorization: "Bearer t" }),
+    ).rejects.toMatchObject({ code: "unsupported" });
   });
 });

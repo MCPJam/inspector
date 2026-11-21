@@ -24,6 +24,7 @@ import {
   provisionConversationBrowser,
 } from "../../routes/v1/chat-session-browser.js";
 import { createConvexClient } from "../../routes/v1/convex-client.js";
+import { authkitAuthorizationServers } from "./endpoint-auth.js";
 import {
   refusedResult,
   toDaemonAction,
@@ -42,21 +43,51 @@ import {
 import { urlOnSites } from "../../utils/harness/real-ui/page-driver.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 
-/** The only sites a web account's hosted browser may open. */
-export function webClientBrowserPolicy(vendor: WebClientVendor): BrowserAgentSessionPolicy {
-  return { mode: "allowlist", originAllowlist: [...WEB_CLIENT_SITES[vendor]] };
+/**
+ * The only sites a web account's hosted browser may open: the vendor's own,
+ * and MCPJam's sign-in page, where the vendor's app sends a person to allow
+ * an OAuth connector while it adds one.
+ */
+export function webClientBrowserPolicy(
+  vendor: WebClientVendor,
+  mcpjamSignIn: readonly string[] = authkitAuthorizationServers(),
+): BrowserAgentSessionPolicy {
+  return { mode: "allowlist", originAllowlist: [...new Set([...WEB_CLIENT_SITES[vendor], ...mcpjamSignIn])] };
+}
+
+/**
+ * Whether the session's daemon reads one element's text, or `undefined` when
+ * it didn't say. An older daemon answers that read with the whole page's
+ * text, which a page module would take for the element's.
+ */
+async function daemonReadsElements(
+  client: Pick<SessionClient, "status">,
+): Promise<boolean | undefined> {
+  try {
+    const status = await client.status();
+    return status.kind === "ok" ? (status.features ?? []).includes("element-text") : undefined;
+  } catch (error) {
+    logger.warn("[web-clients] hosted browser status unreadable", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }
 
 /** One command to the session's daemon, answered in the public contract. */
 export function sessionBrowserTransport(args: {
-  handle: { client: Pick<SessionClient, "sendCommand">; bootId: string };
+  handle: { client: Pick<SessionClient, "sendCommand" | "status">; bootId: string };
   sessionId: string;
   policy: BrowserAgentSessionPolicy;
 }): BrowserCommandTransport {
-  const toDaemon =(commandId: string, action: BrowserAction) =>
+  let readsElements: boolean | undefined;
+  const toDaemon = (commandId: string, action: BrowserAction) =>
     args.handle.client.sendCommand(
       {
         commandId,
+        // The page modules locate elements by selector. Coordinate actions still
+        // need a fixed viewport because their target carries no dimensions.
+        responsiveViewport: !(action.kind === "act" && action.target && "coordinates" in action.target),
         source: "agent",
         sessionId: args.sessionId,
         actor: { kind: "agent", id: "web-client-runtime" },
@@ -105,6 +136,16 @@ export function sessionBrowserTransport(args: {
         code: "origin_not_allowed",
         message: "This browser may only open the vendor's own sites.",
       });
+    }
+    if (command.op === "observe" && command.mode === "text" && command.rootSelector !== undefined) {
+      readsElements ??= await daemonReadsElements(args.handle.client);
+      if (!readsElements) {
+        return refusedResult({
+          commandId,
+          code: "unsupported_target",
+          message: "This hosted browser can't read the page yet. Close its browser pane and run again in a minute.",
+        });
+      }
     }
     // Anything that could change the page (typing, a key, a click) waits for
     // the page to be seen on the sites. Reading goes ahead, since the result
@@ -206,7 +247,8 @@ export async function openWebClientHostedBrowser(args: {
     bearer,
     projectId: args.projectId,
     wireUuid: chatSessionId,
-    ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+    // The account's own session, or a blank profile: never the person's.
+    ownProfile: args.profileArchive ? { archive: args.profileArchive } : {},
     signal,
   });
   const transport = sessionBrowserTransport({

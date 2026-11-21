@@ -17,22 +17,30 @@ afterEach(() => {
 });
 
 describe("the session transport", () => {
-  const policy = webClientBrowserPolicy("chatgpt");
+  const policy = webClientBrowserPolicy("chatgpt", []);
   const okResponse = {
     status: "ok" as const,
     result: { ok: true, output: { url: "https://chatgpt.com/" } },
     bootId: "boot-1",
   };
 
+  /** The daemon's status, announcing `features`. */
+  const statusWith = (features: string[]) =>
+    vi.fn(async () => ({ kind: "ok" as const, bootId: "boot-1", features }));
+
   it("maps a page module's command onto the session's daemon", async () => {
     const sendCommand = vi.fn(async () => okResponse);
     const send = sessionBrowserTransport({
-      handle: { client: { sendCommand }, bootId: "boot-1" },
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
       sessionId: "browser-session-1",
       policy,
     });
     const result = await send({ op: "act", verb: "click", target: { selector: "#send" }, observeAfter: "none" });
     expect(result).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand).toHaveBeenCalledTimes(2);
+    for (const call of sendCommand.mock.calls) {
+      expect(call).toEqual([expect.objectContaining({ responsiveViewport: true }), "boot-1"]);
+    }
     expect(sendCommand).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "agent",
@@ -43,13 +51,24 @@ describe("the session transport", () => {
     );
   });
 
+  it("keeps coordinate actions on a fixed viewport", async () => {
+    const sendCommand = vi.fn(async () => okResponse);
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    await send({ op: "act", verb: "click", target: { coordinates: [10, 10] } });
+    expect(sendCommand).toHaveBeenLastCalledWith(expect.objectContaining({ responsiveViewport: false }), "boot-1");
+  });
+
   it("refuses another site before the daemon and reports a lost command as unknown", async () => {
     const sendCommand = vi.fn(async (command: { action: { kind: string } }) => {
       if (command.action.kind === "observe") return okResponse;
       throw new Error("socket closed");
     });
     const send = sessionBrowserTransport({
-      handle: { client: { sendCommand }, bootId: "boot-1" },
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
       sessionId: "s",
       policy,
     });
@@ -63,6 +82,55 @@ describe("the session transport", () => {
     });
   });
 
+  it("reads one element's text only from a daemon that says it can", async () => {
+    // An older daemon ignores `rootSelector` on a text read and answers with
+    // the whole page's text, which a page module would take for the element's.
+    const read = { op: "observe", mode: "text", rootSelector: "role=dialog" } as const;
+    const sendCommand = vi.fn(async () => okResponse);
+    const older = statusWith(["navigation-stop"]);
+    const send = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: older }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await send(read)).toMatchObject({
+      status: "refused",
+      refusal: { code: "unsupported_target" },
+    });
+    expect(await send({ op: "observe", mode: "text" })).toMatchObject({ status: "executed" });
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+
+    const current = statusWith(["element-text"]);
+    const upToDate = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: current }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await upToDate(read)).toMatchObject({ status: "executed", ok: true });
+    expect(await upToDate(read)).toMatchObject({ status: "executed", ok: true });
+    expect(sendCommand).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        action: { kind: "observe", mode: "text", rootSelector: "role=dialog" },
+      }),
+      "boot-1",
+    );
+    // Asked once per browser, not once per read.
+    expect(current).toHaveBeenCalledTimes(1);
+
+    // A daemon that didn't answer is asked again rather than taken as either.
+    const silent = vi.fn(async () => {
+      throw new Error("socket closed");
+    });
+    const unsure = sessionBrowserTransport({
+      handle: { client: { sendCommand, status: silent }, bootId: "boot-1" },
+      sessionId: "s",
+      policy,
+    });
+    expect(await unsure(read)).toMatchObject({ status: "refused" });
+    expect(await unsure(read)).toMatchObject({ status: "refused" });
+    expect(silent).toHaveBeenCalledTimes(2);
+  });
+
   it("sends nothing that could change a page off the vendor's sites, until a navigate brings it back", async () => {
     let page: string | Error = "https://elsewhere.example/";
     const sendCommand = vi.fn(async (_command: { action: { kind: string } }) => {
@@ -70,7 +138,7 @@ describe("the session transport", () => {
       return { status: "ok" as const, result: { ok: true, output: { url: page } }, bootId: "boot-1" };
     });
     const send = sessionBrowserTransport({
-      handle: { client: { sendCommand }, bootId: "boot-1" },
+      handle: { client: { sendCommand, status: statusWith([]) }, bootId: "boot-1" },
       sessionId: "s",
       policy,
     });
@@ -93,9 +161,13 @@ describe("the session transport", () => {
     ]);
   });
 
-  it("keeps each vendor's browser to its own sites", () => {
-    expect(webClientBrowserPolicy("claude")).toEqual({ mode: "allowlist", originAllowlist: ["https://claude.ai"] });
-    expect(policy.originAllowlist).toEqual(["https://chatgpt.com", "https://auth.openai.com"]);
+  it("keeps each vendor's browser to its own sites and MCPJam's sign-in page", () => {
+    expect(webClientBrowserPolicy("claude", [])).toEqual({ mode: "allowlist", originAllowlist: ["https://claude.ai"] });
+    expect(webClientBrowserPolicy("chatgpt", ["https://signin.example"]).originAllowlist).toEqual([
+      "https://chatgpt.com",
+      "https://auth.openai.com",
+      "https://signin.example",
+    ]);
   });
 });
 

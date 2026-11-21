@@ -1,3 +1,4 @@
+import { harnessRunsOnWebAccount } from "../../shared/harness-descriptors.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import type { TurnTiming } from "./turn-timing.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
@@ -1960,7 +1961,11 @@ export async function streamChatTurn(
     chatSessionId: hostedChatSessionId,
     ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
-    systemPrompt: effectiveEnhancedSystemPrompt,
+    // The vendor receives only the user message. Its settings check needs
+    // the project prompt, before MCPJam adds instructions for its own model.
+    systemPrompt: harnessRunsOnWebAccount(persist.harness)
+      ? (persist.systemPrompt ?? "")
+      : effectiveEnhancedSystemPrompt,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its
     // adapter's declared efforts gate (refused, never dropped).

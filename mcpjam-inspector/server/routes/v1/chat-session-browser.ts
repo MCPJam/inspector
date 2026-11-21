@@ -224,8 +224,8 @@ export async function provisionConversationBrowser(args: {
   wireUuid: string;
   hostId?: string;
   profileId?: string;
-  /** Boots a fresh browser with this archive (a web account's session). */
-  profileArchive?: Uint8Array;
+  /** A fresh boot's own profile (a web account's session, or blank). */
+  ownProfile?: { archive?: Uint8Array };
   signal: AbortSignal;
   onNotice?: (notice: string) => void;
 }) {
@@ -238,7 +238,7 @@ export async function provisionConversationBrowser(args: {
       contextMode: "persistent",
       hostId: args.hostId,
       browserProfileId: args.profileId,
-      ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
+      ...(args.ownProfile ? { ownProfile: args.ownProfile } : {}),
       onNotice: args.onNotice,
       signal: AbortSignal.any([args.signal, AbortSignal.timeout(120_000)]),
     });
