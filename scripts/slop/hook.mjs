@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
+import { driverRunReminder } from "./ui-driver-run.mjs";
 
 export const FILE_BUDGET = 800;
 /** How far a file already over FILE_BUDGET may grow: enough to wire code in. */
@@ -272,7 +273,9 @@ function runStop(input) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "Stop") return runStop(input);
+  if (input.hook_event_name === "Stop") {
+    return Math.max(runStop(input), driverRunReminder(input));
+  }
   if (input.hook_event_name === "UserPromptSubmit") {
     return runPromptSubmit(input);
   }
