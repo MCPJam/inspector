@@ -347,6 +347,35 @@ const SANDBOX_GONE_CODES = new Set(["sandbox_not_found", "sandbox_expiring"]);
  * side failed (408, 429, 5xx). A 400/403/404/422 from the control plane or the
  * broker is a refusal of this request, not an outage: unclassified.
  */
+/**
+ * A web client turn that stopped on the vendor's page, by its failure kind: a
+ * broken step is the run's failure, never the server's. Two kinds stay
+ * unclassified on purpose, since the server under test can cause them: the
+ * vendor's app failing to reach the connector (the server is down), and a
+ * reply that never finished (a tool call that hangs).
+ */
+const WEB_CLIENT_ROWS: Record<string, Row> = {
+  needs_sign_in: { class: "auth", layer: "platform", retryable: false },
+  plan_limit: { class: "account_limit", layer: "platform", retryable: false },
+  turn_running: { class: "capacity", layer: "platform", retryable: true },
+  page_changed: {
+    class: "provider_unavailable",
+    layer: "platform",
+    retryable: false,
+  },
+  send_ambiguous: {
+    class: "provider_unavailable",
+    layer: "platform",
+    retryable: false,
+  },
+  driver: { class: "sandbox", layer: "sandbox", retryable: true },
+  connector_not_found: {
+    class: "configuration",
+    layer: "platform",
+    retryable: false,
+  },
+};
+
 function classifySetup(
   layer: "sandbox" | "platform",
   code: string | undefined,
@@ -405,6 +434,9 @@ export function classifyEvalInfraError(
       break;
     case "platform_setup":
       row = classifySetup("platform", code, httpStatus);
+      break;
+    case "web_client":
+      row = code ? WEB_CLIENT_ROWS[code] : undefined;
       break;
     default:
       return undefined;
