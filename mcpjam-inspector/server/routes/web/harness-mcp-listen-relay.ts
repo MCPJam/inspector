@@ -32,6 +32,7 @@
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 export function harnessListenRelayEnabled(
   env: NodeJS.ProcessEnv = process.env,
@@ -353,8 +354,9 @@ export function relayListenStream(args: {
     start(streamController) {
       controller = streamController;
       start().catch((error: unknown) => {
-        logger.warn("[harness-mcp] relayed listen failed", {
-          error: error instanceof Error ? error.name : "unknown",
+        reportRouteFailure("Could not open the upstream subscription.", error, {
+          source: "harness.mcp.listen_relay",
+          hop: "user_server_hop",
         });
         end("relay-failed", {
           jsonrpc: "2.0",
