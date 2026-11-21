@@ -37,6 +37,7 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "./eval-import-live-validation.js";
+import { refuseTargetProblems } from "./eval-import-targets.js";
 import {
   CASE_WIRE_KEYS,
   caseFromWire,
@@ -1063,6 +1064,7 @@ export async function executeEvalRunFromFile(
     knobs,
     signal: context.signal,
   });
+  refuseTargetProblems(liveCheck.targetFindings);
   const selection = selectedAuthoredCaseIds(loaded.resolved.cases, knobs.case);
   const outgoingCases = applyUnresolvedReferences({
     cases: loaded.resolved.cases,

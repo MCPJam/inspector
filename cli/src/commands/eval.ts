@@ -61,6 +61,7 @@ import {
   validateImportToolReferences,
   type ImportToolFinding,
 } from "../lib/eval-import-live-validation.js";
+import type { ImportTargetFinding } from "../lib/eval-import-targets.js";
 import {
   runAccountServerNames,
   writeRunAccounts,
@@ -2921,7 +2922,8 @@ type ValidateResult = {
     /** Every target the file resolved to, so a finding's scope is readable. */
     targets: string[];
     valid: boolean;
-    findings: ImportToolFinding[];
+    /** Target findings (`SERVER_*`, no `caseId`) first, then tool findings. */
+    findings: Array<ImportTargetFinding | ImportToolFinding>;
   };
 };
 
@@ -3012,14 +3014,15 @@ export function parseApprovalFlags(options: {
  * halves of a `--project` validation is reading one format, not two.
  */
 export function formatImportToolFindings(
-  findings: readonly ImportToolFinding[]
+  findings: ReadonlyArray<ImportTargetFinding | ImportToolFinding>
 ): string {
   return findings
-    .map(
-      (entry) =>
-        `  ${entry.pointer}: ${entry.message} ` +
-        `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
-        `${entry.imported ? ", imported" : ""})`
+    .map((entry) =>
+      "caseId" in entry
+        ? `  ${entry.pointer}: ${entry.message} ` +
+          `(case ${entry.caseId}${entry.disabled ? ", disabled" : ""}` +
+          `${entry.imported ? ", imported" : ""})`
+        : `  ${entry.pointer ?? entry.targetLabel}: ${entry.message}`
     )
     .join("\n");
 }
@@ -3056,8 +3059,9 @@ async function runProjectValidation(
       return {
         project: { id: project.id, name: project.name },
         targets: outcome.targets.map((target) => target.label),
-        valid: outcome.findings.length === 0,
-        findings: outcome.findings,
+        valid:
+          outcome.targetFindings.length === 0 && outcome.findings.length === 0,
+        findings: [...outcome.targetFindings, ...outcome.findings],
       };
     }
   );
@@ -3105,7 +3109,7 @@ async function runEvalValidate(
       );
       if (projectValidation && !projectValidation.valid) {
         process.stdout.write(
-          `${projectValidation.findings.length} unresolved reference(s) ` +
+          `${projectValidation.findings.length} finding(s) ` +
             `against project ${projectValidation.project.name}:\n` +
             formatImportToolFindings(projectValidation.findings) +
             "\n"
