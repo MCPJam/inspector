@@ -83,6 +83,22 @@ function captionOf(
   );
 }
 
+/** The words that differ between an MCP server's accounts and other kinds. */
+export interface AccountListTerms {
+  /** The row's note when the account can't be used until someone acts. */
+  needsReauth: string;
+  /** The row menu's way to fix it. */
+  reauthenticate: string;
+  /** What removing an account deletes. */
+  removeBody: string;
+}
+
+export const SERVER_ACCOUNT_TERMS: AccountListTerms = {
+  needsReauth: "Needs reconnect",
+  reauthenticate: "Reconnect",
+  removeBody: "MCPJam will remove this connection and its stored credentials.",
+};
+
 export function ConnectionAccountsSection({
   projectId,
   serverId,
@@ -184,6 +200,7 @@ export function ConnectionAccountsList({
   localDeliveryAllowed,
   onAuthenticate,
   onUpdate,
+  terms = SERVER_ACCOUNT_TERMS,
 }: {
   connections: OAuthConnection[];
   /** Undefined until the server's list answers. */
@@ -201,6 +218,7 @@ export function ConnectionAccountsList({
     operation: "label" | "default" | "delete",
     label?: string,
   ) => Promise<void>;
+  terms?: AccountListTerms;
 }) {
   const canManage = shared !== true || isAdmin;
   // An account that needs reconnecting holds no token, so it doesn't count.
@@ -319,7 +337,7 @@ export function ConnectionAccountsList({
                     </p>
                     {connection.needsReauth ? (
                       <p className="truncate text-xs text-destructive">
-                        Needs reconnect
+                        {terms.needsReauth}
                       </p>
                     ) : (
                       caption && (
@@ -383,7 +401,7 @@ export function ConnectionAccountsList({
                         })
                       }
                     >
-                      Reconnect
+                      {terms.reauthenticate}
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
@@ -430,9 +448,7 @@ export function ConnectionAccountsList({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this account?</AlertDialogTitle>
-            <AlertDialogDescription>
-              MCPJam will remove this connection and its stored credentials.
-            </AlertDialogDescription>
+            <AlertDialogDescription>{terms.removeBody}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
