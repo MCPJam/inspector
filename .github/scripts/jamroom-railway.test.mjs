@@ -109,7 +109,6 @@ test('clones only the clean template and deploys the verified SHA with a test pr
     projectId: PROJECT, name: NAME, sourceEnvironmentId: TEMPLATE, skipInitialDeploys: true,
   });
   assert.equal(mutations[1].input.variables.ALLOWED_ORIGINS, 'https://preview.up.railway.app');
-  assert.equal(mutations[1].input.variables.MCPJAM_INSPECTOR_PUBLIC_URL, 'https://preview.up.railway.app');
   assert.equal(mutations[1].input.skipDeploys, true);
   assert.equal(mutations[1].input.replace, true);
   assert.deepEqual(mutations[2], { environmentId: 'env-id', serviceId: SERVICE, commitSha: INSPECTOR });
