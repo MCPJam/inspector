@@ -24,7 +24,12 @@ const LAB = resolve(
   __dirname,
   "../../../../scripts/production-traffic/orders_lab.py",
 );
-const PYTHON = process.env.PRODUCTION_TRAFFIC_TEST_PYTHON;
+const PYTHON = process.env.PRODUCTION_TRAFFIC_TEST_PYTHON?.trim();
+if (process.env.PRODUCTION_TRAFFIC_REQUIRE_PYTHON === "1" && !PYTHON) {
+  throw new Error(
+    "PRODUCTION_TRAFFIC_REQUIRE_PYTHON=1 but PRODUCTION_TRAFFIC_TEST_PYTHON is not set",
+  );
+}
 const READER = `reader.${randomBytes(12).toString("hex")}`;
 
 type Lab = { url: string; service: string; stop(): Promise<string> };
@@ -73,13 +78,17 @@ async function connect(url: string, clientName: string) {
 
 describe.skipIf(!clickHouseTestTarget())("Orders lab over OTLP", () => {
   let harness: ReceiverHarness;
+  const liveLabs = new Set<Lab>();
   const evidence: Record<string, unknown> = {};
 
   async function startLab(options: string[]): Promise<Lab> {
+    if (!PYTHON) {
+      throw new Error("Set PRODUCTION_TRAFFIC_TEST_PYTHON to start the orders lab");
+    }
     const port = await freePort();
     const service = `orders-lab-${randomBytes(4).toString("hex")}`;
     const child: ChildProcess = spawn(
-      PYTHON!,
+      PYTHON,
       [
         LAB,
         "--otlp-endpoint",
@@ -99,31 +108,57 @@ describe.skipIf(!clickHouseTestTarget())("Orders lab over OTLP", () => {
       },
     );
     let output = "";
+    let spawnError: Error | undefined;
+    let killDeadline: ReturnType<typeof setTimeout> | undefined;
     child.stdout?.on("data", (chunk) => (output += chunk));
     child.stderr?.on("data", (chunk) => (output += chunk));
-    const exited = new Promise<void>((done) => child.on("close", () => done()));
+    child.on("error", (error) => {
+      spawnError = error;
+    });
+    const exited = new Promise<void>((done) => {
+      child.once("close", () => {
+        clearTimeout(killDeadline);
+        liveLabs.delete(lab);
+        done();
+      });
+    });
     const url = `http://127.0.0.1:${port}`;
-    for (let attempt = 0; ; attempt += 1) {
-      if (child.exitCode !== null || attempt > 150) {
-        throw new Error(`The orders lab did not start:\n${output}`);
-      }
-      const ready = await fetch(`${url}/orders`).then(
-        (response) => response.ok,
-        () => false,
-      );
-      if (ready) break;
-      await new Promise((done) => setTimeout(done, 200));
-    }
-    return {
+    const lab: Lab = {
       url,
       service,
-      // SIGTERM lets the lab flush its batched spans before it exits.
       stop: async () => {
-        child.kill("SIGTERM");
+        // SIGTERM lets the lab flush spans. Bound cleanup if it never exits.
+        if (
+          child.pid &&
+          child.exitCode === null &&
+          child.signalCode === null &&
+          !killDeadline
+        ) {
+          child.kill("SIGTERM");
+          killDeadline = setTimeout(() => child.kill("SIGKILL"), 25_000);
+        }
         await exited;
         return output;
       },
     };
+    liveLabs.add(lab);
+    const deadline = Date.now() + 30_000;
+    while (
+      !spawnError &&
+      child.exitCode === null &&
+      child.signalCode === null &&
+      Date.now() < deadline
+    ) {
+      const ready = await fetch(`${url}/orders`, {
+        signal: AbortSignal.timeout(1_000),
+      }).then((response) => response.ok, () => false);
+      if (ready) return lab;
+      await new Promise((done) => setTimeout(done, 200));
+    }
+    const diagnostic = output.replaceAll(harness.writer, "[redacted]");
+    throw new Error(`The orders lab did not start:\n${diagnostic}`, {
+      cause: spawnError,
+    });
   }
 
   const read = async (path: string, query: Record<string, string>) => {
@@ -140,17 +175,16 @@ describe.skipIf(!clickHouseTestTarget())("Orders lab over OTLP", () => {
   };
 
   beforeAll(async () => {
-    if (process.env.PRODUCTION_TRAFFIC_REQUIRE_PYTHON === "1" && !PYTHON) {
-      throw new Error(
-        "PRODUCTION_TRAFFIC_REQUIRE_PYTHON=1 but PRODUCTION_TRAFFIC_TEST_PYTHON is not set",
-      );
-    }
     harness = await startReceiverHarness();
     harness.convex.addMember(READER, PROJECT, "member");
   }, 180_000);
 
   afterAll(async () => {
-    await harness?.close();
+    try {
+      await Promise.all([...liveLabs].map((lab) => lab.stop()));
+    } finally {
+      await harness?.close();
+    }
     const summary = process.env.GITHUB_STEP_SUMMARY;
     if (summary) {
       appendFileSync(
@@ -158,7 +192,7 @@ describe.skipIf(!clickHouseTestTarget())("Orders lab over OTLP", () => {
         `### Orders lab on the MCP Python SDK (synthetic ids)\n\n\`\`\`json\n${JSON.stringify(evidence, null, 2)}\n\`\`\`\n`,
       );
     }
-  });
+  }, 40_000);
 
   it.skipIf(!PYTHON)(
     "flags the broken refund, a protocol error, a tool error and a rejected request",
@@ -180,7 +214,7 @@ describe.skipIf(!clickHouseTestTarget())("Orders lab over OTLP", () => {
       expect(
         (await call("get_order", { order_id: "9002" }))?.result?.isError,
       ).toBe(true);
-      expect((await call("get_order", { order_id: "12" }))?.error?.code).toBe(
+      expect((await call("get_order", { order_id: "1042\n" }))?.error?.code).toBe(
         -32602,
       );
       const output = await lab.stop();

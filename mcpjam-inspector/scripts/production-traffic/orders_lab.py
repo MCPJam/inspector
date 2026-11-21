@@ -51,7 +51,7 @@ FIXTURE = {
     "1043": {"customer": "Ravi Shah", "total": "18.00", "status": "paid"},
     "1044": {"customer": "Mia Chen", "total": "112.75", "status": "refunded"},
 }
-ORDER_ID = re.compile(r"^[0-9]{4}$")
+ORDER_ID = re.compile(r"[0-9]{4}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -107,7 +107,7 @@ def build_server(args: argparse.Namespace) -> MCPServer:
             span.set_attribute("mcp.client.version", params.client_info.version)
 
     def order(order_id: str) -> dict:
-        if not ORDER_ID.match(order_id):
+        if not ORDER_ID.fullmatch(order_id):
             raise MCPError(INVALID_PARAMS, "order_id must be a four-digit order number, such as 1042.")
         if order_id == "9001":
             raise MCPError(INTERNAL_ERROR, "The order service is unavailable. Retry in a minute.")
