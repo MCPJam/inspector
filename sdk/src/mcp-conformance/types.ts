@@ -521,7 +521,7 @@ export type RetiredMCPCheckId = keyof typeof RETIRED_MCP_CHECK_IDS;
  * for an era may still find nothing to say there (its probe decides).
  */
 export const READINESS_ERAS: Record<MCPReadinessId, MCPCheckEras> = {
-  "readiness-tool-order-deterministic": ["legacy", "modern"],
+  "readiness-tool-order-deterministic": ["modern"],
   // Modern: removed capabilities. Legacy: a revision older than 2025-11-25.
   "readiness-deprecated-feature-use": ["legacy", "modern"],
   "readiness-session-termination": ["legacy", "modern"],
