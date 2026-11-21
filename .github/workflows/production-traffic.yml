@@ -91,10 +91,12 @@ jobs:
           npm run build -w @mcpjam/sdk
           npm run pretest -w @mcpjam/inspector
 
-      - name: Install the OpenTelemetry Python exporter
+      # The orders lab also needs the official MCP Python SDK.
+      - name: Install the OpenTelemetry Python exporter and the MCP SDK
         run: |
           python3 -m venv "$RUNNER_TEMP/otel"
           "$RUNNER_TEMP/otel/bin/pip" install --quiet \
+            mcp==2.3.0 \
             opentelemetry-sdk==1.45.2 \
             opentelemetry-exporter-otlp-proto-http==1.45.2
           echo "PRODUCTION_TRAFFIC_TEST_PYTHON=$RUNNER_TEMP/otel/bin/python" >> "$GITHUB_ENV"
