@@ -251,17 +251,20 @@ export function matchSurface(surfaces, segments) {
   return paramMatch;
 }
 
-/** Surfaces an E2E spec navigates to. */
-export function navigatedSurfaces(source, surfaces) {
+/**
+ * Where an E2E spec navigates, as {@link destinationSegments}: each literal
+ * `goto` target and, when a `goto` destination is built from data, every
+ * route-shaped string literal, since those are the destinations it loops over.
+ */
+export function navigationTargets(source) {
   const { code, literals } = scanSource(source);
   const literalAt = new Map(literals.map((l) => [l.start, l]));
-  const found = new Set();
+  const targets = [];
   let dataDriven = false;
   for (const match of code.matchAll(/\bgoto\(\s*/g)) {
     const literal = literalAt.get(match.index + match[0].length);
     const segments = literal ? destinationSegments(literal.value) : null;
-    const id = segments ? matchSurface(surfaces, segments) : null;
-    if (id) found.add(id);
+    if (segments) targets.push(segments);
     const interpolatedRoute =
       literal?.value.includes(PLACEHOLDER) &&
       (!segments || segments.some((s) => s.includes(PLACEHOLDER)));
@@ -271,9 +274,18 @@ export function navigatedSurfaces(source, surfaces) {
     for (const literal of literals) {
       if (!/^[\w./:*-]+$/.test(literal.value)) continue;
       const segments = destinationSegments(literal.value);
-      const id = segments ? matchSurface(surfaces, segments) : null;
-      if (id) found.add(id);
+      if (segments) targets.push(segments);
     }
+  }
+  return targets;
+}
+
+/** Surfaces an E2E spec navigates to. */
+export function navigatedSurfaces(source, surfaces) {
+  const found = new Set();
+  for (const segments of navigationTargets(source)) {
+    const id = matchSurface(surfaces, segments);
+    if (id) found.add(id);
   }
   return found;
 }
@@ -298,7 +310,8 @@ function stripLineComments(source) {
 const IMPORT_SPECIFIERS = [
   /\b(?:import|export)\s+(?:type\s+)?[\w*\s{},$]*?\bfrom\s*["']([^"']+)["']/g,
   /\bimport\s*["']([^"']+)["']/g,
-  /\bimport\(\s*["']([^"']+)["']\s*\)/g,
+  // `typeof import("…")` is a type query: it names a module, never loads it.
+  /(?<!\btypeof\s+)\bimport\(\s*["']([^"']+)["']\s*\)/g,
 ];
 
 const isTypeOnly = (statement) => {
@@ -313,11 +326,16 @@ const isTypeOnly = (statement) => {
 
 /** Value imports of a module (type-only imports exercise nothing). */
 export function importSpecifiers(source) {
-  const { executable: code } = scanSource(source);
+  const { executable: code, literals } = scanSource(source);
+  // `executable` keeps quoted strings so specifiers can be read, so an
+  // `import` that starts inside one is fixture text, not code. Template text
+  // is already blanked, leaving only its `${…}` expressions.
+  const quoted = literals.filter((l) => source[l.start] !== "`");
+  const inQuoted = (at) => quoted.some((l) => at > l.start && at < l.end);
   const out = [];
   for (const re of IMPORT_SPECIFIERS) {
     for (const match of code.matchAll(re)) {
-      if (isTypeOnly(match[0])) continue;
+      if (isTypeOnly(match[0]) || inQuoted(match.index)) continue;
       out.push(match[1]);
     }
   }

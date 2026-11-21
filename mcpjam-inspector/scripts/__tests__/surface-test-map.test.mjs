@@ -217,6 +217,23 @@ const fixture = \`import { Fake } from "./Fake"; \${await import("./Lazy")}\`;
   ]);
 });
 
+test("a typeof import() type query is not an edge; a dynamic import is", () => {
+  const source = `
+type Module = typeof import("./TracingTab");
+const load = () => import("./Lazy");
+`;
+  assert.deepEqual(importSpecifiers(source), ["./Lazy"]);
+});
+
+test("import text quoted in a string is not an edge", () => {
+  const source = `
+const fixture = 'import("./TracingTab")';
+const other = "import { Fake } from './Fake'";
+const run = \`\${await import("./Lazy")}\`;
+`;
+  assert.deepEqual(importSpecifiers(source), ["./Lazy"]);
+});
+
 test("a module belongs to a surface only when no other surface reaches it", () => {
   const graph = new Map([
     ["A.tsx", new Set(["a-only.ts", "shared.ts"])],
