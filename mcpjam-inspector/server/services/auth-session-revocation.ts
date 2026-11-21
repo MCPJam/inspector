@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import { decodeJwt } from "jose";
 import { getInspectorClientRuntimeConfig } from "../env.js";
+import {
+  ConvexHttpStatusError,
+  convexReadFetch,
+} from "../routes/v1/convex-read-errors.js";
 import { logger } from "../utils/logger.js";
 import { markSessionRevokedLocally } from "./revoked-session-cache.js";
 
@@ -10,7 +14,12 @@ export type SessionRevocationResult =
   | {
       revoked: false;
       reason:
-        "no_identity" | "no_session" | "not_configured" | "timeout" | "failed";
+        | "no_identity"
+        | "no_session"
+        | "token_refused"
+        | "not_configured"
+        | "timeout"
+        | "failed";
     };
 
 export const SESSION_REVOCATION_TIMEOUT_MS = 3_000;
@@ -25,7 +34,9 @@ async function revokeViaConvex(
   convexUrl: string,
   token: string,
 ): Promise<unknown> {
-  const client = new ConvexHttpClient(convexUrl);
+  // Keeps the HTTP status that `ConvexHttpClient` would drop, so a refused
+  // token can be told apart from a failure worth retrying.
+  const client = new ConvexHttpClient(convexUrl, { fetch: convexReadFetch });
   client.setAuth(token);
   return await client.mutation("authSessions:revokeCurrentSession" as any, {});
 }
@@ -83,7 +94,13 @@ export async function revokeAuthKitSession(
       revoked: false,
       reason: outcome.reason === "no_identity" ? "no_identity" : "no_session",
     };
-  } catch {
+  } catch (error) {
+    // Convex answers 401 when it refuses the bearer itself (expired, malformed,
+    // or from no configured issuer) before running the mutation, and it gives
+    // the same token the same answer on every retry.
+    if (error instanceof ConvexHttpStatusError && error.convexStatus === 401) {
+      return { revoked: false, reason: "token_refused" };
+    }
     return { revoked: false, reason: "failed" };
   } finally {
     if (timer) clearTimeout(timer);
@@ -104,7 +121,10 @@ export async function revokeAuthKitSession(
  */
 export type SignOutRevocationResult =
   | { revoked: true }
-  | { revoked: false; reason: "no_identity" | "no_session" | "not_configured" }
+  | {
+      revoked: false;
+      reason: "no_identity" | "no_session" | "token_refused" | "not_configured";
+    }
   | {
       revoked: false;
       reason: "timeout" | "failed";
