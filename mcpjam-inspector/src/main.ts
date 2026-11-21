@@ -467,7 +467,9 @@ async function startHonoServer(): Promise<number> {
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
     // The server reads its version from here when it loads (/health, User-Agent).
-    process.env.MCPJAM_INSPECTOR_VERSION ??= app.getVersion();
+    if (!process.env.MCPJAM_INSPECTOR_VERSION?.trim()) {
+      process.env.MCPJAM_INSPECTOR_VERSION = app.getVersion();
+    }
 
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";
