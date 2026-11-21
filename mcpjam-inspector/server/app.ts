@@ -88,7 +88,6 @@ import {
 } from "./middleware/security-headers.js";
 import { indexingHeadersMiddleware } from "./middleware/indexing-headers.js";
 import {
-  getInspectorClientRuntimeConfigScript,
   loadInspectorEnv,
   warnOnConvexDevMisconfiguration,
 } from "./env.js";
@@ -134,6 +133,7 @@ import {
 } from "./routes/web/webmcp-frames.js";
 import { createComputerUploadHandler } from "./routes/web/computer-upload.js";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { injectDocumentConfigScripts } from "./utils/document-head-scripts.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -639,13 +639,7 @@ export async function createHonoApp() {
         // response's nonce (see middleware/security-headers.ts).
         const scriptNonce = documentScriptNonce(c);
 
-        const runtimeConfigScript = getInspectorClientRuntimeConfigScript();
-        if (runtimeConfigScript) {
-          html = html.replace(
-            "</head>",
-            `${withScriptNonce(runtimeConfigScript, scriptNonce)}</head>`,
-          );
-        }
+        html = injectDocumentConfigScripts(html, c, scriptNonce);
 
         // Guest bootstrap blob: mint a guest bearer server-side and inject it
         // so a cold guest boots with a token already in hand. Gated on

@@ -50,6 +50,7 @@ vi.mock("convex/react", () => ({
 
 vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: mockState.detectPlatform,
+  isPostHogDisabled: false,
 }));
 
 vi.mock("@/lib/config", () => ({

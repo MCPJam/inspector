@@ -2,13 +2,14 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
-import { detectPlatform } from "@/lib/PosthogUtils";
+import { detectPlatform, isPostHogDisabled } from "@/lib/PosthogUtils";
 import {
   retryPersonProfile,
   type PersonProfileProperties,
 } from "@/lib/analytics";
 import { refreshServerFeatureFlagsForActor } from "@/lib/server-feature-flags";
 import { HOSTED_MODE } from "@/lib/config";
+import { reapplyAnalyticsConsent } from "@/lib/analytics-consent";
 import { useActorKey } from "@/hooks/use-actor-key";
 import {
   subscribeTelemetryPolicy,
@@ -77,6 +78,8 @@ export function usePostHogIdentify() {
 
     if (isActorChange && previous?.wasAuthed) {
       posthog.reset();
+      // A disabled build stays opted out whatever the visitor chose.
+      if (!isPostHogDisabled) reapplyAnalyticsConsent(posthog);
       posthog.register({
         environment: import.meta.env.MODE,
         platform: detectPlatform(),

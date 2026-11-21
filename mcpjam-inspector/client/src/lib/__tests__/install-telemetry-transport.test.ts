@@ -3,20 +3,20 @@ import { afterEach, expect, it, vi } from "vitest";
 const policy: { content: "full" | "strict" } = { content: "full" };
 import { TELEMETRY_POLICY_HEADER } from "../../../../shared/strict-posthog";
 let undo: (() => void) | undefined;
-afterEach(() => { undo?.(); undo = undefined; vi.unstubAllGlobals(); vi.resetModules(); });
+afterEach(() => { undo?.(); undo = undefined; vi.unstubAllGlobals(); vi.resetModules(); window.localStorage.clear(); });
 async function install() {
   const fetch = vi.fn().mockResolvedValue(new Response("{}"));
   window.fetch = fetch;
   globalThis.fetch = fetch;
-  const open = vi.fn(); const send = vi.fn(); const header = vi.fn();
-  class Xhr { open = open; send = send; setRequestHeader = header; }
+  const open = vi.fn(); const send = vi.fn(); const header = vi.fn(); const abort = vi.fn();
+  class Xhr { open = open; send = send; setRequestHeader = header; abort = abort; }
   // Prototype methods are what browser SDKs cache.
-  Xhr.prototype.open = open; Xhr.prototype.send = send; Xhr.prototype.setRequestHeader = header;
+  Xhr.prototype.open = open; Xhr.prototype.send = send; Xhr.prototype.setRequestHeader = header; Xhr.prototype.abort = abort;
   vi.stubGlobal("XMLHttpRequest", Xhr);
   const module = await import("../install-telemetry-transport");
   undo = module.installTelemetryTransport();
   (await import("../telemetry-transport-policy")).setTelemetryTransportPolicyReader(() => policy.content);
-  return { fetch, open, send, header, Xhr };
+  return { fetch, open, send, header, abort, Xhr };
 }
 
 it("leaves normal app and external fetch inputs, options, headers and bodies untouched", async () => {
@@ -72,3 +72,26 @@ it.each(["../../main.tsx", "../../app-bootstrap.tsx"])(
     expect(source.match(/^import .*$/m)?.[0]).toBe('import "./lib/install-telemetry-transport";');
   },
 );
+
+it("holds back PostHog uploads queued before a withdrawal, and nothing else", async () => {
+  const { fetch, send, abort, Xhr } = await install();
+  window.__MCPJAM_ANALYTICS_CONSENT_REQUIRED__ = true;
+  window.localStorage.setItem("mcpjam-analytics-consent", "denied");
+  for (const path of ["/tlm/e/", "/tlm/s/?ver=1", "/relay/i/v0/e/"]) {
+    const response = await window.fetch(path, { method: "POST", body: "QUEUED" });
+    expect(response.status).toBe(204);
+  }
+  expect(fetch).not.toHaveBeenCalled();
+  await window.fetch("/tlm/array/phc_key/config");
+  expect(fetch).toHaveBeenCalledOnce();
+
+  const queued = Object.create(Xhr.prototype) as XMLHttpRequest;
+  queued.open("POST", "/tlm/e/");
+  queued.send("QUEUED");
+  expect(send).not.toHaveBeenCalled();
+  expect(abort).toHaveBeenCalledOnce();
+
+  window.localStorage.setItem("mcpjam-analytics-consent", "granted");
+  await window.fetch("/tlm/e/", { method: "POST", body: "ALLOWED" });
+  expect(fetch).toHaveBeenCalledTimes(2);
+});
