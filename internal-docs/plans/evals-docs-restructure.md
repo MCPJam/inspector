@@ -44,29 +44,49 @@ tabs, with redirects. That gets most of C without the churn.
 
 ## Proposed Evaluate group
 
-No sub-group has more than five entries (Figma's rule is at most seven top-level entries per group).
+Revised after checking every feature against the client code (Nov 21). Today's `evals.mdx` describes
+several screens that are no longer mounted (Run all, Update snapshot, Run insights, Suggested
+fixes, Export traces, the LLM-as-judge panel, HOLD/SHIP pills, the By host matrix, the Next run
+sheet, "Checks by stage"). The new pages describe only what a default, ungated user sees.
 
-| Sub-group | Page | Figma page | Source |
+| Sub-group | Page | URL | Figma page |
 | --- | --- | --- | --- |
-| — | Overview | new | intro of `evals.mdx` |
-| — | Run your first eval | Run your first eval | "What to author first", "Requirements" |
-| — | How evals work | new | "How it's organized", vocabulary contract, new scoring and cost section |
-| Author cases | Write a case | Write a case | "Authoring a case", "Case workspace", "History inspect", "Next run sheet" |
-| Author cases | Generate cases | (part of Write a case) | "Generating cases", "Promoting sessions" |
-| Run and review | Run a suite | Run a suite | "Running", "Run review", "Frozen snapshots", "Suite execution config" |
-| Run and review | What a run can access | new | data-sent notes from judge and rubric checks, new |
-| Run and review | Run as test users | existing page | `inspector/eval-test-users.mdx` (moved) |
-| Run and review | Read results | Read results | "Reading results", "Run view", "Cost", "Exporting traces" |
-| Run and review | Compare runs | (part of Read results) | "Comparing two runs", "Cross-host matrix", "Case view" |
-| Grade and ship | Configure grading | Configure grading | "LLM as judge", "Rubric checks", "Grading" |
-| Grade and ship | Run evals in CI | (CLI tab today) | `cli/ci.mdx` "Evals in CI", "CI suites", quality gate |
-| Reference | Assertions | Cases and assertions | "Assertions", "Argument matching", "Validator settings" |
-| Reference | Grading | Grading | pass criteria, evidence, judge defaults, gate conditions |
-| Reference | Runs and results | Runs and results | statuses, origin badges, cost states, export format |
-| Reference | Troubleshooting | new | gotchas spread across `evals.mdx` |
+| — | Overview | `/evaluate/overview` | new |
+| — | Run your first eval | `/evaluate/run-your-first-eval` | Run your first eval |
+| — | How evals work | `/evaluate/how-evals-work` | new |
+| Author cases | Write a case | `/evaluate/write-a-case` | Write a case |
+| Author cases | Generate cases | `/evaluate/generate-cases` | (part of Write a case) |
+| Run and review | Run a suite | `/evaluate/run-a-suite` | Run a suite |
+| Run and review | What a run can access | `/evaluate/what-a-run-can-access` | new |
+| Run and review | Read results (includes comparing runs and cost) | `/evaluate/read-results` | Read results |
+| Grade and ship | Configure grading | `/evaluate/configure-grading` | Configure grading |
+| Grade and ship | Run evals in CI | `/evaluate/run-evals-in-ci` | (CLI tab today) |
+| Reference | Assertions | `/evaluate/reference/assertions` | Cases and assertions |
+| Reference | Suite settings | `/evaluate/reference/suite-settings` | Grading |
+| Reference | Runs and results | `/evaluate/reference/runs-and-results` | Runs and results |
+| Reference | Troubleshooting | `/evaluate/troubleshooting` | new |
 
-Held until confirmed in the app: widget steps (in Write a case) and execution budgets (in the
-Grading reference).
+Changes from the 16-page draft, from the code check:
+
+- **Dropped:** Compare runs (folded into Read results), Exporting traces (not reachable in the app).
+- **Kept out:** Run as test users. It is behind a feature flag, so by the public-docs rules it
+  should not be in the nav. Its existing page is untouched pending a decision.
+- **Now documented:** the five time and retry limits in suite settings, which are rendered and
+  ungated (Figma notes said they were not in the app).
+- **Still held:** detail on Interact steps at runtime (unverified).
+
+`/inspector/evals` redirects to `/evaluate/overview` in the last PR of the stack.
+
+## Delivery: stacked PRs
+
+| PR | Branch | Contents |
+| --- | --- | --- |
+| 1 | `claude/charming-hopper-v5g043` | This plan and the mock |
+| 2 | `…-1-start` | Overview, Run your first eval, How evals work |
+| 3 | `…-2-author` | Write a case, Generate cases |
+| 4 | `…-3-run` | Run a suite, What a run can access, Read results |
+| 5 | `…-4-grade` | Configure grading, Run evals in CI |
+| 6 | `…-5-reference` | Reference pages, Troubleshooting; remove `inspector/evals.mdx`, redirect, fix inbound links |
 
 ## Page recipe
 
