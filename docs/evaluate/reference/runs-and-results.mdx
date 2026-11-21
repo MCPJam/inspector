@@ -102,6 +102,41 @@ The **Runs** table on a suite page has the same columns without Suite. A dash in
 
 {/* Screenshot: Evaluate Overview with the Suite Health chart above the Runs table and the Platform filter open */}
 
+## Read a run from the CLI or API
+
+A run's ID is the last segment of its page URL, `/evals/suite/<suiteId>/runs/<runId>`, and `runs[].id` in the output of `mcpjam cloud eval run --format json`.
+
+```bash Status, verdict and failure diagnostics
+mcpjam cloud eval status --run "$RUN_ID" --format json
+
+# All six user value chain rows for each failing iteration
+mcpjam cloud eval status --run "$RUN_ID" --stages --format human
+```
+
+```bash Per-iteration results: pass or fail, tool calls, tokens, latency
+mcpjam cloud eval iterations --run "$RUN_ID" --limit 200 --format json
+
+# Next page, with the cursor from the previous response
+mcpjam cloud eval iterations --run "$RUN_ID" --limit 200 --cursor "$CURSOR" --format json
+```
+
+<Tip>
+  `eval status` returns at most 20 failure diagnostics unless you ask for more. When `decisionSummary.diagnostics.complete` is `false`, pass `--diagnostics-limit 200` and then `--diagnostics-cursor` with `decisionSummary.diagnostics.nextCursor` until it is `true`. See [`cloud eval status`](/cli/reference#cloud-eval-status).
+</Tip>
+
+The [Public API](/reference/public-api) serves the same data, plus a suite's recent runs, newest first:
+
+```bash API
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-suites/$SUITE_ID/runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+
+curl -s "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs/$RUN_ID/iterations" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY"
+```
+
 <CardGroup cols={3}>
   <Card title="Read results" icon="chart-column" href="/evaluate/read-results">
     Read a run page, findings and the trace.

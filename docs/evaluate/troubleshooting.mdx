@@ -73,6 +73,115 @@ Each heading is the message you see, or the symptom when there is no message.
   </Accordion>
 </AccordionGroup>
 
+## CLI errors
+
+<Tip>
+  Every `mcpjam` command takes the global `--format` flag: `json` (the default when output is piped) for machine-readable output, `human` for the readable summary. Errors go to stderr. Exit codes for every command are in the [CLI reference](/cli/reference#exit-codes).
+</Tip>
+
+<AccordionGroup>
+  <Accordion title="mcpjam cloud eval run --wait exits 2, 3, 4 or 5">
+    **Cause:** with `--wait`, only a run that completed with a failed verdict exits `1`. The other codes mean the run never produced a usable verdict.
+
+    **Fix:** act on the code:
+
+    | Code | Meaning | What to do |
+    | --- | --- | --- |
+    | `2` | Bad flags, `--reporter`/`--out` without `--wait`, or an invalid suite file | Run `mcpjam cloud eval validate --file <path>` for the findings. |
+    | `3` | No credential, or the platform rejected it, at launch or mid-wait | Run `mcpjam cloud login`, or set `MCPJAM_API_KEY` to an `sk_` key. |
+    | `4` | The launch failed before evaluation: network, timeout, rate limit or a failed fan-out | Retry. Human output names each failure as `Failed: <target> — <code>: <message>`. |
+    | `5` | No valid verdict: inconclusive, cancelled, timed out, or the wait hit its deadline | Open the run. To wait longer, raise `--wait-timeout` (default 2100000 ms). |
+
+    Without `--wait`, the command exits `0` on any launch and `1` on a partial or failed fan-out. See [`cloud eval run`](/cli/reference#cloud-eval-run).
+  </Accordion>
+
+  <Accordion title="mcpjam cloud eval gate exits 3">
+    **Cause:** the gate is incomplete, not failed: the run was cancelled, the wait timed out, the network failed, or the evidence cannot be gated. Both cost gates are non-gateable when cost is unknown or partial, for example on a model that ran on your own provider key. A `--baseline-sha` that matches no completed run in the suite is also exit `3`. A waiver never overrides it.
+
+    **Fix:** retry on `3`; treat only `1` as a real failure. For a cost gate, run on a model billed to MCPJam credits. See [`cloud eval gate`](/cli/reference#cloud-eval-gate).
+  </Accordion>
+
+  <Accordion title="TARGET_REQUIRED">
+    **Cause:** the suite has several attached environments or clients, and the CLI never picks one for you, because each target is a paid run.
+
+    **Fix:** name the targets, or run every one:
+
+    ```bash
+    mcpjam cloud eval run --suite "Notes server" --client "Claude"
+    mcpjam cloud eval run --suite "Notes server" --all-targets
+    ```
+  </Accordion>
+
+  <Accordion title="cloud eval run --host claude finds no client">
+    **Cause:** under `cloud eval`, `--host` is a deprecated alias for `--client` and names a client saved in your project, not a host-compat catalog id.
+
+    **Fix:** list your clients and pass one with `--client`:
+
+    ```bash
+    mcpjam cloud clients list
+    mcpjam cloud eval run --suite "Notes server" --client "Claude"
+    ```
+  </Accordion>
+
+  <Accordion title="SUITE_FILE_INVALID">
+    **Cause:** the suite file parsed but breaks the suite-file contract. `eval validate` exits `1`; `eval run --file` exits `2` and starts no run.
+
+    **Fix:** list every finding, each with a `pointer` such as `cases[1].id`:
+
+    ```bash
+    mcpjam cloud eval validate --file .mcpjam/evals/notes.yaml --format json
+    ```
+  </Accordion>
+
+  <Accordion title="REPETITIONS_CAP">
+    **Cause:** a count in the suite file is above 10 (`repetitions` in a `schemaVersion: "1"` file, `iterations` in `"2"`). It is refused, not clamped.
+
+    **Fix:** set the count to 10 or less.
+  </Accordion>
+
+  <Accordion title="NO_ENABLED_CASES">
+    **Cause:** every case in the suite file is `disabled: true`, so `eval run --file` refuses rather than launch the whole stored suite.
+
+    **Fix:** enable at least one case.
+  </Accordion>
+
+  <Accordion title="TOOL_REFERENCE_UNRESOLVED">
+    **Cause:** a `toolCall` step names a tool the target server does not expose. The message reads like `Server "billing" in environment prod exposes no tool named "render_gone".` For a selected case, `eval run --file` refuses before syncing the suite: nothing is written or billed.
+
+    **Fix:** correct the tool name, then check the file against your project's live servers:
+
+    ```bash
+    mcpjam cloud eval validate --file .mcpjam/evals/notes.yaml --project "My project"
+    ```
+  </Accordion>
+
+  <Accordion title="cloud eval update refuses --iterations or --min-iterations">
+    **Cause:** a suite has one iteration rule. A per-case suite takes `--iterations` and `--pass-threshold`; a suite decided by suite accuracy takes `--min-iterations` and `--min-accuracy` or `--pass-threshold`. Passing both flags of a pair is also a usage error.
+
+    **Fix:** read `settings.policy` (`v2` or `legacy`) and use that suite's flags. See [Read and change settings](/evaluate/reference/suite-settings#read-and-change-settings).
+
+    ```bash
+    mcpjam cloud eval get --suite "Notes server" --format json
+    ```
+  </Accordion>
+
+  <Accordion title="RERUN_SOURCE_NOT_TERMINAL or RERUN_NOTHING_TO_RERUN">
+    **Cause:** `cloud eval rerun --failed` was refused with `409`: the run is still executing or grading, or every case passed.
+
+    **Fix:** wait for the run to finish, and preview what would rerun first:
+
+    ```bash
+    mcpjam cloud eval rerun "$RUN_ID" --failed --dry-run --json
+    ```
+  </Accordion>
+
+  <Accordion title="UNSUPPORTED_SUITE_EXPORT">
+    **Cause:** `cloud eval export` found a setting a suite file cannot express, such as automatic LLM-as-judge grading, non-default match options or several attached environments. It exits `1` and writes no file.
+
+    **Fix:** each finding names its field. Change that setting on the suite, or keep editing the suite in the app. See [`cloud eval export`](/cli/reference#cloud-eval-export).
+  </Accordion>
+</AccordionGroup>
+
 <CardGroup cols={3}>
   <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
     Start a run and pick clients and models.
