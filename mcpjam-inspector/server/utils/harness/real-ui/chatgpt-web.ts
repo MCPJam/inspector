@@ -2,12 +2,11 @@
  * chatgpt.com.
  *
  * Built from the HARN-129 spike's walkthrough: custom MCP servers are added
- * from the composer's plus menu ("Add custom MCP server"), MCPJam's sign-in
+ * from Plugins ("Add custom MCP server"), MCPJam's sign-in
  * page asks for consent with an organization choice, write tools ask the
  * person to confirm by default, and a cold sign-in in a fresh hosted browser
- * stopped at OpenAI's security check. The controls below are unverified
- * against the live site until a "live vendor" run records them; a missing
- * one ends the run as `page_changed`, never as a server failure.
+ * stopped at OpenAI's security check. The hosted composer and plugin controls
+ * were observed in the review seat.
  *
  * ChatGPT sends no tool use id with its MCP calls, so its calls are matched
  * to the wire by time only.
@@ -23,7 +22,6 @@ import {
   cssString,
   needsSignIn,
   pageChanged,
-  waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
   type RealUiStep,
@@ -32,24 +30,26 @@ import {
 } from "./page-module.js";
 import { list, readVendorJson, record, text } from "./vendor-json.js";
 
+import {
+  CHATGPT_CHALLENGE as CHALLENGE, CHATGPT_COMPOSER as COMPOSER, CURRENT_COMPOSER,
+  ensureChatGptPlugin, exactRole, readChatGptAccount, waitForControl as waitVisible,
+} from "./chatgpt-controls.js";
+
 const ORIGIN = "https://chatgpt.com";
-const COMPOSER = "#prompt-textarea";
+
 const SEND = '[data-testid="send-button"]';
-const STOP = '[data-testid="stop-button"]';
+const STOP = 'button[aria-label="Stop generating"], [data-testid="stop-button"]';
 const PLUS = '[data-testid="composer-plus-btn"]';
 const USER_MESSAGE = '[data-message-author-role="user"]';
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
-const CHALLENGE = 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]';
+
 const PLUGINS_PANEL = "role=dialog";
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
 
 const role = (kind: string, name: string) =>
   `role=${kind}[name="${cssString(name)}"]`;
-
-const waitVisible = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
-  waitVisibleUnlessBlocked(driver, selector, ctx, { what, step, challengeSelectors: [CHALLENGE] });
 
 /** ChatGPT's own API takes the session's access token, read from the page. */
 async function session(driver: PageDriver): Promise<Record<string, unknown>> {
@@ -96,10 +96,11 @@ export const chatgptWebPageModule: RealUiPageModule = {
     const blocked = await this.blocker(driver);
     if (blocked) throw new RealUiError({ ...blocked, step: "sign_in_check" });
     const url = new URL(await driver.url());
-    if (url.origin !== ORIGIN || (await driver.readText('[data-testid="login-button"]')) !== undefined) {
+    if (url.origin !== ORIGIN || (await driver.readText('[data-testid="login-button"], a[href^="/auth/login"]')) !== undefined) {
       throw needsSignIn("signed_out", "sign_in_check", "The ChatGPT account is signed out.");
     }
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
+    if (!driver.canEvaluate) return readChatGptAccount(driver, ctx);
     const current = await session(driver);
     const user = record(current.user);
     if (!text(user.email)) {
@@ -128,6 +129,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
     // A server already added under this name is reused, never added twice.
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
+    if ((await driver.readText(CURRENT_COMPOSER)) !== undefined) return ensureChatGptPlugin(driver, connector, ctx);
     await openPlusMenuItem(driver, ctx, "Plugins", "connector");
     const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
     const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
@@ -175,6 +177,13 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async enableConnector(driver, name, ctx) {
+    if ((await driver.readText(CURRENT_COMPOSER)) !== undefined) {
+      await driver.click(exactRole("button", "Add files and more"));
+      const plugin = exactRole("button", `${name} ${name}`);
+      await waitVisible(driver, plugin, ctx, "the installed plugin in the composer", "enable_connector");
+      await driver.click(plugin);
+      return;
+    }
     const toggle = role("menuitemcheckbox", name);
     await openPlusMenuItem(driver, ctx, "More", "enable_connector");
     await waitVisible(driver, toggle, ctx, "the server in the tools menu", "enable_connector");
@@ -186,7 +195,8 @@ export const chatgptWebPageModule: RealUiPageModule = {
 
   async send(driver, prompt, ctx) {
     await driver.type(COMPOSER, prompt);
-    await driver.click(SEND);
+    const current = (await driver.readText(CURRENT_COMPOSER)) !== undefined;
+    await driver.click(current ? exactRole("button", "Send") : SEND);
     let conversationUrl: string | undefined;
     await driver.waitFor(
       async () => {
