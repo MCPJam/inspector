@@ -57,5 +57,10 @@ export function useSuiteWebAccounts(suiteId: string, projectId: string) {
     webAccountsApi.mySuiteChoices,
     asks ? { suiteId } : "skip",
   );
-  return { accounts: accounts ?? [], selections: selections ?? [] };
+  return {
+    accounts: accounts ?? [],
+    selections: selections ?? [],
+    // An empty list would also mean "nothing saved yet", a different thing.
+    selectionsLoaded: selections !== undefined,
+  };
 }
