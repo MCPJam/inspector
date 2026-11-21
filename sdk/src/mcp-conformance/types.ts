@@ -561,6 +561,20 @@ export interface MCPReadinessWarning {
   informational?: boolean;
 }
 
+/**
+ * A SHOULD/MAY the server already meets: the advice applied to this server,
+ * was checked, and found nothing to change. Like a warning, it never affects
+ * `passed` or any check status.
+ */
+export interface MCPPassedAdvice {
+  id: MCPReadinessId;
+  title: string;
+  specStrength: MCPReadinessSpecStrength;
+}
+
+/** What one advice probe concluded, when the advice applied. */
+export type MCPReadinessOutcome = MCPReadinessWarning | MCPPassedAdvice;
+
 export interface MCPConformanceResult {
   /**
    * True ONLY when `outcome` is `"passed"`: every selected check either ran and
@@ -603,6 +617,11 @@ export interface MCPConformanceResult {
    * real-world interop, and they NEVER affect `passed` or any check status.
    */
   readiness: MCPReadinessWarning[];
+  /**
+   * Advice the run checked and found nothing to change. Absent when there is
+   * none. Advice that did not apply to this server is in neither list.
+   */
+  passedAdvice?: MCPPassedAdvice[];
   /**
    * WHICH QUESTIONS THIS RUN ASKED, and which build asked them — the frozen
    * scored-check manifest, the checker version, the revisions and (from the

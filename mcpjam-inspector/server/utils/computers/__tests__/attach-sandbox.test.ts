@@ -73,10 +73,67 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("controlled sandbox attachment", () => {
-  it("reuses acknowledged broker preparation while retaining the final policy barrier", async () => {
+describe("broker-prepared attachment with MCPJAM_HARNESS_PARALLEL_ATTACH=1", () => {
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_HARNESS_PARALLEL_ATTACH", "1");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("starts the policy barrier before the box read returns, and still needs both", async () => {
+    let vendorReadsAtBarrier = -1;
+    control.status.mockImplementation(async () => {
+      vendorReadsAtBarrier = requests.length;
+      return { ok: true, value: { ok: true } };
+    });
     const box = await attachBrokerPreparedSandbox("box-1", opts);
     expect(box.sandboxId).toBe("box-1");
+    expect(vendorReadsAtBarrier).toBe(0);
+    expect(requests).toEqual([{ method: "GET" }]);
+    expect(control.prepare).not.toHaveBeenCalled();
+  });
+
+  it("reports a deleted box as deleted even when the policy barrier fails", async () => {
+    responseStatus = 404;
+    control.status.mockResolvedValue({ ok: true, value: { ok: false, reason: "unavailable" } });
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
+  });
+
+  it("refuses a box whose policy barrier fails after good metadata", async () => {
+    control.status.mockResolvedValue({ ok: true, value: { ok: false, reason: "unavailable" } });
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toMatchObject({ code: "sandbox_policy_unavailable" });
+  });
+
+  it("refuses stale metadata even when the policy barrier passes", async () => {
+    responseBody = { ...data, state: "paused" };
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toMatchObject({ code: "sandbox_asleep" });
+  });
+
+  it("stops polling the policy service once the box read has failed", async () => {
+    responseStatus = 404;
+    control.status.mockResolvedValue({
+      ok: true,
+      value: { ok: false, reason: "egress_busy", deadline: Date.now() + 5_000 },
+    });
+    await expect(attachBrokerPreparedSandbox("box-1", opts)).rejects.toBeInstanceOf(SandboxNotFoundError);
+    const polls = control.status.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(control.status).toHaveBeenCalledTimes(polls);
+  });
+});
+
+describe("controlled sandbox attachment", () => {
+  it("reuses acknowledged broker preparation while retaining the final policy barrier", async () => {
+    let vendorReadsAtBarrier = -1;
+    control.status.mockImplementation(async () => {
+      vendorReadsAtBarrier = requests.length;
+      return { ok: true, value: { ok: true } };
+    });
+    const box = await attachBrokerPreparedSandbox("box-1", opts);
+    expect(box.sandboxId).toBe("box-1");
+    // Without the switch the barrier runs after the box read.
+    expect(vendorReadsAtBarrier).toBe(1);
     expect(control.prepare).not.toHaveBeenCalled();
     expect(control.status).toHaveBeenCalledTimes(1);
     expect(requests).toEqual([{ method: "GET" }]);
