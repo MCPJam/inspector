@@ -1,0 +1,297 @@
+---
+title: "CLI & MCP use cases"
+sidebarTitle: "Use cases"
+description: "Pick what you want to do and follow the steps with the mcpjam CLI or MCPJam's MCP server"
+icon: "compass"
+---
+
+Think of MCPJam as **devtools for your MCP server**: you point it at a server, watch what happens, and check it before your users do. Pick what you want to do below and follow the steps.
+
+**What you'll walk away with**
+
+- The command that does what you need, ready to copy
+- The same task as MCP tool calls, if you'd rather ask your agent
+- A link to the full docs for each step
+
+## Before you start
+
+Install the CLI. That's all the first two walkthroughs need: no account.
+
+```bash
+npm i -g @mcpjam/cli
+mcpjam --version
+```
+
+<Note>
+  Replace everything in angle brackets, such as `<project>` or `<tool>`, with your own value. `https://your-server.com/mcp` stands for your server's URL.
+</Note>
+
+## What do you want to do today?
+
+<Tabs>
+  <Tab title="Debug my server">
+    <Steps>
+      <Step title="Run a checkup">
+        One command probes, connects, initializes and tells you what failed.
+
+        ```bash
+        mcpjam server doctor --url https://your-server.com/mcp
+        ```
+      </Step>
+      <Step title="See its tools and call one">
+        ```bash
+        mcpjam tools list --url https://your-server.com/mcp
+        mcpjam tools call --url https://your-server.com/mcp \
+          --tool-name <tool> --tool-args '{"query": "test"}'
+        ```
+      </Step>
+      <Step title="Signing in? Do it once">
+        For an OAuth server, sign in once and reuse the saved credentials in any command.
+
+        ```bash
+        mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json
+        mcpjam tools list --url https://your-server.com/mcp --credentials-file creds.json
+        ```
+      </Step>
+    </Steps>
+
+    <Check>
+      You've seen your server's tools and called one. Next: open the **Check it's ready to ship** tab, or read [Server inspection](/cli/server-inspection).
+    </Check>
+  </Tab>
+  <Tab title="Check it's ready to ship">
+    Two different checks. **Conformance** grades your server against the MCP specification. **Directory readiness** grades it against what a directory such as Claude or OpenAI asks for before you submit. Passing one doesn't mean you pass the other.
+
+    <Steps>
+      <Step title="Check conformance">
+        ```bash
+        mcpjam conformance run --url https://your-server.com/mcp
+        ```
+      </Step>
+      <Step title="Check it for a directory">
+        ```bash
+        mcpjam readiness check claude https://your-server.com/mcp
+        mcpjam readiness check openai https://your-server.com/mcp --submission-mode mcp-only
+        ```
+      </Step>
+      <Step title="Catch breaking changes before you deploy">
+        Save a snapshot, deploy, and compare.
+
+        ```bash
+        mcpjam server export --url https://your-server.com/mcp > before.json
+        mcpjam server diff --baseline before.json --url https://your-server.com/mcp --fail-on breaking
+        ```
+      </Step>
+    </Steps>
+
+    <Check>
+      You know which checks fail and why. Fix them and run the same commands again. More in the [CLI reference](/cli/reference#protocol-conformance).
+    </Check>
+  </Tab>
+  <Tab title="Run evals in CI">
+    A tool description change can quietly change how models use your server. Evals catch that before it ships.
+
+    <Steps>
+      <Step title="Sign in">
+        Evals run on MCPJam, so you need an account.
+
+        ```bash
+        mcpjam cloud login
+        ```
+      </Step>
+      <Step title="Check and run your suite">
+        ```bash
+        mcpjam cloud eval validate --file .mcpjam/evals/<suite-file>.yaml
+        mcpjam cloud eval run --file .mcpjam/evals/<suite-file>.yaml --project <project>
+        ```
+      </Step>
+      <Step title="Fail the build when quality drops">
+        ```bash
+        mcpjam cloud eval gate --run <run-id> --min-pass-rate-percent 90
+        ```
+      </Step>
+    </Steps>
+
+    <Check>
+      Your suite runs and the gate passes or fails your build. Next: [Evals](/inspector/evals).
+    </Check>
+  </Tab>
+  <Tab title="Test with simulated users">
+    <Info>
+      Swarms are enabled per account.
+    </Info>
+
+    <Steps>
+      <Step title="Describe a user and what they want">
+        ```bash
+        mcpjam cloud login
+        mcpjam cloud personas create --name "<persona-name>" --role "<role>"
+        mcpjam cloud goals create --goal "<what the user wants>" --persona <persona-id> --max-turns 8
+        ```
+      </Step>
+      <Step title="Run it against your server">
+        ```bash
+        mcpjam cloud goals run --goal-id <goal-id> --project <project>
+        ```
+      </Step>
+      <Step title="Read the scorecard">
+        ```bash
+        mcpjam cloud goals scorecard --run <goal-run-id>
+        ```
+      </Step>
+    </Steps>
+
+    <Check>
+      You've seen how a simulated user got on with your server. More in [`cloud goals`](/cli/reference#cloud-goals-commands).
+    </Check>
+  </Tab>
+  <Tab title="Share with my team">
+    <Steps>
+      <Step title="Sign in and pick a project">
+        ```bash
+        mcpjam cloud login
+        mcpjam cloud link <project>
+        ```
+      </Step>
+      <Step title="Add your server to it">
+        ```bash
+        mcpjam cloud projects servers connect --url https://your-server.com/mcp --project <project>
+        ```
+      </Step>
+      <Step title="Running it on localhost? Open a tunnel">
+        ```bash
+        mcpjam cloud tunnel http://localhost:9090/mcp --server <server-name> --project <project>
+        ```
+      </Step>
+    </Steps>
+
+    <Check>
+      Your team can open the same server in MCPJam. More in [`cloud projects servers`](/cli/reference#cloud-projects-servers-commands).
+    </Check>
+  </Tab>
+</Tabs>
+
+## Rather ask your agent?
+
+Every walkthrough above also works as MCP tool calls. MCPJam runs two MCP servers:
+
+| | Local MCP | Hosted MCP |
+|---|---|---|
+| **Start it** | `mcpjam mcp` in your MCP client | `https://mcp.mcpjam.com/mcp` |
+| **Reaches** | Any server your machine can reach | Servers saved in your MCPJam projects |
+| **Account** | None | Yes, through OAuth |
+| **Set up** | [MCPJam as an MCP server](/cli/mcp-server) | [MCPJam in Claude](/hosted/claude-connector) |
+
+They have different tools. For example, to list a server's tools and call one:
+
+<Tabs>
+  <Tab title="Local MCP">
+    ```json connect_server
+    { "name": "my-server", "url": "https://your-server.com/mcp" }
+    ```
+
+    ```json call_tool
+    { "server": "my-server", "tool": "<tool>", "arguments": { "query": "test" } }
+    ```
+  </Tab>
+  <Tab title="Hosted MCP">
+    ```json list_server_tools
+    { "project": "<project>", "server": "<server>" }
+    ```
+
+    ```json call_server_tool
+    { "project": "<project>", "server": "<server>", "toolName": "<tool>", "parameters": { "query": "test" } }
+    ```
+  </Tab>
+</Tabs>
+
+## Everything else
+
+Every task, with its command and MCP tools. ¹ enabled per account. ² needs an MCPJam account. A dash means that surface doesn't do it.
+
+<AccordionGroup>
+  <Accordion title="Set up" icon="wrench">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Install the CLI or add MCPJam to an agent ² | `mcpjam --version` | ✓ | ✓ | [MCPJam as an MCP server](/cli/mcp-server) |
+    | Sign in to MCPJam ² | `mcpjam cloud login` | — | `get_me` | [`cloud login`](/cli/reference#cloud-login) |
+    | Pin a repository to a project ² | `mcpjam cloud link <project>` | — | — | [`cloud link`](/cli/reference#cloud-link) |
+    | Find or create a project ² | `mcpjam cloud organizations list` | — | `list_projects`, `create_project` | [`cloud projects list`](/cli/reference#cloud-projects-list) |
+    | See what I can do in a project ² | `mcpjam cloud projects capabilities --project <project>` | — | `get_capabilities` | [CLI reference](/cli/reference) |
+    | Configure the clients evals run as ² | `mcpjam cloud clients templates` | — | `list_clients`, `get_client` | [Clients](/inspector/clients) |
+    | Set up environments to run against ¹ ² | `mcpjam cloud environments list --project <project>` | — | `list_project_environments`, `resolve_project_environment` | [`cloud environments`](/cli/reference#cloud-environments-commands) |
+    | Build a sandbox image ¹ ² | `mcpjam cloud images validate --file <blueprint.yaml>` | — | — | [`cloud images`](/cli/reference#cloud-images-commands) |
+    | List the Cloud Skills in a project ¹ ² | `mcpjam cloud skills list --project <project>` | — | — | [Skills](/inspector/skills) |
+    | Store an API key for evals and sandboxes ² | `mcpjam cloud secrets set --name <ENV_VAR_NAME> --delivery materialized --value-file <path>` | — | `list_secrets`, `delete_secret` | [CLI reference](/cli/reference) |
+    | Install a server from the registry ² | `mcpjam registry servers --scope global` | — | `list_registry_servers`, `install_registry_server` | `--help` |
+    | Turn off CLI telemetry | `mcpjam telemetry status` | — | — | [Telemetry](/cli/telemetry) |
+    | Report a bug to MCPJam ² | `mcpjam cloud feedback --kind bug --summary "<what went wrong>"` | — | `send_feedback` | [`cloud feedback`](/cli/reference#cloud-feedback) |
+  </Accordion>
+  <Accordion title="Test a server while you build it" icon="hammer">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Diagnose a server that fails to connect | `mcpjam server doctor --url https://your-server.com/mcp --access-token $TOKEN` | `server_doctor` | `diagnose_server` | [Server inspection](/cli/server-inspection) |
+    | Check server version, capabilities and latency | `mcpjam server info --url https://your-server.com/mcp` | `server_info`, `ping_server` | — | [Server inspection](/cli/server-inspection) |
+    | See what auth a server expects | `mcpjam server probe --url https://your-server.com/mcp` | `probe_server` | — | [Server inspection](/cli/server-inspection) |
+    | Sign in to an OAuth server and reuse the token | `mcpjam oauth login --url https://your-server.com/mcp --credentials-out creds.json` | — | — | [OAuth login](/cli/oauth-login) |
+    | Send a single OAuth request from my machine | `mcpjam oauth proxy --url https://auth.example.com/.well-known/oauth-authorization-server` | — | — | [`oauth proxy` / `oauth debug-proxy`](/cli/reference#oauth-proxy-%2F-oauth-debug-proxy) |
+    | List tools and call one | `mcpjam tools list --url https://your-server.com/mcp --access-token $TOKEN` | `connect_server`, `list_tools`, `call_tool` | `list_server_tools`, `call_server_tool` | [Tools, resources & prompts](/cli/tools-resources-prompts) |
+    | Read a resource or fetch a prompt | `mcpjam resources read --url https://your-server.com/mcp --resource-uri <resource-uri>` | `read_resource`, `get_prompt` | `read_server_resource`, `get_server_prompt` | [Tools, resources & prompts](/cli/tools-resources-prompts) |
+    | See the Agent Skills a server serves | `mcpjam skills list --url https://your-server.com/mcp` | `list_skills` | `list_server_skills` | [MCPJam as an MCP server](/cli/mcp-server#skills-over-mcp) |
+    | Render an MCP Apps widget ² | `mcpjam apps render --url https://your-server.com/mcp --tool-name <tool> --screenshot-out widget.png` | — | `render_server_widget` | [`apps` commands](/cli/reference#apps-commands) |
+    | Watch notifications from a server | `mcpjam subscriptions listen --url https://your-server.com/mcp --list-changed` | `get_notifications` | — | [CLI overview](/cli/overview) |
+    | List, poll and watch MCP Events | `mcpjam events list --url https://your-server.com/mcp` | — | — | [MCP Events](/cli/events) |
+    | Drive long-running Tasks | `mcpjam tasks capabilities --url https://your-server.com/mcp` | — | — | [Tasks](/cli/tasks) |
+    | Check if my tools and widgets work in each AI host | `mcpjam compat --url https://your-server.com/mcp --host claude --host chatgpt` | — | `check_host_compatibility` | [Host compatibility](/inspector/host-compat) |
+    | Catch breaking changes to my tool surface | `mcpjam server export --url https://your-server.com/mcp > before.json` | — | — | [`server export`](/cli/reference#server-export) |
+  </Accordion>
+  <Accordion title="Check conformance and directory readiness" icon="badge-check">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Run every conformance suite at once | `mcpjam conformance run --url https://your-server.com/mcp` | — | — | [CLI reference](/cli/reference) |
+    | Check MCP protocol conformance | `mcpjam protocol conformance --url https://your-server.com/mcp` | — | — | [`protocol conformance`](/cli/reference#protocol-conformance) |
+    | Check an OAuth flow against the spec | `mcpjam oauth conformance --url https://your-server.com/mcp` | — | — | [OAuth conformance](/cli/oauth-conformance) |
+    | Check an MCP Apps server | `mcpjam apps conformance --url https://your-server.com/mcp` | — | — | [MCP Apps conformance](/cli/apps-conformance) |
+    | Check Tasks conformance | `mcpjam tasks conformance --url https://your-server.com/mcp` | — | — | [Tasks conformance](/cli/tasks-conformance) |
+    | Check MCP Events conformance | `mcpjam events conformance --url https://your-server.com/mcp --profile draft` | — | — | [MCP Events](/cli/events) |
+    | Test a Cross-App Access (XAA) flow | `mcpjam xaa run` | — | — | [Cross-App Access](/cli/xaa) |
+    | Run conformance on MCPJam ¹ ² | `mcpjam cloud conformance run --server <server> --project <project>` | — | `start_conformance_run`, `get_conformance_report` | [CLI reference](/cli/reference) |
+    | Check directory readiness locally | `mcpjam readiness check claude https://your-server.com/mcp` | — | — | [`readiness check claude`](/cli/reference#readiness-check-claude) |
+    | Run a directory readiness check on MCPJam ¹ ² | `mcpjam readiness start claude --server <server> --project <project>` | — | — | [`readiness start claude`](/cli/reference#readiness-start-claude) |
+  </Accordion>
+  <Accordion title="Run evals and gate releases" icon="flask-conical">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Run evals locally from a suite file ² | `mcpjam test .mcpjam/evals/<suite-file>.yaml --reporter junit-xml --out reports/local.xml` | — | — | [Local evals](/cli/local-evals) |
+    | Create and edit eval suites ² | `mcpjam cloud eval validate --file .mcpjam/evals/<suite-file>.yaml` | — | `list_eval_suites`, `create_eval_suite` | [`cloud eval create`](/cli/reference#cloud-eval-create) |
+    | Add, import or run test cases ² | `mcpjam cloud eval cases list --suite "<suite>"` | — | `list_eval_cases`, `run_eval_case` | [`cloud eval cases import`](/cli/reference#cloud-eval-cases-import) |
+    | Generate test cases from my tools ² | `mcpjam cloud eval cases generate --suite "<suite>"` | — | `generate_eval_cases` | [`cloud eval cases generate`](/cli/reference#cloud-eval-cases-generate) |
+    | Run a saved eval suite ² | `mcpjam cloud eval run --suite "<suite>"` | — | `run_eval_suite`, `get_eval_run` | [`cloud eval run`](/cli/reference#cloud-eval-run) |
+    | Find out why a case failed ² | `mcpjam cloud eval iterations --run <run-id>` | — | `list_eval_run_iterations`, `get_eval_run_steps`, `get_eval_iteration_trace` | [`cloud eval iterations`](/cli/reference#cloud-eval-iterations) |
+    | Grade a run with an LLM judge ² | `mcpjam cloud eval judge --run <run-id>` | — | `request_eval_run_judge` | [`cloud eval judge`](/cli/reference#cloud-eval-judge) |
+    | See what broke since the last run ² | `mcpjam cloud eval compare --run <run-id>` | — | `compare_eval_run` | [CI integration](/cli/ci) |
+    | Cancel a run or rerun its failures ² | `mcpjam cloud eval cancel --run <run-id>` | — | `cancel_eval_run` | [`cloud eval rerun`](/cli/reference#cloud-eval-rerun) |
+    | Fail a CI job when evals regress ² | `mcpjam cloud eval gate --run <run-id> --min-pass-rate-percent 90` | — | `get_eval_run_gate` | [CI integration](/cli/ci) |
+    | Unblock a release the eval gate stopped ² | `mcpjam cloud eval gate waive --run <run-id> --reason "<reason>" --expires-in 3d` | — | — | [`cloud eval gate waive`](/cli/reference#cloud-eval-gate-waive) |
+    | Choose which environments a suite runs against ¹ ² | `mcpjam cloud eval environments set --suite "<suite>" --environment <environment>` | — | `set_eval_suite_environments` | [`cloud eval environments set`](/cli/reference#cloud-eval-environments-set) |
+    | Run a suite on a schedule ² | `mcpjam cloud eval schedule --suite "<suite>" --enable --interval 60` | — | — | [`cloud eval schedule`](/cli/reference#cloud-eval-schedule) |
+    | Report eval results as GitHub checks ¹ ² | `mcpjam cloud eval github list` | — | — | [GitHub checks](/github-checks) |
+  </Accordion>
+  <Accordion title="Simulate and study users" icon="users">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Define simulated users and their goals ¹ ² | `mcpjam cloud personas create --name "<persona-name>" --role "<role>"` | — | `create_persona`, `create_goal` | [CLI reference](/cli/reference#cloud-goals-commands) |
+    | Run simulated users against my server ¹ ² | `mcpjam cloud goals run --goal-id <goal-id> --project <project>` | — | `launch_goal_run`, `get_goal_run` | [`cloud goals run`](/cli/reference#cloud-goals-run) |
+    | Review what simulated users ran into ¹ ² | `mcpjam cloud goals scorecard --run <goal-run-id>` | — | `get_goal_run_scorecard`, `list_swarm_findings` | [CLI reference](/cli/reference#cloud-goals-commands) |
+    | Run a user-testing study ¹ ² | `mcpjam cloud studies publish --environment <environment> --name "<study-name>"` | — | `publish_study`, `list_study_findings` | [MCPJam in Claude](/hosted/claude-connector) |
+  </Accordion>
+  <Accordion title="Work in a shared project" icon="folder-kanban">
+    | Task | CLI | Local MCP | Hosted MCP | Docs |
+    |---|---|---|---|---|
+    | Add a server to a project ² | `mcpjam cloud projects servers connect --url https://your-server.com/mcp --project <project>` | — | `connect_project_server`, `get_project_server_connection_status` | [`cloud projects servers connect`](/cli/reference#cloud-projects-servers-connect) |
+    | Review and edit saved servers ² | `mcpjam cloud projects status --project <project>` | — | `show_servers`, `list_project_servers` | [`cloud projects servers`](/cli/reference#cloud-projects-servers-commands) |
+    | Expose a localhost server to MCPJam ² | `mcpjam cloud tunnel http://localhost:9090/mcp --server <server-name> --project <project>` | — | — | [`cloud tunnel`](/cli/reference#cloud-tunnel) |
+    | Chat with my servers through a model ² | `mcpjam cloud sessions send --project <project>` | — | `send_chat_message` | [`cloud sessions send`](/cli/reference#cloud-sessions-send) |
+    | Review past Playground sessions ² | `mcpjam cloud sessions list --project <project>` | — | `list_chat_sessions`, `get_chat_session_trace` | [`cloud sessions trace`](/cli/reference#cloud-sessions-trace) |
+  </Accordion>
+</AccordionGroup>
