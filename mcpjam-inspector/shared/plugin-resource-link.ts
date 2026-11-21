@@ -1,4 +1,4 @@
-import { ResourceLinkSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ResourceLinkSchema } from "@mcpjam/sdk/browser";
 
 export const PLUGIN_MENTION_CONTEXT_LABEL = "Resource mentioned by the user";
 
