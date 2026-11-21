@@ -92,7 +92,37 @@
           {
             "group": "Evaluate",
             "icon": "flask-conical",
-            "pages": ["inspector/evals", "inspector/eval-test-users"]
+            "pages": [
+              "evaluate/overview",
+              "evaluate/run-your-first-eval",
+              "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
+              {
+                "group": "Run and review",
+                "pages": [
+                  "evaluate/run-a-suite",
+                  "evaluate/what-a-run-can-access",
+                  "evaluate/read-results"
+                ]
+              },
+              {
+                "group": "Grade and ship",
+                "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
+              },
+              {
+                "group": "Reference",
+                "pages": [
+                  "evaluate/reference/assertions",
+                  "evaluate/reference/suite-settings",
+                  "evaluate/reference/runs-and-results"
+                ]
+              },
+              "evaluate/troubleshooting",
+              "inspector/eval-test-users"
+            ]
           },
           {
             "group": "Configure",
@@ -259,6 +289,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/inspector/evals",
+      "destination": "/evaluate/overview"
+    },
     {
       "source": "/hosted/claude-connector",
       "destination": "/hosted/mcp-server"
@@ -481,7 +515,7 @@
     },
     {
       "source": "/inspector/test-cases",
-      "destination": "/inspector/evals"
+      "destination": "/evaluate/overview"
     },
     {
       "source": "/inspector/xaa-test-idp",
