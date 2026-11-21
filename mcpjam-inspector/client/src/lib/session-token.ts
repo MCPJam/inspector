@@ -32,6 +32,7 @@ import {
   rememberAccessToken,
   isAccessToken,
 } from "./access-link";
+import { readAccessAnswer } from "./access-answer";
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
@@ -51,12 +52,19 @@ export class SessionTokenError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly restarted: boolean;
-  constructor(status: number, code?: string, restarted = false) {
+  readonly contentType?: string;
+  constructor(
+    status: number,
+    code?: string,
+    restarted = false,
+    contentType?: string,
+  ) {
     super(`Failed to get session token: ${status}`);
     this.name = "SessionTokenError";
     this.status = status;
     this.code = code;
     this.restarted = restarted;
+    this.contentType = contentType;
   }
 }
 
@@ -174,12 +182,14 @@ export async function confirmAccessToken(
     headers: token ? { "X-MCP-Session-Auth": `Bearer ${token}` } : {},
     cache: "no-store",
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new SessionTokenError(response.status, body.code, !!token);
-  }
-  if (!isAccessToken(token) || (await response.json()).ok !== true) {
-    throw new Error("Invalid Inspector access response");
+  const answer = await readAccessAnswer(response);
+  if (!response.ok || !answer.ok || !isAccessToken(token)) {
+    throw new SessionTokenError(
+      response.status,
+      answer.code,
+      !!token,
+      answer.contentType,
+    );
   }
   cachedToken = token;
   rememberAccessToken(token);

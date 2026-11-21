@@ -24,23 +24,43 @@ describe("resolveBootstrapErrorScreen", () => {
     ).toBeInTheDocument();
   });
 
+  it("access link required: renders AccessRequired and does not report", () => {
+    const { report, extra } = resolveBootstrapErrorScreen(
+      new SessionTokenError(401, "ACCESS_LINK_REQUIRED"),
+    );
+
+    expect(report).toBe(false);
+    expect(extra).toBeUndefined();
+  });
+
+  it("non-Inspector answer: reports its status and content type (PLB-523)", () => {
+    const { report, extra } = resolveBootstrapErrorScreen(
+      new SessionTokenError(502, undefined, true, "text/html"),
+    );
+
+    expect(report).toBe(true);
+    expect(extra).toEqual({ httpStatus: 502, contentType: "text/html" });
+  });
+
   it("5xx failure: renders the generic screen and reports", () => {
-    const { report, element } = resolveBootstrapErrorScreen(
+    const { report, element, extra } = resolveBootstrapErrorScreen(
       new SessionTokenError(500),
     );
 
     expect(report).toBe(true);
+    expect(extra).toEqual({ httpStatus: 500 });
     render(element);
     expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reload MCPJam" })).toBeEnabled();
   });
 
   it("non-SessionTokenError failure: renders the generic screen and reports", () => {
-    const { report, element } = resolveBootstrapErrorScreen(
+    const { report, element, extra } = resolveBootstrapErrorScreen(
       new Error("network down"),
     );
 
     expect(report).toBe(true);
+    expect(extra).toBeUndefined();
     render(element);
     expect(screen.getByText("MCPJam couldn't start")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reload MCPJam" })).toBeEnabled();
