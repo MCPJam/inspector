@@ -24,44 +24,87 @@ Use the **Add case** menu on a suite's **Test Cases** card. An empty suite shows
 
 ## Generate from your tools
 
-<Steps>
-  <Step title="Open the dialog">
-    On the suite page, click **Add case**, then **Generate**. The dialog is titled "Generate test cases".
-  </Step>
-  <Step title="Choose the batch">
-    Under **Test set**, pick **Quick set** (5–10 cases) or **Comprehensive** (20 cases). Under **Tool coverage**, pick **Read-only** for retrieval and discovery, or **Read and write** to include workflows that change data.
-  </Step>
-  <Step title="Generate">
-    Click **Generate cases**. Drafts appear one by one as they are written.
-  </Step>
-  <Step title="Review each draft">
-    Click **Review case** to open a draft in the case editor and change its prompt, route or assertions. Click **Add to suite** to save it, or the trash icon to discard it. **Add all to suite** saves every draft that is ready.
-  </Step>
-</Steps>
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the dialog">
+        On the suite page, click **Add case**, then **Generate**. The dialog is titled "Generate test cases".
+      </Step>
+      <Step title="Choose the batch">
+        Under **Test set**, pick **Quick set** (5–10 cases) or **Comprehensive** (20 cases). Under **Tool coverage**, pick **Read-only** for retrieval and discovery, or **Read and write** to include workflows that change data.
+      </Step>
+      <Step title="Generate">
+        Click **Generate cases**. Drafts appear one by one as they are written.
+      </Step>
+      <Step title="Review each draft">
+        Click **Review case** to open a draft in the case editor and change its prompt, route or assertions. Click **Add to suite** to save it, or the trash icon to discard it. **Add all to suite** saves every draft that is ready.
+      </Step>
+    </Steps>
 
-When **Generate** is disabled, the menu says why, for example that a suite server is not connected. Guests see "Sign in to generate test cases. You can still add test cases manually."
+    <Info>
+      Generating requires sign-in. Guests see "Sign in to generate test cases. You can still add test cases manually." When **Generate** is disabled for another reason, the menu says why, for example that a suite server is not connected.
+    </Info>
 
-{/* Screenshot: suite page during generation, with three drafts listed, one expanded in the case editor, and the Add to suite and Review case buttons */}
+    {/* Screenshot: suite page during generation, with three drafts listed, one expanded in the case editor, and the Add to suite and Review case buttons */}
 
-Drafts do not run until you add them. **Check before saving** marks a draft with a problem, such as a tool your server does not have or arguments the tool does not take. Hover the badge for the reason, then fix the steps, or click **Save anyway** if the draft is right.
+    Drafts do not run until you add them. **Check before saving** marks a draft with a problem, such as a tool your server does not have or arguments the tool does not take. Hover the badge for the reason, then fix the steps, or click **Save anyway** if the draft is right.
 
-When every draft is saved or discarded, the page reads "Every generated case has been reviewed." If none was written, it reads "No cases were generated." Either way, a **Back to** button followed by the suite's name returns to the suite page.
+    When every draft is saved or discarded, the page reads "Every generated case has been reviewed." If none was written, it reads "No cases were generated." Either way, a **Back to** button followed by the suite's name returns to the suite page.
+  </Tab>
+  <Tab title="CLI">
+    Sign in with `mcpjam cloud login`, or set `MCPJAM_API_KEY` to an `sk_` key. Then generate cases for a suite in your project and list what was added:
+
+    ```bash
+    mcpjam cloud eval cases generate --suite "Notes server" --simple 5 --negative 2
+    mcpjam cloud eval cases list --suite "Notes server"
+    ```
+
+    The CLI saves generated cases to the suite with no review step, so read them before you run the suite and tighten them with `mcpjam cloud eval cases update`. `--multi-tool`, `--multi-turn` and `--complex` set how many harder cases to write, and `--vary-user-styles` varies the phrasing across user styles.
+
+    Generation is included with MCPJam and spends no credits; it counts against your organization's daily generation quota. Pass `--idempotency-key <key>` so a retried call replays the first attempt instead of generating again.
+  </Tab>
+  <Tab title="SDK">
+    The SDK does not generate cases. The Inspector can copy a prompt that an LLM turns into `@mcpjam/sdk` test code:
+
+    1. Connect your MCP server in the Inspector.
+    2. Click the **⋮** menu on the server card.
+    3. Select **Copy markdown for evals**.
+    4. Paste the copied markdown into an LLM.
+
+    The markdown includes your server's capabilities and the SDK's API reference. Review the tests it writes against the [review checklist](#review-checklist). See [Generate evals from the Inspector](/sdk/quickstart#generate-evals-from-the-inspector).
+  </Tab>
+</Tabs>
 
 ## Import a test plan
 
-<Steps>
-  <Step title="Open the dialog">
-    Click **Add case**, then **Import**. The dialog is titled "Import test cases".
-  </Step>
-  <Step title="Choose a document">
-    Drop one text file, or click to select it. It can be up to 100 KB; split a longer plan into several files.
-  </Step>
-  <Step title="Extract">
-    Click **Extract cases**. The drafts open for review, the same way generated drafts do.
-  </Step>
-</Steps>
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the dialog">
+        Click **Add case**, then **Import**. The dialog is titled "Import test cases".
+      </Step>
+      <Step title="Choose a document">
+        Drop one text file, or click to select it. It can be up to 100 KB; split a longer plan into several files.
+      </Step>
+      <Step title="Extract">
+        Click **Extract cases**. The drafts open for review, the same way generated drafts do.
+      </Step>
+    </Steps>
 
-A model reads the file, so any layout works, but it must be text. A PDF or image is refused with "This file is not text. Choose a text document." If you leave the review early, **Review N draft cases** on the suite page brings the drafts back.
+    A model reads the file, so any layout works, but it must be text. A PDF or image is refused with "This file is not text. Choose a text document." If you leave the review early, **Review N draft cases** on the suite page brings the drafts back.
+  </Tab>
+  <Tab title="CLI">
+    <Warning>
+      Each CLI import consumes customer credits.
+    </Warning>
+
+    ```bash
+    mcpjam cloud eval cases import --suite "Notes server" --file test-plan.md
+    ```
+
+    Any text document up to 100 KiB works. The cases are added to the suite. Cases the model could not finish are not created: they come back under `skipped`, with a `reviewUrl` that opens those drafts in the app. To fix one, import only that case's corrected text; re-sending the whole document authors and bills every case in it again.
+  </Tab>
+</Tabs>
 
 ## Promote a chat session
 

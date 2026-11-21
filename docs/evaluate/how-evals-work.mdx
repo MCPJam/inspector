@@ -26,6 +26,68 @@ cases × iterations per case × client/model pairs
 
 For example, 8 cases at 3 iterations per case on 2 client/model pairs is 48 iterations. In the app, set **Iterations per case** on the run sheet; its footer shows the product as cases × repetitions × client:model combos. The CLI's `--iterations <n>` sets the same count for one run.
 
+In a suite file and in the SDK, the suite, its cases and the iterations per case look like this. Each example is 1 case × 3 iterations × 1 model, so 3 iterations:
+
+<CodeGroup>
+```yaml .mcpjam/evals/notes.yaml
+schemaVersion: "2"
+mode: agentWorkflow
+reportingMode: standard
+suite:                                  # the suite
+  id: s_notes_example
+  name: Notes server
+target:
+  servers:
+    - name: notes
+defaults:                               # settings every case shares
+  judge:
+    enabled: false
+  model: anthropic/claude-haiku-4.5     # one model
+  iterations: 3                         # iterations per case
+  passThreshold: 1
+  validity: {}
+cases:
+  - id: c_reads_a_note                  # one case
+    title: reads the note it was asked about
+    steps:
+      - id: s1
+        kind: prompt                    # the user prompt
+        prompt: What does note 7 say?
+      - id: a1
+        kind: assert                    # an assertion, Required by default
+        assertion:
+          type: toolCalledAtLeastOnce
+          toolName: read_note
+```
+
+```ts evals/notes.mts
+import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  notes: { command: "node", args: ["./notes-server.js"] },
+});
+await manager.connectToServer("notes");
+
+const agent = new HostRunner({
+  tools: await manager.getTools(),
+  model: "anthropic/claude-haiku-4.5",          // one model
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  mcpClientManager: manager,
+});
+
+const suite = new EvalSuite({ name: "Notes server" }); // the suite
+
+suite.add(new EvalTest({                       // one case
+  id: "c_reads_a_note",
+  name: "reads the note it was asked about",
+  test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+}));
+
+await suite.run(agent, { iterations: 3 });     // iterations per case
+await manager.disconnectServer("notes");
+```
+</CodeGroup>
+
 ## What happens in a run
 
 <Steps>
@@ -85,7 +147,11 @@ To compare against a different run, click **Compare runs** on the run page and p
 - The model work in each iteration: each round of tool calls is another model call, and every tool result is sent back to the model as input. Multi-turn cases and long tool results cost more.
 - Judges: each judge adds a model call for every iteration it grades.
 
-Each column header in the results grid shows that client and model's cost. A dash means no cost was observed, never that the run was free; [Read results](/evaluate/read-results) explains dashes and " · partial".
+Each column header in the results grid shows that client and model's cost.
+
+<Note>
+  A dash means no cost was observed, never that the run was free; [Read results](/evaluate/read-results) explains dashes and " · partial".
+</Note>
 
 ## Next steps
 
