@@ -196,20 +196,22 @@ describe("gated feature routes — hosted", () => {
 
       renderRoute(<Route />);
 
-      expect(screen.getByTestId(`gated-feature-${feature}`)).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`gated-feature-${feature}`),
+      ).toBeInTheDocument();
       expect(screen.queryByText(tabText)).not.toBeInTheDocument();
       // The tab must not merely be hidden — mounting it would fire the
       // member-only queries this gate exists to prevent.
       expect(tabMock).not.toHaveBeenCalled();
     });
 
-    it("offers a guest sign-up, not an upgrade", () => {
+    it("offers a guest the feature creation CTA", () => {
       guest();
 
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create account" }),
+        screen.getByRole("button", { name: copy.ctaLabel }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),
@@ -224,7 +226,9 @@ describe("gated feature routes — hosted", () => {
 
       renderRoute(<Route />);
 
-      expect(screen.getByTestId(`gated-feature-${feature}`)).toBeInTheDocument();
+      expect(
+        screen.getByTestId(`gated-feature-${feature}`),
+      ).toBeInTheDocument();
       expect(tabMock).not.toHaveBeenCalled();
     });
 
@@ -241,7 +245,9 @@ describe("gated feature routes — hosted", () => {
 
       // Deciding early would flash a sign-up wall at a paying customer on
       // every cold load.
-      expect(screen.queryByTestId(`gated-feature-${feature}`)).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`gated-feature-${feature}`),
+      ).not.toBeInTheDocument();
       expect(screen.queryByText(tabText)).not.toBeInTheDocument();
       expect(tabMock).not.toHaveBeenCalled();
     });
@@ -250,7 +256,9 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(screen.getByText(tabText)).toBeInTheDocument();
-      expect(screen.queryByTestId(`gated-feature-${feature}`)).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId(`gated-feature-${feature}`),
+      ).not.toBeInTheDocument();
       expect(
         screen.queryByTestId("gated-feature-sample"),
       ).not.toBeInTheDocument();
@@ -266,7 +274,7 @@ describe("gated feature routes — hosted", () => {
       renderRoute(<Route />);
 
       expect(
-        screen.getByRole("button", { name: "Create account" }),
+        screen.getByRole("button", { name: copy.ctaLabel }),
       ).toBeInTheDocument();
       expect(
         screen.queryByTestId("billing-upsell-gate"),
