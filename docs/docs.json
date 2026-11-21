@@ -96,6 +96,10 @@
               "evaluate/overview",
               "evaluate/run-your-first-eval",
               "evaluate/how-evals-work",
+              {
+                "group": "Author cases",
+                "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
+              },
               "inspector/evals",
               "inspector/eval-test-users"
             ]
