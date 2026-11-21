@@ -39,6 +39,12 @@ const upgradeState = {
   effectivePlan: "free" as string,
   canManageBilling: true,
   isLoadingBilling: false,
+  isStarting: false,
+  creditUpgradePlans: [] as Array<{
+    plan: string;
+    displayName: string;
+    includedCredits: { model: "monthly_ledger"; flat: number };
+  }>,
   start: vi.fn(),
 };
 
@@ -61,14 +67,18 @@ vi.mock("@/hooks/use-upgrade-checkout", () => ({
       annualDiscountPct: 21,
       annualSupported: true,
       monthlySupported: true,
-      teamName: "Team",
+      teamName: "Pro",
+      targetPlan: "pro",
+      priceUnit: "per month",
+      isLoadingPrices: false,
+      creditUpgradePlans: upgradeState.creditUpgradePlans,
       teamEvalIterations: 15000,
       currentPlan: upgradeState.currentPlan,
       effectivePlan: upgradeState.effectivePlan,
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
       isLoadingBilling: upgradeState.isLoadingBilling,
-      isStarting: false,
+      isStarting: upgradeState.isStarting,
       start: upgradeState.start,
     };
   },
@@ -141,6 +151,8 @@ beforeEach(() => {
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
   upgradeState.isLoadingBilling = false;
+  upgradeState.isStarting = false;
+  upgradeState.creditUpgradePlans = [];
   recipientsState.recipients = [{ email: "dana@acme.test", name: "Dana Ruiz" }];
   recipientsState.isLoading = false;
   authState.isLoading = false;
@@ -525,7 +537,7 @@ describe("MCPJamLimitDialog", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("renders the topup variant for signed-in users", () => {
+  it("offers a Free owner Pro checkout with BYOK and plans as links", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
@@ -536,18 +548,39 @@ describe("MCPJamLimitDialog", () => {
         name: /out of MCPJam credits/i,
       }),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
+      "Upgrade to Pro",
+    );
+    expect(screen.getByTestId("upgrade-interval-annual")).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(
       screen.getByRole("button", { name: /^Compare plans$/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Learn more/i }),
+      screen.getByRole("button", { name: "Use my own API key" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^buy credits$/i }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(upgradeHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
     expect(recipientHookOrganizationIdMock).toHaveBeenLastCalledWith("org-1");
+  });
+
+  it("locks BYOK and Compare plans while checkout is starting", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.isStarting = true;
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(
+      screen.getByRole("button", { name: "Use my own API key" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /^Compare plans$/i }),
+    ).toBeDisabled();
   });
 
   it("says how many credits are left when the request needs more than that", () => {
@@ -603,6 +636,90 @@ describe("MCPJamLimitDialog", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 
+  it("names only the plan on offer in the Free owner's benefit line", () => {
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.creditUpgradePlans = [
+      {
+        plan: "pro",
+        displayName: "Pro",
+        includedCredits: { model: "monthly_ledger", flat: 2000 },
+      },
+      {
+        plan: "team",
+        displayName: "Team",
+        includedCredits: { model: "monthly_ledger", flat: 5000 },
+      },
+    ];
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    const description = screen.getByTestId("limit-dialog-description");
+    expect(description).toHaveTextContent(
+      "Pro includes 2,000 credits each month",
+    );
+    expect(description).not.toHaveTextContent(/Team includes/);
+  });
+
+  it("starts checkout from the Free owner's wall in one click", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.start.mockResolvedValue({
+      redirected: true,
+      shouldDismiss: false,
+    });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.objectContaining({ primary_action: "checkout" }),
+    );
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+
+    expect(upgradeState.start).toHaveBeenCalledTimes(1);
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_checkout_clicked",
+      expect.objectContaining({
+        organization_id: "org-1",
+        billing_interval: "annual",
+      }),
+    );
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_checkout_failed",
+      expect.anything(),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("says checkout could not open and keeps the wall up", async () => {
+    const user = userEvent.setup();
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
+    upgradeState.start.mockResolvedValue({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "start_failed",
+    });
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    render(<MCPJamLimitDialog />);
+
+    await user.click(screen.getByTestId("upgrade-plan-cta"));
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't open checkout. Try again or compare plans.",
+    );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_checkout_failed",
+      expect.objectContaining({
+        outcome: "checkout_failed",
+        failure_reason: "start_failed",
+      }),
+    );
+  });
+
   it("does not pitch Team when a Team trial runs out of credits", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "owner" });
@@ -642,6 +759,7 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.queryByRole("button", { name: /use your own API key/i }),
     ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     // Decoded first: the address is percent-encoded in the href, so asserting
     // the raw string would be checking the encoding rather than the recipient.
     const memberHref = decodeURIComponent(
@@ -755,7 +873,7 @@ describe("MCPJamLimitDialog", () => {
     });
     render(<MCPJamLimitDialog />);
     await user.click(
-      screen.getByRole("button", { name: "Learn more about BYOK" }),
+      screen.getByRole("button", { name: "Use my own API key" }),
     );
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
     expect(window.location.pathname).toBe(
@@ -1140,8 +1258,13 @@ describe.each(["swarm", "credits"] as const)(
         }
         expect(impressions()).toHaveLength(1);
         expect(impressions()[0][1].organization_id).toBe("org-1");
+        // The swarm wall keeps its plans link; only the credits wall sells.
         expect(impressions()[0][1].primary_action).toBe(
-          plan === "free" ? "explore_plans" : "buy_credits",
+          plan === "team"
+            ? "buy_credits"
+            : surface === "credits"
+            ? "checkout"
+            : "explore_plans",
         );
       },
     );
@@ -1164,6 +1287,7 @@ describe.each(["swarm", "credits"] as const)(
       expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
         "Ask an owner to upgrade",
       );
+      expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
       expect(impressions()[0][1].primary_action).toBe("request_owner");
       await userEvent
         .setup()

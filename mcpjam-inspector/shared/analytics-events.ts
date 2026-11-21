@@ -489,6 +489,11 @@ export const ANALYTICS_EVENTS = {
   plan_limit_upgrade_failed: { source: "client" },
   plan_limit_upgrade_resolved: { source: "client" },
   plan_limit_upgrade_returned: { source: "client" },
+  // The Free credit wall's checkout button, sent on click before the redirect.
+  // A start that can't reach Stripe also sends the failure event with its
+  // `failure_reason`.
+  plan_limit_checkout_clicked: { source: "client" },
+  plan_limit_checkout_failed: { source: "client" },
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },

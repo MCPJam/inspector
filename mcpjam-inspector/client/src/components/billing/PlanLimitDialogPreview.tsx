@@ -41,7 +41,12 @@ type CreditsVariant = {
   note: string;
   props: Omit<
     CreditsLimitDialogViewProps,
-    "onDismiss" | "modal" | "onBuyCredits" | "onUseOwnKey" | "onExplorePlans"
+    | "onDismiss"
+    | "modal"
+    | "onBuyCredits"
+    | "onUseOwnKey"
+    | "onExplorePlans"
+    | "checkout"
   >;
 };
 
@@ -127,13 +132,26 @@ const CREDITS_SHARED = {
 
 const CREDITS_VARIANTS: CreditsVariant[] = [
   {
-    id: "credits-free-owner",
-    label: "Free, can upgrade",
-    note: "Free organizations can explore plans or learn how BYOK and MCPJam credits work.",
+    id: "credits-free-swarm",
+    label: "Free, swarm stopped",
+    note: "A swarm run on Free keeps the plans comparison and the BYOK explainer; it sells nothing in place.",
     props: {
       ...CREDITS_SHARED,
       description:
         "Your Free credits reset daily. Get more monthly credits and top-ups with Pro or Team.",
+      isSwarm: true,
+      isKnownNonManager: false,
+      requestRecipients: [],
+    },
+  },
+  {
+    id: "credits-free-owner",
+    label: "Free owner, can upgrade",
+    note: "Free owner. Upgrade to Pro is the main button; check that BYOK and Compare plans stay as links.",
+    props: {
+      ...CREDITS_SHARED,
+      description:
+        "Your Free credits reset daily. Pro includes 2,000 credits each month. Run more evaluations and Swarms, with top-ups available.",
       isKnownNonManager: false,
       requestRecipients: [],
     },
@@ -296,7 +314,7 @@ export function PlanLimitDialogPreview() {
           modal={false}
           interval={interval}
           onIntervalChange={setInterval}
-          onUpgrade={() => setLastAction(`checkout would start (${interval})`)}
+          onUpgrade={() => setLastAction(`Checkout starts (${interval})`)}
           onRequestEnterprise={() =>
             setLastAction("would open mcpjam.com/contact in a new tab")
           }
@@ -304,7 +322,23 @@ export function PlanLimitDialogPreview() {
         />
       ) : (
         <CreditsLimitDialogView
-          isFreePlan={creditsVariantId === "credits-free-owner"}
+          isFreePlan={creditsVariantId.startsWith("credits-free")}
+          checkout={
+            creditsVariantId === "credits-free-owner"
+              ? {
+                  picker: {
+                    ...SHARED,
+                    teamName: "Pro",
+                    priceUnit: "per month",
+                    interval,
+                    onIntervalChange: setInterval,
+                    onUpgrade: () =>
+                      setLastAction(`Checkout starts (${interval})`),
+                  },
+                  failed: false,
+                }
+              : null
+          }
           key={creditsVariant.id}
           {...creditsVariant.props}
           modal={false}

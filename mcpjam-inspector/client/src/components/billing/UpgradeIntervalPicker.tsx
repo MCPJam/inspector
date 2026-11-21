@@ -3,7 +3,7 @@ import { Button } from "@mcpjam/design-system/button";
 import type { BillingInterval } from "@/hooks/useOrganizationBilling";
 import { cn } from "@/lib/utils";
 
-interface UpgradeIntervalPickerProps {
+export interface UpgradeIntervalPickerProps {
   interval: BillingInterval;
   onIntervalChange: (interval: BillingInterval) => void;
   /** Bare per-seat monthly amounts, e.g. "$30". The unit is rendered here so

@@ -6,12 +6,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
+import { LegalConsentNotice } from "@/components/legal/LegalConsentNotice";
 import { JamIllustration } from "./JamIllustration";
+import {
+  UpgradeIntervalPicker,
+  type UpgradeIntervalPickerProps,
+} from "./UpgradeIntervalPicker";
 import {
   RequestUpgradeButton,
   type CreditEngagementContext,
   type UpgradeRequestRecipient,
 } from "./RequestUpgradeButton";
+
+export interface CreditsCheckoutOffer {
+  picker: Omit<UpgradeIntervalPickerProps, "className">;
+  failed: boolean;
+}
 
 export interface CreditsLimitDialogViewProps {
   title?: string;
@@ -25,6 +35,8 @@ export interface CreditsLimitDialogViewProps {
   organizationName: string;
   teamName: string;
   engagementContext?: CreditEngagementContext;
+  /** Set only when this viewer can buy the plan on offer from the wall. */
+  checkout?: CreditsCheckoutOffer | null;
   onBuyCredits: () => void;
   onExplorePlans: () => void;
   onUseOwnKey: () => void;
@@ -45,6 +57,7 @@ export function CreditsLimitDialogView({
   organizationName,
   teamName,
   engagementContext,
+  checkout,
   onBuyCredits,
   onExplorePlans,
   onUseOwnKey,
@@ -89,6 +102,34 @@ export function CreditsLimitDialogView({
               </Button>
             )}
           </>
+        ) : checkout ? (
+          <div className="space-y-3">
+            <UpgradeIntervalPicker {...checkout.picker} />
+            {checkout.failed && (
+              <p role="alert" className="text-sm text-destructive">
+                Couldn't open checkout. Try again or compare plans.
+              </p>
+            )}
+            <LegalConsentNotice />
+            {/* A started checkout redirects to Stripe when it returns, which
+                would replace any page these links opened in the meantime. */}
+            <div className="flex flex-wrap justify-center gap-x-4">
+              <Button
+                variant="link"
+                onClick={onUseOwnKey}
+                disabled={checkout.picker.isStarting}
+              >
+                Use my own API key
+              </Button>
+              <Button
+                variant="link"
+                onClick={onExplorePlans}
+                disabled={checkout.picker.isStarting}
+              >
+                Compare plans
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Button

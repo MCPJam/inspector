@@ -156,6 +156,54 @@ describe("useUpgradeCheckout", () => {
     );
   });
 
+  it("reports why checkout did not open, without a toast when the caller says so", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockRejectedValue(new Error("Stripe is down"));
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+        inlineErrors: true,
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "start_failed",
+    });
+    expect(toastError).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_failed",
+      expect.objectContaining({ error_kind: "start_plan_change_failed" }),
+    );
+  });
+
+  it("reports a missing organization as a failed start", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: null,
+        origin: "credits",
+        limitKind: "credits",
+      }),
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!.failure).toBe("no_organization");
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
   it("blocks checkout when the catalog says the plan has no checkout", async () => {
     billingState.planCatalog = planCatalog(null);
     const { result } = renderHook(() =>
@@ -231,7 +279,11 @@ describe("useUpgradeCheckout", () => {
       outcome = await result.current.start();
     });
 
-    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "prices_loading",
+    });
     expect(startPlanChange).not.toHaveBeenCalled();
   });
 
@@ -253,7 +305,11 @@ describe("useUpgradeCheckout", () => {
       outcome = await result.current.start();
     });
 
-    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(outcome!).toEqual({
+      redirected: false,
+      shouldDismiss: false,
+      failure: "prices_loading",
+    });
     expect(startPlanChange).not.toHaveBeenCalled();
   });
 
