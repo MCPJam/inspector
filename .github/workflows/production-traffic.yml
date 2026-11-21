@@ -78,6 +78,18 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
+      - name: Run the packaged Helm migration twice
+        working-directory: mcpjam-inspector
+        env:
+          PRODUCTION_TRAFFIC_CLICKHOUSE_URL: http://localhost:8123
+          PRODUCTION_TRAFFIC_CLICKHOUSE_DATABASE: default
+          PRODUCTION_TRAFFIC_CLICKHOUSE_MIGRATION_USER: ci_admin
+          PRODUCTION_TRAFFIC_CLICKHOUSE_MIGRATION_PASSWORD: ${{ env.CLICKHOUSE_ADMIN_PASSWORD }}
+        run: |
+          npm run build:production-traffic-migration
+          node dist/production-traffic/migrate.mjs | jq -e '.applied == [1] and .version == 1'
+          node dist/production-traffic/migrate.mjs | jq -e '.applied == [] and .version == 1'
+
       - name: ClickHouse version
         run: curl -sS --fail -u "ci_admin:${CLICKHOUSE_ADMIN_PASSWORD}" http://localhost:8123/ --data-binary "SELECT version()"
 
