@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  GITHUB_CHECKS_SERVICE_BASE,
   SERVICE_ROUTE_TIMEOUT_MS,
-  githubChecksServiceEnv,
   postServiceRoute,
-} from "../service-route";
+  serviceRouteEnv,
+} from "../internal-backend";
 
-// The transport every plan call goes through, and the one boundary in this flow
-// where a mistake is INVISIBLE to the layer above: `check-plan.ts` classifies on
-// `{status, body}` alone, so anything this function gets wrong arrives there
-// wearing the shape of a legitimate answer. Three behaviours carry that weight:
+// The transport every service-route call goes through, and a boundary where a
+// mistake is INVISIBLE to the layer above: callers such as `check-plan.ts`
+// classify on `{status, body}` alone, so anything this function gets wrong
+// arrives there wearing the shape of a legitimate answer. Three behaviours
+// carry that weight:
 //
 //   1. A MALFORMED BODY IS TOLERATED — the status carries the signal.
 //   2. A BODY READ THAT HIT THE DEADLINE IS NOT. It must surface as a TIMEOUT,
@@ -56,7 +56,7 @@ describe("postServiceRoute", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await postServiceRoute(
-      `${GITHUB_CHECKS_SERVICE_BASE}/plan/begin`,
+      "/internal/v1/github-checks/plan/begin",
       { triggerId: "trig-1" }
     );
 
@@ -144,6 +144,75 @@ describe("postServiceRoute", () => {
       /CONVEX_HTTP_URL and INSPECTOR_SERVICE_TOKEN/
     );
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(githubChecksServiceEnv()).toBeNull();
+    expect(serviceRouteEnv()).toBeNull();
+  });
+
+  it("sends extra headers but never lets them replace the token or content type", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(response(200, jsonBody({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await postServiceRoute(
+      "/x",
+      {},
+      {
+        headers: {
+          "x-mcpjam-eval-run-grant": "grant-1",
+          "X-Inspector-Service-Token": "forged",
+          "content-type": "text/plain",
+        },
+      }
+    );
+
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "x-mcpjam-eval-run-grant": "grant-1",
+      "Content-Type": "application/json",
+      "x-inspector-service-token": "svc-token",
+    });
+  });
+
+  it("refuses a redirect instead of forwarding the token", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(307, jsonBody(null)));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(postServiceRoute("/moved", {})).rejects.toThrow(
+      /\/moved redirected \(307\)/
+    );
+    expect(fetchMock.mock.calls[0][1].redirect).toBe("manual");
+  });
+
+  it("refuses a remote http origin before calling fetch", async () => {
+    process.env.CONVEX_HTTP_URL = "http://convex.test";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(postServiceRoute("/x", {})).rejects.toThrow(
+      "non-HTTPS CONVEX_HTTP_URL (http://convex.test)"
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("allows loopback http and drops a trailing slash", async () => {
+    process.env.CONVEX_HTTP_URL = "http://127.0.0.1:3211/";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(response(200, jsonBody({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await postServiceRoute("/internal/v1/x", {});
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "http://127.0.0.1:3211/internal/v1/x"
+    );
+  });
+});
+
+describe("serviceRouteEnv", () => {
+  it("returns the origin and credential when both are set", () => {
+    expect(serviceRouteEnv()).toEqual({
+      convexUrl: "https://convex.test",
+      serviceToken: "svc-token",
+    });
   });
 });
