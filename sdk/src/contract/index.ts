@@ -743,6 +743,22 @@ export {
 } from "./decision-labels.js";
 export type { EvalStageCoverageDetailKey } from "./decision-labels.js";
 
+// ── the next step on a credit refusal ───────────────────────────────────────
+export {
+  CREDIT_RECOVERY_ACTIONS,
+  CREDIT_RECOVERY_ACTORS,
+  creditRecoveryOfIterations,
+  creditRecoveryOfRefusal,
+  creditRecoverySchema,
+  formatCreditRecovery,
+  parseCreditRecovery,
+} from "./credit-recovery.js";
+export type {
+  CreditRecovery,
+  CreditRecoveryAction,
+  CreditRecoveryActor,
+} from "./credit-recovery.js";
+
 // ── the words for ONE grading policy ─────────────────────────────────────────
 /**
  * The authoring and rendering vocabulary for `./grading-policy.ts`, exported

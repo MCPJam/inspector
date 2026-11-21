@@ -57,6 +57,8 @@ import {
   suiteGatePolicySchema,
 } from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
+import { readEvalRunCreditRecovery } from "../eval-credit-recovery.js";
+import type { CreditRecovery } from "../contract/credit-recovery.js";
 import {
   MODEL_REASONING_EFFORTS,
   MODEL_SELECTION_FALLBACK_PROVIDERS,
@@ -7127,6 +7129,12 @@ export type GetEvalRunResult = {
    * not create a second verdict implementation.
    */
   decisionSummary?: PlatformEvalRunDecisionSummary;
+  /**
+   * The next step when MCPJam credits stopped the run: what to do, who does
+   * it, and the link. Render it with `formatCreditRecovery`. ABSENT for every
+   * other run and on deployments that do not record it.
+   */
+  creditRecovery?: CreditRecovery;
 };
 
 export const getEvalRunOperation: PlatformOperation<
@@ -7159,20 +7167,18 @@ export const getEvalRunOperation: PlatformOperation<
     // Endpoint first, then the same shared assembler over the older iteration
     // resource. MCP and CLI must not disagree merely because a deployment has
     // not rolled out the additive endpoint yet.
-    const decisionSummary = await readEvalRunDecisionSummary(
-      client,
-      signal,
-      project.id,
-      run,
-      {
+    const [decisionSummary, creditRecovery] = await Promise.all([
+      readEvalRunDecisionSummary(client, signal, project.id, run, {
         cursor: input.diagnosticsCursor,
         limit: input.diagnosticsLimit ?? DEFAULT_MCP_DIAGNOSTICS_LIMIT,
-      }
-    );
+      }),
+      readEvalRunCreditRecovery(client, signal, project.id, run),
+    ]);
     return {
       project: toSelectedProjectInfo(project),
       run,
       ...(decisionSummary ? { decisionSummary } : {}),
+      ...(creditRecovery ? { creditRecovery } : {}),
     };
   },
 };

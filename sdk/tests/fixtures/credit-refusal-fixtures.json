@@ -1,0 +1,133 @@
+{
+  "__why": "Credit refusal bodies as mcpjam-backend's buildSpendRefusalBody writes them (branch olartgabo/kes-941-recovery), plus one from a backend that predates `recovery`. Shared by the SDK, Inspector and CLI tests so every surface is checked against the same refusal: each must lead with `formatCreditRecovery(body.recovery)`, which `expectedRecovery` pins. `stopsRun` is whether the refusal is credit exhaustion (a spend cap fails the trial but does not stop the run).",
+  "cases": [
+    {
+      "__name": "v2-free-daily-owner",
+      "stopsRun": true,
+      "body": {
+        "ok": false,
+        "code": "user_rate_limit",
+        "limitKind": "total",
+        "error": "Daily MCPJam model limit reached. Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans",
+        "isRetryable": true,
+        "retryAfter": 61200000,
+        "details": "Run it again after upgrading.",
+        "canTopUp": false,
+        "walletLocked": false,
+        "budgetReached": false,
+        "recovery": {
+          "version": 1,
+          "reason": "allowance_exhausted",
+          "action": "upgrade_plan",
+          "actor": "caller",
+          "plan": "pro",
+          "url": "https://app.mcpjam.com/organizations/org_free/plans",
+          "resetAt": 1795046400000
+        },
+        "organizationId": "org_free"
+      },
+      "expectedRecovery": "Upgrade to Pro to keep going: https://app.mcpjam.com/organizations/org_free/plans",
+      "expectedUrl": "https://app.mcpjam.com/organizations/org_free/plans"
+    },
+    {
+      "__name": "v2-free-daily-member",
+      "stopsRun": true,
+      "body": {
+        "ok": false,
+        "code": "user_rate_limit",
+        "limitKind": "total",
+        "error": "Daily MCPJam model limit reached. Only an organization owner or admin can upgrade to Pro. Send them this link: https://app.mcpjam.com/organizations/org_free/plans",
+        "isRetryable": true,
+        "retryAfter": 61200000,
+        "details": "Run it again after upgrading.",
+        "canTopUp": false,
+        "walletLocked": false,
+        "budgetReached": false,
+        "recovery": {
+          "version": 1,
+          "reason": "allowance_exhausted",
+          "action": "upgrade_plan",
+          "actor": "owner_or_admin",
+          "plan": "pro",
+          "url": "https://app.mcpjam.com/organizations/org_free/plans",
+          "resetAt": 1795046400000
+        },
+        "organizationId": "org_free"
+      },
+      "expectedRecovery": "Only an organization owner or admin can upgrade to Pro. Send them this link: https://app.mcpjam.com/organizations/org_free/plans",
+      "expectedUrl": "https://app.mcpjam.com/organizations/org_free/plans"
+    },
+    {
+      "__name": "paid-monthly-buy-credits",
+      "stopsRun": true,
+      "body": {
+        "ok": false,
+        "billingModel": "monthly_per_seat",
+        "code": "user_rate_limit",
+        "limitKind": "total",
+        "error": "Monthly MCPJam model limit reached. Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open",
+        "isRetryable": true,
+        "retryAfter": 0,
+        "details": "Run it again after buying credits.",
+        "canTopUp": true,
+        "walletLocked": false,
+        "budgetReached": false,
+        "recovery": {
+          "version": 1,
+          "reason": "allowance_exhausted",
+          "action": "buy_credits",
+          "actor": "caller",
+          "url": "https://app.mcpjam.com/organizations/org_paid/billing?topup=open"
+        },
+        "organizationId": "org_paid"
+      },
+      "expectedRecovery": "Buy credits to keep going: https://app.mcpjam.com/organizations/org_paid/billing?topup=open",
+      "expectedUrl": "https://app.mcpjam.com/organizations/org_paid/billing?topup=open"
+    },
+    {
+      "__name": "spend-cap-member",
+      "stopsRun": false,
+      "body": {
+        "ok": false,
+        "code": "spend_budget_reached",
+        "limitKind": "total",
+        "error": "This organization's spend budget is reached. Only an organization owner or admin can raise the spend budget. Send them this link: https://app.mcpjam.com/organizations/org_paid/budget",
+        "isRetryable": false,
+        "retryAfter": 0,
+        "details": "Runs using your own API keys are unaffected.",
+        "canTopUp": true,
+        "walletLocked": false,
+        "budgetReached": true,
+        "refusalReason": "budget_reached",
+        "recovery": {
+          "version": 1,
+          "reason": "budget_reached",
+          "action": "raise_budget",
+          "actor": "owner_or_admin",
+          "url": "https://app.mcpjam.com/organizations/org_paid/budget"
+        },
+        "organizationId": "org_paid"
+      },
+      "expectedRecovery": "Only an organization owner or admin can raise the spend budget. Send them this link: https://app.mcpjam.com/organizations/org_paid/budget",
+      "expectedUrl": "https://app.mcpjam.com/organizations/org_paid/budget"
+    },
+    {
+      "__name": "old-backend-no-recovery",
+      "stopsRun": true,
+      "body": {
+        "ok": false,
+        "code": "user_rate_limit",
+        "limitKind": "total",
+        "error": "Daily MCPJam model limit reached. Use BYOK or try again tomorrow.",
+        "isRetryable": true,
+        "retryAfter": 61200000,
+        "details": "Try again in 17 hours.",
+        "canTopUp": false,
+        "walletLocked": false,
+        "budgetReached": false
+      },
+      "expectedRecovery": null,
+      "expectedUrl": null
+    }
+  ]
+}
