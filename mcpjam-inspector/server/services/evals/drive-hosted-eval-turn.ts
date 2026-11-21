@@ -57,7 +57,10 @@ import {
 } from "./harness-evidence-merge.js";
 import type { FrictionResultEntry } from "@mcpjam/sdk/contract";
 import type { HarnessMcpAtTurn } from "@mcpjam/sdk/host-config/internal";
-import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
+import type {
+  RunAssistantTurnAuthContext,
+  RunAssistantTurnOptions,
+} from "../../utils/assistant-turn.js";
 import { runUnifiedAssistantTurn } from "../../utils/turn-execution.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { HOSTED_STEP_MAX_OUTPUT_TOKENS } from "../hosted-step-limits.js";
@@ -329,7 +332,7 @@ export interface DriveHostedEvalTurnParams {
    *  re-derived per turn. */
   tasks?: RunAssistantTurnOptions["tasks"];
   mcpClientManager: MCPClientManager;
-  evalAuthContext: { kind: "user_bearer"; token: string };
+  evalAuthContext: RunAssistantTurnAuthContext;
   endpointPath: string;
   extraBodyFields: Record<string, unknown> | undefined;
   /**

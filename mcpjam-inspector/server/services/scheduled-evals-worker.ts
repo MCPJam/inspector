@@ -46,6 +46,8 @@ import {
   type ResolvedEnvironmentForLaunch,
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
+import { startJobBearer, type JobBearer } from "./scheduled-eval-job-bearer.js";
+import { bearerNow, type RunBearer } from "../utils/run-bearer.js";
 import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -71,6 +73,13 @@ type ClaimedScheduledRun = {
    * backend that predates the field.
    */
   environmentId?: string | null;
+  /**
+   * The run's job token for the schedule's owner, and the lease token that
+   * renews it. Absent from a backend that predates them: the worker then mints
+   * the owner's token itself, as before.
+   */
+  credentials?: { bearer: string; bearerExpiresAt: number };
+  leaseToken?: string;
 };
 
 export function isScheduledEvalsWorkerEnabled(): boolean {
@@ -185,6 +194,7 @@ export function classifyFailure(error: unknown): string {
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }
+  if (message.startsWith("token_renewal_failed: ")) return message.slice(0, 160);
   return `run_create_failed: ${message.slice(0, 160)}`;
 }
 
@@ -209,12 +219,23 @@ export async function executeClaimedRun(
   let manager:
     Awaited<ReturnType<typeof createAuthorizedManager>>["manager"] | null =
     null;
+  let jobBearer: JobBearer | null = null;
   try {
-    const bearer = await getConvexBearerForDelegation(
-      claimed.createdByExternalId,
-      claimed.organizationId,
-    );
-    const convex = createConvexClient(bearer);
+    const bearer: RunBearer =
+      claimed.credentials && claimed.leaseToken
+        ? (jobBearer = startJobBearer({
+            triggerId: claimed.triggerId,
+            leaseToken: claimed.leaseToken,
+            bearer: claimed.credentials.bearer,
+            bearerExpiresAt: claimed.credentials.bearerExpiresAt,
+            renew: (body) =>
+              postServiceRoute("/internal/v1/scheduled-eval-runs/renew", body),
+          }))
+        : await getConvexBearerForDelegation(
+            claimed.createdByExternalId,
+            claimed.organizationId,
+          );
+    const convex = createConvexClient(bearerNow(bearer));
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
     // predates (or ignores) the pinned environment. The SAME resolution is
@@ -243,7 +264,7 @@ export async function executeClaimedRun(
           };
         })()
       : await fetchSuiteRunServerSelection(
-          bearer,
+          bearerNow(bearer),
           claimed.suiteId,
           undefined,
           "authorized",
@@ -374,6 +395,7 @@ export async function executeClaimedRun(
       failureReason: classifyFailure(translateEnvironmentResolveError(error)),
     });
   } finally {
+    jobBearer?.stop();
     if (manager) {
       await manager.disconnectAllServers().catch(() => {});
     }
