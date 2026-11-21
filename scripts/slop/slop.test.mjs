@@ -1122,3 +1122,6 @@ describe("hooks in a worktree", async () => {
     assert.equal(hook({ hook_event_name: "Stop", cwd: wt }), 2);
   });
 });
+
+// CI runs only this file, so the review-rule tests ride along with it.
+import "./slop-review-rules.test.mjs";

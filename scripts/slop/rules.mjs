@@ -9,6 +9,7 @@
  * ESLint instead.
  */
 
+import { REVIEW_RULES } from "./review-rules.mjs";
 import { extractUiStrings, isUiFile } from "./ui-strings.mjs";
 
 const SOURCE_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -160,6 +161,7 @@ export const RULES = [
     appliesTo: isUiFile,
     count: (text) => countCopy(text, VAGUE_ERROR),
   },
+  ...REVIEW_RULES,
 ];
 
 /** Count every rule that applies to `path`. Rules that do not apply are 0. */
