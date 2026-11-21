@@ -31,7 +31,7 @@ platform API client and OAuth. Entry points are the `exports` map in
   `npm run test:packaging -w @mcpjam/sdk`.
 - No new `as any`, `@ts-*` suppressions, `eslint-disable` or empty catches.
   Enforced by `npm run slop:check`.
-- `npm run lint -w @mcpjam/sdk` (typescript-eslint, Prettier) is not run in CI.
+- Check lint with `npm run lint -w @mcpjam/sdk` (typescript-eslint, Prettier).
   It does not start: the lockfile hoists `typescript-eslint` to the root but
   installs `eslint` only under `sdk/`, so the plugin cannot resolve `eslint`.
 
