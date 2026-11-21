@@ -4,7 +4,7 @@ description: "Run a hosted suite or upload SDK eval results from your pipeline, 
 icon: "git-pull-request"
 ---
 
-There are three ways to run evals from a pipeline. The GitHub Action and the CLI run a suite that already exists in your MCPJam project. The SDK runs evals inside your own test job and uploads the results, which creates or updates a suite managed in code.
+The GitHub Action and the CLI run a suite that already exists in your MCPJam project. The SDK runs evals inside your own test job and uploads the results, which creates or updates a suite managed in code.
 
 All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret named `MCPJAM_API_KEY`. See [eval authentication](/cli/ci#eval-authentication) for credential precedence and failure behavior.
 
@@ -12,7 +12,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
 <Tabs>
   <Tab title="GitHub Action">
-    The evals action runs an existing hosted suite, waits for its result and uploads reports to GitHub. It tests the suite's saved server; it does not build or deploy your PR's code.
+    The evals action runs a hosted suite, waits for its result and uploads reports to GitHub. It tests the suite's saved server, not your PR's code.
 
     Save this as `.github/workflows/mcpjam.yml`, then replace the project and suite:
 
@@ -48,10 +48,10 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
     Create the `MCPJAM_API_KEY` repository secret under Settings → Secrets and variables → Actions in GitHub.
 
-    Without `gate: true`, the run's own verdict must pass. With it, each gate must pass or be waived. Failed launches, incomplete runs, missing reports and upload failures still fail the job. The action supports GitHub.com with Ubuntu runners; the [action README](https://github.com/MCPJam/inspector/blob/main/actions/evals/README.md) lists every input and output.
+    Without `gate: true`, the run's own verdict must pass. With it, each gate must pass or be waived. Failed launches, incomplete runs, missing reports and upload failures still fail the job. The action supports GitHub.com with Ubuntu runners; the [action README](https://github.com/MCPJam/inspector/blob/main/actions/evals/README.md) lists its inputs and outputs.
   </Tab>
   <Tab title="CLI in any CI">
-    `mcpjam cloud eval run` starts a run of a hosted suite. Add `--wait` to hold the job until the run finishes and `--out` to write a JSON report. A second step applies a gate and writes JUnit XML. This example uses GitHub Actions syntax; the commands are the same in any CI system with Node.
+    `cloud eval run --wait` runs a hosted suite to completion and writes a JSON report; `cloud eval gate` then applies a gate and writes JUnit XML. The syntax is GitHub Actions; the commands work in any CI with Node.
 
     ```yaml
           - name: Run hosted eval
@@ -92,7 +92,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
 
     Keep `if: always()` on the gate step. The run step exits nonzero on a failed verdict, and without it the gate and its JUnit report would be skipped exactly when the run failed.
 
-    `--wait-timeout <ms>` replaces the 35-minute wait default. Before retrying a job, pass a stable `--idempotency-key` so the retry resumes the launched run instead of starting a second paid one. See [`cloud eval run`](/cli/reference#cloud-eval-run).
+    Before retrying a job, pass a stable `--idempotency-key` so the retry resumes the launched run instead of starting a second paid one. The [`cloud eval run` reference](/cli/reference#cloud-eval-run) covers the wait timeout, reporters and every other flag.
   </Tab>
   <Tab title="SDK upload">
     If you run evals with [`@mcpjam/sdk`](/sdk/concepts/running-evals) in your own test job, set `MCPJAM_API_KEY` and results upload automatically:
@@ -138,7 +138,7 @@ All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret n
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     ```
 
-    `command` replaces `project` and `suite`. The action finds the uploaded runs through a receipt that `@mcpjam/sdk` 8.8.0 and newer writes. See [Save results to MCPJam](/sdk/concepts/saving-results) for CI metadata and artifact upload.
+    `command` replaces `project` and `suite`. The action finds the uploaded runs through a receipt that `@mcpjam/sdk` 8.8.0 and newer writes. [Save results to MCPJam](/sdk/concepts/saving-results) covers CI metadata and artifact upload.
   </Tab>
 </Tabs>
 
@@ -146,7 +146,7 @@ Hosted runs consume your organization's credits or its configured provider keys.
 
 ## Gate the merge
 
-`eval run --wait` already fails the job when the run's verdict fails. Add `eval gate` when you want a policy on top of that verdict: a different pass-rate bar, a comparison against a baseline run, or a cost limit. The gate also applies the suite's stored [quality gate](/evaluate/configure-grading#quality-gate).
+`eval run --wait` already fails the job on a failed verdict. Add `eval gate` for a policy on top: a different pass-rate bar, a baseline comparison, or a cost limit. The gate also applies the suite's stored [quality gate](/evaluate/configure-grading#quality-gate).
 
 | Condition | `cloud eval gate` flag |
 | --- | --- |
@@ -157,11 +157,11 @@ Hosted runs consume your organization's credits or its configured provider keys.
 | Fail if p95 latency rose by more than N ms | `--max-p95-latency-increase-ms <ms>` (needs a baseline) |
 | Fail if cost exceeded a fixed amount | `--max-cost-usd <usd>` |
 
-The full flag list is in the [`cloud eval gate` reference](/cli/reference#cloud-eval-gate).
+Thresholds, scorer gates and the other flags are in the [`cloud eval gate` reference](/cli/reference#cloud-eval-gate).
 
 ### Gate on cost
 
-Gate cost relative to the previous run rather than as a fixed ceiling, which goes stale whenever the prompt or model changes:
+Gate cost against the previous run; a fixed ceiling goes stale whenever the prompt or model changes:
 
 ```bash
 npx -y @mcpjam/cli@latest cloud eval compare --run "$RUN_ID" \
@@ -173,7 +173,7 @@ With no `--base-run` or `--base-sha`, the baseline is the nearest earlier comple
 
 ### Exit codes
 
-`eval run --wait` and `eval gate` use different exit-code contracts. A `3` means "auth failed" from the first and "incomplete" from the second.
+The two commands use different exit codes: `3` means "auth failed" from `eval run --wait` and "incomplete" from `eval gate`. The [CLI reference](/cli/reference#output-and-exit-codes) has the full rules.
 
 <AccordionGroup>
   <Accordion title="eval run --wait">
@@ -186,7 +186,7 @@ With no `--base-run` or `--base-sha`, the baseline is the nearest earlier comple
     | `4` | Connection or setup failed before evaluation, or `--out` could not be written |
     | `5` | No valid verdict: inconclusive, cancelled, timed out, or the wait hit its deadline |
 
-    `4` and `5` say nothing about your server, so retrying is reasonable once you pass a stable `--idempotency-key`. Fix the credential before retrying on `3`. Don't retry on `1`.
+    `4` and `5` say nothing about your server; retry with a stable `--idempotency-key`. Fix the credential before retrying on `3`. Don't retry on `1`.
   </Accordion>
   <Accordion title="eval gate">
     | Code | Meaning |
@@ -202,13 +202,13 @@ With no `--base-run` or `--base-sha`, the baseline is the nearest earlier comple
 
 ### Waive a failed gate
 
-An authorized user can override a failed gate until an expiry they choose, so a release isn't blocked while a known regression is fixed:
+An authorized user can override a failed gate until a chosen expiry, so a known regression doesn't block a release while it's fixed:
 
 ```bash
 mcpjam cloud eval gate waive --run "$RUN_ID" --reason "hotfix ships today; tracked in ENG-4821" --expires-in 3d
 ```
 
-`eval gate` then exits `0` and reports the outcome as `waived`, not passed. The failing verdicts stay in the report, and JUnit XML records the waiver as a `<skipped>` element. Only a real verdict failure can be waived: a cancelled run, a wait timeout or a network failure still exits `3`. `mcpjam cloud eval gate unwaive --run "$RUN_ID"` ends a waiver early.
+`eval gate` then exits `0` and reports `waived`, not passed. The failing verdicts stay in the report, and JUnit XML records the waiver as a `<skipped>` element. Only a real verdict failure can be waived: a cancelled run, a wait timeout or a network failure still exits `3`. `mcpjam cloud eval gate unwaive --run "$RUN_ID"` ends a waiver early.
 
 <Warning>
   The waiver reason is stored unredacted and readable by anyone who can see the suite. Don't put secrets, tokens or customer data in it.
@@ -216,20 +216,17 @@ mcpjam cloud eval gate waive --run "$RUN_ID" --reason "hotfix ships today; track
 
 ### Read why a run failed
 
-`eval run --wait`, `eval status`, `eval gate` and `eval compare` all print a decision summary: the verdict, why, and the earliest stage where a failing iteration broke, with a trace link per iteration. Script against `--format json`, where the summary is the `decisionSummary` field. See [Decision summary](/cli/ci#decision-summary) for where each command puts it.
+`eval run --wait`, `eval status`, `eval gate` and `eval compare` print a decision summary: the verdict, why, and the earliest stage where a failing iteration broke, with trace links. In `--format json` it is the `decisionSummary` field. [Decision summary](/cli/ci#decision-summary) shows where each command puts it.
 
 ## Suites managed in code
 
-A suite whose configuration lives outside the app carries a **CI** badge, with the tooltip "Managed by CI (created from a test file or the MCPJam SDK)". That covers two kinds of suite:
+A suite synced from a suite file with `mcpjam cloud eval run --file`, or created by an SDK upload, carries a **CI** badge with the tooltip "Managed by CI (created from a test file or the MCPJam SDK)".
 
-- A suite synced from a suite file with `mcpjam cloud eval run --file`.
-- A suite the SDK created when it uploaded a run.
-
-These suites are read-only in the app. An edit made here would not last: a suite-file sync deletes any case the file doesn't name, and an SDK suite's cases are rebuilt from the next report. You can still run the suite and read its settings and results.
+These suites are read-only in the app, because an edit here would not last: a suite-file sync deletes any case the file doesn't name, and an SDK suite's cases are rebuilt from the next report. You can still run the suite and read its settings and results.
 
 {/* Screenshot: Suite settings for a CI suite, showing the "Managed by CI — edit the test file, or duplicate to edit here" notice with the Duplicate to edit button */}
 
-Suite settings and the suite page show the notice "Managed by CI — edit the test file, or duplicate to edit here". The two ways forward:
+Suite settings and the suite page show "Managed by CI — edit the test file, or duplicate to edit here":
 
 | Option | What you get |
 | --- | --- |
@@ -242,9 +239,9 @@ An opened case shows "Managed in code. Update this test in your repository." Its
   The SDK matches a suite by name. Renaming the suite in your code does not rename it here: the next upload creates a second suite and leaves the first behind with its history.
 </Warning>
 
-You can delete a CI suite. The confirmation reads: "This suite is managed by CI. Deleting it removes the run history stored here; the next CI run or SDK report creates the suite again." Deleting the old suite after a rename is how you clean up.
+You can delete a CI suite, which is how you clean up after a rename. The confirmation reads: "This suite is managed by CI. Deleting it removes the run history stored here; the next CI run or SDK report creates the suite again."
 
-A suite you built in the app that CI only reports runs into is not locked. Deleting it warns that the reported run history goes with it, and the cases authored here do not come back.
+A suite built in the app that CI only reports runs into is not locked. Deleting it removes the reported run history too, and its cases do not come back.
 
 ## Next steps
 
