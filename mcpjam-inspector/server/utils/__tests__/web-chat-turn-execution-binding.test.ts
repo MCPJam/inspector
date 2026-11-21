@@ -28,7 +28,7 @@ vi.mock("../org-model-config.js", () => ({
 vi.mock("../chat-v2-orchestration.js", () => ({
   prepareChatV2: vi.fn(async () => ({
     allTools: {},
-    enhancedSystemPrompt: "",
+    enhancedSystemPrompt: "MCPJam turn instructions",
     resolvedTemperature: undefined,
     scrubMessages: (messages: unknown[]) => messages,
     progressivePlan: undefined,
@@ -94,6 +94,15 @@ describe("streamWebChatTurn — execution binding", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ["chatgpt-web", undefined],
+    ["claude-web", "User-configured prompt"],
+  ] as const)("passes the original prompt to the %s settings check", async (harness, systemPrompt) => {
+    const turn = args();
+    await streamWebChatTurn({ ...turn, persist: { ...turn.persist, harness, systemPrompt } });
+    expect(m.mcpjamFree).toHaveBeenCalledWith(expect.objectContaining({ systemPrompt }));
   });
 
   it("awaits the check the route already started instead of a second one", async () => {
