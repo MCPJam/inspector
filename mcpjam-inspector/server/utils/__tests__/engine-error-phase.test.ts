@@ -29,8 +29,13 @@ import {
   executeToolCallsFromMessages,
   hasUnresolvedToolCalls,
 } from "@/shared/http-tool-calls";
+import type { ErrorOrigin } from "@mcpjam/sdk";
+import { captureOriginErrorToSentry } from "../logger";
 import { handleMCPJamFreeChatModel } from "../mcpjam-stream-handler";
-import { failedLayerForEngineError } from "../../services/evals/drive-hosted-eval-turn";
+import {
+  failedLayerForEngineError,
+  failedTurnNeedsCapture,
+} from "../../services/evals/drive-hosted-eval-turn";
 
 let lastExecution: Promise<void> | null = null;
 
@@ -55,7 +60,8 @@ vi.mock("ai", async () => {
   };
 });
 
-vi.mock("@/shared/http-tool-calls", () => ({
+vi.mock("@/shared/http-tool-calls", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/http-tool-calls")>()),
   hasUnresolvedToolCalls: vi.fn(),
   executeToolCallsFromMessages: vi.fn(),
 }));
@@ -88,10 +94,30 @@ vi.mock("@sentry/node", () => ({
 
 type EngineErrorEvent = {
   phase?: "setup" | "stream";
+  reportedOrigin?: ErrorOrigin;
+  reportedCaptured?: boolean;
   message?: string;
   httpStatus?: number;
   stepIndex?: number;
 };
+
+/** A 200 backend stream whose one step asks for a tool call. */
+const toolCallResponse = () =>
+  new Response(
+    [
+      {
+        type: "tool-input-available",
+        toolCallId: "call-1",
+        toolName: "do_thing",
+        input: { x: 1 },
+      },
+      { type: "finish", finishReason: "stop" },
+    ]
+      .map((e) => `data: ${JSON.stringify(e)}\n\n`)
+      .concat("data: [DONE]\n\n")
+      .join(""),
+    { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+  );
 
 async function runTurn(overrides: Record<string, unknown> = {}): Promise<{
   events: EngineErrorEvent[];
@@ -188,5 +214,111 @@ describe("the emulated engine reports which side of the handover it died on", ()
     for (const event of events) {
       expect(event.phase).toBeDefined();
     }
+  });
+
+  it.each([
+    [
+      "a setup throw",
+      () => ({
+        onStreamWriterReady: () => {
+          throw new Error("preparation blew up before the model was asked");
+        },
+      }),
+    ],
+    [
+      "a transport failure",
+      () => {
+        global.fetch = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
+        return {};
+      },
+    ],
+    [
+      "a non-OK backend response",
+      () => {
+        global.fetch = vi
+          .fn()
+          .mockResolvedValue(new Response("Bad Gateway", { status: 502 }));
+        return {};
+      },
+    ],
+    [
+      "a tool that throws",
+      () => {
+        global.fetch = vi.fn().mockResolvedValue(toolCallResponse());
+        vi.mocked(hasUnresolvedToolCalls).mockReturnValue(true);
+        vi.mocked(executeToolCallsFromMessages).mockRejectedValue(
+          new Error("the tool blew up"),
+        );
+        return {
+          tools: { do_thing: { _serverId: "srv" } },
+          mcpClientManager: {
+            getAllToolsMetadata: vi.fn().mockReturnValue({}),
+            hasServer: vi.fn().mockReturnValue(true),
+            listServers: vi.fn().mockReturnValue(["srv"]),
+          },
+        };
+      },
+    ],
+  ])(
+    "leaves no emitter without its reporter's verdict: %s",
+    async (_label, stage) => {
+      // The eval driver re-captures a failure whose event lacks this, so an
+      // omission duplicates a Sentry event rather than losing one — and
+      // re-opens INSPECTOR-HONO-70.
+      const { events } = await runTurn(stage());
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        reportedOrigin: expect.any(String),
+        reportedCaptured: expect.any(Boolean),
+      });
+    },
+  );
+
+  it("sends the nightly's credit refusal to Sentry zero times: the reporter declines it and the eval driver does not re-capture it", async () => {
+    // The prod 429 behind INSPECTOR-HONO-70 (`buildSpendRefusalBody`,
+    // holds_committed), through the real engine and its default reporter.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "user_rate_limit",
+          limitKind: "total",
+          error:
+            "MCPJam model limit reached for the moment: 4 in-flight request(s) hold the remaining credits and release them as they finish.",
+          isRetryable: true,
+          retryAfter: 15000,
+          details: "Retry in a few seconds.",
+          refusalReason: "holds_committed",
+          outstandingHolds: 4,
+        }),
+        { status: 429, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const { events } = await runTurn();
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      httpStatus: 429,
+      reportedOrigin: "user_config",
+      reportedCaptured: false,
+    });
+    expect(captureOriginErrorToSentry).not.toHaveBeenCalled();
+    expect(failedTurnNeedsCapture(events[0])).toBe(false);
+  });
+
+  it("still has the eval driver capture a failure the reporter left unclassified", async () => {
+    const { events } = await runTurn({
+      onStreamWriterReady: () => {
+        throw new Error("preparation blew up before the model was asked");
+      },
+    });
+
+    expect(events[0]).toMatchObject({
+      reportedOrigin: "ambiguous",
+      reportedCaptured: false,
+    });
+    expect(captureOriginErrorToSentry).not.toHaveBeenCalled();
+    expect(failedTurnNeedsCapture(events[0])).toBe(true);
   });
 });

@@ -459,6 +459,8 @@ export interface SwarmOverviewRun {
    * short-id fallback rather than rendering an empty heading.
    */
   swarmName?: string;
+  /** Names resolved from the saved targets' server IDs. */
+  serverNames?: string[];
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
