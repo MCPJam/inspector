@@ -17,6 +17,9 @@ import {
 import type { WebClientEnvironment } from "../web-client-environment.js";
 import type { AccountBrowser } from "./coordinator.js";
 
+/** What recovery reads from where the browser comes from. */
+type BrowserSource = Pick<WebClientEnvironment, "openBrowser" | "pageModule">;
+
 const PAGE_MODULES: Record<WebClientVendor, RealUiPageModule> = {
   claude: claudeWebPageModule,
   chatgpt: chatgptWebPageModule,
@@ -31,7 +34,7 @@ type OpenedBrowser = Awaited<
 };
 
 export function accountBrowserOver(
-  environment: WebClientEnvironment,
+  environment: BrowserSource,
   account: { webAccountId: string; vendor: WebClientVendor },
 ): AccountBrowser & { close(): Promise<void> } {
   const module = environment.pageModule ?? PAGE_MODULES[account.vendor];

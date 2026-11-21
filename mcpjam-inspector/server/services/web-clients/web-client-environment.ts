@@ -35,9 +35,14 @@ export type ResolvedWebAccount = {
   accountEmail?: string;
 };
 
+/** The MCPJam person a hosted turn acts as, as the backend's service calls name them. */
+export type WebRunActor = { actorExternalId: string } | { actorUserId: string };
+
 export interface WebClientEnvironment {
   /** The public origin the vendor's app reaches `/mcp/<connectorId>` on. */
   readonly publicBaseUrl: string;
+  /** Who the turn acts as where the backend keeps the accounts; recovery acts as them too. */
+  readonly actor?: WebRunActor;
   readonly journal: SendJournal;
   /** Replaces the vendor's page module, for the fixture vendor in tests. */
   readonly pageModule?: RealUiPageModule;
@@ -83,7 +88,7 @@ export type WebTurnContext = {
   /** The request's MCPJam bearer, when a person started the run. */
   bearer?: string;
   /** The run's owner, for a run started with nobody signed in. */
-  actor?: { actorExternalId: string } | { actorUserId: string };
+  actor?: WebRunActor;
   /** The run's frozen accounts, in the order this turn tries them. */
   runWebAccountIds?: readonly string[];
   /** How this Inspector reaches each server, for a local connector. */

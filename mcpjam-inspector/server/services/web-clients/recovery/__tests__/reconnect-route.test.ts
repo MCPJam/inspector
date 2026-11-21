@@ -248,15 +248,31 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     expect(commands).toEqual([]);
   });
 
-  it("says so when this server has no browser to hand the account back from", async () => {
+  it("says to sign in again when this server holds no browser to hand the account back from", async () => {
     const environmentFor = vi.fn(async () => undefined);
     const answered = await post(OPEN, undefined, undefined, { environmentFor });
-    expect(answered.status).toBe(503);
+    expect(answered.status).toBe(409);
+    expect(answered.body.error).toMatch(/Take over the browser again/);
     expect(environmentFor).toHaveBeenCalledWith({
       actor: { actorExternalId: "user_admin" },
       projectId: "project-1",
     });
     expect(commands).toEqual([]);
+  });
+
+  it("looks for the sign-in browser the request names", async () => {
+    const environmentFor = vi.fn(async () => undefined);
+    await post(
+      OPEN,
+      undefined,
+      { projectId: "project-1", browserSessionId: "browser-1" },
+      { environmentFor },
+    );
+    expect(environmentFor).toHaveBeenCalledWith({
+      actor: { actorExternalId: "user_admin" },
+      projectId: "project-1",
+      browserSessionId: "browser-1",
+    });
   });
 
   it("reports a backend failure and says the runs are still paused", async () => {

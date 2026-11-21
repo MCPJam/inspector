@@ -15,25 +15,15 @@ import { getInternalBackendConfig } from "../internal-backend.js";
 import { createWebAccountRoutes, SignInBrowserNotFoundError } from "./account-routes.js";
 import { webClientService } from "./backend-connector-resolver.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
-import { openWebClientHostedBrowser, type WebClientHostedBrowser } from "./hosted-browser.js";
+import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
 import { actorFromBearer, restoreWebProfile } from "./hosted-web-client-runtime.js";
 import { createConvexWebReconnectBackend } from "./recovery/convex-backend.js";
+import { findSignInBrowser, keepSignInBrowser } from "./sign-in-browsers.js";
 import { PageDriverError } from "../../utils/harness/real-ui/page-driver.js";
 import { logger } from "../../utils/logger.js";
 
 const bearerOf = (c: Context) => c.req.header("authorization") ?? "";
-
-/**
- * Sign-in browsers this replica opened, each with the person, project and
- * account it was opened for, so one person's id never drives another's
- * browser. Only this replica holds them: save-profile on another one finds
- * none, and the person starts the sign-in again.
- */
-const signInBrowsers = new Map<
-  string,
-  { browser: WebClientHostedBrowser; actor: WebActor; projectId: string; webAccountId: string }
->();
 
 export function createDefaultWebAccountRoutes(): Hono {
   const service = webClientService();
@@ -55,9 +45,8 @@ export function createDefaultWebAccountRoutes(): Hono {
       return webClientsEnabledFor(identity?.kind === "id" ? identity.distinctId : undefined);
     },
     async mayManage({ actor, projectId, webAccountId }) {
-      // The backend has no manage check to ask yet (`mayManageWebAccounts`
-      // is the read it needs). Until it does, the answer is unknown: the
-      // route restores no saved session, and every save checks manage itself.
+      // An older backend has no manage check to ask. Its answer is unknown:
+      // the route restores no saved session, and every save checks manage itself.
       try {
         const answer = (await service.read({
           action: "mayManageWebAccounts",
@@ -93,7 +82,7 @@ export function createDefaultWebAccountRoutes(): Hono {
           vendor,
           ...(profileArchive ? { profileArchive } : {}),
         });
-        signInBrowsers.set(browser.browserSessionId, { browser, actor, projectId, webAccountId });
+        keepSignInBrowser({ browser, actor, projectId, webAccountId });
         try {
           await browser.driver.navigate(startUrl);
         } catch (error) {
@@ -126,30 +115,14 @@ export function createDefaultWebAccountRoutes(): Hono {
   }
 }
 
-/** The person's own sign-in browser for this account, if this replica holds it. */
-function signInBrowserOf(args: {
-  browserSessionId: string;
-  actor: WebActor;
-  projectId: string;
-  webAccountId: string;
-}): WebClientHostedBrowser {
-  const kept = signInBrowsers.get(args.browserSessionId);
-  if (
-    !kept ||
-    !sameActor(kept.actor, args.actor) ||
-    kept.projectId !== args.projectId ||
-    kept.webAccountId !== args.webAccountId
-  ) {
-    throw new SignInBrowserNotFoundError();
-  }
-  return kept.browser;
-}
-
-function sameActor(a: WebActor, b: WebActor): boolean {
-  if ("actorExternalId" in a) {
-    return "actorExternalId" in b && a.actorExternalId === b.actorExternalId;
-  }
-  return "actorUserId" in b && a.actorUserId === b.actorUserId;
+/**
+ * The person's own sign-in browser for this account. One this replica doesn't
+ * hold answers 409, so the person starts the sign-in again.
+ */
+function signInBrowserOf(args: Parameters<typeof findSignInBrowser>[0]) {
+  const browser = findSignInBrowser(args);
+  if (!browser) throw new SignInBrowserNotFoundError();
+  return browser;
 }
 
 /** An older backend answers an action it does not know with this code. */
