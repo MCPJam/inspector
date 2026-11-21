@@ -263,10 +263,71 @@ describe("chatgpt.com", () => {
 describe("chatgpt.com's connector step", () => {
   const connector = { name: "MCPJam orders", url: "https://inspector.example/mcp/abc" };
   const base = {
-    '#prompt-textarea': "",
+    '[contenteditable="true"][aria-label="Ask ChatGPT"], #prompt-textarea': "",
     'role=menuitem[name="Plugins"]': "Plugins",
     'role=menuitem[name="Add custom MCP server"]': "Add custom MCP server",
   };
+
+  const composer = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
+  const current = { [composer]: "", [composer + ", #prompt-textarea"]: "" };
+  const installed = 'role=link[name="MCPJam orders"s]';
+  const pluginSettings = {
+    ...current, [installed]: connector.name,
+    'role=button[name="Add"s]': "Add", 'role=link[name="Settings"s]': "Settings",
+    'role=link[name="View details"s]': "View details",
+  };
+
+  it("reads the hosted account email from Settings with the sidebar collapsed", async () => {
+    const email = "review@example.org";
+    const controls = {
+      ...current,
+      'role=button[name="Show sidebar"s]': "",
+      'role=menuitem[name="Settings"s]': "",
+      'role=dialog >> role=button[name="Account"s]': "",
+      'role=dialog >> text=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/': email,
+    };
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: controls });
+    let expanded = false;
+    const driver: PageDriver = {
+      ...fixture, kind: "hosted", canEvaluate: false,
+      click: async (target) => { if (target === 'role=button[name="Show sidebar"s]') expanded = true; },
+      readText: async (target) => expanded && target === 'role=button[name="Open profile menu"s]'
+        ? "Profile" : fixture.readText(target),
+    };
+    await expect(chatgptWebPageModule.signedIn(driver, { timeoutMs: 500 })).resolves.toEqual({ email });
+    expect(await driver.url()).toBe("https://chatgpt.com/");
+  });
+
+  it("checks the installed plugin address in Settings before reusing it", async () => {
+    const shown = `main >> text="${connector.url}"`;
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...pluginSettings, [shown]: connector.url } });
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 });
+    expect(driver.click).toHaveBeenCalledWith('role=link[name="Settings"s]');
+    expect(driver.type).not.toHaveBeenCalled();
+    const other = cannedDriver({ url: "https://chatgpt.com/", texts: pluginSettings });
+    await expect(chatgptWebPageModule.ensureConnector(other, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "connector_failed" } });
+  });
+
+  it("leaves ChatGPT's trust checkbox for the person setting up the server", async () => {
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: {
+      ...current, 'role=button[name="Add"s]': "Add",
+      'role=menuitem[name="Add custom MCP server"s]': "Add custom MCP server",
+      'role=dialog >> role=textbox[name="Name"s]': "",
+      'role=dialog >> role=checkbox[name="I understand and want to continue"s][checked=false]': "",
+    } });
+    await expect(chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 500 }))
+      .rejects.toMatchObject({ failure: { kind: "needs_sign_in", reason: "consent" } });
+    expect(driver.type).toHaveBeenLastCalledWith('role=dialog >> role=textbox[name="Server URL"s]', connector.url);
+    expect(driver.click).toHaveBeenCalledTimes(2);
+  });
+
+  it("selects the named plugin in the current composer", async () => {
+    const item = 'role=button[name="MCPJam orders MCPJam orders"s]';
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: { ...current, [item]: connector.name } });
+    await chatgptWebPageModule.enableConnector(driver, connector.name, { timeoutMs: 500 });
+    expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Add files and more"s]'], [item]]);
+  });
 
   it("reuses a server already added under the name and address", async () => {
     const driver = cannedDriver({
