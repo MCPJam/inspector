@@ -9,6 +9,7 @@ import type { EvalIteration } from "../evals/types";
 import { computeIterationResult } from "../evals/pass-criteria";
 import type { AffectedIterationRow } from "@/components/shared/actionable-insights/affected-iterations-list";
 import type { ModelReasoningEffort } from "@mcpjam/sdk/browser";
+import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import { iterationReasoningEffort } from "../evals/run-metrics";
 import { reasoningEffortLabel } from "@/components/effort/effort-control";
 
@@ -45,10 +46,14 @@ export function affectedRowFor(
 export function affectedRowsById(
   iterations: readonly EvalIteration[],
   clientLabel?: string | null,
+  chains?: ReadonlyMap<string, EvalRunDecisionChain>,
 ): Record<string, AffectedIterationRow> {
   const rows: Record<string, AffectedIterationRow> = {};
   for (const iteration of iterations) {
-    rows[iteration._id] = affectedRowFor(iteration, clientLabel);
+    rows[iteration._id] = {
+      ...affectedRowFor(iteration, clientLabel),
+      chain: chains?.get(iteration._id),
+    };
   }
   return rows;
 }

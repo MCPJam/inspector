@@ -15,6 +15,7 @@ import { useState } from "react";
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import type { EvalRunDecisionChain } from "@mcpjam/sdk/contract";
 import {
   outcomeDotTone,
   outcomeLabel,
@@ -29,6 +30,7 @@ export type AffectedIterationRow = {
   model: string | null;
   result: string;
   canOpen: boolean;
+  chain?: EvalRunDecisionChain;
 };
 
 const INITIAL = 5;
