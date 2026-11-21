@@ -97,6 +97,42 @@ describe("BrowserPanel token discipline", () => {
     expect(mintProject).toHaveBeenCalledTimes(1);
   });
 
+  it.each([true, false])("reconnects a sleeping browser with lease ownership %s", async (yours) => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    let asleep = false;
+    let leaseState = "held";
+    const actions: string[] = [];
+    let wakes = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith("/lease")) {
+        const { action } = JSON.parse(String(init.body));
+        actions.push(action);
+        if (action === "heartbeat") asleep = true;
+        if (action === "acquire") leaseState = "held";
+      }
+      if (url.endsWith("?ensure=1")) {
+        wakes++;
+        asleep = false;
+        leaseState = "parked";
+      }
+      return asleep
+        ? Response.json({ error: "no_browser_session" }, { status: 409 })
+        : Response.json({ sessionId: "s1", bootId: "b1", yours: wakes === 0 || yours,
+          lease: { state: leaseState, holder: "member" } });
+    }));
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    expect(screen.getByText("You have control")).toBeTruthy();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(screen.queryByText("You have control")).toBeNull();
+    expect(wakes).toBe(0);
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reconnect browser" })); });
+    expect(wakes).toBe(1);
+    expect(actions).toEqual(yours ? ["heartbeat", "acquire"] : ["heartbeat"]);
+    expect(screen.getByText(yours ? "You have control" : "Watching")).toBeTruthy();
+  });
+
   it("stops polling and says so when the browser goes away", async () => {
     // First mint succeeds so the panel reaches WATCHING; the computer is then
     // released, so the re-mint after the token lapses reports it.

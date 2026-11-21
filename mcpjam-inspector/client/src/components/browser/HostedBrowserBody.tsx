@@ -1358,7 +1358,7 @@ export function HostedBrowserBody({
           onInput={noteVncInput}
         >
           {pausedState === "awake" ? (
-            <BrowserPanel projectId={projectId} sessionId={sessionId} />
+            <BrowserPanel projectId={projectId} sessionId={sessionId} onInput={noteVncInput} />
           ) : null}
         </PausablePane>
       </>
