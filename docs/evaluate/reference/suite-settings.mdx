@@ -14,14 +14,14 @@ Open **Suite settings** on a suite page. Edits are drafts until you click **Save
 
 ## Pass criteria
 
-A suite is decided by exactly one criterion. The row shows only the one this suite uses.
+A suite is decided by exactly one criterion, and the row shows only that one. The page shows both as percentages; the API takes them in different units.
 
-| On screen | API field | Default | Notes |
-| --- | --- | --- | --- |
-| Suite accuracy | `settings.minimumAccuracy` | 70% | A percentage, 0–100. One pass rate across the whole run must reach it. Cases have no threshold of their own. |
-| Per-case pass rate | `settings.passThreshold` | Set when the suite becomes per-case | A fraction, 0–1. Each case must pass at least this share of its own iterations. |
+| On screen | API field | API value | Default | Notes |
+| --- | --- | --- | --- | --- |
+| Suite accuracy | `settings.minimumAccuracy` | Percentage, 0–100 | 70% | One pass rate across the whole run must reach it. Cases have no threshold of their own. |
+| Per-case pass rate | `settings.passThreshold` | Fraction, 0–1 | Set when the suite becomes per-case | Each case must pass at least this share of its own iterations. |
 
-The two criteria can decide the same run differently. With ten cases where nine always pass and one always fails, a 90% suite accuracy passes the run and a 0.9 per-case pass rate fails it. The API refuses `settings.minimumAccuracy` on a per-case suite.
+The two criteria can decide the same run differently; see the example in [Configure grading](/evaluate/configure-grading#pass-criteria). The API refuses `settings.minimumAccuracy` on a per-case suite.
 
 The app does not change which criterion a suite uses. To move a suite from suite accuracy to per-case pass rate, send `settings.repetitions` and `settings.passThreshold` together in one `PATCH`. This re-decides every case in the suite, and there is no change back.
 
@@ -29,17 +29,17 @@ The app does not change which criterion a suite uses. To move a suite from suite
 
 Shown under **Pass criteria** on a per-case suite. A run that measured too little is inconclusive rather than passed or failed. A suite decided by suite accuracy shows "No evidence requirements": its runs are never inconclusive.
 
-| On screen | API field | Default | Notes |
-| --- | --- | --- | --- |
-| Minimum completion rate | `settings.validity.minCompletionRate` | 80% | Share of attempted iterations that must finish. A fraction, 0–1, over the API. |
-| Maximum evaluator error rate | `settings.validity.maxEvaluatorErrorRate` | 10% | Share of iterations an evaluator may fail on. |
-| Minimum gradeable iterations | `settings.validity.minEligibleTrials` | Every iteration | Empty is the stricter rule: every configured iteration attempted and at least one gradeable. A number relaxes it to a count. |
+| On screen | API field | API value | Default | Notes |
+| --- | --- | --- | --- | --- |
+| Minimum completion rate | `settings.validity.minCompletionRate` | Fraction, 0–1 | 80% | Share of attempted iterations that must finish. |
+| Maximum evaluator error rate | `settings.validity.maxEvaluatorErrorRate` | Fraction, 0–1 | 10% | Share of iterations an evaluator may fail on. |
+| Minimum gradeable iterations | `settings.validity.minEligibleTrials` | Count | Every iteration | Empty is the stricter rule: every configured iteration attempted and at least one gradeable. A number relaxes it to a count. |
 
 An empty field selects the default, never "no minimum". Fields you send are merged over the stored values.
 
 ## Iterations
 
-How many times each case runs. Like the criterion, a suite has one rule, and the row shows only that one.
+How many times each case runs. A suite has one rule, and the row shows only that one.
 
 | On screen | API field | Default | Notes |
 | --- | --- | --- | --- |
@@ -50,7 +50,7 @@ A case set to 7 iterations runs 7 times under a floor of 3, and 3 times under a 
 
 ## Quality gate
 
-Whether a run should block a merge, separate from whether it met the pass criteria. Every change to it needs a reason, recorded in the suite's revision history.
+Whether a run should block a merge, separate from whether it met the pass criteria. Every change needs a reason, recorded in the suite's revision history.
 
 | On screen | API field | Default | Notes |
 | --- | --- | --- | --- |
@@ -78,17 +78,16 @@ A table of what grades each iteration, ordered by the stage of the user value ch
 
 ## Time and retry limits
 
-Empty fields show the platform default and read "inheriting the platform default". A value above the platform ceiling is refused at save, naming the field and the bound. Your organization may set a lower ceiling, which the server enforces the same way. Send `null` for `settings.executionBudgets` to reset every limit to the platform defaults.
+An empty field shows the platform default and reads "inheriting the platform default". A value above the platform ceiling, or above a lower ceiling your organization sets, is refused at save, naming the field and the bound. Send `null` for `settings.executionBudgets` to reset every limit to the platform defaults. API values are in milliseconds, except retries.
 
 | On screen | API field | Default | Notes |
 | --- | --- | --- | --- |
 | Per-turn timeout | `settings.executionBudgets.turnTimeoutMs` | 6 minutes | One assistant turn, including the tool steps it drives. 10 seconds to 30 minutes. |
-| Per-tool-call timeout | `settings.executionBudgets.toolCallTimeoutMs` | 30 seconds | One MCP request. 1 second to 10 minutes. A host-pinned per-server override wins over it. Saved with the suite, but runs do not apply it yet. |
+| Per-tool-call timeout | `settings.executionBudgets.toolCallTimeoutMs` | 30 seconds | One MCP request. 1 second to 10 minutes. Saved with the suite, but runs do not apply it yet. |
 | Per-iteration timeout | `settings.executionBudgets.iterationTimeoutMs` | 10 minutes | One iteration. An iteration that runs out of time fails alone; the rest keep going. 30 seconds to 2 hours. |
 | Whole-run timeout | `settings.executionBudgets.runTimeoutMs` | 30 minutes | A backstop for the whole run. 1 minute to 12 hours. |
 | Model call retries | `settings.executionBudgets.turnRetries` | 2 | Retries of one model call. Never applied to a live stream. 0 to 5. |
 
-API values are in milliseconds, except retries.
 
 <CardGroup cols={3}>
   <Card title="Configure grading" icon="sliders-horizontal" href="/evaluate/configure-grading">

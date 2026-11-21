@@ -4,15 +4,17 @@ description: "Every assertion you can add to a case, what makes it pass, where i
 icon: "list-checks"
 ---
 
-An assertion is a deterministic rule over one iteration's transcript: the same transcript always gets the same result. Add one from **Add assertion or action** in the case editor, or from **Add an assertion on the whole run**. The picker groups them under the stage of the user value chain their result is reported at, and the tables below follow that grouping.
+An assertion is a deterministic rule over one iteration's transcript: the same transcript always gets the same result. In the case editor, add one with **Add assertion or action**. The picker groups assertions by the stage of the user value chain they report at, and the tables below follow that grouping.
 
-The Scope column says where an assertion can be graded:
+The Scope column follows the hint under each picker entry:
 
-- Turn or whole run: added after a step, it grades only the transcript up to that point; added on the whole run, it grades the finished transcript once.
-- Whole run: graded once, over the finished transcript.
-- At a step (live view): graded against the rendered view at that point in the run. It cannot be re-graded from a stored trace.
+| Scope | Graded |
+| --- | --- |
+| After this action | Over the transcript up to the action it follows. As a suite default assertion, over the finished transcript. |
+| After the run | Once, over the finished transcript. The case editor lists these under "After run checks". |
+| Live view | Against the rendered view at that point in the run. The picker shows "Check the live view at this point". It cannot be re-graded from a stored trace. |
 
-The Suite file column is the assertion's name in a suite file (`type:` on an assertion, `kind:` for a live-view check).
+The Suite file column is the assertion's name in a suite file: `type:` on an assertion, `kind:` for a live-view check.
 
 {/* Screenshot: The "Add actions or assertions" drawer open on a case, showing the Actions section and the Assertions · Selection section */}
 
@@ -20,74 +22,74 @@ The Suite file column is the assertion's name in a suite file (`type:` on an ass
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| Tool descriptions meet the minimum length | Every tool's description is at least the minimum length (20 characters unless set). | Whole run | `toolDescriptionsPresent` |
-| Every tool declares annotations | Every tool declares annotations, including any hints you list as required. | Whole run | `toolAnnotationsPresent` |
-| Tool names are unique within each server | No server exposes two tools with the same name. | Whole run | `toolNamesUnique` |
-| No tool description marks itself deprecated | No tool's own description says it is deprecated. Advisory only. | Whole run | `noDeprecatedToolExposed` |
-| Input schemas have an object root and documented parameters | Every input schema has an object root and documents its parameters. | Whole run | `toolInputSchemasWellFormed` |
-| Every tool declares an output schema | Every tool declares an output schema. | Whole run | `toolOutputSchemasPresent` |
+| Tool descriptions meet the minimum length | Every tool's description is at least the minimum length (20 characters unless set). | After the run | `toolDescriptionsPresent` |
+| Every tool declares annotations | Every tool declares annotations, including any hints you list as required. | After the run | `toolAnnotationsPresent` |
+| Tool names are unique within each server | No server exposes two tools with the same name. | After the run | `toolNamesUnique` |
+| No tool description marks itself deprecated | No tool's own description says it is deprecated. Advisory only. | After the run | `noDeprecatedToolExposed` |
+| Input schemas have an object root and documented parameters | Every input schema has an object root and documents its parameters. | After the run | `toolInputSchemasWellFormed` |
+| Every tool declares an output schema | Every tool declares an output schema. | After the run | `toolOutputSchemasPresent` |
 
 ## Selection
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| No tools should be called | The model called no tool. Marks the case negative. | Whole run | — |
-| Tools must be called in this exact order | The model called the expected tools in strict order with no extra calls. | Whole run | — |
-| Tool was called with… | The named tool was called with arguments that match, under the assertion's argument matching mode. | Turn or whole run | `toolCalledWith` |
-| Tool was called at least once | The named tool was called at least once. Arguments are not checked. | Turn or whole run | `toolCalledAtLeastOnce` |
-| Tool was never called | The named tool was not called. | Turn or whole run | `toolNeverCalled` |
-| Only these tools may be called | No tool outside the list was called. It does not require the listed tools to be called. An empty list means no tool at all. | Turn or whole run | `onlyToolsCalled` |
-| First tool called was… | The first tool call was the named tool. | Turn or whole run | `firstToolWas` |
-| Fewer than N tool calls | Strictly fewer than N calls were made (to one tool, if named). | Turn or whole run | `toolCallCountUnder` |
-| Tool called before another tool | Every call to the second tool came after a call to the first. Passes if the second tool never ran. | Turn or whole run | `toolCalledBefore` |
-| No tool marked deprecated was called | No called tool's own description marks it deprecated. Advisory only. | Whole run | `noDeprecatedToolCalled` |
-| No tool marked destructive was called | No called tool declares `destructiveHint: true`. Errors, rather than passes, when no tool declares annotations. | Whole run | `noDestructiveToolCalled` |
+| No tools should be called | The model called no tool. Marks the case negative. | After the run | — |
+| Tools must be called in this exact order | The model called the expected tools in strict order with no extra calls. | After the run | — |
+| Tool was called with… | The named tool was called with arguments that match, under the assertion's argument matching mode. | After this action | `toolCalledWith` |
+| Tool was called at least once | The named tool was called at least once. Arguments are not checked. | After this action | `toolCalledAtLeastOnce` |
+| Tool was never called | The named tool was not called. | After this action | `toolNeverCalled` |
+| Only these tools may be called | No tool outside the list was called. It does not require the listed tools to be called. An empty list means no tool at all. | After this action | `onlyToolsCalled` |
+| First tool called was… | The first tool call was the named tool. | After this action | `firstToolWas` |
+| Fewer than N tool calls | Strictly fewer than N calls were made (to one tool, if named). | After this action | `toolCallCountUnder` |
+| Tool called before another tool | Every call to the second tool came after a call to the first. Passes if the second tool never ran. | After this action | `toolCalledBefore` |
+| No tool marked deprecated was called | No called tool's own description marks it deprecated. Advisory only. | After the run | `noDeprecatedToolCalled` |
+| No tool marked destructive was called | No called tool declares `destructiveHint: true`. Errors, rather than passes, when no tool declares annotations. | After the run | `noDestructiveToolCalled` |
 
 ## Tool call
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| Arguments match the tool's schema | Every call's arguments validate against the tool's declared input schema. | Whole run | `argumentsMatchToolSchema` |
-| No identical call repeated back-to-back | No call repeats the call immediately before it with equal arguments. Advisory only. | Turn or whole run | `noRepeatedIdenticalCall` |
-| Tool input matches regex | Between the minimum (default 1) and maximum number of calls to the tool have input matching every pattern. All patterns must match within one call. | Turn or whole run | `toolInputMatches` |
+| Arguments match the tool's schema | Every call's arguments validate against the tool's declared input schema. | After the run | `argumentsMatchToolSchema` |
+| No identical call repeated back-to-back | No call repeats the call immediately before it with equal arguments. Advisory only. | After this action | `noRepeatedIdenticalCall` |
+| Tool input matches regex | Between the minimum (default 1) and maximum number of calls to the tool have input matching every pattern. All patterns must match within one call. | After this action | `toolInputMatches` |
 
 ## Response
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| No tool errors | No tool call returned an MCP error or a transport failure. After a step it reads **No tool errors so far**. | Turn or whole run | `noToolErrors` |
-| Tool call under N ms | Every call (to one tool, if named) finished in strictly under N ms. | Whole run | `toolLatencyUnder` |
-| Tool result contains… | A tool result contains the text. Case-insensitive unless set. | Whole run | `toolResultContains` |
-| Tool output matches regex | Between the minimum (default 1) and maximum number of tool results match every pattern. | Whole run | `toolResultMatches` |
-| Tool result matches schema… | Every tool result validates against the JSON Schema you provide. | Whole run | `toolResultMatchesSchema` |
-| Tool result under N bytes | Every tool result is strictly under N bytes, as the server returned it. | Whole run | `toolResultSizeUnder` |
-| Tool errors name an input | Every tool error message names one of the tool's inputs or a value the call sent. Advisory only. | Whole run | `toolErrorNamesInput` |
-| Full pages include a next-page link | A page whose length equals its requested limit carries continuation metadata. Advisory only. | Whole run | `fullPageHasContinuation` |
+| No tool errors | No tool call returned an MCP error or a transport failure. After a step it reads **No tool errors so far**. | After this action | `noToolErrors` |
+| Tool call under N ms | Every call (to one tool, if named) finished in strictly under N ms. | After the run | `toolLatencyUnder` |
+| Tool result contains… | A tool result contains the text. Case-insensitive unless set. | After the run | `toolResultContains` |
+| Tool output matches regex | Between the minimum (default 1) and maximum number of tool results match every pattern. | After the run | `toolResultMatches` |
+| Tool result matches schema… | Every tool result validates against the JSON Schema you provide. | After the run | `toolResultMatchesSchema` |
+| Tool result under N bytes | Every tool result is strictly under N bytes, as the server returned it. | After the run | `toolResultSizeUnder` |
+| Tool errors name an input | Every tool error message names one of the tool's inputs or a value the call sent. Advisory only. | After the run | `toolErrorNamesInput` |
+| Full pages include a next-page link | A page whose length equals its requested limit carries continuation metadata. Advisory only. | After the run | `fullPageHasContinuation` |
 
 ## User value
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| Response contains… | The final assistant message contains the text. Case-insensitive unless set. | Turn or whole run | `responseContains` |
-| Response close to… | The final assistant message is within the maximum edit distance of a reference text. | Turn or whole run | `responseCloseTo` |
-| Response matches regex… | The final assistant message matches the regular expression. | Turn or whole run | `responseMatches` |
-| Final message non-empty | The model produced a final assistant message that is not blank. | Turn or whole run | `finalAssistantMessageNonEmpty` |
-| Final message does not end with a question | The last line of the final message does not end with `?`. Advisory only. | Turn or whole run | `noEndingQuestion` |
-| Text visible | The text is visible in the rendered view. | At a step (live view) | `kind: textVisible` |
-| Element visible | The element is visible in the rendered view. | At a step (live view) | `kind: elementVisible` |
-| Element hidden | The element is hidden in the rendered view. | At a step (live view) | `kind: elementHidden` |
-| Input value equals | The input's value equals the text you set. | At a step (live view) | `kind: inputValue` |
-| View called a tool | The rendered view called the named tool. | At a step (live view) | `kind: widgetToolCalled` |
+| Response contains… | The final assistant message contains the text. Case-insensitive unless set. | After this action | `responseContains` |
+| Response close to… | The final assistant message is within the maximum edit distance of a reference text. | After this action | `responseCloseTo` |
+| Response matches regex… | The final assistant message matches the regular expression. | After this action | `responseMatches` |
+| Final message non-empty | The model produced a final assistant message that is not blank. | After this action | `finalAssistantMessageNonEmpty` |
+| Final message does not end with a question | The last line of the final message does not end with `?`. Advisory only. | After this action | `noEndingQuestion` |
+| Text visible | The text is visible in the rendered view. | Live view | `kind: textVisible` |
+| Element visible | The element is visible in the rendered view. | Live view | `kind: elementVisible` |
+| Element hidden | The element is hidden in the rendered view. | Live view | `kind: elementHidden` |
+| Input value equals | The input's value equals the text you set. | Live view | `kind: inputValue` |
+| View called a tool | The rendered view called the named tool. | Live view | `kind: widgetToolCalled` |
 
 ## Budgets
 
 | Assertion | Passes when | Scope | Suite file |
 | --- | --- | --- | --- |
-| Token budget under N | Input plus output tokens for the whole iteration total strictly less than N. | Whole run | `tokenBudgetUnder` |
-| Fewer than N user turns | The iteration used strictly fewer than N user turns. | Whole run | `turnCountUnder` |
+| Token budget under N | Input plus output tokens for the whole iteration total strictly less than N. | After the run | `tokenBudgetUnder` |
+| Fewer than N user turns | The iteration used strictly fewer than N user turns. | After the run | `turnCountUnder` |
 
 <Note>
-  Token budget under N is not a spend control. Token counts are not comparable across models, and a fixed ceiling goes stale whenever a prompt or model changes. To see what a suite costs, read the cost on each run in [Read results](/evaluate/read-results). To fail CI when a change makes a suite more expensive than its baseline, use `--max-cost-increase-percent` with `mcpjam cloud eval compare` ([CI](/cli/ci)).
+  Token budget under N is not a spend control: token counts are not comparable across models, and a fixed ceiling goes stale when a prompt or model changes. Each run shows its cost ([Read results](/evaluate/read-results)). To fail CI when a suite costs more than its baseline, use `--max-cost-increase-percent` with `mcpjam cloud eval compare` ([CI](/cli/ci)).
 </Note>
 
 ## Argument matching
@@ -128,7 +130,7 @@ The case editor's route question, **Which tool should handle it?**, is an assert
 
 ## Suite defaults and case assertions
 
-A suite can carry default assertions that apply to every case. A case relates to them in one of three modes:
+A suite can carry default assertions that apply to every case, and assertions you add to a case in the app extend them. The three modes below are set over the API, in the case's `checks` field as `{ mode, list }`, or in the SDK as the case evaluator override ([Running evals](/sdk/concepts/running-evals)). The app has no control for them.
 
 | Mode | The case is graded by |
 | --- | --- |
@@ -136,7 +138,7 @@ A suite can carry default assertions that apply to every case. A case relates to
 | `extend` | The suite's defaults, then the case's own list. |
 | `replace` | The case's own list only. An empty list turns the suite's defaults off for that case. |
 
-Assertions you add to a case in the app extend the suite's. A case set to replace shows "Suite evaluators replaced for this case", with **Apply suite evaluators too** to switch it back. Over the API the mode is part of the case's `checks` field, `{ mode, list }`. In the SDK it is the case evaluator override; see [Running evals](/sdk/concepts/running-evals).
+On a case set to `replace`, the scorecard reads "Suite evaluators replaced for this case — N are not applied".
 
 ## Required and Advisory
 
@@ -145,7 +147,7 @@ Assertions you add to a case in the app extend the suite's. A case set to replac
 | **Required** (default) | Fails the iteration. | `role: required` |
 | **Advisory** | Is shown on the result and never fails the iteration. | `role: advisory` |
 
-The six assertions marked "Advisory only" above are heuristics, so they cannot be Required: the picker labels them **Advisory only** and a save that marks one Required is refused. The route check is always Required. When available, an assertion's editor shows a Required / Advisory control.
+The six assertions marked "Advisory only" above are heuristics and cannot be Required: the picker labels them **Advisory only**, and a save that marks one Required is refused. The route check is always Required. When available, an assertion's editor shows a Required / Advisory control.
 
 <CardGroup cols={3}>
   <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
