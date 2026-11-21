@@ -104,6 +104,38 @@ describe("mcpjam_internal boundary", () => {
     expect(decision.captured).toBe(true);
   });
 
+  it("does not promote a request its caller aborted", () => {
+    // A closed tab or a cancelled run reaches every reporting path as an
+    // `AbortError` that classifies `internal/unknown` (INSPECTOR-ELECTRON-107).
+    const controller = new AbortController();
+    controller.abort();
+    for (const boundary of [
+      "mcpjam_internal",
+      "mcpjam_request_construction",
+    ] as const) {
+      const decision = maybeCaptureOriginError(
+        controller.signal.reason,
+        normalizedFor("internal/unknown"),
+        { source: "mcp.chat-v2.request", boundary },
+      );
+      expect(decision, boundary).toMatchObject({
+        origin: "ambiguous",
+        captured: false,
+      });
+    }
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
+  it("still promotes a timeout, which can be our own deadline", () => {
+    const decision = maybeCaptureOriginError(
+      new DOMException("The operation timed out.", "TimeoutError"),
+      normalizedFor("internal/unknown"),
+      { source: "mcp.chat-v2.request", boundary: "mcpjam_internal" },
+    );
+
+    expect(decision.captured).toBe(true);
+  });
+
   it("does NOT overrule positive evidence about a user-owned failure", () => {
     // A boundary declaration says "the hop was ours". It must not turn an
     // ECONNREFUSED against the user's own MCP server into a page.

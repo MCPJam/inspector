@@ -106,6 +106,24 @@ const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
 ]);
 
 /**
+ * An `AbortError`: usually the caller leaving (a closed tab, a cancelled run,
+ * a stream the client stopped reading). It classifies `internal/unknown`, and
+ * a promoting boundary would page it as an MCPJam fault, so it is never
+ * promoted. An internal deadline should abort with a reason or use
+ * `AbortSignal.timeout` (a `TimeoutError`, still promoted); one built on a bare
+ * `controller.abort()` is indistinguishable from the caller leaving.
+ */
+function isCallerAbort(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  try {
+    return (error as { name?: unknown }).name === "AbortError";
+  } catch {
+    // A Proxy whose `get` trap throws; treat it as not an abort.
+    return false;
+  }
+}
+
+/**
  * A SURFACE's own capture rule, layered over the origin policy above.
  *
  * The origin policy answers "whose fault is this" so that a user's dead MCP
@@ -167,7 +185,8 @@ export function maybeCaptureOriginError(
   const origin =
     declared === "ambiguous" &&
     options.boundary !== undefined &&
-    PROMOTING_BOUNDARIES.has(options.boundary)
+    PROMOTING_BOUNDARIES.has(options.boundary) &&
+    !isCallerAbort(raw)
       ? "mcpjam"
       : declared;
 
