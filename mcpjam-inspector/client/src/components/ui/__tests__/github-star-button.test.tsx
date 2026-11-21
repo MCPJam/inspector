@@ -12,7 +12,7 @@ describe("GitHubStarButton", () => {
     );
     render(
       <TooltipProvider delayDuration={0}>
-        <GitHubStarButton />
+        <GitHubStarButton location="header" />
       </TooltipProvider>,
     );
     await userEvent.hover(
@@ -31,7 +31,7 @@ describe("GitHubStarButton", () => {
     );
     render(
       <TooltipProvider delayDuration={0}>
-        <GitHubStarButton />
+        <GitHubStarButton location="header" />
       </TooltipProvider>,
     );
     expect(screen.getByText("Star")).toHaveClass("hidden", "sm:inline");
