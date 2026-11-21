@@ -8,7 +8,7 @@ An eval run sends real prompts to a real model, and the model calls tools on you
 
 ## Servers and their auth
 
-A run connects the servers in the server group of each client it runs (see [Run a suite](/evaluate/run-a-suite#what-a-run-needs)). For each HTTP server it uses the auth saved on that server:
+A run connects each client's server group (see [Run a suite](/evaluate/run-a-suite#what-a-run-needs)) and uses the auth saved on each HTTP server:
 
 | Server auth | What the run sends |
 |---|---|
@@ -18,22 +18,20 @@ A run connects the servers in the server group of each client it runs (see [Run 
 
 Header overrides set on a client are not applied to eval runs. Hosted runs can't start STDIO servers; run those on your machine with [`mcpjam test`](/cli/local-evals), which reads `command`, `args` and `env` from your MCP config.
 
-Before a run starts, the **Set up run** sheet names any server that isn't connected and tries to connect it when you click **Start run**. A server that is no longer in the project stops the run from starting.
-
 <Warning>
   Evals call your real server. A case that asks the model to delete a record can delete it, and an iteration count of 5 asks five times. Point suites at a staging server, or give the server read-only credentials, before you add cases that change data.
 </Warning>
 
 ## Model access
 
-Each iteration calls the model you picked for it, paid for in one of two ways:
+Each iteration calls the model you picked, paid for in one of two ways:
 
 | Model | Who pays for the tokens | Cost on the results page |
 |---|---|---|
 | A model MCPJam provides | Your organization's MCPJam credits. | The MCPJam-billed cost. |
 | A model from your own provider key (BYOK) | Your provider, on your account. | A dash: MCPJam billed nothing, so there is no cost to show. |
 
-When your organization runs out of MCPJam credits, runs whose models all use credits can't start; switch at least one to a model from your own provider. On Enterprise plans an admin can make AI features run only on the organization's own providers, and then the model list offers only those.
+When your organization runs out of MCPJam credits, a run whose models all use credits can't start; switch at least one to a model from your own provider. On Enterprise plans an admin can make AI features run only on the organization's own providers, and then the model list offers only those.
 
 Every iteration also counts against your organization's eval iteration allowance, whichever model it uses.
 
