@@ -1,0 +1,41 @@
+name: Surface Baseline
+
+# The surface-coverage baseline lists screens allowed to have no test, and it
+# only shrinks: this fails when a pull request adds an entry its base did not
+# have (mcpjam-inspector/scripts/check-surface-test-coverage.mjs --base-ref).
+# A reviewer who accepts an untested screen labels the PR
+# `surface-baseline-growth`. `labeled` / `unlabeled` re-run it when that label
+# changes the verdict.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: surface-baseline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    name: Surface baseline only shrinks
+    # Blacksmith, not GitHub's shared 60-job pool; this job holds no secret or
+    # write token. TEST_RUNNER=ubuntu-latest moves it back during an outage.
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-2vcpu-ubuntu-2404' }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The PR's merge commit and its first parent, the base.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24.22.1"
+
+      - name: Compare the baseline with the base revision's
+        env:
+          SURFACE_BASELINE_GROWTH_REVIEWED: ${{ contains(github.event.pull_request.labels.*.name, 'surface-baseline-growth') && '1' || '' }}
+        run: node mcpjam-inspector/scripts/check-surface-test-coverage.mjs --check --base-ref HEAD^1
