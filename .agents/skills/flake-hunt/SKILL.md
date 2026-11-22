@@ -37,10 +37,19 @@ entry links example job logs.
 
 Take the highest count that is a real test or unhandled error. Before you
 start, check that nobody is already on it: `gh pr list --search "<file name>"`
-and read the diff of any open PR that touches it. Read two or three of the
+and read the diff of any open PR that touches it. Check the test still exists:
+`git log -S"<test name>" --oneline` shows the commit that removed it if a
+recent change deleted it, and the window can still count its old failures.
+Read two or three of the
 example logs: the same assertion failing each time points at one race;
 different assertions point at shared state or an unhandled error from another
 test in the same worker.
+
+A "failed to load" or "does not provide an export named" error can come from
+another test file in the same shard. Look at which files finish next to the
+failing one in the CI log, and at child processes that write shared generated
+files: `writeFileSync` empties a file before writing it, so a reader can load an
+empty module.
 
 ## 3. Reproduce it
 
@@ -62,6 +71,14 @@ Read each exit code directly, never through a pipe.
 If it never fails alone, add the load CI has: run it beside its shard
 (`-- --shard=N/6`, with N from the job name), or run two or three copies of
 the loop at once, or both. Record the failure rate before you change code.
+
+When the race is on a file, a tight read loop beside the suspected writer
+measures the window directly (count empty or partial reads per thousand) and is
+much cheaper than looping the test.
+
+On a shared machine, parallel loops sometimes stall together and every loop
+times out in the same iteration. Count those separately from real failures, and
+run a control batch on the old code before you attribute them to a change.
 
 A failure you cannot reproduce is not fixed by a guess. Write down what you
 tried and stop.
@@ -85,4 +102,4 @@ PR that it was app code. Otherwise report it with the evidence.
 Run the same loop, under the same load, with at least as many iterations as
 it took to reproduce the failure, and more than 30 for a rare one. Report the
 loop count and failure count before and after. Then run the checks in
-`verify-before-pr`.
+`preflight-ci`.
