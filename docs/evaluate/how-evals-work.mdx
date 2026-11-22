@@ -4,19 +4,14 @@ description: "The objects an eval is made of, what happens during a run, and how
 icon: "workflow"
 ---
 
-An eval run sends each case's prompt to each model you picked, records what the model and your server did, and grades the recording.
-
-<Frame caption="MCPJam sits between your server and the model, records every exchange as the trace, then grades the trace.">
-  <img className="block dark:hidden" src="/images/evaluate/run-flow-light.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
-  <img className="hidden dark:block" src="/images/evaluate/run-flow-dark.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
-</Frame>
+An eval run plays each case's prompt inside a client environment: a client, its harness, a model and your servers, set up the way a real host would set them up. It records what the model and your servers did, then grades the recording. The [overview](/evaluate/overview#what-is-an-eval-for-an-mcp-server) shows that path end to end.
 
 ## The objects
 
 | Object | What it is |
 |---|---|
 | Project | Holds your servers, clients and suites. See [Projects](/inspector/projects). |
-| Client | A saved MCP client configuration a run emulates. See [Clients](/inspector/clients). |
+| Client | A saved MCP client configuration that stands in for a host such as Claude Desktop or ChatGPT. See [Clients](/inspector/clients). |
 | Suite | A set of cases plus the settings they share: servers, clients and models, evaluators, and the pass criterion. |
 | Case | A user prompt, or several turns, plus the evaluators that decide whether the expected outcome happened. |
 | Run | One execution of a suite against the clients and models chosen when it started. |
@@ -114,6 +109,36 @@ await suite.run(agent, { iterations: 3 });     // iterations per case
 await manager.disconnectServer("notes");
 ```
 </CodeGroup>
+
+## Where a case runs: the client environment
+
+Your server is never tested on its own. Each iteration runs inside one client environment, which gives the model what a real host would:
+
+<Frame caption="One client environment: the client's settings shape what the harness sends; the harness loops between the model and your servers.">
+  <img className="block dark:hidden" src="/images/evaluate/client-environment-light.svg" alt="Inside a dashed client environment: a client card with model, system prompt, protocol versions, capabilities, tool visibility and MCP App sandbox; a harness that sends the prompt and tools to the model and runs tool calls; a model; and a server group with two servers" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/client-environment-dark.svg" alt="Inside a dashed client environment: a client card with model, system prompt, protocol versions, capabilities, tool visibility and MCP App sandbox; a harness that sends the prompt and tools to the model and runs tool calls; a model; and a server group with two servers" width="760" />
+</Frame>
+
+- **Client**
+  - The saved configuration of a host: its default model, system prompt and temperature.
+  - What it tells your server when it connects: protocol versions, `clientInfo` and client capabilities such as elicitation.
+  - What reaches the model: whether app-only tools are hidden, and whether tools load progressively.
+  - How MCP Apps render: host capabilities, sandbox and CSP.
+  - See [Clients](/inspector/clients) for every setting.
+- **Harness**
+  - The agent loop that runs the conversation: MCPJam's own.
+  - It sends the prompt, the client's system prompt and the discovered tools to the model, runs each tool call the model asks for on the right server, and returns the result.
+  - It loops until the model gives its final reply or the suite's timeout ends it.
+- **Model**
+  - The model for this pair. It can differ from the client's default, so one client can run several models.
+- **Servers**
+  - The client's server group: one or more MCP servers, connected with the auth saved on each.
+  - Tools from every server in the group go to the model together, so a case can test servers side by side.
+  - Header overrides set on a client are not applied to eval runs, and hosted runs can't start STDIO servers. See [What a run can access](/evaluate/what-a-run-can-access).
+
+**Where it runs**, in the suite settings and the run sheet, picks the client and model pairs. Each pair is its own client environment, and every case runs in each one.
+
+The environment is why the same server can pass in one pair and fail in another. Two clients can show the model different tool lists, advertise different capabilities, or wrap your tools in different system prompts. Comparing pairs shows which of those your server depends on.
 
 ## What happens in a run
 

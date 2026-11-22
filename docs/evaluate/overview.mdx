@@ -19,10 +19,15 @@ Evals test what a user gets end to end. To call tools by hand, use the [Playgrou
 
 Your server never meets a user directly. A user types into a client; the client's harness hands the prompt and your tools to a model; the model decides what to call; your server answers; the model writes the reply. An eval runs that whole path and asks one question: given this prompt, did the user get what they asked for?
 
+<Frame caption="MCPJam plays the client and its harness: it sends your prompt to the model, relays tool calls to your server, records every exchange as the trace, then grades it.">
+  <img className="block dark:hidden" src="/images/evaluate/run-flow-light.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+  <img className="hidden dark:block" src="/images/evaluate/run-flow-dark.svg" alt="You start a run; MCPJam connects to your server, sends the prompt to the model, relays tool calls, saves the trace and grades it" width="760" />
+</Frame>
+
 - **Case**: one user prompt, or a short conversation, plus the outcome you expect.
   - Example: given "What does note 7 say?", the reply contains note 7's text.
 - **Client**: the MCP client configuration the run emulates, such as a desktop chat app or an IDE agent.
-- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results.
+- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results. See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
 - **Model**: any model you pick, from MCPJam or your own provider.
 - **Suite**: a group of cases, run on each client and model pair you choose, several times each.
 
