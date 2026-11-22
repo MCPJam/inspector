@@ -170,83 +170,25 @@ function tail(path, lines = 30) {
     .join("\n");
 }
 
-/**
- * True when `origin` is the server this launch started: session auth turns
- * a request away without a token and lets it through with the token this
- * launch chose, which no other server knows. A 200 from `/health` alone
- * would also come from another checkout's instance on the same ports.
- */
-async function answersToToken(origin, token) {
-  const url = `${origin}/api/driver-launch-check`;
-  const status = (headers) =>
-    fetch(url, { headers, signal: AbortSignal.timeout(2_000) }).then(
-      (response) => response.status,
-      // Not listening yet, or still compiling: the caller polls again.
-      () => null,
-    );
-  return (
-    (await status({})) === 401 &&
-    ![401, null].includes(
-      await status({ "X-MCP-Session-Auth": `Bearer ${token}` }),
-    )
-  );
-}
-
-/** The ports a launch listens on: the worker's pair only when it runs one. */
-function listenedPorts(ports, worker) {
-  return worker ? ports : { client: ports.client, server: ports.server };
-}
-
-/**
- * One `start` at a time per checkout, so two starts cannot both pick the
- * same free instance and overwrite each other's record. A lock left by a
- * `start` that died is taken over.
- */
-function lockStart(inspectorDir, startTimeOf) {
-  const path = statePath(inspectorDir).replace(/\.json$/, ".lock");
-  const holder = { pid: process.pid, processStart: startTimeOf(process.pid) };
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      writeFileSync(path, JSON.stringify(holder), { flag: "wx", mode: 0o600 });
-      return () => rmSync(path, { force: true });
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    const other = JSON.parse(readFileSync(path, "utf8"));
-    if (isOurProcess(other, startTimeOf)) {
-      throw new Error(
-        `Another \`start\` (pid ${other.pid}) is already starting this checkout's instance.`,
-      );
-    }
-    rmSync(path, { force: true });
+async function responds(url) {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(2_000) });
+    return response.ok;
+  } catch {
+    // Not listening yet, or still compiling: the caller polls again.
+    return false;
   }
-  throw new Error(`Could not take the start lock at ${path}.`);
 }
 
 export async function startInstance({
-  inspectorDir,
-  log = (line) => process.stdout.write(`${line}\n`),
-  startTimeOf = processStartTime,
-  ...options
-}) {
-  ensureDriverHome();
-  const release = lockStart(inspectorDir, startTimeOf);
-  try {
-    return await launch({ inspectorDir, log, startTimeOf, ...options });
-  } finally {
-    release();
-  }
-}
-
-async function launch({
   inspectorDir,
   instance,
   worker = false,
   prepare = true,
   envFile,
   timeoutSeconds = 300,
-  log,
-  startTimeOf,
+  log = (line) => process.stdout.write(`${line}\n`),
+  startTimeOf = processStartTime,
 }) {
   const existing = readState(inspectorDir);
   if (existing) {
@@ -260,14 +202,6 @@ async function launch({
   const launcherArgs = { portOverrides: {}, worker };
   const chosen = instance ?? (await pickFreeInstance(launcherArgs));
   const ports = computeInstancePorts(chosen);
-  if (instance !== undefined) {
-    const conflicts = await findPortConflicts(listenedPorts(ports, worker));
-    if (conflicts.length > 0) {
-      throw new Error(
-        `Instance ${chosen} has ${conflicts.map((c) => `${c.role} :${c.port}`).join(", ")} in use. Pick another --instance, or leave it out to use the first free one.`,
-      );
-    }
-  }
   const token = randomBytes(24).toString("base64url");
   const npmCli = resolveNpmCli();
   if (!npmCli && process.platform === "win32") {
@@ -275,6 +209,7 @@ async function launch({
       "Could not find npm-cli.js next to this Node; run the driver through `npm run driver`.",
     );
   }
+  ensureDriverHome();
   const logPath = join(DRIVER_HOME, `instance-${chosen}.log`);
   // The dev server prints its access link, so the log is as private as the state.
   const logFd = openSync(logPath, "w", 0o600);
@@ -305,96 +240,84 @@ async function launch({
     },
   );
   closeSync(logFd);
-  if (!child.pid) {
-    throw new Error(`Could not start the launcher. Log tail:\n${tail(logPath)}`);
-  }
   child.unref();
+  let processStart;
   try {
-    const processStart = startTimeOf(child.pid);
-    if (!processStart) {
-      throw new Error(
-        `Could not read when pid ${child.pid} started, so \`stop\` could not tell it from a later process with the same pid.`,
-      );
-    }
-    const state = {
-      pid: child.pid,
-      processStart,
-      instance: chosen,
-      ports,
-      worker,
-      baseUrl: `http://localhost:${ports.client}`,
-      token,
-      logPath,
-      startedAt: new Date().toISOString(),
-    };
-    writeFileSync(statePath(inspectorDir), JSON.stringify(state, null, 2), {
-      mode: 0o600,
-    });
-    log(
-      `starting instance ${chosen}: client :${ports.client} server :${ports.server} (pid ${child.pid}, log ${logPath})`,
-    );
-
-    const startedMs = Date.now();
-    const deadline = startedMs + timeoutSeconds * 1_000;
-    while (Date.now() < deadline) {
-      if (!isAlive(child.pid)) {
-        throw new Error(
-          `The launcher exited before it was ready. Log tail:\n${tail(logPath)}`,
-        );
-      }
-      const ready =
-        (await answersToToken(`http://localhost:${ports.server}`, token)) &&
-        (await answersToToken(state.baseUrl, token));
-      if (ready) {
-        log(
-          `ready ${state.baseUrl} after ${Math.round((Date.now() - startedMs) / 1_000)}s`,
-        );
-        return state;
-      }
-      await sleep(1_000);
-    }
-    throw new Error(
-      `Not ready after ${timeoutSeconds}s. A server that crashes under ` +
-        "`tsx watch` waits for a file change instead of exiting, so a missing build " +
-        "output (try without --skip-prepare) looks like a slow start. " +
-        `Full log: ${logPath}\nLog tail:\n${tail(logPath)}`,
-    );
+    processStart = startTimeOf(child.pid);
   } catch (error) {
-    if (!killTree(child.pid)) {
-      error.message += `\nCould not stop pid ${child.pid}; stop it by hand.`;
-      throw error;
-    }
-    rmSync(statePath(inspectorDir), { force: true });
-    error.message += `\nStopped pid ${child.pid}.`;
+    killTree(child.pid);
     throw error;
   }
+  if (!processStart) {
+    killTree(child.pid);
+    throw new Error(
+      `Could not read when pid ${child.pid} started, so \`stop\` could not tell it from a later process with the same pid; stopped it.`,
+    );
+  }
+  const state = {
+    pid: child.pid,
+    processStart,
+    instance: chosen,
+    ports,
+    baseUrl: `http://localhost:${ports.client}`,
+    token,
+    logPath,
+    startedAt: new Date().toISOString(),
+  };
+  writeFileSync(statePath(inspectorDir), JSON.stringify(state, null, 2), {
+    mode: 0o600,
+  });
+  log(
+    `starting instance ${chosen}: client :${ports.client} server :${ports.server} (pid ${child.pid}, log ${logPath})`,
+  );
+
+  const startedMs = Date.now();
+  const deadline = startedMs + timeoutSeconds * 1_000;
+  while (Date.now() < deadline) {
+    if (!isAlive(child.pid)) {
+      rmSync(statePath(inspectorDir), { force: true });
+      throw new Error(
+        `The launcher exited before it was ready. Log tail:\n${tail(logPath)}`,
+      );
+    }
+    const ready =
+      (await responds(`http://localhost:${ports.server}/health`)) &&
+      (await responds(state.baseUrl));
+    if (ready) {
+      log(
+        `ready ${state.baseUrl} after ${Math.round((Date.now() - startedMs) / 1_000)}s`,
+      );
+      return state;
+    }
+    await sleep(1_000);
+  }
+  await stopInstance({ inspectorDir, log, startTimeOf });
+  throw new Error(
+    `Not ready after ${timeoutSeconds}s; stopped it. A server that crashes under ` +
+      "`tsx watch` waits for a file change instead of exiting, so a missing build " +
+      "output (try without --skip-prepare) looks like a slow start. " +
+      `Full log: ${logPath}\nLog tail:\n${tail(logPath)}`,
+  );
 }
 
-/** False when the OS refused to stop `pid`; true once it is signalled or gone. */
 function killTree(pid) {
   if (process.platform === "win32") {
-    const result = spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
+    spawnSync("taskkill", ["/pid", String(pid), "/T", "/F"], {
       stdio: "ignore",
-      windowsHide: true,
     });
-    // 128: no such process, so it already exited.
-    return result.status === 0 || result.status === 128;
+    return;
   }
   try {
     process.kill(-pid, "SIGTERM");
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
   }
-  return true;
 }
-
-const STOP_TIMEOUT_MS = 20_000;
 
 export async function stopInstance({
   inspectorDir,
   log = (line) => process.stdout.write(`${line}\n`),
   startTimeOf = processStartTime,
-  timeoutMs = STOP_TIMEOUT_MS,
 }) {
   const state = readState(inspectorDir);
   if (!state) {
@@ -405,27 +328,17 @@ export async function stopInstance({
     forgetStale(inspectorDir, state, log);
     return;
   }
-  const deadline = Date.now() + timeoutMs;
-  const killed = killTree(state.pid);
-  while (isOurProcess(state, startTimeOf) && Date.now() < deadline) {
-    await sleep(500);
-  }
-  // The record is the only managed way to try again, so it stays until the
-  // launcher is gone.
-  if (isOurProcess(state, startTimeOf)) {
-    throw new Error(
-      `pid ${state.pid} is still running${killed ? "" : " (the OS refused to stop it)"}; kept the record, so \`stop\` can try again.`,
-    );
-  }
-  rmSync(statePath(inspectorDir), { force: true });
+  killTree(state.pid);
   // Only the ports this launch listens on; the worker pair may belong to
-  // another instance when this one ran without the worker.
-  const owned = listenedPorts(state.ports, state.worker);
+  // another instance when this one ran with --no-worker.
+  const owned = { client: state.ports.client, server: state.ports.server };
+  const deadline = Date.now() + 20_000;
   let conflicts = await findPortConflicts(owned);
   while (conflicts.length > 0 && Date.now() < deadline) {
     await sleep(500);
     conflicts = await findPortConflicts(owned);
   }
+  rmSync(statePath(inspectorDir), { force: true });
   if (conflicts.length > 0) {
     throw new Error(
       `Stopped pid ${state.pid}, but ${conflicts.map((c) => `${c.role} :${c.port}`).join(", ")} still in use. ` +
