@@ -128,16 +128,14 @@ If your server already speaks `2026-07-28`, you mostly won't notice. A few thing
 - If your server is missing a capability the inspector needs for a request, you'll get `-32003 MissingRequiredClientCapability` back from your server. Surface those in the Activity log to confirm they reach you.
 - The **Activity** log (server card → **Activity**) is the source of truth: every request and response, success or error, lands there so you can verify headers and `_meta` content.
 
-### Not yet supported in the RC client
+### Limits of the RC client
 
-The 2026 RC client is a **preview**. A handful of pieces from the SEP family aren't wired up yet: if you try them, the inspector throws a labeled error instead of silently no-op'ing:
+The 2026 RC client is a **preview**. Two things work differently from the legacy client:
 
-- `subscriptions/listen` (long-lived notification stream)
-- Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported; see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
-- Resumption tokens
-- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
+- **Sampling and roots.** The client never advertises either capability, so it rejects a `sampling/createMessage` or `roots/list` request that a server embeds in an `InputRequiredResult`. Elicitation via `input_required` is supported; see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required).
+- **Automatic detection.** Over HTTP and stdio, automatic detection falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
-For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications), the RC client behaves like the legacy one.
+For everything else (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, resource subscriptions over `subscriptions/listen`, OAuth refresh, custom headers, progress notifications), the RC client behaves like the legacy one.
 
 ## Recommended testing flow
 
