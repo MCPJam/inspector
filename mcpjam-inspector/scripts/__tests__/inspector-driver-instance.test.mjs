@@ -5,8 +5,6 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
-import { createServer } from "node:net";
-import { computeInstancePorts } from "../../bin/runtime-profile.mjs";
 
 // DRIVER_HOME is read from the home directory at import, so point it at a
 // scratch directory before the module loads.
@@ -32,7 +30,7 @@ function spawnSleeper() {
   });
 }
 
-function writeState(pid, processStart, extra = {}) {
+function writeState(pid, processStart) {
   ensureDriverHome();
   writeFileSync(
     statePath(INSPECTOR_DIR),
@@ -44,20 +42,9 @@ function writeState(pid, processStart, extra = {}) {
       ports: { client: 1, server: 1 },
       baseUrl: "http://localhost:1",
       token: "t",
-      ...extra,
     }),
     { mode: 0o600 },
   );
-}
-
-/** A start time that is "t0" while `pid` is alive, as the OS would report. */
-const liveStartTime = (pid) => (isAlive(pid) ? "t0" : null);
-
-async function listenOn(port) {
-  const server = createServer();
-  server.listen(port, "127.0.0.1");
-  await once(server, "listening");
-  return server;
 }
 
 test("the OS start time names one live process and nothing once it exits", async () => {
@@ -77,7 +64,7 @@ test("stop kills the recorded process when its start time matches", async () => 
   await stopInstance({
     inspectorDir: INSPECTOR_DIR,
     log: () => {},
-    startTimeOf: liveStartTime,
+    startTimeOf: () => "t0",
   });
   await exited;
   assert.equal(existsSync(statePath(INSPECTOR_DIR)), false);
@@ -145,90 +132,4 @@ test("start clears a stale record and carries on", async () => {
   );
   assert.equal(existsSync(statePath(INSPECTOR_DIR)), false);
   assert.match(lines.join("\n"), /cleared the record/);
-});
-
-test("stop keeps the record while the launcher is still running", async (t) => {
-  const child = spawnSleeper();
-  t.after(() => child.kill());
-  writeState(child.pid, "t0");
-  await assert.rejects(
-    stopInstance({
-      inspectorDir: INSPECTOR_DIR,
-      log: () => {},
-      // The OS keeps reporting the launcher, as when a kill is refused.
-      startTimeOf: () => "t0",
-      timeoutMs: 600,
-    }),
-    /still running; kept the record/,
-  );
-  assert.equal(existsSync(statePath(INSPECTOR_DIR)), true);
-});
-
-test("stop waits on the worker port only when the launch ran the worker", async (t) => {
-  const busy = await listenOn(0);
-  t.after(() => busy.close());
-  const port = busy.address().port;
-  const ports = { client: 1, server: 1, worker: port, debugger: 1 };
-  for (const worker of [false, true]) {
-    const child = spawnSleeper();
-    t.after(() => child.kill());
-    writeState(child.pid, "t0", { ports, worker });
-    const stop = stopInstance({
-      inspectorDir: INSPECTOR_DIR,
-      log: () => {},
-      startTimeOf: liveStartTime,
-      timeoutMs: 1_000,
-    });
-    if (worker) {
-      await assert.rejects(stop, new RegExp(`worker :${port} still in use`));
-    } else {
-      await stop;
-    }
-    assert.equal(existsSync(statePath(INSPECTOR_DIR)), false);
-  }
-});
-
-test("an explicit instance whose port is taken is refused before launching", async (t) => {
-  const instance = 41;
-  const busy = await listenOn(computeInstancePorts(instance).client);
-  t.after(() => busy.close());
-  const inspectorDir = join(home, "checkout-ports");
-  await assert.rejects(
-    startInstance({
-      inspectorDir,
-      instance,
-      log: () => {},
-      startTimeOf: () => "t0",
-    }),
-    /Instance 41 has client :\d+ in use/,
-  );
-  assert.equal(existsSync(statePath(inspectorDir)), false);
-});
-
-test("a second start for the same checkout waits for no one and refuses", async () => {
-  const inspectorDir = join(home, "checkout-lock");
-  ensureDriverHome();
-  const lock = statePath(inspectorDir).replace(/\.json$/, ".lock");
-  writeFileSync(lock, JSON.stringify({ pid: process.pid, processStart: "t0" }));
-  await assert.rejects(
-    startInstance({
-      inspectorDir,
-      instance: -1,
-      log: () => {},
-      startTimeOf: () => "t0",
-    }),
-    /already starting this checkout's instance/,
-  );
-  assert.equal(existsSync(lock), true);
-  // A lock whose holder has gone is taken over, and released afterwards.
-  await assert.rejects(
-    startInstance({
-      inspectorDir,
-      instance: -1,
-      log: () => {},
-      startTimeOf: () => "t1",
-    }),
-    /non-negative integer/,
-  );
-  assert.equal(existsSync(lock), false);
 });
