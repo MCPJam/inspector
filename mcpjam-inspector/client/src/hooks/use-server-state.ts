@@ -3723,8 +3723,6 @@ export function useServerState({
       );
       if (access === "wait") return;
       if (access !== "allow") {
-        // A delayed result must not discard a newer authorization attempt.
-        if (issuedState && issuedState !== state) return;
         oauthCallbackHandledRef.current.add(attempt);
         recoverProjectOAuth(hostedOAuthCallbackContext, access, state);
         return;
