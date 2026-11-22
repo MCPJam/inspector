@@ -70,6 +70,11 @@ import {
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
 import {
+  ABANDONED_SIGN_IN_MESSAGE,
+  rememberAbandonedSignIn,
+  takeAbandonedSignIn,
+} from "@/lib/oauth/abandoned-sign-ins";
+import {
   buildOAuthRequest,
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
@@ -3663,6 +3668,15 @@ export function useServerState({
       ? localStorage.getItem(`mcp-oauth-issued-state-${pendingServer}`)
       : null;
     if (oauthCallbackHandledRef.current.has(attempt)) return;
+    if ((code || error) && takeAbandonedSignIn(state)) {
+      oauthCallbackHandledRef.current.add(attempt);
+      consumeOAuthCallbackParams(callbackAttempt);
+      navigateApp(restorePathAfterOAuthCallback(window.location.pathname, ""), {
+        replace: true,
+      });
+      toast.error(ABANDONED_SIGN_IN_MESSAGE);
+      return;
+    }
     if (isHostedProjectCallback && (code || error)) {
       const access = checkProjectOAuthAccess(
         hostedOAuthCallbackContext,
@@ -5498,6 +5512,7 @@ export function useServerState({
         serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       clearAutoOAuthEscalation(serverName);
+      rememberAbandonedSignIn(serverName);
       clearPendingOAuthAttempt(serverName);
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();

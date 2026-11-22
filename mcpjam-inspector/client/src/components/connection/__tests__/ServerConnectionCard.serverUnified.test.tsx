@@ -87,6 +87,7 @@ describe("ServerConnectionCard detail modal trigger", () => {
 
   const defaultProps = {
     onDisconnect: vi.fn(),
+    onCancelSignIn: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
     onRemove: vi.fn(),
     onOpenDetailModal: vi.fn(),

@@ -116,6 +116,7 @@ describe("ServerConnectionCard", () => {
 
   const defaultProps = {
     onDisconnect: vi.fn(),
+    onCancelSignIn: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
     onRemove: vi.fn(),
   };
@@ -536,6 +537,65 @@ describe("ServerConnectionCard", () => {
       });
       expect(toggle).not.toBeDisabled();
     });
+
+    it("reads on while signing in, and turning it off cancels the sign-in", () => {
+      const server = createServer({ connectionStatus: "oauth-flow" });
+      const onCancelSignIn = vi.fn();
+      const onDisconnect = vi.fn();
+      const onReconnect = vi.fn().mockResolvedValue(undefined);
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onCancelSignIn={onCancelSignIn}
+          onDisconnect={onDisconnect}
+          onReconnect={onReconnect}
+        />
+      );
+
+      const toggle = screen.getByRole("switch");
+      expect(toggle).toBeChecked();
+      fireEvent.click(toggle);
+
+      expect(onCancelSignIn).toHaveBeenCalledWith("test-server");
+      expect(onDisconnect).not.toHaveBeenCalled();
+      expect(onReconnect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("cancel sign-in", () => {
+    it("offers Cancel while signing in and cancels this server's sign-in", () => {
+      const onCancelSignIn = vi.fn();
+      render(
+        <ServerConnectionCard
+          server={createServer({ connectionStatus: "oauth-flow" })}
+          {...defaultProps}
+          onCancelSignIn={onCancelSignIn}
+        />
+      );
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Cancel sign-in for test-server" })
+      );
+
+      expect(onCancelSignIn).toHaveBeenCalledWith("test-server");
+    });
+
+    it.each(["connected", "connecting", "disconnected", "failed"] as const)(
+      "offers no Cancel when %s",
+      (connectionStatus) => {
+        render(
+          <ServerConnectionCard
+            server={createServer({ connectionStatus })}
+            {...defaultProps}
+          />
+        );
+
+        expect(
+          screen.queryByRole("button", { name: /Cancel sign-in/ })
+        ).not.toBeInTheDocument();
+      }
+    );
   });
 
   describe("actions menu reconnect", () => {

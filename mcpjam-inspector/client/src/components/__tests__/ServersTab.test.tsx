@@ -560,6 +560,7 @@ describe("ServersTab shared detail modal", () => {
     projectServers,
     onConnect: vi.fn(),
     onDisconnect: vi.fn(),
+    onCancelSignIn: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
     onUpdate: vi.fn().mockResolvedValue({
       ok: true,
@@ -1861,6 +1862,7 @@ describe("ServersTab installed plugins", () => {
     projectServers,
     onConnect: vi.fn(),
     onDisconnect: vi.fn(),
+    onCancelSignIn: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
     onUpdate: vi.fn(),
     onRemove: vi.fn(),
@@ -2035,6 +2037,7 @@ describe("ServersTab server canvas route", () => {
     projectServers,
     onConnect: vi.fn(),
     onDisconnect: vi.fn(),
+    onCancelSignIn: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
     onUpdate: vi.fn(),
     onRemove: vi.fn(),

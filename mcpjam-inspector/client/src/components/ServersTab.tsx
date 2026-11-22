@@ -447,6 +447,7 @@ function SortableServerCard({
   dndDisabled,
   server,
   onDisconnect,
+  onCancelSignIn,
   onReconnect,
   onRemove,
   hostedServerId,
@@ -461,6 +462,7 @@ function SortableServerCard({
   dndDisabled: boolean;
   server: ServerWithName;
   onDisconnect: (name: string) => void;
+  onCancelSignIn: (name: string) => void;
   onReconnect: (
     name: string,
     opts?: {
@@ -507,6 +509,7 @@ function SortableServerCard({
     <ServerConnectionCard
       server={server}
       onDisconnect={onDisconnect}
+      onCancelSignIn={onCancelSignIn}
       onReconnect={onReconnect}
       onRemove={onRemove}
       hostedServerId={hostedServerId}
@@ -556,6 +559,7 @@ interface ServersTabProps {
     options?: { onConfigSaved?: () => void }
   ) => void | Promise<void>;
   onDisconnect: (serverName: string) => void;
+  onCancelSignIn: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: {
@@ -601,6 +605,7 @@ export function ServersTab({
   pendingDashboardOAuth,
   onConnect,
   onDisconnect,
+  onCancelSignIn,
   onReconnect,
   onUpdate,
   onRemove,
@@ -2058,6 +2063,7 @@ export function ServersTab({
                         clearPendingQuickConnectIfMatches(serverName);
                         onDisconnect(serverName);
                       }}
+                      onCancelSignIn={onCancelSignIn}
                       onReconnect={handleReconnectServer}
                       onRemove={(serverName) => {
                         clearPendingQuickConnectIfMatches(serverName);
@@ -2099,6 +2105,7 @@ export function ServersTab({
                       clearPendingQuickConnectIfMatches(serverName);
                       onDisconnect(serverName);
                     }}
+                    onCancelSignIn={onCancelSignIn}
                     onReconnect={handleReconnectServer}
                     onRemove={(serverName) => {
                       clearPendingQuickConnectIfMatches(serverName);

@@ -1930,6 +1930,88 @@ describe("useServerState OAuth callback failures", () => {
     expect(localStorage.getItem("mcp-hosted-oauth-pending")).toBeNull();
   });
 
+  describe("a sign-in the user cancelled", () => {
+    function startSignIn(state: string) {
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      localStorage.setItem("mcp-oauth-issued-state-demo-server", state);
+      localStorage.setItem("mcp-verifier-demo-server", `verifier-${state}`);
+      localStorage.setItem("mcp-oauth-flow-state-demo-server", "{}");
+    }
+
+    function deliverCallback(state: string, rerender: () => void) {
+      act(() => {
+        window.history.replaceState(
+          {},
+          "",
+          `/oauth/callback?code=late-code&state=${state}`
+        );
+        captureOAuthCallbackFromUrl();
+        rerender();
+      });
+    }
+
+    it("clears this attempt's key, verifier and flow session", () => {
+      startSignIn("cancelled-state");
+      const { result } = renderUseServerState(vi.fn());
+
+      act(() => result.current.handleRuntimeDisconnect("demo-server"));
+
+      expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+      expect(localStorage.getItem("mcp-verifier-demo-server")).toBeNull();
+      expect(
+        localStorage.getItem("mcp-oauth-issued-state-demo-server")
+      ).toBeNull();
+      expect(localStorage.getItem("mcp-oauth-flow-state-demo-server")).toBeNull();
+    });
+
+    it("answers its late callback with a plain message and changes nothing", async () => {
+      resetOAuthCallbackInboxForTests();
+      startSignIn("cancelled-state");
+      const dispatch = vi.fn();
+      const { result, rerender } = renderUseServerState(dispatch);
+      act(() => result.current.handleRuntimeDisconnect("demo-server"));
+      dispatch.mockClear();
+
+      deliverCallback("cancelled-state", rerender);
+
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          errorToastMessage(
+            "This sign-in was canceled or timed out. Reconnect the server to sign in again."
+          ),
+          { duration: 8000 }
+        )
+      );
+      expect(toastError).toHaveBeenCalledTimes(1);
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(window.location.pathname).toBe("/servers");
+    });
+
+    it("leaves the newer sign-in alone when the cancelled one's tab finishes", async () => {
+      resetOAuthCallbackInboxForTests();
+      startSignIn("cancelled-state");
+      const dispatch = vi.fn();
+      const { result, rerender } = renderUseServerState(dispatch);
+      act(() => result.current.handleRuntimeDisconnect("demo-server"));
+      startSignIn("newer-state");
+      dispatch.mockClear();
+
+      deliverCallback("cancelled-state", rerender);
+
+      await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcp-oauth-pending")).toBe("demo-server");
+      expect(localStorage.getItem("mcp-oauth-issued-state-demo-server")).toBe(
+        "newer-state"
+      );
+      expect(localStorage.getItem("mcp-oauth-flow-state-demo-server")).toBe(
+        "{}"
+      );
+    });
+  });
+
   it("clears the Auto escalation marker under the identity the hook writes", () => {
     sessionStorage.setItem(
       "mcp-auto-oauth-escalated",

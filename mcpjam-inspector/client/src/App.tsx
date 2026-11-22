@@ -205,7 +205,10 @@ import { DarkDefaultNudge } from "./components/DarkDefaultNudge";
 import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
-import { ServerActionsProvider } from "./state/server-actions-context";
+import {
+  ServerActionsProvider,
+  useServerActions,
+} from "./state/server-actions-context";
 import { usePreviewedHostId } from "./hooks/use-previewed-client-id";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
 import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
@@ -930,12 +933,14 @@ function ServersTabBody({
     suspendRouteAutoConnect,
     handleNavigate,
   } = useAppRouteContext();
+  const { runtimeDisconnectServer } = useServerActions();
 
   return (
     <ServersTab
       projectServers={projectServers}
       onConnect={handleConnect}
       onDisconnect={handleDisconnect}
+      onCancelSignIn={runtimeDisconnectServer}
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}
