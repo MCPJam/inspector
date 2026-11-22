@@ -23,14 +23,19 @@ import {
 
 const MODERN = "2026-07-28" as const;
 const ID: MCPCheckId = "modern-tool-output-schema-conformant";
+/** Reads the first listed resource, so it needs a named `resources/read`. */
+const READ_ID: MCPCheckId = "modern-cache-hint-coverage";
 const closers: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   await Promise.all(closers.splice(0).map((close) => close()));
 });
 
-/** A server whose one tool is called `toolName`. `received` logs each Mcp-Name. */
-async function serveNamedTool(toolName: string, received: string[]) {
+/**
+ * A server whose one tool and one resource are both called `name`. `received`
+ * logs each Mcp-Name.
+ */
+async function serveNamed(name: string, received: string[]) {
   const server = http.createServer((req, res) => {
     void (async () => {
       const parsed = await readJsonRpcBody(req, res);
@@ -52,7 +57,7 @@ async function serveNamedTool(toolName: string, received: string[]) {
           },
         });
 
-      const named = parsed.params?.name;
+      const named = parsed.params?.name ?? parsed.params?.uri;
       if (typeof named === "string") {
         const header = req.headers["mcp-name"];
         const value = Array.isArray(header) ? header[0] : header;
@@ -65,13 +70,13 @@ async function serveNamedTool(toolName: string, received: string[]) {
         case "server/discover":
           return ok({
             supportedVersions: [MODERN],
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, resources: {} },
           });
         case "tools/list":
           return ok({
             tools: [
               {
-                name: toolName,
+                name,
                 inputSchema: { type: "object", properties: {} },
                 outputSchema: {
                   type: "object",
@@ -86,6 +91,12 @@ async function serveNamedTool(toolName: string, received: string[]) {
             content: [{ type: "text", text: "hi" }],
             structuredContent: { greeting: "hi" },
           });
+        case "resources/list":
+          return ok({ resources: [{ uri: name, name: "greeting" }] });
+        case "resources/templates/list":
+          return ok({ resourceTemplates: [] });
+        case "resources/read":
+          return ok({ contents: [{ uri: named, text: "hi" }] });
         default:
           return send(404, {
             jsonrpc: "2.0",
@@ -113,7 +124,7 @@ describe.each(NAMES_THAT_NEED_ENCODING)(
   (_why, name) => {
     it("is called with an encoded Mcp-Name, and its check runs", async () => {
       const received: string[] = [];
-      const serverUrl = await serveNamedTool(name, received);
+      const serverUrl = await serveNamed(name, received);
 
       const result = await new MCPConformanceTest({
         serverUrl,
@@ -139,7 +150,7 @@ describe.each(NAMES_THAT_NEED_ENCODING)(
 describe("a tool with a plain ASCII name", () => {
   it("is called with the name as it is", async () => {
     const received: string[] = [];
-    const serverUrl = await serveNamedTool("hello-world", received);
+    const serverUrl = await serveNamed("hello-world", received);
 
     const result = await new MCPConformanceTest({
       serverUrl,
@@ -153,5 +164,51 @@ describe("a tool with a plain ASCII name", () => {
       "passed"
     );
     expect(received).toEqual(["hello-world"]);
+  });
+});
+
+describe.each(NAMES_THAT_NEED_ENCODING)(
+  "a resource whose uri %s",
+  (_why, uri) => {
+    it("is read with an encoded Mcp-Name, and its check runs", async () => {
+      const received: string[] = [];
+      const serverUrl = await serveNamed(uri, received);
+
+      const result = await new MCPConformanceTest({
+        serverUrl,
+        protocolVersion: MODERN,
+        checkTimeout: 5_000,
+        checkIds: [READ_ID],
+      }).run();
+
+      const check = result.checks.find((entry) => entry.id === READ_ID);
+      expect([check?.status, check?.error?.message]).toEqual([
+        "passed",
+        undefined,
+      ]);
+      // The server saw exactly one named read, and its header named the uri.
+      expect(received).toHaveLength(1);
+      expect(received[0]).toMatch(/^=\?base64\?/);
+      expect(mcpNameProblem(received[0], uri)).toBeUndefined();
+    });
+  }
+);
+
+describe("a resource with a plain ASCII uri", () => {
+  it("is read with the uri as it is", async () => {
+    const received: string[] = [];
+    const serverUrl = await serveNamed("hello://greeting", received);
+
+    const result = await new MCPConformanceTest({
+      serverUrl,
+      protocolVersion: MODERN,
+      checkTimeout: 5_000,
+      checkIds: [READ_ID],
+    }).run();
+
+    expect(result.checks.find((entry) => entry.id === READ_ID)?.status).toBe(
+      "passed"
+    );
+    expect(received).toEqual(["hello://greeting"]);
   });
 });
