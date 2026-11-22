@@ -159,11 +159,12 @@ export class TaskGroupRunner extends TaskOperations {
                   probe.reason ?? "no probe tool resolved",
                   needsSetupDetails(
                     "tasksProbe",
-                    this.config.toolName
-                      ? `This server doesn't list the tool ${JSON.stringify(
-                          this.config.toolName
-                        )}, so there was no task to check. Select a listed tool in setup, then run again.`
-                      : undefined
+                    probe.setupMessage ??
+                      (this.config.toolName
+                        ? `This server doesn't list the tool ${JSON.stringify(
+                            this.config.toolName
+                          )}, so there was no task to check. Select a listed tool in setup, then run again.`
+                        : undefined)
                   )
                 )
               : notApplicable(id, probe.reason ?? "no probe tool resolved");
