@@ -973,17 +973,17 @@
     }
   },
   "shared/plugin-icons.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 1
     }
   },
   "shared/plugin-model-context.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 1
     }
   },
   "shared/plugin-resource-link.ts": {
-    "no-restricted-imports": {
+    "layers/no-cross-layer-imports": {
       "count": 1
     }
   }

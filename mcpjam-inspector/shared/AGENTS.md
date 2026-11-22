@@ -11,7 +11,8 @@ Allowed: other `shared/` modules (relative or `@/shared/*`), `@mcpjam/sdk` or
 its subpaths by package name, and packages that run in both browser and Node.
 
 - No relative import of `server/`, `client/` or `sdk/src/`. Enforced by
-  `no-restricted-imports` in `eslint.config.js`: `npm run lint -w @mcpjam/inspector`.
+  `layers/no-cross-layer-imports` in `eslint.config.js`:
+  `npm run lint -w @mcpjam/inspector`.
   Tests are exempt, and so is `vitest.config.ts`, which only Node loads.
 - No Node built-ins, as `node:fs` or bare `fs`. Same lint rule.
 - No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Same lint rule. The
