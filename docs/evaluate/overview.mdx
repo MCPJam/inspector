@@ -72,14 +72,14 @@ Pick the surface by where you want the suite to live.
     mcpjam cloud login
     ```
 
-    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. See [Local evals](/cli/local-evals).
+    `mcpjam test <file>` runs a suite file in your repository, such as `.mcpjam/evals/example.yaml`, on your machine. Results stay on your machine. A local run checks assertions only; the judge that grades a case's expected outcome runs hosted. See [Local evals](/cli/local-evals).
 
     ```bash Local run
     export ANTHROPIC_API_KEY=sk-ant-...
     mcpjam test .mcpjam/evals/example.yaml
     ```
 
-    `mcpjam cloud eval run` runs a suite in your MCPJam project. `--file` uploads a suite file and runs it; its servers must be saved in the project. See [Evals in CI](/cli/ci#evals-in-ci).
+    `mcpjam cloud eval run` runs a suite in your MCPJam project, judge included. `--file` uploads a suite file and runs it; its servers must be saved in the project. See [Evals in CI](/cli/ci#evals-in-ci).
 
     ```bash Hosted run
     # A suite saved in your project
@@ -97,7 +97,7 @@ Pick the surface by where you want the suite to live.
     ```
 
     ```ts evals/notes.mts
-    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
 
     const manager = new MCPClientManager({
       notes: { command: "node", args: ["./notes-server.js"] },
@@ -114,8 +114,22 @@ Pick the surface by where you want the suite to live.
     const suite = new EvalSuite({ name: "Notes server" });
     suite.add(new EvalTest({
       id: "c_reads_a_note",
-      name: "reads the note it was asked about",
-      test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+      name: "tells the user what note 7 says",
+      execute: async (a) => {
+        await a.run("What does note 7 say?");
+      },
+      evaluators: {
+        mode: "extend",
+        list: [
+          judge({
+            id: "answers-with-the-note",
+            model: "anthropic/claude-sonnet-5",
+            apiKey: process.env.ANTHROPIC_API_KEY!,
+            rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+            role: "required",
+          }),
+        ],
+      },
     }));
 
     await suite.run(agent, { iterations: 3 });

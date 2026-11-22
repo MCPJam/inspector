@@ -81,18 +81,18 @@ Edits are drafts until you click **Save settings**; **Discard** drops them. A sa
     test("notes suite meets its bar", async () => {
       const suite = new EvalSuite({
         name: "Notes server",
-        // Tool-call matching for every test that sets expectedToolCalls
+        // Tool-call matching, for tests that pin a route with expectedToolCalls
         matchOptions: { argumentMatching: "partial", toolCallOrder: "ignore", maxExtraToolCalls: null },
         defaults: {
           evaluators: [
-            // Scored 0 to 1; passes at or above threshold; advisory unless role is "required"
+            // Scored 0 to 1; passes at or above threshold; "required" lets a miss fail the iteration
             judge({
-              id: "answers-from-the-note",
+              id: "answers-with-the-note",
               model: "anthropic/claude-sonnet-5",
               apiKey: process.env.ANTHROPIC_API_KEY!,
-              rubric: ["The answer quotes the text that read_note returned."],
+              rubric: ["The reply tells the user what the note says, using the note's actual text."],
               threshold: 0.7,
-              role: "advisory",
+              role: "required",
             }),
           ],
         },
@@ -102,9 +102,11 @@ Edits are drafts until you click **Save settings**; **Discard** drops them. A sa
 
       suite.add(new EvalTest({
         id: "c_reads_a_note",
-        name: "reads the note it was asked about",
-        expectedToolCalls: [{ toolName: "read_note", arguments: { id: 7 } }],
-        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+        name: "tells the user what note 7 says",
+        // No verdict here: the suite's judge grades the outcome
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
       }));
 
       const result = await suite.run(agent, { iterations: 5 });

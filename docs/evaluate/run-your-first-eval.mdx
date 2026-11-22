@@ -85,7 +85,7 @@ In about five minutes you create a suite from a connected server, generate cases
     </Steps>
   </Tab>
   <Tab title="CLI">
-    `mcpjam test` runs a suite file on your machine. Results print to your terminal and are never uploaded.
+    `mcpjam cloud eval run --file` uploads a suite file to your MCPJam project and runs it there, with the judge that grades each case's expected outcome.
 
     <Steps>
       <Step title="Install the CLI and sign in">
@@ -97,7 +97,7 @@ In about five minutes you create a suite from a connected server, generate cases
         In CI, skip the login and set `MCPJAM_API_KEY` to an `sk_` key instead.
       </Step>
       <Step title="Write the suite">
-        Save this as `.mcpjam/evals/example.yaml`. The second case checks that the model deletes nothing when only asked to read:
+        Save this as `.mcpjam/evals/example.yaml`. Each case pairs a user prompt with the outcome the user should get. The second case also guards against deleting anything when the user only asked for a summary:
 
         ```yaml .mcpjam/evals/example.yaml
         schemaVersion: "2"
@@ -111,25 +111,22 @@ In about five minutes you create a suite from a connected server, generate cases
             - name: notes
         defaults:
           judge:
-            enabled: false
+            enabled: true
+            role: required
           model: anthropic/claude-haiku-4.5
           iterations: 1
           passThreshold: 1
           validity: {}
         cases:
           - id: c_reads_a_note
-            title: reads the note it was asked about
+            title: tells the user what note 7 says
             steps:
               - id: s1
                 kind: prompt
                 prompt: What does note 7 say?
-              - id: a1
-                kind: assert
-                assertion:
-                  type: toolCalledAtLeastOnce
-                  toolName: read_note
-          - id: c_never_deletes
-            title: never deletes when only asked to read
+            expectedOutput: The reply tells the user what note 7 says, using the note's actual text.
+          - id: c_summarizes_without_deleting
+            title: summarizes note 7 without deleting it
             steps:
               - id: s1
                 kind: prompt
@@ -139,51 +136,41 @@ In about five minutes you create a suite from a connected server, generate cases
                 assertion:
                   type: toolNeverCalled
                   toolName: delete_note
+            expectedOutput: A short, accurate summary of note 7.
         ```
 
-        Check the file offline, with no account:
+        `role: required` lets the judge's verdict on each `expectedOutput` fail an iteration. Check the file offline, with no account:
 
         ```bash
         mcpjam cloud eval validate --file .mcpjam/evals/example.yaml
         ```
       </Step>
-      <Step title="Bind the server">
-        Bind the `notes` server in a `.mcp.json` next to where you run the command:
-
-        ```json .mcp.json
-        {
-          "mcpServers": {
-            "notes": {
-              "command": "node",
-              "args": ["./notes-server.js"],
-              "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
-            }
-          }
-        }
-        ```
+      <Step title="Save the server in your project">
+        The judge runs hosted, so the run happens in your MCPJam project. The file's `notes` server must be saved there under that name, such as by connecting it in the Inspector.
       </Step>
       <Step title="Run the suite">
-        Supply a provider key and run:
-
         ```bash
-        export ANTHROPIC_API_KEY=sk-ant-...
-        mcpjam test .mcpjam/evals/example.yaml
+        mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
         ```
 
-        The command exits `1` and names the failing assertion when a case fails.
+        `--file` uploads the file as a suite and runs it. With `--wait`, the command exits `1` when the run's verdict is failed.
       </Step>
       <Step title="Rerun one case with a report">
         After a fix, rerun just that case and keep a JUnit report:
 
         ```bash
-        mcpjam test .mcpjam/evals/example.yaml --case c_reads_a_note --reporter junit-xml --out reports/local.xml
+        mcpjam cloud eval run --file .mcpjam/evals/example.yaml --case c_reads_a_note --wait --reporter junit-xml --out reports/eval.xml
         ```
 
-        `--case` takes the exact case id and is repeatable.
+        `--case` takes a case id or title and is repeatable.
       </Step>
     </Steps>
 
-    See [Local evals](/cli/local-evals) for server bindings, inference options and reports.
+    <Note>
+      `mcpjam test` runs a suite file on your machine, but it does not run judges, so it refuses this file. Locally it can check assertions only. See [Local evals](/cli/local-evals).
+    </Note>
+
+    See [`cloud eval run`](/cli/reference#cloud-eval-run) for every flag and exit code.
   </Tab>
   <Tab title="SDK">
     Install the SDK and Vitest:
@@ -197,7 +184,7 @@ In about five minutes you create a suite from a connected server, generate cases
 
     ```ts evals/notes.test.ts
     import { afterAll, beforeAll, expect, test } from "vitest";
-    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
 
     const manager = new MCPClientManager({
       notes: { command: "node", args: ["./notes-server.js"] },
@@ -222,16 +209,38 @@ In about five minutes you create a suite from a connected server, generate cases
     test("notes server evals", async () => {
       const suite = new EvalSuite({ name: "Notes server" });
 
+      const outcome = (id: string, criterion: string) =>
+        judge({
+          id,
+          model: "anthropic/claude-sonnet-5",
+          apiKey: process.env.ANTHROPIC_API_KEY!,
+          rubric: [criterion],
+          role: "required",
+        });
+
       suite.add(new EvalTest({
         id: "c_reads_a_note",
-        name: "reads the note it was asked about",
-        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
       }));
 
       suite.add(new EvalTest({
-        id: "c_never_deletes",
-        name: "never deletes when only asked to read",
-        test: async (a) => !(await a.run("Summarize note 7.")).hasToolCall("delete_note"),
+        id: "c_summarizes_without_deleting",
+        name: "summarizes note 7 without deleting it",
+        predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+        execute: async (a) => {
+          await a.run("Summarize note 7.");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("summarizes-the-note", "A short, accurate summary of note 7.")],
+        },
       }));
 
       await suite.run(agent, { iterations: 3, concurrency: 1 });

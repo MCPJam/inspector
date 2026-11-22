@@ -38,7 +38,7 @@ A run page reads top to bottom: how each client and model did, what broke, which
 
     ```ts evals/notes-results.test.ts
     import { afterAll, beforeAll, test } from "vitest";
-    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
 
     const manager = new MCPClientManager({
       notes: { command: "node", args: ["./notes-server.js"] },
@@ -63,8 +63,22 @@ A run page reads top to bottom: how each client and model did, what broke, which
       const suite = new EvalSuite({ name: "Notes server" });
       suite.add(new EvalTest({
         id: "c_reads_a_note",
-        name: "reads the note it was asked about",
-        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [
+            judge({
+              id: "answers-with-the-note",
+              model: "anthropic/claude-sonnet-5",
+              apiKey: process.env.ANTHROPIC_API_KEY!,
+              rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+              role: "required",
+            }),
+          ],
+        },
       }));
 
       const result = await suite.run(agent, { iterations: 3 });

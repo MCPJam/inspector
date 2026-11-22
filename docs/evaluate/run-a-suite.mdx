@@ -63,17 +63,19 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
 
     See [`cloud eval run`](/cli/reference#cloud-eval-run) for target selection and exit codes.
 
-    `mcpjam test` runs a suite file on your machine, not a suite saved in the app. It binds each server name to a local MCP config such as `./.mcp.json`. See [Local evals](/cli/local-evals).
+    `--file` runs a suite file from your repository instead. It uploads the file as a suite in your project and runs it there, judge included; the file's servers must be saved in the project.
 
-    ```bash Local run
-    export ANTHROPIC_API_KEY=sk-ant-...
-    mcpjam test .mcpjam/evals/notes.yaml \
-      --concurrency 2 \
+    ```bash Suite file run
+    mcpjam cloud eval run \
+      --file .mcpjam/evals/notes.yaml \
+      --wait \
       --reporter junit-xml \
       --out reports/notes.xml
     ```
 
-    <Accordion title="Example suite file and server config">
+    `mcpjam test` runs a suite file on your machine, but without the judge, so it can check assertions only and refuses a file whose judge is Required. See [Local evals](/cli/local-evals).
+
+    <Accordion title="Example suite file">
       ```yaml .mcpjam/evals/notes.yaml
       schemaVersion: "2"
       mode: agentWorkflow
@@ -86,25 +88,22 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
           - name: notes
       defaults:
         judge:
-          enabled: false
+          enabled: true
+          role: required
         model: anthropic/claude-haiku-4.5
         iterations: 1
         passThreshold: 1
         validity: {}
       cases:
         - id: c_reads_a_note
-          title: reads the note it was asked about
+          title: tells the user what note 7 says
           steps:
             - id: s1
               kind: prompt
               prompt: What does note 7 say?
-            - id: a1
-              kind: assert
-              assertion:
-                type: toolCalledAtLeastOnce
-                toolName: read_note
-        - id: c_never_deletes
-          title: never deletes when only asked to read
+          expectedOutput: The reply tells the user what note 7 says, using the note's actual text.
+        - id: c_summarizes_without_deleting
+          title: summarizes note 7 without deleting it
           steps:
             - id: s1
               kind: prompt
@@ -114,18 +113,7 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
               assertion:
                 type: toolNeverCalled
                 toolName: delete_note
-      ```
-
-      ```json .mcp.json
-      {
-        "mcpServers": {
-          "notes": {
-            "command": "node",
-            "args": ["./notes-server.js"],
-            "env": { "NOTES_DB": "${NOTES_DB:-./notes.db}" }
-          }
-        }
-      }
+          expectedOutput: A short, accurate summary of note 7.
       ```
     </Accordion>
   </Tab>
@@ -139,7 +127,7 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
 
     ```ts evals/notes.test.ts
     import { afterAll, beforeAll, expect, test } from "vitest";
-    import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+    import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
 
     const manager = new MCPClientManager({
       notes: { command: "node", args: ["./notes-server.js"] },
@@ -160,17 +148,40 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
       await manager.disconnectAllServers();
     });
 
+    // Grades the finished run against what the user should get
+    const outcome = (id: string, criterion: string) =>
+      judge({
+        id,
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+        rubric: [criterion],
+        role: "required",
+      });
+
     test("notes suite", async () => {
       const suite = new EvalSuite({ name: "Notes server" });
       suite.add(new EvalTest({
         id: "c_reads_a_note",
-        name: "reads the note it was asked about",
-        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
       }));
       suite.add(new EvalTest({
-        id: "c_never_deletes",
-        name: "never deletes when only asked to read",
-        test: async (a) => !(await a.run("Summarize note 7.")).hasToolCall("delete_note"),
+        id: "c_summarizes_without_deleting",
+        name: "summarizes note 7 without deleting it",
+        predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+        execute: async (a) => {
+          await a.run("Summarize note 7.");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("summarizes-the-note", "A short, accurate summary of note 7.")],
+        },
       }));
 
       const result = await suite.run(agent, {
@@ -209,27 +220,33 @@ A suite saved without clients, such as one created by the SDK, shows a **Servers
     ```bash Hosted case
     mcpjam cloud eval cases run \
       --suite "My eval suite" \
-      --case "Reads a note" \
+      --case "tells the user what note 7 says" \
       --iterations 3
     ```
 
     The case runs as a full run; read it with `mcpjam cloud eval iterations`.
 
-    ```bash Local case
-    mcpjam test .mcpjam/evals/notes.yaml --case c_reads_a_note
+    ```bash Suite file case
+    mcpjam cloud eval run --file .mcpjam/evals/notes.yaml --case c_reads_a_note --wait
     ```
 
-    `--case` takes the case's authored id and can be repeated.
+    `--case` takes a case id or title and can be repeated.
   </Tab>
   <Tab title="SDK">
-    Run one `EvalTest` on its own. Add this to `evals/notes.test.ts` above; it reuses `agent`:
+    Run one `EvalTest` on its own. Add this to `evals/notes.test.ts` above; it reuses `agent` and `outcome`:
 
     ```ts evals/notes.test.ts
     test("reads a note", async () => {
       const readsANote = new EvalTest({
         id: "c_reads_a_note",
-        name: "reads the note it was asked about",
-        test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
       });
 
       const run = await readsANote.run(agent, { iterations: 5, concurrency: 1 });

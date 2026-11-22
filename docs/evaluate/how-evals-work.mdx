@@ -56,27 +56,25 @@ target:
     - name: notes
 defaults:                               # settings every case shares
   judge:
-    enabled: false
+    enabled: true
+    role: required                      # a missed outcome fails the iteration
   model: anthropic/claude-haiku-4.5     # one model
   iterations: 3                         # iterations per case
   passThreshold: 1
   validity: {}
 cases:
   - id: c_reads_a_note                  # one case
-    title: reads the note it was asked about
+    title: tells the user what note 7 says
     steps:
       - id: s1
         kind: prompt                    # the user prompt
         prompt: What does note 7 say?
-      - id: a1
-        kind: assert                    # an assertion, Required by default
-        assertion:
-          type: toolCalledAtLeastOnce
-          toolName: read_note
+    expectedOutput: >-                  # the outcome the judge grades
+      The reply tells the user what note 7 says, using the note's actual text.
 ```
 
 ```ts evals/notes.mts
-import { EvalSuite, EvalTest, HostRunner, MCPClientManager } from "@mcpjam/sdk";
+import { EvalSuite, EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
 
 const manager = new MCPClientManager({
   notes: { command: "node", args: ["./notes-server.js"] },
@@ -94,8 +92,22 @@ const suite = new EvalSuite({ name: "Notes server" }); // the suite
 
 suite.add(new EvalTest({                       // one case
   id: "c_reads_a_note",
-  name: "reads the note it was asked about",
-  test: async (a) => (await a.run("What does note 7 say?")).hasToolCall("read_note"),
+  name: "tells the user what note 7 says",
+  execute: async (a) => {
+    await a.run("What does note 7 say?");      // the user prompt
+  },
+  evaluators: {
+    mode: "extend",
+    list: [
+      judge({                                  // the outcome the judge grades
+        id: "answers-with-the-note",
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+        rubric: ["The reply tells the user what note 7 says, using the note's actual text."],
+        role: "required",
+      }),
+    ],
+  },
 }));
 
 await suite.run(agent, { iterations: 3 });     // iterations per case
