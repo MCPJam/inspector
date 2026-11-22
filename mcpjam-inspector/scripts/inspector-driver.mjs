@@ -127,13 +127,15 @@ function outputDir(values) {
   return dir;
 }
 
-function loadAllowlist(values) {
+function loadAllowlist(values, origin) {
   const path = values.allowlist ? resolve(values.allowlist) : DEFAULT_ALLOWLIST;
   if (!existsSync(path)) {
     if (values.allowlist) throw new Error(`No allowlist at ${path}`);
     return [];
   }
-  return parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path);
+  return parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path, {
+    origin,
+  });
 }
 
 function checkTheme(theme) {
@@ -152,7 +154,7 @@ async function withPage(values, fn) {
   checkTheme(values.theme);
   const { baseUrl, token } = await connection(values);
   const surfaces = await loadSurfaces();
-  const rules = loadAllowlist(values);
+  const rules = loadAllowlist(values, new URL(baseUrl).origin);
   const outDir = outputDir(values);
   const browserLib = await import("./lib/inspector-driver-browser.mjs");
   const session = await browserLib.openContext({
@@ -186,6 +188,7 @@ async function visit({ target, label, ctx, values }) {
   const shown = surfaceId ?? redactUrl(url);
   const page = await session.context.newPage();
   const events = browserLib.recordEvents(page);
+  const succeeded = browserLib.recordSucceeded(page);
   const started = Date.now();
   const slug = artifactSlug(
     `${label ?? shown}${values.theme ? `-${values.theme}` : ""}`,
@@ -213,7 +216,10 @@ async function visit({ target, label, ctx, values }) {
     finalUrl: redactUrl(page.url()),
     title: await page.title(),
     seconds,
-    classified: classifyIssues(events, rules),
+    classified: classifyIssues(events, rules, {
+      guest: session.guestMinted(),
+      succeeded,
+    }),
     artifacts,
   };
   report.artifacts.report = writeReport(outDir, slug, report);
@@ -264,6 +270,7 @@ async function cmdRun(values, arg) {
     const resolveUrl = (target) => resolveTarget(target, surfaces, baseUrl).url;
     const page = await session.context.newPage();
     const events = browserLib.recordEvents(page);
+    const succeeded = browserLib.recordSucceeded(page);
     const started = Date.now();
     const shots = {};
     const shoot = async (name) => {
@@ -293,7 +300,10 @@ async function cmdRun(values, arg) {
       title: await page.title(),
       seconds: (Date.now() - started) / 1_000,
       steps: results,
-      classified: classifyIssues(events, rules),
+      classified: classifyIssues(events, rules, {
+        guest: session.guestMinted(),
+        succeeded,
+      }),
       artifacts,
     };
     report.artifacts.report = writeReport(outDir, slug, report);

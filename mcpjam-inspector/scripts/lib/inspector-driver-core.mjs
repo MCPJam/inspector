@@ -178,11 +178,17 @@ export function describeStep(step) {
 
 // ── allowlist ─────────────────────────────────────────────────────────────
 
+const ACTORS = ["guest"];
+
 /**
  * Validated allowlist rules. Each rule needs a reason, so the file explains
- * why every piece of tolerated noise is tolerated.
+ * why every piece of tolerated noise is tolerated. `{origin}` in a match
+ * stands for the app's own origin, so a rule cannot excuse the same path on
+ * another host. `actor: "guest"` limits a rule to runs signed in as a guest,
+ * and `replaced: true` to a failed request the page later made again and
+ * got an answer for.
  */
-export function parseAllowlist(json, source = "allowlist") {
+export function parseAllowlist(json, source = "allowlist", { origin } = {}) {
   const rules = Array.isArray(json) ? json : json?.rules;
   if (!Array.isArray(rules)) {
     throw new Error(`${source}: expected { "rules": [...] }.`);
@@ -198,10 +204,22 @@ export function parseAllowlist(json, source = "allowlist") {
     if (rule.kind !== undefined && typeof rule.kind !== "string") {
       throw new Error(`${where}: "kind" must be a string.`);
     }
+    if (rule.actor !== undefined && !ACTORS.includes(rule.actor)) {
+      throw new Error(`${where}: "actor" must be one of ${ACTORS.join(", ")}.`);
+    }
+    if (rule.replaced !== undefined && rule.replaced !== true) {
+      throw new Error(`${where}: "replaced" can only be true.`);
+    }
+    if (rule.match.includes("{origin}") && !origin) {
+      throw new Error(`${where}: uses {origin}, but no app origin is known.`);
+    }
+    const escapedOrigin = origin?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return {
       kind: rule.kind ?? "*",
-      pattern: new RegExp(rule.match),
+      pattern: new RegExp(rule.match.replaceAll("{origin}", escapedOrigin)),
       reason: rule.reason,
+      ...(rule.actor ? { actor: rule.actor } : {}),
+      ...(rule.replaced ? { replaced: true } : {}),
     };
   });
 }
@@ -214,10 +232,19 @@ export function kindMatches(ruleKind, kind) {
   return ruleKind === kind;
 }
 
-export function findAllowRule(rules, issue) {
+/**
+ * `context.guest` says the run signed in as a guest; `context.succeeded`
+ * holds the "METHOD url" of every request the page got an answer for.
+ */
+export function findAllowRule(rules, issue, context = {}) {
   return rules.find(
     (rule) =>
-      kindMatches(rule.kind, issue.kind) && rule.pattern.test(issue.text),
+      kindMatches(rule.kind, issue.kind) &&
+      rule.pattern.test(issue.text) &&
+      (!rule.actor || (rule.actor === "guest" && context.guest === true)) &&
+      (!rule.replaced ||
+        (issue.request !== undefined &&
+          context.succeeded?.has(issue.request) === true)),
   );
 }
 
@@ -323,7 +350,7 @@ export function oneLine(text, max = 220) {
  * Split raw events into failing issues, warnings and allowed noise,
  * collapsing repeats into one entry with a count.
  */
-export function classifyIssues(events, rules) {
+export function classifyIssues(events, rules, context = {}) {
   const buckets = {
     issues: new Map(),
     warnings: new Map(),
@@ -331,7 +358,11 @@ export function classifyIssues(events, rules) {
   };
   for (const event of events) {
     const text = oneLine(redactText(event.text));
-    const rule = findAllowRule(rules, { kind: event.kind, text });
+    const rule = findAllowRule(
+      rules,
+      { kind: event.kind, text, request: event.request },
+      context,
+    );
     const bucket = rule
       ? buckets.allowed
       : isFailingKind(event.kind)

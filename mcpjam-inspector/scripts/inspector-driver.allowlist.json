@@ -1,5 +1,5 @@
 {
-  "about": "Known noise the inspector driver does not fail on. Each rule: kind (console-error, console-warning, page-error, request-failed, wrong-route, http-404, http-4xx, *), match (a regex over the one-line text), reason (why it is not a bug). Add a rule only for noise that is present on clean main.",
+  "about": "Known noise the inspector driver does not fail on. Each rule: kind (console-error, console-warning, page-error, request-failed, wrong-route, http-404, http-4xx, *), match (a regex over the one-line text; {origin} is the app's own origin), reason (why it is not a bug), and optionally actor (guest: only when the run signed in as a guest) and replaced (true: only when the page later fetched the same request successfully). Add a rule only for noise that is present on clean main.",
   "rules": [
     {
       "kind": "console-error",
@@ -13,17 +13,20 @@
     },
     {
       "kind": "http-400",
-      "match": "^POST \\S+/user_management/authenticate$",
+      "actor": "guest",
+      "match": "^POST {origin}/user_management/authenticate$",
       "reason": "The chat session asks AuthKit for a WorkOS token on mount (use-chat-session.ts). A guest has no WorkOS session cookie, so the AuthKit proxy answers the refresh with 400 \"No local WorkOS session\" (server/routes/workos-authkit.ts) and the hook falls back to the guest bearer."
     },
     {
       "kind": "console-error",
-      "match": "^Failed to load resource: the server responded with a status of 400 \\(Bad Request\\) @ \\S+/user_management/authenticate$",
+      "actor": "guest",
+      "match": "^Failed to load resource: the server responded with a status of 400 \\(Bad Request\\) @ {origin}/user_management/authenticate$",
       "reason": "Chromium's own console line for the guest's refused AuthKit refresh above. The app logs nothing for it."
     },
     {
       "kind": "request-failed",
-      "match": "^GET \\S+/api/(web|mcp)/xaa(/[go]/[^/\\s]+)?/\\.well-known/openid-configuration net::ERR_ABORTED$",
+      "replaced": true,
+      "match": "^GET {origin}/api/(web|mcp)/xaa(/[go]/[^/\\s]+)?/\\.well-known/openid-configuration net::ERR_ABORTED$",
       "reason": "XAAFlowTab and XAAIdpCard fetch the issuer's discovery document in an effect that aborts the fetch on cleanup. Dev StrictMode runs each effect twice, and the guest's organization id arrives after first render, so the first fetch is cancelled and a second one replaces it."
     }
   ]

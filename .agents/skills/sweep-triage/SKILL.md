@@ -45,8 +45,11 @@ under which it runs. Then put the cause in one of three groups.
 - **Environment problem.** Every surface shows `no-app-shell`, or there is an
   `http-429` on `/api/web/guest-session`, or a JWKS `kid` error in the
   console: guest sign-in is failing. Follow "When guest sign-in fails" in
-  `run-inspector` and stop re-running, because each page load mints a guest
-  and the authority rate-limits by network. If later surfaces fail with
+  `run-inspector` and stop re-running once you see rate limiting. The
+  authority limits guest mints by network. One driver run mints once and
+  replays that guest to every later page, but a failed mint is not replayed,
+  so every page of a failing run asks again, and each new driver run or
+  manual reload outside the driver mints a fresh guest. If later surfaces fail with
   navigation errors after earlier ones passed, run
   `node mcpjam-inspector/scripts/inspector-driver.mjs status`; `NOT running`
   means the instance died, and its log path is printed. Fix the environment
@@ -60,9 +63,14 @@ under which it runs. Then put the cause in one of three groups.
   setup, and the app already handles it. Add one rule to
   `mcpjam-inspector/scripts/inspector-driver.allowlist.json` with `kind`,
   `match` and a `reason` that says why the response is expected. A rule
-  matches on kind and the one-line text only, not on surface, so make
-  `match` an anchored regex over the exact method, path and error, and use a
-  specific kind (`http-400`, `request-failed`) instead of `*`. Then run
+  matches on kind and the one-line text, not on surface, so make `match` an
+  anchored regex over the exact method, path and error, write the app's own
+  host as `{origin}` so the same path elsewhere still fails, and use a
+  specific kind (`http-400`, `request-failed`) instead of `*`. Add
+  `"actor": "guest"` when only a guest gets the response, and
+  `"replaced": true` when a request is cancelled and the page fetches it
+  again: the rule then holds only when the same request later succeeded.
+  A sweep's clean count means clean after these rules. Then run
   `node --test mcpjam-inspector/scripts/__tests__/inspector-driver.test.mjs`,
   which checks that the shipped allowlist parses and every rule has a reason.
 
