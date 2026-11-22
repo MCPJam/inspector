@@ -943,11 +943,16 @@ test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend re
   );
 });
 
-test("npxInvocation runs the Windows batch shim through a shell", () => {
+test("npxInvocation avoids spawning the Windows batch shim with an args array", () => {
   const args = ["-y", "@mcpjam/inspector@latest", "--port", "6274"];
-  assert.deepEqual(npxInvocation(args, "win32"), {
-    command: "npx.cmd",
-    args,
+  assert.deepEqual(npxInvocation(args, "win32", () => "npx-cli.js"), {
+    command: process.execPath,
+    args: ["npx-cli.js", ...args],
+    shell: false,
+  });
+  assert.deepEqual(npxInvocation(args, "win32", () => undefined), {
+    command: "npx.cmd -y @mcpjam/inspector@latest --port 6274",
+    args: [],
     shell: true,
   });
   for (const platform of ["darwin", "linux"] as const) {
