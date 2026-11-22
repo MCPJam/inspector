@@ -7,23 +7,24 @@ description: Start the MCPJam Inspector locally, drive it with the inspector dri
 
 ## Drive it with the inspector driver
 
-`mcpjam-inspector/scripts/inspector-driver.mjs` starts one instance, opens
-screens in headless Chromium signed in the way the e2e suite signs in, and
+`mcpjam-inspector/scripts/inspector-driver.mjs` drives an instance you
+started, opening screens in headless Chromium signed in the way the e2e suite signs in, and
 prints a short report: final URL, title, every console error and warning,
 uncaught page error, and failed or 4xx/5xx request. Screenshots, ARIA
 snapshots and a JSON report go to disk, and their absolute paths are printed.
 Use it before you claim a UI change works; reading the diff is not evidence.
 
-From the repo root:
+Start the app as [Start it by hand](#start-it-by-hand) describes, then point
+the driver at its client port and access link. From the repo root:
 
 ```bash
-node mcpjam-inspector/scripts/inspector-driver.mjs start            # picks a free instance, waits until ready
+export MCPJAM_DRIVER_BASE_URL=http://localhost:<client-port>
+export MCPJAM_SESSION_TOKEN='<access link or token>'   # keep it private
 node mcpjam-inspector/scripts/inspector-driver.mjs surfaces         # surface ids and routes (shared/app-surfaces.ts)
 node mcpjam-inspector/scripts/inspector-driver.mjs open servers     # one screen: report + screenshot + ARIA snapshot
 node mcpjam-inspector/scripts/inspector-driver.mjs open hosts --theme dark
 node mcpjam-inspector/scripts/inspector-driver.mjs run steps.json   # an interaction, step by step
 node mcpjam-inspector/scripts/inspector-driver.mjs sweep            # every surface, one line each
-node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only what `start` started
 ```
 
 - `open` takes a surface id, nav segment or sidebar title (`servers`,
@@ -38,19 +39,14 @@ node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only
   `wrong-route`: a surface must end on one of its own route patterns, a path
   or URL on the same path. When a redirect is the intended behaviour, add an
   allowlist rule of kind `wrong-route` that says why.
-- To drive an instance you started yourself, pass `--base-url
-  http://localhost:<client-port>` and `--token '<access link>'` (or set
-  `MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`).
+- `--base-url` and `--token` work in place of the two variables. The token
+  is seeded into that origin's storage only, the way the access link signs a
+  browser in.
 - `--fresh` keeps the first-run onboarding (it is marked done by default),
   `--headed` shows the browser, `--out <dir>` picks the artifact folder.
-- `start` runs `npm run dev:hosted -- <N> --no-worker` (`--worker` adds the
-  platform MCP worker, `--skip-prepare` skips the SDK and bundle builds,
-  `--env-file <profile>` picks the backend profile, for example
-  `.env.development`) with a token it chose, and logs to the file it prints. It stops the
-  instance again if it is not ready within `--ready-timeout` seconds. Use
-  `--skip-prepare` only when `npm run bundle:all -w @mcpjam/inspector` has
-  run in this worktree: without the bundles the server crashes, and under
-  `tsx watch` a crash waits silently instead of exiting.
+- Set `MCPJAM_SESSION_TOKEN` to a token you chose (24 or more URL-safe
+  characters) before starting the app, and the same value signs the driver
+  in, so you never copy the access link out of the launcher's output.
 
 Steps are JSON. Each step names one action: `goto`, `click`, `hover`,
 `fill` (with `value`), `press` (a key, with optional `on`), `waitFor`
