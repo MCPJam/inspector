@@ -248,6 +248,16 @@ export const localBashRunner: BashRunner = async ({
     let graceTimer: NodeJS.Timeout | undefined;
 
     const killTree = () => {
+      if (process.platform === "win32" && child.pid) {
+        // Windows has no process groups, and killing bash.exe alone leaves
+        // what it started holding the output pipes, so `close` never fires.
+        // taskkill /T ends the whole tree; /F because there is no SIGTERM.
+        spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+          stdio: "ignore",
+          windowsHide: true,
+        }).once("error", () => child.kill("SIGKILL"));
+        return;
+      }
       try {
         if (process.platform !== "win32" && child.pid) {
           process.kill(-child.pid, "SIGTERM");

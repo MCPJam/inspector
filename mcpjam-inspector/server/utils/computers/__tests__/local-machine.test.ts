@@ -7,7 +7,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join, normalize, sep } from "node:path";
 
 // Point the workspace root at a scratch dir — never the developer's real
 // ~/.mcpjam. homedir() is the only path input local-machine consumes.
@@ -184,14 +184,15 @@ describe("runLocalComputerCommand", () => {
   it("runs in the project workspace dir and journals the command", async () => {
     const result = await runLocalComputerCommand({
       projectId: "proj1",
-      command: "pwd",
+      // Git Bash prints /d/... unless asked for the Windows form.
+      command: process.platform === "win32" ? "pwd -W" : "pwd",
       commandId: "cmd-1",
     });
     if ("error" in result) throw new Error(result.error);
     // Physical-path compare: the scratch tmpdir may sit behind a symlink
     // (macOS /var → /private/var), and the sanitized env has no $PWD, so
     // bash prints the resolved path.
-    expect(result.stdout.trim()).toBe(
+    expect(normalize(result.stdout.trim())).toBe(
       realpathSync(await getLocalComputerWorkspaceDir("proj1"))
     );
     await waitForJournalEntry("cmd-1");
