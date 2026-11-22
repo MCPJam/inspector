@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { posix } from "node:path";
+import { pathToFileURL } from "node:url";
 import { FORM_FILE_RETENTION_MS } from "./form-file-journal.js";
 import { PluginInvocationError } from "./invocation.js";
 import type { PluginFormFileStore } from "./form-file-grants.js";
@@ -139,5 +140,7 @@ export function createComputerFormFileStore(
       await fs.write(path, data);
     },
     join: (...parts) => posix.join(...parts),
+    // A VM path, whatever this machine's own path flavour.
+    fileUrl: (path) => pathToFileURL(path, { windows: false }).href,
   };
 }

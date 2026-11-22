@@ -1479,6 +1479,7 @@ describe("a pending form and the client's current capability toggles", () => {
             makeDir: async () => {},
             writeNew: async () => {},
             join: (...parts) => parts.join("/"),
+            fileUrl: (path) => `file://${path}`,
           },
         });
         setFileResources(false);
