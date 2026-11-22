@@ -5,14 +5,23 @@
  * with no test at all.
  *
  * HOW A TEST IS LINKED TO A SURFACE. Derived from the code, so a link moves
- * when the code moves and disappears when the test stops doing the thing:
+ * when the code moves and disappears when the test stops doing the thing.
+ * The links are heuristic discovery, not proof that a test renders and
+ * asserts on the screen: a test can import a surface and assert nothing about
+ * it, or navigate there and get redirected away. A file whose every test is
+ * skipped (`it.skip`, `describe.skip`) links nothing, an import the file
+ * never mentions again is not a link, and `typeof import()` and
+ * `import("…").Props` types are not imports. A runtime skip
+ * (`test.skip(condition)`) still counts.
  *
  *   - E2E (Playwright specs under `e2e/`): the routes the spec navigates to.
  *     Every `goto("…")` literal is normalized (`/p/<project>/`, query and hash
  *     stripped) and matched against each surface's `routePatterns`. A spec
  *     whose `goto` destination is built from data (`goto(path)`,
  *     `` goto(`/p/${id}/${route}`) ``) has its route-shaped string literals
- *     matched instead, since those are the destinations it loops over. A
+ *     matched instead, since those are the destinations it loops over,
+ *     except a literal passed straight to a call (`toHaveURL("/servers")`,
+ *     `getByText("tools")`), which is that call's input. A
  *     `goto` of a test-only harness page (`/__e2e/…` in `router.tsx`) counts
  *     for the surfaces whose modules the harness imports.
  *   - Component (Vitest `__tests__/**\/*.test.ts(x)` under `client/` and
@@ -38,179 +47,33 @@
  * itself finds nothing (no surfaces, specs, tests, or a surface with no root
  * component), so a moved file cannot turn it into a silent pass.
  *
+ * The baseline only shrinks. `--base-ref <rev>` fails when the baseline lists
+ * a surface the baseline at `<rev>` did not; CI passes the pull request's
+ * base (`.github/workflows/surface-baseline.yml`). A reviewer who accepts an
+ * untested surface labels the pull request `surface-baseline-growth`, which
+ * sets `SURFACE_BASELINE_GROWTH_REVIEWED=1`.
+ *
  * Usage:
  *   node scripts/check-surface-test-coverage.mjs [--check] [--update-baseline]
- *     [--markdown <file>] [--json] [--root <inspector dir>] [--baseline <file>]
+ *     [--base-ref <git rev>] [--markdown <file>] [--json]
+ *     [--root <inspector dir>] [--baseline <file>]
  */
-import {
-  existsSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  harnessModules,
-  importSpecifiers,
-  moduleOwners,
-  navigatedSurfaces,
-  navigationTargets,
-  parseSurfaces,
-  surfaceRoots,
-  surfaceTags,
-} from "./lib/surface-test-map.mjs";
-
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"];
-
-/**
- * Builds a resolver for import specifiers, from the inspector root's
- * point of view, matching the client's `@/` and `@/shared/` aliases.
- */
-function makeResolver(root) {
-  const cache = new Map();
-  const tryFile = (base) => {
-    if (cache.has(base)) return cache.get(base);
-    let hit = null;
-    const stem = base.replace(/\.(?:[cm]?js|jsx)$/, "");
-    const candidates = [
-      base,
-      ...SOURCE_EXTENSIONS.map((ext) => stem + ext),
-      ...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate) && statSync(candidate).isFile()) {
-        hit = toRel(root, candidate);
-        break;
-      }
-    }
-    cache.set(base, hit);
-    return hit;
-  };
-  return (fromRel, specifier) => {
-    if (specifier.startsWith("@/shared/")) {
-      return tryFile(join(root, "shared", specifier.slice("@/shared/".length)));
-    }
-    if (specifier.startsWith("@/")) {
-      return tryFile(join(root, "client/src", specifier.slice(2)));
-    }
-    if (specifier.startsWith(".")) {
-      return tryFile(join(root, dirname(fromRel), specifier));
-    }
-    return null;
-  };
-}
-
-function toRel(root, file) {
-  return relative(root, file).split(sep).join("/");
-}
-
-function* walk(dir) {
-  let entries;
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    // A missing scan root yields nothing; the empty-scan checks report it.
-    return;
-  }
-  for (const entry of entries) {
-    if (entry === "node_modules" || entry === "dist" || entry.startsWith(".")) {
-      continue;
-    }
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) yield* walk(full);
-    else yield full;
-  }
-}
-
-const isSource = (rel) =>
-  SOURCE_EXTENSIONS.some((ext) => rel.endsWith(ext)) && !rel.endsWith(".d.ts");
-const isComponentTest = (rel) =>
-  rel.split("/").includes("__tests__") && /\.test\.tsx?$/.test(rel);
-const isE2ESpec = (rel) => /\.(?:spec|browser)\.ts$/.test(rel);
+import { parseSurfaces } from "./lib/surface-test-map.mjs";
+import { scanSurfaceTests } from "./lib/surface-test-scan.mjs";
 
 /** Reads the inspector tree and joins every surface to its tests. */
 export function buildFeatureMap(root) {
   const surfaces = parseSurfaces(
     readFileSync(join(root, "shared/app-surfaces.ts"), "utf8"),
   );
-  const ids = new Set(surfaces.map((s) => s.id));
-  const res = makeResolver(root);
-  const read = (rel) => readFileSync(join(root, rel), "utf8");
-
-  const graph = new Map();
-  for (const dir of ["client/src", "shared"]) {
-    for (const file of walk(join(root, dir))) {
-      const rel = toRel(root, file);
-      if (!isSource(rel) || isComponentTest(rel)) continue;
-      const deps = new Set();
-      for (const spec of importSpecifiers(read(rel))) {
-        const target = res(rel, spec);
-        if (target) deps.add(target);
-      }
-      graph.set(rel, deps);
-    }
-  }
-
-  const routerSource = read("client/src/router.tsx");
-  const roots = surfaceRoots({
+  const { roots, e2e, component, scanned, unknownTags } = scanSurfaceTests(
+    root,
     surfaces,
-    routerSource,
-    appSource: read("client/src/App.tsx"),
-    resolve: res,
-  });
-  const owners = moduleOwners(graph, roots);
-  const harnesses = harnessModules(routerSource);
-
-  const unknownTags = [];
-  const linkImports = (rel, source, into) => {
-    for (const spec of importSpecifiers(source)) {
-      for (const owner of owners.get(res(rel, spec) ?? "") ?? [])
-        into.add(owner);
-    }
-  };
-  const linkHarnesses = (source, into) => {
-    for (const segments of navigationTargets(source)) {
-      const specifier = harnesses.get(segments.join("/"));
-      const harness = specifier && res("client/src/router.tsx", specifier);
-      if (harness) linkImports(harness, read(harness), into);
-    }
-  };
-  const linkByImports = (rel, source, into) => {
-    linkImports(rel, source, into);
-    for (const tag of surfaceTags(source)) {
-      if (ids.has(tag)) into.add(tag);
-      else unknownTags.push(`${rel}: @surface ${tag}`);
-    }
-  };
-
-  const e2e = new Map(surfaces.map((s) => [s.id, []]));
-  let e2eFiles = 0;
-  for (const file of walk(join(root, "e2e"))) {
-    const rel = toRel(root, file);
-    if (!isE2ESpec(rel)) continue;
-    e2eFiles += 1;
-    const source = read(rel);
-    const linked = navigatedSurfaces(source, surfaces);
-    linkHarnesses(source, linked);
-    linkByImports(rel, source, linked);
-    for (const id of linked) e2e.get(id).push(rel);
-  }
-
-  const component = new Map(surfaces.map((s) => [s.id, []]));
-  let componentFiles = 0;
-  for (const dir of ["client", "shared"]) {
-    for (const file of walk(join(root, dir))) {
-      const rel = toRel(root, file);
-      if (!isComponentTest(rel)) continue;
-      componentFiles += 1;
-      const linked = new Set();
-      linkByImports(rel, read(rel), linked);
-      for (const id of linked) component.get(id).push(rel);
-    }
-  }
-
+  );
   return {
     surfaces: surfaces.map((s) => ({
       id: s.id,
@@ -219,7 +82,7 @@ export function buildFeatureMap(root) {
       e2e: e2e.get(s.id).sort(),
       component: component.get(s.id).sort(),
     })),
-    scanned: { e2eFiles, componentFiles, modules: graph.size },
+    scanned,
     unknownTags,
   };
 }
@@ -263,6 +126,35 @@ export function checkFeatureMap(map, baseline) {
   for (const tag of map.unknownTags)
     problems.push(`unknown surface tag: ${tag}`);
   return problems;
+}
+
+/** Surfaces the baseline lists that the base revision's baseline did not. */
+export function baselineGrowth(baseline, baseBaseline) {
+  const before = new Set(baseBaseline);
+  return baseline.filter((id) => !before.has(id));
+}
+
+/**
+ * The baseline as committed at git revision `ref`, or null when that
+ * revision has no baseline file: the change that adds the file is where its
+ * first entries are reviewed.
+ */
+function readBaseBaseline(root, baselinePath, ref) {
+  const rel = relative(root, baselinePath).split(sep).join("/");
+  try {
+    const text = execFileSync("git", ["show", `${ref}:./${rel}`], {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return JSON.parse(text).uncovered;
+  } catch (error) {
+    const stderr = String(error.stderr ?? "");
+    if (/does not exist in|exists on disk, but not in/.test(stderr)) return null;
+    throw new Error(
+      `cannot read the baseline at ${ref}: ${stderr.trim() || error.message}`,
+    );
+  }
 }
 
 const short = (rel) => rel.replace(/^e2e\//, "");
@@ -354,9 +246,30 @@ function main(argv) {
     ? JSON.parse(readFileSync(baselinePath, "utf8")).uncovered
     : [];
 
+  const baseRef = argValue(argv, "--base-ref");
+  if (baseRef) {
+    const before = readBaseBaseline(root, baselinePath, baseRef);
+    const added = before ? baselineGrowth(baseline, before) : [];
+    if (added.length && process.env.SURFACE_BASELINE_GROWTH_REVIEWED === "1") {
+      log(
+        `surface-test-coverage: baseline adds ${added.join(", ")} over ${baseRef}; ` +
+          "allowed by the surface-baseline-growth label",
+      );
+    } else if (added.length) {
+      console.error(
+        `
+surface-test-coverage: the baseline adds ${added.join(", ")}, which ` +
+          `${baseRef} did not list. The baseline only shrinks: add a test for ` +
+          "the surface. If a reviewer accepts shipping it untested, label the " +
+          "pull request surface-baseline-growth.",
+      );
+      process.exit(1);
+    }
+  }
+
   if (argv.includes("--update-baseline")) {
-    // Shrink only. Adding a surface to the baseline is a reviewed hand edit,
-    // never something a flag does for you.
+    // Shrink only. Adding a surface takes a hand edit and a reviewer's
+    // surface-baseline-growth label, never a flag.
     const still = baseline.filter((id) => summary.none.includes(id));
     writeFileSync(
       baselinePath,

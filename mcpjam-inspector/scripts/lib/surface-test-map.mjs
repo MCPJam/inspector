@@ -255,6 +255,9 @@ export function matchSurface(surfaces, segments) {
  * Where an E2E spec navigates, as {@link destinationSegments}: each literal
  * `goto` target and, when a `goto` destination is built from data, every
  * route-shaped string literal, since those are the destinations it loops over.
+ * The fallback is a heuristic. It skips a literal passed straight to a call
+ * (`toHaveURL("/servers")`, `getByText("tools")`), which is that call's input
+ * and not a destination, but any other route-shaped string still counts.
  */
 export function navigationTargets(source) {
   const { code, literals } = scanSource(source);
@@ -273,6 +276,8 @@ export function navigationTargets(source) {
   if (dataDriven) {
     for (const literal of literals) {
       if (!/^[\w./:*-]+$/.test(literal.value)) continue;
+      const before = code.slice(Math.max(0, literal.start - 80), literal.start);
+      if (/[\w$]\s*\(\s*$/.test(before)) continue;
       const segments = destinationSegments(literal.value);
       if (segments) targets.push(segments);
     }
@@ -310,8 +315,9 @@ function stripLineComments(source) {
 const IMPORT_SPECIFIERS = [
   /\b(?:import|export)\s+(?:type\s+)?[\w*\s{},$]*?\bfrom\s*["']([^"']+)["']/g,
   /\bimport\s*["']([^"']+)["']/g,
-  // `typeof import("…")` is a type query: it names a module, never loads it.
-  /(?<!\btypeof\s+)\bimport\(\s*["']([^"']+)["']\s*\)/g,
+  // `typeof import("…")` and `import("…").Props` are types: they name a
+  // module, never load it. A dynamic import's promise has only `.then` and kin.
+  /(?<!\btypeof\s+)\bimport\(\s*["']([^"']+)["']\s*\)(?!\s*\.\s*(?!then\b|catch\b|finally\b)[\w$])/g,
 ];
 
 const isTypeOnly = (statement) => {
@@ -340,6 +346,101 @@ export function importSpecifiers(source) {
     }
   }
   return out;
+}
+
+/**
+ * {@link scanSource}'s `executable` with quoted strings blanked too: only code
+ * and template `${…}` expressions are left, offsets kept.
+ */
+function bareCode(source) {
+  const { executable, literals } = scanSource(source);
+  const quoted = literals.filter((l) => source[l.start] !== "`");
+  const chars = executable.split("");
+  for (const l of quoted) {
+    for (let k = l.start; k < l.end; k += 1) chars[k] = " ";
+  }
+  return { code: chars.join(""), quoted };
+}
+
+const STATIC_IMPORT =
+  /\bimport\s+(?!type\s)(?:([\w$]+)\s*,?\s*)?(?:\*\s*as\s+([\w$]+)|\{([^}]*)\})?\s*from\s*["']([^"']+)["']/g;
+
+/**
+ * {@link importSpecifiers} minus static imports whose bindings the file never
+ * mentions again: a test that imports a screen and never renders or calls it
+ * exercises nothing. Any later mention counts as a use, so this is a
+ * heuristic, not proof the code ran.
+ */
+export function exercisedImportSpecifiers(source) {
+  const { executable } = scanSource(source);
+  const { code, quoted } = bareCode(source);
+  const statements = [];
+  for (const match of executable.matchAll(STATIC_IMPORT)) {
+    if (quoted.some((l) => match.index > l.start && match.index < l.end)) {
+      continue;
+    }
+    const named = (match[3] ?? "")
+      .split(",")
+      .map((b) => b.trim())
+      .filter((b) => b && !b.startsWith("type "))
+      .map((b) => b.split(/\s+as\s+/).pop().trim());
+    const bindings = [match[1], match[2], ...named].filter(Boolean);
+    statements.push({ match, bindings });
+  }
+  const rest = code.split("");
+  for (const { match } of statements) {
+    const end = match.index + match[0].length;
+    for (let k = match.index; k < end; k += 1) rest[k] = " ";
+  }
+  const restCode = rest.join("");
+  const mentioned = (name) =>
+    new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(
+      restCode,
+    );
+  const out = importSpecifiers(source);
+  for (const { match, bindings } of statements) {
+    if (bindings.length === 0 || bindings.some(mentioned)) continue;
+    const at = out.indexOf(match[4]);
+    if (at !== -1) out.splice(at, 1);
+  }
+  return out;
+}
+
+const TEST_CALL =
+  /(?<![\w$.])(?:it|test)(?:\.(?:only|concurrent|sequential|serial|fails|each))*(?:\s*<[^;()]*>)?\s*[(`]/g;
+const SKIPPED_TEST = /(?<![\w$.])(?:xit|xtest|(?:it|test)\.(?:skip|todo))\s*[(`]/;
+const SKIPPED_SUITE =
+  /(?<![\w$.])(?:xdescribe|(?:test\.)?describe\.(?:skip|todo))\s*\(/g;
+
+function closingParen(code, open) {
+  let depth = 0;
+  for (let k = open; k < code.length; k += 1) {
+    if (code[k] === "(") depth += 1;
+    else if (code[k] === ")" && --depth === 0) return k;
+  }
+  return code.length;
+}
+
+/**
+ * Whether a test file runs a test: an `it`/`test` call outside every
+ * `describe.skip`/`xdescribe` block. `it.skip`, `it.todo` and `xit` declare
+ * nothing that runs. A file with no test call and no skip at all gets its
+ * tests from a shared suite helper, and counts. A runtime skip
+ * (`test.skip(condition)` inside a suite, `describe.skipIf`) is not detected.
+ */
+export function runsTests(source) {
+  const { code } = bareCode(source);
+  const skipped = [...code.matchAll(SKIPPED_SUITE)].map((m) => {
+    const open = m.index + m[0].length - 1;
+    return [open, closingParen(code, open)];
+  });
+  let declares = skipped.length > 0 || SKIPPED_TEST.test(code);
+  for (const match of code.matchAll(TEST_CALL)) {
+    const at = match.index;
+    if (!skipped.some(([from, to]) => at > from && at < to)) return true;
+    declares = true;
+  }
+  return !declares;
 }
 
 /**

@@ -12,12 +12,39 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  baselineGrowth,
   buildFeatureMap,
   checkFeatureMap,
 } from "../check-surface-test-coverage.mjs";
 
 const INSPECTOR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const SCRIPT = join(INSPECTOR, "scripts", "check-surface-test-coverage.mjs");
+
+/** Writes `files` into a fresh directory, runs `fn(dir)`, then removes it. */
+function withTree(files, fn) {
+  const dir = mkdtempSync(join(tmpdir(), "mcpjam-surface-tree-"));
+  try {
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const OAUTH_TREE = {
+  "shared/app-surfaces.ts": `export const APP_SURFACES = [
+  { id: "oauth", canonicalPath: "/oauth", routePatterns: ["oauth"] },
+] as const satisfies readonly AppSurfaceManifest[];`,
+  "client/src/router.tsx": `import { OAuthTab } from "./components/OAuthTab";
+const ROUTE_ELEMENTS = {
+  oauth: { element: <OAuthTab /> },
+};`,
+  "client/src/App.tsx": "export {};",
+  "client/src/components/OAuthTab.tsx": "export function OAuthTab() {}",
+};
 
 function featureMap(overrides = {}) {
   const surface = (id, e2e, component) => ({
@@ -95,21 +122,87 @@ const routes = [
     "client/src/App.tsx": "export {};",
     "client/src/components/OAuthTab.tsx": "export function OAuthTab() {}",
     "client/src/components/e2e/Harness.tsx": `import { OAuthTab } from "../OAuthTab";`,
-    "e2e/navigates.spec.ts": `await page.goto("/__e2e/oauth-debugger");`,
+    "e2e/navigates.spec.ts": `test("opens", ({ page }) => page.goto("/__e2e/oauth-debugger"));`,
     "e2e/names.spec.ts": `const harnessPath = "/__e2e/oauth-debugger";
-await page.goto("/");`,
+test("boots", ({ page }) => page.goto("/"));`,
   };
-  const dir = mkdtempSync(join(tmpdir(), "mcpjam-surface-harness-"));
-  try {
-    for (const [rel, content] of Object.entries(files)) {
-      mkdirSync(dirname(join(dir, rel)), { recursive: true });
-      writeFileSync(join(dir, rel), content);
-    }
-    const [oauth] = buildFeatureMap(dir).surfaces;
-    assert.deepEqual(oauth.e2e, ["e2e/navigates.spec.ts"]);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
+  const [oauth] = withTree(files, (dir) => buildFeatureMap(dir).surfaces);
+  assert.deepEqual(oauth.e2e, ["e2e/navigates.spec.ts"]);
+});
+
+test("skipped tests, unused imports and import types earn no credit", () => {
+  const files = {
+    ...OAUTH_TREE,
+    "client/src/components/__tests__/renders.test.tsx": `import { OAuthTab } from "../OAuthTab";
+it("renders", () => render(<OAuthTab />));`,
+    "client/src/components/__tests__/skipped.test.tsx": `import { OAuthTab } from "../OAuthTab";
+describe.skip("later", () => { it("renders", () => render(<OAuthTab />)); });`,
+    "client/src/components/__tests__/unused.test.tsx": `import { OAuthTab } from "../OAuthTab";
+it("does something else", () => expect(1).toBe(1));`,
+    "client/src/components/__tests__/type-only.test.ts": `type Props = import("../OAuthTab").Props;
+it("types", () => expect(1).toBe(1));`,
+    "e2e/loops.spec.ts": `test("redirect", async ({ page }) => {
+  await page.goto(target);
+  await expect(page).toHaveURL("/oauth");
+});`,
+  };
+  const [oauth] = withTree(files, (dir) => buildFeatureMap(dir).surfaces);
+  assert.deepEqual(oauth.component, [
+    "client/src/components/__tests__/renders.test.tsx",
+  ]);
+  assert.deepEqual(oauth.e2e, []);
+});
+
+test("a scan root that is missing reads as empty, so the check reports it", () => {
+  const map = withTree(OAUTH_TREE, (dir) => buildFeatureMap(dir));
+  assert.deepEqual(map.scanned, { e2eFiles: 0, componentFiles: 0, modules: 4 });
+});
+
+test("baseline growth is any entry the base baseline did not list", () => {
+  assert.deepEqual(baselineGrowth(["tracing"], ["tracing", "tools"]), []);
+  assert.deepEqual(baselineGrowth(["tracing", "tools"], ["tracing"]), ["tools"]);
+});
+
+test("--base-ref fails a baseline that grew unless the growth is reviewed", () => {
+  withTree(
+    {
+      ...OAUTH_TREE,
+      "scripts/surface-test-coverage-baseline.json": '{ "uncovered": [] }',
+    },
+    (dir) => {
+      const git = (...args) =>
+        spawnSync("git", args, { cwd: dir, encoding: "utf8" });
+      git("init", "-q");
+      git("add", ".");
+      git(
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-qm",
+        "base",
+      );
+      writeFileSync(
+        join(dir, "scripts/surface-test-coverage-baseline.json"),
+        '{ "uncovered": ["oauth"] }',
+      );
+      const run = (env) =>
+        spawnSync(process.execPath, [SCRIPT, "--root", dir, "--base-ref", "HEAD"], {
+          encoding: "utf8",
+          env: { ...process.env, SURFACE_BASELINE_GROWTH_REVIEWED: env },
+        });
+      const grew = run("");
+      assert.equal(grew.status, 1);
+      assert.ok(
+        grew.stderr.includes("the baseline adds oauth, which HEAD did not list"),
+        grew.stderr,
+      );
+      const reviewed = run("1");
+      assert.equal(reviewed.status, 0, reviewed.stderr);
+      assert.ok(reviewed.stdout.includes("allowed by the surface-baseline-growth label"));
+    },
+  );
 });
 
 test("the real tree passes --check, and --update-baseline only removes entries", () => {
