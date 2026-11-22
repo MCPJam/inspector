@@ -4,6 +4,7 @@
  * revocation only ever moves the sequence forward.
  */
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 // eslint-disable-next-line import/extensions -- plain ESM script with a hand-written .d.mts
 import {
@@ -23,7 +24,8 @@ describe("the revocation list", () => {
     expect(revocationListProblems(list)).toEqual([]);
     expect(SCRIPT_SCHEMA).toBe(REVOCATION_SCHEMA);
     expect(DEFAULT_REVOCATIONS_URL.endsWith("mcpjam-inspector/local-harness-revocations/revocations.json")).toBe(true);
-    expect(REVOCATIONS_FILE.endsWith("local-harness-revocations/revocations.json")).toBe(true);
+    // A filesystem path, so it ends in the host's separator.
+    expect(REVOCATIONS_FILE.endsWith(join("local-harness-revocations", "revocations.json"))).toBe(true);
   });
 
   it("adds an entry by moving the sequence forward, never duplicating one", () => {

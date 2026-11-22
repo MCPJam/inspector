@@ -4,7 +4,7 @@
  * and what the translator does with the bridge's launch (`bridge-launch.ts`).
  */
 import { readFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HARNESS_PINNED_VERSIONS } from "@/shared/harness-model-support";
 import { localOpenCodeBootstrapRecipe, patchOpenCodeLocalLaunch } from "../../opencode-local-bridge.js";
@@ -16,8 +16,10 @@ import {
 } from "../command-translation.js";
 import { opencodeLocalRuntime as runtime } from "../runtimes/opencode.js";
 
-const BUNDLE = "/opt/mcpjam/runtimes/opencode";
-const LAYER = "/opt/mcpjam/layer";
+// The pack and the layer are the host's own paths (`resolve` gives them a drive
+// on Windows); the adapter's grammar is POSIX on every host.
+const BUNDLE = resolve("/opt/mcpjam/runtimes/opencode");
+const LAYER = resolve("/opt/mcpjam/layer");
 const SESSION = "/home/dev/project";
 const STATE = "/home/dev/.mcpjam/harness-local-sessions/s1";
 const HOME = `${STATE}/home`;

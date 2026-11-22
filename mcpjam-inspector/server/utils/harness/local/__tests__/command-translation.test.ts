@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ADAPTER_COMMAND_SHAPES,
@@ -7,10 +8,13 @@ import {
   type CommandTranslationContext,
 } from "../command-translation.js";
 
-const BUNDLE = "/opt/mcpjam/runtimes/claude-code";
+// Paths on the Inspector's side are the host's own; the adapter's grammar is
+// POSIX on every host. `resolve` leaves these as they are on POSIX and gives
+// them a drive on Windows, where the remap joins with `\`.
+const BUNDLE = resolve("/opt/mcpjam/runtimes/claude-code");
 const SESSION = "/home/dev/project";
 const HOME = "/home/dev/.mcpjam/harness-local/sessions/s1/home";
-const OVERLAY = "/home/dev/.mcpjam/harness-local/sessions/s1/bootstrap";
+const OVERLAY = resolve("/home/dev/.mcpjam/harness-local/sessions/s1/bootstrap");
 /** As the framework resolves it: relative to `$HOME/.ai-sdk-harness`. */
 const BOOT = `${HOME}/.ai-sdk-harness/.harness-bootstrap/claude-code`;
 
@@ -162,7 +166,7 @@ describe("the pinned command grammar", () => {
       kind: "exec",
       executable: "/usr/local/bin/node",
       args: [
-        `${BUNDLE}/bridge.mjs`,
+        join(BUNDLE, "bridge.mjs"),
         "--workdir",
         `${SESSION}/claude-code-s1`,
         "--bridge-state-dir",
@@ -173,7 +177,7 @@ describe("the pinned command grammar", () => {
   });
 
   describe("claude-code over the Inspector layer", () => {
-    const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/cc";
+    const LAYER = resolve("/home/dev/.mcpjam/harness-local/runtime/inspector-layer/cc");
     const launch =
       `node '${BOOT}/bridge.mjs' --workdir '${SESSION}/w' ` +
       `--bridge-state-dir '${SESSION}/.harness-bridge'`;
@@ -210,7 +214,7 @@ describe("the pinned command grammar", () => {
         ctx({ layerRoot: LAYER, layerFiles: ["bridge.mjs"], launcherVendorRoot: BUNDLE }),
       );
       expect(result.kind === "exec" && result.args).toEqual([
-        `${LAYER}/bridge.mjs`,
+        join(LAYER, "bridge.mjs"),
         "--workdir",
         `${SESSION}/w`,
         "--bridge-state-dir",
@@ -221,7 +225,7 @@ describe("the pinned command grammar", () => {
 
   describe("codex (app-server adapter)", () => {
     const CODEX_BOOT = `${HOME}/.ai-sdk-harness/.harness-bootstrap/codex-appserver`;
-    const CODEX_BUNDLE = "/opt/mcpjam/runtimes/codex";
+    const CODEX_BUNDLE = resolve("/opt/mcpjam/runtimes/codex");
     const STATE = "/home/dev/.mcpjam/harness-local-sessions/s1/work";
     const codex = (overrides: Partial<CommandTranslationContext> = {}) =>
       ctx({
@@ -260,7 +264,7 @@ describe("the pinned command grammar", () => {
         executable: "/usr/local/bin/node",
         workingDirectory: SESSION,
         args: [
-          `${CODEX_BUNDLE}/bridge.mjs`,
+          join(CODEX_BUNDLE, "bridge.mjs"),
           "--workdir",
           `${SESSION}/project`,
           "--bridge-state-dir",
@@ -274,7 +278,7 @@ describe("the pinned command grammar", () => {
     });
 
     describe("split along the two trusted sources (Inspector layer)", () => {
-      const LAYER = "/home/dev/.mcpjam/harness-local/runtime/inspector-layer/abc";
+      const LAYER = resolve("/home/dev/.mcpjam/harness-local/runtime/inspector-layer/abc");
       const layered = (overrides: Partial<CommandTranslationContext> = {}) =>
         codex({
           layerRoot: LAYER,
@@ -315,11 +319,11 @@ describe("the pinned command grammar", () => {
       it("serves the bridge files from the layer, never from the pack", () => {
         expect(classifyBootstrapPath(`${CODEX_BOOT}/bridge.mjs`, layered())).toEqual({
           kind: "bundle-asset",
-          bundlePath: `${LAYER}/bridge.mjs`,
+          bundlePath: join(LAYER, "bridge.mjs"),
           relativePath: "bridge.mjs",
         });
         expect(classifyBootstrapPath(`${CODEX_BOOT}/host-tools-mcp.mjs`, layered())).toMatchObject({
-          bundlePath: `${LAYER}/host-tools-mcp.mjs`,
+          bundlePath: join(LAYER, "host-tools-mcp.mjs"),
         });
       });
 
@@ -336,7 +340,7 @@ describe("the pinned command grammar", () => {
           { command: launch() },
           layered({ bridgeLauncherPath: undefined }),
         );
-        expect(result.kind === "exec" && result.args[0]).toBe(`${LAYER}/bridge.mjs`);
+        expect(result.kind === "exec" && result.args[0]).toBe(join(LAYER, "bridge.mjs"));
       });
     });
 
@@ -609,12 +613,12 @@ describe("the bootstrap file grammar", () => {
     // adapter's dependency manifests into the user's checkout.
     expect(classifyBootstrapPath(`${BOOT}/package.json`, ctx())).toEqual({
       kind: "bundle-asset",
-      bundlePath: `${BUNDLE}/package.json`,
+      bundlePath: join(BUNDLE, "package.json"),
       relativePath: "package.json",
     });
     expect(classifyBootstrapPath(`${BOOT}/bridge.mjs`, ctx())).toEqual({
       kind: "bundle-asset",
-      bundlePath: `${BUNDLE}/bridge.mjs`,
+      bundlePath: join(BUNDLE, "bridge.mjs"),
       relativePath: "bridge.mjs",
     });
   });
@@ -624,7 +628,7 @@ describe("the bootstrap file grammar", () => {
       classifyBootstrapPath(`${BOOT}/.bootstrap-claude-code-1.ok`, ctx()),
     ).toEqual({
       kind: "session-overlay",
-      overlayPath: `${OVERLAY}/.bootstrap-claude-code-1.ok`,
+      overlayPath: join(OVERLAY, ".bootstrap-claude-code-1.ok"),
     });
   });
 

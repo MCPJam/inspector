@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, symlink, writeFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, parse, sep } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PathConfinementError, confinePath } from "../confine.js";
 
@@ -93,15 +93,22 @@ describe("confinePath", () => {
     // the old offset the path resolved inside `/tmp` and was accepted; with
     // the fix it stays `/ttmp/...` and is rejected. Asserting against a root
     // set that excludes both spellings would pass either way.
-    const tmpRoot = await realpath("/tmp");
+    // The top-level directory holding the temp dir: `/tmp` on Linux, a drive's
+    // first directory on Windows, where `D:\` ends in a separator the same way.
+    const temp = await realpath(tmpdir());
+    const { root } = parse(temp);
+    const top = join(root, temp.slice(root.length).split(sep)[0]!);
+    const name = basename(top);
     await expect(
-      confinePath("/ttmp/definitely-not-here", { roots: [tmpRoot] }),
+      confinePath(join(root, `${name[0]}${name}`, "definitely-not-here"), {
+        roots: [top],
+      }),
     ).rejects.toThrow(PathConfinementError);
     // The same shape one character shorter really is inside, so the test is
     // measuring the slice and not simply a missing directory.
     await expect(
-      confinePath(`${tmpRoot}/definitely-not-here`, { roots: [tmpRoot] }),
-    ).resolves.toBe(`${tmpRoot}/definitely-not-here`);
+      confinePath(join(top, "definitely-not-here"), { roots: [top] }),
+    ).resolves.toBe(join(top, "definitely-not-here"));
   });
 
   it("rejects a read THROUGH a symlink that leaves the root", async () => {
