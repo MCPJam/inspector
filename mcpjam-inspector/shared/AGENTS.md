@@ -15,9 +15,7 @@ its subpaths by package name, and packages that run in both browser and Node.
   `npm run lint -w @mcpjam/inspector`.
   Tests are exempt, and so is `vitest.config.ts`, which only Node loads.
 - No Node built-ins, as `node:fs` or bare `fs`. Same lint rule.
-- No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Same lint rule. The
-  three existing imports are suppressed in `eslint-suppressions.json`; do not
-  add entries.
+- No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Same lint rule.
 
 ## Rules
 

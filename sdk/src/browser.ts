@@ -537,6 +537,13 @@ export type {
   OAuthProtectedResourceMetadata,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
+// Zod schemas, not the Standard Schema validators the client exports, so a
+// browser caller can compose them into its own zod objects.
+export {
+  ContentBlockSchema,
+  IconSchema,
+  ResourceLinkSchema,
+} from "@modelcontextprotocol/core";
 
 export {
   DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,

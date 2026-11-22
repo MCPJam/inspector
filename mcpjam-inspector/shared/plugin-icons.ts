@@ -1,4 +1,4 @@
-import { IconSchema } from "@modelcontextprotocol/sdk/types.js";
+import { IconSchema } from "@mcpjam/sdk/browser";
 import { z } from "zod";
 
 const iconSchema = z.strictObject({
