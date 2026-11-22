@@ -1,11 +1,13 @@
 ---
 title: "MCPJam Docs"
-description: "Test, debug, and evaluate MCP servers, MCP apps, and ChatGPT apps across every major AI client."
+description: "Test, evaluate, and debug your MCP server across every major AI client."
 icon: "book-open"
 mode: "wide"
 ---
 
-MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible. Run evals on test cases, track accuracy over time, and gate regressions before they reach production.
+MCPJam is the **open-source testing and evaluations platform for developers building on MCP**. Connect an MCP server in <strong className="soft-emphasis">under 2 minutes</strong> to see how your server performs across ChatGPT, Claude, and 16 other major AI clients. Run <strong className="soft-emphasis">locally</strong> or in MCPJam's <strong className="soft-emphasis">hosted app</strong>.
+
+Developers can use MCPJam to test MCP tools and capabilities like MCP Apps, MCP Tasks, and WebMCP; see full traces and JSON-RPC responses on every session, and build durable evals to ensure reliability on every deployment.
 
 <Frame>
   <img
@@ -22,55 +24,125 @@ MCPJam is the open-source testing and evaluations platform for developers shippi
   />
 </Frame>
 
-## Choose your tool
+## Where to run MCPJam
 
-MCPJam comes as three tools: **Inspector**, an interactive app for testing and debugging servers by hand; the **CLI**, for your shell and CI; and the **SDK**, for your test suite.
+MCPJam offers five interfaces for testing your MCP server. Choose the option that best matches your workflows.
 
-### Inspector
-
-Open the Inspector in your browser, from your terminal, as a desktop app, or in Docker. The web app needs no install but only reaches HTTPS servers; the other options also run local STDIO and HTTP servers.
-
-<Card title="Start with Inspector" icon="binoculars" href="/getting-started">
-  New to MCPJam? Open the Inspector, connect a server, and send your first prompt.
-</Card>
-
-<CardGroup cols={2}>
-  <Card title="Web" icon="globe" href="https://app.mcpjam.com">
-    Runs at app.mcpjam.com. No install. HTTPS servers only. Share servers with your team.
+<CardGroup cols={3}>
+  <Card title="MCPJam Inspector" icon="binoculars" href="/getting-started#mcpjam-inspector">
+    Visual app for interactive testing via web app, desktop app, local Inspector, and Docker.
   </Card>
-  <Card title="Terminal" icon="terminal" href="/installation#terminal">
-    Requires Node.js. HTTP/S and local STDIO servers.
-    ```bash
-    npx @mcpjam/inspector@latest
-    ```
+  <Card title="CLI" icon="terminal" href="/getting-started#cli">
+    Command-line testing from your shell, CI, or a coding agent that runs terminal commands.
   </Card>
-  <Card title="macOS" icon="laptop" href="/installation#desktop-app">
-    Desktop app (`.dmg`). HTTP/S and local STDIO servers. No Node.js needed.
+  <Card title="SDK" icon="code" href="/getting-started#sdk">
+    Code-based tools for building unit tests, E2E tests, and evals in TypeScript.
   </Card>
-  <Card title="Windows" icon="monitor" href="/installation#desktop-app">
-    Desktop app (`.exe` installer). HTTP/S and local STDIO servers. No Node.js needed.
+  <Card title="API" icon="braces" href="/getting-started#api">
+    HTTP endpoints for running tests from CI, scripts, or agents you build.
   </Card>
-  <Card title="Docker" icon="container" href="/installation#docker">
-    Pull from Docker Hub. Reach host servers through `host.docker.internal`.
+  <Card title="MCP server" icon="plug" href="/getting-started#mcp-server">
+    Hosted and local MCP servers for users in chat-style AI clients like Claude and Cursor.
   </Card>
 </CardGroup>
 
-### CLI and SDK
+### Comparison
 
-<CardGroup cols={2}>
-  <Card title="CLI" icon="terminal" href="/cli/overview">
-    **In your shell or CI.** Connectivity, OAuth, conformance, and tool runs with JUnit/JSON output. Tests local servers over STDIO (`--command`) and HTTP (`--url`).
-    ```bash
-    npm i -g @mcpjam/cli
-    ```
-  </Card>
-  <Card title="SDK" icon="code" href="/sdk">
-    **In your test suite.** Unit tests, e2e tests, and evals in TypeScript with Jest or Vitest. Spawns local STDIO servers or connects over HTTP.
-    ```bash
-    npm install @mcpjam/sdk
-    ```
-  </Card>
-</CardGroup>
+<div className="compare-ways">
+<table>
+  <thead>
+    <tr>
+      <th colSpan={2}>Interface</th>
+      <th>Features supported</th>
+      <th>MCP servers supported</th>
+      <th>Where it runs</th>
+      <th>What you need</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td rowSpan={4}><strong><a href="/getting-started#mcpjam-inspector">MCPJam Inspector</a></strong></td>
+      <td>Web app</td>
+      <td>Playground, OAuth Debugger, Evals, Swarm, MCP Inspector</td>
+      <td>HTTPS</td>
+      <td>MCPJam's hosted service</td>
+      <td>A browser</td>
+    </tr>
+    <tr>
+      <td>Desktop app</td>
+      <td>Playground, OAuth Debugger, Evals, Swarm, MCP Inspector</td>
+      <td>HTTP, HTTPS, and local STDIO</td>
+      <td>Your machine</td>
+      <td>Mac or Windows download</td>
+    </tr>
+    <tr>
+      <td>Local Inspector</td>
+      <td>Playground, OAuth Debugger, Evals, Swarm, MCP Inspector</td>
+      <td>HTTP, HTTPS, and local STDIO</td>
+      <td>Your machine</td>
+      <td>Node.js</td>
+    </tr>
+    <tr>
+      <td>Docker</td>
+      <td>Playground, OAuth Debugger, Evals, Swarm, MCP Inspector</td>
+      <td>HTTP, HTTPS, and STDIO inside the container</td>
+      <td>Your machine, in a container</td>
+      <td>Docker</td>
+    </tr>
+    <tr>
+      <td colSpan={2}><strong><a href="/cli/overview">CLI</a></strong></td>
+      <td>Evals, Swarm, Conformance, MCP Inspector</td>
+      <td>HTTP, HTTPS, and local STDIO</td>
+      <td>Your machine or CI</td>
+      <td>Node.js, plus MCPJam sign-in or API key for evals</td>
+    </tr>
+    <tr>
+      <td colSpan={2}><strong><a href="/sdk">SDK</a></strong></td>
+      <td>Evals, Conformance, MCP Inspector</td>
+      <td>HTTP, HTTPS, and local STDIO</td>
+      <td>Your machine or CI, inside your test suite</td>
+      <td>Node.js 22 or later, plus MCPJam sign-in or API key for evals</td>
+    </tr>
+    <tr>
+      <td colSpan={2}><strong><a href="/reference/public-api">API</a></strong></td>
+      <td>Evals, Swarm, Conformance, MCP Inspector</td>
+      <td>Servers saved in your MCPJam projects</td>
+      <td>MCPJam's hosted service</td>
+      <td>MCPJam API key</td>
+    </tr>
+    <tr>
+      <td rowSpan={2} className="compare-ways-last"><strong><a href="/getting-started#mcp-server">MCP server</a></strong></td>
+      <td>Hosted</td>
+      <td>Evals, MCP Inspector</td>
+      <td>Servers saved in your MCPJam projects</td>
+      <td>MCPJam's hosted service</td>
+      <td>MCP client and MCPJam sign-in</td>
+    </tr>
+    <tr>
+      <td>Local</td>
+      <td>MCP Inspector</td>
+      <td>HTTP, HTTPS, and local STDIO</td>
+      <td>Your machine</td>
+      <td>MCP client and Node.js</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+## Features at a glance
+
+<div className="features-glance">
+
+| Capability | Description |
+| --- | --- |
+| **[Playground](/inspector/playground)** | Visual chat interface for interactively prompting, rendering UI widgets, and comparing AI clients' responses side-by-side, with full conversation traces and raw JSON messages. |
+| **[OAuth Debugger](/inspector/guided-oauth)** | Visual debugger for OAuth, XAA, and EMA flows that walks through step-by-step requests and responses to pinpoint failures. |
+| **[Evals](/inspector/evals)** | Durable evaluations with configurable test suites, cases, assertions, and evaluators that can be integrated in CI/CD. |
+| **Swarm** | Synthetic user testing that runs a swarm of configurable test agents on multi-turn journeys to test how different user personas actually interact with MCP servers. |
+| **[Conformance](/cli/overview#local-mcp-testing)** | Protocol, OAuth, MCP Apps, and MCP Tasks conformance checks, with JSON or JUnit reports. |
+| **[MCP Inspector](/inspector/tools-prompts-resources)** | Environment for manually invoking and inspecting MCP tools, resources, MCP Tasks, MCP Events, and WebMCP. |
+
+</div>
 
 ## What you can build
 
@@ -106,20 +178,6 @@ Open the Inspector in your browser, from your terminal, as a desktop app, or in 
     [Hosted overview →](/hosted/overview)
   </Accordion>
 </AccordionGroup>
-
-## Capabilities at a glance
-
-| Capability | Description |
-| --- | --- |
-| Playground | IDE-style workspace combining chat, manual tool calls, widget rendering, Chat/Trace/Raw views, and multi-model and multi-host compare. OpenAI Apps SDK and MCP App UIs, text tools, Chrome DevTools-style widget emulator. [Read more](/inspector/playground) |
-| OAuth Debugger | Guided MCP OAuth conformance checks: protocol versions 03-26, 06-18, 11-25, 2026-07-28 (Latest); DCR, client pre-registration, CIMD. [Read more](/inspector/guided-oauth) |
-| MCP Server Debugging | Manually run tools, resources, templates, and elicitation; full JSON-RPC logs. |
-| Skills | Skills in the Playground, read from your local filesystem or served by connected MCP servers. [Read more](/inspector/skills) |
-| Projects | Shared server groups with real-time team sync. [Read more](/inspector/projects) |
-| Evals | Test cases with expected tool calls, run across LLMs, metrics. [Read more](/inspector/evals) |
-| CLI | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](/cli/overview) |
-| SDK | Programmatic access to MCPJam for custom tooling, scripting, and integrations. [Read more](/sdk) |
-| CI/CD | Run MCPJam checks and evals in GitHub Actions and other CI systems to gate PRs on regressions. [Read more](/cli/ci) |
 
 ## Get help
 

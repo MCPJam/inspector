@@ -52,7 +52,7 @@
               "index",
               "getting-started",
               {
-                "group": "Choose where to run",
+                "group": "MCPJam Inspector",
                 "pages": ["installation", "hosted/overview"]
               },
               "inspector/connecting-servers"
