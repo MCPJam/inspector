@@ -93,8 +93,11 @@ test("writeCredentialsFile writes versioned JSON with secret-safe permissions", 
   );
 
   assert.equal(writtenPath, filePath);
-  const fileMode = (await stat(filePath)).mode & 0o777;
-  assert.equal(fileMode, 0o600);
+  // Windows ignores the requested mode and stat reports 0o666 for any
+  // writable file, so the permission bits are only meaningful on POSIX.
+  if (process.platform !== "win32") {
+    assert.equal((await stat(filePath)).mode & 0o777, 0o600);
+  }
 
   const payload = JSON.parse(await readFile(filePath, "utf8"));
   assert.deepEqual(payload, {
@@ -116,8 +119,9 @@ test("writeCredentialsFile accepts oauth conformance results", async () => {
 
   await writeCredentialsFile(filePath, createOAuthConformanceResult(), NOW);
 
-  const fileMode = (await stat(filePath)).mode & 0o777;
-  assert.equal(fileMode, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal((await stat(filePath)).mode & 0o777, 0o600);
+  }
   const payload = JSON.parse(await readFile(filePath, "utf8"));
   assert.deepEqual(payload, {
     version: 1,

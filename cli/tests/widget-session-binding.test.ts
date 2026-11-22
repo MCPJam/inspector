@@ -122,7 +122,11 @@ test("saved widget operations keep their project, server and fresh credential ac
     const bindingFile = path.join(home, "mcpjam/widget-sessions", `${id}.json`);
     const saved = await readFile(bindingFile, "utf8");
     assert.ok(!saved.includes(expectedCredential));
-    assert.equal((await stat(bindingFile)).mode & 0o777, 0o600);
+    // Windows ignores the requested mode and stat reports 0o666 for any
+    // writable file, so the bits are only meaningful on POSIX.
+    if (process.platform !== "win32") {
+      assert.equal((await stat(bindingFile)).mode & 0o777, 0o600);
+    }
     expectedCredential = "sk_current_fixture";
     process.env.MCPJAM_API_KEY = expectedCredential;
     const control = { sessionId: id, timeoutMs: 1000 };
