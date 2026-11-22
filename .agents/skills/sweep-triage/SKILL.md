@@ -11,8 +11,9 @@ a sweep's output.
 
 ## Run the sweep
 
-From the repo root, with an instance started by `start` (or `--base-url` and
-`--token` for one you started yourself):
+From the repo root, with an instance running and the driver pointed at it
+(`MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`, as `run-inspector`
+describes):
 
 ```bash
 node mcpjam-inspector/scripts/inspector-driver.mjs sweep
@@ -50,9 +51,8 @@ under which it runs. Then put the cause in one of three groups.
   replays that guest to every later page, but a failed mint is not replayed,
   so every page of a failing run asks again, and each new driver run or
   manual reload outside the driver mints a fresh guest. If later surfaces fail with
-  navigation errors after earlier ones passed, run
-  `node mcpjam-inspector/scripts/inspector-driver.mjs status`; `NOT running`
-  means the instance died, and its log path is printed. Fix the environment
+  navigation errors after earlier ones passed, check the launcher's terminal:
+  the instance may have died, and its output says why. Fix the environment
   and sweep again before you triage anything else.
 - **Bug.** The app makes a request it knows cannot succeed in this mode, or
   fails to handle an error it could handle without a console or network
