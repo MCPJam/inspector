@@ -53,14 +53,18 @@ import type {
   MCPClientCheckDefinition,
   MCPConformanceConfig,
   MCPConformanceResult,
-  MCPReadinessWarning,
+  MCPReadinessOutcome,
   MCPServerSurfaceSnapshot,
   SurfaceListing,
   NormalizedMCPConformanceConfig,
   RawHttpCheckContext,
 } from "./types.js";
 import { MCP_CHECK_CATEGORIES } from "./types.js";
-import { collectClientReadiness, collectRawReadiness } from "./readiness.js";
+import {
+  collectClientAdvice,
+  collectRawAdvice,
+  splitReadinessOutcomes,
+} from "./readiness.js";
 import { WireObservationRecorder } from "./wire-observations.js";
 import { createCapturingFetch } from "./raw-capture.js";
 import {
@@ -299,7 +303,7 @@ async function runClientChecks(
   checks: MCPCheckResult[];
   config: NormalizedMCPConformanceConfig;
   surface?: MCPServerSurfaceSnapshot;
-  readiness: MCPReadinessWarning[];
+  readiness: MCPReadinessOutcome[];
   /**
    * An Auto run's connection was refused for credentials before the era was
    * negotiated. `checks` then already holds every selected check, client and
@@ -421,7 +425,7 @@ async function runClientChecks(
 
         // Readiness is advisory and must not perturb the verdict, so it is
         // gathered before the checks run and never consulted again.
-        const readiness = await collectClientReadiness(ctx, surface);
+        const readiness = await collectClientAdvice(ctx, surface);
 
         if (selectedClientChecks.length === 0) {
           return { checks: [], config: effectiveConfig, surface, readiness };
@@ -682,7 +686,7 @@ export class MCPConformanceTest {
         runSecurityChecks(rawContext, rawSelection),
         runTransportChecks(rawContext, rawSelection),
         runModernChecks(rawContext, rawSelection),
-        collectRawReadiness(rawContext),
+        collectRawAdvice(rawContext),
       ]),
       this.config.signal
     );
@@ -757,7 +761,7 @@ export class MCPConformanceTest {
           : buildSummary(scored),
       durationMs: Date.now() - startedAt,
       categorySummary,
-      readiness: [...clientRun.readiness, ...rawReadiness],
+      ...splitReadinessOutcomes([...clientRun.readiness, ...rawReadiness]),
       profile: buildConformanceProfileStamp({
         profile,
         checks,

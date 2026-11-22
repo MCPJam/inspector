@@ -5,6 +5,7 @@ import type {
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
 import {
+  couldNotRunResult,
   eraSkipMessage,
   failedResult,
   passedResult,
@@ -18,6 +19,7 @@ import {
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  unsupportedVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 import { hasWireField } from "../raw-capture.js";
@@ -59,7 +61,7 @@ const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<RawHttpResult> {
+): Promise<RawHttpResult | { unsupportedVersion: string }> {
   if (ctx.config.era === "modern") {
     const version =
       ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
@@ -76,7 +78,12 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId } = await legacyInitialize(ctx);
+  const { sessionId, unsupportedVersion } = await legacyInitialize(ctx);
+  if (unsupportedVersion !== undefined) {
+    // The handshake did not end in a version this client can speak, so the
+    // probe is not sent: there is no session to send it on.
+    return { unsupportedVersion };
+  }
   return await rawRequest(ctx, {
     headers: legacyHeaders({ sessionId }),
     body: {
@@ -118,6 +125,16 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
+    if ("unsupportedVersion" in response) {
+      results.push(
+        couldNotRunResult(
+          PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
+          unsupportedVersionStop(response.unsupportedVersion),
+          { negotiatedProtocolVersion: response.unsupportedVersion },
+        ),
+      );
+      return results;
+    }
     // `jsonRpcError` reads JSON and SSE bodies alike off the capture, so the
     // check never has to know how the server framed its answer.
     const rpcError = jsonRpcError(response);

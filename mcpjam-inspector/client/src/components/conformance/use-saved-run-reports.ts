@@ -30,6 +30,7 @@ export type SavedReportCase = {
 export type SavedReportJson = {
   groups?: Array<{ cases?: SavedReportCase[] }>;
   advisories?: unknown;
+  passedAdvisories?: unknown;
 };
 
 /** Read one suite's report from its link, once per suite. */
@@ -50,7 +51,9 @@ export function useSavedRunReports(
   // Keyed by run too: the page can move to another run without remounting.
   const cache = useRef(new Map<string, Promise<SavedReportJson>>());
   const [cases, setCases] = useState<Record<string, SavedReportCase[]>>({});
-  const [advisories, setAdvisories] = useState<Record<string, unknown>>({});
+  const [advisories, setAdvisories] = useState<
+    Record<string, Pick<SavedReportJson, "advisories" | "passedAdvisories">>
+  >({});
   const loadReport = useCallback<LoadReport>(
     (suiteKind, url) => {
       const key = `${runId}:${suiteKind}`;
@@ -70,7 +73,13 @@ export function useSavedRunReports(
       pending.then(
         // Whichever caller loads it, page or suite row, the advice shows.
         (json) => {
-          setAdvisories((current) => ({ ...current, [key]: json.advisories }));
+          setAdvisories((current) => ({
+            ...current,
+            [key]: {
+              advisories: json.advisories,
+              passedAdvisories: json.passedAdvisories,
+            },
+          }));
           setCases((current) => ({
             ...current,
             [key]: (json.groups ?? []).flatMap((group) => group.cases ?? []),
@@ -110,7 +119,7 @@ export function useSavedRunReports(
   const advice = reportAdviceGroups(
     reports.map((report) => ({
       suiteKind: report.suiteKind,
-      advisories: advisories[`${runId}:${report.suiteKind}`],
+      ...advisories[`${runId}:${report.suiteKind}`],
     })),
   );
   return {
