@@ -19,6 +19,20 @@ export interface RegionServerOptions {
   listingsWithoutTheMark?: number;
   /** Refuse every call with `-32020`, whatever headers it carries. */
   alwaysRefuse?: boolean;
+  /**
+   * Also mark a `zone` argument with the same header name as `region`. The
+   * spec does not allow two arguments to share one, so the whole schema is
+   * invalid and a client has no valid header to build from it.
+   */
+  duplicateMark?: boolean;
+  /**
+   * Break one `tools/list`, counted from 1: answer a page with no `tools`
+   * array (`malformed`), or do not answer at all (`unreachable`, which makes
+   * the scripted `fetch` reject as a dropped connection would).
+   */
+  brokenListing?: { nth: number; how: "malformed" | "unreachable" };
+  /** Send one log notification along with every refusal. */
+  logOnRefusal?: boolean;
 }
 
 export interface RegionServerRequest {
@@ -32,10 +46,20 @@ export interface RegionServerRequest {
 export interface RegionServerAnswer {
   status: number;
   body: Record<string, unknown>;
+  /** Notifications the server streams before `body`, when it has any. */
+  notifications?: Array<Record<string, unknown>>;
 }
 
 /** One line per request, for asserting what reached the server and in what order. */
 export type RegionServerLog = string[];
+
+/** Thrown by the server function for a `tools/list` it does not answer. */
+export class ListingUnreachable extends Error {
+  constructor() {
+    super("connection reset");
+    this.name = "ListingUnreachable";
+  }
+}
 
 export function createRegionServer(
   options: RegionServerOptions,
@@ -64,6 +88,17 @@ export function createRegionServer(
         id: request.id,
         error: { code: -32020, message },
       },
+      ...(options.logOnRefusal
+        ? {
+            notifications: [
+              {
+                jsonrpc: "2.0",
+                method: "notifications/message",
+                params: { level: "info", data: "refusing the call" },
+              },
+            ],
+          }
+        : {}),
     });
 
     switch (request.method) {
@@ -75,6 +110,13 @@ export function createRegionServer(
         });
       case "tools/list": {
         listings += 1;
+        if (options.brokenListing?.nth === listings) {
+          log.push(`tools/list (${options.brokenListing.how})`);
+          if (options.brokenListing.how === "unreachable") {
+            throw new ListingUnreachable();
+          }
+          return ok({ notTools: true });
+        }
         const marked = listings > (options.listingsWithoutTheMark ?? 0);
         log.push(`tools/list (${marked ? "with" : "without"} the mark)`);
         return ok({
@@ -88,6 +130,9 @@ export function createRegionServer(
                     type: "string",
                     ...(marked ? { "x-mcp-header": "Region" } : {}),
                   },
+                  ...(options.duplicateMark
+                    ? { zone: { type: "string", "x-mcp-header": "region" } }
+                    : {}),
                 },
               },
               outputSchema: {
@@ -130,5 +175,40 @@ export function createRegionServer(
           },
         };
     }
+  };
+}
+
+/**
+ * The region server as a scripted `fetch`. An answer with notifications goes
+ * out as an event stream, the notifications first and the answer last, the
+ * way a server streams a response.
+ */
+export function regionServerFetch(
+  options: RegionServerOptions,
+  log: RegionServerLog
+): typeof fetch {
+  const server = createRegionServer(options, log);
+  return async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    const answer = server({
+      method: body.method,
+      id: body.id,
+      params: body.params,
+      paramRegion:
+        new Headers(init?.headers).get("mcp-param-region") ?? undefined,
+    });
+    if (answer.notifications) {
+      const frames = [...answer.notifications, answer.body]
+        .map((message) => `data: ${JSON.stringify(message)}\n\n`)
+        .join("");
+      return new Response(frames, {
+        status: answer.status,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    }
+    return new Response(JSON.stringify(answer.body), {
+      status: answer.status,
+      headers: { "Content-Type": "application/json" },
+    });
   };
 }

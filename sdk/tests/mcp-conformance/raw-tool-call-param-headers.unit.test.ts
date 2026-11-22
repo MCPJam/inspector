@@ -23,8 +23,8 @@ import {
 import type { MCPCheckId } from "../../src/mcp-conformance/types.js";
 import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
 import {
-  createRegionServer,
   REGION_TOOL,
+  regionServerFetch,
   type RegionServerLog,
   type RegionServerOptions,
 } from "../support/region-tool-server.js";
@@ -205,27 +205,6 @@ describe("mirroredToolCall", () => {
   });
 });
 
-function scriptedFetch(
-  options: RegionServerOptions,
-  log: RegionServerLog
-): typeof fetch {
-  const server = createRegionServer(options, log);
-  return async (_input, init) => {
-    const body = JSON.parse(String(init?.body));
-    const { status, body: payload } = server({
-      method: body.method,
-      id: body.id,
-      params: body.params,
-      paramRegion:
-        new Headers(init?.headers).get("mcp-param-region") ?? undefined,
-    });
-    return new Response(JSON.stringify(payload), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
-}
-
 const PROBE = { toolName: REGION_TOOL, arguments: { region: "us-west1" } };
 
 async function runCheck(
@@ -239,7 +218,7 @@ async function runCheck(
     fixtures: { toolCalls: [PROBE] },
     inputRequiredProbe: PROBE,
     logProbe: PROBE,
-    fetchFn: scriptedFetch(options, log),
+    fetchFn: regionServerFetch(options, log),
   });
   const results = await runModernChecks(
     { config, serverUrl: config.serverUrl, fetchFn: config.fetchFn },

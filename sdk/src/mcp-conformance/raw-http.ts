@@ -28,9 +28,9 @@ import {
   LOG_LEVEL_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/client";
-import { encodeMcpHeaderValue } from "../mcp-client-manager/mcp-header-mirror.js";
 import {
   buildMcpParamHeaders,
+  encodeMcpHeaderValue,
   scanXMcpHeaderDeclarations,
 } from "../mcp-client-manager/mcp-header-mirror.js";
 import type { RawHttpCheckContext } from "./types.js";
@@ -350,6 +350,14 @@ export function mcpParamHeaders(
   return scan.valid ? buildMcpParamHeaders(scan.declarations, args) : {};
 }
 
+/** Whether the server refused the request's headers: HTTP 400, `-32020`. */
+export function isHeaderMismatch(result: RawHttpResult): boolean {
+  return (
+    result.status === 400 &&
+    jsonRpcError(result)?.code === HEADER_MISMATCH_CODE
+  );
+}
+
 /**
  * Send a normal `tools/call` the way a conforming client does: with the
  * `Mcp-Param-*` headers the tool asks for, and one more try when the server
@@ -375,14 +383,16 @@ export async function mirroredToolCall(options: {
     attempt: 0 | 1
   ) => Promise<RawHttpResult>;
 }): Promise<RawHttpResult> {
-  const first = await options.send(
-    mcpParamHeaders(await options.inputSchema(), options.args),
-    0
-  );
-  if (
-    first.status !== 400 ||
-    jsonRpcError(first)?.code !== HEADER_MISMATCH_CODE
-  ) {
+  let known: unknown;
+  try {
+    known = await options.inputSchema();
+  } catch {
+    // The listing could not be read, so the schema is unknown. The call still
+    // goes out, with no `Mcp-Param-*` headers, as it would for an unlisted tool.
+    known = undefined;
+  }
+  const first = await options.send(mcpParamHeaders(known, options.args), 0);
+  if (!isHeaderMismatch(first)) {
     return first;
   }
 

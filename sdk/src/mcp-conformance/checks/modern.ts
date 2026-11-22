@@ -51,6 +51,7 @@ import {
   MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
+  isHeaderMismatch,
   mirroredToolCall,
   rawRequest,
   walkToolsList,
@@ -494,14 +495,21 @@ interface ModernRunState {
   missingResource?: Promise<{ uri: string; result: RawHttpResult }>;
   /** One raw `tools/list` walk, shared by every check that needs tool schemas. */
   toolsWalk?: Promise<ToolsListWalk>;
+  /**
+   * How many times the tools were listed again after a refused call. Once it
+   * is not zero, `toolsWalk` is newer than the client's own snapshot.
+   */
+  toolsRelisted: number;
 }
 
-function walkToolsOnce(
+/** One raw `tools/list` walk, recorded like every other probe. */
+function toolsWalk(
   ctx: RawHttpCheckContext,
-  state: ModernRunState
+  state: ModernRunState,
+  startId: number
 ): Promise<ToolsListWalk> {
-  state.toolsWalk ??= walkToolsList({
-    startId: 7960,
+  return walkToolsList({
+    startId,
     request: ({ id, cursor }) =>
       track(
         state,
@@ -512,6 +520,13 @@ function walkToolsOnce(
         })
       ),
   });
+}
+
+function walkToolsOnce(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<ToolsListWalk> {
+  state.toolsWalk ??= toolsWalk(ctx, state, 7960);
   return state.toolsWalk;
 }
 
@@ -524,42 +539,48 @@ const RETRY_ID_OFFSET = 10_000;
  * after a fresh `tools/list` when the server refuses them (`-32020`).
  *
  * Every attempt is recorded, so callers do not `track` the result again.
+ * `attempts`, when given, receives each answer in order: the returned one is
+ * the last, and a check that must not miss anything the server said on the
+ * refused first try reads them all.
  */
 async function modernToolCall(
   ctx: RawHttpCheckContext,
   state: ModernRunState,
-  options: Parameters<typeof modernProbe>[1] & { name: string }
+  options: Parameters<typeof modernProbe>[1] & { name: string },
+  attempts?: RawHttpResult[]
 ): Promise<RawHttpResult> {
   const toolName = options.name;
   return await mirroredToolCall({
     args: options.params?.arguments,
     inputSchema: () => toolInputSchema(ctx, state, toolName),
     refreshInputSchema: async () => {
-      // Replace the shared walk too, so later checks read the new listing.
-      state.toolsWalk = walkToolsList({
-        startId: 7960 + RETRY_ID_OFFSET,
-        request: ({ id, cursor }) =>
-          track(
-            state,
-            modernProbe(ctx, {
-              id,
-              method: "tools/list",
-              ...(cursor !== undefined ? { params: { cursor } } : {}),
-            })
-          ),
-      });
-      const walk = await state.toolsWalk;
+      const walk = await toolsWalk(
+        ctx,
+        state,
+        7960 + RETRY_ID_OFFSET + state.toolsRelisted * 100
+      );
+      // Only a listing that was read to the end replaces the one the run
+      // already has. A walk that timed out throws above and never gets here; a
+      // cut-off or malformed one is used for this retry and then dropped, so
+      // later checks keep reading the good listing.
+      if (walk.termination === "complete" && !walk.malformedPage) {
+        state.toolsWalk = Promise.resolve(walk);
+        state.toolsRelisted += 1;
+      }
       return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
     },
-    send: (paramHeaders, attempt) =>
-      track(
+    send: async (paramHeaders, attempt) => {
+      const result = await track(
         state,
         modernProbe(ctx, {
           ...options,
           id: options.id + attempt * RETRY_ID_OFFSET,
           paramHeaders,
         })
-      ),
+      );
+      attempts?.push(result);
+      return result;
+    },
   });
 }
 
@@ -572,6 +593,21 @@ async function toolInputSchema(
   state: ModernRunState,
   toolName: string
 ): Promise<unknown> {
+  // A raw listing this run already read is newer than the client's snapshot,
+  // so it wins. Above all the one read again after a refused call: otherwise
+  // every later call would build its headers from the stale schema, be
+  // refused, and list the tools once more.
+  if (state.toolsWalk) {
+    try {
+      const walk = await state.toolsWalk;
+      const entry = walk.tools.find((tool) => tool.name === toolName);
+      if (entry) return entry.inputSchema;
+      // A complete fresh listing without the tool means the tool is gone.
+      if (state.toolsRelisted > 0) return undefined;
+    } catch {
+      // That walk failed. The client's snapshot below is the next best source.
+    }
+  }
   const listed = ctx.surface?.tools.find((tool) => tool.name === toolName);
   if (listed) return listed.inputSchema;
   try {
@@ -1522,6 +1558,24 @@ async function runUndeclaredCapabilityCheck(
     clientCapabilities: {},
   });
 
+  // Still refused for its headers, after the retry: the request never
+  // reached the tool, so nothing here is about an undeclared capability.
+  // Grading it would fail the server with "expected -32021, got -32020".
+  if (isHeaderMismatch(result)) {
+    const mismatch = jsonRpcError(result);
+    return couldNotRunResult(
+      meta,
+      `The server refused the call to "${probe.toolName}" for its headers (JSON-RPC -32020${
+        mismatch?.message ? `: ${mismatch.message}` : ""
+      }), so the request never reached the tool and the undeclared-capability path was never exercised`,
+      {
+        httpStatus: result.status,
+        jsonRpcCode: mismatch?.code,
+        jsonRpcMessage: mismatch?.message,
+      }
+    );
+  }
+
   const payload = jsonRpcResult(result);
   if (payload?.resultType === "input_required") {
     return failedResult(
@@ -2308,14 +2362,25 @@ async function captureLogProbe(
   state: ModernRunState,
   meta: CheckMeta,
   options: Parameters<typeof modernProbe>[1]
-): Promise<{ response: RawHttpResult } | { unavailable: MCPCheckResult }> {
+): Promise<
+  | { response: RawHttpResult; attempts: RawHttpResult[] }
+  | { unavailable: MCPCheckResult }
+> {
   try {
-    return {
-      response:
-        options.method === "tools/call" && options.name !== undefined
-          ? await modernToolCall(ctx, state, { ...options, name: options.name })
-          : await track(state, modernProbe(ctx, options)),
-    };
+    // A tool call may be sent twice (refused for its headers, then retried).
+    // `attempts` keeps both answers; `response` is the last one.
+    const attempts: RawHttpResult[] = [];
+    if (options.method === "tools/call" && options.name !== undefined) {
+      const response = await modernToolCall(
+        ctx,
+        state,
+        { ...options, name: options.name },
+        attempts
+      );
+      return { response, attempts };
+    }
+    const response = await track(state, modernProbe(ctx, options));
+    return { response, attempts: [response] };
   } catch (error) {
     return {
       unavailable: couldNotRunResult(
@@ -2386,7 +2451,10 @@ async function runLogLevelCheck(
   );
   if ("unavailable" in silent) return silent.unavailable;
 
-  const unrequested = logRecords(silent.response);
+  // Every answer to the silent call counts, a refused first try included: a
+  // log on a request that asked for none is the violation, whether or not the
+  // request went on to succeed.
+  const unrequested = silent.attempts.flatMap(logRecords);
   if (unrequested.length > 0) {
     return failedResult(
       meta,
@@ -3150,7 +3218,7 @@ export async function runModernChecks(
     return results;
   }
 
-  const state: ModernRunState = { observed: [] };
+  const state: ModernRunState = { observed: [], toolsRelisted: 0 };
   let cacheable: Array<{ method: string; result: RawHttpResult }> | undefined;
   const cacheableProbes = async () => {
     cacheable ??= await collectCacheableResults(ctx, state);

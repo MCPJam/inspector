@@ -529,21 +529,6 @@ async function protocolVersionHeaderAdvice(
   );
 }
 
-/**
- * Log level filtering: call the operator's logging tool asking for logs at
- * `logProbe.level` (default `warning`) and look at what comes back.
- *
- * The 2026-07-28 logging page says the server "MAY send" log notifications at
- * or above the requested level. Sending none is allowed, and nothing states
- * lower-level logs as a violation, so both findings are informational. They
- * are still worth showing: the operator told us this tool logs, so silence or
- * lower-level logs usually mean the server's filtering is off.
- *
- * A call that does not complete cleanly proves nothing about filtering, so it
- * yields no advice. Modern era only, and only when a `logProbe` (or this
- * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
- * tool logs, and advice never calls a tool on a guess.
- */
 /** The `inputSchema` `toolName` declares in a `tools/list` read right now. */
 async function listedInputSchema(
   ctx: RawHttpCheckContext,
@@ -568,6 +553,21 @@ async function listedInputSchema(
   return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
 }
 
+/**
+ * Log level filtering: call the operator's logging tool asking for logs at
+ * `logProbe.level` (default `warning`) and look at what comes back.
+ *
+ * The 2026-07-28 logging page says the server "MAY send" log notifications at
+ * or above the requested level. Sending none is allowed, and nothing states
+ * lower-level logs as a violation, so both findings are informational. They
+ * are still worth showing: the operator told us this tool logs, so silence or
+ * lower-level logs usually mean the server's filtering is off.
+ *
+ * A call that does not complete cleanly proves nothing about filtering, so it
+ * yields no advice. Modern era only, and only when a `logProbe` (or this
+ * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
+ * tool logs, and advice never calls a tool on a guess.
+ */
 async function logLevelFilteringAdvice(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessOutcome | undefined> {
