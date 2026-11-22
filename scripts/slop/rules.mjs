@@ -131,6 +131,127 @@ const FILLER =
 const VAGUE_ERROR =
   /^(?:oops|whoops|uh[- ]oh|something went wrong|an? (?:unexpected |unknown )?error (?:has )?occurred|unknown error|error occurred)\b/i;
 
+/**
+ * Comments blanked out, line breaks kept. Comments cite issues (`#5104`) and
+ * describe colors without rendering them. A `//` after a `:` or a quote is
+ * left alone so URLs in strings survive.
+ */
+function stripComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "))
+    .replace(/(^|[^:"'`])\/\/[^\n]*/gm, "$1");
+}
+
+const HEX = "#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\\w-])";
+
+/**
+ * A hex color in a string whose role is a color, alone or after a space
+ * (`"1px solid #e4e4e7"`).
+ */
+const HEX_VALUE = new RegExp(`(?<![^\\s(,:[_])${HEX}`, "g");
+
+/** A string that is one hex color and nothing else. */
+const HEX_ONLY = new RegExp(`^\\s*${HEX}\\s*$`);
+
+/**
+ * A hex color in any string where CSS or Tailwind holds it: a Tailwind
+ * arbitrary value (`bg-[#fff]`) or a color-bearing CSS declaration
+ * (`border: 1px solid #ccc`, `--host-bg: #000`).
+ */
+const HEX_IN_CSS = new RegExp(
+  `(?:[[_]|(?:^|[\\s;{])(?:--[\\w-]+|[a-z-]*(?:color|background|border|fill|stroke|shadow|outline)[a-z-]*)\\s*:[^;:]*?)${HEX}`,
+  "g",
+);
+
+/** Words in a prop, property or variable name that say it holds colors or classes. */
+const COLOR_WORDS = new Set(
+  "color colors colour colours fill stroke background bg fg foreground border shadow outline ring tint accent palette theme style styles class gradient stop glow hue".split(
+    " ",
+  ),
+);
+
+/** Words in a name that say a `#...` value is a link, an id or a label. */
+const NOT_COLOR_WORDS = new Set(
+  "href to id hash anchor target key label title alt placeholder path url link route selector".split(
+    " ",
+  ),
+);
+
+/**
+ * A color function with a literal first channel; `hsl(var(--x))` is a token.
+ * `_` may precede it, as inside `shadow-[0_1px_2px_rgba(0,0,0,0.3)]`.
+ */
+const COLOR_FUNCTION =
+  /(?<![A-Za-z0-9-])(?:rgba?|hsla?|oklch|oklab|lch|lab|hwb)\(\s*[\d.]/g;
+
+/** A Tailwind color utility on the default palette, with any variant prefix. */
+const PALETTE_CLASS =
+  /(?<![\w-])(?:bg|text|border(?:-[trblxyse])?|ring(?:-offset)?|outline|divide|from|via|to|fill|stroke|decoration|placeholder|caret|accent|shadow)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-(?:50|[1-9]00|950)\b/g;
+
+/**
+ * Other hosts' design tokens, host styles and brand tints (ChatGPT, Claude,
+ * ...), copied verbatim so a widget and its host chrome look as they do
+ * there. They define someone else's palette, so MCPJam's roles cannot
+ * replace them, and adding a host template must not trip the ratchet.
+ */
+const HOST_PALETTE_PATH =
+  /^mcpjam-inspector\/client\/src\/(?:config\/[\w-]+-client-context\.ts$|lib\/client-styles\/|lib\/host-ui-metadata\.ts$)/;
+
+const isClientColorCode = (path) =>
+  CLIENT_PATH.test(path) && !HOST_PALETTE_PATH.test(path);
+
+/**
+ * The lower-case words of the names a string is assigned to (`termBg` gives
+ * `term`, `bg`), from the nearest name out to its statement.
+ */
+function roleWords(node) {
+  const ts = typescript();
+  const words = [];
+  for (let at = node.parent; at && !ts.isStatement(at); at = at.parent) {
+    if (ts.isFunctionLike(at) || ts.isSourceFile(at)) break;
+    const name =
+      ts.isPropertyAssignment(at) ||
+      ts.isJsxAttribute(at) ||
+      ts.isVariableDeclaration(at) ||
+      ts.isParameter(at)
+        ? at.name
+        : ts.isBinaryExpression(at) &&
+            at.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? at.left
+          : undefined;
+    if (!name) continue;
+    const spaced = name.getText().replace(/([a-z\d])([A-Z])/g, "$1 $2");
+    words.push(...spaced.toLowerCase().split(/[^a-z\d]+/).filter(Boolean));
+  }
+  return words;
+}
+
+/**
+ * Literal colors in the strings and template text of a JS/TS/JSX/TSX file.
+ * Comments and JSX text are prose, so "order #4521" there never counts. A
+ * hex counts where CSS holds it, in a string whose name says it holds colors
+ * or classes, or as a whole string unless its name says it is a link, an id
+ * or a label, so `href="#feed"` and `"Order: #4521"` do not count.
+ */
+function countColorLiterals(path, text) {
+  const ts = typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!ts.isStringLiteralLike(node) && !ts.isTemplateLiteralToken(node)) {
+      return;
+    }
+    const value = node.text;
+    const words = roleWords(node);
+    if (words.some((word) => COLOR_WORDS.has(word))) {
+      count += countMatches(value, HEX_VALUE);
+    } else if (HEX_ONLY.test(value)) {
+      if (!words.some((word) => NOT_COLOR_WORDS.has(word))) count += 1;
+    } else count += countMatches(value, HEX_IN_CSS);
+    count += countMatches(value, COLOR_FUNCTION);
+  });
+  return count;
+}
+
 export const RULES = [
   {
     id: "as-any",
@@ -188,6 +309,22 @@ export const RULES = [
     appliesTo: (path) => CLIENT_PATH.test(path),
     fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
     count: (text, path) => countCalls(path, text, TIMERS),
+  },
+  {
+    id: "client-color-literal",
+    label:
+      "literal hex / `rgb()` / `hsl()` / `oklch()` colors in inspector client JS/TS (stylesheets are not read)",
+    appliesTo: isClientColorCode,
+    fix: "Use a role token from DESIGN.md: a Tailwind utility such as `bg-card`, `text-muted-foreground` or `border-border`, or `var(--success)` where a style object or SVG attribute needs a value. A color with no role goes into `design-system/src/tokens.css` first (then `npm run design:sync`).",
+    count: (text, path) => countColorLiterals(path, text),
+  },
+  {
+    id: "client-palette-class",
+    label:
+      "raw Tailwind palette classes (`bg-red-500`) in the inspector client",
+    appliesTo: isClientColorCode,
+    fix: "Use the role class instead: `bg-destructive/10 text-destructive` for errors, `text-success`, `text-warning`, `text-info`, `bg-muted text-muted-foreground` for neutral grays. Roles carry their dark-mode value, so no `dark:` twin is needed.",
+    count: (text) => countMatches(stripComments(text), PALETTE_CLASS),
   },
   {
     id: "eslint-disable",

@@ -138,6 +138,75 @@ describe("rules", () => {
     assert.equal(server["client-timer"], 0);
   });
 
+  it("counts literal colors in client code, not comments or host palettes", () => {
+    const text = [
+      'const style = { color: "#fff", border: "1px solid #E4E4E7" };',
+      'const ring = "rgba(0, 0, 0, 0.5)", fill = "oklch(0.6 0.1 155)";',
+      'const shadow = "shadow-[0_1px_2px_rgba(0,0,0,0.28)] bg-[#303030]";',
+      'const css = `--hp-host-bg: #000;`;',
+      'const token = "hsl(var(--primary))", link = "https://x.dev/#a1";',
+      "<p>What is the status of order #4521?</p>",
+      "// Matches ChatGPT #212121 and rgb(33, 33, 33).",
+      "/* Was a literal `#ae5630`. */",
+    ].join("\n");
+    // `#fff` and `#E4E4E7` in the style object, two functions, the shadow's
+    // rgba and `bg-[#303030]`, and the CSS custom property.
+    assert.equal(
+      count(text, "mcpjam-inspector/client/src/a.tsx")["client-color-literal"],
+      7,
+    );
+    for (const path of [
+      "mcpjam-inspector/server/a.ts",
+      "mcpjam-inspector/client/src/config/chatgpt-client-context.ts",
+      "mcpjam-inspector/client/src/lib/client-styles/built-ins.ts",
+      "mcpjam-inspector/client/src/lib/host-ui-metadata.ts",
+    ]) {
+      assert.equal(count(text, path)["client-color-literal"], 0, path);
+    }
+  });
+
+  it("counts a hex only where a color goes, not in links or copy", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const colors = (line) => count(line, path)["client-color-literal"];
+    for (const line of [
+      '<path fill="#fff" />;',
+      'const COLORS = { ok: "#0f0" };',
+      '<div style={{ backgroundColor: "#abcdef80" }} />;',
+      'const cls = cn("text-[#fff]");',
+      'const termBg = dark ? "#1a1916" : null;',
+      'const TONES = { slate: { dark: "#22262b" } };',
+    ]) {
+      assert.equal(colors(line), 1, line);
+    }
+    for (const line of [
+      '<a href="#feed">Feed</a>;',
+      'const label = "Order: #4521";',
+      '<p title={"Order: #4521"}>Order #4521</p>;',
+      'const color = "#12345";',
+      'navigate({ to: "#add" });',
+    ]) {
+      assert.equal(colors(line), 0, line);
+    }
+  });
+
+  it("counts Tailwind palette classes in client code, not role classes", () => {
+    const text = [
+      'cn("bg-red-500/10 text-red-600 dark:text-red-400", "hover:border-zinc-200");',
+      'const ok = "bg-gradient-to-b from-card to-blue-50/40 ring-offset-slate-950";',
+      'const roles = "bg-destructive/10 text-muted-foreground border-border";',
+      'const scale = "text-2xl bg-white my-red-500 text-red-500x";',
+      "// Was text-zinc-400.",
+    ].join("\n");
+    assert.equal(
+      count(text, "mcpjam-inspector/client/src/a.tsx")["client-palette-class"],
+      6,
+    );
+    assert.equal(
+      count(text, "mcpjam-inspector/server/a.ts")["client-palette-class"],
+      0,
+    );
+  });
+
   it("counts effects and timers only in executable code", () => {
     const path = "mcpjam-inspector/client/src/a.tsx";
     const commented = [
