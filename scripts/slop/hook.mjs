@@ -6,7 +6,8 @@
  *
  *   PreToolUse (Write)        refuse new root files, NOTES-*.md and .spike-* folders
  *   PostToolUse (Edit|Write)  report rules an edit added, and a file growing past FILE_BUDGET lines
- *   UserPromptSubmit          note which untracked files exist as the turn begins
+ *   UserPromptSubmit          note which untracked files exist as the turn begins, and hash
+ *                             the inspector files already changed for the Stop lint
  *   Stop                      run the ratchet over the whole change once before the turn ends,
  *                             counting untracked files only if they appeared during the turn
  *
@@ -22,6 +23,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path, { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { lintChanged, snapshotTurn } from "./lint-stop.mjs";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
 
 export const FILE_BUDGET = 800;
@@ -272,9 +274,11 @@ function runStop(input) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "Stop") return runStop(input);
+  if (input.hook_event_name === "Stop") {
+    return Math.max(runStop(input), lintChanged(input));
+  }
   if (input.hook_event_name === "UserPromptSubmit") {
-    return runPromptSubmit(input);
+    return Math.max(runPromptSubmit(input), snapshotTurn(input));
   }
 
   const filePath = input.tool_input?.file_path;

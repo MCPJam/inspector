@@ -790,6 +790,54 @@ describe("hook paths", async () => {
   });
 });
 
+describe("lint on stop", async () => {
+  const { lintTargets, trimOutput, repeatCheck, MAX_LINES } = await import(
+    "./lint-stop.mjs"
+  );
+
+  it("lints only what the inspector's lint script covers", () => {
+    assert.deepEqual(
+      lintTargets([
+        "mcpjam-inspector/client/src/App.tsx",
+        "mcpjam-inspector/client/src/lib/a.test.ts",
+        "mcpjam-inspector/server/routes/a.ts",
+        "mcpjam-inspector/shared/types.ts",
+        "mcpjam-inspector/server/routes/a.ts",
+        "mcpjam-inspector/client/vite.config.ts",
+        "mcpjam-inspector/client/src/index.css",
+        "mcpjam-inspector/server/views/a.tsx",
+        "mcpjam-inspector/scripts/a.mjs",
+        "sdk/src/index.ts",
+        "",
+      ]),
+      [
+        "client/src/App.tsx",
+        "client/src/lib/a.test.ts",
+        "server/routes/a.ts",
+        "shared/types.ts",
+      ],
+    );
+    assert.deepEqual(lintTargets(["README.md", "sdk/src/a.ts"]), []);
+  });
+
+  it("keeps a short report whole and cuts a long one", () => {
+    assert.equal(trimOutput("a\nb\n"), "a\nb");
+    const long = Array.from({ length: MAX_LINES + 5 }, (_, i) => `line ${i}`);
+    const trimmed = trimOutput(long.join("\n")).split("\n");
+    assert.equal(trimmed.length, MAX_LINES + 1);
+    assert.equal(trimmed[MAX_LINES - 1], `line ${MAX_LINES - 1}`);
+    assert.match(trimmed[MAX_LINES], /^\.\.\. 5 more lines\. Run `npm run lint/);
+  });
+
+  it("reports the same failure on the same tree once, and again otherwise", () => {
+    const first = repeatCheck("a.ts:1 error", "tree", "");
+    assert.equal(first.repeat, false);
+    assert.equal(repeatCheck("a.ts:1 error", "tree", first.seen).repeat, true);
+    assert.equal(repeatCheck("a.ts:2 error", "tree", first.seen).repeat, false);
+    assert.equal(repeatCheck("a.ts:1 error", "edited", first.seen).repeat, false);
+  });
+});
+
 describe("repo hygiene", async () => {
   const { checkChange, parseNameStatus } = await import("./repo-hygiene.mjs");
   const { FILE_BUDGET, GROWTH_ALLOWANCE } = await import("./hook.mjs");
@@ -1113,6 +1161,107 @@ describe("hooks in a worktree", async () => {
       },
     });
     assert.equal(result.status, 0);
+  });
+
+  describe("lint on stop", () => {
+    const lintRepo = makeRepo("lint");
+    const pkg = join(lintRepo, "mcpjam-inspector");
+    const eslintDir = join(pkg, "node_modules/eslint");
+    // Stands in for ESLint: a marker in a file decides the verdict.
+    const installEslint = () => {
+      mkdirSync(join(eslintDir, "bin"), { recursive: true });
+      writeFileSync(join(eslintDir, "package.json"), '{"name":"eslint"}');
+      writeFileSync(
+        join(eslintDir, "bin/eslint.js"),
+        [
+          'const { readFileSync } = require("node:fs");',
+          'const files = process.argv.slice(2).filter((a) => !a.startsWith("--"));',
+          "let failed = false;",
+          "for (const file of files) {",
+          '  const text = readFileSync(file, "utf8");',
+          '  if (text.includes("LINT_CRASH")) { console.error("config broke"); process.exit(2); }',
+          '  if (text.includes("LINT_ERROR")) { console.log(file + ": error"); failed = true; }',
+          "}",
+          "process.exit(failed ? 1 : 0);",
+        ].join("\n"),
+      );
+    };
+    installEslint();
+    mkdirSync(join(pkg, "server"), { recursive: true });
+    writeFileSync(join(lintRepo, ".gitignore"), "node_modules/\n");
+    writeFileSync(join(pkg, "server/old.ts"), "export const o = 1;\n");
+    writeFileSync(join(pkg, "server/wip.ts"), "export const w = 1;\n");
+    git(lintRepo, "add", ".");
+    git(lintRepo, "commit", "-qm", "inspector");
+    git(lintRepo, "update-ref", "refs/remotes/origin/main", "HEAD");
+    const lintHook = join(lintRepo, "scripts/slop/hook.mjs");
+    // The hook keeps its turn state in the temp directory; keep it in ours.
+    const state = join(temp, "lint-state");
+    mkdirSync(state);
+    const lintRun = (event) =>
+      spawnSync("node", [lintHook], {
+        input: JSON.stringify(event),
+        encoding: "utf8",
+        env: { ...process.env, TMPDIR: state, TEMP: state, TMP: state },
+      });
+    const session = `lint-${process.pid}-${Date.now()}`;
+    const event = (name) => ({
+      hook_event_name: name,
+      cwd: lintRepo,
+      session_id: session,
+    });
+    const startTurn = () =>
+      assert.equal(lintRun(event("UserPromptSubmit")).status, 0);
+    const stop = () => lintRun(event("Stop"));
+    const write = (path, text) => writeFileSync(join(pkg, path), text);
+
+    it("leaves the branch's earlier changes and a person's edits alone", () => {
+      write("server/old.ts", "export const o = 2; // LINT_ERROR\n");
+      git(lintRepo, "commit", "-qam", "branch work");
+      write("server/wip.ts", "export const w = 2; // LINT_ERROR\n");
+      write("server/scratch.ts", "export const s = 1; // LINT_ERROR\n");
+      startTurn();
+      const result = stop();
+      assert.equal(result.status, 0);
+      assert.doesNotMatch(result.stderr, /ESLint/);
+    });
+
+    it("lints a file the turn edited, even one untracked before it", () => {
+      write("server/scratch.ts", "export const s = 1;\n");
+      startTurn();
+      write("server/scratch.ts", "export const s = 2; // LINT_ERROR\n");
+      const first = stop();
+      assert.equal(first.status, 2);
+      assert.match(first.stderr, /server\/scratch\.ts: error/);
+      assert.doesNotMatch(first.stderr, /wip\.ts|old\.ts/);
+      // The same report on the same files goes back once.
+      assert.equal(stop().status, 0);
+      // The same report on edited files is new.
+      write("server/scratch.ts", "export const s = 3; // LINT_ERROR\n");
+      assert.equal(stop().status, 2);
+    });
+
+    it("says so when ESLint cannot give a verdict", () => {
+      startTurn();
+      write("server/scratch.ts", "export const s = 4; // LINT_CRASH\n");
+      const crash = stop();
+      assert.equal(crash.status, 0);
+      assert.match(crash.stderr, /ESLint Stop check skipped: config broke/);
+
+      rmSync(eslintDir, { recursive: true, force: true });
+      const missing = stop();
+      assert.equal(missing.status, 0);
+      assert.match(missing.stderr, /ESLint Stop check skipped: Cannot find/);
+      installEslint();
+
+      const unknown = lintRun({
+        hook_event_name: "Stop",
+        cwd: lintRepo,
+        session_id: `${session}-x`,
+      });
+      assert.equal(unknown.status, 0);
+      assert.match(unknown.stderr, /ESLint Stop check skipped: no turn-start/);
+    });
   });
 
   it("stops on tracked changes but not on someone's untracked files", () => {
