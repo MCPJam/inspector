@@ -111,7 +111,11 @@ describe("local rate overrides", () => {
   it("writes only to this machine, readable by this user alone", async () => {
     await store.set({ ...llama, rates: { input: 1, output: 2 } });
 
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits: Node reports 0o666 whatever was asked,
+    // and the file is private through the user profile ACL it inherits.
+    if (process.platform !== "win32") {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
       version: 1,
       revisions: [{ providerKey: "ollama", modelId: "llama3.2" }],
