@@ -51,10 +51,8 @@
             "pages": [
               "index",
               "getting-started",
-              {
-                "group": "Choose where to run",
-                "pages": ["installation", "hosted/overview"]
-              },
+              "installation",
+              "hosted/overview",
               "inspector/connecting-servers"
             ]
           },
