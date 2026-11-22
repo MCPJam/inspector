@@ -79,13 +79,14 @@ export async function checkPluginLaunch(
     return { reason: "working_directory_outside_plugin" };
   }
 
-  // Windows resolves commands through PATHEXT and .cmd shims; there the
-  // spawn's own error names the command.
-  if (process.platform === "win32") return null;
+  const windows = process.platform === "win32";
   // Looked up as the spawn looks it up: from the directory the server runs
   // in, where a relative PATH entry starts and an empty one points.
   const { command } = launch;
-  if (command.includes("/")) {
+  if (command.includes("/") || (windows && command.includes("\\"))) {
+    // Windows has no executable bit to check; there the spawn's own error
+    // names a bundle file that is missing.
+    if (windows) return null;
     return (await isExecutableFile(path.resolve(real, command)))
       ? null
       : { reason: "command_not_executable", command: options.declaredCommand };
@@ -94,8 +95,27 @@ export async function checkPluginLaunch(
   // the spawn searches the system default, which only it knows.
   const searchPath = launch.env.PATH ?? process.env.PATH;
   if (searchPath === undefined) return null;
-  for (const dir of searchPath.split(path.delimiter)) {
-    if (await isExecutableFile(path.resolve(real, dir, command))) return null;
+  const dirs = searchPath.split(path.delimiter);
+  let names = [command];
+  if (windows) {
+    // The stdio transport spawns through cross-spawn, which on Windows looks
+    // in the working directory first and finds `uvx` as `uvx.exe` or
+    // `uvx.cmd` by trying each PATHEXT suffix.
+    dirs.unshift(real);
+    const suffixes = (
+      launch.env.PATHEXT ??
+      process.env.PATHEXT ??
+      ".COM;.EXE;.BAT;.CMD"
+    ).split(";");
+    names = [
+      ...(command.includes(".") ? [command] : []),
+      ...suffixes.map((suffix) => command + suffix),
+    ];
+  }
+  for (const dir of dirs) {
+    for (const name of names) {
+      if (await isExecutableFile(path.resolve(real, dir, name))) return null;
+    }
   }
   return { reason: "runtime_not_found", command };
 }

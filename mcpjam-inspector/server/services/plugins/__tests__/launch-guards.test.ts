@@ -92,6 +92,23 @@ describe("checkPluginLaunch", () => {
     });
   });
 
+  // PATHEXT shims are how Windows installs runtimes such as `uvx` and `npx`.
+  it.skipIf(process.platform !== "win32")(
+    "finds a runtime installed as a PATHEXT shim",
+    async () => {
+      const shims = path.join(base, "shims");
+      await mkdir(shims);
+      await writeFile(path.join(shims, "uvx.cmd"), "@echo off\r\n");
+      const shimmed = { command: "uvx", env: { PATH: shims }, workingDirectory: root };
+      expect(
+        await checkPluginLaunch(shimmed, { root, dataDir }, {
+          remote: false,
+          declaredCommand: "uvx",
+        }),
+      ).toBeNull();
+    },
+  );
+
   posixOnly("runs a bundle executable only once it is executable", async () => {
     const server = path.join(root, "bin", "server");
     await writeFile(server, "#!/bin/sh\n");
