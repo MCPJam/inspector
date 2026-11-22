@@ -220,8 +220,10 @@ jobs:
         # runtime-safety, which are `! rg -n '...'`. With rg missing the shell
         # returns 127 and `! 127` evaluates to 0 — the guards would vacuously
         # pass instead of running. Installing one package is fast (~seconds),
-        # unlike the `--with-deps` browser libs we dropped.
-        run: apt-get update && apt-get install -y ripgrep
+        # unlike the `--with-deps` browser libs we dropped. The retries ride out
+        # a mirror 502, which otherwise fails the job with exit 100 before any
+        # test runs.
+        run: apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y ripgrep
 
       - name: Run SDK → CLI verification
         # Everything except the inspector suite, which the sharded `inspector`
