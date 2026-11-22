@@ -507,7 +507,9 @@ for (const n of [
 }
 let publicPluginHost = false;
 try {
-  await import("@mcpjam/sdk/plugin-host");
+  // Resolve rather than import, so an error raised while evaluating the module
+  // cannot pass for the subpath being hidden.
+  import.meta.resolve("@mcpjam/sdk/plugin-host");
   publicPluginHost = true;
 } catch (error) {
   // Only "not exported" proves the subpath is hidden; anything else is a

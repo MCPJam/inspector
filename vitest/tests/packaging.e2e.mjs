@@ -66,14 +66,14 @@ function check(label, condition, detail) {
 // On Windows npm and npx are .cmd shims, which spawn cannot start without a
 // shell (ENOENT), and a shell would need every path quoted. Under `npm run`,
 // npm_execpath names npm-cli.js and npx-cli.js sits beside it, so run those
-// with this node instead.
+// with this node instead. Run directly, fall back to the npm the Windows
+// installer bundles next to node.exe.
 function tool(name, args) {
-  const npmCli = process.env.npm_execpath;
-  if (process.platform !== "win32" || !npmCli) return [name, args];
-  return [
-    process.execPath,
-    [path.join(path.dirname(npmCli), `${name}-cli.js`), ...args],
-  ];
+  if (process.platform !== "win32") return [name, args];
+  const npmBin = process.env.npm_execpath
+    ? path.dirname(process.env.npm_execpath)
+    : path.join(path.dirname(process.execPath), "node_modules", "npm", "bin");
+  return [process.execPath, [path.join(npmBin, `${name}-cli.js`), ...args]];
 }
 
 function run(command, args, options = {}) {
