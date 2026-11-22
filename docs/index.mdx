@@ -55,9 +55,9 @@ Open the Inspector in your browser, from your terminal, as a desktop app, or in 
   </Card>
 </CardGroup>
 
-### CLI and SDK
+### CLI, SDK and coding agents
 
-<CardGroup cols={2}>
+<CardGroup cols={3}>
   <Card title="CLI" icon="terminal" href="/cli/overview">
     **In your shell or CI.** Connectivity, OAuth, conformance, and tool runs with JUnit/JSON output. Tests local servers over STDIO (`--command`) and HTTP (`--url`).
     ```bash
@@ -70,7 +70,35 @@ Open the Inspector in your browser, from your terminal, as a desktop app, or in 
     npm install @mcpjam/sdk
     ```
   </Card>
+  <Card title="Coding agent" icon="bot" href="/installation#from-your-coding-agent">
+    **In Claude Code, Codex or Cursor.** Add MCPJam as a skill or an MCP server and let your agent test your server.
+    ```bash
+    npx skills add mcpjam/inspector --skill mcp-inspector
+    ```
+  </Card>
 </CardGroup>
+
+## How to test MCP
+
+Find what you want to test, then follow the guide for the tool you use. Each row links to the page that shows how.
+
+| What to test | What to check | Inspector | CLI |
+| --- | --- | --- | --- |
+| Connection and capabilities | The server starts, completes the handshake and declares what it supports | [Connect servers](/inspector/connecting-servers) | [`server probe`, `server doctor`](/cli/server-inspection) |
+| Tools | Tools list, accept valid arguments and return usable results | [Tools](/inspector/tools-prompts-resources#tools) | [Tools](/cli/tools-resources-prompts#tools) |
+| Resources and templates | Resources list and read; templates resolve | [MCP Inspector](/inspector/tools-prompts-resources) | [Resources](/cli/tools-resources-prompts#resources) |
+| Prompts | Prompts list and render with their arguments | [MCP Inspector](/inspector/tools-prompts-resources) | [Prompts](/cli/tools-resources-prompts#prompts) |
+| Elicitation and multi-round input | The server asks the user for input mid-call and resumes with the answer | [Elicitation requests](/inspector/tools-prompts-resources#elicitation-requests) | [Tools, Resources & Prompts](/cli/tools-resources-prompts) |
+| Notifications and logs | `list_changed`, log messages and resource updates arrive in a live session | [Tracing & debugging](/inspector/debugging) | [MCPJam as an MCP server](/cli/mcp-server) |
+| MCP Events | The server declares events and delivers them by push, poll or webhook | — | [MCP Events](/cli/events) |
+| MCP Tasks | Long-running calls create, report and finish tasks | — | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) |
+| Skills over MCP | The server serves skills a client can list and load | [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills) | [Skills from the CLI](/inspector/skills#inspecting-a-servers-skills-from-the-cli) |
+| OAuth | Each step of the authorization flow, across protocol versions | [OAuth Debugger](/inspector/guided-oauth) | [OAuth conformance](/cli/oauth-conformance), [OAuth login](/cli/oauth-login) |
+| Enterprise sign-in (XAA) | Cross-app access token exchange | [XAA Debugger](/inspector/xaa-debugger) | [XAA Debugger (CLI)](/cli/xaa) |
+| MCP Apps and ChatGPT Apps | Widgets render and talk to the host | [First MCP App](/guides/first-mcp-app) | [MCP Apps conformance](/cli/apps-conformance) |
+| Client compatibility | Your server works in each client's configuration | [Host compatibility](/inspector/host-compat) | [`compat`](/cli/reference#compat-command) |
+| Protocol versions | Behavior on each MCP protocol version | [MCP protocol versions](/inspector/protocol-versions) | [Server inspection](/cli/server-inspection) |
+| User value end to end | Real prompts get users the outcome they asked for, across clients and models | [Evaluate](/evaluate/overview) | [Evals in CI](/cli/ci#evals-in-ci) |
 
 ## What you can build
 
@@ -91,7 +119,7 @@ Open the Inspector in your browser, from your terminal, as a desktop app, or in 
     [Guided OAuth →](/inspector/guided-oauth) · [CLI OAuth conformance →](/cli/oauth-conformance)
   </Accordion>
   <Accordion title="Run evals across LLMs and gate CI on regressions" icon="flask-conical">
-    Author cases with expected tool calls, optional expected outputs, and deterministic checks. Run across Claude, GPT, Gemini, and your own providers, or move the same suite into Jest/Vitest with `@mcpjam/sdk`.
+    Write cases as a user prompt and the outcome the user should get, with deterministic checks for what must never happen. Run across Claude, GPT, Gemini, and your own providers, or move the same suite into Jest/Vitest with `@mcpjam/sdk`.
 
     [Evaluate in Inspector →](/evaluate/overview) · [Run evals from the SDK →](/sdk/concepts/running-evals) · [CI integration →](/cli/ci)
   </Accordion>
@@ -116,7 +144,7 @@ Open the Inspector in your browser, from your terminal, as a desktop app, or in 
 | MCP Server Debugging | Manually run tools, resources, templates, and elicitation; full JSON-RPC logs. |
 | Skills | Skills in the Playground, read from your local filesystem or served by connected MCP servers. [Read more](/inspector/skills) |
 | Projects | Shared server groups with real-time team sync. [Read more](/inspector/projects) |
-| Evals | Test cases with expected tool calls, run across LLMs, metrics. [Read more](/evaluate/overview) |
+| Evals | End-to-end tests that real prompts get users the expected outcome, across clients and models. [Read more](/evaluate/overview) |
 | CLI | Run MCPJam checks, probes, and evals from the terminal. Perfect for local dev loops and CI. [Read more](/cli/overview) |
 | SDK | Programmatic access to MCPJam for custom tooling, scripting, and integrations. [Read more](/sdk) |
 | CI/CD | Run MCPJam checks and evals in GitHub Actions and other CI systems to gate PRs on regressions. [Read more](/cli/ci) |
