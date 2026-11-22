@@ -810,3 +810,69 @@ footer [class*="powered" i],
 :is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded] svg {
   color: var(--mcj-ink-muted) !important;
 }
+
+/* ── "On this page" (right rail) — larger, higher-contrast text ─────────── */
+#table-of-contents {
+  font-size: 15px !important;
+  line-height: 1.5 !important;
+}
+#table-of-contents [data-layout-item="toc-title"] button {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mcj-ink-strong);
+}
+#table-of-contents [data-layout-item="toc-item-link"] {
+  color: var(--mcj-ink);
+}
+#table-of-contents [data-layout-item="toc-item-link"]:hover {
+  color: var(--mcj-ink-strong);
+}
+#table-of-contents [data-layout-item="toc-item-link"][data-active="true"] {
+  color: var(--mcj-orange) !important;
+  font-weight: 500;
+}
+
+/* ── Reading progress — 2px hairline under the top bar ──────────────────
+   CSS scroll-driven animation, no script. Browsers without
+   animation-timeline simply show no bar. */
+@supports (animation-timeline: scroll()) {
+  #navbar-transition-maple::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--mcj-orange);
+    transform-origin: 0 50%;
+    transform: scaleX(0);
+    pointer-events: none;
+    animation: mcj-read-progress linear both;
+    animation-timeline: scroll(root block);
+  }
+  @keyframes mcj-read-progress {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+}
+
+/* ── One-click install buttons (Add to Cursor, Add to VS Code) ──────────── */
+a.mcj-btn {
+  display: inline-block;
+  padding: 4px 12px;
+  border: 1px solid var(--mcj-rule-strong);
+  border-radius: var(--mcj-radius);
+  background: var(--mcj-paper-2);
+  color: var(--mcj-ink-strong) !important;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+a.mcj-btn:hover {
+  border-color: var(--mcj-orange);
+  color: var(--mcj-orange) !important;
+}

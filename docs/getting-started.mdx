@@ -4,29 +4,13 @@ description: "Start testing your MCP server in minutes"
 icon: "rocket"
 ---
 
-import AgentSetupPrompt from '/snippets/agent-setup-prompt.mdx';
+import AgentConnect from '/snippets/agent-connect.mdx';
 
 ## For agents
 
-### Get started from your agent
+<AgentConnect />
 
-<AgentSetupPrompt />
-
-### Connect MCPJam to your agent
-
-Three ways in, depending on what the agent should do. [Installation](/installation#add-mcpjam-to-your-coding-agent) has the commands for Claude Code, Codex and Cursor.
-
-<CardGroup cols={3}>
-  <Card title="Local MCP server" icon="plug" href="/cli/mcp-server">
-    `npx -y @mcpjam/cli@latest mcp`. Connect to your server, call its tools and watch notifications. No account.
-  </Card>
-  <Card title="Skill" icon="sparkles" href="/cli/overview#recommended-use-with-agent-skills">
-    `npx skills add mcpjam/inspector --skill mcp-inspector`. Teaches an agent with a shell every `mcpjam` command.
-  </Card>
-  <Card title="Account MCP server" icon="cloud" href="/hosted/mcp-server">
-    `https://mcp.mcpjam.com/mcp`. Your projects, saved servers and evals, behind OAuth.
-  </Card>
-</CardGroup>
+To install the MCPJam skill or use the CLI from your agent, see [Installation](/installation#add-mcpjam-to-your-coding-agent).
 
 ## For humans
 
