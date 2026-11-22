@@ -143,8 +143,10 @@ beforeAll(async () => {
   // not executable. Copying a 110 MB binary into every fixture would cost more
   // than it proves, so this is a stub: the provider is handed the real node as
   // its launcher below, which is the seam its options already have.
-  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(bundleRoot, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(bundleRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
   // The bundle carries the adapter's dependency manifest too — a CI build runs
   // the same recipe, so the bytes the adapter would write are already here.
   await writeFile(join(bundleRoot, "package.json"), BUNDLE_PACKAGE_JSON);
@@ -216,7 +218,8 @@ async function buildSession(
   const resolved = await resolveManagedBundle({
     manifest,
     runtimeRoot,
-    platform: "linux",
+    // The host, whose filesystem the fixture pack is on.
+    platform: process.platform === "win32" ? "win32" : "linux",
   });
   if (!resolved.ok)
     throw new Error(`bundle did not resolve: ${resolved.message}`);

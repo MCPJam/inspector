@@ -49,6 +49,7 @@ import {
   resolveLocalHarnessAvailability,
   type LocalHarnessActor,
 } from "../availability.js";
+import { setWindowsJobLauncherVerified } from "../process-identity.js";
 import {
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
@@ -65,6 +66,9 @@ const realHome = process.env.HOME;
 // the grant revokes below never reach a developer's real store.
 const realUserProfile = process.env.USERPROFILE;
 
+// The host's platform, because the fixture pack is resolved on this host's
+// filesystem: NTFS has no execute bits for a "linux" resolution to find.
+const PLATFORM = process.platform === "win32" ? "win32" : "linux";
 const USER = "user_1";
 const PROJECT = "proj_1";
 const MACHINE = "mach_1";
@@ -118,7 +122,7 @@ async function query(overrides: Record<string, unknown> = {}) {
       LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
-    platform: "linux",
+    platform: PLATFORM,
     killSwitchEnabled: true,
     hosted: false,
     ...overrides,
@@ -139,8 +143,14 @@ beforeAll(async () => {
     join(bundleRoot, "launcher.mjs"),
     'await import("./bridge.mjs");',
   );
-  await writeFile(join(bundleRoot, "bin", "node"), "#!/bin/sh\nexit 0\n");
-  await chmod(join(bundleRoot, "bin", "node"), 0o755);
+  // The name the build script gives the pack's Node on this host.
+  const node = join(bundleRoot, "bin", process.platform === "win32" ? "node.exe" : "node");
+  await writeFile(node, "#!/bin/sh\nexit 0\n");
+  await chmod(node, 0o755);
+  // Windows proves process ownership through the pack's job launcher.
+  if (PLATFORM === "win32") {
+    await writeFile(join(bundleRoot, "bin", "mcpjam-job-launcher.exe"), "stub");
+  }
 
   const grant = await registerWorkspaceGrant(workspace);
   if (!grant.ok) throw new Error(grant.message);
@@ -179,7 +189,7 @@ beforeAll(async () => {
       LOCAL_HARNESS_MANIFEST["claude-code"].adapterVersion,
     localMachineId: MACHINE,
     manifests,
-    platform: "linux",
+    platform: PLATFORM,
     killSwitchEnabled: true,
     hosted: false,
   });
@@ -188,7 +198,7 @@ beforeAll(async () => {
   const resolved = await resolveManagedBundle({
     manifest: manifests["claude-code"]!,
     runtimeRoot,
-    platform: "linux",
+    platform: PLATFORM,
   });
   if (!resolved.ok) throw new Error(resolved.message);
   runtimeId = resolved.runtime.runtimeId;
@@ -238,9 +248,17 @@ describe("the gates, in order", () => {
   });
 
   it("refuses a platform whose process trees it cannot own", async () => {
-    await expect(query({ platform: "win32" })).resolves.toMatchObject({
-      status: "ownership-unprovable",
-    });
+    // Windows without a verified job launcher. On a Windows host this file's
+    // pack carries one, so the verification its resolution recorded is
+    // cleared for this query and put back after.
+    setWindowsJobLauncherVerified(false);
+    try {
+      await expect(query({ platform: "win32" })).resolves.toMatchObject({
+        status: "ownership-unprovable",
+      });
+    } finally {
+      setWindowsJobLauncherVerified(PLATFORM === "win32");
+    }
   });
 
   it("refuses an unknown workspace grant", async () => {
