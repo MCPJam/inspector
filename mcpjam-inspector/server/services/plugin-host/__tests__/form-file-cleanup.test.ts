@@ -64,7 +64,7 @@ async function fixture(localJournal = true) {
       "clearInterval",
     ],
   });
-  const registry = new PluginFormFileGrants(root);
+  const registry = new PluginFormFileGrants(root, root);
   await registry.start(localJournal);
   const fs = fakeComputerFiles();
   const authorize = vi.fn().mockResolvedValue(undefined);

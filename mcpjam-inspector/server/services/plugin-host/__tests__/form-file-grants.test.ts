@@ -65,7 +65,7 @@ function source(): PluginFormSource {
 async function fixture() {
   const base = await mkdtemp(join(tmpdir(), "mcpjam-form-upload-test-"));
   roots.push(base);
-  const registry = new PluginFormFileGrants(base);
+  const registry = new PluginFormFileGrants(base, base);
   registries.push(registry);
   const current = source();
   const sourceAbort = new AbortController();

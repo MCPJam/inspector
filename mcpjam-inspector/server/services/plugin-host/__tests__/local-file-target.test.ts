@@ -223,6 +223,19 @@ describe("explicit saved local target", () => {
     expect(
       resolveLocalFilePath(contract, "saved", "/etc/hosts"),
     ).toBeUndefined();
+    expect(
+      resolveLocalFilePath(contract, "saved", target.relativePath),
+    ).toBeUndefined();
+    if (process.platform === "win32") {
+      // Servers on Windows send either separator for the same file.
+      const forward = path
+        .join(root, target.relativePath)
+        .replaceAll("\\", "/");
+      expect(resolveLocalFilePath(contract, "saved", forward)).toEqual(target);
+      expect(
+        resolveLocalFilePath(contract, "saved", `${forward}/../other.cad`),
+      ).toBeUndefined();
+    }
   });
   it("refuses symlinks and keys outside the saved target", async (ctx) => {
     const { root, adapter } = await fixture();

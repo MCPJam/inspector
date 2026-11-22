@@ -134,8 +134,9 @@ export class PluginFormFileGrants {
   private sweeping?: ReturnType<PluginFormFileJournal["sweep"]>;
   private janitor?: ReturnType<typeof setInterval>;
   private readonly local: PluginFormFileStore;
-  constructor(base = FORM_FILE_DIRECTORY) {
-    this.journal = new PluginFormFileJournal(base);
+  /** `profile` is the directory a Windows upload root must resolve inside. */
+  constructor(base = FORM_FILE_DIRECTORY, profile?: string) {
+    this.journal = new PluginFormFileJournal(base, undefined, profile);
     this.local = {
       start: () => this.start(),
       reserve: async (key, bytes) => {

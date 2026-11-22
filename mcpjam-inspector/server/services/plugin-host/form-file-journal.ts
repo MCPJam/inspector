@@ -11,8 +11,8 @@ import {
   rm,
   rmdir,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
 
 export const FORM_FILE_RETENTION_MS = 30 * 60_000;
 export const FORM_FILE_DIRECTORY = join(
@@ -45,11 +45,12 @@ const same = (a: Identity, b: Identity) => a.dev === b.dev && a.ino === b.ino;
 const missing = (error: unknown) =>
   (error as NodeJS.ErrnoException).code === "ENOENT";
 // Windows has no POSIX permission bits (Node reports 0o666 for every file and
-// directory), so the mode check would reject every placement. Privacy there
-// comes from the folder's ACL: the default per-user temp directory is private,
-// but a TEMP pointed at a shared folder is not, and this check could not tell.
-// Windows also refuses to flush a directory handle (EPERM), and NTFS journals
-// the directory entries itself.
+// directory) and no O_NOFOLLOW, so neither the mode check nor the open flag
+// protects anything there. Privacy comes from the folder's ACL instead: the
+// user's profile is private to them by default, so the upload root must
+// resolve inside it, and a TEMP pointed at a shared folder elsewhere is
+// refused rather than trusted. Windows also refuses to flush a directory
+// handle (EPERM), and NTFS journals the directory entries itself.
 const WINDOWS = process.platform === "win32";
 
 /** Cleanup ownership only. Records cannot revive grants, sources, approvals or wire
@@ -61,6 +62,7 @@ export class PluginFormFileJournal {
   constructor(
     private readonly base = FORM_FILE_DIRECTORY,
     private readonly now = Date.now,
+    private readonly profile = homedir(),
   ) {}
 
   private async privateDirectory(path: string) {
@@ -77,7 +79,13 @@ export class PluginFormFileJournal {
     if (!this.directory) {
       await mkdir(this.base, { recursive: true, mode: 0o700 });
       const value = await this.privateDirectory(this.base);
-      this.directory = { path: await realpath(this.base), identity: value };
+      const path = await realpath(this.base);
+      if (WINDOWS) {
+        const inside = relative(await realpath(this.profile), path);
+        if (inside.startsWith("..") || isAbsolute(inside))
+          throw new Error("Owned upload directory is outside the user profile");
+      }
+      this.directory = { path, identity: value };
     }
     if (
       (await realpath(this.base)) !== this.directory.path ||
@@ -151,6 +159,10 @@ export class PluginFormFileJournal {
   }
   private async read(root: string, originalName: string) {
     const rootIdentity = await this.privateDirectory(root);
+    // lstat first because O_NOFOLLOW is a no-op on Windows; the handle must
+    // then be the same file, not a link swapped in between.
+    const marker = await lstat(join(root, MARKER), { bigint: true });
+    if (!marker.isFile()) throw new Error("Invalid owned upload record");
     const handle = await open(
       join(root, MARKER),
       constants.O_RDONLY | constants.O_NOFOLLOW,
@@ -159,6 +171,7 @@ export class PluginFormFileJournal {
       const value = await handle.stat({ bigint: true });
       if (
         !value.isFile() ||
+        !same(identity(value), identity(marker)) ||
         value.size > 4096n ||
         (!WINDOWS && (value.mode & 0o777n) !== 0o600n) ||
         (process.getuid && value.uid !== BigInt(process.getuid()))

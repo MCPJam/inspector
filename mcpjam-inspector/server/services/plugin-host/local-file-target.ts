@@ -119,6 +119,9 @@ export function resolveLocalFilePath(
 ): LocalFileTarget | undefined {
   if (!paths.isAbsolute(requestedPath) || contract === undefined)
     return undefined;
+  // Windows accepts either separator, and servers send both spellings.
+  const spelled =
+    paths.sep === "\\" ? requestedPath.replaceAll("/", "\\") : requestedPath;
   const parsed = contractSchema.safeParse(contract);
   if (!parsed.success) throw new ResourceGrantError("RESOURCE_DENIED");
   const candidates = parsed.data.targets.flatMap((target) =>
@@ -126,7 +129,7 @@ export function resolveLocalFilePath(
       ? target.resources
           .filter(
             (resource) =>
-              paths.join(target.root, resource.relativePath) === requestedPath,
+              paths.join(target.root, resource.relativePath) === spelled,
           )
           .map(
             (resource) =>
