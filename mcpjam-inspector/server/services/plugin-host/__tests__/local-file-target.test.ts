@@ -224,12 +224,18 @@ describe("explicit saved local target", () => {
       resolveLocalFilePath(contract, "saved", "/etc/hosts"),
     ).toBeUndefined();
   });
-  it("refuses symlinks and keys outside the saved target", async () => {
+  it("refuses symlinks and keys outside the saved target", async (ctx) => {
     const { root, adapter } = await fixture();
     const signal = new AbortController().signal;
     await expect(adapter.read("cad://other", signal)).rejects.toThrow();
     await rm(path.join(root, "part.cad"));
-    await symlink("/etc/hosts", path.join(root, "part.cad"));
+    try {
+      await symlink("/etc/hosts", path.join(root, "part.cad"));
+    } catch (error) {
+      // A file symlink on Windows needs Developer Mode or an elevated shell.
+      if ((error as NodeJS.ErrnoException).code === "EPERM") return ctx.skip();
+      throw error;
+    }
     await expect(adapter.read("cad://part", signal)).rejects.toThrow();
   });
   it("delivers actual file notifications and stops watching on close", async () => {

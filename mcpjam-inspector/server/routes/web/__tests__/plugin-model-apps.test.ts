@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { join, resolve } from "node:path";
 const mocks = vi.hoisted(() => ({
   resolve: vi.fn(),
   resolveTools: vi.fn(),
@@ -130,9 +131,11 @@ beforeEach(() => {
 });
 
 describe("model App local file opening", () => {
-  const contract = { version: 1, targets: [{ serverId: "saved-id", root: "/allowed", exclusiveWrites: true, resources: [{ uri: "cad://part", relativePath: "part.stl" }] }] };
+  // A local target is spelled the way this machine spells absolute paths.
+  const root = resolve("/allowed");
+  const contract = { version: 1, targets: [{ serverId: "saved-id", root, exclusiveWrites: true, resources: [{ uri: "cad://part", relativePath: "part.stl" }] }] };
   const viewer = { name: "viewer", inputSchema: { type: "object" }, _meta: { ui: { resourceUri: "ui://viewer" }, "openai/ui": { entrypoints: [{ type: "file", extensions: [".stl"] }] } } };
-  const open = (f: Awaited<ReturnType<typeof fixture>>, path = "/allowed/part.stl") => f.router.request("/files/open", {
+  const open = (f: Awaited<ReturnType<typeof fixture>>, path = join(root, "part.stl")) => f.router.request("/files/open", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ projectId: "project", pluginWorkspace: { version: 1, workspaceId: "workspace" }, instanceToken: f.token, path }),
   });
