@@ -10,7 +10,7 @@ import { recordScratchOwner, scratchRoot, sweepLocalHarnessScratch } from "../sc
 let home: string;
 beforeEach(async () => {
   vi.clearAllMocks();
-  home = await mkdtemp(join(tmpdir(), "scratch-janitor-")); vi.stubEnv("HOME", home);
+  home = await mkdtemp(join(tmpdir(), "scratch-janitor-")); vi.stubEnv("HOME", home); vi.stubEnv("USERPROFILE", home);
   mocks.probe.mockResolvedValue({ state: "alive", identity: "owner" }); mocks.records.mockResolvedValue([]);
   await mkdir(join(scratchRoot(), "run-test"), { recursive: true });
   await writeFile(join(scratchRoot(), "run-test", "proof"), "keep");

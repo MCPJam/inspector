@@ -33,6 +33,9 @@ const canOwnProcesses = supportsOwnershipProof();
 let base: string;
 let scripts: string;
 const realHome = process.env.HOME;
+// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
+// developer's real state in play there.
+const realUserProfile = process.env.USERPROFILE;
 
 function record(
   overrides: Partial<LocalHarnessProcessRecord> = {},
@@ -74,6 +77,7 @@ const LEADER_WITH_SURVIVOR = [
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-registry-")));
   process.env.HOME = base;
+  process.env.USERPROFILE = base;
   scripts = join(base, "scripts");
   await mkdir(scripts, { recursive: true });
   await writeFile(
@@ -85,6 +89,8 @@ beforeAll(async () => {
 afterAll(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
 });
 
 beforeEach(async () => {

@@ -19,6 +19,9 @@ let base: string;
 let scripts: string;
 let stateDir: string;
 const realHome = process.env.HOME;
+// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
+// developer's real state in play there.
+const realUserProfile = process.env.USERPROFILE;
 
 /** Poll until `pid` is gone, or give up. Returns whether it went. */
 async function waitForExit(pid: number, timeoutMs = 8_000): Promise<boolean> {
@@ -67,6 +70,7 @@ beforeAll(async () => {
   // The registry writes under `homedir()`; point HOME at the temp tree so a
   // test never touches the developer's real state.
   process.env.HOME = base;
+  process.env.USERPROFILE = base;
   stateDir = join(base, ".mcpjam", "harness-local", "sessions", "s1");
   await mkdir(scripts, { recursive: true });
   await mkdir(stateDir, { recursive: true });
@@ -142,6 +146,8 @@ beforeAll(async () => {
 afterAll(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
 });
 
 describe("launch preconditions", () => {

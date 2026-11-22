@@ -29,11 +29,16 @@ const EXPIRES_AT = Date.now() + 3_600_000;
 
 let home: string;
 let realHome: string | undefined;
+// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
+// developer's real state in play there.
+let realUserProfile: string | undefined;
 
 beforeEach(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-runtime-login-")));
   realHome = process.env.HOME;
+  realUserProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   resetInstanceKeyCacheForTests();
   vi.stubEnv("CONVEX_HTTP_URL", "https://backend.test");
 });
@@ -44,6 +49,8 @@ afterEach(async () => {
   resetInstanceKeyCacheForTests();
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
   await rm(home, { recursive: true, force: true });
 });
 

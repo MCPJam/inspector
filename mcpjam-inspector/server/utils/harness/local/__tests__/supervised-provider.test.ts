@@ -53,6 +53,9 @@ let runtimeRoot: string;
 let bundleRoot: string;
 let outside: string;
 const realHome = process.env.HOME;
+// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
+// developer's real state in play there.
+const realUserProfile = process.env.USERPROFILE;
 
 /**
  * A stand-in for the CI-built managed bundle: the same shape (a `bridge.mjs`
@@ -115,6 +118,7 @@ const LAN_BRIDGE_ATTEMPTS = 3;
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-provider-")));
   process.env.HOME = base;
+  process.env.USERPROFILE = base;
   workspace = join(base, "project");
   outside = join(base, "outside");
   runtimeRoot = join(base, "runtimes");
@@ -149,6 +153,8 @@ beforeAll(async () => {
 afterAll(() => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
 });
 
 async function buildSession(

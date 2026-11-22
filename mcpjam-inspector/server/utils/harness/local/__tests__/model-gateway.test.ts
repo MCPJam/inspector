@@ -28,6 +28,9 @@ function fakeLease(jti: string): string {
 
 let home: string;
 let realHome: string | undefined;
+// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
+// developer's real state in play there.
+let realUserProfile: string | undefined;
 const open: LocalModelGateway[] = [];
 
 beforeAll(async () => {
@@ -35,7 +38,9 @@ beforeAll(async () => {
   // the harness-local state root on first use.
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-gateway-")));
   realHome = process.env.HOME;
+  realUserProfile = process.env.USERPROFILE;
   process.env.HOME = home;
+  process.env.USERPROFILE = home;
   resetInstanceKeyCacheForTests();
 });
 
@@ -46,6 +51,8 @@ afterEach(async () => {
 afterAll(async () => {
   if (realHome === undefined) delete process.env.HOME;
   else process.env.HOME = realHome;
+  if (realUserProfile === undefined) delete process.env.USERPROFILE;
+  else process.env.USERPROFILE = realUserProfile;
   resetInstanceKeyCacheForTests();
   await rm(home, { recursive: true, force: true });
 });

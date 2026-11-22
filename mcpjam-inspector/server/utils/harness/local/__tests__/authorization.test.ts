@@ -8,7 +8,7 @@ import { localHarnessStateRoot } from "../grants.js";
 
 let root: string;
 const binding = { userId: "user", machineId: "machine", projectId: "project", workspaceGrantId: "workspace" };
-beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "local-authorize-")); vi.stubEnv("HOME", root); });
+beforeEach(async () => { root = await mkdtemp(join(tmpdir(), "local-authorize-")); vi.stubEnv("HOME", root); vi.stubEnv("USERPROFILE", root); });
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
 describe("durable local authorization", () => {
   it("survives execution credential expiry and is bound to member, project and machine", async () => {

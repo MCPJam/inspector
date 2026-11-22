@@ -75,7 +75,7 @@ async function fixture() {
     await mkdtemp(join(tmpdir(), "approval-attach-")),
   );
   roots.push(root);
-  vi.stubEnv("HOME", root);
+  vi.stubEnv("HOME", root); vi.stubEnv("USERPROFILE", root);
   const workspace = join(root, "workspace");
   const bundle = join(root, "runtimes", "claude-code");
   await mkdir(workspace);
