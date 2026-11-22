@@ -11,7 +11,8 @@ Allowed: `@/shared/*`, `@mcpjam/design-system/*`, `@mcpjam/chat-ui`,
 `@mcpjam/widget-react`, and `@mcpjam/sdk` or its subpaths by package name.
 
 - No relative import of `server/` or of `sdk/src/`. Enforced by
-  `no-restricted-imports` in `eslint.config.js`: `npm run lint -w @mcpjam/inspector`.
+  `layers/no-cross-layer-imports` in `eslint.config.js`:
+  `npm run lint -w @mcpjam/inspector`.
   Tests (`__tests__/`, `*.test.ts(x)`) are exempt.
 - No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Enforced by
   `npm run check:mcp-v1-runtime-imports` (root; CI runs it in `test:checks`).
@@ -26,9 +27,10 @@ Allowed: `@/shared/*`, `@mcpjam/design-system/*`, `@mcpjam/chat-ui`,
 - Hooks follow `react-hooks/rules-of-hooks` and `exhaustive-deps`. Enforced by
   `npm run lint -w @mcpjam/inspector`. Do not add `eslint-suppressions.json`
   entries; after fixing old ones, run `npm run lint:prune -w @mcpjam/inspector`.
-- No new `useEffect`, `useLayoutEffect` or timers. Not enforced (pending #7920).
+- No new `useEffect`, `useLayoutEffect` or timers. No check enforces this yet;
+  reviewers block it.
 - Colors come from role tokens (DESIGN.md), not hex/`rgb()`/`oklch()` literals
-  or Tailwind palette classes. Not enforced (pending #7944); REVIEW.md blocks it.
+  or Tailwind palette classes. No check enforces this yet; REVIEW.md blocks it.
 - No em/en dashes, filler or vague error openers in user-facing copy, and no new
   `as any`, `@ts-*`, `eslint-disable` or empty catches. Enforced by the slop
   ratchet: `npm run slop:check`.
