@@ -10,6 +10,8 @@ import {
 import type { PluginFormSource } from "../form-sources";
 import { PluginFormFileJournal } from "../form-file-journal";
 
+// Windows has no POSIX permission bits to assert.
+const posixModes = process.platform !== "win32";
 const roots: string[] = [];
 const registries: PluginFormFileGrants[] = [];
 afterEach(async () => {
@@ -137,12 +139,14 @@ describe("original local stdio file grants", () => {
       delivery.commit();
       f.sourceAbort.abort();
       const path = fileURLToPath(delivery.content.files as string);
-      expect((await stat(path)).mode & 0o777).toBe(0o700);
-      expect((await stat(join(path, "nested"))).mode & 0o777).toBe(0o700);
+      if (posixModes) {
+        expect((await stat(path)).mode & 0o777).toBe(0o700);
+        expect((await stat(join(path, "nested"))).mode & 0o777).toBe(0o700);
+      }
       for (const file of files) {
         const target = join(path, ...file.relativePath.split("/").slice(1));
         expect(await readFile(target)).toEqual(file.bytes);
-        expect((await stat(target)).mode & 0o777).toBe(0o600);
+        if (posixModes) expect((await stat(target)).mode & 0o777).toBe(0o600);
       }
       f.registry.closeOperation(f.current.owner, f.current.invocationId);
       await f.registry.drain();
@@ -342,7 +346,7 @@ describe("original local stdio file grants", () => {
     });
     const file = fileURLToPath((answer.files as string[])[1]!);
     expect(await readFile(file)).toEqual(f.input.files[0]!.bytes);
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    if (posixModes) expect((await stat(file)).mode & 0o777).toBe(0o600);
     f.sourceAbort.abort();
     await f.registry.drain();
     expect(await readFile(file)).toEqual(f.input.files[0]!.bytes);

@@ -20,6 +20,13 @@ import {
   FORM_FILE_RETENTION_MS,
 } from "../form-file-journal";
 
+// Windows has no POSIX permission bits to assert or tamper with.
+const posixModes = process.platform !== "win32";
+// A junction links a directory on Windows without the symlink privilege; the
+// type is ignored elsewhere.
+const linkDirectory = (target: string, path: string) =>
+  symlink(target, path, "junction");
+
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0))
@@ -50,10 +57,12 @@ describe("durable owned placement cleanup", () => {
     expect(record).toEqual(placed.ownership);
     expect(record.expiresAt - record.createdAt).toBe(FORM_FILE_RETENTION_MS);
     expect(await readdir(placed.payload)).toEqual([]);
-    expect((await stat(join(placed.root, "ownership.json"))).mode & 0o777).toBe(
-      0o600,
-    );
-    expect((await stat(placed.payload)).mode & 0o777).toBe(0o700);
+    if (posixModes) {
+      expect(
+        (await stat(join(placed.root, "ownership.json"))).mode & 0o777,
+      ).toBe(0o600);
+      expect((await stat(placed.payload)).mode & 0o777).toBe(0o700);
+    }
     expect(Object.keys(record).sort()).toEqual([
       "bindingDigest",
       "bytes",
@@ -102,22 +111,22 @@ describe("durable owned placement cleanup", () => {
     await mkdir(outside);
     await writeFile(join(outside, "keep"), "preserved");
     const placed = await f.journal.reserve("a".repeat(64), 5);
-    await symlink(outside, join(placed.payload, "link"));
+    await linkDirectory(outside, join(placed.payload, "link"));
     f.expire();
     expect((await f.journal.sweep()).removed).toBe(1);
     expect(await readFile(join(outside, "keep"), "utf8")).toBe("preserved");
   });
-  it.each([
+  it.for([
     "namespace-link",
     "entry-link",
     "marker-link",
-    "permissions",
+    ...(posixModes ? ["permissions"] : []),
     "identity",
     "expiry",
     "malformed",
   ])(
     "refuses %s without deleting substituted or foreign contents",
-    async (kind) => {
+    async (kind, ctx) => {
       const f = await fixture();
       const placed = await f.journal.reserve("a".repeat(64), 5);
       const outside = join(f.root, "keep");
@@ -125,16 +134,23 @@ describe("durable owned placement cleanup", () => {
       await writeFile(join(outside, "sentinel"), "preserved");
       if (kind === "namespace-link") {
         await rename(f.base, join(f.root, "original"));
-        await symlink(outside, f.base);
+        await linkDirectory(outside, f.base);
       } else if (kind === "entry-link") {
         await rm(placed.root, { recursive: true });
-        await symlink(outside, placed.root);
+        await linkDirectory(outside, placed.root);
       } else if (kind === "marker-link") {
         await rm(join(placed.root, "ownership.json"));
-        await symlink(
-          join(outside, "sentinel"),
-          join(placed.root, "ownership.json"),
-        );
+        try {
+          await symlink(
+            join(outside, "sentinel"),
+            join(placed.root, "ownership.json"),
+          );
+        } catch (error) {
+          // A file symlink on Windows needs Developer Mode or an elevated shell.
+          if ((error as NodeJS.ErrnoException).code === "EPERM")
+            return ctx.skip();
+          throw error;
+        }
       } else if (kind === "permissions") await chmod(placed.root, 0o755);
       else {
         const marker = {

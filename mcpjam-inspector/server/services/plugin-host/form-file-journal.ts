@@ -44,6 +44,11 @@ const identity = (value: { dev: bigint; ino: bigint }): Identity => ({
 const same = (a: Identity, b: Identity) => a.dev === b.dev && a.ino === b.ino;
 const missing = (error: unknown) =>
   (error as NodeJS.ErrnoException).code === "ENOENT";
+// Windows has no POSIX permission bits (Node reports 0o666 for every file and
+// directory); the per-user temp directory's ACL keeps placements private there.
+// It also refuses to flush a directory handle (EPERM), and NTFS journals the
+// directory entries itself.
+const WINDOWS = process.platform === "win32";
 
 /** Cleanup ownership only. Records cannot revive grants, sources, approvals or wire
  * receipts. Every placement is conservatively retained until its original deadline
@@ -60,7 +65,7 @@ export class PluginFormFileJournal {
     const value = await lstat(path, { bigint: true });
     if (
       !value.isDirectory() ||
-      (value.mode & 0o777n) !== 0o700n ||
+      (!WINDOWS && (value.mode & 0o777n) !== 0o700n) ||
       (process.getuid && value.uid !== BigInt(process.getuid()))
     )
       throw new Error("Invalid owned upload directory");
@@ -87,7 +92,7 @@ export class PluginFormFileJournal {
     try {
       if (!same(identity(await handle.stat({ bigint: true })), expected))
         throw new Error("Owned upload directory changed");
-      await handle.sync();
+      if (!WINDOWS) await handle.sync();
     } finally {
       await handle.close();
     }
@@ -153,7 +158,7 @@ export class PluginFormFileJournal {
       if (
         !value.isFile() ||
         value.size > 4096n ||
-        (value.mode & 0o777n) !== 0o600n ||
+        (!WINDOWS && (value.mode & 0o777n) !== 0o600n) ||
         (process.getuid && value.uid !== BigInt(process.getuid()))
       )
         throw new Error("Invalid owned upload record");
