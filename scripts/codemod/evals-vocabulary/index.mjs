@@ -128,6 +128,11 @@ const CODE_EXT = new Set([
 ]);
 const TEXT_EXT = new Set([".md", ".mdx", ".json", ".yml", ".yaml"]);
 
+/** A path relative to ROOT with forward slashes, as every report entry uses. */
+function rootRelative(full) {
+  return relative(ROOT, full).split(sep).join("/");
+}
+
 /**
  * The fallback enumeration, for a root that is not a git work tree.
  *
@@ -139,7 +144,7 @@ function walk(dir, out, failures, skipped) {
   try {
     entries = readdirSync(dir);
   } catch (error) {
-    failures.push({ file: relative(ROOT, dir), reason: String(error) });
+    failures.push({ file: rootRelative(dir), reason: String(error) });
     return out;
   }
   for (const entry of entries) {
@@ -149,13 +154,13 @@ function walk(dir, out, failures, skipped) {
     try {
       stat = lstatSync(full);
     } catch (error) {
-      failures.push({ file: relative(ROOT, full), reason: String(error) });
+      failures.push({ file: rootRelative(full), reason: String(error) });
       continue;
     }
     if (stat.isSymbolicLink()) {
-      skipped.push({ file: relative(ROOT, full), reason: symlinkReason(full) });
+      skipped.push({ file: rootRelative(full), reason: symlinkReason(full) });
     } else if (stat.isDirectory()) walk(full, out, failures, skipped);
-    else out.push(relative(ROOT, full).split(sep).join("/"));
+    else out.push(rootRelative(full));
   }
   return out;
 }
