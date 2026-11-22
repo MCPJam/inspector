@@ -18,6 +18,7 @@ const FAILING_KINDS = new Set([
   "not-found",
   "still-loading",
   "step-failed",
+  "wrong-route",
 ]);
 
 export function isFailingKind(kind) {
@@ -166,9 +167,10 @@ export function parseSelector(selector) {
   return { by: "selector", value: selector };
 }
 
+/** Fill values can be credentials, so the text names the field and hides the value. */
 export function describeStep(step) {
   const parts = [step.action, step.target];
-  if (step.value !== undefined) parts.push(JSON.stringify(step.value));
+  if (step.value !== undefined) parts.push("(value hidden)");
   if (step.on !== undefined) parts.push(`on ${step.on}`);
   if (step.state !== undefined) parts.push(step.state);
   return parts.join(" ");
@@ -239,6 +241,74 @@ export function redactUrl(raw) {
   return url.href;
 }
 
+const URL_IN_TEXT = /(?:https?|wss?):\/\/[^\s"'<>`]*[^\s"'<>`.,;:)]/gi;
+
+/**
+ * Free text (console lines, stacks, Playwright errors) with every URL in it
+ * redacted and each of `secrets` replaced, so it can go into a report.
+ */
+export function redactText(text, secrets = []) {
+  let out = String(text).replace(URL_IN_TEXT, (url) => redactUrl(url));
+  for (const secret of secrets) {
+    if (secret) out = out.split(secret).join("[redacted]");
+  }
+  return out;
+}
+
+/** A `goto` target (surface, /path or URL) with its credentials removed. */
+export function redactTarget(target) {
+  if (!target.startsWith("/")) return redactText(target);
+  const placeholder = "http://placeholder";
+  return redactUrl(new URL(target, placeholder).href).slice(placeholder.length);
+}
+
+/** A step as it may be written to a report: no fill value, no URL credentials. */
+export function redactStep(step) {
+  return {
+    ...step,
+    ...(step.action === "goto" ? { target: redactTarget(step.target) } : {}),
+    ...(step.value !== undefined ? { value: "[redacted]" } : {}),
+  };
+}
+
+// ── routes ────────────────────────────────────────────────────────────────
+
+/** A path without the `/p/<projectId>` prefix the app adds to project routes. */
+function logicalPath(pathname) {
+  return pathname.replace(/^\/p\/[^/]+/, "") || "/";
+}
+
+function matchesPattern(path, pattern) {
+  const have = path.split("/").filter(Boolean);
+  const want = pattern.split("/").filter(Boolean);
+  return (
+    have.length === want.length &&
+    want.every((part, i) => part.startsWith(":") || part === have[i])
+  );
+}
+
+/**
+ * Why the page that loaded is not the one asked for, or null when it is. A
+ * surface must land on one of its own route patterns; a path or URL must land
+ * on the same origin and path. A clean shell elsewhere would otherwise pass
+ * under the requested name.
+ */
+export function routeMismatch({ requestedUrl, finalUrl, surface }) {
+  const requested = new URL(requestedUrl);
+  const final = new URL(finalUrl);
+  const landed = logicalPath(final.pathname);
+  const ok =
+    final.origin === requested.origin &&
+    (surface
+      ? surface.routePatterns.some((pattern) => matchesPattern(landed, pattern))
+      : landed === logicalPath(requested.pathname));
+  if (ok) return null;
+  const wanted = surface
+    ? `surface ${surface.id} (${surface.canonicalPath})`
+    : redactUrl(requested.href);
+  return `asked for ${wanted}, landed on ${redactUrl(final.href)}`;
+}
+
 /** One line, bounded, so a report stays greppable. */
 export function oneLine(text, max = 220) {
   // Playwright colors its call logs; escape codes are noise in a text report.
@@ -260,7 +330,7 @@ export function classifyIssues(events, rules) {
     allowed: new Map(),
   };
   for (const event of events) {
-    const text = oneLine(event.text);
+    const text = oneLine(redactText(event.text));
     const rule = findAllowRule(rules, { kind: event.kind, text });
     const bucket = rule
       ? buckets.allowed

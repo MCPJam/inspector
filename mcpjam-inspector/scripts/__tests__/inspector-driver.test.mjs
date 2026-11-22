@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   artifactSlug,
   classifyIssues,
+  describeStep,
   displayPath,
   findAllowRule,
   formatPageReport,
@@ -18,9 +19,12 @@ import {
   parseSelector,
   recordedToken,
   redactLog,
+  redactStep,
+  redactText,
   redactUrl,
   resolveNpmCli,
   resolveTarget,
+  routeMismatch,
   withStartStep,
 } from "../lib/inspector-driver-core.mjs";
 
@@ -235,6 +239,7 @@ test("failing kinds are errors, failed requests and 4xx/5xx, never warnings", ()
     "http-404",
     "http-503",
     "not-found",
+    "wrong-route",
   ]) {
     assert.equal(isFailingKind(kind), true, kind);
   }
@@ -285,6 +290,61 @@ test("credentials in URLs and the launcher log are redacted", () => {
   assert.equal(
     redactLog(`ready\nhttp://localhost:5173/#token=${TOKEN}\nbye`),
     "ready\n[access link redacted]\nbye",
+  );
+});
+
+test("fill values and URL credentials stay out of steps and free text", () => {
+  const fill = { action: "fill", target: "label=Password", value: "hunter2" };
+  assert.equal(describeStep(fill), "fill label=Password (value hidden)");
+  assert.deepEqual(redactStep(fill), { ...fill, value: "[redacted]" });
+  assert.deepEqual(
+    redactStep({ action: "goto", target: "/cb?code=abc&page=2" }),
+    { action: "goto", target: "/cb?code=REDACTED&page=2" },
+  );
+  assert.deepEqual(
+    redactStep({ action: "goto", target: `http://x/#token=${TOKEN}` }),
+    { action: "goto", target: "http://x/#REDACTED" },
+  );
+  assert.deepEqual(redactStep({ action: "goto", target: "servers" }), {
+    action: "goto",
+    target: "servers",
+  });
+  assert.equal(
+    redactText(
+      'locator.fill("hunter2") at http://x/a?session=s1, then ws://y/?key=k',
+      ["hunter2"],
+    ),
+    'locator.fill("[redacted]") at http://x/a?session=REDACTED, then ws://y/?key=REDACTED',
+  );
+  const classified = classifyIssues(
+    [{ kind: "page-error", text: "boom at http://x/?token=t" }],
+    [],
+  );
+  assert.equal(classified.issues[0].text, "boom at http://x/?token=REDACTED");
+});
+
+test("a page that lands off the requested route is named, a match is not", () => {
+  const evals = {
+    id: "evals",
+    canonicalPath: "/evals",
+    routePatterns: ["evals", "evals/suite/:suiteId"],
+  };
+  const home = { id: "home", canonicalPath: "/home", routePatterns: ["/"] };
+  const at = (finalUrl, surface, requestedUrl = `${BASE}/evals`) =>
+    routeMismatch({ requestedUrl, finalUrl, surface });
+  assert.equal(at(`${BASE}/p/abc/evals`, evals), null);
+  assert.equal(at(`${BASE}/p/abc/evals/suite/s1`, evals), null);
+  assert.equal(at(`${BASE}/p/abc`, home, `${BASE}/home`), null);
+  assert.equal(
+    at(`${BASE}/p/abc/servers`, evals),
+    `asked for surface evals (/evals), landed on ${BASE}/p/abc/servers`,
+  );
+  assert.match(at(`${BASE}/p/abc/evals/suite`, evals), /landed on/);
+  assert.match(at("http://elsewhere/evals", evals), /landed on/);
+  assert.equal(at(`${BASE}/p/abc/tools`, null, `${BASE}/tools?x=1`), null);
+  assert.equal(
+    at(`${BASE}/sign-in`, null, `${BASE}/tools?code=c`),
+    `asked for ${BASE}/tools?code=REDACTED, landed on ${BASE}/sign-in`,
   );
 });
 

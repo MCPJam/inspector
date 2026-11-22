@@ -34,6 +34,10 @@ node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only
 - Warnings never fail a run. Known noise on clean main goes in
   `mcpjam-inspector/scripts/inspector-driver.allowlist.json`, one rule per
   message with a `reason`; never allowlist an error your change introduced.
+- A page that lands somewhere other than what was asked for fails with
+  `wrong-route`: a surface must end on one of its own route patterns, a path
+  or URL on the same path. When a redirect is the intended behaviour, add an
+  allowlist rule of kind `wrong-route` that says why.
 - To drive an instance you started yourself, pass `--base-url
   http://localhost:<client-port>` and `--token '<access link>'` (or set
   `MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`).
@@ -71,6 +75,13 @@ the file below shows the shape, not the current labels:
 
 A run stops at the first failing step, prints it as `step N FAIL` with the
 reason, and still saves a screenshot of where it stopped.
+
+Reports print `fill` steps without their value and redact credentials from
+every URL they record, but screenshots and `.aria.yml` snapshots show what
+the page shows, including what a step typed. Fill synthetic values only. The
+default output folder is created closed to other users on Linux and macOS;
+an `--out` folder, or one that already exists, keeps its own permissions, and
+Windows relies on the profile directory's ACLs.
 
 When every screen reports `no-app-shell` with a console error about the
 JWT's `kid` not matching the provider's JWKS, or `http-429` on
