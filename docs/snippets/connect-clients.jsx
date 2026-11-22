@@ -25,7 +25,7 @@ export const ConnectClients = () => {
   ];
 
   const cards = [
-    { name: "ChatGPT App", icon: "/images/clients/openai_logo.png", href: "/hosted/mcp-server" },
+    { name: "ChatGPT App", icon: "/images/clients/openai_logo.png", href: "https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56" },
     { name: "Claude Connector", icon: "/images/clients/claude_logo.png", href: "/hosted/mcp-server" },
   ];
 
@@ -69,7 +69,7 @@ export const ConnectClients = () => {
       </div>
       <div className="mcj-cards">
         {cards.map((card) => (
-          <a key={card.name} className="mcj-card" href={card.href}>
+          <a key={card.name} className="mcj-card" href={card.href} {...(card.href.startsWith("http") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
             {external}
             <div className="mcj-card-icons">
               <img className="mcj-card-client" src={card.icon} alt="" />
