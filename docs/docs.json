@@ -63,6 +63,7 @@
               "inspector/playground",
               {
                 "group": "Test MCP Apps",
+                "icon": "app-window",
                 "pages": [
                   "guides/first-mcp-app",
                   "guides/first-chatgpt-app-react",
@@ -71,10 +72,12 @@
               },
               {
                 "group": "Check host compatibility",
+                "icon": "monitor-check",
                 "pages": ["inspector/host-compat", "inspector/host-templates"]
               },
               {
                 "group": "Test authentication",
+                "icon": "shield-check",
                 "pages": [
                   "inspector/guided-oauth",
                   "inspector/xaa-debugger",
@@ -83,6 +86,7 @@
               },
               {
                 "group": "Inspect your server",
+                "icon": "search",
                 "pages": ["inspector/tools-prompts-resources", "inspector/debugging"]
               }
             ]
@@ -96,10 +100,12 @@
               "evaluate/how-evals-work",
               {
                 "group": "Author cases",
+                "icon": "pencil",
                 "pages": ["evaluate/write-a-case", "evaluate/generate-cases"]
               },
               {
                 "group": "Run and review",
+                "icon": "list-checks",
                 "pages": [
                   "evaluate/run-a-suite",
                   "evaluate/what-a-run-can-access",
@@ -108,10 +114,12 @@
               },
               {
                 "group": "Grade and ship",
+                "icon": "scale",
                 "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
               },
               {
                 "group": "Reference",
+                "icon": "book-open",
                 "pages": [
                   "evaluate/reference/assertions",
                   "evaluate/reference/suite-settings",
@@ -129,12 +137,14 @@
               "inspector/clients",
               {
                 "group": "Manage your workspace",
+                "icon": "users",
                 "pages": ["inspector/projects", "inspector/home"]
               },
               "inspector/protocol-versions",
               "inspector/skills",
               {
                 "group": "Use with other tools",
+                "icon": "plug",
                 "pages": [
                   "hosted/mcp-server",
                   "inspector/docs-server",
@@ -143,6 +153,7 @@
               },
               {
                 "group": "Enterprise admin",
+                "icon": "building-2",
                 "pages": ["hosted/sso", "hosted/network"]
               },
               "inspector/telemetry-privacy"

@@ -782,3 +782,31 @@ footer [class*="powered" i],
 .card-group:has(a[href="/inspector/playground"]):has(a[href="https://app.mcpjam.com"]) [data-component-part="card-title"] {
   font-size: 1.25rem !important;
 }
+
+/* Collapsible sub-groups (nested groups in docs.json) render as
+   button[aria-expanded] too, but they are clickable rows, not section
+   labels: undo the all-caps label treatment so they read like the page
+   links around them, with the chevron as the affordance. */
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded] {
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--mcj-ink) !important;
+  margin-top: 0 !important;
+  padding-top: 6px !important;
+  padding-bottom: 6px !important;
+  border-top: none !important;
+  border-radius: 6px;
+  align-items: center !important;
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded]:hover {
+  color: var(--mcj-ink-strong) !important;
+  background: var(--mcj-paper-2);
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded="true"] {
+  color: var(--mcj-ink-strong) !important;
+}
+:is(#sidebar, aside[aria-label="sidebar"]) .sidebar-group button[aria-expanded] svg {
+  color: var(--mcj-ink-muted) !important;
+}
