@@ -28,6 +28,7 @@ import {
   LOG_LEVEL_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/client";
+import { encodeMcpHeaderValue } from "../mcp-client-manager/mcp-header-mirror.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
   createCapturingFetch,
@@ -302,6 +303,11 @@ export function modernRequestBody(options: {
  * The SEP-2243 standard request headers for a modern call. `name` is the
  * `Mcp-Name` mirror, required whenever the body carries a `params.name` or
  * `params.uri` (tools/call, prompts/get, resources/read).
+ *
+ * `name` is the value as it stands in the body. It goes out encoded the way a
+ * conforming client sends it: plain ASCII as it is, and anything else, or
+ * anything that looks like the Base64 sentinel, wrapped as `=?base64?…?=`. A
+ * raw copy would be refused by the server before the check behind it could run.
  */
 export function modernHeaders(options: {
   protocolVersion: string;
@@ -313,7 +319,9 @@ export function modernHeaders(options: {
     Accept: "application/json, text/event-stream",
     "MCP-Protocol-Version": options.protocolVersion,
     "Mcp-Method": options.method,
-    ...(options.name === undefined ? {} : { "Mcp-Name": options.name }),
+    ...(options.name === undefined
+      ? {}
+      : { "Mcp-Name": encodeMcpHeaderValue(options.name) }),
   };
 }
 
