@@ -72,7 +72,7 @@
     {
       "kind": "wrong-route",
       "match": "^asked for surface tracing \\(/tracing\\), landed on \\S+/p/<id>/servers$",
-      "reason": "Tracing is hostedBlocked (shared/app-surfaces.ts) and the driver starts dev:hosted, so App.tsx sends a hosted-blocked tab to Servers with a toast."
+      "reason": "Tracing is hostedBlocked (shared/app-surfaces.ts) and on a hosted run (dev:hosted) App.tsx sends a hosted-blocked tab to Servers with a toast."
     }
   ]
 }
