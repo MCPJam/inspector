@@ -45,6 +45,29 @@ async function writeSkill(
   return skillDir;
 }
 
+/**
+ * Link a file. Windows refuses file symlinks without Developer Mode or admin
+ * rights, so there the case is skipped, not failed; it runs wherever the link
+ * can be made, Windows with Developer Mode included.
+ */
+async function symlinkFile(
+  target: string,
+  link: string,
+  skip: (note: string) => never
+): Promise<void> {
+  try {
+    await fs.symlink(target, link, "file");
+  } catch (error) {
+    if (
+      process.platform === "win32" &&
+      (error as NodeJS.ErrnoException).code === "EPERM"
+    ) {
+      skip("creating a file symlink needs Developer Mode on Windows");
+    }
+    throw error;
+  }
+}
+
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), "mcpjam-local-skills-"));
   home = path.join(root, "home");
@@ -72,7 +95,9 @@ describe("listLocalRuntimeSkills", () => {
     expect(skills[0]!.content).toContain("Do the thing.");
   });
 
-  it("refuses a SKILL.md that symlinks out of the skill directory", async () => {
+  it("refuses a SKILL.md that symlinks out of the skill directory", async ({
+    skip,
+  }) => {
     // The silent case: nothing in the pack's own text says it exfiltrates,
     // because the body IS the secret. An instruction to read `~/.ssh/id_rsa`
     // is at least legible in a review; this is not.
@@ -84,7 +109,7 @@ describe("listLocalRuntimeSkills", () => {
     );
     const skillDir = path.join(cwd, ".claude", "skills", "code-review");
     await fs.mkdir(skillDir, { recursive: true });
-    await fs.symlink(secret, path.join(skillDir, "SKILL.md"));
+    await symlinkFile(secret, path.join(skillDir, "SKILL.md"), skip);
 
     expect(await listLocalRuntimeSkills()).toEqual([]);
   });
@@ -96,10 +121,12 @@ describe("listLocalRuntimeSkills", () => {
     // skips it the same way). Recorded so a future change to that scan is a
     // deliberate one.
     const real = await writeSkill(path.join(root, "dev"), "code-review");
+    // A junction is how a Windows user links a directory without Developer
+    // Mode, and Node reports it as a symlink just the same.
     await fs.symlink(
       real,
       path.join(cwd, ".claude", "skills", "code-review"),
-      "dir"
+      process.platform === "win32" ? "junction" : "dir"
     );
 
     expect(await listLocalRuntimeSkills()).toEqual([]);
@@ -150,7 +177,7 @@ describe("listLocalRuntimeSkills", () => {
     expect(await listLocalRuntimeSkills()).toEqual([]);
   });
 
-  it("lists a real supporting file and no symlinked one", async () => {
+  it("lists a real supporting file and no symlinked one", async ({ skip }) => {
     const secret = path.join(root, "secret.txt");
     await fs.writeFile(secret, "PRIVATE", "utf-8");
     const skillDir = await writeSkill(
@@ -158,7 +185,7 @@ describe("listLocalRuntimeSkills", () => {
       "code-review"
     );
     await fs.writeFile(path.join(skillDir, "notes.txt"), "public", "utf-8");
-    await fs.symlink(secret, path.join(skillDir, "escape.txt"));
+    await symlinkFile(secret, path.join(skillDir, "escape.txt"), skip);
 
     const [skill] = await listLocalRuntimeSkills();
     const files = await skill!.listFiles!();

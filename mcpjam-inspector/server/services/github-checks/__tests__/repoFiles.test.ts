@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -104,8 +104,19 @@ describe("listRepoFiles — against real git", () => {
     execFileSync("git", ["init", "--quiet"], { cwd: dir, stdio: "pipe" });
     writeFileSync(join(dir, "package.json"), "{}\n");
     writeFileSync(join(dir, "real.js"), "//\n");
-    symlinkSync("node_modules/acme/server.js", join(dir, "linked.js"));
     execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "pipe" });
+    // Staged straight into the index as mode 120000, as `git add` records a
+    // symlink: creating one on disk needs Developer Mode on Windows.
+    const target = execFileSync("git", ["hash-object", "-w", "--stdin"], {
+      cwd: dir,
+      input: "node_modules/acme/server.js",
+      encoding: "utf8",
+    }).trim();
+    execFileSync(
+      "git",
+      ["update-index", "--add", "--cacheinfo", `120000,${target},linked.js`],
+      { cwd: dir, stdio: "pipe" },
+    );
 
     const entries = listRepoFiles(dir);
     const byPath = new Map(entries.map((e) => [e.path, e.kind]));

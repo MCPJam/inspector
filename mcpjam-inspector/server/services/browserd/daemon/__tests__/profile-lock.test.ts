@@ -71,8 +71,18 @@ describe("clearStaleSingletonLock (L8)", () => {
   });
 });
 
+/**
+ * The probe reads `SingletonLock`, the `host-pid` symlink Chromium writes on
+ * POSIX. On Windows Chromium holds a profile with a `lockfile` it opens
+ * delete-on-close, so the system removes it when the browser dies: there is no
+ * symlink to read and no debris to clear. Making one there also needs
+ * Developer Mode.
+ */
+const posixDescribe = describe.skipIf(process.platform === "win32");
+const posixIt = it.skipIf(process.platform === "win32");
+
 describe("probeSingletonOwner — is anyone actually using this profile?", () => {
-  it("reports a live owner when the lock names this host and a running browser", async () => {
+  posixIt("reports a live owner when the lock names this host and a running browser", async () => {
     // BOTH FAKES, ALWAYS. Omitting `describeProcess` lets the probe shell out
     // to the real `ps`, and the answer then depends on what pid 4242 happens
     // to be on the machine running the test: absent on a laptop (unreadable ⇒
@@ -93,7 +103,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
     });
   });
 
-  it("reports a dead pid as clearable debris", async () => {
+  posixIt("reports a dead pid as clearable debris", async () => {
     const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
     expect(await probeSingletonOwner(dir, () => false)).toEqual({
@@ -102,7 +112,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
     });
   });
 
-  it("treats ANOTHER host's lock as in use, not as debris", async () => {
+  posixIt("treats ANOTHER host's lock as in use, not as debris", async () => {
     // A shared home directory over NFS: the pid is real, on a machine whose
     // process table this one cannot see. `process.kill` here would be asking
     // about a local process that happens to share the number — so the honest
@@ -124,7 +134,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
   });
 });
 
-describe("clearing a lock is not a licence to take a live profile", () => {
+posixDescribe("clearing a lock is not a licence to take a live profile", () => {
   it("removes nothing when the probe finds a live owner at unlink time", async () => {
     // The window this closes: the session layer checked a moment ago and
     // decided to launch. A browser that took the profile in between would have
@@ -157,7 +167,7 @@ describe("clearing a lock is not a licence to take a live profile", () => {
   });
 });
 
-describe("probeSingletonOwner — a live pid is not yet an owner", () => {
+posixDescribe("probeSingletonOwner — a live pid is not yet an owner", () => {
   it("clears the lock when the pid was RECYCLED by something else", async () => {
     // The wedge this pins. An ungraceful exit leaves `SingletonLock` behind;
     // after a reboot its pid routinely belongs to an unrelated process. Taken
@@ -212,7 +222,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
   });
 });
 
-describe("probeSingletonOwner — what counts as having ASKED", () => {
+posixDescribe("probeSingletonOwner — what counts as having ASKED", () => {
   it("does not read empty output as a confirmed non-browser", async () => {
     // `""` is a reading we failed to take, not one that came back negative.
     // Treated as the latter it cleared the lock of a live process, which is
