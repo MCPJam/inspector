@@ -214,8 +214,8 @@ const ASSIGNED_TO =
 function listenerPattern(name) {
   const target = name
     .replace(/\s+/g, "")
-    .replace(/[$.]/g, "\\$&")
-    .replace("\\.", "\\s*\\.\\s*");
+    .replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")
+    .replaceAll("\\.", "\\s*\\.\\s*");
   const event = "\\s*[\"'`]error[\"'`]";
   return new RegExp(
     `(?<![\\w$])${target}\\s*\\??\\.\\s*(?:on|once|addListener|prependListener|prependOnceListener)\\s*\\(${event}` +
