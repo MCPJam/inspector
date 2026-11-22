@@ -55,12 +55,27 @@ before the first drive and after any surprising result.
 node .agents/skills/cli-change/verify.mjs run <label> [--kill-after <seconds>] -- <mcpjam args...>
 ```
 
-The driver runs `node cli/dist/index.js <args>` without a shell, with
-`MCPJAM_TELEMETRY_DISABLED=1` and stdin closed, kills it after 60 seconds by
-default, and exits with the CLI's exit code. It writes `command.txt`,
-`stdout.txt`, `stderr.txt` and `exit-code.txt` to
-`<os tmpdir>/mcpjam-cli-verify/<label>/` and prints the path. A reused label
-overwrites the earlier evidence.
+The driver runs `node cli/dist/index.js <args>` without a shell and with
+stdin closed, and exits with the CLI's exit code. The CLI runs with a fresh
+empty home directory (`HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA` and
+the XDG directories), without any `MCPJAM_*` variable or variable whose name
+looks like a key, token, secret or password, and with telemetry and the update
+check off. A saved login or API key on this machine does not reach it. The
+driver does not block the network: a run stays offline only when its inputs
+are the local fixtures below.
+
+`--kill-after` (default 60 seconds, a positive number) bounds the whole run,
+fixture startup included. When it runs out the driver kills the CLI's process
+tree and records `killed after <s>`. The label is one path component
+(letters, digits, `.`, `_`, `-`). Each run writes `command.txt`,
+`run.json`, `stdout.txt`, `stderr.txt` and `exit-code.txt` to a new
+private directory, `<os tmpdir>/mcpjam-cli-verify-<label>-XXXXXX/`, and
+prints its path. `command.txt` is the bash command that replays the run
+through the driver, with `{http}` kept, since the fixture URL dies with the
+run. `run.json` adds the Node executable, the CLI entry and the arguments the
+CLI received. Values of credential flags (`--token`, `--header`,
+`--client-secret` and the like) and of `--env NAME=value` are written as
+`<redacted>`.
 
 Targets that need no network or credentials:
 
@@ -111,7 +126,7 @@ The output contract, from `cli/src/lib/output.ts` and `cli/src/index.ts`:
   deployment. Some commands add their own codes and say so in their
   description in `commands.md` (`tasks watch`: 6, 7, 130).
 
-Report, for each command you changed: the exact command from `command.txt`,
+Report, for each command you changed: the command from `command.txt`,
 the exit code, the stdout fields that show the change, the stderr content
 (usually empty), and the evidence path. Also run one failing case (a missing
 required flag exits 2 with a `USAGE_ERROR` on stderr) when the change touches
@@ -139,7 +154,8 @@ Do not log in, use an API key, or call MCPJam to verify a change.
   loopback (`cli/tests/support/fake-mcpjam.ts`), and list in the PR which
   commands were not run against MCPJam. The help of `cloud status` and of
   `cloud eval validate` (without `--project`) says they make no network
-  call; `cloud status` still reads your saved login.
+  call. Under the driver `cloud status` reads the empty home, so it reports
+  no login.
 - `compat` fetches the live host catalog from MCPJam unless you pass
   `--offline`.
 - `oauth login`, `oauth conformance` and `xaa run` need an authorization
@@ -149,13 +165,15 @@ Do not log in, use an API key, or call MCPJam to verify a change.
   Inspector. Use the `run-inspector` skill for Inspector changes.
 - `mcp` is a long-lived stdio server that the driver cannot hold a session
   with. `cli/tests/mcp.test.ts` drives the same server in-process.
-- `telemetry enable` and `telemetry disable` write your real telemetry state.
-  Use `telemetry status` only.
+- `telemetry enable` and `telemetry disable` write to the driver's throwaway
+  home, and the driver turns telemetry off with `MCPJAM_TELEMETRY_DISABLED=1`,
+  so a run shows the override, not a stored setting.
 
 ## 7. Cleanup
 
 The driver stops the HTTP fixture, and the CLI stops a stdio fixture when it
-exits. After a killed run, list leftover fixture processes and stop each one
+exits. A timeout kills the CLI's process tree. If the driver itself is
+interrupted, list leftover fixture processes and stop each one
 by its process ID:
 
 ```powershell
@@ -166,4 +184,4 @@ Get-WmiObject Win32_Process -Filter "Name='node.exe'" | Where-Object { $_.Comman
 pgrep -af 'mock-http-server|target-server'   # Linux and macOS; Git Bash has no pgrep
 ```
 
-Evidence stays in `<os tmpdir>/mcpjam-cli-verify/` until you delete it.
+Evidence stays in `<os tmpdir>/mcpjam-cli-verify-<label>-*/` until you delete it.
