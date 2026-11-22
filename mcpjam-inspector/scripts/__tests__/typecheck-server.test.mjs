@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import {
   compare,
   countErrors,
-  failedWithoutDiagnostics,
   globalErrors,
+  unusableResult,
 } from "../typecheck-server.mjs";
 
 const OUTPUT = [
@@ -39,31 +39,51 @@ test("backslash paths count under the forward-slash baseline key", () => {
 });
 
 test("a failing tsc with nothing parseable is flagged, not read as zero errors", () => {
-  assert.equal(failedWithoutDiagnostics(2, ""), true);
-  assert.equal(failedWithoutDiagnostics(null, ""), true);
-  assert.equal(
-    failedWithoutDiagnostics(
-      2,
-      "server/a.ts:1:1 - error TS2322: unexpected format",
-    ),
-    true,
-  );
-  assert.equal(failedWithoutDiagnostics(2, OUTPUT), false);
-  assert.equal(
-    failedWithoutDiagnostics(
-      2,
-      "client/x.ts(1,1): error TS2322: outside server\r\n",
-    ),
-    false,
+  const unusable = (status, output) => unusableResult({ status, output });
+  assert.notEqual(unusable(2, ""), null);
+  assert.notEqual(
+    unusable(2, "server/a.ts:1:1 - error TS2322: unexpected format"),
+    null,
   );
   assert.equal(
-    failedWithoutDiagnostics(
-      1,
-      "error TS5058: The specified path does not exist.\r\n",
-    ),
-    false,
+    unusable(2, "client/x.ts(1,1): error TS2322: outside server\r\n"),
+    null,
   );
-  assert.equal(failedWithoutDiagnostics(0, ""), false);
+  assert.equal(
+    unusable(1, "error TS5058: The specified path does not exist.\r\n"),
+    null,
+  );
+  assert.equal(unusable(0, ""), null);
+});
+
+test("a completed run with diagnostics is counted", () => {
+  for (const status of [1, 2]) {
+    assert.equal(
+      unusableResult({ status, signal: null, output: OUTPUT }),
+      null,
+    );
+  }
+});
+
+test("a tsc that did not run to completion is fatal whatever it printed", () => {
+  const oneDiagnostic =
+    "server/a.ts(1,1): error TS2322: Type 'string' is not assignable to type 'number'.\n";
+  assert.match(
+    unusableResult({ status: null, signal: "SIGTERM", output: oneDiagnostic }),
+    /terminated by SIGTERM/,
+  );
+  assert.match(
+    unusableResult({ status: null, signal: null, output: oneDiagnostic }),
+    /unexpected status null/,
+  );
+  assert.match(
+    unusableResult({ status: 3, output: oneDiagnostic }),
+    /unexpected status 3/,
+  );
+  assert.match(
+    unusableResult({ status: 134, output: OUTPUT }),
+    /unexpected status 134/,
+  );
 });
 
 test("a file over its allowance regresses; under it improves", () => {

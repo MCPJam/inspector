@@ -132,6 +132,7 @@ function runTsc() {
   return {
     output: result.stdout,
     status: result.status,
+    signal: result.signal,
     stderr: result.stderr,
   };
 }
@@ -142,16 +143,32 @@ export function globalErrors(output) {
 }
 
 /**
- * tsc failed but printed nothing this script can read: a crash, a kill, or an
- * output format the parser does not match. Counting that as zero errors would
- * pass the check and empty the baseline on `--update`.
+ * tsc's `ExitStatus` values for a run that checked the whole program:
+ * Success, DiagnosticsPresent_OutputsSkipped, DiagnosticsPresent_OutputsGenerated.
  */
-export function failedWithoutDiagnostics(status, output) {
-  return (
+const COMPLETED_STATUSES = new Set([0, 1, 2]);
+
+/**
+ * Why tsc's result cannot be counted, or null when it can. A killed or crashed
+ * tsc may have printed only some of its diagnostics, so any other status is
+ * fatal whatever the output. A completed failing run with nothing this script
+ * can read (an output format the parser does not match) is fatal too.
+ * Counting either would pass the check and shrink the baseline on `--update`.
+ */
+export function unusableResult({ status, signal, output }) {
+  if (!COMPLETED_STATUSES.has(status)) {
+    return signal
+      ? `tsc was terminated by ${signal} before it finished:`
+      : `tsc exited with unexpected status ${status}:`;
+  }
+  if (
     status !== 0 &&
     diagnostics(output).length === 0 &&
     globalErrors(output).length === 0
-  );
+  ) {
+    return `tsc exited with status ${status} but printed no diagnostics this script can parse:`;
+  }
+  return null;
 }
 
 function total(counts) {
@@ -163,11 +180,10 @@ function total(counts) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   writeTelemetryCatalogs();
   ensureSdkBuilt();
-  const { output, status, stderr } = runTsc();
-  if (failedWithoutDiagnostics(status, output)) {
-    console.error(
-      `tsc exited with status ${status} but printed no diagnostics this script can parse:`,
-    );
+  const { output, status, signal, stderr } = runTsc();
+  const unusable = unusableResult({ status, signal, output });
+  if (unusable) {
+    console.error(unusable);
     console.error(`${output}${stderr}`.trim() || "  (no output)");
     process.exit(1);
   }
