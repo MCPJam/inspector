@@ -257,7 +257,10 @@ import {
 } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
-import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "./mcp-protocol-version.js";
 import {
   type ManagedMcpClient,
   ModernProtocolVersionRefused,
@@ -3177,11 +3180,21 @@ export class MCPClientManager {
             // supported version". The legacy handshake negotiates down to it.
             // One retry only: a refusal on this second attempt is not caught
             // here again.
+            //
+            // `isKnownProtocolVersion` first: the list comes from the server,
+            // and `isStatelessProtocolVersion` alone calls any string it does
+            // not know (an empty one included) a 2025-era version.
+            //
+            // This server has already answered as a modern one, so the retry
+            // is told not to open the SSE transport whatever its `initialize`
+            // fails with.
             if (
               error instanceof ModernProtocolVersionRefused &&
               wantsAutoNegotiation &&
               error.supportedVersions.some(
-                (version) => !isStatelessProtocolVersion(version)
+                (version) =>
+                  isKnownProtocolVersion(version) &&
+                  !isStatelessProtocolVersion(version)
               )
             ) {
               upstreamClient.setVersionNegotiation(undefined);
@@ -3191,7 +3204,8 @@ export class MCPClientManager {
                 startupConfig,
                 timeout,
                 state,
-                signal
+                signal,
+                { knownModernServer: true }
               );
             }
             throw error;
@@ -3338,7 +3352,14 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number,
     state: LiveClientState,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: {
+      /**
+       * The server already answered a modern request with its own JSON-RPC
+       * error, so it is a modern server and the SSE transport is not for it.
+       */
+      knownModernServer?: boolean;
+    }
   ): Promise<Transport | undefined> {
     // A new handshake is about to run (first connect, reconnect, protocol
     // switch): the previous declaration no longer describes this connection
@@ -3540,6 +3561,15 @@ export class MCPClientManager {
             error,
           ]);
           if (declaredPinFailure) throw declaredPinFailure;
+          // The server's own modern version refusal, for the same reason: a
+          // declared-transport server never reaches the check before the SSE
+          // transport below, so without this it would get neither the clear
+          // error nor the caller's retry on a 2025 version it listed.
+          const declaredModernRefusal = this.modernVersionRefusal(
+            serverId,
+            error
+          );
+          if (declaredModernRefusal) throw declaredModernRefusal;
           // Preserve `cause`: `formatError` reduces the failure to its
           // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
           // lives on the error object — usually one `.cause` hop down, since
@@ -3593,12 +3623,23 @@ export class MCPClientManager {
     // to be a legacy one. Opening it against a server that has just shown it is
     // modern sends a GET it has no use for (a modern-only server answers 405),
     // and the 405 then hid the real reason in the combined error message.
-    const modernRefusal = readModernVersionRefusal(streamableError);
-    if (modernRefusal) {
-      throw new ModernProtocolVersionRefused(serverId, {
-        cause: streamableError,
-        supportedVersions: modernRefusal.supported,
-      });
+    const modernRefusal = this.modernVersionRefusal(serverId, streamableError);
+    if (modernRefusal) throw modernRefusal;
+
+    // The retry after such a refusal: the server is known to be modern, so a
+    // 2025 handshake that failed for any other reason stops here as well.
+    if (options?.knownModernServer) {
+      throw new Error(
+        connectionErrorMessage(
+          serverId,
+          url,
+          [streamableError],
+          `Failed to connect to MCP server "${serverId}" using Streamable HTTP. The server answered as a modern MCP server, so the older SSE transport was not tried. Streamable HTTP error: ${formatError(
+            streamableError
+          )}`
+        ),
+        { cause: streamableError }
+      );
     }
 
     const sseTransport = new SSEClientTransport(url, {
@@ -3713,6 +3754,24 @@ export class MCPClientManager {
         streamableError
       );
     }
+  }
+
+  /**
+   * The server's own modern "protocol version not supported" answer, as the
+   * error an unpinned connect ends with instead of trying the SSE transport.
+   * `undefined` for any other failure.
+   */
+  private modernVersionRefusal(
+    serverId: string,
+    error: unknown
+  ): ModernProtocolVersionRefused | undefined {
+    const refusal = readModernVersionRefusal(error);
+    return refusal
+      ? new ModernProtocolVersionRefused(serverId, {
+          cause: error,
+          supportedVersions: refusal.supported,
+        })
+      : undefined;
   }
 
   /**

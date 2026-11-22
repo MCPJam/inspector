@@ -18,8 +18,17 @@ import {
 } from "../src/mcp-client-manager/index.js";
 
 type Shape =
-  /** Modern server: refuses the probe with -32022 and lists `supported`. */
-  | { kind: "modern"; supported: string[] }
+  /**
+   * Modern server: refuses the probe with -32022 and lists `supported`.
+   * `initialize` says how it answers the 2025 handshake for a 2025 version it
+   * listed: properly (`ok`, the default), with an HTTP 404 (`not-found`), or
+   * with an HTTP 400 carrying another JSON-RPC error (`bad-request`).
+   */
+  | {
+      kind: "modern";
+      supported: string[];
+      initialize?: "ok" | "not-found" | "bad-request";
+    }
   /** An old HTTP+SSE server: it does not take a POST at this URL at all. */
   | { kind: "sse-only" };
 
@@ -55,6 +64,18 @@ async function serve(shape: Shape) {
     const isLegacyRequest =
       body?.method === "initialize" ||
       req.headers["mcp-session-id"] !== undefined;
+
+    if (isLegacyRequest && shape.initialize === "not-found") {
+      res.writeHead(404).end();
+      return;
+    }
+    if (isLegacyRequest && shape.initialize === "bad-request") {
+      return json(400, {
+        jsonrpc: "2.0",
+        id: body?.id ?? null,
+        error: { code: -32600, message: "Invalid Request" },
+      });
+    }
 
     if (isLegacyRequest && legacyOffer) {
       switch (body?.method) {
@@ -112,21 +133,32 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function connect(shape: Shape, pin?: "2026-07-28") {
+async function connect(
+  shape: Shape,
+  config: {
+    mcpProtocolVersion?: "2026-07-28";
+    disableSseFallback?: boolean;
+  } = {}
+) {
   const served = await serve(shape);
   const manager = new MCPClientManager();
   cleanups.push(served.close, () =>
     manager.disconnectAllServers().catch(() => undefined)
   );
   const connected = manager
-    .connectToServer("fixture", {
-      url: served.url,
-      timeout: 5_000,
-      ...(pin ? { mcpProtocolVersion: pin } : {}),
-    })
+    .connectToServer("fixture", { url: served.url, timeout: 5_000, ...config })
     .then(() => manager.getInitializationInfo("fixture")?.protocolVersion);
   return { connected, wire: served.wire };
 }
+
+/** The rejection itself, so a test can read its class and message. */
+const failure = (connected: Promise<unknown>) =>
+  connected.then(
+    () => undefined,
+    (reason: unknown) => reason as Error
+  );
+
+const NO_SHARED_VERSION = `MCP server "fixture" doesn't support an MCP protocol version this client speaks. It offers 2099-01-01.`;
 
 describe("an unpinned connect refused with the modern version error", () => {
   it("stops without trying the SSE transport when no version is shared", async () => {
@@ -135,15 +167,10 @@ describe("an unpinned connect refused with the modern version error", () => {
       supported: ["2099-01-01"],
     });
 
-    const error = await connected.then(
-      () => undefined,
-      (reason: unknown) => reason
-    );
+    const error = await failure(connected);
 
     expect(error).toBeInstanceOf(ModernProtocolVersionRefused);
-    expect((error as Error).message).toBe(
-      `MCP server "fixture" doesn't support an MCP protocol version this client speaks. It offers 2099-01-01.`
-    );
+    expect(error?.message).toBe(NO_SHARED_VERSION);
     expect((error as ModernProtocolVersionRefused).supportedVersions).toEqual([
       "2099-01-01",
     ]);
@@ -178,6 +205,88 @@ describe("an unpinned connect refused with the modern version error", () => {
   });
 });
 
+describe("what counts as a version the server shares", () => {
+  // The list comes from the server. Only a 2025 version this client knows is
+  // a reason to retry: an empty string or an older revision is not.
+  it.each([
+    ["an empty string", ["2099-01-01", ""]],
+    [
+      "a revision older than any this client pins",
+      ["2099-01-01", "2024-11-05"],
+    ],
+    ["text that is not a version", ["2099-01-01", "latest"]],
+  ])("does not retry for %s", async (_label, supported) => {
+    const { connected, wire } = await connect({ kind: "modern", supported });
+
+    expect(await failure(connected)).toBeInstanceOf(
+      ModernProtocolVersionRefused
+    );
+    expect(wire).toEqual(["POST server/discover"]);
+  });
+});
+
+describe("the retry on a server already known to be modern", () => {
+  // The 2025 handshake fails with something that is not the modern refusal.
+  // On a server not yet known to be modern, that is where SSE would be tried.
+  it.each(["not-found", "bad-request"] as const)(
+    "does not open the SSE transport when the 2025 handshake fails too (%s)",
+    async (initialize) => {
+      const { connected, wire } = await connect({
+        kind: "modern",
+        supported: ["2099-01-01", "2025-06-18"],
+        initialize,
+      });
+
+      const error = await failure(connected);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error?.message).not.toContain("SSE error");
+      // The probe, then one 2025 handshake. No GET for an SSE stream.
+      expect(wire).toEqual(["POST server/discover", "POST initialize"]);
+    }
+  );
+
+  it("says why SSE was not tried", async () => {
+    const { connected } = await connect({
+      kind: "modern",
+      supported: ["2099-01-01", "2025-06-18"],
+      initialize: "bad-request",
+    });
+
+    expect((await failure(connected))?.message).toContain(
+      "The server answered as a modern MCP server, so the older SSE transport was not tried."
+    );
+  });
+});
+
+describe("a server whose declared transport rules out SSE", () => {
+  it("gets the same clear error when no version is shared", async () => {
+    const { connected, wire } = await connect(
+      { kind: "modern", supported: ["2099-01-01"] },
+      { disableSseFallback: true }
+    );
+
+    const error = await failure(connected);
+
+    expect(error).toBeInstanceOf(ModernProtocolVersionRefused);
+    expect(error?.message).toBe(NO_SHARED_VERSION);
+    expect(wire).toEqual(["POST server/discover"]);
+  });
+
+  it("gets the 2025 retry when it lists a version it shares", async () => {
+    const { connected, wire } = await connect(
+      { kind: "modern", supported: ["2099-01-01", "2025-06-18"] },
+      { disableSseFallback: true }
+    );
+
+    await expect(connected).resolves.toBe("2025-06-18");
+    expect(wire.slice(0, 2)).toEqual([
+      "POST server/discover",
+      "POST initialize",
+    ]);
+  });
+});
+
 describe("what must not change", () => {
   it("an old HTTP+SSE server still gets the SSE fallback", async () => {
     const { connected, wire } = await connect({ kind: "sse-only" });
@@ -191,7 +300,7 @@ describe("what must not change", () => {
   it("a pinned connect still reports the pin, and sends no GET", async () => {
     const { connected, wire } = await connect(
       { kind: "modern", supported: ["2099-01-01"] },
-      "2026-07-28"
+      { mcpProtocolVersion: "2026-07-28" }
     );
 
     await expect(connected).rejects.toBeInstanceOf(

@@ -65,6 +65,20 @@ describe("readModernVersionRefusal", () => {
     });
   });
 
+  it("reads the client's error by shape, whatever its class is called", () => {
+    // The upstream client raises the -32022 as a `ProtocolError`. Only
+    // `supported` plus `requested` mark it as the version refusal.
+    const raised = Object.assign(new Error("Unsupported protocol version"), {
+      name: "ProtocolError",
+      code: -32022,
+      supported: ["2099-01-01"],
+      requested: "2026-07-28",
+    });
+    expect(readModernVersionRefusal(raised)).toEqual({
+      supported: ["2099-01-01"],
+    });
+  });
+
   it("returns an empty list when the server named no version", () => {
     expect(readModernVersionRefusal(postError(-32022))).toEqual({
       supported: [],

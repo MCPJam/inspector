@@ -163,18 +163,8 @@ export function readUnsupportedVersionFailure(
       requested?: unknown;
       message?: unknown;
     };
-    if (
-      named.name === "UnsupportedProtocolVersionError" ||
-      (Array.isArray(named.supported) && typeof named.requested === "string")
-    ) {
-      return {
-        supported: Array.isArray(named.supported)
-          ? named.supported.filter(
-              (version): version is string => typeof version === "string"
-            )
-          : [],
-      };
-    }
+    const raised = raisedVersionRefusal(named);
+    if (raised) return raised;
     // The pin-mode refusal. Deliberately the SPECIFIC wording rather than the
     // code: see above — its siblings are outages, not version verdicts.
     if (
@@ -245,30 +235,44 @@ export function readModernVersionRefusal(
 ): { supported: string[] } | undefined {
   for (const candidate of causeChain(error)) {
     if (!candidate || typeof candidate !== "object") continue;
-    const named = candidate as {
-      name?: unknown;
-      supported?: unknown;
-      requested?: unknown;
-      message?: unknown;
-    };
-    if (
-      named.name === "UnsupportedProtocolVersionError" ||
-      (Array.isArray(named.supported) && typeof named.requested === "string")
-    ) {
-      return {
-        supported: Array.isArray(named.supported)
-          ? named.supported.filter(
-              (version): version is string => typeof version === "string"
-            )
-          : [],
-      };
-    }
-    if (typeof named.message === "string") {
-      const refusal = readJsonRpcVersionRefusal(named.message);
+    const raised = raisedVersionRefusal(candidate);
+    if (raised) return raised;
+    const message = (candidate as { message?: unknown }).message;
+    if (typeof message === "string") {
+      const refusal = readJsonRpcVersionRefusal(message);
       if (refusal) return refusal;
     }
   }
   return undefined;
+}
+
+/**
+ * The server's `-32022` as the client raises it: `supported` plus the version
+ * that was `requested`. Matched by shape first. The class is named
+ * `UnsupportedProtocolVersionError` in the spec, but the upstream client
+ * raises it as a `ProtocolError`, so the name alone would miss it.
+ */
+function raisedVersionRefusal(
+  candidate: object
+): { supported: string[] } | undefined {
+  const named = candidate as {
+    name?: unknown;
+    supported?: unknown;
+    requested?: unknown;
+  };
+  if (
+    named.name !== "UnsupportedProtocolVersionError" &&
+    !(Array.isArray(named.supported) && typeof named.requested === "string")
+  ) {
+    return undefined;
+  }
+  return {
+    supported: Array.isArray(named.supported)
+      ? named.supported.filter(
+          (version): version is string => typeof version === "string"
+        )
+      : [],
+  };
 }
 
 /** A JSON-RPC `-32022` error body inside a transport error's message. */
