@@ -305,9 +305,7 @@ async function scopedScenario(
   // The id arrives under a different parameter name on each base; the value
   // and everything downstream of it are identical.
   const scenarioId = routeParam(c, studyIdParam(surface));
-  const client = createConvexClient(
-    await getConvexBearerForRequest(c as never),
-  );
+  const client = createConvexClient(await getConvexBearerForRequest(c));
   const scenario = await requireScenarioInProject(
     client,
     projectId,
