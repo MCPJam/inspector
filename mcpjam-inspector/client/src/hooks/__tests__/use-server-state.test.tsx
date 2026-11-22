@@ -2010,6 +2010,126 @@ describe("useServerState OAuth callback failures", () => {
         "{}"
       );
     });
+
+    it("still answers its late callback after the app reloads", async () => {
+      resetOAuthCallbackInboxForTests();
+      startSignIn("cancelled-state");
+      const first = renderUseServerState(vi.fn());
+      act(() => first.result.current.handleRuntimeDisconnect("demo-server"));
+      first.unmount();
+      const dispatch = vi.fn();
+      const { rerender } = renderUseServerState(dispatch);
+
+      deliverCallback("cancelled-state", rerender);
+
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          errorToastMessage(
+            "This sign-in was canceled or timed out. Reconnect the server to sign in again."
+          ),
+          { duration: 8000 }
+        )
+      );
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it("does not finish a sign-in cancelled while its code is being exchanged", async () => {
+      resetOAuthCallbackInboxForTests();
+      startSignIn("current-state");
+      let finishExchange!: (value: unknown) => void;
+      handleOAuthCallbackMock.mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishExchange = resolve;
+        })
+      );
+      const dispatch = vi.fn();
+      const { result, rerender } = renderUseServerState(dispatch);
+
+      deliverCallback("current-state", rerender);
+      await waitFor(() => expect(handleOAuthCallbackMock).toHaveBeenCalled());
+      act(() => result.current.handleRuntimeDisconnect("demo-server"));
+      await act(async () => {
+        finishExchange({
+          success: true,
+          serverName: "demo-server",
+          serverConfig: { url: "https://example.com/mcp" },
+        });
+        await flushAsyncWork();
+      });
+
+      const types = dispatch.mock.calls.map(([action]) => action.type);
+      expect(types).not.toContain("CONNECT_SUCCESS");
+      expect(types).not.toContain("CONNECT_FAILURE");
+    });
+  });
+
+  describe("a callback from an older attempt while a newer sign-in waits", () => {
+    // Nothing in memory names the older attempt, as after a renderer reload:
+    // only the newer attempt's issued state in storage tells them apart.
+    function startNewerSignIn() {
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      localStorage.setItem("mcp-oauth-issued-state-demo-server", "newer-state");
+      localStorage.setItem("mcp-verifier-demo-server", "verifier-newer");
+      localStorage.setItem("mcp-oauth-return-hash", "/playground");
+    }
+
+    function deliver(query: string, rerender: () => void) {
+      act(() => {
+        window.history.replaceState({}, "", `/oauth/callback?${query}`);
+        captureOAuthCallbackFromUrl();
+        rerender();
+      });
+    }
+
+    function expectNewerSignInUntouched(dispatch: ReturnType<typeof vi.fn>) {
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcp-oauth-pending")).toBe("demo-server");
+      expect(localStorage.getItem("mcp-oauth-issued-state-demo-server")).toBe(
+        "newer-state"
+      );
+      expect(localStorage.getItem("mcp-verifier-demo-server")).toBe(
+        "verifier-newer"
+      );
+      expect(localStorage.getItem("mcp-oauth-return-hash")).toBe("/playground");
+    }
+
+    it("ignores the older attempt's code and returns to where the newer one started", async () => {
+      resetOAuthCallbackInboxForTests();
+      startNewerSignIn();
+      const dispatch = vi.fn();
+      const { rerender } = renderUseServerState(dispatch);
+
+      deliver("code=older-code&state=older-state", rerender);
+
+      await waitFor(() =>
+        expect(toastError).toHaveBeenCalledWith(
+          errorToastMessage(
+            "An earlier sign-in finished after a newer one started. Finish the newer sign-in in your browser."
+          ),
+          { duration: 8000 }
+        )
+      );
+      expect(handleOAuthCallbackMock).not.toHaveBeenCalled();
+      expectNewerSignInUntouched(dispatch);
+      expect(window.location.pathname).toBe("/playground");
+    });
+
+    it("ignores the older attempt's denial", async () => {
+      resetOAuthCallbackInboxForTests();
+      startNewerSignIn();
+      const dispatch = vi.fn();
+      const { rerender } = renderUseServerState(dispatch);
+
+      deliver("error=access_denied&state=older-state", rerender);
+
+      await waitFor(() => expect(toastError).toHaveBeenCalledTimes(1));
+      expect(toastError).not.toHaveBeenCalledWith(
+        expect.stringContaining("access_denied"),
+        expect.anything()
+      );
+      expectNewerSignInUntouched(dispatch);
+    });
   });
 
   it("fails a sign-in still waiting after 10 minutes and clears its key", () => {
@@ -2040,6 +2160,48 @@ describe("useServerState OAuth callback failures", () => {
       });
       expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
       expect(localStorage.getItem("mcp-verifier-demo-server")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not time out a sign-in whose callback arrived before the card re-rendered", () => {
+    vi.useFakeTimers();
+    try {
+      resetOAuthCallbackInboxForTests();
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      localStorage.setItem("mcp-oauth-issued-state-demo-server", "slow-state");
+      localStorage.setItem("mcp-verifier-demo-server", "verifier");
+      handleOAuthCallbackMock.mockReturnValueOnce(new Promise(() => {}));
+      // The card still reads oauth-flow: the dispatched CONNECT_REQUEST has
+      // not rendered when the timer fires.
+      const appState = createAppState();
+      appState.servers["demo-server"].connectionStatus = "oauth-flow";
+      appState.projects.default.servers["demo-server"].connectionStatus =
+        "oauth-flow";
+      const dispatch = vi.fn();
+      const { rerender } = renderUseServerState(dispatch, appState);
+
+      act(() => vi.advanceTimersByTime(10 * 60 * 1000 - 1));
+      act(() => {
+        window.history.replaceState(
+          {},
+          "",
+          "/oauth/callback?code=slow-code&state=slow-state"
+        );
+        captureOAuthCallbackFromUrl();
+        rerender();
+      });
+      expect(handleOAuthCallbackMock).toHaveBeenCalled();
+      act(() => vi.advanceTimersByTime(1));
+
+      expect(dispatch).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "CONNECT_FAILURE",
+          error: "Sign-in timed out. Reconnect to try again.",
+        })
+      );
+      expect(localStorage.getItem("mcp-oauth-pending")).toBe("demo-server");
     } finally {
       vi.useRealTimers();
     }
@@ -3535,6 +3697,50 @@ describe("useServerState OAuth callback failures", () => {
     });
 
     expect(outcome).toMatchObject({ status: "superseded" });
+  });
+
+  it("stops a reconnect's sign-in cancelled while OAuth is still preparing", async () => {
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    let finishDiscovery!: () => void;
+    let continuedAfterCancel: boolean | undefined;
+    let options: any;
+    vi.mocked(ensureAuthorizedForReconnect).mockImplementationOnce(
+      async (_server, reconnectOptions) => {
+        options = reconnectOptions;
+        await new Promise<void>((resolve) => {
+          finishDiscovery = resolve;
+        });
+        continuedAfterCancel = options.shouldContinue();
+        return { kind: "error", error: "OAuth authorization was canceled." };
+      },
+    );
+    reconnectServerMock.mockResolvedValue({
+      success: false,
+      error: "requires OAuth authentication",
+    } as any);
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    let outcome: unknown;
+    await act(async () => {
+      const reconnect = result.current
+        .reconnectServerWithResult("demo-server")
+        .then((value) => {
+          outcome = value;
+        });
+      await vi.waitFor(() => expect(options).toBeDefined());
+      result.current.handleRuntimeDisconnect("demo-server");
+      finishDiscovery();
+      await reconnect;
+    });
+
+    expect(continuedAfterCancel).toBe(false);
+    expect(outcome).toMatchObject({ status: "superseded" });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONNECT_FAILURE" }),
+    );
   });
 
   it("treats a superseded client-switch reconnect as in-progress, not a failure", async () => {

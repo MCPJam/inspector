@@ -343,6 +343,12 @@ export async function ensureAuthorizedForReconnect(
     onAuthorizationRedirect?: (flow: {
       state?: string;
     }) => void | Promise<void>;
+    /**
+     * False once the caller's attempt was cancelled or replaced. Checked
+     * before this clears anything and passed to `initiateOAuth`, so a sign-in
+     * cancelled while OAuth prepares never stores its flow or opens the browser.
+     */
+    shouldContinue?: () => boolean;
   },
 ): Promise<OAuthResult> {
   // If server is explicitly configured without OAuth, skip OAuth flow entirely
@@ -416,6 +422,9 @@ export async function ensureAuthorizedForReconnect(
             : "Failed to build the OAuth request",
       };
     }
+    if (options?.shouldContinue?.() === false) {
+      return { kind: "error", error: "OAuth authorization was canceled." };
+    }
     if (options?.preserveExistingAuthorization) {
       clearOAuthFlowState(server.name);
     } else {
@@ -426,6 +435,9 @@ export async function ensureAuthorizedForReconnect(
       options?.onAuthorizationRedirect
         ? { ...opts, onAuthorizationRedirect: options.onAuthorizationRedirect }
         : opts,
+      ...(options?.shouldContinue
+        ? [{ shouldContinue: options.shouldContinue }]
+        : []),
     );
     if (init.success && init.serverConfig) {
       return {

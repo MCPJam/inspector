@@ -72,6 +72,7 @@ import {
 } from "@/lib/oauth/mcp-oauth";
 import {
   ABANDONED_SIGN_IN_MESSAGE,
+  REPLACED_SIGN_IN_MESSAGE,
   rememberAbandonedSignIn,
   takeAbandonedSignIn,
 } from "@/lib/oauth/abandoned-sign-ins";
@@ -3124,8 +3125,15 @@ export function useServerState({
       state: string | null,
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
-      isCancelled: () => boolean = () => false,
+      isCallerCancelled: () => boolean = () => false,
     ) => {
+      // Set when the exchange starts. Cancel, the sign-in timeout and a newer
+      // connect each advance the server's op token, and every write after
+      // the exchange yields to them.
+      let claim: { name: string; token: number } | undefined;
+      const isCancelled = () =>
+        isCallerCancelled() ||
+        (claim !== undefined && isStaleOp(claim.name, claim.token));
       const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
@@ -3195,6 +3203,8 @@ export function useServerState({
         const callbackServer = connectingName
           ? effectiveServers[connectingName]
           : undefined;
+        if (connectingName)
+          claim = { name: connectingName, token: nextOpToken(connectingName) };
         if (connectingName && callbackServer)
           dispatch({
             type: "CONNECT_REQUEST",
@@ -3673,13 +3683,38 @@ export function useServerState({
       ? localStorage.getItem(`mcp-oauth-issued-state-${pendingServer}`)
       : null;
     if (oauthCallbackHandledRef.current.has(attempt)) return;
-    if ((code || error) && takeAbandonedSignIn(state)) {
+    // The issued state names the attempt that owns the pending key, the
+    // return hash and the hosted context. A callback carrying another state
+    // belongs to an attempt that was cancelled, timed out or replaced, and
+    // must not write to any of them. Read from storage so this holds after a
+    // renderer reload.
+    const wasAbandoned = Boolean(code || error) && takeAbandonedSignIn(state);
+    const newerAttemptOwnsKey =
+      Boolean(code || error) &&
+      !(hostedOAuthCallbackContext && !isHostedProjectCallback) &&
+      issuedState !== null &&
+      issuedState !== state;
+    if (wasAbandoned || newerAttemptOwnsKey) {
       oauthCallbackHandledRef.current.add(attempt);
       consumeOAuthCallbackParams(callbackAttempt);
-      navigateApp(restorePathAfterOAuthCallback(window.location.pathname, ""), {
-        replace: true,
-      });
-      toast.error(ABANDONED_SIGN_IN_MESSAGE);
+      // Back to where the newer attempt, if any, started; its return hash
+      // stays for its own callback.
+      navigateApp(
+        newerAttemptOwnsKey && hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(
+              window.location.pathname,
+              (newerAttemptOwnsKey &&
+                localStorage.getItem("mcp-oauth-return-hash")) ||
+                "",
+            ),
+        { replace: true },
+      );
+      toast.error(
+        newerAttemptOwnsKey
+          ? REPLACED_SIGN_IN_MESSAGE
+          : ABANDONED_SIGN_IN_MESSAGE,
+      );
       return;
     }
     if (isHostedProjectCallback && (code || error)) {
@@ -6249,24 +6284,29 @@ export function useServerState({
           server,
           {
             beforeRedirect: (oauthOptions) => {
-              if (!options?.connectionIntent)
-                dispatch({
-                  type: "UPSERT_SERVER",
-                  name: serverName,
-                  server: {
-                    ...server,
-                    connectionStatus: "oauth-flow",
-                    enabled: true,
-                    lastError: undefined,
-                    useOAuth: true,
-                  },
-                });
               prepareHostedProjectOAuthRedirect({
                 serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
                 suppressErrorToast: suppressErrors,
                 suppressSuccessToast: options?.suppressSuccessToast,
+              });
+            },
+            // beforeRedirect runs before discovery, which can be slow or fail;
+            // the card says "Authorizing in browser" only once the browser opens.
+            onAuthorizationRedirect: () => {
+              if (options?.connectionIntent || isStaleOp(serverName, token))
+                return;
+              dispatch({
+                type: "UPSERT_SERVER",
+                name: serverName,
+                server: {
+                  ...server,
+                  connectionStatus: "oauth-flow",
+                  enabled: true,
+                  lastError: undefined,
+                  useOAuth: true,
+                },
               });
             },
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
@@ -6278,6 +6318,7 @@ export function useServerState({
             // orchestrator treats a tokenless auto server as
             // ready-unauthenticated instead of redirecting.
             interactiveOAuthConfirmed: autoInteractiveConfirmed,
+            shouldContinue: () => !isStaleOp(serverName, token),
           },
         );
         if (authResult.kind === "redirect") {
