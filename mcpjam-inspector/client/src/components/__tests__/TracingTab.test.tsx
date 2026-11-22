@@ -76,27 +76,22 @@ describe("TracingTab", () => {
       data: {
         totalItems: 2,
         counts: { mcpServer: 1, mcpApps: 1 },
+        recent: expect.arrayContaining([
+          expect.objectContaining({
+            source: "mcp-apps",
+            method: "ui/message",
+            direction: "UI→HOST",
+            server: "Notion",
+          }),
+          expect.objectContaining({
+            source: "mcp-server",
+            method: "tools/call",
+            direction: "RECEIVE",
+            server: "Notion",
+          }),
+        ]),
       },
     });
-    const recent = snapshot.ok
-      ? (snapshot.data as { recent: unknown[] }).recent
-      : [];
-    expect(recent).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          source: "mcp-apps",
-          method: "ui/message",
-          direction: "UI→HOST",
-          server: "Notion",
-        }),
-        expect.objectContaining({
-          source: "mcp-server",
-          method: "tools/call",
-          direction: "RECEIVE",
-          server: "Notion",
-        }),
-      ]),
-    );
     expect(JSON.stringify(snapshot)).not.toContain(SECRET_PAYLOAD);
   });
 });

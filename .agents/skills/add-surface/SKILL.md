@@ -72,9 +72,9 @@ From the repo root:
 
 ```bash
 npm run check:surface-tests
-npx vitest run client/src/lib/__tests__/app-surface-coverage.test.ts client/src/lib/__tests__/agent-tool-coverage.test.ts client/src/lib/__tests__/surface-snapshot-coverage.test.ts client/src/lib/__tests__/launcher-tabs.test.ts client/src/lib/__tests__/session-privacy.test.ts
+npm run test -w @mcpjam/inspector -- client/src/lib/__tests__/app-surface-coverage.test.ts client/src/lib/__tests__/agent-tool-coverage.test.ts client/src/lib/__tests__/surface-snapshot-coverage.test.ts client/src/lib/__tests__/launcher-tabs.test.ts client/src/lib/__tests__/session-privacy.test.ts
 npm run typecheck:client -w @mcpjam/inspector
 ```
 
-Run the `vitest` line from `mcpjam-inspector/`. Then open the new screen in
+Then open the new screen in
 the running app with the `run-inspector` skill.
