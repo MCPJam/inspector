@@ -1,30 +1,23 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { checkEdit } from "./hook.mjs";
 import { countFile } from "./rules.mjs";
 import {
   countSpawnWithoutErrorListener,
   fetchCallsWithoutSignal,
-  stripComments,
 } from "./review-rules.mjs";
 
-const fetches = (text) => fetchCallsWithoutSignal(text).length;
+const fetches = (text) => fetchCallsWithoutSignal(text, "a.ts").length;
 
 const CHILD_PROCESS = 'import { spawn, fork } from "node:child_process";\n';
-const spawns = (body) => countSpawnWithoutErrorListener(CHILD_PROCESS + body);
+const spawns = (body) =>
+  countSpawnWithoutErrorListener(CHILD_PROCESS + body, "a.ts");
 
 describe("review rules", () => {
   it("runs through countFile like the other rules", () => {
     const counts = countFile("sdk/src/x.ts", "await fetch(url);\n");
     assert.equal(counts["fetch-without-signal"], 1);
     assert.equal(counts["spawn-without-error-listener"], 0);
-  });
-
-  it("blanks comments and literals without moving offsets", () => {
-    const text = 'const a = `x${`y${z}`}w` + "q(" // fetch(u)\nfetch(u)';
-    const code = stripComments(text, { blankStrings: true });
-    assert.equal(code.length, text.length);
-    assert.equal(code.indexOf("fetch"), text.lastIndexOf("fetch"));
-    assert.equal(stripComments('"a" /* b */', {}), '"a"        ');
   });
 
   it("reads a slash after postfix ++ or an identifier named of as division", () => {
@@ -50,6 +43,20 @@ describe("review rules", () => {
     assert.equal(fetches("await fetch(url, init);\n"), 0);
     assert.equal(fetches('await fetch(url, { ...init, method: "GET" });\n'), 0);
     assert.equal(fetches("const f = (...args) => fetch(...args);\n"), 0);
+    assert.equal(
+      fetches('await fetch(url, { "signal": AbortSignal.timeout(25) });\n'),
+      0,
+    );
+  });
+
+  it("reads only the options' own signal, and counts one set to undefined", () => {
+    assert.equal(
+      fetches('await fetch(url, { headers: { signal: "blue" } });\n'),
+      1,
+    );
+    assert.equal(fetches("await fetch(url, { signal: undefined });\n"), 1);
+    assert.equal(fetches("await fetch(url, { signal: null });\n"), 1);
+    assert.equal(fetches("await fetch(url, { signal: opts.signal });\n"), 0);
   });
 
   it("does not count fetch in comments, strings, methods or other objects", () => {
@@ -102,9 +109,40 @@ describe("review rules", () => {
     assert.equal(spawns('return spawn("x", { stdio: "inherit" });\n'), 0);
     assert.equal(spawns('const src = `const child = spawn("x");`;\n'), 0);
     assert.equal(
-      countSpawnWithoutErrorListener('const child = spawn("x");\n'),
+      countSpawnWithoutErrorListener('const child = spawn("x");\n', "a.ts"),
       0,
       "spawn from a module that is not child_process",
     );
+  });
+
+  it("matches a listener only in the scope of the child it names", () => {
+    const first =
+      'function a() {\n  const child = spawn("x");\n  child.on("error", f);\n}\n';
+    const second = 'function b() {\n  const child = spawn("y");\n}\n';
+    assert.equal(spawns(first + second), 1);
+    assert.equal(spawns(first), 0);
+    assert.equal(
+      spawns(
+        'class R {\n  start() { this.child = spawn("x"); }\n  watch() { this.child.on("error", f); }\n}\n',
+      ),
+      0,
+    );
+  });
+
+  it("does not see a listener a helper adds to a child passed to it", () => {
+    assert.equal(
+      spawns('const child = spawn("x");\nawait waitForExit(child);\n'),
+      1,
+    );
+  });
+
+  it("prints the fix from the edit hook", () => {
+    const problem = checkEdit("sdk/src/a.ts", {
+      before: "const a = 1;",
+      after: "await fetch(url);",
+      fileBefore: "const a = 1;\n",
+      fileAfter: "await fetch(url);\n",
+    });
+    assert.match(problem, /no `signal`: \+1\. Pass a `signal`/);
   });
 });

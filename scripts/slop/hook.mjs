@@ -154,7 +154,13 @@ export function checkEdit(path, { before, after, fileBefore, fileAfter }) {
     const now = countFile(path, after);
     for (const rule of RULES) {
       const added = now[rule.id] - was[rule.id];
-      if (added > 0) problems.push(`${rule.label}: +${added}`);
+      if (added > 0) {
+        problems.push(
+          rule.fix
+            ? `${rule.label}: +${added}. ${rule.fix}`
+            : `${rule.label}: +${added}`,
+        );
+      }
     }
     const lines = lineCount(fileAfter);
     const linesBefore = lineCount(fileBefore);
