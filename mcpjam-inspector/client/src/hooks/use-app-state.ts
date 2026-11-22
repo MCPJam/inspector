@@ -37,6 +37,7 @@ import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { hasPendingOAuthCallback } from "@/lib/oauth-callback-inbox";
 import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
+import { describeAsSlug } from "@mcpjam/sdk/browser";
 import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -552,6 +553,7 @@ export function useAppState({
           type: "CONNECT_FAILURE" as const,
           name: pendingOAuth.serverName,
           error: OAUTH_AUTHORIZATION_CANCELLED_MESSAGE,
+          normalized: describeAsSlug("auth/sign_in_cancelled"),
         };
         dispatch(cancelled);
         // Outside `useServerState`'s wrapped dispatch, so record it here.

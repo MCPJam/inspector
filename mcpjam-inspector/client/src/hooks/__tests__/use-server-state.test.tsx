@@ -2033,6 +2033,10 @@ describe("useServerState OAuth callback failures", () => {
         type: "CONNECT_FAILURE",
         name: "demo-server",
         error: "Sign-in timed out. Reconnect to try again.",
+        normalized: expect.objectContaining({
+          slug: "auth/sign_in_timed_out",
+          title: "Sign-in timed out",
+        }),
       });
       expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
       expect(localStorage.getItem("mcp-verifier-demo-server")).toBeNull();

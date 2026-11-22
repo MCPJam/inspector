@@ -825,6 +825,20 @@ describe("describeAsSlug — explicit catalog pinning", () => {
     expect(out.slug).toBe("provider/quota");
     expect(out.rawMessage).toBe("");
   });
+
+  // The inspector names these slugs when a browser sign-in ends without a
+  // token. Without an entry the card fell back to a generic "Connection error".
+  it.each([
+    ["auth/sign_in_timed_out", "Sign-in timed out"],
+    ["auth/sign_in_cancelled", "Authorization cancelled"],
+  ])("describes %s as a sign-in the user can retry", (slug, title) => {
+    const out = describeAsSlug(slug);
+    expect(out.slug).toBe(slug);
+    expect(out.title).toBe(title);
+    expect(out.severity).toBe("warning");
+    expect(out.origin).toBe("user_config");
+    expect(out.nextSteps.join(" ")).toContain("Reconnect");
+  });
 });
 
 describe("protocol version pin", () => {
