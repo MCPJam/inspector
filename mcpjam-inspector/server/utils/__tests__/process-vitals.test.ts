@@ -275,8 +275,12 @@ describe("process vitals sampler", () => {
   // step from; the listing failing is a step of its own.
   it("emits a row when the fd listing starts failing", async () => {
     const { flushProcessVitals } = await loadVitals([500 * MB]);
+    // A listing that works first, which a real /dev/fd cannot give on Windows.
+    const readdir = vi
+      .spyOn(fs, "readdirSync")
+      .mockImplementation(() => ["0", "1", "2"] as never);
     flushProcessVitals(0);
-    vi.spyOn(fs, "readdirSync").mockImplementation(() => {
+    readdir.mockImplementation(() => {
       throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
     });
 

@@ -9,6 +9,10 @@ import {
 import { NETWORK_MONITOR_SCRIPT } from "../network-monitor-script";
 import type { CheckSandbox } from "../sandbox";
 
+// The observer runs in the Linux check sandbox, but its parsing is plain Python.
+// Windows installs the interpreter as `python`; its `python3` is a Store stub.
+const PYTHON = process.platform === "win32" ? "python" : "python3";
+
 vi.mock("../../../utils/logger", () => ({
   logger: { info: vi.fn(), warn: vi.fn() },
 }));
@@ -262,20 +266,20 @@ o.observe(tcp('10.0.0.4','192.0.2.2',443,12348,18),False,32)
 o.observe(tcp('10.0.0.4','192.0.2.2',443,12348,20),False,33)
 print(json.dumps(rows))
 `;
-    const availability = spawnSync("python3", ["--version"], {
+    const availability = spawnSync(PYTHON, ["--version"], {
       encoding: "utf8",
     });
     expect(
       availability.error,
-      `python3 is required for the network monitor tests: ${availability.error?.message ?? "failed to start"}`,
+      `${PYTHON} is required for the network monitor tests: ${availability.error?.message ?? "failed to start"}`,
     ).toBeUndefined();
     expect(
       availability.status,
-      `python3 is required for the network monitor tests: ${availability.stderr || availability.stdout}`,
+      `${PYTHON} is required for the network monitor tests: ${availability.stderr || availability.stdout}`,
     ).toBe(0);
 
     const result = spawnSync(
-      "python3",
+      PYTHON,
       [
         "-c",
         NETWORK_MONITOR_SCRIPT.replace(
@@ -287,7 +291,7 @@ print(json.dumps(rows))
     );
     expect(
       result.error,
-      `python3 failed to start the network monitor test: ${result.error?.message ?? "unknown startup error"}`,
+      `${PYTHON} failed to start the network monitor test: ${result.error?.message ?? "unknown startup error"}`,
     ).toBeUndefined();
     expect(result.status, result.error?.message ?? result.stderr).toBe(0);
     const rows = JSON.parse(result.stdout);
