@@ -35,9 +35,11 @@ import {
   legacyInitialize,
   logRecords,
   rawHeadersProbe,
+  mirroredToolCall,
   modernHeaders,
   modernRequestBody,
   rawRequest,
+  walkToolsList,
 } from "./raw-http.js";
 
 /** Capabilities whose 2025-era mechanics were replaced in the 2026 revision. */
@@ -542,6 +544,30 @@ async function protocolVersionHeaderAdvice(
  * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
  * tool logs, and advice never calls a tool on a guess.
  */
+/** The `inputSchema` `toolName` declares in a `tools/list` read right now. */
+async function listedInputSchema(
+  ctx: RawHttpCheckContext,
+  toolName: string,
+  startId: number
+): Promise<unknown> {
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const walk = await walkToolsList({
+    startId,
+    request: ({ id, cursor }) =>
+      rawRequest(ctx, {
+        headers: modernHeaders({ protocolVersion: version, method: "tools/list" }),
+        body: modernRequestBody({
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+          protocolVersion: version,
+        }),
+        timeoutMs: ctx.config.checkTimeout,
+      }),
+  });
+  return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
+}
+
 async function logLevelFilteringAdvice(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessOutcome | undefined> {
@@ -551,22 +577,34 @@ async function logLevelFilteringAdvice(
   }
   const level = probe.level ?? "warning";
   const version = ctx.config.protocolVersion ?? "2026-07-28";
-  const response = await rawRequest(ctx, {
-    headers: {
-      ...modernHeaders({
-        protocolVersion: version,
-        method: "tools/call",
-        name: probe.toolName,
+  // Sent as a conforming client sends it: with the `Mcp-Param-*` headers the
+  // tool asks for, and one retry after a fresh listing if they are refused.
+  const args = probe.arguments ?? {};
+  const response = await mirroredToolCall({
+    args,
+    inputSchema: async () =>
+      ctx.surface?.tools.find((tool) => tool.name === probe.toolName)
+        ?.inputSchema ?? (await listedInputSchema(ctx, probe.toolName, 9410)),
+    refreshInputSchema: () => listedInputSchema(ctx, probe.toolName, 9420),
+    send: (paramHeaders, attempt) =>
+      rawRequest(ctx, {
+        headers: {
+          ...modernHeaders({
+            protocolVersion: version,
+            method: "tools/call",
+            name: probe.toolName,
+          }),
+          ...paramHeaders,
+        },
+        body: modernRequestBody({
+          id: 9403 + attempt,
+          method: "tools/call",
+          params: { name: probe.toolName, arguments: args },
+          protocolVersion: version,
+          logLevel: level,
+        }),
+        timeoutMs: ctx.config.checkTimeout,
       }),
-    },
-    body: modernRequestBody({
-      id: 9403,
-      method: "tools/call",
-      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-      protocolVersion: version,
-      logLevel: level,
-    }),
-    timeoutMs: ctx.config.checkTimeout,
   });
 
   const result = jsonRpcResult(response);

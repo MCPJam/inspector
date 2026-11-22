@@ -51,6 +51,7 @@ import {
   MAX_TOOLS_LIST_PAGES,
   modernHeaders,
   modernRequestBody,
+  mirroredToolCall,
   rawRequest,
   walkToolsList,
   type ToolsListWalk,
@@ -384,6 +385,8 @@ async function modernProbe(
     name?: string;
     clientCapabilities?: Record<string, unknown>;
     logLevel?: string;
+    /** `Mcp-Param-*` headers for a `tools/call`. See {@link modernToolCall}. */
+    paramHeaders?: Record<string, string>;
     headerOverrides?: Record<string, string>;
     /**
      * SEP-2243 standard headers to leave OFF the request entirely. A header
@@ -419,6 +422,7 @@ async function modernProbe(
   return await rawRequest(ctx, {
     headers: {
       ...framed,
+      ...(options.paramHeaders ?? {}),
       ...(options.headerOverrides ?? {}),
     },
     body: modernRequestBody({
@@ -509,6 +513,54 @@ function walkToolsOnce(
       ),
   });
   return state.toolsWalk;
+}
+
+/** Added to a call's JSON-RPC id when it is sent a second time. */
+const RETRY_ID_OFFSET = 10_000;
+
+/**
+ * A normal `tools/call`, sent the way a conforming client sends it: with the
+ * `Mcp-Param-*` headers the tool's `inputSchema` asks for, and retried once
+ * after a fresh `tools/list` when the server refuses them (`-32020`).
+ *
+ * Every attempt is recorded, so callers do not `track` the result again.
+ */
+async function modernToolCall(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState,
+  options: Parameters<typeof modernProbe>[1] & { name: string }
+): Promise<RawHttpResult> {
+  const toolName = options.name;
+  return await mirroredToolCall({
+    args: options.params?.arguments,
+    inputSchema: () => toolInputSchema(ctx, state, toolName),
+    refreshInputSchema: async () => {
+      // Replace the shared walk too, so later checks read the new listing.
+      state.toolsWalk = walkToolsList({
+        startId: 7960 + RETRY_ID_OFFSET,
+        request: ({ id, cursor }) =>
+          track(
+            state,
+            modernProbe(ctx, {
+              id,
+              method: "tools/list",
+              ...(cursor !== undefined ? { params: { cursor } } : {}),
+            })
+          ),
+      });
+      const walk = await state.toolsWalk;
+      return walk.tools.find((entry) => entry.name === toolName)?.inputSchema;
+    },
+    send: (paramHeaders, attempt) =>
+      track(
+        state,
+        modernProbe(ctx, {
+          ...options,
+          id: options.id + attempt * RETRY_ID_OFFSET,
+          paramHeaders,
+        })
+      ),
+  });
 }
 
 /**
@@ -1462,16 +1514,13 @@ async function runUndeclaredCapabilityCheck(
   // Declared capabilities are deliberately EMPTY: that is the condition under
   // test. A server that needs `elicitation` (or any other client capability) to
   // serve `input_required` must answer -32021 instead of asking anyway.
-  const result = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7600,
-      method: "tools/call",
-      params: { name: probe.toolName, arguments: probe.arguments ?? {} },
-      name: probe.toolName,
-      clientCapabilities: {},
-    })
-  );
+  const result = await modernToolCall(ctx, state, {
+    id: 7600,
+    method: "tools/call",
+    params: { name: probe.toolName, arguments: probe.arguments ?? {} },
+    name: probe.toolName,
+    clientCapabilities: {},
+  });
 
   const payload = jsonRpcResult(result);
   if (payload?.resultType === "input_required") {
@@ -1830,18 +1879,15 @@ async function runToolOutputSchemaCheck(
 
   for (const fixture of fixtures) {
     const outputSchema = declared.get(fixture.toolName);
-    const result = await track(
-      state,
-      modernProbe(ctx, {
-        id: id++,
-        method: "tools/call",
-        params: {
-          name: fixture.toolName,
-          arguments: fixture.arguments ?? {},
-        },
+    const result = await modernToolCall(ctx, state, {
+      id: id++,
+      method: "tools/call",
+      params: {
         name: fixture.toolName,
-      })
-    );
+        arguments: fixture.arguments ?? {},
+      },
+      name: fixture.toolName,
+    });
 
     if (outputSchema === undefined) {
       // Still worth calling: the frame reaches the run-wide wire record, so
@@ -2264,7 +2310,12 @@ async function captureLogProbe(
   options: Parameters<typeof modernProbe>[1]
 ): Promise<{ response: RawHttpResult } | { unavailable: MCPCheckResult }> {
   try {
-    return { response: await track(state, modernProbe(ctx, options)) };
+    return {
+      response:
+        options.method === "tools/call" && options.name !== undefined
+          ? await modernToolCall(ctx, state, { ...options, name: options.name })
+          : await track(state, modernProbe(ctx, options)),
+    };
   } catch (error) {
     return {
       unavailable: couldNotRunResult(
