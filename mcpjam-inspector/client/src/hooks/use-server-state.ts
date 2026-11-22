@@ -6210,6 +6210,18 @@ export function useServerState({
           server,
           {
             beforeRedirect: (oauthOptions) => {
+              if (!options?.connectionIntent)
+                dispatch({
+                  type: "UPSERT_SERVER",
+                  name: serverName,
+                  server: {
+                    ...server,
+                    connectionStatus: "oauth-flow",
+                    enabled: true,
+                    lastError: undefined,
+                    useOAuth: true,
+                  },
+                });
               prepareHostedProjectOAuthRedirect({
                 serverId: hostedProjectServerId,
                 serverName,

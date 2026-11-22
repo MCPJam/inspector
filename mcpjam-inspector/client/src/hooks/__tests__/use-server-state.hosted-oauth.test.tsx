@@ -1301,6 +1301,38 @@ describe("useServerState hosted OAuth callback guards", () => {
     });
   });
 
+  it("leaves the server in the OAuth sign-in state when a reconnect redirects to sign in", async () => {
+    mockReconnectServer.mockResolvedValueOnce({
+      success: false,
+      error:
+        'Server "srv_asana" requires OAuth authentication. Please complete the OAuth flow first.',
+    });
+    mockEnsureAuthorizedForReconnect.mockImplementationOnce(
+      async (_server, options) => {
+        options.beforeRedirect({ serverUrl: "https://mcp.asana.com/sse" });
+        return { kind: "redirect" };
+      },
+    );
+
+    const dispatch = vi.fn();
+    const { result } = renderHostedServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleReconnect("asana");
+    });
+
+    const asanaActions = dispatch.mock.calls
+      .map(([action]) => action)
+      .filter((action) => action.name === "asana");
+    expect(asanaActions.map((action) => action.type)).toContain(
+      "RECONNECT_REQUEST",
+    );
+    expect(asanaActions.at(-1)).toMatchObject({
+      type: "UPSERT_SERVER",
+      server: { connectionStatus: "oauth-flow" },
+    });
+  });
+
   it("opens the known server's OAuth flow when a user action requests readiness", async () => {
     mockReconnectServer.mockResolvedValueOnce({
       success: false,
