@@ -145,7 +145,8 @@ describe("tree digests", () => {
 
   it("refuses to digest a bundle containing a symlink", async () => {
     const root = await writeBundle("linked", { "bridge.mjs": "x" });
-    await symlink("/etc", join(root, "escape"));
+    // A junction on Windows, which needs no privilege; POSIX ignores the type.
+    await symlink("/etc", join(root, "escape"), "junction");
     await expect(computeTreeDigest(root)).rejects.toThrow(/symlink/);
   });
 });

@@ -77,7 +77,8 @@ beforeEach(async () => {
 describe("workspace grants", () => {
   it("returns an opaque id, never the path, and canonicalizes the selection", async () => {
     const linked = join(base, "project-link");
-    await symlink(workspace, linked).catch(() => {});
+    // A junction on Windows, which needs no privilege; POSIX ignores the type.
+    await symlink(workspace, linked, "junction").catch(() => {});
     const result = await registerWorkspaceGrant(linked);
     expect(result.ok).toBe(true);
     if (!result.ok) return;

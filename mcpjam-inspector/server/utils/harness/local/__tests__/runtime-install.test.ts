@@ -163,7 +163,8 @@ async function stagePack(
   // against. A tree containing either could not be digested at all (symlink)
   // or would digest to something else (AppleDouble).
   if (opts.withSymlink === true) {
-    await symlink("/etc/passwd", join(packRoot, "sneaky"));
+    // A junction on Windows, which needs no privilege; POSIX ignores the type.
+    await symlink("/etc/passwd", join(packRoot, "sneaky"), "junction");
   }
   if (opts.withAppleDouble === true) {
     await writeFile(

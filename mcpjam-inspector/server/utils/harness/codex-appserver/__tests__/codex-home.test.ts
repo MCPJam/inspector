@@ -210,7 +210,9 @@ describe("untrustedProjectPathsFor", () => {
   it("covers a symlinked working directory under both spellings", () => {
     const root = scratch();
     mkdirSync(join(root, "real", ".git"), { recursive: true });
-    symlinkSync(join(root, "real"), join(root, "link"));
+    // A junction on Windows, which needs no symlink privilege; POSIX ignores
+    // the type.
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
     expect(untrustedProjectPathsFor(join(root, "link"))).toEqual([
       join(root, "link"),
       join(root, "real"),

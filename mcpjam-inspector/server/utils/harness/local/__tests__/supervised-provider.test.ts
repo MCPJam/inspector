@@ -410,7 +410,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
   it("refuses to read or write outside them, including through a symlink", async () => {
     const sup = supervisor();
     const { session } = await buildSession("confined", sup);
-    await symlink(outside, join(workspace, "escape")).catch(() => {});
+    await symlink(outside, join(workspace, "escape"), "junction").catch(() => {});
 
     await expect(
       session.readTextFile({ path: join(outside, "secret.txt") }),
@@ -439,7 +439,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(session.readTextFile({ path: viaLink })).resolves.toBe(
       "export const a = 1;\n",
     );
-    await symlink(outside, join(workspace, "escape")).catch(() => {});
+    await symlink(outside, join(workspace, "escape"), "junction").catch(() => {});
     await expect(
       session.readTextFile({
         path: join(workRoot, "project", "escape", "secret.txt"),
@@ -541,6 +541,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await symlink(
       join(outside, "captured.ok"),
       join(sessionStateDir, "bootstrap", ".bootstrap-linked.ok"),
+      "junction",
     ).catch(() => {});
     await expect(
       session.writeTextFile({ path: marker, content: "" }),
@@ -624,7 +625,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
     const { session, workRoot, sessionStateDir } = await buildSession("bridge-args", sup);
-    await symlink(outside, join(workspace, "escape-args")).catch(() => {});
+    await symlink(outside, join(workspace, "escape-args"), "junction").catch(() => {});
     await expect(
       session.spawn({
         command:
