@@ -15,19 +15,51 @@ export interface NpxInvocation {
 }
 
 /**
+ * @deprecated Use `npxInvocation`. Published CLI versions still import this
+ * from `@mcpjam/sdk/internal/inspector`.
+ */
+export function getNpxExecutable(platform = process.platform): string {
+  return platform === "win32" ? "npx.cmd" : "npx";
+}
+
+/**
  * How to spawn npx. On Windows `npx` is the `npx.cmd` shim, and since Node's
  * CVE-2024-27980 hardening spawning a `.cmd` without a shell throws EINVAL.
- * cmd.exe then re-reads the joined command line, so each argument is quoted,
- * and characters cmd.exe still expands inside quotes are refused.
+ * So Windows runs npm's own `npx-cli.js` with the current Node, which needs
+ * no shell. Without it, the shim runs through cmd.exe as one command string:
+ * Node 24 deprecates passing an args array with `shell: true` (DEP0190).
+ * cmd.exe re-reads that string, so each argument is quoted, and characters
+ * cmd.exe still expands inside quotes are refused.
  */
 export function npxInvocation(
   args: readonly string[],
   platform = process.platform,
+  findNpxCli: () => string | undefined = findBundledNpxCli,
 ): NpxInvocation {
   if (platform !== "win32") {
     return { command: "npx", args: [...args], shell: false };
   }
-  return { command: "npx.cmd", args: args.map(quoteCmdArgument), shell: true };
+  const npxCli = findNpxCli();
+  if (npxCli) {
+    return { command: process.execPath, args: [npxCli, ...args], shell: false };
+  }
+  return {
+    command: ["npx.cmd", ...args.map(quoteCmdArgument)].join(" "),
+    args: [],
+    shell: true,
+  };
+}
+
+// The Windows Node installer and nvm-windows put npm next to node.exe.
+function findBundledNpxCli(): string | undefined {
+  const npxCli = path.join(
+    path.dirname(process.execPath),
+    "node_modules",
+    "npm",
+    "bin",
+    "npx-cli.js",
+  );
+  return existsSync(npxCli) ? npxCli : undefined;
 }
 
 function quoteCmdArgument(arg: string): string {
