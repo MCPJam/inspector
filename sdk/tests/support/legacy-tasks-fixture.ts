@@ -92,6 +92,11 @@ export interface LegacyTasksFixtureOptions {
    * able to overwrite what the client resolved for itself.
    */
   listResultExtras?: Record<string, unknown>;
+  /**
+   * The tool's `execution.taskSupport`. Default `"required"`; `null` leaves
+   * `execution` out, the case where a client must not call the tool as a task.
+   */
+  toolTaskSupport?: string | null;
 }
 
 export interface ReceivedRequest {
@@ -139,14 +144,16 @@ function initialize(
   };
 }
 
-function toolsList(): Record<string, unknown> {
+function toolsList(
+  taskSupport: string | null = "required"
+): Record<string, unknown> {
   return {
     tools: [
       {
         name: LEGACY_TASK_TOOL_NAME,
         description: "A tool that only runs as a task.",
         inputSchema: { type: "object", properties: {} },
-        execution: { taskSupport: "required" },
+        ...(taskSupport === null ? {} : { execution: { taskSupport } }),
       },
     ],
   };
@@ -214,7 +221,7 @@ export async function serveLegacyTasksFixture(
       case "initialize":
         return initialize(options.tasksCapability);
       case "tools/list":
-        return toolsList();
+        return toolsList(options.toolTaskSupport);
       case "tools/call":
         // The whole point of the fixture: only answer with a CreateTaskResult
         // when the client actually delivered `params.task`.
