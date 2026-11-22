@@ -1,8 +1,8 @@
 /**
  * An in-memory box for the skill writer's tests: a file map, and the shell the
  * box writer and `@ai-sdk/harness`'s `writeSkills` send it (`mkdir -p`,
- * `mv -f`, `rm -rf --`, `rm -f --`, `test ! -e`, and the writer's `find`
- * sweeps). Paths arrive single-quoted. A command it doesn't know throws, so a
+ * `mv -f`, `rm -rf --`, `rm -f --`, `test ! -e`, `printf '%s' … >`, joined
+ * by `&&`, and the writer's `find` sweeps). Paths arrive single-quoted. A command it doesn't know throws, so a
  * test notices when the writer starts sending a new one.
  */
 import type { BoxSkillsSession } from "../../utils/harness/box-skills-writer.js";
@@ -51,47 +51,72 @@ export function fakeSkillBox(
       write(path, Buffer.from(content).toString("utf8")),
     run: async ({ command }) => {
       commands.push(command);
-      const argv = tokens(command);
-      if (argv[0] === "mkdir" && argv[1] === "-p") {
-        dirs.add(argv[2]!);
-        return ok;
+      // `a && b`: each in turn, stopping at the first that fails.
+      let result = ok;
+      for (const argv of splitAnd(tokens(command))) {
+        result = runArgv(argv, command);
+        if (result.exitCode !== 0) return result;
       }
-      if (argv[0] === "mv" && argv[1] === "-f") {
-        const content = files.get(argv[2]!);
-        if (content === undefined) return { ...ok, exitCode: 1 };
-        files.set(argv[3]!, content);
-        files.delete(argv[2]!);
-        return ok;
-      }
-      if (argv[0] === "rm" && argv[2] === "--") {
-        for (const path of argv.slice(3)) removeTree(path);
-        return ok;
-      }
-      if (argv[0] === "test" && argv[1] === "!" && argv[2] === "-e") {
-        return { ...ok, exitCode: exists(argv[3]!) ? 1 : 0 };
-      }
-      if (argv[0] === "find" && argv.includes("-mindepth")) {
-        const base = argv[1]!;
-        if (!exists(base)) return { ...ok, exitCode: 1 };
-        const found = [...files.keys()].filter(
-          (path) =>
-            path.startsWith(`${base}/`) &&
-            path.slice(base.length + 1).includes("/") &&
-            !path.endsWith("/SKILL.md"),
-        );
-        const sized = argv.includes("-printf");
-        return {
-          ...ok,
-          stdout: found
-            .map((path) =>
-              sized ? `${Buffer.byteLength(files.get(path)!)}\t${path}` : path,
-            )
-            .join("\n"),
-        };
-      }
-      throw new Error(`fake box: unknown command: ${command}`);
+      return result;
     },
   };
+
+  function splitAnd(argv: string[]): string[][] {
+    const parts: string[][] = [[]];
+    for (const arg of argv) {
+      if (arg === "&&") parts.push([]);
+      else parts[parts.length - 1]!.push(arg);
+    }
+    return parts;
+  }
+
+  function runArgv(
+    argv: string[],
+    command: string,
+  ): { exitCode: number; stdout: string; stderr: string } {
+    if (argv[0] === "printf" && argv[1] === "%s" && argv[3] === ">") {
+      write(argv[4]!, argv[2]!);
+      return ok;
+    }
+    if (argv[0] === "mkdir" && argv[1] === "-p") {
+      dirs.add(argv[2]!);
+      return ok;
+    }
+    if (argv[0] === "mv" && argv[1] === "-f") {
+      const content = files.get(argv[2]!);
+      if (content === undefined) return { ...ok, exitCode: 1 };
+      files.set(argv[3]!, content);
+      files.delete(argv[2]!);
+      return ok;
+    }
+    if (argv[0] === "rm" && argv[2] === "--") {
+      for (const path of argv.slice(3)) removeTree(path);
+      return ok;
+    }
+    if (argv[0] === "test" && argv[1] === "!" && argv[2] === "-e") {
+      return { ...ok, exitCode: exists(argv[3]!) ? 1 : 0 };
+    }
+    if (argv[0] === "find" && argv.includes("-mindepth")) {
+      const base = argv[1]!;
+      if (!exists(base)) return { ...ok, exitCode: 1 };
+      const found = [...files.keys()].filter(
+        (path) =>
+          path.startsWith(`${base}/`) &&
+          path.slice(base.length + 1).includes("/") &&
+          !path.endsWith("/SKILL.md"),
+      );
+      const sized = argv.includes("-printf");
+      return {
+        ...ok,
+        stdout: found
+          .map((path) =>
+            sized ? `${Buffer.byteLength(files.get(path)!)}\t${path}` : path,
+          )
+          .join("\n"),
+      };
+    }
+    throw new Error(`fake box: unknown command: ${command}`);
+  }
 
   return {
     session,

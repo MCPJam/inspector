@@ -298,7 +298,13 @@ export async function collectClientAdvice(
 ): Promise<MCPReadinessOutcome[]> {
   const warnings: MCPReadinessOutcome[] = [];
 
-  if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
+  // The deterministic-order SHOULD first appears in 2026-07-28; the 2025 tools
+  // pages say nothing about order, so an older run gets no advice and no
+  // repeat listing.
+  if (
+    ctx.config.era === "modern" &&
+    adviceSelected(ctx.config, "readiness-tool-order-deterministic")
+  ) {
     try {
       // Bypass the cache: a cached first listing would make any server look
       // stable, and the advice can now be reported as met.
