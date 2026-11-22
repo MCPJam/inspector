@@ -5,20 +5,14 @@
  * of surfaces against a loose phrase. Everything except the alias file is
  * read from source, so the map moves when the app does.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   destinationSegments,
-  harnessModules,
-  importSpecifiers,
   matchSurface,
-  moduleOwners,
-  navigatedSurfaces,
   parseSurfaces,
-  scanSource,
-  surfaceRoots,
-  surfaceTags,
 } from "./surface-test-map.mjs";
+import { scanSurfaceTests } from "./surface-test-scan.mjs";
 
 export const SOURCES = {
   surfaces: "shared/app-surfaces.ts",
@@ -29,7 +23,6 @@ export const SOURCES = {
   aliases: "scripts/feature-map-aliases.json",
 };
 
-const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".js", ".jsx", ".mjs"];
 const COMPONENTS_DIR = "client/src/components/";
 const DESIGN_SYSTEM_DIR = "client/src/components/ui/";
 
@@ -166,125 +159,6 @@ export function describePlace(place) {
   }`;
 }
 
-function makeResolver(root) {
-  const cache = new Map();
-  const tryFile = (base) => {
-    if (cache.has(base)) return cache.get(base);
-    let hit = null;
-    const stem = base.replace(/\.(?:[cm]?js|jsx)$/, "");
-    const candidates = [
-      base,
-      ...SOURCE_EXTENSIONS.map((ext) => stem + ext),
-      ...SOURCE_EXTENSIONS.map((ext) => join(base, `index${ext}`)),
-    ];
-    for (const candidate of candidates) {
-      if (existsSync(candidate) && statSync(candidate).isFile()) {
-        hit = toRel(root, candidate);
-        break;
-      }
-    }
-    cache.set(base, hit);
-    return hit;
-  };
-  return (fromRel, specifier) => {
-    if (specifier.startsWith("@/shared/")) {
-      return tryFile(join(root, "shared", specifier.slice("@/shared/".length)));
-    }
-    if (specifier.startsWith("@/")) {
-      return tryFile(join(root, "client/src", specifier.slice(2)));
-    }
-    if (specifier.startsWith(".")) {
-      return tryFile(join(root, dirname(fromRel), specifier));
-    }
-    return null;
-  };
-}
-
-const toRel = (root, file) => relative(root, file).split(sep).join("/");
-
-function* walk(dir) {
-  for (const entry of readdirSync(dir)) {
-    if (entry === "node_modules" || entry === "dist" || entry.startsWith(".")) {
-      continue;
-    }
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) yield* walk(full);
-    else yield full;
-  }
-}
-
-const isSource = (rel) =>
-  SOURCE_EXTENSIONS.some((ext) => rel.endsWith(ext)) && !rel.endsWith(".d.ts");
-const isComponentTest = (rel) =>
-  rel.split("/").includes("__tests__") && /\.test\.tsx?$/.test(rel);
-const isE2ESpec = (rel) => /\.(?:spec|browser)\.ts$/.test(rel);
-
-/**
- * Each surface's root files, its E2E specs and its component tests, joined by
- * the rules documented in `surface-test-map.mjs`; and the import graph.
- */
-export function readSurfaceTests(root, surfaces) {
-  const res = makeResolver(root);
-  const read = (rel) => readFileSync(join(root, rel), "utf8");
-  const graph = new Map();
-  for (const dir of ["client/src", "shared"]) {
-    for (const file of walk(join(root, dir))) {
-      const rel = toRel(root, file);
-      if (!isSource(rel) || isComponentTest(rel)) continue;
-      const deps = new Set();
-      for (const spec of importSpecifiers(read(rel))) {
-        const target = res(rel, spec);
-        if (target) deps.add(target);
-      }
-      graph.set(rel, deps);
-    }
-  }
-  const routerSource = read(SOURCES.router);
-  const roots = surfaceRoots({
-    surfaces,
-    routerSource,
-    appSource: read(SOURCES.app),
-    resolve: res,
-  });
-  const owners = moduleOwners(graph, roots);
-  const harnesses = harnessModules(routerSource);
-  const ids = new Set(surfaces.map((s) => s.id));
-
-  const linkImports = (rel, source, into) => {
-    for (const spec of importSpecifiers(source)) {
-      for (const owner of owners.get(res(rel, spec) ?? "") ?? [])
-        into.add(owner);
-    }
-    for (const tag of surfaceTags(source)) if (ids.has(tag)) into.add(tag);
-  };
-  const e2e = new Map(surfaces.map((s) => [s.id, []]));
-  for (const file of walk(join(root, "e2e"))) {
-    const rel = toRel(root, file);
-    if (!isE2ESpec(rel)) continue;
-    const source = read(rel);
-    const linked = navigatedSurfaces(source, surfaces);
-    for (const literal of scanSource(source).literals) {
-      const segments = destinationSegments(literal.value);
-      const specifier = segments && harnesses.get(segments.join("/"));
-      const harness = specifier && res(SOURCES.router, specifier);
-      if (harness) linkImports(harness, read(harness), linked);
-    }
-    linkImports(rel, source, linked);
-    for (const id of linked) e2e.get(id).push(rel);
-  }
-  const component = new Map(surfaces.map((s) => [s.id, []]));
-  for (const dir of ["client", "shared"]) {
-    for (const file of walk(join(root, dir))) {
-      const rel = toRel(root, file);
-      if (!isComponentTest(rel)) continue;
-      const linked = new Set();
-      linkImports(rel, read(rel), linked);
-      for (const id of linked) component.get(id).push(rel);
-    }
-  }
-  return { graph, roots, e2e, component };
-}
-
 /**
  * Components a root file renders one import down: feature components only,
  * not design-system primitives, hooks or helpers.
@@ -316,7 +190,7 @@ export function buildFeatureMap(root) {
     parseConnectTabs(read(SOURCES.connectTabs)),
   );
   const aliases = JSON.parse(read(SOURCES.aliases));
-  const tests = readSurfaceTests(root, surfaces);
+  const tests = scanSurfaceTests(root, surfaces);
   return surfaces.map((s) => {
     const roots = [...tests.roots.get(s.id)].sort();
     return {
@@ -413,9 +287,13 @@ export function searchFields(entry) {
   ].map((f) => ({ ...f, words: new Set(f.phrases.flatMap(words)) }));
 }
 
-// A match on a field at least this heavy (a name or a URL, not prose or a
-// file name) is what makes a result confident.
+// An exact word match on a field at least this heavy (a name or a URL, not
+// prose or a file name) is what makes a result strong. A prefix such as
+// `auth` for `authentication` is not.
 const STRONG_WEIGHT = 2;
+// The top result must outscore every other by this factor to be confident;
+// anything closer is reported as ambiguous.
+const MARGIN = 1.25;
 // A prose field a word also matches in adds this share of its value.
 const ECHO_SHARE = 0.25;
 const PROSE_FIELDS = new Set(["purpose", "activity"]);
@@ -434,6 +312,10 @@ function wordMatch(q, w) {
  * screen). A label or alias whose every word is in the query adds its weight
  * again, so a two-word name beats two scattered hits. A surface no navigation
  * or atlas reaches (a redirect kept for old links) counts half.
+ *
+ * The result is confident only when the top surface is strong, every query
+ * word matches some surface, and no other surface scores within
+ * {@link MARGIN} of it. The close ones are listed in `ambiguous`.
  */
 export function rankSurfaces(entries, phrase) {
   const query = [...new Set(words(phrase))];
@@ -472,8 +354,9 @@ export function rankSurfaces(entries, phrase) {
           .filter((h) => PROSE_FIELDS.has(h.field.field))
           .reduce((sum, h) => sum + h.value, 0) * ECHO_SHARE;
       score += (best.value + echo) * idf.get(q);
-      // A heavier field can lose `best` to an exact file-name hit and still count.
-      if (hits.some((h) => h.field.weight >= STRONG_WEIGHT)) strong = true;
+      if (hits.some((h) => h.field.weight >= STRONG_WEIGHT && h.word === q)) {
+        strong = true;
+      }
       reasons.push(
         `"${q}" ~ ${best.field.field}${best.word === q ? "" : ` "${best.word}"`}`,
       );
@@ -515,5 +398,11 @@ export function rankSurfaces(entries, phrase) {
     .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   const unmatched = query.filter((q) => df(q) === 0);
-  return { query, unmatched, ranked, confident: ranked[0]?.strong ?? false };
+  const [top, ...rest] = ranked;
+  const ambiguous = top
+    ? rest.filter((r) => r.score * MARGIN > top.score).map((r) => r.id)
+    : [];
+  const confident =
+    Boolean(top?.strong) && unmatched.length === 0 && ambiguous.length === 0;
+  return { query, unmatched, ranked, ambiguous, confident };
 }

@@ -1,10 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildFeatureMap as buildCoverageMap } from "../check-surface-test-coverage.mjs";
 import {
   SOURCES,
+  buildFeatureMap,
   childComponents,
   describePlace,
   navigationPlaces,
@@ -250,22 +259,46 @@ test("prose alone is never confident; unknown words match nothing", () => {
   assert.equal(none.confident, false);
 });
 
-test("a URL hit is confident even when a file name outranks it", () => {
+test("an exact URL word is confident; a prefix of one is not", () => {
   const auth = entry("sign-in", {
     label: "Sign in",
     title: "Sign in",
     routePatterns: ["auth"],
     places: [],
-    roots: ["client/src/components/AuthenticationPanel.tsx"],
+    roots: ["client/src/components/AuthPanel.tsx"],
   });
-  const { ranked, confident } = rankSurfaces([auth], "authentication");
-  assert.ok(ranked[0].reasons[0].includes("component"));
-  assert.ok(confident);
+  assert.ok(rankSurfaces([auth], "auth").confident);
+  const prefixOnly = rankSurfaces([auth], "authentication");
+  assert.equal(prefixOnly.ranked[0].id, "sign-in");
+  assert.equal(prefixOnly.confident, false);
   const fileOnly = rankSurfaces(
     [{ ...auth, routePatterns: ["login"] }],
-    "authentication",
+    "auth",
   );
   assert.equal(fileOnly.confident, false);
+});
+
+test("a close runner-up or a tie abstains and names the candidates", () => {
+  const twins = [
+    entry("project-settings", { label: "Settings" }),
+    entry("settings", { label: "Settings" }),
+    entry("tools", { label: "Tools" }),
+  ];
+  const tie = rankSurfaces(twins, "settings");
+  assert.equal(tie.confident, false);
+  assert.deepEqual(tie.ambiguous, ["settings"]);
+  const clear = rankSurfaces(twins, "tools");
+  assert.equal(clear.confident, true);
+  assert.deepEqual(clear.ambiguous, []);
+});
+
+test("held-out queries: an irrelevant word abstains even beside a real one", () => {
+  for (const phrase of ["oauth kubernetes", "where is the billing page"]) {
+    const result = rankSurfaces(ENTRIES, phrase);
+    assert.equal(result.confident, false, phrase);
+    assert.ok(result.unmatched.length > 0, phrase);
+  }
+  assert.equal(rankSurfaces(ENTRIES, "oauth").confident, true);
 });
 
 test("several query words in a file name are not confident; in prose they are", () => {
@@ -318,4 +351,68 @@ test("children are feature components one import down, not primitives or helpers
     childComponents(graph, ["client/src/components/ToolsTab.tsx"]),
     ["client/src/components/tools/ToolList.tsx"],
   );
+});
+
+test("the CLI and the coverage check report the same tests for each surface", () => {
+  const files = {
+    [SOURCES.surfaces]: `export const APP_SURFACES = [
+  { id: "oauth", canonicalPath: "/oauth", routePatterns: ["oauth"], navSegments: ["oauth"] },
+  { id: "tools", canonicalPath: "/tools", routePatterns: ["tools"], navSegments: ["tools"] },
+] as const satisfies readonly AppSurfaceManifest[];`,
+    [SOURCES.router]: `import { OAuthTab } from "./components/OAuthTab";
+import { ToolsTab } from "./components/ToolsTab";
+const ROUTE_ELEMENTS = {
+  oauth: { element: <OAuthTab /> },
+  tools: { element: <ToolsTab /> },
+};
+const routes = [
+  {
+    path: "__e2e/oauth-debugger",
+    lazy: async () => {
+      const { Harness } = await import("./components/e2e/Harness");
+      return { Component: Harness };
+    },
+  },
+];`,
+    [SOURCES.app]: "export {};",
+    [SOURCES.sidebar]: SIDEBAR,
+    [SOURCES.connectTabs]: CONNECT_HEADER,
+    [SOURCES.aliases]: "{}",
+    "client/src/components/OAuthTab.tsx": "export function OAuthTab() {}",
+    "client/src/components/ToolsTab.tsx": "export function ToolsTab() {}",
+    "client/src/components/e2e/Harness.tsx": 'import { OAuthTab } from "../OAuthTab";',
+    "e2e/harness.spec.ts": 'test("opens", ({ page }) => page.goto("/__e2e/oauth-debugger"));',
+    "e2e/tagged.spec.ts": `// @surface tools
+test("clicks through", async () => {});`,
+    "client/src/components/__tests__/tools.test.tsx": `import { ToolsTab } from "../ToolsTab";
+it("renders", () => render(<ToolsTab />));`,
+    "client/src/components/__tests__/types.test.ts": `type P = import("../OAuthTab").Props;
+it("types", () => {});`,
+  };
+  const dir = mkdtempSync(join(tmpdir(), "mcpjam-feature-map-"));
+  try {
+    for (const [rel, content] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, rel)), { recursive: true });
+      writeFileSync(join(dir, rel), content);
+    }
+    const cli = buildFeatureMap(dir).map(({ id, e2e, component }) => ({
+      id,
+      e2e,
+      component,
+    }));
+    const check = buildCoverageMap(dir).surfaces.map(
+      ({ id, e2e, component }) => ({ id, e2e, component }),
+    );
+    assert.deepEqual(cli, check);
+    assert.deepEqual(cli, [
+      { id: "oauth", e2e: ["e2e/harness.spec.ts"], component: [] },
+      {
+        id: "tools",
+        e2e: ["e2e/tagged.spec.ts"],
+        component: ["client/src/components/__tests__/tools.test.tsx"],
+      },
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

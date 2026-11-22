@@ -20,14 +20,16 @@ npm run feature-map -w @mcpjam/inspector -- find <the user's words>
 - Pass the user's phrase as written. Add `--json` to read the result in code.
 - Each result prints its id, UI label, place, route, rendering component and
   the words that matched.
-- Exit code 1 means the best match rests on a file name or one word of prose.
-  The closest candidates are still printed; treat them as guesses.
+- Exit code 1 means no confident match: no id, label, alias or route word
+  matched exactly, a query word matched no surface, or another surface scored
+  close to the best one (listed as `ambiguous` in `--json`). The closest
+  candidates are still printed; treat them as guesses.
 
 ## Confirm it
 
 Name the top result back to the user in the UI's own words before you change
 anything: "The Skills tab in the Connect view, at `/p/:projectId/skills`?"
-Ask when the top two results are close or the run exited 1.
+Ask when the run exited 1.
 
 ## Start from it
 
