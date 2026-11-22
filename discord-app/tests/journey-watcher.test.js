@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import { watchDiscordJourneyRun } from "../watcher.js";
+
+// The watcher sleeps on an `unref`'d timer; in the bot, the Gateway connection
+// is what keeps the process up. Without a ref'd handle here the event loop
+// drains during the first sleep, before any poll, and `node --test` cancels
+// the test.
+let keepAlive;
+before(() => {
+	keepAlive = setInterval(() => {}, 1_000);
+});
+after(() => {
+	clearInterval(keepAlive);
+});
 
 /**
  * The Discord journey watcher end to end against a fake API: the status
