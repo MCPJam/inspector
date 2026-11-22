@@ -918,3 +918,33 @@ div.mcj-card { position: relative; }
 div.mcj-card:has(.mcj-card-main:focus-visible) { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
 .mcj-card-alt { position: relative; z-index: 1; align-self: flex-start; font-size: 13px; color: var(--mcj-ink-muted); text-decoration: underline; text-underline-offset: 2px; }
 .mcj-card-alt:hover { color: var(--mcj-orange); }
+
+/* Setup help panel under the chips: manual steps in case a deeplink or copy fails */
+.mcj-help {
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px;
+  border: 1px solid var(--mcj-rule); border-radius: 12px; background: var(--mcj-paper-2);
+  color: var(--mcj-ink);
+}
+.mcj-help-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: var(--mcj-ink-strong); }
+.mcj-help-head img { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; }
+.mcj-help-close {
+  margin-left: auto; width: 28px; height: 28px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--mcj-ink-muted); cursor: pointer;
+}
+.mcj-help-close:hover { background: var(--mcj-paper); color: var(--mcj-ink-strong); }
+.mcj-help-close svg { width: 16px; height: 16px; }
+.mcj-help-text { margin: 0; font-size: 14px; line-height: 1.5; }
+.mcj-help-text a { color: var(--mcj-orange); text-decoration: underline; text-underline-offset: 2px; }
+.mcj-help-code { position: relative; }
+.mcj-help-code pre {
+  margin: 0; padding: 12px 72px 12px 14px; overflow-x: auto;
+  border: 1px solid var(--mcj-rule); border-radius: 8px; background: var(--mcj-paper);
+  font-size: 13px; line-height: 1.5; white-space: pre;
+}
+.mcj-help-copy {
+  position: absolute; top: 8px; right: 8px; padding: 4px 10px;
+  border: 1px solid var(--mcj-rule); border-radius: 6px; background: var(--mcj-paper-2);
+  color: var(--mcj-ink-strong); font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.mcj-help-copy:hover { border-color: var(--mcj-rule-strong); }
+.mcj-help-close:focus-visible, .mcj-help-copy:focus-visible { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
