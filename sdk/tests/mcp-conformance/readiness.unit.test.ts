@@ -108,6 +108,11 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
+/** The tool-order SHOULD exists only from 2026-07-28 on. */
+function modernContext(): MCPClientCheckContext {
+  return clientContext({ protocolVersion: "2026-07-28" });
+}
+
 describe("client readiness advice", () => {
   it("warns when tools/list is not deterministically ordered", async () => {
     mockedOperations.listTools.mockResolvedValue({
@@ -115,7 +120,7 @@ describe("client readiness advice", () => {
       nextCursor: undefined,
     } as never);
 
-    const warnings = await collectClientReadiness(clientContext(), surface());
+    const warnings = await collectClientReadiness(modernContext(), surface());
     const order = warnings.find(
       (item) => item.id === "readiness-tool-order-deterministic"
     );
@@ -135,9 +140,35 @@ describe("client readiness advice", () => {
       nextCursor: undefined,
     } as never);
 
-    const warnings = await collectClientReadiness(clientContext(), surface());
+    const warnings = await collectClientReadiness(modernContext(), surface());
     expect(warnings).toEqual([]);
   });
+
+  // The 2025 tools pages say nothing about order, so a run on one of them
+  // neither lists the tools again nor reports on the order, met or not.
+  for (const protocolVersion of [
+    undefined,
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+  ] as const) {
+    it(`gives no order advice on ${protocolVersion ?? "an unpinned"} run`, async () => {
+      mockedOperations.listTools.mockResolvedValue({
+        tools: [tool("beta"), tool("alpha")],
+        nextCursor: undefined,
+      } as never);
+
+      const advice = await collectClientAdvice(
+        clientContext({ protocolVersion }),
+        surface()
+      );
+
+      expect(
+        advice.find((item) => item.id === "readiness-tool-order-deterministic")
+      ).toBeUndefined();
+      expect(mockedOperations.listTools).not.toHaveBeenCalled();
+    });
+  }
 
   it("asks the server for the repeat listing instead of the cached one", async () => {
     // A cached repeat listing is the first listing again, and a list compared
@@ -147,7 +178,7 @@ describe("client readiness advice", () => {
       nextCursor: undefined,
     } as never);
 
-    await collectClientReadiness(clientContext(), surface());
+    await collectClientReadiness(modernContext(), surface());
 
     expect(mockedOperations.listTools).toHaveBeenCalledTimes(1);
     expect(mockedOperations.listTools).toHaveBeenCalledWith(
@@ -170,7 +201,7 @@ describe("client readiness advice", () => {
         nextCursor: undefined,
       } as never);
 
-      const warnings = await collectClientReadiness(clientContext(), surface());
+      const warnings = await collectClientReadiness(modernContext(), surface());
 
       expect(
         warnings.find((item) => item.id === "readiness-tool-order-deterministic")
@@ -576,7 +607,7 @@ describe("advice the server meets", () => {
       nextCursor: undefined,
     } as never);
 
-    const outcomes = await collectClientAdvice(clientContext(), surface());
+    const outcomes = await collectClientAdvice(modernContext(), surface());
 
     expect(outcomes).toEqual([
       {
@@ -595,7 +626,7 @@ describe("advice the server meets", () => {
         specStrength: "Deprecation Notice",
       },
     ]);
-    expect(await collectClientReadiness(clientContext(), surface())).toEqual(
+    expect(await collectClientReadiness(modernContext(), surface())).toEqual(
       []
     );
   });
@@ -606,7 +637,7 @@ describe("advice the server meets", () => {
       nextCursor: undefined,
     } as never);
 
-    await collectClientAdvice(clientContext(), surface());
+    await collectClientAdvice(modernContext(), surface());
 
     expect(mockedOperations.listTools).toHaveBeenCalledWith(
       expect.anything(),
@@ -621,7 +652,7 @@ describe("advice the server meets", () => {
     } as never);
 
     const outcomes = await collectClientAdvice(
-      clientContext(),
+      modernContext(),
       surface({ tools: [] })
     );
 
