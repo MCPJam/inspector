@@ -911,6 +911,20 @@ export class MCPClientManager {
   }
 
   /**
+   * {@link getManagedClient} once the server's connection attempt is done.
+   * A manager built with servers queues their connects, so a read right
+   * after construction can find the attempt still running. Rejects when the
+   * connection fails, as `listTools` would.
+   */
+  async ensureManagedClient(
+    serverId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<import("./managed-mcp-client.js").ManagedMcpClient | undefined> {
+    await this.ensureConnected(serverId, options?.signal);
+    return this.getManagedClient(serverId);
+  }
+
+  /**
    * Gets initialization information for a connected server.
    */
   getInitializationInfo(serverId: string) {
@@ -2798,6 +2812,16 @@ export class MCPClientManager {
     if (wire !== "legacy") {
       throw new MCPTasksWireError(
         `Server "${serverId}" does not speak the 2025-11-25 tasks wire (resolved wire: "${wire}"); refusing to send a task-augmented tools/call.`,
+        wire
+      );
+    }
+    // The legacy wire resolves from ANY of `tasks.list`/`cancel`/`requests`,
+    // but only `tasks.requests.tools.call` lets a client call a tool as a
+    // task (2025-11-25 tasks.mdx:113, a MUST NOT whatever the tool's own
+    // `taskSupport` says). Same typed error, so routes keep answering 400.
+    if (!this.supportsTasksForToolCalls(serverId)) {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" did not declare tasks.requests.tools.call; refusing to send a task-augmented tools/call.`,
         wire
       );
     }

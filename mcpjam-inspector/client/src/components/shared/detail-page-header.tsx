@@ -116,6 +116,7 @@ export function DetailPageHeader<T extends string>({
   className,
   testId,
   stackWhenNarrow = false,
+  tabsBelow = false,
 }: {
   backLabel: string;
   onBack: () => void;
@@ -143,12 +144,23 @@ export function DetailPageHeader<T extends string>({
    * otherwise cover the back button and the title.
    */
   stackWhenNarrow?: boolean;
+  /** Put tabs on their own row, below the title and actions. */
+  tabsBelow?: boolean;
 }) {
+  const tabStrip = tabs && (
+    <ViewModeSelector
+      {...tabs}
+      className={cn(
+        TAB_CLASSNAME,
+        tabsBelow && "col-span-2 order-none basis-full md:order-none",
+      )}
+    />
+  );
   return (
     <div
       className={cn(
         "relative shrink-0 border-b border-border/40 px-8 pt-2.5 pb-2.5",
-        stackWhenNarrow && "@container/detail-header",
+        (stackWhenNarrow || tabsBelow) && "@container/detail-header",
         className,
       )}
       data-testid={testId}
@@ -158,9 +170,16 @@ export function DetailPageHeader<T extends string>({
           "flex items-center justify-between gap-6",
           stackWhenNarrow &&
             "flex-col items-stretch gap-2 @3xl/detail-header:flex-row @3xl/detail-header:items-center @3xl/detail-header:gap-6",
+          tabsBelow &&
+            "grid grid-cols-[auto_minmax(0,1fr)] gap-2 @lg/detail-header:flex @lg/detail-header:flex-wrap @lg/detail-header:gap-x-4",
         )}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 items-center gap-3",
+            tabsBelow && "contents @lg/detail-header:flex",
+          )}
+        >
           <DetailBackLink
             label={backLabel}
             onBack={onBack}
@@ -168,32 +187,40 @@ export function DetailPageHeader<T extends string>({
             disabled={backDisabled}
           />
           <div
-            className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
+            className={cn(
+              "hidden h-4 w-px shrink-0 bg-border/60",
+              tabsBelow ? "@lg/detail-header:block" : "sm:block",
+            )}
             aria-hidden="true"
           />
           {/* Bounds how far a long name can push the tabs right; past the cap
               the surface's own title ellipsizes. Names under it still size the
               slot to content, so the tab row is not pinned to one spot. */}
-          <div className="min-w-[10rem] max-w-[52ch] shrink">{title}</div>
-          {tabs ? (
+          <div
+            className={
+              tabsBelow ? "col-span-2 min-w-0" : "min-w-[10rem] max-w-[52ch] shrink"
+            }
+          >
+            {title}
+          </div>
+          {tabs && !tabsBelow ? (
             <>
               <div
                 className="hidden h-4 w-px shrink-0 bg-border/60 sm:block"
                 aria-hidden="true"
               />
-              <ViewModeSelector
-                value={tabs.value}
-                options={tabs.options}
-                onChange={tabs.onChange}
-                ariaLabel={tabs.ariaLabel}
-                indicatorId={tabs.indicatorId}
-                className={TAB_CLASSNAME}
-              />
+              {tabStrip}
             </>
           ) : null}
         </div>
         {meta || actions ? (
-          <div className="flex shrink-0 items-center gap-3">
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-3",
+              tabsBelow &&
+                "col-start-2 row-start-1 ml-auto max-w-full @lg/detail-header:self-start",
+            )}
+          >
             {meta ? (
               <div className="flex items-center">{meta}</div>
             ) : null}
@@ -212,6 +239,7 @@ export function DetailPageHeader<T extends string>({
                   stackWhenNarrow
                     ? "min-w-0 shrink flex-wrap @3xl/detail-header:shrink-0"
                     : "shrink-0",
+                  tabsBelow && "min-w-0 shrink flex-wrap justify-end",
                 )}
               >
                 {actions}
@@ -219,6 +247,7 @@ export function DetailPageHeader<T extends string>({
             ) : null}
           </div>
         ) : null}
+        {tabsBelow && tabStrip}
       </div>
 
       {children ? <div className="mt-3 min-w-0">{children}</div> : null}

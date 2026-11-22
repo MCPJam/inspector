@@ -78,3 +78,35 @@ describe("legacy 2025-11-25 tasks wire — real client integration", () => {
     });
   });
 });
+
+describe("legacy 2025-11-25 tasks wire — server without tasks.requests.tools.call", () => {
+  let served: ServedLegacyTasksFixture;
+  let manager: MCPClientManager;
+
+  beforeEach(async () => {
+    // `tasks.cancel` alone still resolves to the legacy wire, and the
+    // fixture's tool says `taskSupport: "required"`.
+    served = await serveLegacyTasksFixture({
+      tasksCapability: { cancel: {} },
+    });
+    manager = new MCPClientManager();
+    await manager.connectToServer("legacy", {
+      url: served.url,
+      mcpProtocolVersion: "2025-11-25",
+      timeout: 10_000,
+    });
+  });
+
+  afterEach(async () => {
+    await manager.disconnectAllServers().catch(() => {});
+    await served.close();
+  });
+
+  it("refuses to call a tool as a task and sends nothing", async () => {
+    expect(manager.supportsTasksForToolCalls("legacy")).toBe(false);
+    await expect(
+      manager.executeTool("legacy", LEGACY_TASK_TOOL_NAME, {}, undefined, {})
+    ).rejects.toThrow(/tasks\.requests\.tools\.call/);
+    expect(served.received.some((r) => r.method === "tools/call")).toBe(false);
+  });
+});

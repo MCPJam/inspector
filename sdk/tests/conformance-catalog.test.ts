@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   APPS_CHECK_CATALOG,
+  APPS_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   READINESS_CATALOG,
   TASKS_CHECK_CATALOG,
@@ -11,7 +12,10 @@ import {
   MCP_READINESS_IDS,
   READINESS_ERAS,
 } from "../src/mcp-conformance/types.js";
-import { MCP_APPS_CHECK_IDS } from "../src/apps-conformance/types.js";
+import {
+  MCP_APPS_CHECK_IDS,
+  MCP_APPS_READINESS_IDS,
+} from "../src/apps-conformance/types.js";
 import { MCP_TASKS_CHECK_IDS } from "../src/tasks-conformance/types.js";
 import { CORE_CHECKS } from "../src/mcp-conformance/checks/core.js";
 import { TOOL_CHECKS } from "../src/mcp-conformance/checks/tools.js";
@@ -97,6 +101,12 @@ describe("conformance catalog", () => {
     );
     expect(Object.keys(READINESS_ERAS).sort()).toEqual(
       [...MCP_READINESS_IDS].sort()
+    );
+  });
+
+  it("covers every apps advice id, and only those", () => {
+    expect(Object.keys(APPS_READINESS_CATALOG).sort()).toEqual(
+      [...MCP_APPS_READINESS_IDS].sort()
     );
   });
 
