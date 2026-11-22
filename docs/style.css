@@ -782,3 +782,22 @@ footer [class*="powered" i],
 .card-group:has(a[href="/inspector/playground"]):has(a[href="https://app.mcpjam.com"]) [data-component-part="card-title"] {
   font-size: 1.25rem !important;
 }
+
+/* Homepage tables: row labels use the same medium weight as column headers. */
+.compare-ways td:first-child strong,
+.compare-ways td:first-child strong a,
+.features-glance td:first-child strong,
+.features-glance td:first-child strong a {
+  font-weight: 500 !important;
+}
+
+/* Homepage comparison table: a merged cell that reaches the last row drops
+   its bottom border, like every other last-row cell. */
+.compare-ways td.compare-ways-last {
+  border-bottom: none !important;
+}
+
+/* Homepage intro: a lighter emphasis than bold, for secondary key phrases. */
+strong.soft-emphasis {
+  font-weight: 500 !important;
+}
