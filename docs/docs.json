@@ -53,7 +53,8 @@
               "getting-started",
               "installation",
               "hosted/overview",
-              "inspector/connecting-servers"
+              "inspector/connecting-servers",
+              "inspector/mcp-support"
             ]
           },
           {
