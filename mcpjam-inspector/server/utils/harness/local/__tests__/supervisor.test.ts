@@ -171,11 +171,14 @@ describe("launch preconditions", () => {
     ).rejects.toThrow(SupervisorError);
   });
 
+  // As helpers: argv is checked for every role, and a root on a host that
+  // cannot prove process ownership (Windows without the pack's job launcher)
+  // is refused before its argv is read.
   it("refuses argv carrying shell syntax", async () => {
     const sup = supervisor();
     await expect(
       sup.spawnSupervised({
-        ...request("s-argv", "idle.js"),
+        ...request("s-argv", "idle.js", "helper"),
         args: [join(scripts, "idle.js"), "; rm -rf /"],
       }),
     ).rejects.toThrow(/shell metacharacter/);
@@ -185,7 +188,7 @@ describe("launch preconditions", () => {
     const sup = supervisor();
     await expect(
       sup.spawnSupervised({
-        ...request("s-bypass", "idle.js"),
+        ...request("s-bypass", "idle.js", "helper"),
         args: [join(scripts, "idle.js"), "--dangerously-skip-permissions"],
       }),
     ).rejects.toThrow(/disables the vendor permission controls/);

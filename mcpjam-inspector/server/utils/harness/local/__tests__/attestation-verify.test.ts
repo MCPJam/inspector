@@ -27,7 +27,9 @@ esac
 exit 0
 `;
 
-describe("verifyAttestation", () => {
+// Release tooling that runs on the Linux pack pipeline. Windows would not run
+// the bash stand-in as `gh`, and the real `gh` on PATH would answer instead.
+describe.skipIf(process.platform === "win32")("verifyAttestation", () => {
   let dir: string;
   let path: string | undefined;
 

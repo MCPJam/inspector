@@ -95,7 +95,9 @@ describe("spawnAppServerClient teardown", () => {
     expect(alive(pid)).toBe(false);
   }, 30_000);
 
-  it("waits for the process even after a stream failure killed the client", async () => {
+  // On Windows a write into a pipe whose child closed fd 0 still succeeds, so
+  // the EPIPE this case is built on never comes and the request never fails.
+  it.skipIf(process.platform === "win32")("waits for the process even after a stream failure killed the client", async () => {
     /*
      * THE REGRESSION. A child that closes its stdin makes the next write EPIPE,
      * which fails the client instantly — correctly, because the turn racing

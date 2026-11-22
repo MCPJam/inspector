@@ -135,7 +135,8 @@ describe("tree digests", () => {
     expect(await computeTreeDigest(c)).not.toBe(await computeTreeDigest(a));
   });
 
-  it("notices a file becoming executable, not just its content", async () => {
+  // NTFS has no execute bit to flip, so every file digests as non-executable.
+  it.skipIf(process.platform === "win32")("notices a file becoming executable, not just its content", async () => {
     const root = await writeBundle("mode", { "bridge.mjs": "x" });
     const before = await computeTreeDigest(root);
     await chmod(join(root, "bridge.mjs"), 0o755);
@@ -334,7 +335,8 @@ describe("managed bundles", () => {
     expect((result as { message: string }).message).toMatch(/Node binary/);
   });
 
-  it("refuses a Node binary that is not executable", async () => {
+  // Windows has no execute bit to clear.
+  it.skipIf(PLATFORM === "win32")("refuses a Node binary that is not executable", async () => {
     const root = await writeBundle("dudnode", { "bridge.mjs": "x" });
     await chmod(join(root, NODE), 0o644);
     const result = await resolveManagedBundle({
