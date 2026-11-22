@@ -75,6 +75,10 @@ import {
   takeAbandonedSignIn,
 } from "@/lib/oauth/abandoned-sign-ins";
 import {
+  SIGN_IN_TIMED_OUT_MESSAGE,
+  useSignInTimeout,
+} from "./use-sign-in-timeout";
+import {
   buildOAuthRequest,
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
@@ -5502,7 +5506,7 @@ export function useServerState({
   // Used by host-switch auto-disconnect, where we want to drop the runtime
   // connection but keep the server entry intact so the user can re-connect
   // (or another host can require it) without re-adding the server.
-  const handleRuntimeDisconnect = useCallback(
+  const abandonConnectAttempt = useCallback(
     (serverName: string) => {
       // Invalidate any connect/reconnect that is still awaiting I/O. Without
       // this, a late completion can overwrite this disconnect with success or
@@ -5517,10 +5521,28 @@ export function useServerState({
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();
       }
+    },
+    [clearAutoOAuthEscalation],
+  );
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      abandonConnectAttempt(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [clearAutoOAuthEscalation, dispatch],
+    [abandonConnectAttempt, dispatch],
   );
+  useSignInTimeout({
+    servers: effectiveServers,
+    getOpToken: (serverName) => opTokenRef.current.get(serverName) ?? 0,
+    onTimeout: (serverName) => {
+      abandonConnectAttempt(serverName);
+      dispatch({
+        type: "CONNECT_FAILURE",
+        name: serverName,
+        error: SIGN_IN_TIMED_OUT_MESSAGE,
+      });
+    },
+  });
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
     // Slice 5: env removal handled by Convex deleteServer; only OAuth local

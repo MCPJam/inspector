@@ -2012,6 +2012,35 @@ describe("useServerState OAuth callback failures", () => {
     });
   });
 
+  it("fails a sign-in still waiting after 10 minutes and clears its key", () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem("mcp-oauth-pending", "demo-server");
+      localStorage.setItem("mcp-oauth-issued-state-demo-server", "slow-state");
+      localStorage.setItem("mcp-verifier-demo-server", "verifier");
+      const appState = createAppState();
+      appState.servers["demo-server"].connectionStatus = "oauth-flow";
+      appState.projects.default.servers["demo-server"].connectionStatus =
+        "oauth-flow";
+      const dispatch = vi.fn();
+      renderUseServerState(dispatch, appState);
+
+      act(() => vi.advanceTimersByTime(10 * 60 * 1000 - 1));
+      expect(localStorage.getItem("mcp-oauth-pending")).toBe("demo-server");
+      act(() => vi.advanceTimersByTime(1));
+
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "CONNECT_FAILURE",
+        name: "demo-server",
+        error: "Sign-in timed out. Reconnect to try again.",
+      });
+      expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+      expect(localStorage.getItem("mcp-verifier-demo-server")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears the Auto escalation marker under the identity the hook writes", () => {
     sessionStorage.setItem(
       "mcp-auto-oauth-escalated",
