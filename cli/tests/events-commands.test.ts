@@ -473,6 +473,7 @@ test("events subscribe writes a new secret only to --secret-file (0600), then un
         assert.equal(again.exitCode, 0, again.stderr);
         assert.equal((jsonOf(again) as { id: string }).id, result.id);
         assert.equal(readFileSync(secretFile, "utf8").trim(), secret);
+        assert.doesNotMatch(again.stderr, /readable by other users/);
         assert.equal(fixture.subscriptions().length, 1);
 
         const unsubscribe = [
