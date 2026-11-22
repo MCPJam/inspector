@@ -64,4 +64,14 @@ describe("connectionLabels", () => {
     expect(connectionLabel(make("a"), 0)).toBe("Account 1");
     expect(new Set(connectionLabels([make("a"), make("b")])).size).toBe(2);
   });
+
+  it("names an unnamed account by its stored number, not its place (PUR-111)", () => {
+    // Account 1 was removed, or a filter left it out: the rest keep theirs.
+    expect(
+      connectionLabels([
+        { ...make("b"), accountNumber: 2 },
+        { ...make("c"), accountNumber: 3 },
+      ]),
+    ).toEqual(["Account 2", "Account 3"]);
+  });
 });

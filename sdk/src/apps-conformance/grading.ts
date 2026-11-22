@@ -6,6 +6,7 @@
  */
 
 import { isAuthorizationRefusal } from "../conformance-authorization.js";
+import { APPS_READINESS_CATALOG } from "../conformance-catalog.js";
 import type { ConformanceCredentialSource } from "../conformance-login.js";
 import {
   MCP_UI_RESOURCE_MIME_TYPE,
@@ -32,6 +33,7 @@ import {
   type MCPAppsCheckId,
   type MCPAppsCheckResult,
   type MCPAppsConformanceResult,
+  type MCPAppsPassedAdvice,
   type MCPAppsReadinessWarning,
   type MCPAppsResourceReadOutcome,
 } from "./types.js";
@@ -155,6 +157,8 @@ export interface MCPAppsGrading {
   checks: MCPAppsCheckResult[];
   /** Advice reported beside the verdict rather than as check warnings. */
   readiness: MCPAppsReadinessWarning[];
+  /** Advice the checked tools already meet. */
+  passedAdvice: MCPAppsPassedAdvice[];
   discovery: MCPAppsConformanceResult["discovery"];
 }
 
@@ -171,6 +175,7 @@ export function gradeMCPApps(input: MCPAppsGradingInput): MCPAppsGrading {
   const selectedCheckIds = new Set(input.checkIds ?? MCP_APPS_CHECK_IDS);
   const checks: MCPAppsCheckResult[] = [];
   const readiness: MCPAppsReadinessWarning[] = [];
+  const passedAdvice: MCPAppsPassedAdvice[] = [];
   const {
     uiTools,
     listedUiResources,
@@ -322,12 +327,22 @@ export function gradeMCPApps(input: MCPAppsGradingInput): MCPAppsGrading {
         readiness.push({
           id: "apps-readiness-deprecated-resource-uri",
           checkId: "ui-tool-metadata-valid",
-          title: "Deprecated ui/resourceUri Field",
+          title:
+            APPS_READINESS_CATALOG["apps-readiness-deprecated-resource-uri"]
+              .title,
           severity: "warning",
           specStrength: "Deprecation Notice",
           message: `${legacyFieldTools.join(", ")} still use _meta["ui/resourceUri"], which will be removed before GA; use _meta.ui.resourceUri instead.`,
           details: { tools: legacyFieldTools },
           informational: true,
+        });
+      } else {
+        passedAdvice.push({
+          id: "apps-readiness-deprecated-resource-uri",
+          title:
+            APPS_READINESS_CATALOG["apps-readiness-deprecated-resource-uri"]
+              .title,
+          specStrength: "Deprecation Notice",
         });
       }
 
@@ -633,6 +648,7 @@ export function gradeMCPApps(input: MCPAppsGradingInput): MCPAppsGrading {
   return {
     checks,
     readiness,
+    passedAdvice,
     discovery: {
       toolCount: tools.length,
       uiToolCount: uiTools.length,

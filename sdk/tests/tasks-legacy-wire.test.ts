@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MCPClientManager } from "../src/mcp-client-manager";
+import { MCPClientManager, MCPTasksWireError } from "../src/mcp-client-manager";
 import { resolveTasksWire } from "../src/mcp-client-manager/tasks-dispatch.js";
 import type { ManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client.js";
 
@@ -162,6 +162,26 @@ describe("executeTool legacy task wire", () => {
     await expect(
       manager.executeTool(serverId, "long_tool", {}, undefined, { ttl: 1000 })
     ).rejects.toThrow(/does not speak the 2025-11-25 tasks wire/);
+    expect(calls).toEqual([]);
+  });
+
+  it("throws (and sends nothing) when the server did not declare tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone puts the connection on the legacy wire, but
+    // 2025-11-25 tasks.mdx:113 forbids calling any of its tools as a task.
+    const { manager, calls, serverId } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: { tools: {}, tasks: { cancel: true } },
+    });
+
+    const attempt = manager.executeTool(
+      serverId,
+      "long_tool",
+      {},
+      undefined,
+      {}
+    );
+    await expect(attempt).rejects.toBeInstanceOf(MCPTasksWireError);
+    await expect(attempt).rejects.toThrow(/tasks\.requests\.tools\.call/);
     expect(calls).toEqual([]);
   });
 
