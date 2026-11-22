@@ -447,8 +447,11 @@ describe("workspace-owned widget surfaces", () => {
       maxInstances: 1,
       maxIdentities: 2,
     });
-    // Well past the old lifetime cap: each closed App frees its identity.
-    for (let i = 0; i < 2100; i += 1) {
+    // Several times both caps: a registry that counted every bridge ever
+    // registered would refuse the second or third. Each closed App frees its
+    // identity. Every pass awaits a SHA-256 on the libuv threadpool, so a
+    // count in the thousands times out on a loaded machine.
+    for (let i = 0; i < 10; i += 1) {
       const bridgeId = `bridge-${i}`;
       await registry
         .getState()
