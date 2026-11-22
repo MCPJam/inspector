@@ -117,10 +117,11 @@ function countCommentLines(text, regex) {
 /**
  * A comment that justifies a workaround instead of fixing its cause: a named
  * hack, a wait for React or the browser to catch up, a deferral by a frame or
- * tick, or a cause nobody understood.
+ * tick, or a cause nobody understood. A hack or workaround that the comment
+ * says is avoided ("not", "without", "prevent") does not count.
  */
 const WORKAROUND =
-  /(?<!\bnot (?:an? )?)\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
+  /(?<!\b(?:not|no|without|avoid(?:s|ed|ing)?|prevent(?:s|ed|ing)?)\b[^.]{0,30})\b(?:hack(?:s|y|ish)?|workarounds?)\b|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,40}\b(?:React|the DOM|the browser)\b[^.]{0,30}\b(?:commit|flush|paint|render|settle|catch(?:es)? up)|\b(?:wait|yield|defer|delay)(?:s|ed|ing)?\b[^.]{0,30}\b(?:one|a|the next|another) (?:frame|tick|paint)\b|\b(?:for (?:some|whatever) reason|no idea why|not sure why)\b/i;
 
 /**
  * A comment that admits a compromise: a failure tolerated (a swallowed
@@ -152,20 +153,69 @@ const WORKAROUND_OR_COMPROMISE = new RegExp(
 );
 
 /**
- * A third-party bug tracker link. A workaround forced by someone else's bug
- * cannot be fixed here, and the link is how a reader knows when to remove it.
- * Our own issues do not count: those are ours to fix.
+ * A link to one third-party bug: an issue or PR number outside `MCPJam/`, or
+ * a bug id. A workaround forced by someone else's bug cannot be fixed here,
+ * and the link is how a reader knows when to remove it. A tracker's home or
+ * docs page names no bug, and our own issues are ours to fix.
  */
 const UPSTREAM_ISSUE =
-  /https?:\/\/(?:github\.com\/(?!mcpjam\/)[\w.-]+\/[\w.-]+\/(?:issues|pull)\/\d+|(?:crbug\.com|bugs\.[\w.-]+|bugzilla\.[\w.-]+)\/)/i;
+  /https?:\/\/(?!(?:www\.)?github\.com\/mcpjam\/)[^\s"'`)>\]]*?(?:\/(?:issues|pull|bugs?)\/\d+|[?&]id=\d+|crbug\.com\/\d+)/i;
 
-/** Like `countCommentLines`, but a comment block that links `exempt` counts 0. */
-function countUnexemptCommentLines(text, regex, exempt) {
+const INDENT = /[ \t]*/y;
+
+/**
+ * Lines whose first character sits in a real comment, read from the syntax
+ * tree so a `//` inside a string, a template or JSX text is not one. The
+ * scan runs before and after every node and inside every bracket, which
+ * also reaches a comment before a closing brace, where no node starts.
+ */
+function commentLineNumbers(path, text) {
+  const ts = typescript();
+  const tree = parse(path, text);
+  const ranges = new Map();
+  const jsxText = [];
+  const scan = (pos) => {
+    for (const range of ts.getLeadingCommentRanges(text, pos) ?? []) {
+      ranges.set(range.pos, range);
+    }
+  };
+  walk(tree, (node) => {
+    if (ts.isJsxText(node)) {
+      jsxText.push(node);
+      return;
+    }
+    scan(node.pos);
+    scan(node.end);
+    const start = node.getStart(tree);
+    if (!ts.isToken(node) && "{([".includes(text[start])) scan(start + 1);
+  });
+  const lineStarts = tree.getLineStarts();
+  const lines = new Set();
+  for (const { pos, end } of ranges.values()) {
+    if (jsxText.some((node) => pos >= node.pos && pos < node.end)) continue;
+    const first = tree.getLineAndCharacterOfPosition(pos).line;
+    const last = tree.getLineAndCharacterOfPosition(end).line;
+    for (let line = first; line <= last; line += 1) {
+      INDENT.lastIndex = lineStarts[line];
+      const at = lineStarts[line] + INDENT.exec(text)[0].length;
+      if (at >= pos && at < end) lines.add(line);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Comment lines matching `regex`, except in a run of comment lines that links
+ * `exempt`. Each line is matched on its own, so a claim split across two
+ * lines ("Defensive check" / "This cannot happen") does not count.
+ */
+function countUnexemptCommentLines(path, text, regex, exempt) {
+  const comments = commentLineNumbers(path, text);
   let count = 0;
   let block = 0;
   let exempted = false;
-  for (const line of text.split("\n")) {
-    if (!COMMENT_LINE.test(line)) {
+  for (const [index, line] of text.split("\n").entries()) {
+    if (!comments.has(index)) {
       if (!exempted) count += block;
       block = 0;
       exempted = false;
@@ -274,8 +324,9 @@ export const RULES = [
     label:
       "comments that justify a workaround or compromise (hack, wait for React, swallowed error, defensive guard)",
     fix: "Fix the cause instead of explaining it: act on the event or state change the code is waiting for, handle or surface the failure instead of swallowing it, and drop a guard for a case the types or callers already rule out. If a third-party bug forces the workaround, link the upstream issue in the same comment.",
-    count: (text) =>
+    count: (text, path) =>
       countUnexemptCommentLines(
+        path,
         text,
         WORKAROUND_OR_COMPROMISE,
         UPSTREAM_ISSUE,

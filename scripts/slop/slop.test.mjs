@@ -259,7 +259,7 @@ describe("rules", () => {
     const counts = count(
       [
         "// Hack: the picker reads stale props.",
-        " * Same vendor declaration workaround as schema.ts.",
+        "/* Same vendor declaration workaround as schema.ts. */",
         "// Yield one frame so React can flush the status update.",
         "/** Wait for React to paint the new screen before measuring. */",
         "// `requestAnimationFrame` defers the scroll one paint so it wins.",
@@ -338,12 +338,62 @@ describe("rules", () => {
     ],
   ];
 
+  // A ` * ` line is only a comment inside a block comment.
+  const inComment = (line) =>
+    line.startsWith(" *") ? `/**\n${line}\n */` : line;
+
   for (const [name, positive, negative] of COMPROMISE_CASES) {
     it(`counts a "${name}" comment and skips its neutral neighbour`, () => {
-      assert.equal(count(positive)["workaround-comment"], 1, positive);
-      assert.equal(count(negative)["workaround-comment"], 0, negative);
+      const counts = (line) => count(inComment(line))["workaround-comment"];
+      assert.equal(counts(positive), 1, positive);
+      assert.equal(counts(negative), 0, negative);
     });
   }
+
+  it("does not count a workaround the comment says is avoided", () => {
+    const avoided =
+      "// Prevent a common logging workaround from becoming necessary.";
+    assert.equal(count(avoided)["workaround-comment"], 0);
+    const used = "// A common logging workaround: print and continue.";
+    assert.equal(count(used)["workaround-comment"], 1);
+  });
+
+  it("reads only real comments, not a // line inside a template", () => {
+    const template = "const s = `\n// hack around the parser\n`;\n";
+    assert.equal(count(template)["workaround-comment"], 0);
+    const jsx = "const v = <p>\n  // hack around the parser\n</p>;\n";
+    assert.equal(count(jsx, "sdk/src/a.tsx")["workaround-comment"], 0);
+    const closing = "function f() {\n  go();\n  // hack around the parser\n}\n";
+    assert.equal(count(closing)["workaround-comment"], 1);
+    const afterToken = [
+      'switch (a) {\n  case "b":\n    // hack around the parser\n    break;\n}',
+      "const o = {\n  a: 1,\n  // hack around the parser\n  b: 2,\n};\n",
+    ].join("\n");
+    assert.equal(count(afterToken)["workaround-comment"], 2);
+  });
+
+  it("exempts only a link to one upstream bug, not a tracker's docs", () => {
+    const docs =
+      "// Hack around the vendor bug: https://bugs.vendor.example/docs\n";
+    assert.equal(count(docs)["workaround-comment"], 1);
+    for (const link of [
+      "https://bugs.vendor.example/show_bug.cgi?id=4521",
+      "https://gitlab.com/vendor/lib/-/issues/88",
+      "https://crbug.com/40123",
+    ]) {
+      const exempt = `// Hack around the vendor bug: ${link}\n`;
+      assert.equal(count(exempt)["workaround-comment"], 0, link);
+    }
+  });
+
+  it("matches each line alone, so a claim split over two lines does not count", () => {
+    const split =
+      "// Defensive check for a missing state.\n// This cannot happen.\n";
+    assert.equal(count(split)["workaround-comment"], 0);
+    const joined =
+      "// Defensive check for a missing state; this cannot happen.\n";
+    assert.equal(count(joined)["workaround-comment"], 1);
+  });
 
   it("does not count a workaround that links an upstream issue", () => {
     const counts = count(
