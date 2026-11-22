@@ -6247,24 +6247,29 @@ export function useServerState({
           server,
           {
             beforeRedirect: (oauthOptions) => {
-              if (!options?.connectionIntent)
-                dispatch({
-                  type: "UPSERT_SERVER",
-                  name: serverName,
-                  server: {
-                    ...server,
-                    connectionStatus: "oauth-flow",
-                    enabled: true,
-                    lastError: undefined,
-                    useOAuth: true,
-                  },
-                });
               prepareHostedProjectOAuthRedirect({
                 serverId: hostedProjectServerId,
                 serverName,
                 serverUrl: oauthOptions.serverUrl,
                 suppressErrorToast: suppressErrors,
                 suppressSuccessToast: options?.suppressSuccessToast,
+              });
+            },
+            // beforeRedirect runs before discovery, which can be slow or fail;
+            // the card says "Authorizing in browser" only once the browser opens.
+            onAuthorizationRedirect: () => {
+              if (options?.connectionIntent || isStaleOp(serverName, token))
+                return;
+              dispatch({
+                type: "UPSERT_SERVER",
+                name: serverName,
+                server: {
+                  ...server,
+                  connectionStatus: "oauth-flow",
+                  enabled: true,
+                  lastError: undefined,
+                  useOAuth: true,
+                },
               });
             },
             onTraceUpdate: (oauthTrace: OAuthTrace) => {
