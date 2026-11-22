@@ -3,16 +3,6 @@ export const ConnectClients = () => {
 
   const chips = [
     {
-      name: "Cursor",
-      icon: "/images/clients/cursor_logo.png",
-      href: "cursor://anysphere.cursor-deeplink/mcp/install?name=mcpjam&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtY3BqYW0vY2xpQGxhdGVzdCIsIm1jcCJdfQ==",
-    },
-    {
-      name: "VS Code",
-      icon: "/images/clients/vscode_logo.svg",
-      href: "vscode:mcp/install?%7B%22name%22%3A%22mcpjam%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40mcpjam%2Fcli%40latest%22%2C%22mcp%22%5D%7D",
-    },
-    {
       name: "Claude Code",
       icon: "/images/clients/claude_code_logo.png",
       command: "claude mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp",
@@ -22,11 +12,20 @@ export const ConnectClients = () => {
       icon: "/images/clients/codex-logo.svg",
       command: "codex mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp",
     },
+    {
+      name: "Cursor",
+      icon: "/images/clients/cursor_logo.png",
+      href: "cursor://anysphere.cursor-deeplink/mcp/install?name=mcpjam&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtY3BqYW0vY2xpQGxhdGVzdCIsIm1jcCJdfQ==",
+    },
+    {
+      name: "VS Code",
+      icon: "/images/clients/vscode_logo.svg",
+      href: "vscode:mcp/install?%7B%22name%22%3A%22mcpjam%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40mcpjam%2Fcli%40latest%22%2C%22mcp%22%5D%7D",
+    },
   ];
 
   const cards = [
     { name: "ChatGPT App", icon: "/images/clients/openai_logo.png", href: "https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56" },
-    { name: "Claude Connector", icon: "/images/clients/claude_logo.png", href: "/hosted/mcp-server" },
   ];
 
   const copy = (chip) => {
