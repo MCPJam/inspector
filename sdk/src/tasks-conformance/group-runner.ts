@@ -31,6 +31,7 @@ import {
   type MCPTasksCheckId,
   type MCPTasksCheckResult,
   type MCPTasksConformanceResult,
+  type MCPTasksPassedAdvice,
   type MCPTasksReadinessWarning,
   type MCPTasksUncheckedAdvice,
 } from "./types.js";
@@ -48,6 +49,7 @@ import {
   toolTaskSupport,
   resolveProbeTool,
   findDeclarationViolations,
+  type ProbeToolResolution,
 } from "./metadata.js";
 import { validateCreateTaskShape } from "./shapes.js";
 import {
@@ -72,6 +74,7 @@ export class TaskGroupRunner extends TaskOperations {
     // check's warnings.
     const readiness: MCPTasksReadinessWarning[] = [];
     const uncheckedAdvice: MCPTasksUncheckedAdvice[] = [];
+    const passedAdvice: MCPTasksPassedAdvice[] = [];
     const sent: unknown[] = [];
     // The RAW inbound bytes. Every task check that has to judge the
     // discriminator reads this, because by the time a result reaches the
@@ -128,7 +131,21 @@ export class TaskGroupRunner extends TaskOperations {
           const taskCapableTools = tools.filter(
             (tool) => toolTaskSupport(tool) !== undefined
           );
-          const probe = resolveProbeTool(wire, tools, this.config.toolName);
+          // A 2025-11-25 server reaches the legacy wire by declaring ANY of
+          // `tasks.list`/`cancel`/`requests`, so the wire alone does not mean
+          // it accepts tools called as tasks. Without
+          // `tasks.requests.tools.call` a client MUST NOT call any of its
+          // tools as a task, whatever the tool's own `taskSupport` says
+          // (2025-11-25 tasks.mdx:113). The CLI and the Tools tab apply the
+          // same gate before their task calls.
+          const probe: ProbeToolResolution =
+            wire === "legacy" && !support.toolCalls
+              ? {
+                  reason:
+                    "This server supports tasks but did not declare `tasks.requests.tools.call`, so its tools can't be called as tasks. Nothing to check.",
+                  blocking: false,
+                }
+              : resolveProbeTool(wire, tools, this.config.toolName);
           const probeTool = probe.tool;
           /**
            * The check verdict for "there is no probe tool", per resolution. A
@@ -142,11 +159,12 @@ export class TaskGroupRunner extends TaskOperations {
                   probe.reason ?? "no probe tool resolved",
                   needsSetupDetails(
                     "tasksProbe",
-                    this.config.toolName
-                      ? `This server doesn't list the tool ${JSON.stringify(
-                          this.config.toolName
-                        )}, so there was no task to check. Select a listed tool in setup, then run again.`
-                      : undefined
+                    probe.setupMessage ??
+                      (this.config.toolName
+                        ? `This server doesn't list the tool ${JSON.stringify(
+                            this.config.toolName
+                          )}, so there was no task to check. Select a listed tool in setup, then run again.`
+                        : undefined)
                   )
                 )
               : notApplicable(id, probe.reason ?? "no probe tool resolved");
@@ -621,6 +639,7 @@ export class TaskGroupRunner extends TaskOperations {
             rawCreation,
             readiness,
             uncheckedAdvice,
+            passedAdvice,
           };
           this.config.signal?.throwIfAborted();
           await runReadChecks(context);
@@ -672,6 +691,9 @@ export class TaskGroupRunner extends TaskOperations {
           const pickedUnchecked = uncheckedAdvice.filter(
             (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
           );
+          const pickedPassed = passedAdvice.filter(
+            (entry) => !pickedAdvice || pickedAdvice.includes(entry.id)
+          );
 
           for (const check of checks) {
             if (isTasksToolCheck(check.id))
@@ -697,6 +719,7 @@ export class TaskGroupRunner extends TaskOperations {
             ...(pickedUnchecked.length > 0
               ? { uncheckedAdvice: pickedUnchecked }
               : {}),
+            ...(pickedPassed.length > 0 ? { passedAdvice: pickedPassed } : {}),
             summary:
               pending.length > 0
                 ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
