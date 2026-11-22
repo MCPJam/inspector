@@ -355,10 +355,9 @@ async function runTaskAugmentedToolCall(args: {
 
         // A 2025-11-25 server reaches the legacy wire by declaring ANY of
         // `tasks.list`/`cancel`/`requests`, so the wire alone does not mean it
-        // accepts task-augmented tool calls — and the manager's guard checks
-        // only the wire. Without this, the CLI sends an opt-in the server never
-        // advertised and the user debugs a protocol error instead of reading
-        // the reason.
+        // accepts task-augmented tool calls. The manager's guard refuses that
+        // call too, but checking here first gives the user a CLI error with a
+        // clear reason and hint instead of a generic wire error.
         assertWireCapability(
           support,
           "toolCalls",
