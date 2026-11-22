@@ -13,12 +13,10 @@ import {
   reusableLaunchCredentials,
 } from "../launch-credentials.js";
 import { LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let home: string;
-// Both, because `os.homedir()` reads USERPROFILE on Windows: redirecting only
-// HOME would let the revoke below reach a developer's real grant store.
-const realHome = process.env.HOME;
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
 const binding: HarnessGrantBinding = {
   scope: "attended",
@@ -35,17 +33,13 @@ const binding: HarnessGrantBinding = {
 
 beforeAll(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-launch-")));
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
+  restoreHome = useDisposableHome(home);
   // Never revoke anything outside the temporary home.
   expect(homedir()).toBe(home);
 });
 
 afterAll(async () => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
   await rm(home, { recursive: true, force: true });
 });
 

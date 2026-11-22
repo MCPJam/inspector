@@ -35,6 +35,7 @@ import {
 } from "../supervised-provider.js";
 import { LocalHarnessSupervisor } from "../supervisor.js";
 import { localHarnessStateRoot } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 const canOwnProcesses = supportsOwnershipProof();
 
@@ -58,10 +59,7 @@ let workspace: string;
 let runtimeRoot: string;
 let bundleRoot: string;
 let outside: string;
-const realHome = process.env.HOME;
-// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
-// developer's real state in play there.
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
 /**
  * A stand-in for the CI-built managed bundle: the same shape (a `bridge.mjs`
@@ -123,8 +121,7 @@ const LAN_BRIDGE_ATTEMPTS = 3;
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-provider-")));
-  process.env.HOME = base;
-  process.env.USERPROFILE = base;
+  restoreHome = useDisposableHome(base);
   workspace = join(base, "project");
   outside = join(base, "outside");
   runtimeRoot = join(base, "runtimes");
@@ -159,10 +156,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
 });
 
 async function buildSession(
@@ -419,7 +413,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
   it("refuses to read or write outside them, including through a symlink", async () => {
     const sup = supervisor();
     const { session } = await buildSession("confined", sup);
-    await symlink(outside, join(workspace, "escape"), "junction").catch(() => {});
+    await symlink(outside, join(workspace, "escape"), "junction");
 
     await expect(
       session.readTextFile({ path: join(outside, "secret.txt") }),
@@ -448,10 +442,10 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     await expect(session.readTextFile({ path: viaLink })).resolves.toBe(
       "export const a = 1;\n",
     );
-    await symlink(outside, join(workspace, "escape"), "junction").catch(() => {});
+    await symlink(outside, join(workspace, "escape-via-project"), "junction");
     await expect(
       session.readTextFile({
-        path: join(workRoot, "project", "escape", "secret.txt"),
+        path: join(workRoot, "project", "escape-via-project", "secret.txt"),
       }),
     ).rejects.toThrow(/outside every directory/);
     await session.stop();
@@ -551,7 +545,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
       join(outside, "captured.ok"),
       join(sessionStateDir, "bootstrap", ".bootstrap-linked.ok"),
       "junction",
-    ).catch(() => {});
+    );
     await expect(
       session.writeTextFile({ path: marker, content: "" }),
     ).rejects.toThrow(/outside every directory/);
@@ -634,7 +628,7 @@ describe("the AI SDK sandbox contract, over a supervised host process", () => {
     // of the workspace would start the agent outside its grant.
     const sup = supervisor();
     const { session, workRoot, sessionStateDir } = await buildSession("bridge-args", sup);
-    await symlink(outside, join(workspace, "escape-args"), "junction").catch(() => {});
+    await symlink(outside, join(workspace, "escape-args"), "junction");
     await expect(
       session.spawn({
         command:

@@ -13,12 +13,10 @@ import {
   type InstanceKeyStore,
 } from "../instance-key.js";
 import { localHarnessStateRoot } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let home: string;
-let realHome: string | undefined;
-// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
-// developer's real state in play there.
-let realUserProfile: string | undefined;
+let restoreHome: () => void;
 
 function keyPath(): string {
   return join(localHarnessStateRoot(), "instance-key.json");
@@ -46,10 +44,7 @@ function fakeKeystore(available = true): InstanceKeyStore {
 
 beforeEach(async () => {
   home = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-instance-key-")));
-  realHome = process.env.HOME;
-  realUserProfile = process.env.USERPROFILE;
-  process.env.HOME = home;
-  process.env.USERPROFILE = home;
+  restoreHome = useDisposableHome(home);
   setInstanceKeyStore(null);
   resetInstanceKeyCacheForTests();
 });
@@ -57,10 +52,7 @@ beforeEach(async () => {
 afterEach(async () => {
   setInstanceKeyStore(null);
   resetInstanceKeyCacheForTests();
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
   await rm(home, { recursive: true, force: true });
 });
 

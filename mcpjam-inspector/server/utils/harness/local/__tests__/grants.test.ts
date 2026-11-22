@@ -27,13 +27,11 @@ import {
   verifyLocalHarnessGrant,
   type HarnessGrantBinding,
 } from "../grants.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let base: string;
 let workspace: string;
-const realHome = process.env.HOME;
-// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
-// developer's real state in play there.
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
 function binding(
   overrides: Partial<HarnessGrantBinding> = {},
@@ -54,17 +52,13 @@ function binding(
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-grants-")));
-  process.env.HOME = base;
-  process.env.USERPROFILE = base;
+  restoreHome = useDisposableHome(base);
   workspace = join(base, "project");
   await mkdir(workspace, { recursive: true });
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
 });
 
 beforeEach(async () => {
@@ -78,7 +72,7 @@ describe("workspace grants", () => {
   it("returns an opaque id, never the path, and canonicalizes the selection", async () => {
     const linked = join(base, "project-link");
     // A junction on Windows, which needs no privilege; POSIX ignores the type.
-    await symlink(workspace, linked, "junction").catch(() => {});
+    await symlink(workspace, linked, "junction");
     const result = await registerWorkspaceGrant(linked);
     expect(result.ok).toBe(true);
     if (!result.ok) return;

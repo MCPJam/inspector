@@ -166,7 +166,10 @@ async function stagePack(
   // or would digest to something else (AppleDouble).
   if (opts.withSymlink === true) {
     // A junction on Windows, which needs no privilege; POSIX ignores the type.
-    await symlink("/etc/passwd", join(packRoot, "sneaky"), "junction");
+    // Its target is a directory this test owns, beside the archived tree.
+    const outside = join(staging, "outside");
+    await mkdir(outside);
+    await symlink(outside, join(packRoot, "sneaky"), "junction");
   }
   if (opts.withAppleDouble === true) {
     await writeFile(

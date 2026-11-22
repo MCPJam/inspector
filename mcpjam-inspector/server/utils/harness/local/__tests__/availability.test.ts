@@ -54,6 +54,7 @@ import {
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalHarnessExecutionTarget,
 } from "../targets.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 let base: string;
 let workspace: string;
@@ -61,10 +62,7 @@ let runtimeRoot: string;
 let workspaceGrantId: string;
 let runtimeId: string;
 let manifests: Record<string, LocalHarnessCompatibility>;
-const realHome = process.env.HOME;
-// `os.homedir()` reads USERPROFILE on Windows; both point at the fixture so
-// the grant revokes below never reach a developer's real store.
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
 // The host's platform, because the fixture pack is resolved on this host's
 // filesystem: NTFS has no execute bits for a "linux" resolution to find.
@@ -131,8 +129,7 @@ async function query(overrides: Record<string, unknown> = {}) {
 
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-avail-")));
-  process.env.HOME = base;
-  process.env.USERPROFILE = base;
+  restoreHome = useDisposableHome(base);
   workspace = join(base, "project");
   runtimeRoot = join(base, "runtimes");
   await mkdir(workspace, { recursive: true });
@@ -205,10 +202,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
 });
 
 beforeEach(async () => {

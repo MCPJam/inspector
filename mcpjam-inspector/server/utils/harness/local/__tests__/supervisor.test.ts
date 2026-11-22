@@ -9,6 +9,7 @@ import {
 } from "../process-identity.js";
 import { listProcessRecords } from "../process-registry.js";
 import { LocalHarnessSupervisor, SupervisorError } from "../supervisor.js";
+import { useDisposableHome } from "./disposable-home.js";
 
 /** These exercise real processes, so they only run where the supervisor is
  *  willing to own one — which is the same predicate the manifest uses to
@@ -18,10 +19,7 @@ const canOwnProcesses = supportsOwnershipProof();
 let base: string;
 let scripts: string;
 let stateDir: string;
-const realHome = process.env.HOME;
-// `os.homedir()` reads USERPROFILE on Windows, so HOME alone would leave the
-// developer's real state in play there.
-const realUserProfile = process.env.USERPROFILE;
+let restoreHome: () => void;
 
 /** Poll until `pid` is gone, or give up. Returns whether it went. */
 async function waitForExit(pid: number, timeoutMs = 8_000): Promise<boolean> {
@@ -67,10 +65,9 @@ function request(
 beforeAll(async () => {
   base = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-supervisor-")));
   scripts = join(base, "scripts");
-  // The registry writes under `homedir()`; point HOME at the temp tree so a
+  // The registry writes under `homedir()`; point it at the temp tree so a
   // test never touches the developer's real state.
-  process.env.HOME = base;
-  process.env.USERPROFILE = base;
+  restoreHome = useDisposableHome(base);
   stateDir = join(base, ".mcpjam", "harness-local", "sessions", "s1");
   await mkdir(scripts, { recursive: true });
   await mkdir(stateDir, { recursive: true });
@@ -144,10 +141,7 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
-  if (realHome === undefined) delete process.env.HOME;
-  else process.env.HOME = realHome;
-  if (realUserProfile === undefined) delete process.env.USERPROFILE;
-  else process.env.USERPROFILE = realUserProfile;
+  restoreHome();
 });
 
 describe("launch preconditions", () => {
