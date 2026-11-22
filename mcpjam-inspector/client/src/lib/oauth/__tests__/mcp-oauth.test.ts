@@ -1864,6 +1864,22 @@ describe("mcp-oauth", () => {
       expect(mockExchangeAuthorization).not.toHaveBeenCalled();
     });
 
+    it("keeps the newer sign-in when an older tab's callback state does not match", async () => {
+      await seedPendingOAuth();
+      const newerState = issuedCallbackState();
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const result = await handleOAuthCallback("oauth-code", {
+        callbackState: "state-from-an-older-attempt",
+      });
+
+      expect(result.success).toBe(false);
+      expect(mockExchangeAuthorization).not.toHaveBeenCalled();
+      expect(localStorage.getItem("mcp-oauth-pending")).toBe("asana");
+      expect(localStorage.getItem("mcp-oauth-flow-state-asana")).not.toBeNull();
+      expect(issuedCallbackState()).toBe(newerState);
+    });
+
     it("warns but still exchanges on a 2025 issuer mismatch", async () => {
       // `MUST validate a present iss` is SEP-2468, introduced in the
       // 2026-07-28 draft. 2025-11-25 never mentions `iss`, so blocking here
