@@ -45,9 +45,11 @@ const same = (a: Identity, b: Identity) => a.dev === b.dev && a.ino === b.ino;
 const missing = (error: unknown) =>
   (error as NodeJS.ErrnoException).code === "ENOENT";
 // Windows has no POSIX permission bits (Node reports 0o666 for every file and
-// directory); the per-user temp directory's ACL keeps placements private there.
-// It also refuses to flush a directory handle (EPERM), and NTFS journals the
-// directory entries itself.
+// directory), so the mode check would reject every placement. Privacy there
+// comes from the folder's ACL: the default per-user temp directory is private,
+// but a TEMP pointed at a shared folder is not, and this check could not tell.
+// Windows also refuses to flush a directory handle (EPERM), and NTFS journals
+// the directory entries itself.
 const WINDOWS = process.platform === "win32";
 
 /** Cleanup ownership only. Records cannot revive grants, sources, approvals or wire
