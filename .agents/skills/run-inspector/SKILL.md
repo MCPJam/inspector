@@ -47,6 +47,10 @@ node mcpjam-inspector/scripts/inspector-driver.mjs sweep            # every surf
 - Set `MCPJAM_SESSION_TOKEN` to a token you chose (24 or more URL-safe
   characters) before starting the app, and the same value signs the driver
   in, so you never copy the access link out of the launcher's output.
+- The shipped allowlist is tuned on `dev:hosted` (the same launcher with
+  hosted mode on). Under `dev:worktree` the app also probes Ollama at
+  `127.0.0.1:11434`, which reports `request-failed` when Ollama is not
+  running; that is the environment, not your change.
 
 Steps are JSON. Each step names one action: `goto`, `click`, `hover`,
 `fill` (with `value`), `press` (a key, with optional `on`), `waitFor`
