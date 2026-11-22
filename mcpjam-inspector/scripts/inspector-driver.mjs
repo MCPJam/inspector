@@ -49,8 +49,11 @@ import {
   parseAccessToken,
   parseAllowlist,
   recordedToken,
+  redactText,
+  redactUrl,
   resolveTarget,
   resultLine,
+  routeMismatch,
   withStartStep,
 } from "./lib/inspector-driver-core.mjs";
 
@@ -228,24 +231,35 @@ async function visit({ target, label, ctx, values }) {
   const { surfaces, baseUrl, rules, outDir, session, browserLib } = ctx;
   const timeoutMs = positiveInt(values.timeout, "timeout", 30) * 1_000;
   const { url, surfaceId } = resolveTarget(target, surfaces, baseUrl);
+  const surface = surfaces.find((s) => s.id === surfaceId);
+  const shown = surfaceId ?? redactUrl(url);
   const page = await session.context.newPage();
   const events = browserLib.recordEvents(page);
   const started = Date.now();
   const slug = artifactSlug(
-    `${label ?? surfaceId ?? target}${values.theme ? `-${values.theme}` : ""}`,
+    `${label ?? shown}${values.theme ? `-${values.theme}` : ""}`,
   );
   try {
     await browserLib.loadAndSettle(page, url, events, timeoutMs);
+    const mismatch = routeMismatch({
+      requestedUrl: url,
+      finalUrl: page.url(),
+      surface,
+    });
+    if (mismatch) events.push({ kind: "wrong-route", text: mismatch });
   } catch (error) {
-    events.push({ kind: "navigation-failed", text: error.message });
+    events.push({
+      kind: "navigation-failed",
+      text: redactText(error.message),
+    });
   }
   const seconds = (Date.now() - started) / 1_000;
   const artifacts = await browserLib.captureArtifacts(page, outDir, slug);
   const report = {
-    label: `OPEN ${surfaceId ?? target}`,
-    surfaceId: surfaceId ?? target,
-    requestedUrl: url,
-    finalUrl: page.url(),
+    label: `OPEN ${shown}`,
+    surfaceId: shown,
+    requestedUrl: redactUrl(url),
+    finalUrl: redactUrl(page.url()),
     title: await page.title(),
     seconds,
     classified: classifyIssues(events, rules),
@@ -323,7 +337,7 @@ async function drive({ ctx, values, steps, slug, prefix = "" }) {
   };
   const report = {
     label: `RUN ${steps.length} steps`,
-    finalUrl: page.url(),
+    finalUrl: redactUrl(page.url()),
     title: await page.title(),
     seconds: (Date.now() - started) / 1_000,
     steps: results,
@@ -465,6 +479,9 @@ async function cmdSweep(values) {
     const chosen = ctx.surfaces.filter(
       (s) => (!only || only.includes(s.id)) && !skip.includes(s.id),
     );
+    if (chosen.length === 0) {
+      throw new Error("--only/--skip left no surfaces to sweep.");
+    }
     const width = Math.max(...chosen.map((s) => s.id.length));
     process.stdout.write(
       `SWEEP ${chosen.length} surfaces against ${ctx.baseUrl}\n`,

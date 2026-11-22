@@ -10,6 +10,8 @@ import { join } from "node:path";
 import {
   describeStep,
   parseSelector,
+  redactStep,
+  redactText,
   redactUrl,
 } from "./inspector-driver-core.mjs";
 
@@ -71,26 +73,41 @@ export async function openContext({
     },
     { origin, force, ifAbsent },
   );
-  // The client holds its guest token in memory only, so every page load
-  // mints a guest, and mints draw on a small per-IP allowance: a sweep ran
-  // out after about 18 surfaces. One real mint per run, replayed after that.
-  let guestSession;
-  await context.route("**/api/web/guest-session", async (route) => {
-    if (guestSession) return route.fulfill(guestSession);
-    const response = await route.fetch();
-    if (response.ok()) {
-      guestSession = {
-        status: response.status(),
-        headers: response.headers(),
-        body: await response.body(),
-      };
-    }
-    return route.fulfill({ response });
-  });
+  await replayGuestSession(context, origin);
   return {
     context,
     close: () => browser.close(),
   };
+}
+
+const GUEST_SESSION_PATH = "/api/web/guest-session";
+
+/**
+ * The client holds its guest token in memory only, so every page load mints
+ * a guest, and mints draw on a small per-IP allowance: a sweep ran out after
+ * about 18 surfaces. One real mint per run, replayed after that, and only to
+ * the app's own origin: the response is a bearer credential, so a page on any
+ * other origin, or a mint that redirected anywhere, is never served it.
+ */
+export async function replayGuestSession(context, origin) {
+  let guestSession;
+  await context.route(
+    (url) => url.origin === origin && url.pathname === GUEST_SESSION_PATH,
+    async (route) => {
+      if (route.request().method() !== "POST") return route.fallback();
+      if (guestSession) return route.fulfill(guestSession);
+      // A redirect comes back as itself, not ok, so it is never cached.
+      const response = await route.fetch({ maxRedirects: 0 });
+      if (response.ok()) {
+        guestSession = {
+          status: response.status(),
+          headers: response.headers(),
+          body: await response.body(),
+        };
+      }
+      return route.fulfill({ response });
+    },
+  );
 }
 
 /** Everything a page emits that a reviewer would call broken or noisy. */
@@ -218,15 +235,19 @@ export async function runSteps({
         index,
       });
       results.push({
-        ...step,
+        ...redactStep(step),
         index,
         ok: true,
         seconds: (Date.now() - started) / 1_000,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      // Playwright errors quote the call, which can carry the fill value.
+      const message = redactText(
+        error instanceof Error ? error.message : String(error),
+        [step.value],
+      );
       results.push({
-        ...step,
+        ...redactStep(step),
         index,
         ok: false,
         error: message,
@@ -234,7 +255,7 @@ export async function runSteps({
       });
       events.push({
         kind: "step-failed",
-        text: `step ${index} (${describeStep(step)}): ${message.split("\n")[0]}`,
+        text: `step ${index} (${describeStep(redactStep(step))}): ${message.split("\n")[0]}`,
       });
       break;
     }
