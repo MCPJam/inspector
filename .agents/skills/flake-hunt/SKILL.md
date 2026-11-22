@@ -25,7 +25,7 @@ node .github/scripts/flake-hunt.mjs --cache <dir on a disk with room>
 | `--top N`, `--json` | `20`, off                       | length and format of the output                 |
 
 A cold 14-day run of `test.yml` costs a few hundred calls; a warm rerun costs
-the last two days' run lists. Keep `--max-calls` well under what
+the last two days' run lists if it is the same day. Keep `--max-calls` well under what
 `rate_limit` reports, since other agents use the same token.
 
 Each entry is a test, a Vitest unhandled error (ranked under the test file it

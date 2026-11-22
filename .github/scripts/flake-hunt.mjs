@@ -5,16 +5,16 @@
 //       [--max-calls 1000]
 //
 // It reads GitHub Actions runs through `gh api`, groups every attempt of every
-// run by workflow and head SHA, and treats a job that failed on one try and
-// passed on a later try of the same commit as flaked. It downloads those
+// run by workflow, event and head SHA, and treats a job that failed on one try
+// and passed on a later try of the same commit as flaked. It downloads those
 // jobs' logs, pulls out the failing Vitest and Playwright tests, and ranks
 // them by how many flaked jobs they appeared in.
 //
-// Logs, finished attempts' job lists and older days' run lists are cached
-// under --cache (default: <tmpdir>/mcpjam-flake-hunt), so a second run costs
-// only the run lists of the last two days. --max-calls stops the hunt before
-// it spends more of the shared 5,000-an-hour API limit; the report then says
-// it is partial.
+// Logs, finished attempts' job lists and run lists are cached per repository
+// under --cache (default: <tmpdir>/mcpjam-flake-hunt), so a second run the
+// same day costs only the run lists of the last two days. --max-calls stops
+// the hunt before it spends more of the shared 5,000-an-hour API limit; the
+// report then says it is partial and how far it got.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,6 +25,9 @@ import { findFlakedJobs, firstError, formatReport, parseFailures, rankFlakes } f
 const DAY_MS = 24 * 60 * 60 * 1000;
 // A day's run list can still change while its runs are being retried.
 const RECENT_DAY_TTL_MS = 60 * 60 * 1000;
+// GitHub lets a run be re-run for 30 days, which changes its attempt and
+// conclusion, so until then a day's run list is refetched daily.
+const RERUN_WINDOW_MS = 30 * DAY_MS;
 
 export function parseArgs(argv) {
   const options = {
@@ -122,7 +125,8 @@ export function windowDays(days, now = Date.now()) {
 // is read one day at a time.
 async function listRuns(github, cache, { repo, workflow, day, today }) {
   const key = `${workflow.replace(/[^\w.-]/g, "_")}-${day}.json`;
-  const ageLimit = Date.parse(today) - Date.parse(day) > 2 * DAY_MS ? Infinity : RECENT_DAY_TTL_MS;
+  const age = Date.parse(today) - Date.parse(day);
+  const ageLimit = age > RERUN_WINDOW_MS ? Infinity : age > 2 * DAY_MS ? DAY_MS : RECENT_DAY_TTL_MS;
   const cached = cache.read("runs", key, ageLimit);
   if (cached) return JSON.parse(cached);
   const runs = [];
@@ -137,6 +141,7 @@ async function listRuns(github, cache, { repo, workflow, day, today }) {
       ...body.workflow_runs.map((run) => ({
         id: run.id,
         workflow,
+        event: run.event,
         headSha: run.head_sha,
         attempt: run.run_attempt,
         status: run.status,
@@ -167,6 +172,7 @@ async function listJobs(github, cache, repo, runId, attempt) {
         status: job.status,
         conclusion: job.conclusion,
         url: job.html_url,
+        startedAt: job.started_at,
         completedAt: job.completed_at,
       })),
     );
@@ -194,72 +200,93 @@ async function jobLog(github, cache, repo, jobId) {
   return text;
 }
 
-// Every attempt of every run on one commit, for the commits CI tried more
-// than once. A final attempt that succeeded needs no job list: all its jobs
-// passed.
-async function triesPerCommit(github, cache, repo, runs) {
+// The completed runs of each workflow, event and commit that CI tried more
+// than once. A push and a pull_request run on one SHA can run different jobs,
+// so they are not compared.
+function retriedCommits(runs) {
   const groups = new Map();
   for (const run of runs) {
     if (run.status !== "completed") continue;
-    const key = `${run.workflow}\u0000${run.headSha}`;
+    const key = `${run.workflow}\u0000${run.event}\u0000${run.headSha}`;
     groups.set(key, [...(groups.get(key) ?? []), run]);
   }
-  const retried = [...groups.values()].filter(
-    (group) => group.length > 1 || group[0].attempt > 1,
-  );
-  const commits = [];
-  for (const group of retried) {
-    const tries = [];
-    for (const run of group) {
-      for (let attempt = 1; attempt <= run.attempt; attempt += 1) {
-        const final = attempt === run.attempt;
-        if (final && run.conclusion === "success") {
-          tries.push({ runId: run.id, attempt, createdAt: run.createdAt, conclusion: "success", jobs: null });
-        } else if (final && run.conclusion !== "failure" && run.conclusion !== "timed_out") {
-          continue;
-        } else {
-          const jobs = await listJobs(github, cache, repo, run.id, attempt);
-          tries.push({ runId: run.id, attempt, createdAt: run.createdAt, conclusion: null, jobs });
-        }
-      }
-    }
-    commits.push({ workflow: group[0].workflow, tries });
-  }
-  return commits;
+  return [...groups.values()].filter((group) => group.length > 1 || group[0].attempt > 1);
 }
 
+// Every attempt of every run on one commit, with its job list. A successful
+// attempt's jobs are fetched too: a job it skipped or did not run did not pass.
+async function triesOf(github, cache, repo, group) {
+  const tries = [];
+  for (const run of group) {
+    for (let attempt = 1; attempt <= run.attempt; attempt += 1) {
+      const final = attempt === run.attempt;
+      if (final && !["success", "failure", "timed_out"].includes(run.conclusion)) continue;
+      const jobs = await listJobs(github, cache, repo, run.id, attempt);
+      const starts = jobs.map((job) => job.startedAt).filter(Boolean).sort();
+      tries.push({ runId: run.id, attempt, startedAt: starts[0] ?? run.createdAt, jobs });
+    }
+  }
+  return { workflow: group[0].workflow, tries };
+}
+
+// Runs `step` and reports whether it stopped at the call budget.
+async function untilBudget(step) {
+  try {
+    await step();
+    return false;
+  } catch (error) {
+    if (!(error instanceof BudgetSpent)) throw error;
+    return true;
+  }
+}
+
+const flakeEvent = (job, workflow, log) => ({
+  url: job.url,
+  jobName: job.name,
+  workflow,
+  date: job.completedAt ?? "",
+  failures: parseFailures(log),
+  error: firstError(log),
+});
+
 export async function hunt(options, github = createGitHub(options)) {
-  const cache = createCache(options.cache);
+  // One directory per --repo: run list keys hold only the workflow and day.
+  const cache = createCache(join(options.cache, options.repo.replace(/[^\w.-]/g, "_")));
   const days = windowDays(options.days);
   const today = days.at(-1);
   const runs = [];
+  let runListsRead = 0;
+  let retried = [];
   const commits = [];
   const events = [];
-  let budgetHit = false;
-  try {
+  let stage = "listing runs";
+  let budgetHit = await untilBudget(async () => {
     for (const workflow of options.workflows) {
-      for (const day of days) runs.push(...(await listRuns(github, cache, { repo: options.repo, workflow, day, today })));
+      for (const day of days) {
+        runs.push(...(await listRuns(github, cache, { repo: options.repo, workflow, day, today })));
+        runListsRead += 1;
+      }
     }
-    commits.push(...(await triesPerCommit(github, cache, options.repo, runs)));
-    const flaked = commits.flatMap(({ workflow, tries }) =>
-      findFlakedJobs(tries).map((flake) => ({ ...flake, workflow })),
-    );
+    stage = "reading attempts";
+    retried = retriedCommits(runs);
+    for (const group of retried) commits.push(await triesOf(github, cache, options.repo, group));
+  });
+  const flaked = commits.flatMap(({ workflow, tries }) =>
+    findFlakedJobs(tries).map((flake) => ({ ...flake, workflow })),
+  );
+  if (!budgetHit) {
+    stage = "reading logs";
     // One at a time: several `gh` processes at once can exhaust a Windows
     // machine's resources, and each finished log stays counted on a budget stop.
-    for (const { job, workflow } of flaked) {
-      const log = await jobLog(github, cache, options.repo, job.id);
-      events.push({
-        url: job.url,
-        jobName: job.name,
-        workflow,
-        date: job.completedAt ?? "",
-        failures: parseFailures(log),
-        error: firstError(log),
-      });
-    }
-  } catch (error) {
-    if (!(error instanceof BudgetSpent)) throw error;
-    budgetHit = true;
+    budgetHit = await untilBudget(async () => {
+      for (const { job, workflow } of flaked) {
+        events.push(flakeEvent(job, workflow, await jobLog(github, cache, options.repo, job.id)));
+      }
+    });
+  }
+  // Flaked jobs found before a budget stop still rank, under their job name.
+  for (const { job, workflow } of flaked.slice(events.length)) {
+    events.push(flakeEvent(job, workflow, "##[error]log not read (call budget spent)\n"));
   }
   const summary = {
     repo: options.repo,
@@ -267,10 +294,14 @@ export async function hunt(options, github = createGitHub(options)) {
     until: today,
     workflows: options.workflows,
     runs: runs.filter((run) => run.status === "completed").length,
-    retriedCommits: commits.length,
+    runListsRead,
+    runLists: options.workflows.length * days.length,
+    retriedCommits: retried.length,
+    commitsRead: commits.length,
     flakedJobs: events.length,
     apiCalls: github.calls,
     budgetHit,
+    stoppedWhile: budgetHit ? stage : null,
   };
   return { summary, ranking: rankFlakes(events), events };
 }

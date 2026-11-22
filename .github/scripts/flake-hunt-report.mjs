@@ -16,30 +16,27 @@ const FAILED_JOB = new Set(["failure", "timed_out"]);
 /**
  * The failed jobs that passed on a later try of the same commit.
  *
- * `tries` is every attempt of every run of one workflow on one head SHA:
- * `{ runId, attempt, createdAt, conclusion, jobs }`. `jobs` is null when the
- * attempt succeeded and its jobs were not fetched; every job of such an
- * attempt passed. A failed job flaked when a later try (a later attempt of
- * the same run, or a run created later) ran a job of the same name that
- * passed.
+ * `tries` is every attempt of every run of one workflow and event on one
+ * head SHA: `{ runId, attempt, startedAt, jobs }`. Tries are ordered by when
+ * the attempt started, since a rerun of an older run can start after a newer
+ * run failed. A failed job flaked when a later try ran a job of the same name
+ * that passed. A skipped job, or one the later try did not run, proves
+ * nothing.
  */
 export function findFlakedJobs(tries) {
   const ordered = [...tries].sort(
-    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.attempt - b.attempt,
+    (a, b) => a.startedAt.localeCompare(b.startedAt) || a.attempt - b.attempt,
   );
   const flaked = [];
   ordered.forEach((attemptRecord, index) => {
-    if (attemptRecord.jobs === null) return;
     const later = ordered.slice(index + 1);
     for (const job of attemptRecord.jobs) {
       if (!FAILED_JOB.has(job.conclusion)) continue;
-      const passedBy = later.find(
-        (other) =>
-          other.jobs === null ||
-          other.jobs.some(
-            (otherJob) =>
-              otherJob.name === job.name && otherJob.conclusion === "success",
-          ),
+      const passedBy = later.find((other) =>
+        other.jobs.some(
+          (otherJob) =>
+            otherJob.name === job.name && otherJob.conclusion === "success",
+        ),
       );
       if (passedBy) {
         flaked.push({
@@ -248,7 +245,11 @@ export function formatReport(ranking, summary, { top = 20 } = {}) {
   const lines = [
     `Flake report for ${summary.repo}, ${summary.since} to ${summary.until} (${summary.workflows.join(", ")})`,
     `${summary.runs} completed runs, ${summary.retriedCommits} commits tried more than once, ${summary.flakedJobs} jobs failed and then passed.`,
-    `GitHub API calls: ${summary.apiCalls}${summary.budgetHit ? " (stopped at the budget; the report is partial)" : ""}.`,
+    `GitHub API calls: ${summary.apiCalls}${
+      summary.budgetHit
+        ? ` (stopped at the budget while ${summary.stoppedWhile}, after ${summary.runListsRead} of ${summary.runLists} run lists and ${summary.commitsRead} of ${summary.retriedCommits} retried commits; the report is partial)`
+        : ""
+    }.`,
     "",
     `Top ${Math.min(top, ranking.tests.length)} flaky tests:`,
   ];

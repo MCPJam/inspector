@@ -98,11 +98,11 @@ const job = (name, conclusion, id = Math.random()) => ({ id, name, conclusion, u
 
 test("findFlakedJobs pairs a failed job with a later attempt that passed it", () => {
   const flaked = findFlakedJobs([
-    { runId: 1, attempt: 2, createdAt: "2026-11-20T00:00:00Z", jobs: null },
+    { runId: 1, attempt: 2, startedAt: "2026-11-20T00:30:00Z", jobs: [job("Inspector Tests 3/6", "success"), job("Run Tests", "success")] },
     {
       runId: 1,
       attempt: 1,
-      createdAt: "2026-11-20T00:00:00Z",
+      startedAt: "2026-11-20T00:00:00Z",
       jobs: [job("Inspector Tests 3/6", "failure", 11), job("Run Tests", "success", 12)],
     },
   ]);
@@ -117,13 +117,13 @@ test("findFlakedJobs matches by job name across runs on the same SHA", () => {
     {
       runId: 1,
       attempt: 1,
-      createdAt: "2026-11-20T00:00:00Z",
+      startedAt: "2026-11-20T00:00:00Z",
       jobs: [job("A", "failure", 1), job("B", "failure", 2), job("C", "cancelled", 3)],
     },
     {
       runId: 2,
       attempt: 1,
-      createdAt: "2026-11-20T01:00:00Z",
+      startedAt: "2026-11-20T01:00:00Z",
       jobs: [job("A", "success"), job("B", "failure"), job("C", "success")],
     },
   ]);
@@ -133,10 +133,36 @@ test("findFlakedJobs matches by job name across runs on the same SHA", () => {
 test("findFlakedJobs ignores a failure that no later try passed", () => {
   assert.deepEqual(
     findFlakedJobs([
-      { runId: 2, attempt: 1, createdAt: "2026-11-20T01:00:00Z", jobs: null },
-      { runId: 3, attempt: 1, createdAt: "2026-11-20T02:00:00Z", jobs: [job("A", "failure")] },
+      { runId: 2, attempt: 1, startedAt: "2026-11-20T01:00:00Z", jobs: [job("A", "success")] },
+      { runId: 3, attempt: 1, startedAt: "2026-11-20T02:00:00Z", jobs: [job("A", "failure")] },
     ]),
     [],
+  );
+});
+
+test("findFlakedJobs does not count a later success that skipped or dropped the job", () => {
+  assert.deepEqual(
+    findFlakedJobs([
+      { runId: 1, attempt: 1, startedAt: "2026-11-20T00:00:00Z", jobs: [job("A", "failure"), job("B", "failure")] },
+      { runId: 1, attempt: 2, startedAt: "2026-11-20T01:00:00Z", jobs: [job("A", "skipped"), job("C", "success")] },
+    ]),
+    [],
+  );
+});
+
+test("findFlakedJobs orders tries by when the attempt started, not when its run was created", () => {
+  // Run 1 is older, but its second attempt started after run 2 failed.
+  const flaked = findFlakedJobs([
+    { runId: 1, attempt: 1, startedAt: "2026-11-20T00:00:00Z", jobs: [job("A", "failure", 1)] },
+    { runId: 2, attempt: 1, startedAt: "2026-11-20T01:00:00Z", jobs: [job("A", "failure", 2)] },
+    { runId: 1, attempt: 2, startedAt: "2026-11-20T02:00:00Z", jobs: [job("A", "success")] },
+  ]);
+  assert.deepEqual(
+    flaked.map(({ job: failed, passedOn }) => [failed.id, passedOn]),
+    [
+      [1, { runId: 1, attempt: 2 }],
+      [2, { runId: 1, attempt: 2 }],
+    ],
   );
 });
 
@@ -195,26 +221,32 @@ test("windowDays lists each UTC day of the window, oldest first", () => {
   assert.deepEqual(windowDays(2, Date.parse("2026-11-21T05:00:00Z")), ["2026-11-19", "2026-11-20", "2026-11-21"]);
 });
 
-// A fake `gh api` over one commit: attempt 1 fails shard 3 and Packaging,
-// whose log GitHub no longer has; attempt 2 passes.
-function fakeGh(calls) {
+const today = new Date().toISOString().slice(0, 10);
+const ghRun = (id, fields) => ({ id, head_sha: "abc", event: "push", run_attempt: 1, status: "completed", conclusion: "success", created_at: `${today}T01:00:00Z`, html_url: `run/${id}`, ...fields });
+const ghJob = (id, name, conclusion, startedAt) => ({ id, name, status: "completed", conclusion, html_url: `job/${id}`, started_at: startedAt, completed_at: startedAt.replace(":00:", ":10:") });
+
+// A fake `gh api` over today's runs. By default one commit: attempt 1 fails
+// shard 3 and Packaging, whose log GitHub no longer has; attempt 2 passes.
+function fakeGh(
+  calls,
+  {
+    runs = [ghRun(7, { run_attempt: 2 })],
+    jobs = {
+      "7/1": [ghJob(70, "Inspector Tests 3/6", "failure", "2026-11-21T01:00:00Z"), ghJob(71, "Packaging", "failure", "2026-11-21T01:00:00Z")],
+      "7/2": [ghJob(72, "Inspector Tests 3/6", "success", "2026-11-21T02:00:00Z"), ghJob(73, "Packaging", "success", "2026-11-21T02:00:00Z")],
+    },
+  } = {},
+) {
   return async ([, path]) => {
     calls.push(path);
     if (path.includes("/workflows/test.yml/runs")) {
-      const today = new Date().toISOString().slice(0, 10);
-      const runs = path.includes(`created=${today}..`)
-        ? [{ id: 7, head_sha: "abc", run_attempt: 2, status: "completed", conclusion: "success", created_at: `${today}T01:00:00Z`, html_url: "run/7" }]
-        : [];
-      return JSON.stringify({ total_count: runs.length, workflow_runs: runs });
+      const listed = path.includes(`created=${today}..`) ? runs : [];
+      return JSON.stringify({ total_count: listed.length, workflow_runs: listed });
     }
-    if (path.includes("/runs/7/attempts/1/jobs")) {
-      return JSON.stringify({
-        total_count: 1,
-        jobs: [
-          { id: 70, name: "Inspector Tests 3/6", status: "completed", conclusion: "failure", html_url: "job/70", completed_at: "2026-11-21T01:10:00Z" },
-          { id: 71, name: "Packaging", status: "completed", conclusion: "failure", html_url: "job/71", completed_at: "2026-11-21T01:09:00Z" },
-        ],
-      });
+    const attempt = /\/runs\/(\d+)\/attempts\/(\d+)\/jobs/.exec(path);
+    if (attempt) {
+      const list = jobs[`${attempt[1]}/${attempt[2]}`];
+      return JSON.stringify({ total_count: list.length, jobs: list });
     }
     if (path.endsWith("/jobs/70/logs")) return vitestLog;
     if (path.endsWith("/jobs/71/logs")) throw new Error("gh api ... exited 1: gh: HTTP 404");
@@ -222,35 +254,90 @@ function fakeGh(calls) {
   };
 }
 
-test("hunt ranks a rerun's failures and reads them from the cache the second time", async () => {
+async function withCache(body) {
   const cache = mkdtempSync(join(tmpdir(), "flake-hunt-test-"));
   try {
-    const options = { ...parseArgs(["--days", "1", "--cache", cache]), maxCalls: 50 };
+    await body(cache);
+  } finally {
+    rmSync(cache, { recursive: true, force: true });
+  }
+}
+
+const huntWith = (cache, maxCalls, run, flags = []) =>
+  hunt({ ...parseArgs(["--days", "1", "--cache", cache, ...flags]), maxCalls }, createGitHub({ maxCalls, run }));
+
+test("hunt ranks a rerun's failures and reads them from the cache the second time", () =>
+  withCache(async (cache) => {
     const calls = [];
-    const first = await hunt(options, createGitHub({ maxCalls: 50, run: fakeGh(calls) }));
+    const first = await huntWith(cache, 50, fakeGh(calls));
     assert.equal(first.summary.flakedJobs, 2);
     assert.equal(first.ranking.tests[0].name, "Suite > opens the dialog");
     assert.deepEqual(
       first.ranking.tests.find((entry) => entry.kind === "job"),
-      { kind: "job", project: null, file: "Packaging", name: "log unavailable (HTTP 404)", count: 1, jobs: ["test.yml / Packaging"], examples: ["job/71"], lastSeen: "2026-11-21T01:09:00Z" },
+      { kind: "job", project: null, file: "Packaging", name: "log unavailable (HTTP 404)", count: 1, jobs: ["test.yml / Packaging"], examples: ["job/71"], lastSeen: "2026-11-21T01:10:00Z" },
     );
     assert.deepEqual(first.ranking.tests[0].examples, ["job/70"]);
     const firstCalls = calls.length;
-    await hunt(options, createGitHub({ maxCalls: 50, run: fakeGh(calls) }));
+    await huntWith(cache, 50, fakeGh(calls));
     assert.equal(calls.length, firstCalls, "the second run reads everything from the cache");
-  } finally {
-    rmSync(cache, { recursive: true, force: true });
-  }
-});
+  }));
 
-test("hunt stops at the call budget and marks the report partial", async () => {
-  const cache = mkdtempSync(join(tmpdir(), "flake-hunt-test-"));
-  try {
-    const options = { ...parseArgs(["--days", "1", "--cache", cache]), maxCalls: 1 };
-    const result = await hunt(options, createGitHub({ maxCalls: 1, run: fakeGh([]) }));
-    assert.equal(result.summary.budgetHit, true);
+test("hunt does not compare runs of different events on the same commit", () =>
+  withCache(async (cache) => {
+    const result = await huntWith(
+      cache,
+      50,
+      fakeGh([], {
+        runs: [ghRun(8, { event: "push", conclusion: "failure" }), ghRun(9, { event: "pull_request", created_at: `${today}T02:00:00Z` })],
+        jobs: {
+          "8/1": [ghJob(80, "Inspector Tests 3/6", "failure", "2026-11-21T01:00:00Z")],
+          "9/1": [ghJob(90, "Inspector Tests 3/6", "success", "2026-11-21T02:00:00Z")],
+        },
+      }),
+    );
+    assert.equal(result.summary.retriedCommits, 0);
+    assert.equal(result.summary.flakedJobs, 0);
+  }));
+
+test("hunt keeps each repository's run lists apart in a shared cache", () =>
+  withCache(async (cache) => {
+    await huntWith(cache, 50, fakeGh([]), ["--repo", "a/one"]);
+    const calls = [];
+    const second = await huntWith(cache, 50, fakeGh(calls), ["--repo", "b/two"]);
+    assert.ok(calls.length > 0 && calls.every((path) => path.startsWith("repos/b/two/")));
+    assert.equal(second.summary.flakedJobs, 2);
+  }));
+
+test("hunt reports how far it got when it stops at the call budget", () =>
+  withCache(async (cache) => {
+    const result = await huntWith(cache, 1, fakeGh([]));
     assert.equal(result.summary.apiCalls, 1);
-  } finally {
-    rmSync(cache, { recursive: true, force: true });
-  }
-});
+    assert.deepEqual(
+      [result.summary.budgetHit, result.summary.stoppedWhile, result.summary.runListsRead, result.summary.runLists],
+      [true, "listing runs", 1, 2],
+    );
+    assert.match(
+      formatReport(result.ranking, result.summary),
+      /stopped at the budget while listing runs, after 1 of 2 run lists and 0 of 0 retried commits; the report is partial/,
+    );
+  }));
+
+test("hunt still ranks the flaked jobs it found when the budget runs out before their logs", () =>
+  withCache(async (cache) => {
+    const attempts = await huntWith(cache, 3, fakeGh([]));
+    assert.deepEqual(
+      [attempts.summary.stoppedWhile, attempts.summary.commitsRead, attempts.summary.retriedCommits],
+      ["reading attempts", 0, 1],
+    );
+    // The run lists and attempt 1 are cached now; one call reads attempt 2.
+    const logs = await huntWith(cache, 1, fakeGh([]));
+    assert.equal(logs.summary.stoppedWhile, "reading logs");
+    assert.equal(logs.summary.flakedJobs, 2);
+    assert.deepEqual(
+      logs.ranking.tests.map((entry) => [entry.file, entry.name]),
+      [
+        ["Inspector Tests 3/6", "log not read (call budget spent)"],
+        ["Packaging", "log not read (call budget spent)"],
+      ],
+    );
+  }));
