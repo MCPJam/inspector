@@ -1311,6 +1311,55 @@ describe("MCPTasksConformanceTest", () => {
     ).toBe(true);
   });
 
+  it("does not call a tool as a task when a 2025-11-25 server leaves out tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone puts the connection on the legacy wire, and the
+    // tool itself says `required`, but 2025-11-25 tasks.mdx:113 forbids the
+    // task call regardless of the tool's own `taskSupport`.
+    let toolCalls = 0;
+    const manager = extensionManager({
+      getNegotiatedProtocolVersion: () => "2025-11-25",
+      getServerCapabilities: () => ({ tools: {}, tasks: { cancel: {} } }),
+      getTasksSupport: () => ({
+        wire: "legacy",
+        toolCalls: false,
+        list: false,
+        cancel: true,
+        update: false,
+        inlineResult: false,
+      }),
+      listTools: async () => ({
+        tools: [
+          {
+            name: "long_job",
+            inputSchema: {},
+            execution: { taskSupport: "required" },
+          },
+        ],
+      }),
+      executeTool: async () => {
+        toolCalls += 1;
+        throw new Error("must not call a tool as a task");
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job" },
+    });
+
+    expect(toolCalls).toBe(0);
+    expect(result.passed).toBe(true);
+    for (const id of [
+      "tasks-result-type-discipline",
+      "tasks-ttl-shape",
+      "tasks-inline-result",
+    ]) {
+      const entry = result.checks.find((c) => c.id === id)!;
+      expect(entry.status).toBe("skipped");
+      expect(entry.skipReason).toBe("not-applicable");
+      expect(entry.error?.message).toContain("tasks.requests.tools.call");
+    }
+  });
+
   it("does not send the unknown-id mutations when their advice was not picked", async () => {
     const mutatedIds: string[] = [];
     const manager = extensionManager({
