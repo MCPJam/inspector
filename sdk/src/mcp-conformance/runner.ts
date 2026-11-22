@@ -8,7 +8,10 @@ import {
   isAuthorizationRefusal,
   isUnauthorizedProbe,
 } from "../conformance-authorization.js";
-import { isMissingInputCheck } from "../conformance-input.js";
+import {
+  isMissingInputCheck,
+  needsSetupDetails,
+} from "../conformance-input.js";
 import {
   loginRequiredDetails,
   type ConformanceCredentialSource,
@@ -21,6 +24,7 @@ import {
   partitionByProfile,
 } from "../conformance-profile.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
+import { ProtocolVersionPinUnsupported } from "../mcp-client-manager/managed-mcp-client.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   listPrompts,
@@ -40,8 +44,10 @@ import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
   blockedResult,
   errorMessage,
+  eraSkipMessage,
   failedResult,
   couldNotRunResult,
+  notApplicableResult,
 } from "./checks/helpers.js";
 import { awaitWithSignal } from "../abort-signal.js";
 import { eraGate, runSelectedClientChecks } from "./client-check-runner.js";
@@ -59,7 +65,7 @@ import type {
   NormalizedMCPConformanceConfig,
   RawHttpCheckContext,
 } from "./types.js";
-import { MCP_CHECK_CATEGORIES } from "./types.js";
+import { CHECK_ERAS, MCP_CHECK_CATEGORIES } from "./types.js";
 import {
   collectClientAdvice,
   collectRawAdvice,
@@ -311,6 +317,13 @@ async function runClientChecks(
    * guessed era.
    */
   authorizationRefused?: true;
+  /**
+   * A pinned run's connection was refused because the server does not speak
+   * the pinned version. `checks` then already holds every selected check, and
+   * neither the raw families nor the raw advice run: there is no session on
+   * that version for them to use.
+   */
+  versionRefused?: true;
   /** The check that carries a failed connect, for checks blocked by it. */
   connectFailedCheck?: { id: MCPCheckId; title: string };
 }> {
@@ -481,6 +494,42 @@ async function runClientChecks(
       };
     }
 
+    // Refused on a PINNED run because the server does not speak the pin. The
+    // server is allowed to do that, so nothing here is its fault and nothing
+    // can be tested on the pinned version: every selected check, client or
+    // raw, could not run, with one message naming the version to use. It is
+    // a setup gap like a missing login: no points lost, the run incomplete.
+    // Checks the pinned era rules out stay not-applicable, as on any run.
+    const pinRefusal =
+      config.protocolVersion !== undefined ? findPinRefusal(error) : undefined;
+    if (pinRefusal) {
+      const message = pinRefusalStop(pinRefusal);
+      return {
+        checks: [...selectedCheckIds].map((id) => {
+          const metadata = selectedClientChecks.find(
+            (check) => check.id === id,
+          ) ?? {
+            id,
+            category: CHECK_CATEGORY_BY_ID.get(id) ?? "protocol",
+            ...PROTOCOL_CHECK_CATALOG[id],
+          };
+          return CHECK_ERAS[id].includes(config.era)
+            ? couldNotRunResult(metadata, message, {
+                requestedProtocolVersion: pinRefusal.protocolVersion,
+                offeredProtocolVersions: [...pinRefusal.supportedVersions],
+                ...needsSetupDetails("protocolVersion", message),
+              })
+            : notApplicableResult(
+                metadata,
+                eraSkipMessage(config.era, config.protocolVersion),
+              );
+        }),
+        config,
+        readiness: [],
+        versionRefused: true,
+      };
+    }
+
     // A raw-only Auto run has no client-backed check on which to report a
     // failed negotiation. Reject the run instead of silently executing raw
     // checks with the legacy default after detection failed.
@@ -594,6 +643,33 @@ async function runClientChecks(
   }
 }
 
+/** The pin refusal behind a failed connect, however deep it was wrapped. */
+function findPinRefusal(
+  error: unknown,
+): ProtocolVersionPinUnsupported | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (current instanceof ProtocolVersionPinUnsupported) return current;
+    current =
+      typeof current === "object" && "cause" in current
+        ? current.cause
+        : undefined;
+  }
+  return undefined;
+}
+
+/** Why every check of a pinned run stopped, with the version to run instead. */
+function pinRefusalStop(refusal: ProtocolVersionPinUnsupported): string {
+  const offered = refusal.supportedVersions.filter(isKnownProtocolVersion);
+  const instead =
+    offered.length === 1
+      ? `Run it on ${offered[0]} instead.`
+      : offered.length > 1
+        ? `Run it on one of ${offered.join(", ")} instead.`
+        : "Run it on a version the server supports instead.";
+  return `The server does not support protocol version ${refusal.protocolVersion}, which this run uses, so nothing could be checked on it. ${instead}`;
+}
+
 /** What the protocol suite sends to authenticate. */
 function protocolCredentials(
   config: NormalizedMCPConformanceConfig,
@@ -670,9 +746,10 @@ export class MCPConformanceTest {
     // A refused Auto run already reported every selected check as
     // could-not-run; the raw families get nothing to grade against an era the
     // run never learned.
-    const rawSelection: Set<MCPCheckId> = clientRun.authorizationRefused
-      ? new Set()
-      : selectedCheckIds;
+    const rawSelection: Set<MCPCheckId> =
+      clientRun.authorizationRefused || clientRun.versionRefused
+        ? new Set()
+        : selectedCheckIds;
 
     const [
       protocolChecks,
@@ -686,7 +763,11 @@ export class MCPConformanceTest {
         runSecurityChecks(rawContext, rawSelection),
         runTransportChecks(rawContext, rawSelection),
         runModernChecks(rawContext, rawSelection),
-        collectRawAdvice(rawContext),
+        // Advice probes would open a session on a version the server already
+        // refused, and grade its answers as advice about that version.
+        clientRun.versionRefused
+          ? Promise.resolve<MCPReadinessOutcome[]>([])
+          : collectRawAdvice(rawContext),
       ]),
       this.config.signal
     );

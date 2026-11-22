@@ -19,7 +19,8 @@ import {
   modernHeaders,
   modernRequestBody,
   rawRequest,
-  unsupportedVersionStop,
+  versionStopDetails,
+  type LegacyVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 import { hasWireField } from "../raw-capture.js";
@@ -61,7 +62,7 @@ const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<RawHttpResult | { unsupportedVersion: string }> {
+): Promise<RawHttpResult | { versionStop: LegacyVersionStop }> {
   if (ctx.config.era === "modern") {
     const version =
       ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
@@ -78,12 +79,12 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId, unsupportedVersion, negotiatedVersion } =
+  const { sessionId, negotiatedVersion, versionStop } =
     await legacyInitialize(ctx);
-  if (unsupportedVersion !== undefined) {
-    // The handshake did not end in a version this client can speak, so the
-    // probe is not sent: there is no session to send it on.
-    return { unsupportedVersion };
+  if (versionStop !== undefined) {
+    // The handshake did not end in the version this run uses, so the probe is
+    // not sent: there is no session on that version to send it on.
+    return { versionStop };
   }
   return await rawRequest(ctx, {
     // Only the method name is the test. 2025-06-18 and later require the
@@ -136,12 +137,12 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
-    if ("unsupportedVersion" in response) {
+    if ("versionStop" in response) {
       results.push(
         couldNotRunResult(
           PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
-          unsupportedVersionStop(response.unsupportedVersion),
-          { negotiatedProtocolVersion: response.unsupportedVersion },
+          response.versionStop.message,
+          versionStopDetails(response.versionStop),
         ),
       );
       return results;

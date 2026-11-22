@@ -22,7 +22,8 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
-  unsupportedVersionStop,
+  versionStopDetails,
+  type LegacyVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -151,19 +152,19 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   body: unknown;
   contentType: string;
   isMcpLayerResponse: boolean;
-  /** The answered protocol version, when MCPJam does not support it. */
-  unsupportedVersion?: string;
   /** The answered protocol version, when MCPJam supports it. */
   negotiatedVersion?: string;
+  /** Set when the server did not answer with the version the run uses. */
+  versionStop?: LegacyVersionStop;
 }> {
-  const { result, sessionId, unsupportedVersion, negotiatedVersion } =
+  const { result, sessionId, negotiatedVersion, versionStop } =
     await legacyInitialize(ctx);
   return {
     ok: isOk(result),
     status: result.status,
     sessionId,
-    unsupportedVersion,
     negotiatedVersion,
+    versionStop,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -480,9 +481,10 @@ export async function runTransportChecks(
     }
 
     // The checks above read the `initialize` answer itself. The ones below
-    // send more requests on the session, which a client does not do once the
-    // server has picked a version it cannot speak.
-    if (session.unsupportedVersion !== undefined) {
+    // send more requests on the session, which this run does not do once the
+    // server has answered with a version other than the one it uses.
+    const versionStop = session.versionStop;
+    if (versionStop !== undefined) {
       for (const id of [
         "server-accepts-multiple-post-streams",
         "server-sse-streams-functional",
@@ -493,8 +495,8 @@ export async function runTransportChecks(
           results.push(
             couldNotRunResult(
               TRANSPORT_CHECK_METADATA[id],
-              unsupportedVersionStop(session.unsupportedVersion),
-              { negotiatedProtocolVersion: session.unsupportedVersion },
+              versionStop.message,
+              versionStopDetails(versionStop),
             ),
           );
         }
