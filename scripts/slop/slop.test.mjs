@@ -149,9 +149,11 @@ describe("rules", () => {
       "// Matches ChatGPT #212121 and rgb(33, 33, 33).",
       "/* Was a literal `#ae5630`. */",
     ].join("\n");
+    // `#fff` and `#E4E4E7` in the style object, two functions, the shadow's
+    // rgba and `bg-[#303030]`, and the CSS custom property.
     assert.equal(
       count(text, "mcpjam-inspector/client/src/a.tsx")["client-color-literal"],
-      6,
+      7,
     );
     for (const path of [
       "mcpjam-inspector/server/a.ts",
@@ -160,6 +162,30 @@ describe("rules", () => {
       "mcpjam-inspector/client/src/lib/host-ui-metadata.ts",
     ]) {
       assert.equal(count(text, path)["client-color-literal"], 0, path);
+    }
+  });
+
+  it("counts a hex only where a color goes, not in links or copy", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const colors = (line) => count(line, path)["client-color-literal"];
+    for (const line of [
+      '<path fill="#fff" />;',
+      'const COLORS = { ok: "#0f0" };',
+      '<div style={{ backgroundColor: "#abcdef80" }} />;',
+      'const cls = cn("text-[#fff]");',
+      'const termBg = dark ? "#1a1916" : null;',
+      'const TONES = { slate: { dark: "#22262b" } };',
+    ]) {
+      assert.equal(colors(line), 1, line);
+    }
+    for (const line of [
+      '<a href="#feed">Feed</a>;',
+      'const label = "Order: #4521";',
+      '<p title={"Order: #4521"}>Order #4521</p>;',
+      'const color = "#12345";',
+      'navigate({ to: "#add" });',
+    ]) {
+      assert.equal(colors(line), 0, line);
     }
   });
 

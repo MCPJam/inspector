@@ -142,13 +142,40 @@ function stripComments(text) {
     .replace(/(^|[^:"'`])\/\/[^\n]*/gm, "$1");
 }
 
+const HEX = "#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})(?![\\w-])";
+
 /**
- * A hex color where a value starts: after a quote, a bracket (`bg-[#fff]`),
- * or a colon or comma. Not after a bare space, so prose such as
- * "order #4521" does not count.
+ * A hex color in a string whose role is a color, alone or after a space
+ * (`"1px solid #e4e4e7"`).
  */
-const HEX_COLOR =
-  /(?<=["'`([]|[:,]\s*)#(?:[0-9a-fA-F]{8}|[0-9a-fA-F]{6}|[0-9a-fA-F]{3,4})\b/g;
+const HEX_VALUE = new RegExp(`(?<![^\\s(,:[_])${HEX}`, "g");
+
+/** A string that is one hex color and nothing else. */
+const HEX_ONLY = new RegExp(`^\\s*${HEX}\\s*$`);
+
+/**
+ * A hex color in any string where CSS or Tailwind holds it: a Tailwind
+ * arbitrary value (`bg-[#fff]`) or a color-bearing CSS declaration
+ * (`border: 1px solid #ccc`, `--host-bg: #000`).
+ */
+const HEX_IN_CSS = new RegExp(
+  `(?:[[_]|(?:^|[\\s;{])(?:--[\\w-]+|[a-z-]*(?:color|background|border|fill|stroke|shadow|outline)[a-z-]*)\\s*:[^;:]*?)${HEX}`,
+  "g",
+);
+
+/** Words in a prop, property or variable name that say it holds colors or classes. */
+const COLOR_WORDS = new Set(
+  "color colors colour colours fill stroke background bg fg foreground border shadow outline ring tint accent palette theme style styles class gradient stop glow hue".split(
+    " ",
+  ),
+);
+
+/** Words in a name that say a `#...` value is a link, an id or a label. */
+const NOT_COLOR_WORDS = new Set(
+  "href to id hash anchor target key label title alt placeholder path url link route selector".split(
+    " ",
+  ),
+);
 
 /**
  * A color function with a literal first channel; `hsl(var(--x))` is a token.
@@ -172,6 +199,58 @@ const HOST_PALETTE_PATH =
 
 const isClientColorCode = (path) =>
   CLIENT_PATH.test(path) && !HOST_PALETTE_PATH.test(path);
+
+/**
+ * The lower-case words of the names a string is assigned to (`termBg` gives
+ * `term`, `bg`), from the nearest name out to its statement.
+ */
+function roleWords(node) {
+  const ts = typescript();
+  const words = [];
+  for (let at = node.parent; at && !ts.isStatement(at); at = at.parent) {
+    if (ts.isFunctionLike(at) || ts.isSourceFile(at)) break;
+    const name =
+      ts.isPropertyAssignment(at) ||
+      ts.isJsxAttribute(at) ||
+      ts.isVariableDeclaration(at) ||
+      ts.isParameter(at)
+        ? at.name
+        : ts.isBinaryExpression(at) &&
+            at.operatorToken.kind === ts.SyntaxKind.EqualsToken
+          ? at.left
+          : undefined;
+    if (!name) continue;
+    const spaced = name.getText().replace(/([a-z\d])([A-Z])/g, "$1 $2");
+    words.push(...spaced.toLowerCase().split(/[^a-z\d]+/).filter(Boolean));
+  }
+  return words;
+}
+
+/**
+ * Literal colors in the strings and template text of a JS/TS/JSX/TSX file.
+ * Comments and JSX text are prose, so "order #4521" there never counts. A
+ * hex counts where CSS holds it, in a string whose name says it holds colors
+ * or classes, or as a whole string unless its name says it is a link, an id
+ * or a label, so `href="#feed"` and `"Order: #4521"` do not count.
+ */
+function countColorLiterals(path, text) {
+  const ts = typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!ts.isStringLiteralLike(node) && !ts.isTemplateLiteralToken(node)) {
+      return;
+    }
+    const value = node.text;
+    const words = roleWords(node);
+    if (words.some((word) => COLOR_WORDS.has(word))) {
+      count += countMatches(value, HEX_VALUE);
+    } else if (HEX_ONLY.test(value)) {
+      if (!words.some((word) => NOT_COLOR_WORDS.has(word))) count += 1;
+    } else count += countMatches(value, HEX_IN_CSS);
+    count += countMatches(value, COLOR_FUNCTION);
+  });
+  return count;
+}
 
 export const RULES = [
   {
@@ -234,13 +313,10 @@ export const RULES = [
   {
     id: "client-color-literal",
     label:
-      "literal hex / `rgb()` / `hsl()` / `oklch()` colors in the inspector client",
+      "literal hex / `rgb()` / `hsl()` / `oklch()` colors in inspector client JS/TS (stylesheets are not read)",
     appliesTo: isClientColorCode,
     fix: "Use a role token from DESIGN.md: a Tailwind utility such as `bg-card`, `text-muted-foreground` or `border-border`, or `var(--success)` where a style object or SVG attribute needs a value. A color with no role goes into `design-system/src/tokens.css` first (then `npm run design:sync`).",
-    count: (text) => {
-      const code = stripComments(text);
-      return countMatches(code, HEX_COLOR) + countMatches(code, COLOR_FUNCTION);
-    },
+    count: (text, path) => countColorLiterals(path, text),
   },
   {
     id: "client-palette-class",
