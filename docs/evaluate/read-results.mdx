@@ -138,9 +138,15 @@ Once a pair's run has finished, a line under the findings compares it with the p
 
 The matrix has one row per case and one column per client and model. Each column header shows "x/y iters passed", the p95 latency and the cost.
 
-- **Results** shows each cell's verdict (Pass, Fail, Running or Cancelled) and passed count. **Metrics** shows P50, P95, average tokens and average tool calls instead.
-- "Find a test case…" filters by name; the **Status** filter keeps Failures, Passed, Pending or Cancelled.
-- Click a case name to edit the case. Click a cell to list its iterations, then click one to open its report.
+- **Results and Metrics views**
+  - **Results** shows each cell's verdict (Pass, Fail, Running or Cancelled) and passed count.
+  - **Metrics** shows P50, P95, average tokens and average tool calls instead.
+- **Filters**
+  - "Find a test case…" filters by name.
+  - The **Status** filter keeps Failures, Passed, Pending or Cancelled.
+- **Drilling in**
+  - Click a case name to edit the case.
+  - Click a cell to list its iterations, then click one to open its report.
 
 {/* Screenshot: results matrix with the Results view on, the Status filter set to Failures, and one cell's sheet open listing three iterations */}
 

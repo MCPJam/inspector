@@ -15,13 +15,14 @@ A run executes every case in a suite once per iteration, on each client and mode
 | Clients and models | The pairs saved on the suite. You can change them for one run in the **Set up run** sheet. |
 | Model access | MCPJam credits, or a model from your own provider. See [What a run can access](/evaluate/what-a-run-can-access). |
 | Eval iterations | Your organization's eval iteration allowance. Every iteration counts against it. |
+| MCPJam identity | CLI and SDK runs need an MCPJam login or an `sk_` API key, even when the model runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data). |
 
 A suite saved without clients, such as one created by the SDK, shows a **Servers** picker in the sheet instead. Pick the server group the run should use; the suite itself is not changed.
 
 ## Start a run
 
 <Warning>
-  Every iteration calls a real model and a real server. Hosted runs spend your organization's MCPJam credits or its provider keys, local and SDK runs spend the provider key you export, and the model's tool calls reach your server with the credentials it is given.
+  Every iteration calls a real model and a real server. Hosted runs spend your organization's MCPJam credits or its provider keys, local and SDK runs spend the provider key you export, and the model's tool calls reach your server with the credentials it is given. A run's size is cases × iterations per case × client/model pairs; the **Set up run** sheet shows that total before you start.
 </Warning>
 
 <Tabs>

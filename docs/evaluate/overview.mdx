@@ -1,12 +1,10 @@
 ---
 title: "Overview"
-description: "Test how real models use your MCP server: which tools they call, with what arguments, and whether the user's request was met."
+description: "Test that users get what they ask for from your MCP server, across clients, with a real agent and model in the loop."
 icon: "flask-conical"
 ---
 
-An eval sends a real prompt to a real model connected to your MCP server, records what the model does, and checks it: which tools it called, the arguments it passed, and whether the user's request was satisfied.
-
-One scenario is a case. A suite groups cases and runs them against the clients and models you pick, so you see where each model gets your server right and where it doesn't.
+An eval is an end-to-end test of your MCP server from the user's side. Given a user prompt, it sends the request through a real client, its agent harness and a model you pick, to your server and back, then checks whether the outcome you expected happened.
 
 <Frame caption="Stages are checked in order, and the first one that fails points at a likely owner.">
   <img className="block dark:hidden" src="/images/evaluate/user-value-chain-light.svg" alt="Six stages, connection to user value, with a break marked at selection and the likely owner under each stage" width="760" />
@@ -14,12 +12,23 @@ One scenario is a case. A suite groups cases and runs them against the clients a
 </Frame>
 
 <Note>
-This section is for testing how models use your server. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
+Evals test what a user gets end to end. To call tools by hand, use the [Playground](/inspector/playground). To check your server against the MCP spec, use the [CLI conformance commands](/cli/overview#local-mcp-testing).
 </Note>
+
+## What is an eval for an MCP server?
+
+Your server never meets a user directly. A user types into a client; the client's harness hands the prompt and your tools to a model; the model decides what to call; your server answers; the model writes the reply. An eval runs that whole path and asks one question: given this prompt, did the user get what they asked for?
+
+- **Case**: one user prompt, or a short conversation, plus the outcome you expect.
+  - Example: given "What does note 7 say?", the reply contains note 7's text.
+- **Client**: the MCP client configuration the run emulates, such as a desktop chat app or an IDE agent.
+- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results.
+- **Model**: any model you pick, from MCPJam or your own provider.
+- **Suite**: a group of cases, run on each client and model pair you choose, several times each.
 
 ## What an eval checks
 
-MCPJam grades every iteration along six stages, in order, and reports the first stage that failed. That points at a likely owner: the connection, the server's tool catalog, the model's choice, or the server's answer.
+The [user-value chain](/sdk/concepts/user-value-chain) breaks a request into six stages, from the client reaching your server to the user getting what they asked for. Together they define what a successful request looks like. MCPJam grades every iteration along the chain and reports the first stage that failed, which points at a likely owner: the connection, your tool catalog, the model's choice, or your server's answer.
 
 | Stage | The question it answers |
 |---|---|
@@ -30,13 +39,22 @@ MCPJam grades every iteration along six stages, in order, and reports the first 
 | Response | Did the server return data the model could use? |
 | User value | Was the user's actual request satisfied? |
 
-[The user-value chain](/sdk/concepts/user-value-chain) lists which checks file at each stage.
+Which tool was called, and with what arguments, are stages on the way. The last stage is the point: was the user's request met.
 
 ## When to use evals
 
-- Catch routing regressions: after you change a tool's description or input schema, rerun the suite. The run page counts cases regressed and fixed since the previous run.
-- Compare models: run one suite across several client and model pairs. Results are broken out per pair, so a case that fails on only one model stands out.
-- Gate releases: run a suite in CI and fail the build when it doesn't pass. See [Run evals in CI](/evaluate/run-evals-in-ci).
+- **Verify value end to end**
+  - Check that real requests, through real clients and models, get users what they asked for.
+  - Unit tests stop at your server's edge; evals include the client, harness and model.
+- **Catch regressions before users do**
+  - Rerun the suite after you change a tool's name, description, schema or output.
+  - The run page counts cases regressed and fixed since the previous run.
+- **Compare clients and models**
+  - Run one suite across several client and model pairs.
+  - Results are broken out per pair, so a case that fails on one pair stands out.
+- **Gate releases**
+  - Run a suite in CI and fail the build when it doesn't pass.
+  - See [Run evals in CI](/evaluate/run-evals-in-ci).
 
 ## Where to run evals
 
@@ -114,13 +132,19 @@ Pick the surface by where you want the suite to live.
 
 Suites created from a suite file or the SDK carry a **CI** badge in the app; change them in code, not in the app.
 
-<Info>
-  Current CLI and SDK versions need an MCPJam login or an `sk_` API key for every eval, including runs on your own provider key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
-</Info>
+## Next steps
 
-<Warning>
-Evals call real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. A run's size is cases × iterations per case × client/model pairs; the Inspector's run sheet shows that total before you start.
-</Warning>
+<CardGroup cols={3}>
+  <Card title="Run your first eval" icon="play" href="/evaluate/run-your-first-eval">
+    Generate cases from a connected server and run them.
+  </Card>
+  <Card title="How evals work" icon="workflow" href="/evaluate/how-evals-work">
+    Suites, cases, runs and iterations, and how a verdict is reached.
+  </Card>
+  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
+    Write a case by hand when generated ones miss a behavior.
+  </Card>
+</CardGroup>
 
 ## Example suites
 
@@ -135,19 +159,5 @@ Copy one of these to start a suite in code or in a file.
   </Card>
   <Card title="Suite file quick start" icon="file-code" href="/cli/local-evals#quick-start">
     A two-case YAML suite for a notes server, run with `mcpjam test`.
-  </Card>
-</CardGroup>
-
-## Next steps
-
-<CardGroup cols={3}>
-  <Card title="Run your first eval" icon="play" href="/evaluate/run-your-first-eval">
-    Generate cases from a connected server and run them.
-  </Card>
-  <Card title="How evals work" icon="workflow" href="/evaluate/how-evals-work">
-    Suites, cases, runs and iterations, and how a verdict is reached.
-  </Card>
-  <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
-    Write a case by hand when generated ones miss a behavior.
   </Card>
 </CardGroup>

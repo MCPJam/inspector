@@ -8,9 +8,12 @@ In about five minutes you create a suite from a connected server, generate cases
 
 ## Before you start
 
-- In the Inspector, sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
-- In the Inspector, connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
-- For the CLI or SDK, have a model provider key, such as `ANTHROPIC_API_KEY`, and an MCPJam login or `sk_` API key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
+- **Inspector**
+  - Sign in to MCPJam. As a guest, the **Generate test cases** dialog asks you to sign in; you can still add cases by hand.
+  - Connect at least one server to your project. See [Connecting servers](/inspector/connecting-servers).
+- **CLI or SDK**
+  - Have a model provider key, such as `ANTHROPIC_API_KEY`.
+  - Have an MCPJam login or `sk_` API key. See [eval identity](/cli/local-evals#eval-identity-and-local-data).
 
 <Warning>
   A run calls real models. Each iteration spends MCPJam credits when MCPJam serves the model, or tokens on your provider account when you bring your own key. One model and one iteration per case keeps a first run small.
@@ -39,8 +42,13 @@ In about five minutes you create a suite from a connected server, generate cases
       <Step title="Review the generated cases">
         Drafts appear under "Review generated cases" as they are written. A draft is not in your suite, and won't run, until you add it.
 
-        - Keep cases whose prompt reads like something a real user would type. Remove the rest, or fix a prompt's wording under **Review case**.
-        - Keep at least one case where the right answer uses no tool. The quick set includes some; open one with **Review case** and check that it says **No tool should be called**. Without one, the suite can't catch a model calling tools it shouldn't.
+        - **Keep realistic prompts**
+          - Keep cases whose prompt reads like something a real user would type.
+          - Remove the rest, or fix a prompt's wording under **Review case**.
+        - **Keep a no-tool case**
+          - Keep at least one case where the right answer uses no tool; the quick set includes some.
+          - Open one with **Review case** and check that it says **No tool should be called**.
+          - Without one, the suite can't catch a model calling tools it shouldn't.
 
         Click **Add to suite** on each case you keep, or **Add all to suite**. When every draft is handled, the page reads "Every generated case has been reviewed." Click **Back to** followed by your suite's name to return to the suite.
 

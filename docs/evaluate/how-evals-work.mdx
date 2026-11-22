@@ -18,7 +18,7 @@ An eval run sends each case's prompt to each model you picked, records what the 
 | Project | Holds your servers, clients and suites. See [Projects](/inspector/projects). |
 | Client | A saved MCP client configuration a run emulates. See [Clients](/inspector/clients). |
 | Suite | A set of cases plus the settings they share: servers, clients and models, evaluators, and the pass criterion. |
-| Case | One scenario: a user prompt, or several turns, and the evaluators that decide whether the model handled it. |
+| Case | A user prompt, or several turns, plus the evaluators that decide whether the expected outcome happened. |
 | Run | One execution of a suite against the clients and models chosen when it started. |
 | Iteration | One execution of one case on one client and model pair. |
 | Trace | The recorded evidence of an iteration: messages, tool calls, results, tokens and timing. |
@@ -128,8 +128,11 @@ await manager.disconnectServer("notes");
 
 A suite has one pass criterion, set under **Pass criteria** in **Suite settings**:
 
-- Suite accuracy: the share of all iterations in the run that passed must reach a percentage, 70% when unset.
-- Per-case pass rate: each case must pass at least a set share of its own iterations. One case falling short fails the run.
+- **Suite accuracy**
+  - The share of all iterations in the run that passed must reach a percentage, 70% when unset.
+- **Per-case pass rate**
+  - Each case must pass at least a set share of its own iterations.
+  - One case falling short fails the run.
 
 Under a per-case pass rate, a run that did not record enough gradeable iterations ends **Inconclusive** instead of passed or failed. [Configure grading](/evaluate/configure-grading) covers both criteria and their evidence requirements.
 
@@ -158,9 +161,13 @@ To compare against a different run, click **Compare runs** on the run page and p
 
 ## What drives cost
 
-- The number of iterations: cost scales with cases × iterations per case × client/model pairs.
-- The model work in each iteration: each round of tool calls is another model call, and every tool result is sent back to the model as input. Multi-turn cases and long tool results cost more.
-- Judges: each judge adds a model call for every iteration it grades.
+- **Number of iterations**
+  - Cost scales with cases × iterations per case × client/model pairs.
+- **Model work per iteration**
+  - Each round of tool calls is another model call, and every tool result goes back to the model as input.
+  - Multi-turn cases and long tool results cost more.
+- **Judges**
+  - Each judge adds a model call for every iteration it grades.
 
 Each column header in the results grid shows that client and model's cost.
 
@@ -172,7 +179,7 @@ Each column header in the results grid shows that client and model's cost.
 
 <CardGroup cols={3}>
   <Card title="Write a case" icon="pencil" href="/evaluate/write-a-case">
-    Prompts, routes and assertions for one scenario.
+    A user prompt, its expected outcome, and the assertions that check it.
   </Card>
   <Card title="Configure grading" icon="scale" href="/evaluate/configure-grading">
     Pass criteria, iterations, judges and evaluator roles.
