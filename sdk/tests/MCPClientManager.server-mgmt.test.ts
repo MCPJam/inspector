@@ -317,5 +317,23 @@ describe("MCPClientManager", () => {
 
       expect(manager.hasServer("to-remove")).toBe(false);
     }, 30000);
+
+    it("should wait for a connect queued at construction before handing over the client", async () => {
+      const built = new MCPClientManager({ queued: everythingServerConfig() });
+      try {
+        expect(built.getManagedClient("queued")).toBeUndefined();
+        const client = await built.ensureManagedClient("queued");
+        expect(client).toBeDefined();
+        expect(client).toBe(built.getManagedClient("queued"));
+      } finally {
+        await built.disconnectAllServers();
+      }
+    }, 30000);
+
+    it("should reject ensureManagedClient for a server it never registered", async () => {
+      await expect(manager.ensureManagedClient("missing")).rejects.toThrow(
+        'Unknown MCP server "missing".'
+      );
+    });
   });
 });

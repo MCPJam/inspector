@@ -19,7 +19,9 @@ import { listTools } from "../operations.js";
 import {
   MCP_LOG_LEVELS,
   type MCPClientCheckContext,
+  type MCPPassedAdvice,
   type MCPReadinessId,
+  type MCPReadinessOutcome,
   type MCPReadinessSpecStrength,
   type MCPReadinessWarning,
   type MCPServerSurfaceSnapshot,
@@ -84,6 +86,39 @@ function informational(
   };
 }
 
+/**
+ * Advice that applied to this server and found nothing to change. A probe
+ * returns undefined instead when the advice did not apply (wrong era, nothing
+ * to look at, a probe that could not complete), so a pass is never claimed
+ * for advice the run did not actually check.
+ */
+function passed(
+  id: MCPReadinessId,
+  specStrength: MCPReadinessSpecStrength
+): MCPPassedAdvice {
+  return { id, title: READINESS_CATALOG[id].title, specStrength };
+}
+
+function isWarning(
+  outcome: MCPReadinessOutcome
+): outcome is MCPReadinessWarning {
+  return "severity" in outcome;
+}
+
+/** Split probe outcomes into the result's `readiness` and `passedAdvice`. */
+export function splitReadinessOutcomes(
+  outcomes: readonly MCPReadinessOutcome[]
+): {
+  readiness: MCPReadinessWarning[];
+  passedAdvice?: MCPPassedAdvice[];
+} {
+  const readiness = outcomes.filter(isWarning);
+  const passedAdvice = outcomes.filter(
+    (outcome): outcome is MCPPassedAdvice => !isWarning(outcome)
+  );
+  return passedAdvice.length > 0 ? { readiness, passedAdvice } : { readiness };
+}
+
 /** Whether the run asked for this advice: all of it, unless `readinessIds` narrows it. */
 function adviceSelected(
   config: { readinessIds?: readonly MCPReadinessId[] },
@@ -92,12 +127,15 @@ function adviceSelected(
   return config.readinessIds === undefined || config.readinessIds.includes(id);
 }
 
-function toolOrderWarning(
+function toolOrderAdvice(
   first: string[],
   second: string[]
-): MCPReadinessWarning | undefined {
-  if (first.length === 0 || first.join("\u0000") === second.join("\u0000")) {
+): MCPReadinessOutcome | undefined {
+  if (first.length === 0) {
     return undefined;
+  }
+  if (first.join("\u0000") === second.join("\u0000")) {
+    return passed("readiness-tool-order-deterministic", "SHOULD");
   }
 
   // The spec asks for the same order only "when the underlying set of tools
@@ -122,10 +160,10 @@ function toolOrderWarning(
  * over every tool. They first appear in 2025-11-25, so an older negotiated
  * revision gets no advice. Informational until advice has a grading rubric.
  */
-function toolNameConventionsWarning(
+function toolNameConventionsAdvice(
   ctx: MCPClientCheckContext,
   tools: Tool[]
-): MCPReadinessWarning | undefined {
+): MCPReadinessOutcome | undefined {
   if (
     ctx.config.era !== "modern" &&
     negotiatedBefore(ctx, "2025-11-25") !== false
@@ -138,6 +176,9 @@ function toolNameConventionsWarning(
   const names = tools
     .map((tool) => tool.name as unknown)
     .filter((name): name is string => typeof name === "string");
+  if (names.length === 0) {
+    return undefined;
+  }
   const unique = [...new Set(names)];
   const badLength = unique.filter(
     (name) => name.length < 1 || name.length > 128
@@ -164,7 +205,7 @@ function toolNameConventionsWarning(
   ].filter((problem): problem is string => problem !== null);
 
   if (problems.length === 0) {
-    return undefined;
+    return passed("readiness-tool-name-conventions", "SHOULD");
   }
 
   return informational(
@@ -201,11 +242,13 @@ function negotiatedBefore(
   return negotiated < revision;
 }
 
-function deprecatedFeatureWarning(
+function deprecatedFeatureAdvice(
   ctx: MCPClientCheckContext,
   capabilities: Record<string, unknown>
-): MCPReadinessWarning | undefined {
+): MCPReadinessOutcome | undefined {
   const findings: string[] = [];
+  // A legacy run with no date-shaped revision has nothing to compare.
+  const legacyRevisionOlder = negotiatedBefore(ctx, "2025-11-25");
 
   if (ctx.config.era === "modern") {
     for (const { key, advice } of DEPRECATED_MODERN_CAPABILITIES) {
@@ -223,14 +266,16 @@ function deprecatedFeatureWarning(
         "resources.subscribe advertises the removed resources/subscribe flow; modern clients subscribe through subscriptions/listen"
       );
     }
-  } else if (negotiatedBefore(ctx, "2025-11-25") === true) {
+  } else if (legacyRevisionOlder === undefined) {
+    return undefined;
+  } else if (legacyRevisionOlder) {
     findings.push(
       `the negotiated revision ${ctx.initializationInfo?.protocolVersion} is superseded; newer clients negotiate a later revision`
     );
   }
 
   if (findings.length === 0) {
-    return undefined;
+    return passed("readiness-deprecated-feature-use", "Deprecation Notice");
   }
 
   return warning(
@@ -243,23 +288,32 @@ function deprecatedFeatureWarning(
 
 /**
  * Readiness advice observable from the client session, collected while the
- * connection is still open. Any failure here is swallowed: readiness is
- * advisory, so a probe that cannot run must never disturb the run.
+ * connection is still open: the warnings and the advice that passed. Any
+ * failure here is swallowed: readiness is advisory, so a probe that cannot run
+ * must never disturb the run.
  */
-export async function collectClientReadiness(
+export async function collectClientAdvice(
   ctx: MCPClientCheckContext,
   surface: MCPServerSurfaceSnapshot
-): Promise<MCPReadinessWarning[]> {
-  const warnings: MCPReadinessWarning[] = [];
+): Promise<MCPReadinessOutcome[]> {
+  const warnings: MCPReadinessOutcome[] = [];
 
-  if (adviceSelected(ctx.config, "readiness-tool-order-deterministic")) {
+  // The deterministic-order SHOULD first appears in 2026-07-28; the 2025 tools
+  // pages say nothing about order, so an older run gets no advice and no
+  // repeat listing.
+  if (
+    ctx.config.era === "modern" &&
+    adviceSelected(ctx.config, "readiness-tool-order-deterministic")
+  ) {
     try {
+      // Bypass the cache: a cached first listing would make any server look
+      // stable, and the advice can now be reported as met.
       const secondListing = await listTools(ctx.manager, {
         serverId: ctx.serverId,
         signal: ctx.config.signal,
         cacheMode: "bypass",
       });
-      const orderWarning = toolOrderWarning(
+      const orderWarning = toolOrderAdvice(
         surface.toolNames,
         secondListing.tools.map((tool) => tool.name)
       );
@@ -273,14 +327,14 @@ export async function collectClientReadiness(
   }
 
   if (adviceSelected(ctx.config, "readiness-tool-name-conventions")) {
-    const toolNameWarning = toolNameConventionsWarning(ctx, surface.tools);
+    const toolNameWarning = toolNameConventionsAdvice(ctx, surface.tools);
     if (toolNameWarning) {
       warnings.push(toolNameWarning);
     }
   }
 
   if (adviceSelected(ctx.config, "readiness-deprecated-feature-use")) {
-    const deprecated = deprecatedFeatureWarning(
+    const deprecated = deprecatedFeatureAdvice(
       ctx,
       surface.serverCapabilities ?? {}
     );
@@ -292,6 +346,14 @@ export async function collectClientReadiness(
   return warnings;
 }
 
+/** {@link collectClientAdvice}, warnings only. */
+export async function collectClientReadiness(
+  ctx: MCPClientCheckContext,
+  surface: MCPServerSurfaceSnapshot
+): Promise<MCPReadinessWarning[]> {
+  return (await collectClientAdvice(ctx, surface)).filter(isWarning);
+}
+
 /**
  * Explicit session termination is advice on both sides of the era line: the
  * 2025 revisions say clients SHOULD send a DELETE when abandoning a session
@@ -299,9 +361,9 @@ export async function collectClientReadiness(
  * 2026 revision says stray GET/DELETE traffic from older clients SHOULD get
  * 405 Method Not Allowed.
  */
-async function sessionTerminationWarning(
+async function sessionTerminationAdvice(
   ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
+): Promise<MCPReadinessOutcome | undefined> {
   if (ctx.config.era === "modern") {
     // The obligation is about "traffic from an older client", so the probes
     // have to LOOK like one: a 2025 protocol pin and a session id, which the
@@ -341,7 +403,12 @@ async function sessionTerminationWarning(
       ...(del && del.status !== 405 ? [`DELETE got HTTP ${del.status}`] : []),
     ];
     if (offenders.length === 0) {
-      return undefined;
+      // A pass needs both answers: one probe that never completed leaves
+      // half the clause unchecked. An observed violation is still reported
+      // below even when the other probe failed.
+      return get && del
+        ? passed("readiness-session-termination", "SHOULD")
+        : undefined;
     }
     return warning(
       "readiness-session-termination",
@@ -379,7 +446,7 @@ async function sessionTerminationWarning(
     (deleteResult.status >= 200 && deleteResult.status < 300) ||
     deleteResult.status === 405
   ) {
-    return undefined;
+    return passed("readiness-session-termination", "SHOULD");
   }
 
   return warning(
@@ -414,9 +481,9 @@ async function sessionTerminationWarning(
  * The sibling `modern-missing-method-header-rejected` IS a check: `Mcp-Method`
  * has no carve-out, and the reference implementation rejects without it.
  */
-async function protocolVersionHeaderWarning(
+async function protocolVersionHeaderAdvice(
   ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
+): Promise<MCPReadinessOutcome | undefined> {
   if (ctx.config.era !== "modern") {
     // The header does not exist before 2026-07-28; advising about its absence
     // on a 2025 wire would invent a requirement.
@@ -441,8 +508,14 @@ async function protocolVersionHeaderWarning(
     timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
   });
 
+  if (result.status === 400) {
+    // Rejected with the 400 Bad Request SEP-2243 names: the strict reading,
+    // and unobjectionable.
+    return passed("readiness-protocol-version-header-required", "SHOULD");
+  }
   if (result.status >= 400 || jsonRpcError(result)) {
-    // Rejected: the strict reading, and unobjectionable.
+    // Some other failure (auth, upstream, an unrelated JSON-RPC error) says
+    // nothing about the missing header either way.
     return undefined;
   }
 
@@ -469,9 +542,9 @@ async function protocolVersionHeaderWarning(
  * advice's own `logLevelFilteringProbe`) is supplied: no metadata says which
  * tool logs, and advice never calls a tool on a guess.
  */
-async function logLevelFilteringWarning(
+async function logLevelFilteringAdvice(
   ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning | undefined> {
+): Promise<MCPReadinessOutcome | undefined> {
   const probe = ctx.config.logLevelFilteringProbe ?? ctx.config.logProbe;
   if (ctx.config.era !== "modern" || !probe) {
     return undefined;
@@ -527,7 +600,7 @@ async function logLevelFilteringWarning(
       !known.includes(found) || known.indexOf(found) < known.indexOf(level)
   );
   if (invalidOrLowerLevels.length === 0) {
-    return undefined;
+    return passed("readiness-log-level-filtering", "MAY");
   }
   return informational(
     "readiness-log-level-filtering",
@@ -541,18 +614,19 @@ async function logLevelFilteringWarning(
   );
 }
 
-export async function collectRawReadiness(
+/** Raw-wire advice: the warnings and the advice that passed. */
+export async function collectRawAdvice(
   ctx: RawHttpCheckContext
-): Promise<MCPReadinessWarning[]> {
+): Promise<MCPReadinessOutcome[]> {
   const probes: Array<
-    [MCPReadinessId, () => Promise<MCPReadinessWarning | undefined>]
+    [MCPReadinessId, () => Promise<MCPReadinessOutcome | undefined>]
   > = [
-    ["readiness-session-termination", () => sessionTerminationWarning(ctx)],
+    ["readiness-session-termination", () => sessionTerminationAdvice(ctx)],
     [
       "readiness-protocol-version-header-required",
-      () => protocolVersionHeaderWarning(ctx),
+      () => protocolVersionHeaderAdvice(ctx),
     ],
-    ["readiness-log-level-filtering", () => logLevelFilteringWarning(ctx)],
+    ["readiness-log-level-filtering", () => logLevelFilteringAdvice(ctx)],
   ];
   // An advice left out never sends its probe, not just its result.
   const settled = await Promise.allSettled(
@@ -563,4 +637,11 @@ export async function collectRawReadiness(
   return settled.flatMap((outcome) =>
     outcome.status === "fulfilled" && outcome.value ? [outcome.value] : []
   );
+}
+
+/** {@link collectRawAdvice}, warnings only. */
+export async function collectRawReadiness(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning[]> {
+  return (await collectRawAdvice(ctx)).filter(isWarning);
 }

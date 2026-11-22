@@ -911,6 +911,20 @@ export class MCPClientManager {
   }
 
   /**
+   * {@link getManagedClient} once the server's connection attempt is done.
+   * A manager built with servers queues their connects, so a read right
+   * after construction can find the attempt still running. Rejects when the
+   * connection fails, as `listTools` would.
+   */
+  async ensureManagedClient(
+    serverId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<import("./managed-mcp-client.js").ManagedMcpClient | undefined> {
+    await this.ensureConnected(serverId, options?.signal);
+    return this.getManagedClient(serverId);
+  }
+
+  /**
    * Gets initialization information for a connected server.
    */
   getInitializationInfo(serverId: string) {
@@ -1581,9 +1595,24 @@ export class MCPClientManager {
         request,
         baseCallParams
       );
+      // Signal + timeout only: the schema lookup must honor the caller's abort
+      // and deadline, but must NOT inherit the call's progress handler (a
+      // `tools/list` is not the operation the caller is tracking).
+      const schemaLookupOptions = {
+        ...(signal ? { signal } : {}),
+        ...(request.request?.timeout !== undefined
+          ? { timeout: request.request.timeout }
+          : {}),
+      };
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
+        await this.assertToolAcceptsTaskCalls(
+          serverId,
+          client,
+          toolName,
+          schemaLookupOptions
+        );
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
         // 2025-11-25 puts the task opt-in in request **params**, not in
@@ -1615,15 +1644,6 @@ export class MCPClientManager {
         };
       }
 
-      // Signal + timeout only: the schema lookup must honor the caller's abort
-      // and deadline, but must NOT inherit the call's progress handler (a
-      // `tools/list` is not the operation the caller is tracking).
-      const schemaLookupOptions = {
-        ...(signal ? { signal } : {}),
-        ...(request.request?.timeout !== undefined
-          ? { timeout: request.request.timeout }
-          : {}),
-      };
       // `mirrorToolParamHeaders: false` (host config `toolParamHeaderMirroring:
       // "omit"`) simulates a client that never sends `Mcp-Param-*`. Upstream
       // `callTool` mirrors internally with no disable knob, so the suppression
@@ -2801,6 +2821,55 @@ export class MCPClientManager {
         wire
       );
     }
+    // The legacy wire resolves from ANY of `tasks.list`/`cancel`/`requests`,
+    // but only `tasks.requests.tools.call` lets a client call a tool as a
+    // task (2025-11-25 tasks.mdx:113, a MUST NOT whatever the tool's own
+    // `taskSupport` says). Same typed error, so routes keep answering 400.
+    if (!this.supportsTasksForToolCalls(serverId)) {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" did not declare tasks.requests.tools.call; refusing to send a task-augmented tools/call.`,
+        wire
+      );
+    }
+  }
+
+  /**
+   * 2025-11-25 tasks.mdx:115: a tool whose `execution.taskSupport` is missing
+   * or "forbidden" MUST NOT be called as a task. The tool's definition comes
+   * from the same `tools/list` lookup the unmirrored-definition path uses. A
+   * failed lookup throws to the caller: without the definition the call cannot
+   * be shown to be allowed, so nothing is sent. The lookup gets the server's
+   * configured timeout when the caller sets none, like the task call itself.
+   */
+  private async assertToolAcceptsTaskCalls(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<void> {
+    const list = await client.listTools(
+      undefined,
+      this.withTimeout(serverId, options)
+    );
+    const tool = list.tools.find((candidate) => candidate.name === toolName);
+    const execution = (tool as { execution?: unknown } | undefined)?.execution;
+    const support =
+      execution !== null &&
+      typeof execution === "object" &&
+      typeof (execution as { taskSupport?: unknown }).taskSupport === "string"
+        ? (execution as { taskSupport: string }).taskSupport
+        : undefined;
+    if (support === "required" || support === "optional") return;
+    const why =
+      tool === undefined
+        ? "is not listed by the server, so its taskSupport is unknown"
+        : support === undefined
+          ? "has no taskSupport"
+          : `has taskSupport ${JSON.stringify(support)}`;
+    throw new MCPTasksWireError(
+      `Tool ${JSON.stringify(toolName)} on server "${serverId}" ${why}; refusing to send a task-augmented tools/call.`,
+      "legacy"
+    );
   }
 
   // ===========================================================================
