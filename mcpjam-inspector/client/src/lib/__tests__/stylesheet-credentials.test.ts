@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { containsCredential } from "../../../../shared/credential-urls";
@@ -62,7 +62,8 @@ function cssUrls(file: string): CssUrl[] {
     ? /(?<![\w$.])url\(([^)\n]*)/gi
     : /(?<![\w$.])url\(([^)\n]*)/g;
   return [...text.matchAll(pattern)].map((match) => ({
-    file: relative(repoRoot, file),
+    // In the forward-slash form DYNAMIC_URL_SITES is keyed by, on Windows too.
+    file: relative(repoRoot, file).split(sep).join("/"),
     argument: (match[1] ?? "").trim().replace(/^["'`]/, ""),
   }));
 }
