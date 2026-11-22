@@ -51,6 +51,10 @@ node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only
   `--skip-prepare` only when `npm run bundle:all -w @mcpjam/inspector` has
   run in this worktree: without the bundles the server crashes, and under
   `tsx watch` a crash waits silently instead of exiting.
+- The shipped allowlist is tuned on `dev:hosted` (the same launcher with
+  hosted mode on). Under `dev:worktree` the app also probes Ollama at
+  `127.0.0.1:11434`, which reports `request-failed` when Ollama is not
+  running; that is the environment, not your change.
 
 Steps are JSON. Each step names one action: `goto`, `click`, `hover`,
 `fill` (with `value`), `press` (a key, with optional `on`), `waitFor`
