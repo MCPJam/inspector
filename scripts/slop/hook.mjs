@@ -237,6 +237,10 @@ function withoutStepSummary(env) {
 }
 
 function runStop(input) {
+  return Math.max(runRatchet(input), driverRunReminder(input));
+}
+
+function runRatchet(input) {
   // Second stop in a row: the agent already saw the report once. Let it end
   // the turn rather than loop on something that needs a human waiver.
   if (input.stop_hook_active) return 0;
@@ -273,9 +277,7 @@ function runStop(input) {
 
 function main() {
   const input = JSON.parse(readFileSync(0, "utf8"));
-  if (input.hook_event_name === "Stop") {
-    return Math.max(runStop(input), driverRunReminder(input));
-  }
+  if (input.hook_event_name === "Stop") return runStop(input);
   if (input.hook_event_name === "UserPromptSubmit") {
     return runPromptSubmit(input);
   }
