@@ -183,6 +183,30 @@ describe("rules", () => {
     assert.equal(count(forOf, path)["client-timer"], 0);
   });
 
+  it("reads a regex literal after an if condition as a regex", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const regex = "if (enabled) /setTimeout(foo)/.test(source);";
+    assert.equal(count(regex, path)["client-timer"], 0);
+    const call = "if (enabled) setTimeout(foo, 0);";
+    assert.equal(count(call, path)["client-timer"], 1);
+  });
+
+  it("counts a timer on a line whose JSX text holds an apostrophe", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const jsx =
+      "const v = <p>Don't <button onClick={() => setTimeout(open, 1)}>Go</button></p>;";
+    assert.equal(count(jsx, path)["client-timer"], 1);
+    const text = "const v = <p>Don't setTimeout(open, 1) yet</p>;";
+    assert.equal(count(text, path)["client-timer"], 0);
+  });
+
+  it("does not count a catch written inside a string", () => {
+    const inString = 'const example = "try { a(); } catch { /* why */ }";';
+    assert.equal(count(inString)["comment-only-catch"], 0);
+    const inCode = "try { a(); } catch { /* why */ }";
+    assert.equal(count(inCode)["comment-only-catch"], 1);
+  });
+
   it("counts a comment-only catch whose binding holds a dollar sign", () => {
     const counts = count("try { a(); } catch ($error) { /* ignored */ }");
     assert.equal(counts["comment-only-catch"], 1);
