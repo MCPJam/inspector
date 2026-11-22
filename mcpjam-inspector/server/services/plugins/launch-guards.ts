@@ -95,22 +95,20 @@ export async function checkPluginLaunch(
   // the spawn searches the system default, which only it knows.
   const searchPath = launch.env.PATH ?? process.env.PATH;
   if (searchPath === undefined) return null;
-  const dirs = searchPath.split(path.delimiter);
+  let dirs = searchPath.split(path.delimiter);
   let names = [command];
   if (windows) {
-    // The stdio transport spawns through cross-spawn, which on Windows looks
-    // in the working directory first and finds `uvx` as `uvx.exe` or
-    // `uvx.cmd` by trying each PATHEXT suffix.
-    dirs.unshift(real);
-    const suffixes = (
-      launch.env.PATHEXT ??
-      process.env.PATHEXT ??
-      ".COM;.EXE;.BAT;.CMD"
-    ).split(";");
-    names = [
-      ...(command.includes(".") ? [command] : []),
-      ...suffixes.map((suffix) => command + suffix),
+    // The stdio transport spawns through cross-spawn 7, whose `which` 2 looks
+    // in the working directory first, drops the quotes around a quoted PATH
+    // entry, and finds `uvx` as `uvx.exe` or `uvx.cmd` by trying each suffix
+    // of this process's PATHEXT. When no suffix matches it retries the bare
+    // name, which is how it runs an extensionless shebang script.
+    dirs = [
+      real,
+      ...dirs.map((dir) => (/^".*"$/.test(dir) ? dir.slice(1, -1) : dir)),
     ];
+    const suffixes = (process.env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";");
+    names = [...suffixes.map((suffix) => command + suffix), command];
   }
   for (const dir of dirs) {
     for (const name of names) {

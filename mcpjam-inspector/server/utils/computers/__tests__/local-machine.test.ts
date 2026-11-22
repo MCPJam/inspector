@@ -6,6 +6,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, normalize, sep } from "node:path";
 
@@ -25,9 +26,11 @@ import {
   isLocalComputerEngineAvailable,
   localBashRunner,
   resetLocalBashPathCacheForTests,
+  resolveLocalBashPath,
   runLocalComputerCommand,
   validateLocalProjectKey,
 } from "../local-machine.js";
+import { MSYS_COMMAND_ID_ENV } from "../msys-process-tree.js";
 
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
@@ -154,6 +157,51 @@ describe("localBashRunner", () => {
     });
     expect(result.exitCode).not.toBe(0);
   });
+
+  // Asks the MSYS bash whether a pid from `$!` is still running.
+  const msysPidAlive = (pid: string) =>
+    spawnSync(resolveLocalBashPath()!, ["-c", `kill -0 ${pid}`]).status === 0;
+
+  it.runIf(process.platform === "win32")(
+    "returns and ends a descendant that outlives the shell and holds its output",
+    async () => {
+      const started = Date.now();
+      const result = await localBashRunner({
+        sandboxId: "local-machine",
+        command: "sleep 60 & echo $!",
+        timeoutMs: 500,
+      });
+      expect(Date.now() - started).toBeLessThan(10_000);
+      expect(result.exitCode).toBe(124);
+      const pid = result.stdout.trim();
+      expect(pid).toMatch(/^\d+$/);
+      expect(msysPidAlive(pid)).toBe(false);
+    },
+    20_000,
+  );
+
+  it.runIf(process.platform === "win32")(
+    "returns at the deadline when a descendant escapes termination",
+    async () => {
+      // Scrubbing the command id hides this sleep from the reaper, the case
+      // where termination cannot reach a pipe holder.
+      const started = Date.now();
+      const result = await localBashRunner({
+        sandboxId: "local-machine",
+        command: `env -u ${MSYS_COMMAND_ID_ENV} sleep 60 & echo $!`,
+        timeoutMs: 500,
+      });
+      const pid = result.stdout.trim();
+      try {
+        expect(Date.now() - started).toBeLessThan(10_000);
+        expect(result.exitCode).toBe(124);
+        expect(msysPidAlive(pid)).toBe(true);
+      } finally {
+        spawnSync(resolveLocalBashPath()!, ["-c", `kill -9 ${pid}`]);
+      }
+    },
+    20_000,
+  );
 
   it("spawns with the sanitized env", async () => {
     process.env.MCPJAM_LOCAL_MACHINE_TEST_SECRET = "leak-me";

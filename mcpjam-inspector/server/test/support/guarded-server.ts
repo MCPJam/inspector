@@ -43,6 +43,7 @@ const TSX_LOADER = pathToFileURL(
  * keeps the child alive.
  */
 const WINDOWS = process.platform === "win32";
+const STOP_TIMEOUT_MS = 15_000;
 const SIGTERM_RELAY = `data:text/javascript,${encodeURIComponent(
   "process.on('message', (m) => { if (m === 'SIGTERM') process.emit('SIGTERM', 'SIGTERM'); });" +
     " process.channel?.unref();",
@@ -185,10 +186,18 @@ export async function startGuardedServer(options: {
     output: () => output,
     async stop() {
       if (child.exitCode === null) {
-        if (WINDOWS) child.send("SIGTERM");
-        else child.kill("SIGTERM");
+        // A child already on its way out can drop the channel before
+        // `exitCode` is set; the callback takes that failure, which would
+        // otherwise be an unhandled `error` event, and ends the child.
+        if (!WINDOWS) child.kill("SIGTERM");
+        else if (!child.connected) child.kill();
+        else child.send("SIGTERM", (error) => error && child.kill());
       }
+      // A shutdown that hangs fails the test on its exit code, not on the
+      // suite's timeout.
+      const timer = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
       const code = await exited;
+      clearTimeout(timer);
       return code;
     },
   };
