@@ -97,6 +97,9 @@ export function buildLocalStepHandlers(
       // Optional-chained: `driveLocalEvalTurn` always returns an outcome, but
       // this bridge has no business crashing over one it did not get.
       ...(outcome?.kind === "cancelled" ? { cancelled: true } : {}),
+      ...(outcome?.kind === "completed" && outcome.pinnedCall
+        ? { pinnedCall: outcome.pinnedCall }
+        : {}),
       ...(newError
         ? {
             ...(acc.timeout ? { timeout: acc.timeout } : {}),
@@ -439,6 +442,8 @@ export function buildHostedStepHandlers(
         ...(accounting.toolErrors.length
           ? { toolErrors: accounting.toolErrors }
           : {}),
+        // The result reaches grading here, never through `messageHistory`.
+        pinnedCall: accounting.evidence,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         ...(accounting.iterationError
           ? { iterationError: accounting.iterationError, setupFailure: true }
