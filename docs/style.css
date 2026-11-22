@@ -495,7 +495,7 @@ th {
 }
 
 td {
-  color: var(--mcj-ink) !important;
+  color: var(--mcj-ink-strong) !important;
   border-top: none !important;
   border-bottom: 1px solid var(--mcj-rule) !important;
   border-left: none !important;
@@ -508,10 +508,7 @@ tbody tr:last-child td {
   border-bottom: none !important;
 }
 
-/* Row hover — minimal lift, matches Anthropic's subtle row treatment */
-tbody tr:hover td {
-  background: var(--mcj-paper-2);
-}
+/* No row hover tint: grey fill under grey text was hard to read. */
 
 /* In-table links — read as part of the sentence, accent on hover only.
    This is the "Read more" treatment from image #5: was too loud. */
