@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const SCRIPT = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "check-runtime-guards.mjs",
-);
+const THIS_FILE = fileURLToPath(import.meta.url);
+const REPO = join(dirname(THIS_FILE), "..", "..");
+const SCRIPT = join(REPO, "scripts", "check-runtime-guards.mjs");
 
 const CLEAN = "export const x = 1;\n";
 
@@ -106,13 +111,13 @@ for (const [check, [file, text]] of Object.entries(VIOLATIONS)) {
   test(`${check}: a clean tree passes`, () => {
     const result = runTree(check);
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, new RegExp(`\\[${check}\\]: clean`));
+    assert.ok(result.stdout.includes(`[${check}]: clean`), result.stdout);
   });
 
   test(`${check}: a violation fails and names the file and line`, () => {
     const result = runTree(check, { [file]: `// header\n${text}` });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, new RegExp(`${file}:2 `));
+    assert.ok(result.stderr.includes(`${file}:2 `), result.stderr);
   });
 
   test(`${check}: a missing scan root fails instead of passing`, () => {
@@ -181,4 +186,40 @@ test("without --root the script scans this repository", () => {
   const result = run("platform-runtime-safety");
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /clean \(\d+ files scanned\)/);
+});
+
+// Guards in `test:checks` that no test drives yet. Each entry is a known gap:
+// remove it when the script gains a test.
+const UNTESTED_GUARDS = [
+  "scripts/check-bundled-runtime-paths.mjs",
+  "scripts/check-permalink-concatenation.mjs",
+  "mcpjam-inspector/scripts/check-hosted-manager-base-fetch.mjs",
+];
+
+test("every guard in test:checks has a test or is listed as untested", () => {
+  const { scripts } = JSON.parse(
+    readFileSync(join(REPO, "package.json"), "utf8"),
+  );
+  const guards = [...scripts["test:checks"].matchAll(/npm run (check:\S+)/g)]
+    .flatMap(([, name]) => [
+      ...scripts[name].matchAll(/node (\S+\.mjs)(?: ([\w-]+))?/g),
+    ])
+    .map(([, script, mode]) => ({ script, mode }));
+  assert.ok(guards.length > 0, "found no node guard in test:checks");
+  const otherTests = ["scripts/__tests__", "mcpjam-inspector/scripts/__tests__"]
+    .flatMap((dir) =>
+      readdirSync(join(REPO, dir))
+        .filter((name) => name.endsWith(".test.mjs"))
+        .map((name) => join(REPO, dir, name)),
+    )
+    .filter((file) => file !== THIS_FILE)
+    .map((file) => readFileSync(file, "utf8"));
+  const tested = ({ script, mode }) =>
+    script === "scripts/check-runtime-guards.mjs"
+      ? mode in VIOLATIONS
+      : otherTests.some((text) => text.includes(script.split("/").pop()));
+  const untested = [
+    ...new Set(guards.filter((g) => !tested(g)).map((g) => g.script)),
+  ];
+  assert.deepEqual(untested.sort(), [...UNTESTED_GUARDS].sort());
 });
