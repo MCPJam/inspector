@@ -909,3 +909,12 @@ a.mcj-btn:hover {
   border-color: var(--mcj-orange);
   color: var(--mcj-orange) !important;
 }
+
+/* Plugin card: whole card opens the web link; the desktop link sits above it */
+div.mcj-card { position: relative; }
+.mcj-card-main { color: inherit; text-decoration: none; }
+.mcj-card-main::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+.mcj-card-main:focus-visible { outline: none; }
+div.mcj-card:has(.mcj-card-main:focus-visible) { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
+.mcj-card-alt { position: relative; z-index: 1; align-self: flex-start; font-size: 13px; color: var(--mcj-ink-muted); text-decoration: underline; text-underline-offset: 2px; }
+.mcj-card-alt:hover { color: var(--mcj-orange); }

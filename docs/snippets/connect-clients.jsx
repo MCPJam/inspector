@@ -25,7 +25,12 @@ export const ConnectClients = () => {
   ];
 
   const cards = [
-    { name: "ChatGPT App", icon: "/images/clients/openai_logo.png", href: "https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56" },
+    {
+      name: "ChatGPT & Codex",
+      icons: ["/images/clients/openai_logo.png", "/images/clients/codex-logo.svg"],
+      href: "https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56",
+      desktopHref: "https://chatgpt.com/plugins/plugin_asdk_app_6ae3a54df10c8191b901cbadc1d0df56?open_in_app",
+    },
   ];
 
   const copy = (chip) => {
@@ -68,16 +73,21 @@ export const ConnectClients = () => {
       </div>
       <div className="mcj-cards">
         {cards.map((card) => (
-          <a key={card.name} className="mcj-card" href={card.href} {...(card.href.startsWith("http") ? { target: "_blank", rel: "noopener noreferrer" } : {})}>
+          <div key={card.name} className="mcj-card">
             {external}
             <div className="mcj-card-icons">
-              <img className="mcj-card-client" src={card.icon} alt="" />
+              {card.icons.map((icon) => (
+                <img key={icon} className="mcj-card-client" src={icon} alt="" />
+              ))}
               <span className="mcj-card-app">
                 <img src="/images/clients/mcpjam.svg" alt="MCPJam" />
               </span>
             </div>
-            <span className="mcj-card-name">{card.name}</span>
-          </a>
+            <a className="mcj-card-name mcj-card-main" href={card.href} target="_blank" rel="noopener noreferrer">{card.name}</a>
+            {card.desktopHref ? (
+              <a className="mcj-card-alt" href={card.desktopHref} target="_blank" rel="noopener noreferrer">Open in the desktop app</a>
+            ) : null}
+          </div>
         ))}
       </div>
     </div>
