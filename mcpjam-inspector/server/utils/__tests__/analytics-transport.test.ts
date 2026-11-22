@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { analyticsTransport } from "../analytics-transport";
 import { RUNTIME_COMPAT } from "../../../server/utils/harness/local/runtime-compat";
-import { rebuildServerAnalytics } from "../../../shared/strict-server-analytics";
+import { rebuildServerAnalytics } from "../strict-server-analytics";
 import { PostHog } from "posthog-node";
 
 const actor = "user_01H00000000000000000000000";

@@ -1,7 +1,8 @@
 // @ts-check
+import { builtinModules } from "node:module";
+import path from "node:path";
 import tsParser from "@typescript-eslint/parser";
 import reactHooks from "eslint-plugin-react-hooks";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 // One layer per directory. `shared` is loaded by the browser and by Node, so
@@ -27,9 +28,14 @@ const CLIENT_BY_PATH = {
     "Server and shared code cannot import the client. Move what both sides need into shared/.",
 };
 const NODE_BUILTIN = {
-  specifier: "^node:",
+  specifier: `^(node:|(${builtinModules.join("|")})(/|$))`,
   message:
     "shared/ also runs in the browser, so it cannot import Node built-ins. Put this in server/.",
+};
+const RAW_MCP_SDK = {
+  specifier: "^@modelcontextprotocol/sdk(/|$)",
+  message:
+    "Import MCP types and schemas from `@mcpjam/sdk`, not the raw `@modelcontextprotocol/sdk`.",
 };
 // Tests are left out: a parity test has to load both sides it compares.
 const TESTS = ["**/__tests__/**", "**/*.test.{ts,tsx}"];
@@ -133,12 +139,14 @@ export default [
   },
   {
     files: ["shared/**/*.ts"],
-    ignores: TESTS,
+    // Vitest loads its config in Node; the browser never does.
+    ignores: [...TESTS, "shared/vitest.config.ts"],
     rules: restrictImports(
       SERVER_BY_PATH,
       CLIENT_BY_PATH,
       SDK_BY_PATH,
       NODE_BUILTIN,
+      RAW_MCP_SDK,
     ),
   },
   {

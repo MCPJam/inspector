@@ -8,7 +8,7 @@ import {
   HARNESS_TURN_STARTS,
   HARNESS_TURN_SURFACES,
 } from "../harness-turn-event";
-import { rebuildServerAnalytics } from "../strict-server-analytics";
+import { rebuildServerAnalytics } from "../../server/utils/strict-server-analytics";
 import { explainTelemetry, expectTelemetryFields } from "./explain-telemetry";
 
 /**

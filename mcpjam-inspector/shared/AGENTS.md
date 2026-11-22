@@ -13,14 +13,11 @@ its subpaths by package name, and packages that run in both browser and Node.
 - No relative import of `server/`, `client/` or `sdk/src/`. Enforced by
   `layers/no-cross-layer-imports` in `eslint.config.js`:
   `npm run lint -w @mcpjam/inspector`.
-  Tests are exempt.
-- No `node:` built-ins. Same lint rule. Bare specifiers (`fs`, `path`) are not
-  caught: not enforced.
-- Existing violations in `sentry-build-metadata.ts` and
-  `strict-server-analytics.ts` are suppressed in `eslint-suppressions.json`;
-  do not add entries.
-- Prefer `@mcpjam/sdk` over raw `@modelcontextprotocol/sdk`. Not enforced here:
-  `check:mcp-v1-runtime-imports` does not scan `shared/`.
+  Tests are exempt, and so is `vitest.config.ts`, which only Node loads.
+- No Node built-ins, as `node:fs` or bare `fs`. Same lint rule.
+- No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Same lint rule. The
+  three existing imports are suppressed in `eslint-suppressions.json`; do not
+  add entries.
 
 ## Rules
 

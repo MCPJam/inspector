@@ -21,8 +21,8 @@ on:
       - "mcpjam-inspector/server/tsup.config.ts"
       - "mcpjam-inspector/server/__tests__/server-sourcemaps.test.ts"
       - "mcpjam-inspector/scripts/server-sourcemaps.mjs"
-      - "mcpjam-inspector/shared/sentry-build-metadata.ts"
-      - "mcpjam-inspector/shared/__tests__/sentry-build-metadata.test.ts"
+      - "mcpjam-inspector/server/utils/sentry-build-metadata.ts"
+      - "mcpjam-inspector/server/utils/__tests__/sentry-build-metadata.test.ts"
       - "mcpjam-inspector/package.json"
       - "package-lock.json"
       - ".github/workflows/sdk-windows-telemetry.yml"
@@ -51,7 +51,7 @@ jobs:
             tests: tests/packaged-telemetry.test.ts
           - name: Server source maps
             directory: mcpjam-inspector
-            tests: server/__tests__/server-sourcemaps.test.ts shared/__tests__/sentry-build-metadata.test.ts
+            tests: server/__tests__/server-sourcemaps.test.ts server/utils/__tests__/sentry-build-metadata.test.ts
     env:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:

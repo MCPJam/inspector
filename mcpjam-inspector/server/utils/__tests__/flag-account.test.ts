@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 const query = vi.hoisted(() => vi.fn());
 vi.mock("../../routes/v1/convex-client.js", () => ({ createConvexClient: (token: string) => ({ query: (...args: unknown[]) => query(token, ...args) }) }));
 import { flagAccountEmail } from "../flag-account";
-import { rolloutPersonProperties } from "../../../shared/strict-server-analytics";
+import { rolloutPersonProperties } from "../strict-server-analytics";
 afterEach(() => { vi.unstubAllEnvs(); query.mockReset(); });
 it("uses only the authenticated subject's account record for flag email", async () => {
   vi.stubEnv("CONVEX_URL", "https://synthetic.convex.cloud");

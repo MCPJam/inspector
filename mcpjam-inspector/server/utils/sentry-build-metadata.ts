@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { posix, resolve, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
-import { sentryInjectedDebugId } from "./strict-sentry.js";
+import { sentryInjectedDebugId } from "../../shared/strict-sentry.js";
 
 /**
  * Exact spellings of fixed files under a verified root: the native path of
