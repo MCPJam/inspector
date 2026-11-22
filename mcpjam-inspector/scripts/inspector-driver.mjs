@@ -30,10 +30,16 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
   EVIDENCE_THEMES,
@@ -49,6 +55,7 @@ import {
   parseAccessToken,
   parseAllowlist,
   recordedToken,
+  redactStep,
   redactText,
   redactUrl,
   resolveTarget,
@@ -99,9 +106,11 @@ function inspectorDir(values) {
 }
 
 /**
- * The commit an instance serves, read from its checkout. Uncommitted changes
- * are flagged because a screenshot of them matches no commit a reviewer can
- * check out.
+ * The commit and dirty flag of a checkout. The dev server serves the working
+ * tree, so for an instance `start` launched there this is the code it runs,
+ * except build output made at start (the SDK and bundles). Uncommitted
+ * changes are flagged because a screenshot of them matches no commit a
+ * reviewer can check out.
  */
 function commitOf(dir) {
   const git = (...args) =>
@@ -117,9 +126,12 @@ function commitOf(dir) {
   return { sha: head.stdout.trim(), dirty: status.stdout.trim() !== "" };
 }
 
-async function loadSurfaces() {
+/** The surfaces of the checkout being driven, so its own routes are used. */
+async function loadSurfaces(dir = INSPECTOR_DIR) {
   try {
-    const { listAppSurfaces } = await import("../shared/app-surfaces.ts");
+    const { listAppSurfaces } = await import(
+      pathToFileURL(join(dir, "shared", "app-surfaces.ts")).href
+    );
     return listAppSurfaces();
   } catch (error) {
     // The package allows Node 22.0, but Node only strips TypeScript types
@@ -157,7 +169,7 @@ async function connection(values) {
     throw new Error("--token is neither an access token nor an access link.");
   }
   // Only an instance `start` recorded has a known checkout behind it.
-  return { baseUrl, token, fromState: !givenUrl };
+  return { baseUrl, token, state: givenUrl ? null : state };
 }
 
 function outputDir(values) {
@@ -199,7 +211,7 @@ function writeReport(outDir, slug, report) {
 async function withPage(values, fn, { video = false } = {}) {
   checkTheme(values.theme);
   const { baseUrl, token } = await connection(values);
-  const surfaces = await loadSurfaces();
+  const surfaces = await loadSurfaces(inspectorDir(values));
   const rules = loadAllowlist(values);
   const outDir = outputDir(values);
   const browserLib = await import("./lib/inspector-driver-browser.mjs");
@@ -384,6 +396,7 @@ async function recordTheme(values, steps, theme) {
       report.artifacts.video = join(ctx.outDir, `${theme}.webm`);
       await video.saveAs(report.artifacts.video);
       await video.delete();
+      writeReport(ctx.outDir, `${theme}-final`, report);
       process.stdout.write(`${formatPageReport(report)}\n`);
       const { classified, artifacts } = report;
       return {
@@ -405,24 +418,56 @@ async function recordTheme(values, steps, theme) {
   );
 }
 
+/**
+ * The commit of the checkout behind the instance `start` recorded, once that
+ * instance is shown to be the one still answering: its launcher is alive and
+ * the server accepts the token only that launch knows.
+ */
+async function servedCommit(dir, state) {
+  const { answersToToken, isOurProcess } =
+    await import("./lib/inspector-driver-instance.mjs");
+  if (!isOurProcess(state) || !(await answersToToken(state.baseUrl, state.token))) {
+    throw new Error(
+      `The instance recorded for ${dir} is not the one answering at ${state.baseUrl}. Run \`stop\` and \`start\` again.`,
+    );
+  }
+  return commitOf(dir);
+}
+
 async function cmdRecord(values, arg) {
   const steps = readRunSteps(values, arg, "record");
   checkTheme(values.theme);
-  const { fromState } = await connection(values);
-  // Read before the run, so a commit made while it runs is not credited.
-  const commit = fromState ? commitOf(inspectorDir(values)) : null;
+  const { state } = await connection(values);
+  const dir = inspectorDir(values);
+  const commit = state ? await servedCommit(dir, state) : null;
   const outDir = outputDir(values);
+  // A manifest left by an earlier attempt would point at this attempt's
+  // half-written files if it failed, so it goes before anything is captured.
+  for (const name of ["evidence.json", "evidence.md"]) {
+    rmSync(join(outDir, name), { force: true });
+  }
   const capturedAt = new Date().toISOString();
   const runs = [];
   for (const theme of values.theme ? [values.theme] : EVIDENCE_THEMES) {
     runs.push(await recordTheme({ ...values, out: outDir }, steps, theme));
+  }
+  if (commit && JSON.stringify(commitOf(dir)) !== JSON.stringify(commit)) {
+    throw new Error(
+      `${dir} changed while recording (it was ${commit.sha}${commit.dirty ? " plus changes" : ""}); no evidence written. Record again.`,
+    );
   }
   const { VIEWPORT } = await import("./lib/inspector-driver-browser.mjs");
   const evidence = {
     capturedAt,
     commit,
     viewport: `${VIEWPORT.width}x${VIEWPORT.height}`,
+    settings: {
+      browser: values.headed ? "headed" : "headless",
+      fresh: Boolean(values.fresh),
+    },
     steps: steps.map(describeStep),
+    // What compare checks: the steps as run, with fill values redacted.
+    canonicalSteps: steps.map(redactStep),
     runs,
   };
   writeFileSync(

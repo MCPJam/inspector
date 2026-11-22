@@ -44,11 +44,21 @@ video. It prints the usual report for each theme and the path of
 `evidence.md`. `--theme dark` records one theme; the other then shows as
 "not captured".
 
+The commit in `evidence.md` is the instance checkout's HEAD and dirty flag,
+read before the capture and again after it; `record` refuses to write
+evidence if they differ, and it first checks the instance `start` recorded
+still answers to its own token. The dev server serves the working tree, so
+that is the code it ran, except the SDK and bundles built when `start` ran:
+`start` again after changing those. `record` deletes any `evidence.json` and
+`evidence.md` in the folder before it captures, so a failed attempt leaves no
+manifest pointing at a mix of old and new files.
+
 ## Before and after
 
 Check out the base ref in a second worktree and start its instance from your
 branch's driver with `--checkout`. The driver records the base worktree's
-commit, so the base ref does not need the driver itself.
+commit and resolves surface ids from the base worktree's own surface list, so
+the base ref does not need the driver itself.
 
 ```bash
 git worktree add <base-worktree> origin/main
@@ -65,7 +75,9 @@ node mcpjam-inspector/scripts/inspector-driver.mjs compare <evidence>
 ```
 
 `compare` writes `<evidence>/evidence.md` with before and after side by
-side. It refuses two records whose steps or viewport differ. Both instances
+side. It refuses two records whose steps (compared field by field, not by
+their printed text), viewport, browser mode or `--fresh` differ, and it
+shows only the themes both records captured. Both instances
 can run at once; `start` picks free ports for the second.
 
 ## Put it in the PR

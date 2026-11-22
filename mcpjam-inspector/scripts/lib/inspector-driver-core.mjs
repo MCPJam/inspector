@@ -532,7 +532,7 @@ export function formatEvidence(evidence) {
     "",
     commitLine(evidence.commit),
     "",
-    `Captured ${evidence.capturedAt} by the inspector driver, headless Chromium at ${evidence.viewport}.`,
+    `Captured ${evidence.capturedAt} by the inspector driver, ${evidence.settings.browser} Chromium at ${evidence.viewport}.`,
     "",
     "| Theme | Final screenshot | Recording |",
     "| --- | --- | --- |",
@@ -555,31 +555,52 @@ export function formatEvidence(evidence) {
   ].join("\n");
 }
 
-/** A before/after pair only means something when both ran the same thing. */
+/**
+ * A before/after pair only means something when both ran the same steps
+ * under the same settings. Steps compare by their recorded fields, not the
+ * display text, which two different steps can share. Returns the themes both
+ * sides captured.
+ */
 export function assertComparable(before, after) {
   const problems = [];
   if (before.viewport !== after.viewport) {
     problems.push(`viewport ${before.viewport} vs ${after.viewport}`);
   }
-  if (JSON.stringify(before.steps) !== JSON.stringify(after.steps)) {
+  for (const key of ["browser", "fresh"]) {
+    if (before.settings?.[key] !== after.settings?.[key]) {
+      problems.push(
+        `${key} ${before.settings?.[key]} vs ${after.settings?.[key]}`,
+      );
+    }
+  }
+  if (
+    !before.canonicalSteps ||
+    JSON.stringify(before.canonicalSteps) !==
+      JSON.stringify(after.canonicalSteps)
+  ) {
     problems.push("the steps differ");
   }
+  const themes = EVIDENCE_THEMES.filter(
+    (theme) => runFor(before, theme) && runFor(after, theme),
+  );
+  if (themes.length === 0) problems.push("no theme was captured on both");
   if (problems.length > 0) {
     throw new Error(
-      `before and after are not the same run (${problems.join("; ")}). Record both with the same steps file.`,
+      `before and after are not the same run (${problems.join("; ")}). Record both with the same steps file and options.`,
     );
   }
+  return themes;
 }
 
 /** The `evidence.md` that sets a `before` and an `after` record side by side. */
 export function formatComparison(before, after) {
-  assertComparable(before, after);
+  const themes = assertComparable(before, after);
   const cell = (evidence, folder, theme, key) => {
     const name = runFor(evidence, theme)?.artifacts[key];
     return placeholder(name && `${folder}/${name}`);
   };
   const table = (key) =>
-    EVIDENCE_THEMES.map(
+    themes.map(
       (theme) =>
         `| ${theme} | ${cell(before, "before", theme, key)} | ${cell(after, "after", theme, key)} |`,
     );
@@ -590,7 +611,7 @@ export function formatComparison(before, after) {
     "",
     `After. ${commitLine(after.commit)} Captured ${after.capturedAt}.`,
     "",
-    `Same steps on both, headless Chromium at ${after.viewport}.`,
+    `Same steps on both, ${after.settings.browser} Chromium at ${after.viewport}.`,
     "",
     "| Theme | Before | After |",
     "| --- | --- | --- |",
@@ -606,7 +627,7 @@ export function formatComparison(before, after) {
     "",
     "### Console and network",
     "",
-    ...EVIDENCE_THEMES.flatMap((theme) => [
+    ...themes.flatMap((theme) => [
       ...findingLines(`before, ${theme}`, runFor(before, theme)),
       ...findingLines(`after, ${theme}`, runFor(after, theme)),
     ]),

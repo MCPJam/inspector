@@ -447,7 +447,12 @@ function evidenceOf(overrides = {}) {
     capturedAt: "2026-11-20T10:00:00.000Z",
     commit: { sha: "abc123", dirty: false },
     viewport: "1440x900",
+    settings: { browser: "headless", fresh: false },
     steps: ["goto servers", "click testid=add"],
+    canonicalSteps: [
+      { action: "goto", target: "servers" },
+      { action: "click", target: "testid=add" },
+    ],
     runs: [themedRun("light"), themedRun("dark")],
     ...overrides,
   };
@@ -521,12 +526,77 @@ test("a before/after pair puts each side's file in its own column", () => {
 
 test("a before/after pair refuses runs with different steps or viewports", () => {
   assert.throws(
-    () => assertComparable(evidenceOf(), evidenceOf({ steps: ["goto hosts"] })),
+    () =>
+      assertComparable(
+        evidenceOf(),
+        evidenceOf({ canonicalSteps: [{ action: "goto", target: "hosts" }] }),
+      ),
     /not the same run \(the steps differ\)/,
   );
   assert.throws(
     () => formatComparison(evidenceOf({ viewport: "800x600" }), evidenceOf()),
     /viewport 800x600 vs 1440x900/,
+  );
+});
+
+test("steps whose display text collides still compare as different", () => {
+  // "waitFor text=hidden" (visible) and "waitFor text" with state hidden.
+  const visible = { action: "waitFor", target: "text=hidden" };
+  const hidden = { action: "waitFor", target: "text", state: "hidden" };
+  assert.equal(
+    describeStep(visible),
+    describeStep({ ...hidden, target: "text=hidden", state: undefined }),
+  );
+  const as = (step) =>
+    evidenceOf({ steps: ["waitFor text hidden"], canonicalSteps: [step] });
+  assert.throws(
+    () => assertComparable(as(visible), as(hidden)),
+    /the steps differ/,
+  );
+});
+
+test("a before/after pair needs the same options and a shared theme", () => {
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ settings: { browser: "headed", fresh: false } }),
+        evidenceOf(),
+      ),
+    /browser headed vs headless/,
+  );
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ settings: { browser: "headless", fresh: true } }),
+        evidenceOf(),
+      ),
+    /fresh true vs false/,
+  );
+  assert.throws(
+    () =>
+      assertComparable(
+        evidenceOf({ runs: [themedRun("light")] }),
+        evidenceOf({ runs: [themedRun("dark")] }),
+      ),
+    /no theme was captured on both/,
+  );
+  const text = formatComparison(
+    evidenceOf({ runs: [themedRun("dark")] }),
+    evidenceOf(),
+  );
+  assert.doesNotMatch(text, /^\| light \|/m);
+  assert.match(text, /^\| dark \|/m);
+});
+
+test("evidence names the browser mode it actually ran", () => {
+  const settings = { browser: "headed", fresh: false };
+  assert.match(
+    formatEvidence(evidenceOf({ settings })),
+    /headed Chromium at 1440x900/,
+  );
+  assert.match(
+    formatComparison(evidenceOf({ settings }), evidenceOf({ settings })),
+    /Same steps on both, headed Chromium/,
   );
 });
 

@@ -176,7 +176,7 @@ function tail(path, lines = 30) {
  * launch chose, which no other server knows. A 200 from `/health` alone
  * would also come from another checkout's instance on the same ports.
  */
-async function answersToToken(origin, token) {
+export async function answersToToken(origin, token) {
   const url = `${origin}/api/driver-launch-check`;
   const status = (headers) =>
     fetch(url, { headers, signal: AbortSignal.timeout(2_000) }).then(
