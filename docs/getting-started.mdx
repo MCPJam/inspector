@@ -4,11 +4,37 @@ description: "Start testing your MCP server in minutes"
 icon: "rocket"
 ---
 
+import AgentSetupPrompt from '/snippets/agent-setup-prompt.mdx';
+
 <Note>
 SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions keep their existing behavior.
 </Note>
 
-## 1. Choose how to open Inspector
+## For agents
+
+### Get started from your agent
+
+<AgentSetupPrompt />
+
+### Connect MCPJam to your agent
+
+Three ways in, depending on what the agent should do. [Installation](/installation#add-mcpjam-to-your-coding-agent) has the commands for Claude Code, Codex and Cursor.
+
+<CardGroup cols={3}>
+  <Card title="Local MCP server" icon="plug" href="/cli/mcp-server">
+    `npx -y @mcpjam/cli@latest mcp`. Connect to your server, call its tools and watch notifications. No account.
+  </Card>
+  <Card title="Skill" icon="sparkles" href="/cli/overview#recommended-use-with-agent-skills">
+    `npx skills add mcpjam/inspector --skill mcp-inspector`. Teaches an agent with a shell every `mcpjam` command.
+  </Card>
+  <Card title="Account MCP server" icon="cloud" href="/hosted/mcp-server">
+    `https://mcp.mcpjam.com/mcp`. Your projects, saved servers and evals, behind OAuth.
+  </Card>
+</CardGroup>
+
+## For humans
+
+### 1. Choose how to open Inspector
 
 Every option below opens the MCPJam Inspector. Pick one based on where your MCP server runs.
 
@@ -36,7 +62,7 @@ Every option below opens the MCPJam Inspector. Pick one based on where your MCP 
 
 See [Installation](/installation#which-one-do-i-need) for the full comparison.
 
-## 2. Connect a server
+### 2. Connect a server
 
 On first launch, MCPJam shows a **Welcome** overlay that guides you through connecting your first server. You can:
 
@@ -59,7 +85,7 @@ You should see your server show **Connected** and its tools listed in the Playgr
   Use the widget debug icons to open tool input/output, CSP activity, widget state, and JSON-RPC for each result.
 </Tip>
 
-## 3. Connect your own server
+### 3. Connect your own server
 
 Open the **Connect** tab in the left sidebar (labelled **Servers** in some builds). Click **Add server**.
 
@@ -72,7 +98,7 @@ Each **Connected** server is available in the Playground, Tools, Prompts, and Re
 You should see your server show **Connected** with a green dot in the **Connect** tab, and its tools should appear in the Playground's left rail.
 </Check>
 
-## 4. Where to go next
+### 4. Where to go next
 
 <CardGroup cols={2}>
   <Card title="Playground" icon="joystick" href="/inspector/playground">

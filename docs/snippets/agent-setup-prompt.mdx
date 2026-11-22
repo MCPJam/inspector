@@ -1,0 +1,29 @@
+Paste this prompt into Claude Code, Codex, Cursor or another coding agent. It connects MCPJam to the agent, then checks your server with it.
+
+```text Prompt
+Help me test my MCP server with MCPJam.
+
+1. Connect MCPJam to this agent.
+   - Add MCPJam's local MCP server, which runs: npx -y @mcpjam/cli@latest mcp
+     Claude Code: claude mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp
+     Codex: codex mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp
+     Cursor: add it under "mcpServers" in .cursor/mcp.json
+   - If you can run shell commands, also install the MCPJam skill:
+     npx skills add mcpjam/inspector --skill mcp-inspector
+   - Tell me if I need to restart you or approve anything. Then check that
+     the MCPJam tools (connect_server, list_tools, server_doctor) are available.
+
+2. Ask me for my MCP server: an HTTP URL ending in /mcp, or the command
+   that starts it over STDIO.
+
+3. Check it.
+   - Run server_doctor on it and summarize what passed and what failed.
+   - Connect with connect_server, then list its tools, resources and prompts.
+   - Call one read-only tool with sensible arguments and show me the result.
+
+4. Offer next steps: fixing what the doctor found, writing an eval for a
+   real user request, or opening the server in MCPJam Inspector with
+   npx @mcpjam/inspector@latest. Let me choose.
+
+Use https://docs.mcpjam.com when you need more detail.
+```
