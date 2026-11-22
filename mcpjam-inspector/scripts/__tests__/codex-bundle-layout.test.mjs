@@ -19,10 +19,15 @@ test("Codex artifacts retain their bytes when a worktree shares dependencies", a
     for (const name of ["bundle-codex-appserver-bridge.mjs", "lib/bridge-control-plugin.mjs"]) {
       await cp(join(inspectorRoot, "scripts", name), join(inspector, "scripts", name));
     }
-    for (const name of ["server", "shared", "node_modules", "tsconfig.json", "package.json"]) {
-      await symlink(join(inspectorRoot, name), join(inspector, name));
+    // Junctions, unlike directory symlinks, need no privilege on Windows; the
+    // two files are copied because a junction cannot point at a file.
+    for (const name of ["server", "shared", "node_modules"]) {
+      await symlink(join(inspectorRoot, name), join(inspector, name), "junction");
     }
-    await symlink(join(inspectorRoot, "..", "node_modules"), join(worktree, "node_modules"));
+    for (const name of ["tsconfig.json", "package.json"]) {
+      await cp(join(inspectorRoot, name), join(inspector, name));
+    }
+    await symlink(join(inspectorRoot, "..", "node_modules"), join(worktree, "node_modules"), "junction");
     const shared = await import(pathToFileURL(join(inspector, "scripts", "bundle-codex-appserver-bridge.mjs")).href);
     for (const layer of [false, true]) {
       const original = await bundleCodexAppServerBridgeSources({ layer });
