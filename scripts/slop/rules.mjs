@@ -4,11 +4,13 @@
  * remove, and `check-file.mjs` reports them on one file as an agent edits it.
  * All three read this list, so a rule added here is enforced everywhere.
  *
- * These are text counts, not a parser. A rule earns its place by being cheap,
- * stable and hard to hit by accident; anything that needs types belongs in
- * ESLint instead.
+ * Most are text counts. A rule that has to tell code from comments, strings
+ * or JSX text reads the syntax tree from `parse.mjs`. A rule earns its place
+ * by being cheap, stable and hard to hit by accident; anything that needs
+ * types belongs in ESLint instead.
  */
 
+import { parse, typescript, walk } from "./parse.mjs";
 import { extractUiStrings, isUiFile } from "./ui-strings.mjs";
 
 const SOURCE_EXTENSIONS = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
@@ -62,90 +64,46 @@ function countMatches(text, regex) {
   return text.match(regex)?.length ?? 0;
 }
 
+const EFFECTS = new Set(["useEffect", "useLayoutEffect"]);
+
+const TIMERS = new Set([
+  "setTimeout",
+  "setInterval",
+  "requestAnimationFrame",
+  "requestIdleCallback",
+]);
+
 /**
- * `text` with comments and string literal contents removed, so a rule that
- * counts calls ignores a commented-out call or a call named inside a string.
- * Code inside a template literal's `${...}` is kept. A comment becomes a
- * space so the tokens on either side stay separate. A single-line regex
- * literal is blanked so a quote or backtick inside it opens nothing. JSX text
- * is not recognized; a stray quote there blanks at most the rest of its line,
- * which is rare enough to accept.
+ * Calls to one of `names`, bare or as a member (`window.setTimeout`). They
+ * are read from the syntax tree, so a call named in a comment, a string, a
+ * regex literal or JSX text does not count.
  */
-function codeOnly(text) {
-  let out = "";
-  // One entry per open `${`: the brace depth inside that expression.
-  const templates = [];
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    if (c === "/" && text[i + 1] === "/") {
-      const end = text.indexOf("\n", i);
-      i = end === -1 ? text.length : end;
-    } else if (c === "/" && text[i + 1] === "*") {
-      const end = text.indexOf("*/", i + 2);
-      i = end === -1 ? text.length : end + 2;
-      out += " ";
-    } else if (c === "/" && regexCanStart(out) && regexEnd(text, i) !== -1) {
-      i = regexEnd(text, i);
-      out += " ";
-    } else if (c === '"' || c === "'") {
-      i += 1;
-      while (i < text.length && text[i] !== c && text[i] !== "\n") {
-        i += text[i] === "\\" ? 2 : 1;
-      }
-      i += 1;
-      out += " ";
-    } else if (c === "`" || (c === "}" && templates.at(-1) === 0)) {
-      if (c === "}") templates.pop();
-      i += 1;
-      while (i < text.length && text[i] !== "`") {
-        if (text[i] === "\\") i += 2;
-        else if (text.startsWith("${", i)) break;
-        else i += 1;
-      }
-      if (text.startsWith("${", i)) {
-        templates.push(0);
-        i += 2;
-      } else i += 1;
-      out += " ";
-    } else {
-      const top = templates.length - 1;
-      if (top >= 0 && c === "{") templates[top] += 1;
-      if (top >= 0 && c === "}") templates[top] -= 1;
-      out += c;
-      i += 1;
+function countCalls(path, text, names) {
+  const { isCallExpression, isIdentifier, isPropertyAccessExpression } =
+    typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!isCallExpression(node)) return;
+    const callee = isPropertyAccessExpression(node.expression)
+      ? node.expression.name
+      : node.expression;
+    if (isIdentifier(callee) && names.has(callee.text)) count += 1;
+  });
+  return count;
+}
+
+/** `catch` clauses whose block has no statement but has a comment. */
+function countCommentOnlyCatches(path, text) {
+  const { isCatchClause } = typescript();
+  let count = 0;
+  walk(parse(path, text), (node) => {
+    if (!isCatchClause(node) || node.block.statements.length) return;
+    // A block with no statement holds only whitespace and comments.
+    if (/\S/.test(text.slice(node.block.getStart() + 1, node.block.end - 1))) {
+      count += 1;
     }
-  }
-  return out;
-}
-
-/** Whether a `/` after `code` opens a regex literal instead of dividing. */
-function regexCanStart(code) {
-  let end = code.length;
-  while (end > 0 && /\s/.test(code[end - 1])) end -= 1;
-  const line = code.slice(code.lastIndexOf("\n", end - 1) + 1, end);
-  // A prefix update cannot take a regex operand, so `++` or `--` here is
-  // postfix and the slash divides. `a+++/re/` is `a++ + /re/`: odd runs end
-  // in a binary operator.
-  const run = /(?:\++|-+)$/.exec(line)?.[0].length ?? 0;
-  if (run > 1) return run % 2 === 1;
-  if (end === 0 || "(,=:[!&|?{};+-*%~^".includes(code[end - 1])) return true;
-  // `of` is only a keyword in a for-of head; elsewhere it is an identifier.
-  if (/\bof$/.test(line))
-    return /\bfor\s*(?:await\s*)?\([^;()=]*of$/.test(line);
-  return /\b(?:return|typeof|case|in|void|yield|await)$/.test(line);
-}
-
-/** Index just past the regex literal opening at `start`, or -1 if it does not close on its line. */
-function regexEnd(text, start) {
-  let inClass = false;
-  for (let i = start + 1; i < text.length && text[i] !== "\n"; i += 1) {
-    if (text[i] === "\\") i += 1;
-    else if (text[i] === "[") inClass = true;
-    else if (text[i] === "]") inClass = false;
-    else if (text[i] === "/" && !inClass) return i + 1;
-  }
-  return -1;
+  });
+  return count;
 }
 
 function countCommentLines(text, regex) {
@@ -276,20 +234,15 @@ export const RULES = [
   {
     id: "comment-only-catch",
     label: "`catch` blocks that hold only a comment",
-    fix: "Handle the error, or log it at debug level next to the reason. A comment alone hides the failure from whoever debugs it next.",
-    count: (text) =>
-      countMatches(
-        text,
-        /\bcatch\s*(?:\(\s*[\w${}\s,:]*\))?\s*\{\s*(?:(?:\/\/[^\n]*\n|\/\*(?:[^*]|\*(?!\/))*\*\/)\s*)+\}/g
-      ),
+    fix: "Propagate the error, or return a failure the caller can tell apart from success. Log it only where the code falls back on purpose, and say what the fallback is.",
+    count: (text, path) => countCommentOnlyCatches(path, text),
   },
   {
     id: "client-effect",
     label: "`useEffect` / `useLayoutEffect` calls in the inspector client",
     appliesTo: (path) => CLIENT_PATH.test(path),
     fix: "Derive the value during render, do the work in the event handler that causes it, reset state with a `key`, or subscribe with `useSyncExternalStore`. If an effect is the only option, replace an existing one in the same change.",
-    count: (text) =>
-      countMatches(codeOnly(text), /\buse(?:Layout)?Effect\s*\(/g),
+    count: (text, path) => countCalls(path, text, EFFECTS),
   },
   {
     id: "client-timer",
@@ -297,11 +250,7 @@ export const RULES = [
       "`setTimeout` / `setInterval` / `requestAnimationFrame` / `requestIdleCallback` calls in the inspector client",
     appliesTo: (path) => CLIENT_PATH.test(path),
     fix: "A timer that waits for React to commit or for state to settle hides an ordering bug. Act on the event or state change that makes the work possible.",
-    count: (text) =>
-      countMatches(
-        codeOnly(text),
-        /\b(?:setTimeout|setInterval|requestAnimationFrame|requestIdleCallback)\s*\(/g
-      ),
+    count: (text, path) => countCalls(path, text, TIMERS),
   },
   {
     id: "eslint-disable",
@@ -359,7 +308,7 @@ export function countFile(path, text) {
   const counts = {};
   for (const rule of RULES) {
     counts[rule.id] =
-      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text);
+      rule.appliesTo && !rule.appliesTo(path) ? 0 : rule.count(text, path);
   }
   return counts;
 }

@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -31,6 +32,12 @@ import {
 } from "./copy-review.mjs";
 
 const RATCHET = join(dirname(fileURLToPath(import.meta.url)), "ratchet.mjs");
+
+// Scripts copied into a temp repo resolve `typescript` from there, and it
+// has no node_modules. Child processes find the package these tests load.
+process.env.NODE_PATH = dirname(
+  dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
+);
 
 function count(text, path = "sdk/src/a.ts") {
   return countFile(path, text);
@@ -181,6 +188,30 @@ describe("rules", () => {
 
     const forOf = "for (const m of /setTimeout(run)/g.exec(s) ?? []) use(m);";
     assert.equal(count(forOf, path)["client-timer"], 0);
+  });
+
+  it("reads a regex literal after an if condition as a regex", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const regex = "if (enabled) /setTimeout(foo)/.test(source);";
+    assert.equal(count(regex, path)["client-timer"], 0);
+    const call = "if (enabled) setTimeout(foo, 0);";
+    assert.equal(count(call, path)["client-timer"], 1);
+  });
+
+  it("counts a timer on a line whose JSX text holds an apostrophe", () => {
+    const path = "mcpjam-inspector/client/src/a.tsx";
+    const jsx =
+      "const v = <p>Don't <button onClick={() => setTimeout(open, 1)}>Go</button></p>;";
+    assert.equal(count(jsx, path)["client-timer"], 1);
+    const text = "const v = <p>Don't setTimeout(open, 1) yet</p>;";
+    assert.equal(count(text, path)["client-timer"], 0);
+  });
+
+  it("does not count a catch written inside a string", () => {
+    const inString = 'const example = "try { a(); } catch { /* why */ }";';
+    assert.equal(count(inString)["comment-only-catch"], 0);
+    const inCode = "try { a(); } catch { /* why */ }";
+    assert.equal(count(inCode)["comment-only-catch"], 1);
   });
 
   it("counts a comment-only catch whose binding holds a dollar sign", () => {
