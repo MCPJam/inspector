@@ -137,6 +137,71 @@ try {
     throw new Error(`npm install failed with status ${install.status}`);
   }
 
+  // The Inspector composes these three browser exports into its own zod
+  // objects (shared/plugin-model-context.ts, plugin-resource-link.ts,
+  // plugin-icons.ts). Composing them from the installed tarball catches a
+  // build that drops an export or ships a non-zod validator in its place.
+  writeFileSync(
+    path.join(fixtureDir, "browser-schemas.mjs"),
+    `import { z } from "zod";
+import {
+  ContentBlockSchema,
+  IconSchema,
+  ResourceLinkSchema,
+} from "@mcpjam/sdk/browser";
+
+const link = {
+  type: "resource_link",
+  uri: "file:///notes/plan.md",
+  name: "plan.md",
+  mimeType: "text/markdown",
+  icons: [{ src: "https://example.com/icon.png", sizes: ["16x16"] }],
+};
+const savedContext = z.strictObject({
+  revision: z.number().int().nonnegative(),
+  sequence: z.number().int().nonnegative(),
+  state: z
+    .strictObject({
+      updateId: z.string().min(1),
+      content: z.array(ContentBlockSchema),
+    })
+    .nullable(),
+});
+const restored = savedContext.parse({
+  revision: 2,
+  sequence: 1,
+  state: {
+    updateId: "update-1",
+    content: [{ type: "text", text: "Selected rows 1-3" }, link],
+  },
+});
+if (restored.state.content[1].uri !== link.uri) {
+  throw new Error("the restored resource link lost its uri");
+}
+if (ResourceLinkSchema.parse(link).name !== "plan.md") {
+  throw new Error("ResourceLinkSchema did not parse a resource link");
+}
+if (z.array(IconSchema).parse(link.icons).length !== 1) {
+  throw new Error("IconSchema did not parse an icon");
+}
+const { uri: _uri, ...withoutUri } = link;
+if (ResourceLinkSchema.safeParse(withoutUri).success) {
+  throw new Error("ResourceLinkSchema accepted a link without a uri");
+}
+if (savedContext.safeParse({ revision: 1, sequence: 0, state: { updateId: "u", content: [{ type: "text" }] } }).success) {
+  throw new Error("ContentBlockSchema accepted a text block without text");
+}
+`
+  );
+  const browserSchemas = run("node", ["browser-schemas.mjs"], {
+    cwd: fixtureDir,
+  });
+  check(
+    "installed @mcpjam/sdk/browser zod schemas compose and parse a saved context",
+    browserSchemas.status === 0,
+    `${browserSchemas.stdout ?? ""}${browserSchemas.stderr ?? ""}`
+  );
+
   // A stub executor written the way a CONSUMER would have to write one, from
   // the public entry alone. If the package's exports are insufficient for
   // this, the E2E fails here rather than in someone's repo.
