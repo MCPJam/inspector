@@ -1,13 +1,8 @@
-| Client | Connect MCPJam |
-| --- | --- |
-| Cursor | <a className="mcj-btn" href="cursor://anysphere.cursor-deeplink/mcp/install?name=mcpjam&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBtY3BqYW0vY2xpQGxhdGVzdCIsIm1jcCJdfQ==">Add to Cursor</a> |
-| VS Code | <a className="mcj-btn" href="vscode:mcp/install?%7B%22name%22%3A%22mcpjam%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40mcpjam%2Fcli%40latest%22%2C%22mcp%22%5D%7D">Add to VS Code</a> |
-| Claude Code | `claude mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp` |
-| Codex | `codex mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp` |
-| Claude (web or desktop) | Add a custom connector with `https://mcp.mcpjam.com/mcp`. See [MCPJam MCP server](/hosted/mcp-server). |
-| ChatGPT | Turn on developer mode, then add a custom connector with `https://mcp.mcpjam.com/mcp`. |
+import { ConnectClients } from '/snippets/connect-clients.jsx';
 
-Coding agents get MCPJam's local MCP server, which needs no account. Claude and ChatGPT connect to your MCPJam account and sign in with OAuth.
+Connect MCPJam's MCP server to test your servers from your agent. Cursor and VS Code install it in one click; the other chips copy a ready-made command. Coding agents use the local server and need no account. ChatGPT and Claude connect to your MCPJam account at `https://mcp.mcpjam.com/mcp`.
+
+<ConnectClients />
 
 Or paste this prompt into any of them. It walks the agent through the right setup for that client, then tests your server:
 

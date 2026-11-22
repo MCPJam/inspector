@@ -858,6 +858,39 @@ footer [class*="powered" i],
   }
 }
 
+/* ── Connect MCPJam to your agent: client chips + app cards ─────────────── */
+.mcj-connect { margin: 1rem 0 1.25rem; display: flex; flex-direction: column; gap: 12px; }
+.mcj-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.mcj-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 16px; border: 1px solid var(--mcj-rule); border-radius: 999px;
+  background: var(--mcj-paper); color: var(--mcj-ink-strong) !important;
+  font-size: 14px; font-weight: 500; line-height: 1.2; cursor: pointer;
+  text-decoration: none !important; transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.mcj-chip:hover { background: var(--mcj-paper-2); border-color: var(--mcj-rule-strong); }
+.mcj-chip:focus-visible, .mcj-card:focus-visible { outline: 2px solid var(--mcj-orange); outline-offset: 2px; }
+.mcj-chip img { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; flex: none; }
+.mcj-ext { width: 14px; height: 14px; color: var(--mcj-ink-muted); flex: none; }
+.mcj-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .mcj-cards { grid-template-columns: minmax(0, 1fr); } }
+.mcj-card {
+  position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px;
+  border: 1px solid var(--mcj-rule); border-radius: 12px; background: var(--mcj-paper);
+  color: var(--mcj-ink-strong) !important; text-decoration: none !important;
+  transition: background 120ms ease-out, border-color 120ms ease-out;
+}
+.mcj-card:hover { background: var(--mcj-paper-2); border-color: var(--mcj-rule-strong); }
+.mcj-card .mcj-ext { position: absolute; top: 16px; right: 16px; width: 16px; height: 16px; }
+.mcj-card-icons { display: flex; align-items: center; gap: 12px; }
+.mcj-card-client { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; }
+.mcj-card-app {
+  width: 48px; height: 48px; border-radius: 13px; display: grid; place-items: center;
+  background: #fff; border: 1px solid var(--mcj-rule);
+}
+.mcj-card-app img { width: 30px; height: 30px; object-fit: contain; }
+.mcj-card-name { font-size: 14px; font-weight: 500; }
+
 /* ── One-click install buttons (Add to Cursor, Add to VS Code) ──────────── */
 a.mcj-btn {
   display: inline-block;
