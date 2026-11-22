@@ -10,7 +10,8 @@ needs goes in `../shared/`. Logging and error-reporting policy is in
 Allowed: `@/shared/*`, and `@mcpjam/sdk` or its subpaths by package name.
 
 - No relative import of `client/` or of `sdk/src/`. Enforced by
-  `no-restricted-imports` in `eslint.config.js`: `npm run lint -w @mcpjam/inspector`.
+  `layers/no-cross-layer-imports` in `eslint.config.js`:
+  `npm run lint -w @mcpjam/inspector`.
   Tests are exempt.
 - No raw `@modelcontextprotocol/sdk`; use `@mcpjam/sdk`. Enforced by
   `npm run check:mcp-v1-runtime-imports` (root; CI runs it in `test:checks`).
