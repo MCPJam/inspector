@@ -2838,7 +2838,8 @@ export class MCPClientManager {
    * or "forbidden" MUST NOT be called as a task. The tool's definition comes
    * from the same `tools/list` lookup the unmirrored-definition path uses. A
    * failed lookup throws to the caller: without the definition the call cannot
-   * be shown to be allowed, so nothing is sent.
+   * be shown to be allowed, so nothing is sent. The lookup gets the server's
+   * configured timeout when the caller sets none, like the task call itself.
    */
   private async assertToolAcceptsTaskCalls(
     serverId: string,
@@ -2846,7 +2847,10 @@ export class MCPClientManager {
     toolName: string,
     options: Pick<ClientRequestOptions, "signal" | "timeout">
   ): Promise<void> {
-    const list = await client.listTools(undefined, options);
+    const list = await client.listTools(
+      undefined,
+      this.withTimeout(serverId, options)
+    );
     const tool = list.tools.find((candidate) => candidate.name === toolName);
     const execution = (tool as { execution?: unknown } | undefined)?.execution;
     const support =

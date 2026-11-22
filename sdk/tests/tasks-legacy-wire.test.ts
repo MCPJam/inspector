@@ -32,9 +32,15 @@ function seedManager(options: {
   callToolResult?: unknown;
   /** What `tools/list` returns. Not recorded in `calls`. */
   tools?: Array<Record<string, unknown>>;
-}): { manager: MCPClientManager; calls: Recorded[]; serverId: string } {
+}): {
+  manager: MCPClientManager;
+  calls: Recorded[];
+  serverId: string;
+  listToolsOptions: Array<{ timeout?: number } | undefined>;
+} {
   const serverId = options.serverId ?? "srv";
   const calls: Recorded[] = [];
+  const listToolsOptions: Array<{ timeout?: number } | undefined> = [];
   const manager = new MCPClientManager();
 
   const client = {
@@ -59,15 +65,21 @@ function seedManager(options: {
     },
     // A task call first checks the tool's `taskSupport` (2025-11-25
     // tasks.mdx:115); by default the probed tool allows it.
-    listTools: async () => ({
-      tools: options.tools ?? [
-        {
-          name: "long_tool",
-          inputSchema: {},
-          execution: { taskSupport: "optional" },
-        },
-      ],
-    }),
+    listTools: async (
+      _params: unknown,
+      lookupOptions?: { timeout?: number }
+    ) => {
+      listToolsOptions.push(lookupOptions);
+      return {
+        tools: options.tools ?? [
+          {
+            name: "long_tool",
+            inputSchema: {},
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      };
+    },
   } as unknown as ManagedMcpClient;
 
   (manager as any).registeredServers.set(serverId, {
@@ -76,7 +88,7 @@ function seedManager(options: {
   });
   (manager as any).liveClientStates.set(serverId, { client });
 
-  return { manager, calls, serverId };
+  return { manager, calls, serverId, listToolsOptions };
 }
 
 describe("resolveTasksWire", () => {
@@ -243,6 +255,23 @@ describe("executeTool legacy task wire", () => {
       expect(calls).toEqual([]);
     });
   }
+
+  it("gives the taskSupport lookup the server's timeout unless the caller sets one", async () => {
+    // The task call itself uses the server's configured timeout (1000 here),
+    // so the `tools/list` check before it must not fall back to the SDK default.
+    const { manager, serverId, listToolsOptions } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: LEGACY_TASK_CAPS as never,
+      requestResult: { task: { taskId: "t-3", status: "working" } },
+    });
+
+    await manager.executeTool(serverId, "long_tool", {}, undefined, {});
+    await manager.executeTool(serverId, "long_tool", {}, { timeout: 5000 }, {});
+
+    expect(listToolsOptions.map((lookup) => lookup?.timeout)).toEqual([
+      1000, 5000,
+    ]);
+  });
 
   it("leaves non-task calls byte-identical on every version", async () => {
     for (const version of [
