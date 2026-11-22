@@ -5,6 +5,7 @@ import {
   seedFromHostTemplate,
 } from "@mcpjam/sdk/host-config/templates";
 import type { HostThemeMode } from "@/lib/client-styles";
+import { getHostLogoSrc, UNKNOWN_HOST_LOGO } from "@/lib/host-ui-metadata";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { HOST_MATRIX_NODE_ID, type HostMatrixNodeData } from "../../types";
 import { buildRedesignedHostCanvas } from "../canvasBuilder";
@@ -14,11 +15,13 @@ function renderCard(
   templateId: (typeof HOST_TEMPLATES)[number]["id"],
   hostName: string,
   themeMode: HostThemeMode,
+  hostStyle?: string,
 ) {
+  const draft = seedFromHostTemplate(templateId, { theme: themeMode });
   const viewModel = buildRedesignedHostCanvas(
     {
       hostName,
-      draft: seedFromHostTemplate(templateId, { theme: themeMode }),
+      draft: hostStyle ? { ...draft, hostStyle } : draft,
       savedSnapshotId: "snap",
       isDirty: false,
       projectServers: [],
@@ -59,5 +62,33 @@ describe("HostMatrixCard logo", () => {
   it("keeps the style's logo when the host is renamed", () => {
     const { container } = renderCard("chatgpt", "Cursor staging", "light");
     expect(glyphSrc(container)).toBe(getScenarioHostLogo("chatgpt"));
+  });
+
+  // Hosts saved before their style was retired, or with a custom style this
+  // client does not register, fall back to the hint table in host-logo.ts.
+  describe("with a host style the client does not register", () => {
+    it("takes the logo from a recognised host name", () => {
+      const { container } = renderCard(
+        "claude",
+        "Cursor (staging)",
+        "light",
+        "retired-style",
+      );
+      expect(glyphSrc(container)).toBe(getHostLogoSrc("cursor", "light"));
+      expect(glyphSrc(container)).not.toBe(UNKNOWN_HOST_LOGO);
+    });
+
+    // The card used to match the clientInfo name as well. It no longer reads
+    // it, so the Claude template's "claude-ai" does not pick Claude's logo.
+    it("shows the generic MCP mark when only the clientInfo name is recognised", () => {
+      const { container } = renderCard(
+        "claude",
+        "Team bot",
+        "light",
+        "retired-style",
+      );
+      expect(container.textContent).toContain("claude-ai");
+      expect(glyphSrc(container)).toBe(UNKNOWN_HOST_LOGO);
+    });
   });
 });

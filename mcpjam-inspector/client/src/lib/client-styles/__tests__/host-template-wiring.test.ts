@@ -3,7 +3,7 @@ import {
   HOST_TEMPLATE_IDS,
   seedFromHostTemplate,
 } from "@mcpjam/sdk/host-config/templates";
-import { getHostLogoSrc } from "@/lib/host-ui-metadata";
+import { getHostLogoSrc, UNKNOWN_HOST_LOGO } from "@/lib/host-ui-metadata";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { BUILT_IN_HOST_STYLES } from "../built-ins";
 
@@ -24,6 +24,12 @@ describe("every SDK host template has client wiring", () => {
     ).toBe(true);
 
     for (const theme of ["light", "dark"] as const) {
+      // Both lookups end at the generic MCP mark when they know nothing, so
+      // agreeing proves nothing unless the mark is the template's own.
+      expect(
+        getScenarioHostLogo(hostStyle, undefined, theme),
+        `Host style "${hostStyle}" (${theme}) has no logo of its own. Set chatUi.logoSrc in mcpjam-inspector/client/src/lib/client-styles/built-ins.ts.`,
+      ).not.toBe(UNKNOWN_HOST_LOGO);
       expect(
         getHostLogoSrc(hostStyle, theme),
         `Host "${hostStyle}" (${theme}) has a different logo in LOGO_BY_HOST_ID than in its host style. Update mcpjam-inspector/client/src/lib/host-ui-metadata.ts to match built-ins.ts.`,
