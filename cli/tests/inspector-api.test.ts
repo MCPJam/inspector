@@ -867,23 +867,28 @@ test("resolveInspectorBrowserBaseUrl reports advertised frontend rejected by bac
 });
 
 test("resolveInspectorBrowserBaseUrl rejects discovered frontend when backend rejects its origin", async () => {
-  await withServerOnAvailablePort(
-    [5181, 5182, 5183, 5184, 5185],
-    (frontendRequest, frontendResponse) => {
-      if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
-        frontendResponse.writeHead(200, { "Content-Type": "text/html" });
-        frontendResponse.end(INSPECTOR_FRONTEND_HTML);
-        return;
-      }
+  // The advertised port is held by a server that is not a frontend. Left
+  // free, tools-call-ui.test.ts, running in parallel on the same ports, could
+  // serve an Inspector frontend there, and the resolver would accept it.
+  await withServersOnConsecutiveAvailablePorts(
+    [5180, 5181, 5182, 5183, 5184],
+    [
+      (_advertisedRequest, advertisedResponse) => {
+        advertisedResponse.writeHead(404);
+        advertisedResponse.end();
+      },
+      (frontendRequest, frontendResponse) => {
+        if (frontendRequest.method === "GET" && frontendRequest.url === "/") {
+          frontendResponse.writeHead(200, { "Content-Type": "text/html" });
+          frontendResponse.end(INSPECTOR_FRONTEND_HTML);
+          return;
+        }
 
-      frontendResponse.writeHead(404);
-      frontendResponse.end();
-    },
-    async (frontendUrl) => {
-      const frontendPort = Number(new URL(frontendUrl).port);
-      // One-port stale hint depends on the resolver's frontend probe window.
-      const advertisedUrl = `http://127.0.0.1:${frontendPort - 1}`;
-
+        frontendResponse.writeHead(404);
+        frontendResponse.end();
+      },
+    ],
+    async ([advertisedUrl, frontendUrl]) => {
       await withServer(
         (request, response) => {
           if (
