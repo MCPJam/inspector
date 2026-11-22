@@ -337,7 +337,7 @@ test("a page that lands off the requested route is named, a match is not", () =>
   assert.equal(at(`${BASE}/p/abc`, home, `${BASE}/home`), null);
   assert.equal(
     at(`${BASE}/p/abc/servers`, evals),
-    `asked for surface evals (/evals), landed on ${BASE}/p/abc/servers`,
+    `asked for surface evals (/evals), landed on ${BASE}/p/<id>/servers`,
   );
   assert.match(at(`${BASE}/p/abc/evals/suite`, evals), /landed on/);
   assert.match(at("http://elsewhere/evals", evals), /landed on/);
