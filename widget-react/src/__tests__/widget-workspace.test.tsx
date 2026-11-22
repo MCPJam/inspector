@@ -465,6 +465,27 @@ describe("workspace-owned widget surfaces", () => {
     expect(registry.getState().aliases.size).toBe(0);
   });
 
+  it("frees an identity when its registration settles, with the bridge still open", async () => {
+    const registry = createAppToolsRegistry({
+      maxInstances: 3,
+      maxIdentities: 2,
+    });
+    // No bridge closes here, so only settlement can free an identity for the
+    // third registration.
+    for (let i = 0; i < 3; i += 1) {
+      await registry
+        .getState()
+        .registerInstance(
+          instance(`open-${i}`, { parentToolCallId: `open-call-${i}` })
+        );
+    }
+    expect([...registry.getState().instancesByBridgeId.keys()]).toEqual([
+      "open-0",
+      "open-1",
+      "open-2",
+    ]);
+  });
+
   it("still invalidates a registration that is hashing when its bridge closes", async () => {
     const registry = createAppToolsRegistry();
     const pending = registry.getState().registerInstance(instance("late"));
