@@ -333,7 +333,12 @@ export function routeMismatch({ requestedUrl, finalUrl, surface }) {
   const wanted = surface
     ? `surface ${surface.id} (${surface.canonicalPath})`
     : redactUrl(requested.href);
-  return `asked for ${wanted}, landed on ${redactUrl(final.href)}`;
+  // The project id varies per account, so an allowlist rule can match the rest.
+  const landedOn = redactUrl(final.href).replace(
+    /^([a-z]+:\/\/[^/]+)\/p\/[^/?#]+/,
+    "$1/p/<id>",
+  );
+  return `asked for ${wanted}, landed on ${landedOn}`;
 }
 
 /** One line, bounded, so a report stays greppable. */
