@@ -6,9 +6,12 @@ import {
 import { LocalRunsControl } from "@/components/connection/LocalRunsControl";
 import { FocusBlock } from "@/components/hosts/redesigned/focus/primitives";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   webAccountAsConnection,
+  webAccountReconnectPath,
   webClientSite,
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
@@ -16,23 +19,23 @@ import type { WebClientVendor } from "@/shared/web-clients";
 /** A web account is a saved sign-in to the vendor's site, so it is signed into. */
 export const WEB_ACCOUNT_TERMS: AccountListTerms = {
   needsReauth: "Needs sign-in",
-  // No `reauthenticate`: nothing here can sign a saved account in again, so
-  // the row's menu doesn't offer it.
+  reauthenticate: "Sign in again",
   removeBody: "MCPJam will remove this account and its saved sign-in.",
 };
 
 /**
  * The client's accounts on its Browser settings tab, in the list MCP servers
  * share, with the same rules: admins manage, members' runs use them, and
- * local apps get them only when an admin allows it. Accounts are added and
- * signed in from the playground's pane, in the browser the runs use, so the
- * list here offers neither.
+ * local apps get them only when an admin allows it. Signing in happens in the
+ * playground's pane, in the browser the runs use.
  */
 export function WebAccountsSettings({
   projectId,
+  hostId,
   vendor,
 }: {
   projectId: string;
+  hostId: string;
   vendor: WebClientVendor;
 }) {
   const { accounts, loaded, isAdmin } = useWebAccounts(projectId, vendor);
@@ -69,6 +72,18 @@ export function WebAccountsSettings({
             />
           ) : null
         }
+        onAuthenticate={(intent) => {
+          // Signing in again opens that account's own page; a new account
+          // starts in the playground's pane, in the browser runs use.
+          if (intent.kind === "replace") {
+            navigateApp(
+              webAccountReconnectPath(intent.credentialId, projectId),
+            );
+            return;
+          }
+          savePreviewedHostId(projectId, hostId);
+          navigateApp(routePaths.playground);
+        }}
         onUpdate={async ({ connectionId: webAccountId }, operation, label) => {
           if (operation === "label")
             await rename({ webAccountId, label: label ?? "" });

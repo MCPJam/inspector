@@ -156,22 +156,27 @@ function SuiteWebAccountsGroup({
   );
   const save = useMutation(webAccountsApi.setSuiteSelection);
   const [pending, setPending] = useState<Partial<Record<string, string[]>>>({});
-  const servers: SuiteAccountsServer[] = WEB_CLIENT_VENDORS.map((vendor) => ({
-    serverId: vendor,
-    mode: "shared" as const,
-    accounts: accounts
-      .filter((account) => account.vendor === vendor)
-      .map((account) => ({
-        connectionId: account.webAccountId,
-        name: webAccountName(account),
-        isDefault: account.isDefault,
-        needsReauth: account.status === "needs_sign_in",
-      })),
-    chosen:
-      selections.find((selection) => selection.vendor === vendor)
-        ?.webAccountIds ?? null,
-  })).filter((server) => server.accounts.length);
-  if (!servers.length) return null;
+  // Each web client reads as a shared server, so the server rows' choices,
+  // and their rules, carry over.
+  const rows = WEB_CLIENT_VENDORS.map((vendor) => {
+    const server: SuiteAccountsServer = {
+      serverId: vendor,
+      mode: "shared",
+      accounts: accounts
+        .filter((account) => account.vendor === vendor)
+        .map((account) => ({
+          connectionId: account.webAccountId,
+          name: webAccountName(account),
+          isDefault: account.isDefault,
+          needsReauth: account.status === "needs_sign_in",
+        })),
+      chosen:
+        selections.find((selection) => selection.vendor === vendor)
+          ?.webAccountIds ?? null,
+    };
+    return { vendor, server };
+  }).filter(({ server }) => server.accounts.length);
+  if (!rows.length) return null;
 
   const choose = async (vendor: WebClientVendor, next: string[]) => {
     setPending((current) => ({ ...current, [vendor]: next }));
@@ -198,23 +203,20 @@ function SuiteWebAccountsGroup({
       footer="Teammates choose their own accounts."
       column="Client"
     >
-      {servers.map((server) => {
-        const vendor = server.serverId as WebClientVendor;
-        return (
-          <AccountServerRow key={vendor} name={webClientName(vendor)}>
-            <AccountChoices
-              server={server}
-              serverName={webClientName(vendor)}
-              checked={pending[vendor] ?? checkedAccountIds(server)}
-              // Until the saved choice loads the default shows as checked,
-              // and a click would save over the person's real choice.
-              saving={vendor in pending || !selectionsLoaded}
-              onChange={(next) => void choose(vendor, next)}
-              needsReauthLabel="Needs sign-in"
-            />
-          </AccountServerRow>
-        );
-      })}
+      {rows.map(({ vendor, server }) => (
+        <AccountServerRow key={vendor} name={webClientName(vendor)}>
+          <AccountChoices
+            server={server}
+            serverName={webClientName(vendor)}
+            checked={pending[vendor] ?? checkedAccountIds(server)}
+            // Until the saved choice loads the default shows as checked,
+            // and a click would save over the person's real choice.
+            saving={vendor in pending || !selectionsLoaded}
+            onChange={(next) => void choose(vendor, next)}
+            needsReauthLabel="Needs sign-in"
+          />
+        </AccountServerRow>
+      ))}
     </AccountGroup>,
   );
 }
