@@ -1,10 +1,10 @@
 ---
 title: "OAuth Debugger"
-description: "Debug your MCP server's OAuth implementation at every step of the handshake"
+description: "Step through your MCP server's OAuth handshake and see exactly where it breaks."
 icon: "workflow"
 ---
 
-The OAuth Debugger provides a visual, step-by-step interface for testing and debugging your MCP server's OAuth 2.1 implementation. View every step of the OAuth handshake in detail with guided explanations, inspect network messages, and validate your implementation against multiple protocol versions. The debugger is fully compliant with [MCP OAuth specification](https://modelcontextprotocol.io/specification/draft/basic/authorization).
+The OAuth Debugger walks your MCP server's OAuth 2.1 handshake one step at a time, so you can see exactly which request fails and why. It shows every HTTP request and response, explains each step as you go, and checks your server against the [MCP authorization spec](https://modelcontextprotocol.io/specification/draft/basic/authorization) for the protocol version you pick.
 
 <Frame>
   <img
@@ -15,162 +15,130 @@ The OAuth Debugger provides a visual, step-by-step interface for testing and deb
   />
 </Frame>
 
-## Key Features
+## Getting Started
 
-The OAuth Debugger includes:
+1. Open **OAuth Debugger** in the sidebar.
+2. Click **Edit** next to the server URL to set up the target, prefilled with the selected server. To add a new target without changing the current one, click **Add** instead.
+3. Enter your server's base URL and pick a protocol version.
+4. Pick a registration method: CIMD, DCR or pre-registered.
+5. Click **Continue** to start the flow.
 
-- **Visual Step-by-Step Guide** - Interactive flow guide with detailed explanations for each OAuth step
-- **Multi-Protocol Support** - Test against OAuth spec versions 03-26, 06-18, 11-25, and 2026-07-28 (Latest)
-- **Full Registration Methods** - Support for client pre-registration, Dynamic Client Registration (DCR), and Client ID Metadata Documents (CIMD)
-- **Network Inspection** - View all HTTP requests and responses with headers and body content
-- **Educational Context** - Built-in teachable moments and tips for common OAuth issues
-- **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
-- **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
+The debugger then walks you through each step of the handshake and explains what happened.
+
+## What the debugger shows
+
+- A step-by-step guide with an explanation of each OAuth step
+- The spec versions 03-26, 06-18, 11-25 and 2026-07-28, so you can test against each
+- Every registration method: pre-registration, Dynamic Client Registration (DCR) and Client ID Metadata Documents (CIMD)
+- Every HTTP request and response, with headers and body
+- Tips for common OAuth problems
+- A sequence diagram that follows your progress and shows the exact `resource` value the flow sends
+- Logs you can copy in guide or raw format
+
+## OAuth trace on the server
+
+When you connect a server with OAuth, MCPJam records every step of the flow, so you can diagnose a failed connection without opening the debugger.
+
+If OAuth fails, a banner on the server card names the step that failed, for example "OAuth failed during Token Request".
+
+For the full trace, open the server's details and expand **Last OAuth Trace**. Failed steps open automatically. The trace shows:
+
+- **Source**: which part of the flow produced the trace (`interactive_connect`, `callback`, `refresh`, or `hosted_callback`)
+- **Current step**: the step the flow reached before it finished or failed
+- Each OAuth step (discovery, client registration, PKCE, authorization redirect, token exchange), with its status, a message, any error text, and optional HTTP details
+- **HTTP History**: every HTTP call in the flow, with tokens and secrets redacted
+
+The trace survives page reloads, so you can read it after the browser returns from the authorization redirect. Disconnecting the server or resetting its OAuth data clears it.
+
+Use the trace to diagnose a real connection attempt, and the OAuth Debugger to walk through the flow step by step against a specific protocol version.
+
+### Reading OAuth log entries
+
+OAuth trace steps also appear in the traffic log. Set the log panel's **Source** filter to **OAuth** to see only them. See [OAuth log entries](/inspector/tools-prompts-resources#oauth-log-entries) for details on the status indicators.
+
+## Bearer token authentication
+
+For an HTTP server that uses a bearer token, the **Auth** tab confirms bearer auth instead of showing OAuth details. Manage or rotate the token in the server's configuration.
+
+The **Auth** tab also shows the server's auth type: **Bearer Token**, **OAuth**, process-based for STDIO, or **No Authentication**.
+
+### Saved bearer tokens
+
+Once a bearer token is saved, the edit form hides it. The **Bearer Token** field reads "Saved — enter a new value to replace".
+
+- To keep the saved token, leave the field blank when you save other changes.
+- To replace it, enter a new value and save.
+
+To see the stored token, click **Reveal** next to the **Bearer Token** label. The value is hidden again when you close the panel or navigate away.
+
+## Pre-registered clients
+
+With **Pre-registered** as the registration method, enter a **Client ID** before you save. The pre-registered flow skips Dynamic Client Registration, so it has no other way to get one.
+
+If you save without a Client ID, the form shows an error and opens **Advanced settings** so you can enter it. Switching the **Registration** dropdown to another method, such as **Dynamic (DCR)**, clears the error.
+
+### Pre-registered client secrets
+
+Once saved, a pre-registered client's secret is hidden. The field reads "A client secret is saved" instead of showing an input, and has these controls:
+
+- **Reveal**: shows the stored secret in an editable field. Copy it, or type over it to replace it on the next save. Click **Hide** to close the field without changes.
+- **Clear**: deletes the secret when you save. Click **Undo** to keep it.
+
+### Authorization header conflict warning
+
+If you use OAuth and also add a custom `Authorization` header under **Advanced settings**, a warning appears, because OAuth sets that header itself. Remove the custom header, or switch to another authentication method.
+
+## Navigating to the OAuth Debugger from the logger
+
+Hover an OAuth error in the request log and click **Continue in OAuth Debugger**. MCPJam selects the server that produced the error and opens the OAuth Debugger on it.
+
+## Reconnecting OAuth servers
+
+To sign in again, click **Reconnect** on the server card or in the server's details. It's the only control that opens the OAuth consent screen. The server's on/off toggle only reuses existing tokens: if they've expired, it shows a re-authentication error instead.
+
+With [multiple accounts](/inspector/connecting-servers#multiple-oauth-accounts) connected, **Reconnect** in an account's row menu, on the **Config** tab, replaces only that account's token. **Reconnect** on the card replaces the default account's.
+
+## Desktop app behavior
+
+In the MCPJam Desktop app, the authorization step opens in your system browser. After you approve access, a **Continue in MCPJam Desktop** page hands you back to the app, which finishes the flow in the OAuth Debugger. If the handoff doesn't happen, click the link on that page.
+
+## Warnings and strict checks
 
 ### Resource indicator warnings
 
 When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 (for example, a same-origin resource on a different path than the transport endpoint), the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
 
-The debugger intentionally proceeds rather than failing so you can observe real server behavior. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict RFC 9728 validation.
+The debugger carries on so you can see how the server really behaves. For strict RFC 9728 validation, use [OAuth Conformance](/cli/oauth-conformance).
 
 ### Path-scoped authorization servers
 
-Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path, for example `https://<env>.example.com/resources/res_x`, while their metadata advertises the origin root as the `issuer`. By default, Inspector enforces the RFC 8414 §3.3 requirement that the advertised `issuer` exactly matches the URL discovery started from, so those servers fail discovery with an error that names the mismatch.
+Some multi-tenant authorization servers (such as Scalekit) scope their OAuth endpoints under a path, for example `https://<env>.example.com/resources/res_x`, while their metadata advertises the origin root as the `issuer`. By default, MCPJam requires the advertised `issuer` to match the URL discovery started from exactly (RFC 8414 §3.3), so those servers fail discovery with an error that names the mismatch and the switch that fixes it.
 
-To connect to a path-scoped authorization server, enable the **Path-scoped authorization server** switch in **Advanced settings**:
+To connect to a path-scoped authorization server, turn on the **Path-scoped authorization server** switch:
 
-- In the **OAuth Debugger**, open the **Configure** dialog and expand **Advanced settings**.
-- In the **Connect** server form, open **Authentication → Advanced settings**.
+- In the OAuth Debugger, click **Edit** next to the server URL and expand **Advanced settings**.
+- In the server form, open **Advanced Settings** in the authentication section.
 
-The toggle is **off by default**. When off, the strict exact-match check applies and the error message names the toggle so you can find the fix from the error itself.
-
-When enabled, the following rules still apply:
+The switch is off by default and is saved per server, for both the OAuth Debugger and connecting. When it's on, these rules still apply:
 
 - The advertised issuer must be a same-origin, segment-aware path-prefix ancestor of the discovery URL. For example, `/resources` is accepted as an ancestor of `/resources/res_x`, but `/resources-evil` is not.
 - The `token_endpoint` and `registration_endpoint` in the server's metadata must stay on the advertised issuer's own origin. A present endpoint that points off-origin is rejected even with the toggle on.
 - A query string or fragment on either side of the comparison disqualifies the relaxation (RFC 8414 §2 forbids both in an issuer identifier).
 - Cross-origin issuers are always rejected.
 
-When the toggle accepts a path-scoped issuer, a **warning** is recorded in the OAuth flow log because strict MCP clients may still refuse to connect to the server being debugged.
-
-The setting is stored per server and applies to both the OAuth Debugger and the Connect flow, so the behavior is consistent across both surfaces.
+When the switch accepts a path-scoped issuer, the OAuth flow log records a warning, because strict MCP clients may still refuse to connect.
 
 ### Authorization-response `iss` mismatch warnings
 
-When the authorization server returns an `iss` parameter on the callback that does not match the issuer recorded from its metadata, Inspector's behavior depends on the protocol version selected for the flow:
+When the authorization server returns an `iss` parameter on the callback that doesn't match the issuer from its metadata, what happens depends on the flow's protocol version:
 
-- **2026-07-28 (Latest)**: The flow is blocked before the authorization code is redeemed. The error names both the recorded issuer and the one returned on the callback so you can compare them directly.
-- **2025-11-25 and earlier**: The flow continues and a warning toast is shown naming both issuers. These protocol versions do not mention `iss` or RFC 9207 issuer validation, so blocking would enforce a rule the selected version does not contain.
+- 2026-07-28: the flow stops before the authorization code is redeemed. The error names both issuers so you can compare them.
+- 2025-11-25 and earlier: the flow continues, and a warning toast names both issuers. These versions don't require issuer validation (RFC 9207).
 
 In both cases the mismatch is recorded on the OAuth trace at the `received_authorization_code` step, visible in the **Last OAuth Trace** panel.
 
-## Inline OAuth tracing
+## Good to know
 
-When you connect a server using OAuth 2.0, Inspector automatically records a trace of every step in the flow and surfaces it in the connection UI. No separate tool required.
-
-**On the connection card**, if OAuth fails, a banner identifies the exact step where the failure occurred (for example, "OAuth failed during Token Request").
-
-**In the server detail panel**, the **Last OAuth Trace** section is collapsed by default. Click the chevron next to **Last OAuth Trace** to expand it. Inside, each step and the **HTTP History** log are also collapsed by default. Error steps open automatically so failures are immediately visible. The section shows:
-
-- Each OAuth step (discovery, client registration, PKCE, authorization redirect, token exchange) with a status indicator and message
-- The error text for any failed step
-- An **HTTP History** log of every request and response, with tokens and secrets automatically redacted
-
-The trace persists across page reloads so you can inspect it after the browser returns from the authorization redirect. It is cleared when you disconnect or reset OAuth data for the server.
-
-Use the inline trace for a quick diagnosis of real connection attempts, and switch to the OAuth Debugger when you need a guided, step-by-step walkthrough against a specific protocol version.
-
-## Getting Started
-
-To begin debugging OAuth flows:
-
-1. **Navigate to the OAuth Debugger** - Click the OAuth Flow tab in MCPJam Inspector
-2. **Configure a Target Server** - Click **Configure** to open the OAuth Profile Modal prefilled with the currently selected server, or click **Add** to open a blank form and save a new target without changing the current one
-3. **Enter Server Details** - Provide your server's base URL and select your protocol version
-4. **Choose Registration Method** - Select CIMD, DCR, or pre-registered based on your implementation
-5. **Start Testing** - Click **Continue** to begin the OAuth flow
-
-The debugger will guide you through each step of the OAuth handshake, providing real-time feedback and educational context.
-
-<Note>
-The header **Add Server** button also opens a blank form so you can add a new target without affecting the server currently selected in the debugger.
-</Note>
-
-## OAuth trace in server overview
-
-When you connect a server using OAuth, Inspector records a structured trace of the entire flow. You can view this trace at any time, even after a failed connection, by opening the server's detail panel and scrolling to the **Last OAuth Trace** section.
-
-The trace shows:
-
-- **Source** - Which part of the flow produced the trace (`interactive_connect`, `callback`, `refresh`, or `hosted_callback`)
-- **Current step** - The step the flow reached before completing or failing
-- **Step-by-step breakdown** - Each OAuth step collapsed by default (error steps open automatically), with its status conveyed by title color, a summary message, and optional HTTP request/response details
-- **HTTP history** - A bounded list of all HTTP calls made during the flow, with headers and bodies sanitized to redact sensitive values such as tokens and secrets
-- **Failure highlight** - If a step failed, the error panel on the server card and the overview both identify the specific step that caused the failure
-
-The trace persists across page reloads so you can inspect a failed OAuth flow after returning to the inspector.
-
-### Reading OAuth log entries
-
-OAuth trace steps also appear as filterable entries in the traffic log. Select **OAuth** from the **Source** filter in the log panel to isolate them. See [OAuth log entries](/inspector/tools-prompts-resources#oauth-log-entries) for details on the status indicators.
-
-## Bearer token authentication
-
-When you configure an HTTP server with a bearer token, the **Auth** tab shows a **Bearer Token Authentication** panel instead of the OAuth panel. The panel confirms that the server is using bearer auth and directs you to the server configuration to manage or rotate the token.
-
-The **Auth** tab also displays an **Authentication** label that reflects the current auth type for the selected server: **Bearer Token**, **OAuth**, **Process-based** (STDIO), or **No Authentication**.
-
-### Saved bearer tokens
-
-When a bearer token has been saved for a server, the token value is hidden in the edit form. The **Bearer Token** field shows the placeholder text **"Saved — enter a new value to replace"** to indicate that a token is stored without revealing it.
-
-- **Leave the field blank** to keep the existing saved token when you save other changes to the server.
-- **Enter a new value** to replace the saved token on the next save.
-
-In hosted mode, a **Reveal** button appears next to the **Bearer Token** label. Clicking it fetches and displays the stored token value so you can inspect or copy it. The revealed value is cleared when you close the panel or navigate away.
-
-<Note>
-Bearer tokens are stored securely and are never written to your browser's local storage in hosted mode. In local mode, the token is stored in your browser's local storage alongside the rest of your server configuration.
-</Note>
-
-## Pre-registered clients
-
-When you select **Pre-registered** as the registration strategy, a **Client ID** is required before you can save the configuration. Because the pre-registered flow skips Dynamic Client Registration entirely, there is no way to obtain a client ID at runtime. The flow will fail without one.
-
-If you try to save without a Client ID, the form blocks the save and shows an inline error. The **Advanced settings** section expands automatically so you can enter the Client ID without having to find and open it yourself. Switching the **Registration** dropdown away from **Pre-registered** (for example, to **Dynamic (DCR)**) clears the error.
-
-### Pre-registered client secrets
-
-When you configure a pre-registered OAuth client with a client secret, the secret is stored securely and never exposed in the UI after saving. The client secret field shows the following controls:
-
-- **Reveal** (hosted mode only): Fetches and displays the stored secret in an editable field. You can copy it or type directly in the field to replace it. Click **Hide** to collapse the field without saving changes.
-- **Clear**: Marks the secret for removal. The secret is deleted from storage when you save. Click **Undo** to cancel before saving.
-- **Replace**: After clicking **Reveal**, type a new value into the revealed field to replace the stored secret on the next save.
-
-When a secret is saved but not yet revealed, the field shows a "A client secret is saved" message in place of an input box. No empty input is shown until you click **Reveal**.
-
-<Note>
-In hosted mode, client secrets are stored in a secure vault and are never written to your browser's local storage. In local mode, the secret is stored in your browser's local storage alongside the rest of your server configuration.
-</Note>
-
-### Authorization header conflict warning
-
-If you enable OAuth and also add a custom `Authorization` header under **Advanced settings**, a warning appears. OAuth automatically sets the `Authorization` header when exchanging tokens, which may override or conflict with your custom value. Remove the custom header or switch to a different authentication method to avoid unexpected behavior.
-
-## Navigating to the OAuth Debugger from the logger
-
-When an OAuth error appears in the request log, a **Continue in OAuth Debugger** button is shown on hover for that log row. Clicking it switches the selected server to the one that produced the error and deep-links directly to the OAuth Debugger (`#oauth-flow`), so you can investigate the failure without manually locating the right server.
-
-## Reconnecting OAuth servers
-
-The enable/connect toggle on a server card or detail modal reuses existing credentials only. It will not launch a new OAuth consent screen. If the existing tokens are expired or missing and a fresh consent flow is required, the toggle reports a re-authentication error instead of redirecting you to the authorization server.
-
-To start a full OAuth flow, use the explicit **Reconnect** button on the server card or detail modal. This is the only path that will open the OAuth consent screen when new credentials are needed.
-
-When a server has [multiple accounts](/inspector/connecting-servers#multiple-oauth-accounts) connected, the **Reconnect** option in each account row's menu (in the server detail modal's Config tab) replaces only that row's credential. The other accounts are not affected. Using the top-level **Reconnect** button on the card replaces the default account's credential.
-
-## Desktop app behavior
-
-When using the OAuth Debugger in the MCPJam Desktop app, the authorization step opens in your system browser instead of inside the app. After you approve access in the browser, you will see a **"Continue in MCPJam Desktop"** page that automatically hands control back to the desktop app. If the handoff does not happen automatically, click the link on that page to return.
-
-Once the browser callback is received, the desktop app resumes the OAuth flow and displays the result in the OAuth Flow tab.
+- **Where secrets are stored.** In the hosted app, bearer tokens and client secrets are kept in a secure vault, never in browser local storage. In the local inspector, they're stored in browser local storage with the rest of your server configuration.
+- **Revealing a secret.** **Reveal** appears only in the hosted app.
+- **Adding a target from the header.** The header's **Add Server** button also opens a blank form without changing the server selected in the debugger.

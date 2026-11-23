@@ -1,14 +1,16 @@
 ---
 title: "CLI Overview"
-description: "Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal"
+description: "Test MCP servers from your terminal or CI: probing, debugging, OAuth, conformance, and hosted evals"
 icon: "terminal"
 ---
 
-The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths; see [Migrating to CLI 4.0](/cli/migration).
+The `mcpjam` CLI tests MCP servers from your terminal or CI: connectivity, OAuth, MCP Apps, tools, resources and prompts, and protocol conformance.
+
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. If you used CLI 3.x, see [Migrating to CLI 4.0](/cli/migration): the old Cloud paths have no aliases.
 
 ## Recommended: Use with Agent Skills
 
-The easiest way to use the CLI is through the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector), which gives your agent full context on every command and workflow.
+Install the [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector) and your agent knows every `mcpjam` command and when to run it.
 
 ```bash
 npx skills add mcpjam/inspector --skill mcp-inspector
@@ -25,8 +27,6 @@ To drive MCPJam's hosted eval tools (launch a run, poll it to a verdict, and tri
 ```bash
 npx skills add mcpjam/inspector --skill run-mcpjam-evals
 ```
-
-Once installed, your agent will know how and when to invoke `mcpjam` commands automatically.
 
 ## Install
 
@@ -99,10 +99,10 @@ API URL precedence:
 
 1. `--api-url`
 2. `MCPJAM_API_URL`, or `MCPJAM_BASE_URL` (the same server without `/api/v1`)
-3. The server saved with the OAuth login (only when that login is the credential; a login saved before logins recorded their server counts as MCPJam Cloud, and one whose recorded server is not a usable address is refused with exit `3`)
+3. The server saved with the OAuth login (only when that login is the credential; a recorded server that is not a usable address is refused with exit `3`)
 4. `https://app.mcpjam.com/api/v1`
 
-Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. The error masks credentials, a query and a fragment, and does not repeat a value that is not a URL. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
+Every command that can contact MCPJam (it accepts `--api-url`, or it uploads results) decides its server when it starts, before it contacts anything. An explicit `--api-url`, `MCPJAM_API_URL` or `MCPJAM_BASE_URL` that is not an `http(s)` URL, or that carries credentials, a query or a fragment, is a usage error (exit `2`), and so are the two variables naming different servers. A saved login is only sent to its own server: when it is the credential and the order picks another server, the command exits `3` before any request. `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
 
 Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout. `cloud status` redacts API keys.
 
@@ -224,7 +224,7 @@ Update available: @mcpjam/cli 1.2.0 -> 1.3.0
 Run npm install -g @mcpjam/cli to update
 ```
 
-The check is non-blocking: version data is fetched in a detached background process and cached locally for 24 hours, so it never slows down your commands. The notice is written to stderr only and never touches stdout or JSON output, so it is safe for both interactive terminals and AI agents (Claude Code, Cursor, etc.) that capture stderr. It is suppressed automatically in CI.
+The check runs in a background process and is cached for 24 hours, so it doesn't slow your commands. The notice goes to stderr only and never touches stdout or JSON output. It is suppressed automatically in CI.
 
 To opt out, set one of these environment variables before running any command:
 

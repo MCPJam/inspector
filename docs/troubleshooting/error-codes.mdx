@@ -4,9 +4,7 @@ description: "What every MCPJam Inspector error code means, the likely causes, a
 icon: "shield-alert"
 ---
 
-This page is the source of truth for the error messages MCPJam Inspector surfaces. Every error rendered in the inspector deep-links to one of the sections below.
-
-If you arrived here from an ErrorCard's "Learn more" link, the page should already be scrolled to the right section. Otherwise, use the index below.
+Find what an MCPJam Inspector error means, its likely causes, and how to fix it. Each error in the Inspector links to its section below; you can also start from the code tables.
 
 ## JSON-RPC codes
 
@@ -112,7 +110,7 @@ The server replied, but the result was not a valid MCP tool, resource, or prompt
 - Inspect the result in the Traffic Log and compare it to the MCP result shape.
 - Return `{ content: [{ type: "text", text: "..." }] }` from the handler, or the matching resource/prompt result.
 
-> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+> The `-32603` code is overloaded between a generic internal error and `invalid_response_format`. The inspector disambiguates by message; check the raw message in the error card's details panel.
 
 ### Connection closed
 
@@ -163,7 +161,7 @@ The server rejected the request because an HTTP header disagreed with the JSON-R
 - Verify the server's protocol-version pinning in the connection settings.
 - If you set an explicit protocol version per server, ensure it matches what the server advertises.
 
-> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the ErrorCard's details panel.
+> The `-32001` code is overloaded between `request_timeout` and `header_mismatch`. The inspector disambiguates by message; check the raw message in the error card's details panel.
 
 ### Unsupported protocol version
 
@@ -585,7 +583,7 @@ These come from the inspector's own SDK runtime.
 The inspector's stateless HTTP transport does not yet implement this MCP operation.
 
 **Likely causes**
-- Operation requires a server-initiated channel (subscriptions, MRTR) the stateless preview transport hasn't wired up yet.
+- The operation needs a server-initiated channel (subscriptions, MRTR), which the stateless transport doesn't support.
 
 **Next steps**
 - Switch the server to the legacy stateful transport in its protocol-mode toggle.
@@ -609,7 +607,7 @@ Stateless mode can only be used with an HTTP-transport server, not STDIO.
 This connection is pinned to a specific MCP protocol version that the server does not offer.
 
 **Likely causes**
-- The client profile you're using pins a protocol version this server hasn't adopted; for example, a client set to **Latest (2026-07-28)** against a server that still speaks a 2025 revision.
+- The client profile you're using pins a protocol version this server hasn't adopted; for example, a client set to the latest protocol version (2026-07-28) against a server that still speaks a 2025 revision.
 - A per-server protocol override is pinned to a version the server dropped or never shipped.
 
 **Next steps**
@@ -725,10 +723,9 @@ A frontier model was selected but the request requires a signed-in account.
 
 MCPJam refused the call before it reached a provider. For the daily, monthly,
 and general codes, the account's own allowance is spent.
-`provider/mcpjam_limit_insufficient` means the balance is not empty but is below
-what the request could cost. Which allowance depends on the plan: free accounts
-share a daily bucket per organization, paid plans spend a monthly allowance that
-renews with the billing period.
+Which allowance depends on the plan: free accounts share a daily bucket per
+organization, and paid plans spend a monthly allowance that renews with the
+billing period.
 
 `provider/mcpjam_limit_insufficient` means the balance is not empty but is below
 what the request could cost. MCPJam reserves a request's worst-case cost before
@@ -935,14 +932,14 @@ keys for all AI features.
 The feature coverage card on **Organization → AI providers** also explains related
 configuration failures:
 
-- **Default model not set**: admins see "The organization's default AI model
-  isn't set. Choose it below." Members are asked to contact an admin.
-- **Saved model can't run**: the model was saved but its connection was
-  removed or it can no longer serve the feature. Admins see "The
-  organization's default AI model can't run. Choose another below."
-  A removed provider connection reports `credential_missing`.
-- **No eligible provider yet**: when no direct cloud provider exists, the
-  card asks for a provider first, then the model.
+- If the default model isn't set, admins see "The organization's default AI
+  model isn't set. Choose it below." Members are asked to contact an admin.
+- If the saved model can't run because its connection was removed or it can
+  no longer serve the feature, admins see "The organization's default AI
+  model can't run. Choose another below." A removed provider connection
+  reports `credential_missing`.
+- If no direct cloud provider exists yet, the card asks for a provider first,
+  then the model.
 
 **Next steps**
 - Organization admins can set or change the default model under
@@ -1033,7 +1030,7 @@ failing.
 
 ## Environment errors
 
-These codes come from the environment resolution service. They appear in the Playground, the Environment Tools pane, and on scenario shared links when a project environment cannot be resolved to a usable set of servers. The error card offers an action where one exists (for example, **Open Servers** for `ENV_NO_SERVERS`) rather than a generic retry that would fail identically.
+These codes appear in the Playground, the Environment Tools pane, and on scenario shared links when a project environment doesn't resolve to a usable set of servers. Where a fix exists, the error card offers it, such as **Open Servers** for `ENV_NO_SERVERS`.
 
 When a visitor opens a scenario shared link and the scenario's environment is archived, they see **"This link has been archived"** instead of a generic failure message. For other unresolvable environment states they see **"This link isn't available right now"**. Signing in cannot change either state; the environment itself must be restored or reconfigured by the scenario owner.
 
@@ -1202,7 +1199,7 @@ MCPJam withheld the shared or uploaded account’s access token from this client
 - If the cause is `not_acknowledged`, ask a project admin to enable **Allow local runs** in the server’s sharing settings. Sharing enables it automatically for new shares; servers shared before Inspector 3.22.0 need this acknowledgement.
 - If the cause is `client_upgrade_required`, update your local MCPJam installation.
 - Use the local Inspector for local runs. Shared tokens are not delivered to browser clients or sandbox runtimes.
-- If your organization has turned off **Allow credential export**, ask an organization owner or admin to turn it on under **Organization settings → Security**.
+- If your organization has turned off **Allow credential export**, ask an organization owner or admin to turn it on in the organization's **Security** settings.
 
 ### Shared sign-in needs HTTPS
 
@@ -1239,11 +1236,11 @@ An error occurred that the inspector could not classify.
 - New error class the inspector hasn't been taught about yet.
 
 **Next steps**
-- Open the details panel of the ErrorCard and copy the raw message.
+- Open the error card's details panel and copy the raw message.
 - File an issue with the raw message so we can add it to the catalog.
 
 ## Generation failed
 
 Persona or goal generation returned a response that could not be used. Try generation again. If it keeps failing, contact support with the request ID.
 
-The request ID lets the team find the saved failed response and its retry outcome. Failed model output is kept in private diagnostics and is not returned to the browser.
+The request ID lets the team find the failed response and its retry outcome.

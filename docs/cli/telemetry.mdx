@@ -4,9 +4,7 @@ description: "Anonymous command-level telemetry, opt-outs, and debug mode"
 icon: "activity"
 ---
 
-`mcpjam` collects anonymous command-level telemetry so we can understand CLI usage and reliability. Telemetry is designed for aggregate product insight, not user or server inspection.
-
-Telemetry is enabled by default. The first command invocation that is not opted out writes `telemetry.json` with `enabled: true` and a random install UUID.
+`mcpjam` sends anonymous command-level telemetry, on by default: which command ran and how it ended, never your arguments, URLs or tokens. You can turn it off for one command or permanently.
 
 ## What's collected
 
@@ -28,7 +26,7 @@ The CLI emits one `cli_command` event after a command action starts. Event prope
 | `is_ci` | Whether the command appears to be running in CI |
 | `ci_name` | Coarse CI provider enum, such as `github_actions`, only when in CI |
 
-Commands that run conformance (`conformance run`, `protocol conformance`, `protocol conformance-suite`, `apps conformance`, `apps conformance-suite`, `tasks conformance`, `oauth conformance`, and `oauth conformance-suite`) also emit one `conformance_run_triggered` event when the run starts. The MCPJam app and SDK send the same event, so conformance use can be counted in one place. It has one property:
+Commands that run conformance (`conformance run`, `protocol conformance`, `protocol conformance-suite`, `apps conformance`, `apps conformance-suite`, `tasks conformance`, `oauth conformance`, and `oauth conformance-suite`) also emit one `conformance_run_triggered` event when the run starts. It has one property:
 
 | Property | Description |
 |----------|-------------|

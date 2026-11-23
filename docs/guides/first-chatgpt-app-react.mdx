@@ -4,7 +4,7 @@ description: "Build a simple Coffee Shop ChatGPT App with React"
 icon: "sparkles"
 ---
 
-We're going to create a simple Coffee Shop ChatGPT App where users can order and drink coffees!
+Build a Coffee Shop ChatGPT App in React, where users order and drink coffees from a widget in the chat. Then test it in MCPJam Inspector and connect it to ChatGPT.
 
 ## Getting Started
 
@@ -192,7 +192,7 @@ You still need to declare the API's domains in `_meta.ui.csp`:
 
 ## A note on authentication and monetization
 
-To keep this guide focused on building your first ChatGPT App, we've skipped authentication and monetization. For production apps, check out [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
+This guide skips authentication and monetization. For production apps, see [OpenAI's authentication docs](https://developers.openai.com/apps-sdk/build/auth) and [monetization docs](https://developers.openai.com/apps-sdk/build/monetization).
 
 ## Running Your App
 
@@ -207,18 +207,16 @@ This builds the React widget with Vite and starts the server at `http://localhos
 
 ### Testing with MCPJam Inspector
 
-The easiest way to test your app:
-
-1. Run the inspector: `npx @mcpjam/inspector@latest`
-2. Enter URL: `http://localhost:8787/mcp`
-3. Try your app in our Playground!
+1. Run the Inspector: `npx @mcpjam/inspector@latest`
+2. Enter the URL `http://localhost:8787/mcp`.
+3. Try your app in the Playground.
 
 ### Connecting to ChatGPT
 
 To connect your app to ChatGPT:
 
-1. Sign in to MCPJam Inspector (tunnels require an account)
-2. Click **Create Tunnel** on the server card with your server connected
+1. Sign in to MCPJam Inspector.
+2. With your server connected, click **Create tunnel** on its server card.
 3. Use the tunnel URL as your connector endpoint in ChatGPT
 
 For more information, see [Tunneling](/inspector/connecting-servers#tunneling).
@@ -231,5 +229,3 @@ Now that your Coffee Shop is running, you can:
 2. **Try the buttons** - Click "Order" and "Drink" to interact with your server
 3. **Chat naturally** - Say "order me 3 coffees" and watch the widget update
 4. **Iterate and expand** - Add more tools, improve the UI, or build something completely new!
-
-Congratulations! You've built your first ChatGPT App! 🎉

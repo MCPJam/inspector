@@ -5,10 +5,8 @@ icon: "circle-alert"
 ---
 
 <Info>
-Looking for a specific error code? See the [error code reference](/troubleshooting/error-codes); every ErrorCard in the inspector deep-links to a section there.
+Looking for a specific error code? See the [error code reference](/troubleshooting/error-codes). Each error card in the Inspector links to its section there.
 </Info>
-
-This guide covers common errors you might encounter when working with MCP servers and how to resolve them.
 
 ## Connection Issues
 
@@ -48,7 +46,7 @@ Most "failed to connect" / `fetch failed` / `ECONNREFUSED` / `MCP error -32000: 
 
    `MCP error -32001: Request timed out` during `initialize` means the server didn't respond to the handshake in time, usually because it's still loading models, opening a database, or waiting on an upstream. Raise the **Request timeout** in **Clients → your client → Request timeout** (default 30,000ms), or reduce the server's startup work.
 
-   In the **hosted app**, the Connect check has a 45-second deadline from the moment the request arrives. If your MCP server hasn't responded by then, the connect fails with "The MCP server did not respond in time"; you'll see this before the Connect button gives up on its own. Servers that connect within the window are unaffected. For servers that consistently take longer to initialize, use the [local inspector](/installation) instead.
+   In the hosted app, a connection fails with "The MCP server did not respond in time" if your server hasn't responded within 45 seconds of the request arriving. For servers that consistently take longer to initialize, use the [local inspector](/installation).
 
 If all five check out and you still see a failure, copy the full error from the JSON-RPC log into a [GitHub issue](https://github.com/MCPJam/inspector/issues) or [Discord](https://discord.gg/JEnDtz8X6z) thread.
 
@@ -89,7 +87,7 @@ This response comes from **your MCP server**, not from MCPJam Inspector. The ser
 
 ### Server fails to connect with authentication errors
 
-**If your server is failing to connect, first verify you've selected the correct authentication option:**
+First check that the server uses the right authentication option:
 
 - **Auto** (default) - Connects without credentials first; if the server returns 401, MCPJam prompts you to continue with OAuth. Use this when you're unsure what the server requires.
 - **No Authentication** - Use this for local or development servers that don't require authentication
@@ -129,7 +127,7 @@ If a connection fails with a message like:
 
 This means the server's URL was changed to a **different origin** (scheme, host, or port) after credentials were saved, and MCPJam refused to send those credentials to the new destination.
 
-When this error occurs, MCPJam automatically opens the server's **Configuration** panel so you can re-enter the credentials immediately.
+MCPJam opens the server's configuration panel so you can re-enter them.
 
 **Solution:** Re-enter the server's credentials for the current URL.
 
@@ -149,22 +147,17 @@ This means your organization has turned off **Allow credential export**, so only
 **Solutions:**
 
 - **Connect from MCPJam in the browser**: open the server from [app.mcpjam.com](https://app.mcpjam.com) instead of a local inspector or CLI.
-- **Ask an organization admin to turn on Allow credential export**: organization owners and admins change it under **Organization settings → Security**. Members can open that page to see how it is set.
+- **Ask an organization admin to turn on Allow credential export**: organization owners and admins change it in the organization's **Security** settings. Members can open that page to see how it is set.
 
 ### Getting 401 Unauthorized errors
 
-If you're seeing **401 Unauthorized** errors when trying to connect to your server, this typically means the server requires authentication that hasn't been set up yet.
+A `401 Unauthorized` error on connect usually means the server requires authentication that you haven't set up yet.
 
 **Solution:**
 
 - **If you're using Auto (the default):** MCPJam will prompt "Continue with OAuth?" when it receives a 401. Accept the prompt to start the OAuth flow.
 - **If you're using No Authentication:** Change your authentication type to **Auto** or **OAuth 2.0** in the server configuration and go through the OAuth authorization flow.
-- Use the OAuth Debugger to troubleshoot any issues with the OAuth process.
-
-<Info>
-  The OAuth Debugger helps you step through each part of the authorization
-  process and identify where things might be going wrong.
-</Info>
+- Use the [OAuth Debugger](/inspector/guided-oauth) to step through each part of the authorization flow and find where it fails.
 
 ### 401 on one tool call after connecting
 
@@ -180,7 +173,7 @@ A ChatGPT-style server signals the same thing with an `isError` tool result carr
 
 ### OAuth connection failures
 
-When an OAuth flow fails, Inspector surfaces the failure directly in the connection UI so you can diagnose the problem without leaving the Servers tab.
+When an OAuth flow fails, the Inspector shows where it failed on the **Servers** page.
 
 **Connection card**: a banner above the error message identifies the exact OAuth step that failed (for example, "OAuth failed during Token Request").
 
@@ -194,9 +187,9 @@ Use the trace to pinpoint whether the failure occurred during discovery, client 
 
 ### Toggle shows a re-authentication error for an OAuth server
 
-The enable/connect toggle on a server card or detail modal reuses existing credentials only. If your tokens are expired or missing, the toggle will report a re-authentication error rather than opening the OAuth consent screen.
+The enable/connect toggle on a server card or detail modal reuses existing credentials only. If your tokens are expired or missing, the toggle reports a re-authentication error instead of opening the OAuth consent screen.
 
-**Solution:** Use the **Reconnect** button on the server card or detail modal to start a full OAuth flow and obtain new credentials. The toggle is intentionally non-interactive for OAuth to avoid unexpected browser redirects.
+**Solution:** Click **Reconnect** on the server card or detail modal to run the full OAuth flow and get new credentials.
 
 ### Common Configuration Mistakes
 
@@ -227,15 +220,15 @@ This is an expected quota state, not an error with your MCP server.
 
 ### App bounces in the dock and disappears (macOS) or closes immediately
 
-If the desktop app fails to start, it now shows a recovery dialog instead of quitting silently. The dialog offers three options:
+If the desktop app fails to start, it shows a recovery dialog with three options:
 
-- **Reset app data and quit**: removes cached data (`Cache`, `Code Cache`, `GPUCache`, `Local Storage`) from the app's user data folder and relaunches. Use this when the app crashes consistently after an update or when local data appears corrupted.
-- **Open logs folder**: opens the folder containing `electron-log` output, then quits. Use this to inspect the error before deciding whether to reset.
-- **Quit**: exits without making any changes.
+- "Reset app data and quit": removes cached data (`Cache`, `Code Cache`, `GPUCache`, `Local Storage`) from the app's user data folder and relaunches. Use this when the app crashes consistently after an update or when local data appears corrupted.
+- "Open logs folder": opens the folder containing `electron-log` output, then quits. Use this to inspect the error before deciding whether to reset.
+- "Quit": exits without making any changes.
 
 ### Port 6274 is already in use
 
-The desktop app defaults to port **6274**. If another process holds that port, the app automatically tries the next available port up to port **6283**. A warning is written to the app logs when a fallback port is used. No action is required; the app starts normally on the fallback port.
+The desktop app defaults to port `6274`. If another process holds that port, the app tries the next free port up to `6283`, starts normally there, and writes a warning to the app logs. You don't need to do anything.
 
 If you need to free port 6274 manually, find and stop the process occupying it:
 
@@ -249,25 +242,25 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 6274).OwningProcess | Stop-Proc
 
 ### App crashes after an automatic update
 
-The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, use the **Reset app data and quit** option in the recovery dialog.
+The desktop app automatically clears stale GPU and HTTP caches (`Cache`, `Code Cache`, `GPUCache`) the first time it launches after a version change. This handles most renderer or GPU process crashes caused by cached data from a previous build. If the app still fails to start after an update, choose "Reset app data and quit" in the recovery dialog.
 
 ### Update button does nothing after a download completes
 
-If you click **Update** and nothing happens, or the app refuses to quit after a download finishes, you are on a version earlier than 3.8.1.
+If you click the update button and nothing happens, or the app refuses to quit after a download finishes, you are on a version earlier than 3.8.1.
 
 The fix is included in 3.8.1 and later. If you are on an affected version:
 
 - **Quitting:** quit normally (Cmd+Q / Alt+F4). The app now always completes the quit even if the install fails.
-- **Update button stuck:** click **Update** once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
-- **If neither works:** use the **Reset app data and quit** option in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
+- **Update button stuck:** click it once. If the staged build has gone missing, the app relaunches automatically, re-downloads the update, and installs it without a second click.
+- **If neither works:** choose "Reset app data and quit" in the recovery dialog, or download the latest release manually from the [releases page](https://github.com/MCPJam/inspector/releases).
 
 ## Getting Help
 
 ### "Reference" line on an error toast
 
-When an unexpected failure occurs in the app (for example, while inviting a member or changing a role), the error toast shows a **Reference `<id>`** line beneath the message. You can hover the toast and click **Copy error message** to copy both the message and the reference together.
+When an unexpected failure occurs in the app (for example, while inviting a member or changing a role), the error toast shows a **Reference `<id>`** line beneath the message. Hover the toast and click the copy button to copy the message and the reference together.
 
-That reference is a request ID you can include when reporting the issue. It lets the MCPJam team look up the exact failure in the logs, so you don't need to reproduce it or capture a stack trace; a screenshot of the toast (or the copied text) is enough.
+Include that reference when you report the issue. The MCPJam team can look up the exact failure with it, so a screenshot of the toast or the copied text is enough; you don't need to reproduce the failure or capture a stack trace.
 
 If you're still experiencing issues:
 

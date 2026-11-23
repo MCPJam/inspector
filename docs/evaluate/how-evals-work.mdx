@@ -1,10 +1,10 @@
 ---
 title: "How evals work"
-description: "One request followed from the user through the client environment to your server and back, the eval case that tests it, and how a run records and grades it."
+description: "Follow one request from the user to your server and back, then see the eval case that tests it and how a run records and grades it."
 icon: "workflow"
 ---
 
-An eval replays a real user's request inside a client environment, records everything that happened, and grades the recording. This page follows one request from the user to your server and back, then shows the eval case that tests it.
+An eval stands in for a real user: it sends their request through a client and a model to your server, records everything that happened, and grades the recording. This page follows one request from the user to your server and back, then shows the eval case that tests it.
 
 ## One request, end to end
 
@@ -31,13 +31,13 @@ The user only sees steps 1 and 8. Everything that could go wrong for your server
 
 ## The eval case for this request
 
-A case stands in for the user. Its prompt is what the user sends at step 1, and its expected outcome describes the reply at step 8. During the run, MCPJam plays the client and its harness, so every arrow is recorded in the iteration's trace.
+A case stands in for the user. Its prompt is what the user sends at step 1, and its expected outcome describes the reply at step 8. During a run, MCPJam plays the client and its harness, so it records every arrow. Each time a case runs is one iteration, and its recording is the trace.
 
 | Part of the case | Where it is in the request | What grades it |
 |---|---|---|
 | **User prompt** "What does note 7 say?" | Arrow 1 | Nothing; it's the input |
-| **Expected outcome** "The reply tells the user what note 7 says, using the note's actual text." | The reply at arrow 8 | The goal completion judge, reading the trace |
-| **Tool was never called** `delete_note` | Arrow 5, on every call | An assertion over the trace |
+| **Expected outcome** "The reply tells the user what note 7 says, using the note's actual text." | The reply at arrow 8 | The goal completion judge, a model that reads the trace and scores whether the outcome happened |
+| **Tool was never called** `delete_note` | Arrow 5, on every call | An assertion, a fixed rule checked against the trace |
 
 The expected outcome is the test. It doesn't say which tool the model must call, so a model that searches first and then reads the note still passes. The assertion pins the one thing that must never happen. [Write a case](/evaluate/write-a-case) explains why cases start from the outcome.
 
@@ -140,7 +140,7 @@ Your server is never tested on its own. Each iteration runs inside one client en
   - The agent loop that runs the conversation. It sends the prompt and the tools to the model, runs each tool call the model asks for on the right server, and loops until the model gives its final reply or the suite's timeout ends it.
   - The client's **Harness** section picks **MCPJam Harness** or the client's native runtime: Claude Agent SDK for Claude Code, Codex App Server for Codex, or the GitHub Copilot CLI, Cursor CLI or OpenCode runtime. A client with no native runtime always uses MCPJam Harness.
   - A native runtime is the vendor's own agent loop, so the run uses that agent's way of loading tools and prompting the model. Claude Agent SDK, GitHub Copilot CLI and Cursor CLI also connect to your servers themselves, as the real agent would.
-  - Native runtimes are in limited rollout, so they may not appear in your workspace yet.
+  - If a native runtime isn't offered in the **Harness** section, it isn't available in your workspace yet.
   - A native runtime runs only models it supports. Cursor CLI needs a Cursor key in AI providers, and native harness turns can be limited by your plan.
 - **Model**
   - The model for this pair. It can differ from the client's default, so one client can run several models.

@@ -4,11 +4,11 @@ description: "What MCPJam's built-in host presets capture, and which fields to g
 icon: "plus-square"
 ---
 
-MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, and MCPJam itself. Each preset captures what a real host publishes during MCP `initialize` and `ui/initialize`: `clientInfo`, `hostInfo`, capability advertise, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features). With a preset selected, a widget rendered in the [Playground](/inspector/playground) behaves the way it would in production under that host.
+MCPJam ships built-in host presets for Claude, ChatGPT, Cursor, Copilot, and MCPJam itself. Pick one and a widget in the [Playground](/inspector/playground) behaves as it would in production under that host. Each preset captures what the real host sends during MCP `initialize` and `ui/initialize`: `clientInfo`, `hostInfo`, the capabilities it advertises, `hostContext` (theme, viewport, device, locale), and sandbox policy (CSP directives, permissions, allow-features).
 
 ## Field guide
 
-When you mirror a host in your own [Client](/inspector/clients), capture each value from the real host rather than inventing it. DevTools (Network → Response Headers) and the Playground's JSON-RPC logger are the easiest places to capture them. This table covers the fields most often gotten wrong:
+When you mirror a host in your own [Client](/inspector/clients), copy each value from the real host instead of inventing it. Find them in DevTools (Network → Response Headers) and the Playground's JSON-RPC logger. These are the fields people most often get wrong:
 
 | Field                              | What to capture                                                                                     | Common mistake                                                                                                          |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
@@ -35,8 +35,7 @@ When you mirror a host in your own [Client](/inspector/clients), capture each va
 
 <Warning>
   **`mcpProfile.apps.mcpAppsOverrides` is what the host advertises for MCP
-  Apps.** Listing capabilities the renderer doesn't actually implement misleads
-  widget authors, they'll gate on the advertised flag, hit a dead path at
-  runtime, and blame their widget. If a capability's `listChanged` notifications
+  Apps.** If you list a capability the renderer doesn't implement, widget authors
+  will rely on the advertised flag and hit a dead path at runtime. If a capability's `listChanged` notifications
   aren't forwarded by the renderer yet, omit the sub-field.
 </Warning>

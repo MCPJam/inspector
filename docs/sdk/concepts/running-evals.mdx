@@ -4,11 +4,11 @@ description: "Measure tool accuracy with statistical evaluations"
 icon: "chart-bar"
 ---
 
-<Note>
-SDK 10, CLI 6, Vitest 0.3, and later versions require an MCPJam login or `sk_` API key for every eval, including BYOK runs with uploads disabled. Earlier versions do not.
-</Note>
+LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure how often it passes.
 
-LLMs are probabilistic, so the same prompt might produce different results each time. Running a test once tells you it *can* work, not that it *reliably* works. Evals run the same test many times and measure statistical accuracy.
+<Note>
+Every eval needs an MCPJam login or `sk_` API key, including runs that use your own provider key with uploads turned off. See [Eval authentication](#eval-authentication).
+</Note>
 
 ## Why Run Evals?
 
@@ -143,7 +143,7 @@ console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 
 ## Save Results to MCPJam
 
-Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` to an **MCPJam API key (`sk_…`)** from Settings → API keys and results are saved automatically:
+Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` to an MCPJam API key (`sk_…`) from **Settings → API Keys** and results are saved automatically:
 
 ```typescript
 await test.run(agent, {
@@ -159,9 +159,9 @@ Results are filed under the project in `MCPJAM_PROJECT_ID` (or the `project` opt
 
 ### Tool errors vs. `passed` on upload
 
-By default, when results are **built from traces** (auto-save and reporter helpers), a failed tool execution (MCP `isError`, errored tool spans, or error tool-results in messages) sets `passed: false` for that iteration even if your test function returned `true`. That keeps CI pass rate aligned with real server behavior.
+By default, when results are **built from traces** (auto-save and reporter helpers), a failed tool execution (MCP `isError`, errored tool spans, or error tool-results in messages) sets `passed: false` for that iteration even if your test function returned `true`.
 
-To disable that for a run (for example you only assert which tools were called, not that every call succeeded), set `failOnToolError: false` on the `mcpjam` block:
+If you only assert which tools were called, not that every call succeeded, set `failOnToolError: false` on the `mcpjam` block:
 
 ```typescript
 await test.run(agent, {
@@ -180,9 +180,9 @@ See [Eval reporting: Tool execution and `passed`](/sdk/reference/eval-reporting#
 
 Predicates express richer pass/fail criteria than tool-call matching, without an LLM judge. Each predicate is a pure function of the iteration transcript, so it produces the same verdict every time, which makes it safe to use as a CI release gate.
 
-Predicates are authored in the corpus JSON (the Inspector's per-case **Checks** editor writes the same shape) and threaded through the runner automatically; there is no predicate field to set on individual uploaded results. A case passes iff every **required** predicate passes (`"gating"` is the legacy spelling of that role and is still accepted): an **advisory** one is recorded and never fails the case, including when it could not be scored. A required check that could not be scored does hold the gate shut. An absent or empty list means no predicate gate.
+You write predicates in the corpus JSON, the same shape the Inspector's per-case **Checks** editor writes, and the runner applies them for you. Uploaded results have no predicate field. A case passes only if every **required** predicate passes. An **advisory** predicate is recorded and never fails the case, even when it could not be scored. A required predicate that could not be scored keeps the gate closed. An absent or empty list means no predicate gate.
 
-The built-in predicate types. **Measures** is the link of the [user-value chain](/sdk/concepts/user-value-chain) the check is filed at; Connection is measured by the runner. Discovery combines runner evidence with optional catalog assertions:
+Built-in predicate types. **Measures** is the [user-value chain](/sdk/concepts/user-value-chain) link the check is filed at. The runner measures Connection itself, and Discovery combines runner evidence with optional catalog assertions:
 
 | Type | Measures | What it checks |
 |------|----------|----------------|
@@ -212,7 +212,7 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 | `toolResultContains` | Response | A tool result contains a substring |
 | `toolResultMatches` | Response | One result's content matches every pattern; `min`/`max` count matching results, not all results |
 | `toolResultMatchesSchema` | Response | Every tool result matches an authored JSON Schema (any JSON root) |
-| `toolResultSizeUnder` | Response | Every tool result is under a byte ceiling, measured before our storage cap |
+| `toolResultSizeUnder` | Response | Every tool result is under a byte ceiling, measured before MCPJam's storage cap |
 | `argumentsMatchToolSchema` | Tool call | Every call's arguments validate against the tool's declared inputSchema |
 | `noRepeatedIdenticalCall` | Tool call | **Observation.** No identical call repeated back-to-back. Advisory only |
 | `toolInputMatches` | Tool call | One call's input matches every pattern; `min`/`max` count matching calls, not all calls |
@@ -235,17 +235,17 @@ The built-in predicate types. **Measures** is the link of the [user-value chain]
 }
 ```
 
-`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. `toolName` is optional there, omit it to read every tool's results, and `isError` results count like any other.
+`toolResultMatches` is the same check on what came back: one tool result at a time, every pattern within that one result. Its `toolName` is optional; omit it to read every tool's results. `isError` results count like any other.
 
 `path` is a JSON Pointer to one top-level key (`"/elements"`); omit it to match the whole arguments object, or the whole result. Both kinds count **matching** units: `min` and `max` count matching calls for `toolInputMatches` and matching results for `toolResultMatches`, never all of them. The default (`min` 1) means at least one matches, so one correct call among ten others still passes. `min: 0, max: 0` means none matches, not that the tool was never called. Use `toolNeverCalled` for that. For "any of these", put the alternatives in one pattern (`Idea|Plan`). Patterns use a linear-time engine (re2js), so lookahead and backreferences are refused when the check is written. See [Matching tool input and output](/sdk/reference/eval-reporting#matching-tool-input-and-output).
 
-When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass, since a missing signal counts as a failure. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
+When an iteration records no widget render observations, the three `widget*` predicates fail rather than pass. See [Predicate gate reference](/sdk/reference/eval-reporting#predicate-gate) for the full type definitions and a code example, and [The user-value chain](/sdk/concepts/user-value-chain) for what a set of checks leaves unmeasured.
 
 ### Standard checks
 
-Standard checks use the browser-safe `STANDARD_CHECKS` catalog from `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory. The user-value chain reports these evaluator results without turning advisory failures into failed stages. Scored required discovery failures can fail Discovery; setup failure attribution takes precedence. Empty complete catalogs receive an explicit "no tools advertised" rationale.
+Standard checks come from the browser-safe `STANDARD_CHECKS` catalog in `@mcpjam/sdk/contract`. Every assertion preset defaults to Advisory, so a failing standard check is reported without failing its stage. A required discovery check that fails can fail Discovery, unless setup failed first. When the server's complete tool list is empty, the result says "no tools advertised".
 
-Cases can suppress suite check families with `suppressedSuiteStandardCheckIds` (for example, `["response.performance"]`). This filters suite defaults before inherit/extend/replace resolution, preserves explicit case and step assertions, and remains effective after a suite threshold changes. Omitted updates preserve suppression; `[]` clears it. Catalog IDs are authoring references; evaluator reporting keeps its existing content-derived scorer IDs.
+To drop a family of suite checks from one case, set `suppressedSuiteStandardCheckIds` on the case (for example, `["response.performance"]`). It removes only the suite defaults: assertions you set on the case or its steps still run, and the suppression survives a change to the suite threshold. An update that omits the field keeps the suppression; `[]` clears it. Reports identify these checks by scorer ID, not by catalog ID.
 
 ### Suite Results
 
@@ -374,11 +374,15 @@ const r1 = await runtime.run("Who am I?");
 const r2 = await runtime.run("List my projects", { context: [r1] });
 ```
 
-**Eval reporting.** When you upload results to MCPJam and the reporter can resolve a host snapshot, it sends the canonical host config alongside the run (`{ hostConfig, hostConfigHash }`) so the run in the Evals UI shows the host you ran with. The snapshot comes from `executor.getHostSnapshot?.()`, falling back to `MCPJamReportingConfig.host`; result-only uploads with neither source omit the pair. The host config is recorded once per run, when the report is built, not per iteration. If you mutate a `HostRuntime`'s host between iterations, the recorded config is the host at report time, which can differ from the one earlier iterations used. Keep the host fixed for the run, or use `HostRunner`, which snapshots once at construction, for an exact record.
+**Eval reporting.** When you upload results, the run in MCPJam shows the host you ran with. The reporter takes it from the executor, or from `MCPJamReportingConfig.host`; result-only uploads with neither leave it out. The host is recorded once per run, when the report is built. If you change a `HostRuntime`'s host between iterations, the recorded host can differ from the one earlier iterations used. For an exact record, keep the host fixed for the run, or use `HostRunner`.
 
 ## Generate evals from the Inspector
 
 You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy markdown for evals** on any server card, then paste it into an LLM. See the [Quickstart](/sdk/quickstart#generate-evals-from-the-inspector) for details.
+
+## Eval authentication
+
+See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.
 
 ## Next Steps
 
@@ -396,7 +400,3 @@ You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy 
     Auto-save, manual APIs, CI metadata, and artifact upload
   </Card>
 </CardGroup>
-
-## Eval authentication
-
-See [eval identity and local data](/cli/local-evals#eval-identity-and-local-data) for credential precedence, CI setup, failure behavior, and the exact fields sent before an eval.

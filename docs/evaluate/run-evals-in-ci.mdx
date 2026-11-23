@@ -4,7 +4,7 @@ description: "Run a hosted suite or upload SDK eval results from your pipeline, 
 icon: "git-pull-request"
 ---
 
-The GitHub Action and the CLI run a suite that already exists in your MCPJam project. The SDK runs evals inside your own test job and uploads the results, which creates or updates a suite managed in code.
+Run a suite from your pipeline and fail the build when a run fails or regresses. The GitHub Action and the CLI run a suite that already exists in your MCPJam project. The SDK runs evals inside your own test job and uploads the results, which creates or updates a suite managed in code.
 
 All three authenticate with an MCPJam API key (`sk_…`) stored as a CI secret named `MCPJAM_API_KEY`. See [eval authentication](/cli/ci#eval-authentication) for credential precedence and failure behavior.
 

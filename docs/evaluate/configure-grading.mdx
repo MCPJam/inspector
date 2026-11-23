@@ -4,7 +4,7 @@ description: "Set what a suite must pass, how many times each case runs, when a 
 icon: "sliders-horizontal"
 ---
 
-Grading lives in **Suite settings** on a suite page, in this order: **Pass criteria**, **Iterations**, evidence requirements, **Quality gate**, then **Evaluators**. Each is a separate setting, so raising the iteration count does not move the bar.
+Grading settings decide when a run passes: the bar it must reach, how many times each case runs, and which evaluators grade it. An evaluator is either an assertion (a fixed rule) or a judge (a model that scores the outcome). The settings live in **Suite settings** on a suite page, in this order: **Pass criteria**, **Iterations**, evidence requirements, **Quality gate**, then **Evaluators**. Each is a separate setting, so raising the iteration count does not move the bar.
 
 Edits are drafts until you click **Save settings**; **Discard** drops them. A saved change applies to future runs only.
 
@@ -185,7 +185,7 @@ The **Evaluators** table lists what grades each iteration, grouped by **Stage of
 | --- | --- | --- |
 | **Goal completion judge** | Whether the iteration accomplished the case's goal, scored 0 to 1. | On or off, threshold, and role (Required or Advisory). The model is under **Judge model**. |
 | **Groundedness judge** | Whether the final answer is supported by what the tools returned. | None. Always advisory. Runs on demand, not after every iteration. |
-| **Rubric checks** | Each grading criterion, asked on its own as a yes or no question. | On or off. Always advisory. Shown when your deployment grades rubric checks. |
+| **Rubric checks** | Each grading criterion, asked on its own as a yes or no question. | On or off. Always advisory. |
 
 {/* Screenshot: Evaluators table with the User value stage expanded, showing Goal completion judge, Groundedness judge and Rubric checks rows after Edit evaluators */}
 

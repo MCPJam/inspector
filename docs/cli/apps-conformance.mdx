@@ -4,16 +4,7 @@ description: "Validate MCP Apps tool metadata and ui:// resource wiring from the
 icon: "app-window"
 ---
 
-The `apps conformance` command validates the server-side MCP Apps surface your server exposes through tools and `ui://` resources.
-
-Use `tools call --ui` when you want to execute one UI-capable tool and render the completed result in the local Inspector App Builder.
-
-<Note>
-  This is currently **server-side** MCP Apps conformance only. A passing run does
-  **not** prove full SEP-1865 host behavior such as `ui/initialize`,
-  `ui/notifications/tool-input` ordering, sandbox proxy behavior, or host
-  display-mode handling.
-</Note>
+The `apps conformance` command checks the MCP Apps surface your server exposes: tool metadata and the `ui://` resources it points to.
 
 ## Quick start
 
@@ -49,7 +40,7 @@ mcpjam tools call \
 
 ## What it checks
 
-The current runner validates:
+The runner validates:
 
 1. MCP Apps tools are present.
 2. Tool metadata uses valid `_meta.ui.resourceUri` and `visibility` values.
@@ -170,7 +161,9 @@ mcpjam apps conformance \
 
 Use `tools list` to find UI-capable tools. A tool has interactive UI when its metadata includes `_meta.ui.resourceUri`, deprecated `_meta["ui/resourceUri"]`, or `openai/outputTemplate` in `toolsMetadata`.
 
-Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, opens Inspector by default in a TTY, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot. `--inspector-url` is the Inspector backend/API URL; `--frontend-url` is the browser/client URL and skips frontend discovery. Use `--no-open` when browser automation already opened `http://127.0.0.1:6274/#app-builder`; use `--attach-only` to disallow startup, browser opening, and discovery. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial wait progress unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY.
+Then use `tools call --ui` when you need to inspect the output of one UI-capable tool call. The CLI starts or attaches to the local Inspector backend, opens Inspector by default in a TTY, connects the target server, focuses App Builder in the active Inspector browser client, injects the already-completed tool result, and requests a UI snapshot.
+
+`--inspector-url` is the Inspector backend/API URL; `--frontend-url` is the browser/client URL and skips frontend discovery. Use `--no-open` when browser automation already opened `http://127.0.0.1:6274/#app-builder`; use `--attach-only` to disallow startup, browser opening, and discovery. Default non-TTY `--ui` runs do not open a browser unless `--open` is passed. TTY stderr runs print the App Builder URL and initial wait progress unless `--quiet` is set; the elapsed-seconds heartbeat only appears when stderr is a TTY.
 
 ```bash
 mcpjam tools call \
@@ -185,10 +178,10 @@ mcpjam tools call \
 ```
 
 <Note>
-  `tools call --ui` executes the server tool once. Inspector receives the
-  completed result through `renderToolResult`, so the UI render path does not
-  call the tool a second time. The rendered state lives in the active Inspector
-  client; opening the URL in a fresh tab later does not hydrate the old render.
+  `tools call --ui` executes the server tool once; Inspector renders the
+  completed result without calling the tool again. The rendered state lives in
+  the active Inspector client; opening the URL in a fresh tab later does not
+  restore the old render.
 </Note>
 
 If `inspectorRender.status` is `skipped`, the tool call succeeded but Inspector had no active browser client, a render precondition was missing, or the render wait timed out; the envelope includes a stable root `warning` and `inspectorRender.warning` with one of the stable codes `no_active_client`, `timeout`, `disconnected_server`, or `unsupported_in_mode`, plus an `inspectorRender.remediation` hint. Non-quiet runs print a stderr tip, and the command keeps the tool-call exit code unless `--require-render` is set. If the command returns `success: false` with an `error`, check whether the failure came from `result` or from an Inspector render command.
@@ -247,8 +240,9 @@ Every skipped check carries a `skipReason`:
 
 An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
 
-## Notes
+## Good to know
 
+- This is **server-side** MCP Apps conformance only. A passing run does **not** prove full SEP-1865 host behavior such as `ui/initialize`, `ui/notifications/tool-input` ordering, sandbox proxy behavior, or host display-mode handling.
 - The runner always advertises the MCP Apps UI extension capability so servers do not hide their MCP Apps surface when custom client capabilities are provided.
 - Deprecated `_meta["ui/resourceUri"]` is accepted. Tools that still use it are reported as one "Deprecation Notice" advice item (`apps-readiness-deprecated-resource-uri`), printed under `Advice` on stderr (suppressed by `--quiet`). It costs no points and never changes the exit code.
 - Tool name conventions (length, character set, uniqueness) are core MCP rules, so this suite does not check them. The protocol suite reports them on every tool as the advice item `readiness-tool-name-conventions`, on protocol 2025-11-25 and later.

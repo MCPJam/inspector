@@ -6,11 +6,6 @@ icon: "list-checks"
 
 The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, `-32021` on undeclared requests, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
 
-<Note>
-  Tasks conformance provokes and then polls a real task, so it requires a
-  persistent connection. It is not available in hosted mode.
-</Note>
-
 ## Quick start
 
 ```bash
@@ -23,7 +18,7 @@ For a local stdio server:
 mcpjam tasks conformance --command node --args server.js --cwd /path/to/project
 ```
 
-On the extension wire you must name the probe tool. Auto-selection reads `execution.taskSupport`, which the 2026-07-28 `ToolSchema` strips, so a tasks-extension server cannot advertise which tool creates a task. Without `--tool-name` the six task-dependent checks cannot run and the command reports `"outcome": "incomplete"` (exit code `3`) rather than a green run:
+On the extension wire you must name the probe tool with `--tool-name`. Without it, the six task-dependent checks cannot run and the command reports `"outcome": "incomplete"` (exit code `3`) rather than a green run:
 
 ```bash
 mcpjam tasks conformance \
@@ -47,7 +42,7 @@ mcpjam tasks conformance \
 |---|---|---|
 | `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
 | `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
-| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong: it is the only signal that separates a task from a standard result. |
+| `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. A missing or wrong `resultType` fails the check. |
 | `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`; the server must answer normally or reject with `-32021`. |
 | `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
 | `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
@@ -163,14 +158,13 @@ An incomplete run carries a root `incompleteReason` naming the checks that did n
 
 `--transport` is optional; without it, `--url` implies HTTP and `--command` implies stdio.
 
-## Notes
+## Good to know
 
+- The run creates and polls a real task on your server, so it needs a persistent connection. It is not available in hosted mode.
 - Exit codes are CI-friendly: `0` when all selected checks pass, `1` when any check fails, `2` for invalid command usage, and `3` when the run is incomplete because a selected check could not be run.
-- Declaration hygiene is asserted against captured outbound JSON-RPC bytes, not re-derived from intent.
 - The undeclared-request checks (`tasks-undeclared-creation-refused`, `tasks-undeclared-capability-rejected`) apply to the extension wire only and are skipped on the legacy wire.
-- `tasks-undeclared-capability-rejected` needs a live task to probe with, so it is reported as `could-not-run` (and the run as incomplete) when no task could be provoked. Its probes run last, after every check that reads the task, because a server that wrongly accepts an undeclared `tasks/update` or `tasks/cancel` would otherwise mutate the very task the other checks inspect. If the server does not implement `subscriptions/listen` at all (`-32601`), that sub-probe is reported as a warning instead of a failure.
+- `tasks-undeclared-capability-rejected` needs a live task to probe with, so it is reported as `could-not-run` (and the run as incomplete) when no task could be provoked. Its probes run last, after every check that reads the task. If the server does not implement `subscriptions/listen` at all (`-32601`), that sub-probe is reported as a warning instead of a failure.
 - The `tasks-mcp-name-routing` check applies to HTTP transports only and is skipped for stdio servers.
-- Checks that require a created task cannot run when no probe tool resolves. That is a `could-not-run` skip, so the command exits `3` instead of reporting a pass; pass `--tool-name` to fix it.
 
 ## Related commands
 

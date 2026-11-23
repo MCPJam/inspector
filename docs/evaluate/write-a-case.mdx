@@ -4,7 +4,7 @@ description: "Write what the user asks and the outcome they should get, then add
 icon: "file-pen-line"
 ---
 
-A case is one user prompt and the outcome the user should get from it. The **Expected outcome** is the test: a judge reads the finished run and decides whether the user got what they asked for. Assertions are for hard constraints, such as a tool that must never run. Each run of a case is one iteration.
+A case is one user prompt and the outcome the user should get from it. The expected outcome is the test: a judge, a model that reads the finished run, decides whether the user got what they asked for. Assertions, fixed rules checked against the run, are for hard constraints, such as a tool that must never run. Each run of a case is one iteration.
 
 <Note>
   To draft cases from your server's tools or a test plan instead of writing each one, see [Generate cases](/evaluate/generate-cases).
@@ -16,7 +16,7 @@ A case is one user prompt and the outcome the user should get from it. The **Exp
 
 - **Write the prompt and the expected outcome**
   - For example: "The reply tells the user what note 7 says, using the note's actual text."
-  - Leave the route as **Any route**.
+  - Don't require a particular tool yet.
 - **Run it across clients and models, several iterations each**
   - Agents may call `read_note` directly, search or list notes first, or answer from earlier context.
   - Clients expose and name tools differently, and models choose differently, so one pair tells you little.
@@ -38,7 +38,7 @@ Each tab adds the same two cases to a notes server: one where the user asks for 
         In the Evaluate tab, open **Suites** and pick a suite.
       </Step>
       <Step title="Start a blank case">
-        On the **Test Cases** card, click **Add case**, then **Add manually**. In an empty suite ("No cases yet"), click **Describe**, which opens the same form beside a chat; you can fill it in yourself.
+        On the **Test Cases** card, click **Add case**, then **Add manually**.
       </Step>
       <Step title="Write the prompt and the outcome">
         Type what the user asks in the first **User prompt**, such as "What does note 7 say?". In **Expected outcome**, write what the user should get: "The reply tells the user what note 7 says, using the note's actual text."
@@ -51,8 +51,6 @@ Each tab adds the same two cases to a notes server: one where the user asks for 
     For the negative case, type "What parameters does read_note take?", write the outcome "Lists read_note's parameters from its description", and add "No tools should be called" from **Add assertion or action**.
 
     The judge is Advisory by default, so a missed outcome shows on the result without failing the iteration. To make the outcome decide pass or fail, set the judge's role to Required in [Configure grading](/evaluate/configure-grading).
-
-    A new case is a draft until you save it: leaving without saving adds nothing to the suite, and **Run** stays disabled. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
 
     {/* Screenshot: case editor with one User prompt, the Expected outcome box filled in, and the Add assertion or action button */}
   </Tab>
@@ -91,10 +89,6 @@ Each tab adds the same two cases to a notes server: one where the user asks for 
     ```bash
     mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
     ```
-
-    <Note>
-      `mcpjam test` runs on your machine without a judge, so it refuses a file with a Required judge. Locally it can check assertions only. See [what runs locally](/cli/local-evals#what-runs-locally).
-    </Note>
 
     To add one case to a suite in your project instead, pass the same fields as JSON to `mcpjam cloud eval cases create`, then run it:
 
@@ -224,7 +218,7 @@ Set a route only after reading traces shows that a path is wrong. Without one, t
 | A named tool: reach it | Add "Tool was called with…" under the prompt; pick the tool and arguments. | That tool is called with matching arguments. Other calls, in any order, are allowed. |
 | A named tool: exact route | Also add "Tools must be called in this exact order". | The calls happen in the listed order, with no extra calls. |
 
-Prefer reaching a tool over an exact route: an exact route fails every correct run that takes an extra step. A case with no assertion and no expected outcome would check nothing, so **Save** stays disabled with "Choose which tool should handle it, or that no tool should be called." On a read-only case, such as one managed in code, **Matching options** shows whether the route uses **Reach the tool** or **Exact route**.
+Prefer reaching a tool over an exact route: an exact route fails every correct run that takes an extra step. A case with no assertion and no expected outcome would check nothing, so **Save** stays disabled with "Choose which tool should handle it, or that no tool should be called."
 
 ### Argument values
 
@@ -337,6 +331,13 @@ This case checks a two-prompt conversation: the user gets note 7, then says than
     ```
   </Tab>
 </Tabs>
+
+## Good to know
+
+- **The suite has no cases yet.** Click **Describe** instead of **Add case**. It opens the same form beside a chat, and you can fill it in yourself.
+- **Save or Run stays disabled.** A new case is a draft until you save it: leaving without saving adds nothing to the suite. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
+- **Running a suite file on your machine.** `mcpjam test` runs without a judge, so it refuses a file with a Required judge and checks assertions only. See [what runs locally](/cli/local-evals#what-runs-locally).
+- **A case managed in code.** It is read-only, and **Matching options** shows whether its route uses **Reach the tool** or **Exact route**.
 
 ## Next steps
 

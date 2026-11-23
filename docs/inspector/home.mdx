@@ -1,35 +1,23 @@
 ---
 title: "Home"
 sidebarTitle: "Home dashboard"
-description: "Org-scoped dashboard with activity stats, recommended servers, and quick-start clients"
+description: "See your organization's activity, connect a recommended server or client in one click, and ask the MCPJam agent for help."
 icon: "house"
 ---
 
-The Home dashboard is the default landing page for authenticated users with an active organization. It gives you a snapshot of your org's activity and lets you connect recommended MCP servers or spin up sandbox clients without leaving the page.
+Home is where MCPJam opens. It shows what your organization has been doing, lets you connect a recommended server or create a client in one click, and gives you a chat box for the MCPJam agent.
 
-<Note>
-The Home dashboard is available in the hosted app at [app.mcpjam.com](https://app.mcpjam.com) and requires you to be signed in with an active organization.
-</Note>
+The page shows, from top to bottom:
 
-## Overview
-
-When you open MCPJam, the Home tab loads at `/home` (also the root `/`). If you don't have an active organization yet, the page shows a **Get started** prompt that takes you to the Organizations page.
-
-<Note>
-If you are signing in for the first time, MCPJam shows a **Welcome** overlay on Home that guides you through connecting your first server. Once you complete onboarding and open the Playground, subsequent logins land on Home as normal.
-</Note>
-
-With an organization selected, the dashboard shows:
-
-- **Greeting**: a time-aware greeting with your first name.
-- **Org stats strip**: live counts for teammates, projects, servers, eval suites, tool executions (last 30 days), and messages sent (last 30 days).
-- **MCPJam Agent composer**: a text input to start or resume an agent conversation directly from the home page.
-- **What's new**: a compact list of recent platform releases and changes, with per-item dismiss and a "Clear all" action.
-- **Recommended servers** and **Recommended clients**: displayed side by side in a two-column grid.
+- A greeting with your first name.
+- A stats strip with counts for your organization.
+- A composer that starts or resumes an MCPJam agent conversation.
+- **What's new**, a short list of recent MCPJam releases.
+- **Recommended servers** and **Recommended clients**, side by side.
 
 ## Org stats strip
 
-The stats strip appears directly below the greeting and shows six metrics for your organization:
+The stats strip sits below the greeting and shows six metrics for your organization:
 
 | Stat | Description |
 |------|-------------|
@@ -40,50 +28,47 @@ The stats strip appears directly below the greeting and shows six metrics for yo
 | Tool executions · 30d | Tool calls made in the last 30 days |
 | Messages · 30d | Messages sent in the last 30 days |
 
-Click **projects** or **servers** to jump to the Connect tab. Click **eval suites** to jump to the Evals tab. The 30-day metrics refresh automatically in the background.
+Click **projects** or **servers** to open the Connect tab. Click **eval suites** to open **Evaluate**.
 
 ## Recommended servers
 
-The **Recommended servers** section shows a curated list of MCP servers. To connect one:
+**Recommended servers** lists MCP servers you can try. To connect one:
 
-1. Make sure you have an active project selected.
-2. Click **Connect** next to the server you want.
-3. MCPJam creates the server on your active project and navigates to the Connect tab.
+1. Select a project.
+2. Click **Connect** next to the server.
 
-If the server is already connected to your project, you'll see an info toast and be taken to the Connect tab instead.
+MCPJam adds the server to your project and takes you to it.
 
 ## Recommended clients
 
-The **Recommended clients** section lets you create a pre-configured sandbox client from a template. Available templates include Claude, ChatGPT, and Cursor.
+**Recommended clients** creates a preconfigured sandbox client from a template, such as Claude, ChatGPT or Cursor. To create one:
 
-To create a client:
+1. Select a project.
+2. Click the template.
 
-1. Make sure you have an active project selected.
-2. Click the template you want.
-3. MCPJam creates the client on your active project and opens it in the Clients tab.
+MCPJam adds the client to your project and opens it in the Clients tab.
 
 ## What's new
 
-The **What's new** section appears above the recommended servers and clients grid and lists recent platform updates.
+**What's new** sits above the recommended servers and clients and lists recent MCPJam updates.
 
-- **Hover** a row to open a popover with a muted looping video preview (or a YouTube thumbnail if no preview clip is available).
-- **Click** a row to open a panel with the full video, a "Watch on YouTube" link, an optional Docs link, and the full release description. Click **Got it** or press **Escape** to close.
-- **Dismiss** a single update with the **✕** button that appears on hover.
-- **Clear all** dismisses every pending update at once.
-- If there are more than three updates, a **View more** button expands the list inline.
+- **Hover** a row to preview its video.
+- **Click** a row to open the full video, a "Watch on YouTube" link, an optional docs link and the release notes. Click **Got it** or press **Escape** to close.
+- **Dismiss** one update with the **✕** button that appears on hover, or click **Clear all** to dismiss them all.
+- With more than three updates, click the button below the list to show the rest.
 
 ## MCPJam Agent panel
 
-The MCPJam Agent is a persistent chat panel that lets you ask questions about docs, evals, and tools without leaving your current tab. It is available on every tab (Playground, Evals, Clients, and others) so you can keep a conversation going while you work.
+The MCPJam agent answers questions about MCPJam and MCP, and operates the app for you while you watch. Its panel stays open as you move between tabs, so the conversation follows you.
 
 ### Opening the panel
 
-- Click the **Ask MCPJam** button in the top-right header bar.
-- Press **⌘\\** (Mac) or **Ctrl+\\** (Windows / Linux) from anywhere in the app. The shortcut is ignored when focus is inside a text input, textarea, or content-editable field.
+- Click **Ask MCPJam** in the top-right of the header.
+- Press **⌘\\** (Mac) or **Ctrl+\\** (Windows / Linux). The shortcut does nothing while you're typing in a text field.
 
 ### What the agent can do
 
-The agent acts by driving the inspector UI directly: every action it takes is visible on your screen as it happens. It uses the documentation and web search to answer knowledge questions, and navigates or operates the app on your behalf through UI actions.
+Every action the agent takes happens in the visible UI, so you see each change as it's made.
 
 | Capability | What it does |
 |------------|-------------|
@@ -94,60 +79,56 @@ The agent acts by driving the inspector UI directly: every action it takes is vi
 | **Documentation & web search** | Answers questions about MCPJam features and MCP concepts |
 | **Clarifying questions** | Asks a multiple-choice question inline when a request is genuinely ambiguous, then continues the same turn with your answer |
 
+When it adds a server, the agent saves it first and connects it as a second step. If the server needs OAuth, the agent tells you and waits for you to click **Authorize** yourself.
+
+When a request is ambiguous, the agent shows a question card with two to four choices, plus **Something else** so you can answer in your own words. Pick an option or type an answer and the agent carries on. If you send a new message or stop the response instead, the agent drops the original request and responds to what you do next.
+
 ### What it costs
 
-Ask MCPJam is on MCPJam. Its turns and its web searches do not consume your organization's credits or its free daily allowance, and you do not need credits or a paid plan to use it, signing in is enough. Playground chat, evals, and swarms are unchanged; they still spend your credits or your own provider key.
+Ask MCPJam is free once you're signed in. It doesn't spend your organization's credits or free daily allowance, and it doesn't need a paid plan. Playground chat, evals and swarms still spend your credits or your own provider key.
 
-The agent runs on a fixed model chosen by MCPJam, so it does not follow the model you have selected in the Playground.
+The agent runs on a model MCPJam chooses, not the one selected in the Playground.
 
-There are limits, and neither of them is something you can buy your way past:
+It has two limits, and you can't pay to lift either:
 
-- **Today's limit**: after a large number of turns in one UTC day, or when MCPJam's daily budget for the feature is used up, the panel says *"Ask MCPJam has reached today's limit. It resets at 00:00 UTC."* Nothing is charged, and the limit clears at 00:00 UTC.
-- **Temporarily unavailable**: an infrastructure problem on our side shows *"Ask MCPJam is temporarily unavailable."* Try again shortly.
-
-Guests (visitors who have not signed in) use the agent on the same shared free allowance the rest of the hosted app gives them.
-
-The same inspector actions are also available to browser-native WebMCP agents via `document.modelContext`, so an external agent can navigate, connect servers, and run playground actions without opening the Ask MCPJam panel. Browser support (Chrome with WebMCP enabled) is a prerequisite; where the API is absent, Ask MCPJam is unaffected.
-
-For server management, adding and connecting are always two separate steps: the agent saves the server first, then connects it, so you can see each change as it happens. If a server requires OAuth authorization, the agent reports that and waits for you to click **Authorize** yourself; it never redirects the page on your behalf. Removing a server is irreversible from chat, so it always pauses for approval even when the **Tool approval** toggle is off.
-
-When the agent needs to clarify your intent before acting, it renders a question card inline in the thread with 2–4 choices. A **Something else** option is always present so you can answer in your own words if none of the choices fit. Once you pick an option or type a free-text answer, the agent continues the same turn with your response. If you send a new message or press **Stop** instead of answering, the question is dismissed and the agent does not attempt to answer the original request. It responds to whatever you say next.
-
-Actions that mutate the UI (such as running a tool call) pause for your explicit approval before they run when the **Tool approval** toggle is on. Destructive actions, those that can't be undone by looking at the screen, always pause for approval regardless of the toggle setting.
+- **Daily limit**: after many turns in one UTC day, or once MCPJam's daily budget for the feature is spent, the panel says *"Ask MCPJam has reached today's limit. It resets at 00:00 UTC."* Nothing is charged.
+- **Temporarily unavailable**: if something breaks on MCPJam's side, the panel says *"Ask MCPJam is temporarily unavailable."* Try again shortly.
 
 ### Using the panel
 
 - **New chat**: Click **New chat** in the panel header to start a fresh conversation.
-- **Resume a session**: Previously started sessions are listed in the panel's home view. Click one to continue.
-- **Resize**: Drag the left edge of the panel to adjust its width. The minimum width is 360 px; the maximum is 50% of the viewport. Dragging below the minimum snaps the panel closed.
-- **Close**: Click the **✕** button in the panel header, or press the keyboard shortcut again.
+- **Resume**: Click a previous conversation in the panel's home view to continue it.
+- **Resize**: Drag the panel's left edge. It ranges from 360 px to half the window, and dragging below the minimum closes it.
+- **Close**: Click **✕** in the panel header, or press the keyboard shortcut again.
 
 ### Tool approval
 
-The composer footer includes a **Tool approval** toggle (shield icon).
+The **Tool approval** toggle (shield icon) in the composer footer decides which actions wait for you.
 
-- **Toggle off (default)**: Additive UI actions apply immediately. Destructive actions (those that can't be undone by looking at the screen) still pause for approval.
-- **Toggle on (strict)**: Every mutating UI action pauses before it runs.
+- **Off (default)**: Actions that add to the UI run immediately.
+- **On**: Every action that changes the UI waits for you.
 
-When the agent pauses, an **Approve / Deny** pill appears in the chat. Denying a call is final. The agent will not retry it automatically. The preference is saved to your browser's local storage and shared across the Home takeover and the side panel.
+Destructive actions, such as removing a server, always wait, whatever the toggle says. When the agent waits, click **Approve** or **Deny** in the chat. A denied action is final; the agent won't retry it. Your choice is saved in your browser.
 
 ### Widget rendering
 
-The agent supports MCP Apps widget rendering. When a workspace tool returns an interactive widget (for example, asking "show my servers"), the widget renders inline in the chat, just like widgets in the LLM Playground. You can interact with the widget directly without leaving the panel.
+When a tool returns an MCP Apps widget, for example when you ask "show my servers", the widget renders in the chat and you can use it there.
 
 ### Persistence
 
-The panel's open state, width, and active session are saved to your browser's local storage and restored on reload. Conversations persist server-side, so you can close and reopen the panel without losing your chat history.
-
-On mobile viewports (below 768 px) the panel opens as a full-width drawer instead of an inline side panel.
-
-<Note>
-The MCPJam Agent panel is available to all signed-in users.
-</Note>
+Conversations are saved to your account, so closing the panel doesn't lose them. The panel's open state, width and active conversation are saved in your browser and restored on reload.
 
 ## Notifications
 
-Notifications are accessible from the sidebar. Click **Notifications** next to the **Support** entry at the bottom of the sidebar to open the notifications panel. Unread notifications show a badge count that is visible in both expanded and collapsed sidebar states.
+Click **Notifications** next to **Support** at the bottom of the sidebar to open the notifications panel. A badge shows how many are unread, whether the sidebar is expanded or collapsed.
+
+## Good to know
+
+- **Home needs an organization.** Home is part of the hosted app at [app.mcpjam.com](https://app.mcpjam.com). If you aren't in an organization yet, click **Get started** to join or create one.
+- **First sign-in.** The first time you sign in, a welcome overlay walks you through connecting your first server.
+- **Guests.** If you haven't signed in, Ask MCPJam draws on the same shared free allowance as the rest of the hosted app.
+- **Small screens.** Below 768 px wide, the agent panel opens as a full-width drawer.
+- **WebMCP agents.** Browser agents that support WebMCP (Chrome with WebMCP enabled) can use the same actions through `document.modelContext` without opening the panel.
 
 ## What's next
 

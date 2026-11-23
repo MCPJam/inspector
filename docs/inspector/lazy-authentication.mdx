@@ -1,10 +1,10 @@
 ---
 title: "Mid-session sign-in"
-description: "Test servers that let you connect without signing in and ask for sign-in only when a protected call needs it"
+description: "Test a server that lets clients connect without signing in, and asks for sign-in only when a protected call needs it."
 icon: "log-in"
 ---
 
-Some MCP servers let a client connect, list tools, and call public tools without a token. They ask for sign-in only when a call needs it. This pattern is often called **lazy authentication**.
+Test an MCP server that lets clients connect, list tools and call public tools without a token, and asks for sign-in only when a call needs it. This pattern is often called lazy authentication.
 
 MCPJam recognizes these sign-in challenges. Depending on the host you are emulating, it shows a **Connect** card, signs you in, and runs the call again, or it reports the challenge the way that host would.
 
@@ -55,7 +55,7 @@ This challenge is not part of the MCP specification. A client that does not know
 
 ## Per-host settings
 
-How a host reacts to each signal is a setting on the client you are emulating. Open **Clients**, select a client, and find **Mid-session sign-in** in the **MCP Protocol** card. Each signal has an action and a trigger.
+How a host reacts to each signal is a setting on the client you are emulating. Open **Connect**, select a client, and find **Mid-session sign-in** on the **MCP Protocol** tab. Each signal has an action and a trigger.
 
 | Setting | Options | Default |
 | --- | --- | --- |
@@ -72,7 +72,7 @@ The actions:
 
 A trigger only narrows its action, so it has no effect while that action is **Pass through**. The defaults follow the MCP specification: any 401 counts as a challenge, because the specification falls back to well-known discovery when the header is missing, and the `_meta` challenge is not acted on.
 
-The settings are read on every call, so a change applies to the next call without reconnecting the server.
+A change applies to the next call, without reconnecting the server.
 
 In the **MCP Protocol** JSON editor, the same settings are these keys. Leave a key out to use its default.
 
@@ -85,7 +85,7 @@ In the **MCP Protocol** JSON editor, the same settings are these keys. Leave a k
 
 ### Preset values
 
-The host presets set these values from each vendor's published documentation. MCPJam has not yet measured them against the live hosts.
+The host presets take these values from each vendor's published documentation, not from tests against the live hosts.
 
 | Preset | Values that differ from the defaults | Source |
 | --- | --- | --- |
@@ -96,7 +96,7 @@ Every other preset uses the defaults.
 
 ### Why the host did not prompt
 
-When the emulated host does not start sign-in for a challenge, MCPJam explains why and what the server could send instead. For example, with a Claude preset and a `_meta` challenge, the note says the host ignores `_meta["mcp/www_authenticate"]` and that the server should return HTTP 401 with a `WWW-Authenticate: Bearer` header instead. The note appears with the error, and under **Details** on a Connect card. It is for you; it is never sent to the model.
+When the emulated host does not start sign-in for a challenge, MCPJam explains why and what the server could send instead. For example, with a Claude preset and a `_meta` challenge, the note says the host ignores `_meta["mcp/www_authenticate"]` and that the server should return HTTP 401 with a `WWW-Authenticate: Bearer` header instead. The note appears with the error, and under **Details** on a Connect card. It is never sent to the model.
 
 ## The Connect card
 
@@ -114,7 +114,7 @@ When the action is **Prompt to sign in** or **Notify**, MCPJam shows a card in p
 
 ### After you sign in
 
-- The original call runs again on its own, whether it reads or writes. It uses the tool-approval policy in **Clients**; OAuth does not add a separate **Run again** prompt.
+- The original call runs again on its own, whether it reads or writes. It follows the client's tool-approval setting; signing in doesn't add a separate prompt.
 - If the server asks for sign-in again right after you signed in, MCPJam does not retry. The call fails with a message asking you to check that your account has access to the server, then try again.
 
 ## Which servers can sign in

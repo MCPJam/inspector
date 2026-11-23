@@ -22,18 +22,14 @@ mcpjam xaa run \
 
 ## Recommended: use with Agent Skills
 
-The easiest way to use the CLI is through the
-[MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector),
-which gives your agent full context on every command and workflow.
+The [MCPJam skill](https://github.com/MCPJam/inspector/tree/main/skills/mcp-inspector)
+teaches your agent every `mcpjam` command and how to read `xaa run` output
+conservatively: advertisement is evidence, redemption is the verdict, and an
+issuer it can't reach is your setup, not a server bug.
 
 ```bash
 npx skills add mcpjam/inspector --skill mcp-inspector
 ```
-
-Once installed, your agent will know how and when to invoke `mcpjam` commands
-automatically, and how to read `xaa run` output conservatively (advertisement
-is evidence, redemption is the verdict; an issuer it can't reach is your setup,
-not a server bug).
 
 ## The three parties
 

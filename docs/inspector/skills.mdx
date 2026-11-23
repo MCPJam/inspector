@@ -1,17 +1,17 @@
 ---
 title: "Skills"
-description: "Load and use skills to give your agents the context they need to use MCP tools effectively"
+description: "Give the model instructions for using your MCP tools, from local skill folders or from your server, and test them in the Playground."
 icon: "square-slash"
 tag: "NEW"
 ---
 
-[Skills](https://agentskills.io/what-are-skills) are an open format that provide instructions on how to use MCP tools and complete workflows. MCPJam discovers skills from your filesystem and from connected MCP servers, lets you upload new ones, and lets you use them in the Playground, either automatically based on the user's prompt or deterministically with the `/` command.
+[Skills](https://agentskills.io/what-are-skills) tell a model how to use your MCP tools and complete workflows. Test them in the Playground, where the model picks skills to fit the prompt, or you add one yourself with `/`. MCPJam finds skills in your filesystem and on connected MCP servers, and you can upload new ones.
 
 ## Getting Started
 
-1. **Open the Connect view** in MCPJam Inspector and select the **Skills** tab
-2. **Load skills**: MCPJam automatically discovers skills from [supported directories](#skill-directories). You can also upload skills directly through the Skills tab, or run `npx skills` to install them
-3. **Use skills in the Playground**: the LLM discovers them automatically, or you can inject them with the `/` command
+1. Open **Connect** and select the **Skills** tab.
+2. Add skills. MCPJam finds them in the [skill directories](#skill-directories) on its own. You can also upload them on the **Skills** tab, or run `npx skills` to install them.
+3. Open the Playground. The model picks skills for each prompt, or you type `/` to add one.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -23,7 +23,7 @@ tag: "NEW"
 
 ## Skill Directories
 
-MCPJam scans the following directories for skills. Each subdirectory is expected to contain a `SKILL.md` file. When duplicate skill names are found, the first match in search order wins.
+MCPJam looks for skills in these directories. Each skill is a subdirectory with a `SKILL.md` file. If two skills share a name, the first one found wins.
 
 **Global:**
 ```
@@ -45,12 +45,12 @@ MCPJam scans the following directories for skills. Each subdirectory is expected
 
 ## Uploading Skills
 
-You can upload skill folders directly from the Skills tab in the Connect view. The upload dialog supports drag-and-drop or file browsing and validates the `SKILL.md` frontmatter in real time.
+Upload a skill folder from the **Skills** tab by dragging it in or browsing for it. The dialog checks the `SKILL.md` frontmatter as you go.
 
 Uploaded skills are stored in `~/.mcpjam/skills/`.
 
 <Note>
-  Uploading a skill with a name that already exists will be rejected. Delete the existing skill first if you need to replace it.
+  You can't upload a skill whose name already exists. To replace it, delete the existing skill first.
 </Note>
 
 ## Updating Skills
@@ -71,27 +71,25 @@ npx skills update
 
 ### Progressive Disclosure
 
-When you have skills available, MCPJam inlines the skill catalog, each skill's name and a one-line description, directly into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the full instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
-
-The catalog is not a tool call. There is no general `listSkills` tool: a turn with no skills gets no skill tools and no catalog section at all, so an empty project never spends a discovery turn on tools that would return nothing.
+MCPJam puts a catalog of your skills, each with its name and a one-line description, in the model's system prompt. The model decides which skills fit your prompt and calls `loadSkill` to load just those. Once a skill is loaded, the model can browse and read its supporting files with `listSkillFiles` and `readSkillFile`. A turn with no skills gets no catalog and no skill tools.
 
 #### Catalog Size Limit
 
-The catalog is capped at **2% of the model's context window** (MCPJam follows OpenAI's plugin guidance here, measured in characters at roughly 4 characters per token). When a model definition carries no context length, the cap falls back to **8,000 characters**.
+The catalog is capped at 2% of the model's context window, counted at about 4 characters per token. If MCPJam doesn't know the model's context length, the cap is 8,000 characters.
 
-If your skills do not fit, MCPJam shortens descriptions first, and only omits whole skills as a last resort. An omission is always reported in the catalog itself:
+If your skills don't fit, MCPJam shortens descriptions first and leaves out whole skills only as a last resort. The catalog says when it left skills out:
 
 ```
 (3 more skills could not be listed within this model's skill-metadata budget.)
 ```
 
-An omitted skill is invisible to the model and cannot be loaded, so keep skill descriptions to a single line if you have many skills installed.
+The model can't see or load a skill that was left out, so keep descriptions to one line if you have many skills.
 
 ### Deterministic Injection
 
-Type `/` in the input to open the skills popover. Select a skill to inject it directly into the conversation. This pre-loads the `SKILL.md` content before the LLM processes your message, so the skill is guaranteed to be used.
+To make sure the model uses a skill, type `/` in the input and select it. MCPJam adds the skill's `SKILL.md` to the conversation before the model reads your message.
 
-When you select a skill via `/`, it appears as a card above the input. You can expand the card to browse the skill's file tree and optionally select additional files to include. Only files you explicitly select are pre-loaded: by default, only the `SKILL.md` is injected.
+The skill appears as a card above the input. Expand the card to browse its files and select any others to include. By default, only `SKILL.md` is added.
 
 <iframe
   className="w-full aspect-video rounded-xl"
@@ -103,7 +101,7 @@ When you select a skill via `/`, it appears as a card above the input. You can e
 
 ## LLM Tool Integration
 
-When at least one skill is available, the LLM is given `loadSkill`, and, on surfaces that can serve supporting files, the two file tools as well:
+When at least one skill is available, the model gets `loadSkill`, plus the two file tools where skills can carry supporting files:
 
 | Tool | Description | When advertised |
 |------|-------------|-----------------|
@@ -111,30 +109,28 @@ When at least one skill is available, the LLM is given `loadSkill`, and, on surf
 | `listSkillFiles(name)` | List all files in the skill directory | Only when the turn's skills can carry supporting files |
 | `readSkillFile(name, path)` | Read the content of a specific supporting file | Only when the turn's skills can carry supporting files |
 
-Together with the inlined catalog, these tools let the LLM progressively load skill content as needed during a conversation, rather than injecting every skill's content upfront.
-
 <Note>
-`listSkills` is not a general discovery tool. It appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists those server-provided skills only. Use it to re-read the catalog mid-conversation; the catalog is already inlined in the system prompt at the start of each turn.
+`listSkills` appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists only those skills. The model can use it to re-read the catalog mid-conversation.
 </Note>
 
 ## Skills over MCP (Server-Provided Skills)
 
-When a connected MCP server advertises the SEP-2640 skills extension, MCPJam discovers its skills automatically and inlines them in the system prompt catalog alongside local skills: each entry attributed to its originating server (`MCP server "…"`). The model can choose a relevant skill from the catalog and load it with `loadSkill`, exactly as it would for any other skill origin.
+If your MCP server serves skills through the SEP-2640 skills extension, MCPJam adds them to the catalog next to your local skills, each labelled with its server (`MCP server "…"`). The model loads them with `loadSkill`, like any other skill.
 
-Every server skill is verified before it is loaded: MCPJam fetches each file listed in the skill's manifest and checks its digest (and byte length, when the server provides one) before any content reaches the model.
+Before any content reaches the model, MCPJam fetches each file in the skill's manifest and checks its digest, and its byte length when the server gives one.
 
-The extension is mutually declared, so the client has to advertise it too. Each client has a **Skills over MCP** switch in its Protocol tab that decides this, in local and hosted mode alike. The MCPJam and VS Code clients have it on; other clients start with it off. A change applies on the next connect.
+Both sides have to declare the extension. Turn on **Skills over MCP** on the client's **MCP Protocol** tab. The MCPJam and VS Code clients have it on; other clients start with it off. A change applies on the next connect.
 
-Each server skill row shows the origin server's label as a badge directly on the row, so provenance is visible wherever the skill appears in the list. A server that has not mutually declared the extension contributes no rows: "this host and server never had a skills conversation" is a different fact from "this server has no skills".
+On the **Skills** tab, each server skill shows its server as a badge. A server that hasn't declared the extension shows no skills.
 
-The [stable spec](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx) is written against protocol revision 2026-07-28. MCPJam also sends `skills/*` on a 2025-era connection when both sides declared the extension, which is outside the spec's baseline; the request `_meta` envelope the spec requires exists only on 2026-07-28 connections.
+The [stable spec](https://github.com/modelcontextprotocol/ext-skills/blob/main/specification/stable/skills.mdx) targets protocol revision 2026-07-28. MCPJam also sends `skills/*` on a 2025 connection when both sides declared the extension, but without the request `_meta` the spec requires, which only exists on 2026-07-28.
 
-The tab's refresh button reloads your local skills and every server skill catalog at once.
+The tab's refresh button reloads your local skills and every server's skills at once.
 
 ### Inspecting a server's skills from the CLI
 
-`mcpjam skills` asks a server what it serves and verifies the answer. It
-connects directly, so it needs no MCPJam project and no API key:
+`mcpjam skills` asks a server which skills it serves and verifies them. It
+connects directly, so it needs no MCPJam project or API key:
 
 ```bash
 mcpjam skills list --url https://example.com/mcp
@@ -144,18 +140,15 @@ mcpjam skills read --url https://example.com/mcp \
   --resource-uri "skill://acme/refunds/scripts/run.py"
 ```
 
-`mcpjam resources list` will also show `skill://` URIs, because they are
-resources, but it shows them as bytes with no manifest, no digest check, and
-no reason when something is wrong. These commands run the same verified read
-path the Playground uses, so what you get back is either verified content or a
-**refusal** naming the check that failed (see the table below). A refusal is a
-result, not an error: it prints to stdout and exits 0, because "this skill
-cannot be verified, and here is why" is the answer you asked for.
+`mcpjam resources list` also shows `skill://` URIs, but only as bytes, with
+no manifest, digest check or explanation when something is wrong. The
+`skills` commands verify like the Playground does, so you get either verified
+content or a refusal naming the check that failed (see
+[Unloadable skills](#unloadable-skills)). A refusal prints to stdout and exits 0.
 
-The skills extension is mutually declared, so these commands advertise it on
-connect. If you pin a host persona that does not (`--host cursor`, say), the
-command refuses rather than quietly advertising anyway, since the answer to
-"what would Cursor see here?" is *nothing*:
+These commands declare the skills extension on connect. If you pin a host that
+doesn't, such as `--host cursor`, the command refuses, because that host would
+see no skills:
 
 ```
 $ mcpjam skills list --url https://example.com/mcp --host cursor
@@ -170,9 +163,9 @@ MCP server, and the in-app assistant.
 
 ### Checking that your own server serves skills correctly
 
-`mcpjam server doctor` includes a **skills** check. Unlike the tool, resource
-and prompt checks it verifies rather than counts, fetching a sample of skills
-and checking each against its manifest:
+`mcpjam server doctor` includes a `skills` check. Unlike the tool, resource
+and prompt checks, it fetches a sample of skills and verifies each against its
+manifest:
 
 ```
 - skills: ok (4 skills discovered. 4 verified against their manifests.)
@@ -180,21 +173,18 @@ and checking each against its manifest:
   skill://demo/tampered/SKILL.md (digest_mismatch).)
 ```
 
-It reports `skipped` when the extension is not active on the connection, which
-is the normal state for a server that serves no skills.
+It reports `skipped` when the extension isn't active, as for any server that
+serves no skills.
 
-It also reports `error` for requirements of the stable spec that MCPJam
-otherwise tolerates: a `skills/list` or `skills/get` result without `ttlMs`
-and `cacheScope`, a listed file without its `size`, or an extension
-declaration without the `resources` capability. The Playground still loads
-such a server, so the doctor is where the omission is named. As with any
-check in `error`, the doctor's status is `partial` and `mcpjam server doctor`
-exits 1, so a CI step that runs the doctor fails for a server built against
-the draft spec until it sends the required fields.
+It also reports `error` for stable-spec requirements the Playground tolerates:
+a `skills/list` or `skills/get` result without `ttlMs` and `cacheScope`, a
+listed file without its `size`, or an extension declaration without the
+`resources` capability. The doctor's status is then `partial` and it exits 1,
+so a CI step that runs it fails until your server sends the required fields.
 
 ### Unloadable skills
 
-A server skill can appear in the catalog but be refused for loading. MCPJam keeps the skill visible in the catalog, marked `unverifiable`, so the model stops retrying it and you can see what the server advertised. MCPJam declines to inject unverifiable content into a model turn. The reason is always shown:
+A server skill can appear in the catalog but be refused for loading. It stays in the catalog marked `unverifiable`, so the model stops retrying it and you can see what the server advertised, but its content never reaches the model. The reason is always shown:
 
 | Reason | What it means |
 |--------|---------------|
@@ -203,14 +193,14 @@ A server skill can appear in the catalog but be refused for loading. MCPJam keep
 | `too_many_resources` | The skill's manifest lists more than 512 files, which is the per-skill limit the spec requires hosts to support. |
 | `too_large` | The skill's manifest declares a total size over 16 MiB, which is the per-skill byte budget the spec requires hosts to support. |
 
-A skill that is unloadable for a limit reason (`too_many_resources` or `too_large`) is a real skill whose manifest exceeds what any conforming host is required to handle. It is not a server bug. The skill remains visible in the catalog with its advertised manifest so you can inspect what was declared.
+A skill refused with `too_many_resources` or `too_large` isn't a server bug: its manifest is larger than hosts are required to handle.
 
 ### Size limit
 
-Verification uses the spec's per-skill budget of 16 MiB, which the spec requires a host to support. A separate cap of 256 KiB applies to how much skill content one `loadSkill` or `readSkillFile` result places in a model turn, since nothing else bounds a tool's output on its way into the provider request and the chat history. A skill or file past that cap verifies and is refused with `too_large_for_prompt` rather than truncated: a clipped skill ends mid-sentence, and the model cannot distinguish that from a skill that simply said less.
+Verification allows up to 16 MiB per skill, the spec's budget. Separately, one `loadSkill` or `readSkillFile` result can put at most 256 KiB of skill content in a model turn. A skill or file over that cap is refused with `too_large_for_prompt` instead of being cut off mid-sentence.
 
 ### While a server skill is loaded
 
-Once a server-provided skill's `SKILL.md` is in the conversation, MCPJam treats the model as acting on that skill until the conversation no longer contains it. During that time, running a shell command (`bash`) and reading a resource from a saved server (`read_server_resource`) always ask for approval, whatever the Tool Approval setting says, because the spec requires the approval gate on code execution and on cross-server reads driven by skill content. The approval on `read_server_resource` shows the tool's input, which names the server being read; the spec asks it to name the skill's origin server too, and that is not yet shown. On an org provider running in the local runtime, which cannot resume a turn after an approval, such a turn is refused with `tool_approval_unsupported` instead.
+While a server-provided skill's `SKILL.md` is in the conversation, running a shell command (`bash`) or reading a resource from a saved server (`read_server_resource`) always asks for approval, whatever the tool approval setting says. The spec requires this for code execution and cross-server reads driven by skill content. The `read_server_resource` approval shows its input, which names the server being read. With an org provider in the local runtime, which can't resume a turn after an approval, such a turn is refused with `tool_approval_unsupported` instead.
 
-The origin banner on a loaded skill records the digest set of the manifest it was loaded under. If the server changes the skill's files afterwards, `listSkillFiles` and `readSkillFile` refuse with `manifest_changed` until the skill is loaded again, so a file the server added later is never read as part of the skill the user saw.
+If the server changes a loaded skill's files, `listSkillFiles` and `readSkillFile` refuse with `manifest_changed` until the skill is loaded again, so a file added later is never read as part of the skill you saw.

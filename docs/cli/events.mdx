@@ -40,7 +40,7 @@ mcpjam events list --url https://your-server.com/mcp
 }
 ```
 
-`support` and `rawCapabilities` are read from the raw handshake: the official client drops capability keys it does not know, so its parsed capabilities never show `events`. `events` holds every page of `events/list`.
+`support` and `rawCapabilities` are read from the raw handshake. `events` holds every page of `events/list`.
 
 Against a server that did not declare `capabilities.events`, every events command except `conformance` exits `2` with `EVENTS_NOT_DECLARED` and sends no `events/*` request. Pass `--force` to send the request anyway, for example to probe how an undeclared server answers. (`conformance` reports the missing declaration as a failed check instead.)
 
@@ -77,7 +77,7 @@ mcpjam events watch comment.created \
 
 stdout carries only these lines, in both output formats, so it can be piped into `jq`. Status messages go to stderr. `kind` is `event`, `gap` (the server could not replay everything since the cursor) or `terminated`. `origin` is the delivery mode that carried the entry.
 
-The watch stops on Ctrl-C, after `--duration <seconds>`, or after `--max-events <n>` delivered events. It then removes the subscription through the coordinator, which for webhook mode means `events/unsubscribe`, and exits `0`. It exits `1` if the subscription fails for good (for example `paused_auth`, a non-retryable error, or a `terminated` envelope) or if the unsubscribe could not be confirmed.
+The watch stops on Ctrl-C, after `--duration <seconds>`, or after `--max-events <n>` delivered events. It then removes the subscription (in webhook mode, with `events/unsubscribe`) and exits `0`. It exits `1` if the subscription fails for good (for example `paused_auth`, a non-retryable error, or a `terminated` envelope) or if the unsubscribe could not be confirmed.
 
 ### Choosing a delivery mode
 
@@ -142,7 +142,7 @@ mcpjam events unsubscribe comment.created \
   --callback-url https://hooks.example.com/mcp-events
 ```
 
-This prints `{"outcome": "removed"}`. Running it again prints `{"outcome": "already-gone"}`, because the server's `NotFound` for a subscription that no longer exists is the outcome you wanted. The subscription is identified by the event name, the arguments and the callback URL, so pass the same values you subscribed with.
+This prints `{"outcome": "removed"}`. Running it again prints `{"outcome": "already-gone"}`: a `NotFound` from the server counts as success. The subscription is identified by the event name, the arguments and the callback URL, so pass the same values you subscribed with.
 
 ## Conformance
 

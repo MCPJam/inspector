@@ -4,7 +4,7 @@ description: "MCP server unit testing, end-to-end (e2e) testing, and server eval
 icon: "box"
 ---
 
-The [**@mcpjam/sdk**](https://www.npmjs.com/package/@mcpjam/sdk) is a TypeScript SDK for testing, evaluating, and building applications with MCP (Model Context Protocol) servers. It gives you the tools to check your MCP server works reliably across different LLMs and environments.
+[**@mcpjam/sdk**](https://www.npmjs.com/package/@mcpjam/sdk) tells you whether your MCP (Model Context Protocol) server works reliably across different LLMs and environments. It is a TypeScript SDK for testing and evaluating MCP servers, and for building applications on them.
 
 ## Who is this for?
 
@@ -30,7 +30,7 @@ CI-friendly conformance is built into the same package:
 - [OAuth Conformance SDK](/sdk/reference/oauth-conformance)
 - [MCP Apps Conformance SDK](/sdk/reference/apps-conformance)
 
-Use the suite classes inside Jest or Vitest, then convert results into shared JSON or JUnit XML reporters with `toConformanceReport(...)` and `renderConformanceReportJUnitXml(...)`.
+Run the suite classes inside Jest or Vitest, then turn results into JSON or JUnit XML reports with `toConformanceReport(...)` and `renderConformanceReportJUnitXml(...)`.
 
 ## Installation
 
@@ -75,10 +75,6 @@ const test = new EvalTest({
 await test.run(runner, { iterations: 30 });
 console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 ```
-
-<Note>
-**Renames in 1.11.** `TestAgent` → `HostRunner`, `EvalAgent` → `HostExecutor`, `.prompt()` → `.run()`, `Host.addServer()` → `Host.requireServer()`. No deprecation aliases. The same code with the old names will not type-check against `@mcpjam/sdk@>=1.11`.
-</Note>
 
 ## Spec-first: `Host` + `HostRuntime`
 

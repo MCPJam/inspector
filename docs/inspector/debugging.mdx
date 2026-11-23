@@ -1,36 +1,34 @@
 ---
 title: "Tracing & debugging"
-description: "See all messages sent to and from your MCP server"
+description: "See every message between MCPJam and your MCP server, and inspect widget state."
 icon: "bug"
 ---
 
-MCPJam Inspector gives you full visibility into every exchange between the inspector and your MCP server, across the Playground, Tools, Prompts, and Resources tabs.
+When your server misbehaves, MCPJam shows you every message it sent and received, in the Playground and in the Tools, Prompts and Resources tabs.
 
 ## JSON-RPC logging
 
-Every tab that talks to a connected server renders a live JSON-RPC logger. Each entry records the direction (client → server or server → client), the method name, a timestamp, and the full request/response payload. Click an entry to expand and inspect.
+Every tab that talks to a connected server has a live JSON-RPC log. Each entry shows the direction (client → server or server → client), the method, a timestamp and the full payload. Click an entry to expand it.
 
 See [Playground → JSON-RPC Logger](/inspector/playground#json-rpc-logger) and [MCP Inspector](/inspector/tools-prompts-resources#json-rpc-logging) for how it surfaces in each tab.
 
 ## Widget debugging
 
-When using ChatGPT Apps or MCP Apps in the Playground, you can debug widget state and globals directly from tool call results.
+If your server renders ChatGPT Apps or MCP Apps widgets, you can inspect a widget's state and environment from its tool call.
 
 ### Debugging in the chat
 
-Click on any tool call in the chat to expand its debug panel. For widgets, you'll see three tabs:
+Click a tool call in the chat to open its debug panel. For widgets, it shows:
 
-- **Data** - The tool's input arguments and output result
-- **Widget State** - The current state persisted by the widget (updated in real-time as the widget calls `setWidgetState`)
-- **Globals** - Environment information passed to the widget including theme, display mode, locale, and device capabilities
-
-A "Click to debug" hint appears on tool calls that have widget debug information available.
+- **Data**: the tool's input arguments and result
+- **Widget State**: the state the widget has saved, updated live as the widget calls `setWidgetState`
+- The environment passed to the widget, including theme, display mode, locale and device capabilities
 
 ### Debugging in the Tools tab
 
-When testing OpenAI Apps or MCP Apps from the Tools tab, the results panel includes a **State/Globals** button alongside the Component and Raw JSON views. This shows the same widget state and globals information in a dedicated panel.
+When you run an OpenAI Apps or MCP Apps tool from the Tools tab, the results panel has a button next to the Component and Raw JSON views that shows the same widget state and environment.
 
 <Tip>
-  Widget state persists across follow-up turns in a conversation. Keep state
-  under 4k tokens for optimal performance.
+  Widget state carries over to later turns in the conversation, so keep it
+  under 4k tokens.
 </Tip>

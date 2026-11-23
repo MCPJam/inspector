@@ -1,17 +1,15 @@
 ---
 title: "View origins"
-description: "Which origin your MCP App's view runs at, and how to allowlist it with a third-party API"
+description: "Find the origin your MCP App's view runs at, so you can allowlist it with a third-party API."
 ---
 
-Your app's view runs in a sandboxed iframe at a **real URL**, on an origin separate from the Inspector itself. That matters whenever something outside MCPJam checks where a request came from: a referrer-restricted Google Maps key, an OAuth redirect URI, a CORS allowlist.
+If your MCP App calls an API that checks where requests come from, such as a referrer-restricted Google Maps key, an OAuth redirect URI or a CORS allowlist, you need to allowlist the origin your app's view runs at. The view runs in a sandboxed iframe at a real URL, on an origin separate from the Inspector itself.
 
 ## Which origin to allowlist
 
 <Tabs>
   <Tab title="Local">
-    The view runs on the Inspector's scheme and port with the hostname swapped between `localhost` and `127.0.0.1`. The swap is what keeps the sandbox on a different origin from the app.
-
-    Because the swap depends on which one you open the Inspector with, **allowlist both**:
+    The view runs on the Inspector's scheme and port, with the hostname swapped between `localhost` and `127.0.0.1`. Which one it gets depends on which you open the Inspector with, so allowlist both:
 
     ```
     http://localhost:*
@@ -26,7 +24,7 @@ Your app's view runs in a sandboxed iframe at a **real URL**, on an origin separ
   </Tab>
 </Tabs>
 
-To read the exact value rather than infer it, open a tool result, expand the CSP Workbench, and look at **Sandbox Stack → View origin**. It has a copy button.
+To read the exact value, open a tool result, expand the CSP workbench, and look at **View origin** on the **Sandbox Stack** tab. It has a copy button.
 
 <Note>
   Cross-origin requests carry the **origin**, not the full path. MCPJam sends
@@ -37,7 +35,7 @@ To read the exact value rather than infer it, open a tool result, expand the CSP
 
 ## CSP is a separate gate
 
-Allowlisting your origin tells the third party to _accept_ your requests. It does not let your widget _make_ them. MCPJam's default policy denies everything not declared. Both have to pass.
+Allowlisting your origin tells the third party to _accept_ your requests. It doesn't let your widget _make_ them: MCPJam's default policy blocks anything not declared. Both have to pass.
 
 Declare what the API needs in the UI resource's `_meta.ui.csp`:
 
@@ -59,24 +57,24 @@ Declare what the API needs in the UI resource's `_meta.ui.csp`:
 
 `resourceDomains` covers scripts, images, styles and fonts; `connectDomains` covers `fetch`/XHR/WebSocket. A JavaScript SDK usually needs both. `frameDomains` is only for APIs you embed as a nested iframe, an embed widget, not a JS SDK.
 
-Anything still blocked shows up in the Workbench's **Findings** tab with the directive that refused it.
+Anything still blocked appears on the workbench's **Findings** tab, with the directive that blocked it.
 
 ## `_meta.ui.domain`
 
 SEP-1865 lets a server request a dedicated origin with `_meta.ui.domain`. The format is host-specific and each host derives its own (Claude uses `sha256(<connector URL>)[:32] + ".claudemcpcontent.com"`, ChatGPT a per-plugin label) so one declared string cannot match every host.
 
-MCPJam **derives** the origin it serves your view from rather than routing on what you declare; a server-chosen string would otherwise let one server claim another's origin, and with it that origin's cookies and storage. If you declare a domain, the Workbench's Findings tab reports whether it matches what MCPJam serves. A mismatch is informational (it is the normal state for a server already targeting Claude or ChatGPT) and simply means an allowlist keyed on that value will not match requests coming from MCPJam.
+MCPJam derives the origin it serves your view from, and ignores the one you declare, so one server can't claim another's origin and its cookies and storage. If you declare a domain, the **Findings** tab says whether it matches what MCPJam serves. A mismatch is normal for a server built for Claude or ChatGPT. It just means an allowlist keyed on that value won't match requests from MCPJam.
 
 ## Rendering mode
 
-MCPJam mounts a view by writing its HTML into a blank document, the same way Claude does. A document written that way **without a doctype is parsed in quirks mode**, where the box model and percentage heights differ from what you probably tested against.
+MCPJam mounts a view by writing its HTML into a blank document, as Claude does. Without a doctype, that document is parsed in quirks mode, where the box model and percentage heights differ from what you probably tested.
 
 Start your resource HTML with `<!DOCTYPE html>`. The readiness report flags this as `claude.apps.design.doctype`.
 
 ## Opaque-origin mode
 
-When the active client's **Same-origin app iframe** setting is off (for example, the Copilot preset), the inspector mounts the view with `srcdoc` and no `allow-same-origin`. The view runs in an **opaque origin**: it has no URL of its own, `localStorage`/`sessionStorage`/`indexedDB` throw, cookies are inaccessible, and outbound fetches send `Origin: null` instead of a real origin.
+When the active client's **Same-origin app iframe** setting is off (for example, the Copilot preset), the view runs in an opaque origin: it has no URL of its own, `localStorage`, `sessionStorage` and `indexedDB` throw, cookies are inaccessible, and fetches send `Origin: null`.
 
-In this mode the **View origin** chip in the Sandbox Stack shows `about:srcdoc` rather than a URL. There is no origin to allowlist with a third-party API, if your app relies on a real origin for CORS, OAuth redirects, or referrer-restricted keys, it will not work on hosts that mount apps this way.
+**View origin** then shows `about:srcdoc`. There's no origin to allowlist, so if your app needs a real origin for CORS, OAuth redirects or referrer-restricted keys, it won't work on hosts that mount apps this way.
 
 If the app reloads itself while running in opaque mode, the proxy stops relaying messages for it and the Sandbox Stack shows **channel closed**.

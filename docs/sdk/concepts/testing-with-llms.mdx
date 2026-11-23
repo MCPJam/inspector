@@ -4,7 +4,7 @@ description: "Use HostRunner to run prompts and inspect tool calls"
 icon: "bot"
 ---
 
-The `HostRunner` connects an LLM to your MCP tools, letting you test how models interact with your server. It handles the agentic loop (prompt → tool call → result → response) and gives you rich inspection capabilities.
+`HostRunner` shows you how a real model uses your MCP server: which tools it calls, with what arguments, and how long it takes. It connects an LLM to your tools and runs the agentic loop (prompt → tool call → result → response) for you.
 
 ## Why Test with LLMs?
 
@@ -38,7 +38,7 @@ const agent = new HostRunner({
 });
 ```
 
-Pass the same **`mcpClientManager`** instance when you use **MCP App** tools and upload evals to MCPJam: that enables [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) (HTML from `readResource` on `ui.resourceUri`) so traces can replay widgets offline. See the [HostRunner reference](/sdk/reference/host-runner).
+If your server has **MCP App** tools and you upload evals to MCPJam, pass the same **`mcpClientManager`** instance. It lets [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) capture each widget's HTML, so traces can replay widgets offline. See the [HostRunner reference](/sdk/reference/host-runner).
 
 ## Running Prompts
 
@@ -110,8 +110,6 @@ const r3 = await agent.run("Now show me all my tasks", {
 });
 ```
 
-This is essential for testing workflows that span multiple interactions.
-
 ## Tuning Agent Behavior
 
 ### System Prompt
@@ -165,7 +163,7 @@ expect(result.hasToolCall("search_tasks")).toBe(true);
 ```
 
 <Tip>
-`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `HostRunner` also applies `stepCountIs(maxSteps)` as a safety guard.
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes. `maxSteps` still applies as a limit.
 </Tip>
 
 ## Bound Prompt Runtime with timeout
@@ -183,7 +181,7 @@ if (result.hasError()) {
 ```
 
 <Tip>
-`timeout` accepts `number`, `totalMs`, `stepMs`, and `chunkMs`. In practice, `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
+`timeout` accepts `number`, `totalMs`, `stepMs`, and `chunkMs`. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` mainly matters in streaming flows. Tools can stop early if they respect the `abortSignal` they receive.
 </Tip>
 
 ## Writing Assertions

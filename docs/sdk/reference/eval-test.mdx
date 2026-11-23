@@ -37,10 +37,8 @@ new EvalTest(options: EvalTestConfig)
 | `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
 
 <Warning>
-  **New in 5.0: `id` is required.** A case's identity used to be its `name`, so
-  renaming a test forked its history; the run page started a fresh series and
-  the old one was orphaned. `id` separates the two: history joins on `id`, and
-  `name` is free to change.
+  **`id` is required.** A case's history joins on `id`, so you can rename its
+  `name` without starting a fresh series on the run page.
 
   Mint one **once** and commit the literal beside the test:
 
@@ -60,7 +58,7 @@ new EvalTest(options: EvalTestConfig)
   `externalCaseId`, reuse that value verbatim as `id`. Do not mint a new one.
   The hosted history for that case is keyed on `externalCaseId`, so setting
   `id` to the same value keeps the history intact. Setting `id` to a different
-  value is a hard error; at construction from 6.0, and at ingest.
+  value is an error, both at construction and at ingest.
 
   If your `externalCaseId` is not a valid id (it was never charset-bound, so it
   may contain spaces, slashes or punctuation), no `id` can agree with it.
@@ -77,9 +75,9 @@ new EvalTest(options: EvalTestConfig)
 </Warning>
 
 <Warning>
-  **New in 5.0: step objects reject unknown fields.** `prompt`, `toolCall`,
+  **Step objects reject unknown fields.** `prompt`, `toolCall`,
   `interact`, and `assert` steps, and their nested sub-objects such as
-  `elementLocator` and widget assertions, are now **closed schemas**. A step
+  `elementLocator` and widget assertions, are **closed schemas**. A step
   carrying a field the contract does not declare fails to parse instead of
   silently dropping that field.
 
@@ -95,16 +93,11 @@ new EvalTest(options: EvalTestConfig)
 </Warning>
 
 <Warning>
-  **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
-  the local verdict came from your `test` function alone, while the dashboard
-  recomputed the match, so the same run could show `accuracy() === 1` locally
-  and fail in MCPJam. It is now enforced during the run, which means a test
-  whose expectations were never actually checked can start failing on upgrade.
-
-  If that happens, the expectation was wrong or over-specified. Fix it, relax it
+  **`expectedToolCalls` is enforced during the run.** A mismatch fails the
+  iteration. If an expectation is wrong or over-specified, fix it, relax it
   with `matchOptions` (e.g. `{ argumentMatching: "ignore" }`), or drop
-  `expectedToolCalls` if it was only ever documentation. Tests that declare
-  neither `expectedToolCalls` nor `predicates` behave exactly as before.
+  `expectedToolCalls` if it was only ever documentation. Upgrading from 2.x?
+  See [Migrating to SDK 3.0](/sdk/migrating-to-v3).
 </Warning>
 
 #### matchOptions
@@ -150,8 +143,6 @@ The test function receives a [`HostExecutor`](/sdk/reference/host-runner) (the i
 
 - `true` = test passed
 - `false` = test failed
-
-Both `HostRunner`, `HostRuntime`, and mock executors implement the `HostExecutor` interface, so you can use any of them for testing.
 
 ### Example
 
@@ -268,12 +259,9 @@ precision(): number
 Counted per iteration from the expected/actual tool calls: a matched expectation is a true positive, an unexpected call is a false positive, a missing one is a false negative, and an argument mismatch counts as both.
 
 <Warning>
-  **Changed in 3.0.** `precision()`, `recall()` and `truePositiveRate()` all
-  used to `return this.accuracy()`, three names for one number. They now
-  compute real values, and **throw** when no test in the run declared
-  `expectedToolCalls`, because there is nothing to compute them from. If you
-  were reading `precision()` as a stand-in for accuracy, call
-  [`accuracy()`](#accuracy) directly.
+  `precision()`, `recall()` and `truePositiveRate()` **throw** when no test in
+  the run declared `expectedToolCalls`, because there is nothing to compute
+  them from. For the pass rate, call [`accuracy()`](#accuracy).
 </Warning>
 
 ---
@@ -321,11 +309,10 @@ unexpectedToolCallRate(): number
 ### falsePositiveRate()
 
 <Warning>
-  **Deprecated in 3.0**: use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
-  The old implementation returned `failures / iterations`, which is the failure
-  rate, not a false-positive rate. For runs with no `expectedToolCalls` it still
-  returns that legacy value so existing dashboards do not change; for runs with
-  expectations it now delegates to `unexpectedToolCallRate()`.
+  **Deprecated**: use [`unexpectedToolCallRate()`](#unexpectedtoolcallrate).
+  For runs with no `expectedToolCalls` it returns `failures / iterations`,
+  which is the failure rate, not a false-positive rate. For runs with
+  expectations it delegates to `unexpectedToolCallRate()`.
 </Warning>
 
 ```typescript

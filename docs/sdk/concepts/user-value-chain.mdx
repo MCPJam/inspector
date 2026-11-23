@@ -15,7 +15,7 @@ A run of one eval case walks six links, in order. MCPJam reports where it stoppe
 | 5 | **Response** | Did the server return data the model could use? | Usable response returned |
 | 6 | **User value** | Was the user's actual request satisfied? | Request satisfied |
 
-Most documentation describes the chain as something you read after a run. This page is the other direction: when you write a check, you are choosing a link.
+When you write a check, you are choosing which link it measures.
 
 ## Which links you can write a check for
 
@@ -37,9 +37,9 @@ Four of the six. Every [predicate](/sdk/reference/eval-reporting#predicate-gate)
 - **Tool call**: passes when the call returned a result; fails when the call never produced one (protocol error). Present on the scorecard only when the case gives the runner a call to measure.
 - **Response**: passes when the result came back without a tool error; fails when the server reported a tool error. Present only when the case implies a measurable response.
 
-When a stage fails for an evaluator's reason (a required assertion, a rejected argument, a widget that did not render) the runner check for that stage stays undecided rather than also showing failed. The failure already has its evaluator's row; two red rows for one failure would read as two failures.
+When a stage fails for an evaluator's reason (a required assertion, a rejected argument, a widget that did not render), the runner check for that stage stays undecided rather than also showing failed, so one failure shows as one failed row.
 
-Missing or partial catalog capture at Discovery reports an evaluator error, not a pass. Scored gating catalog failures can fail Discovery; advisory failures remain visible evaluator results without failing the stage. A description-based deprecation check is advisory only.
+Missing or partial catalog capture at Discovery reports an evaluator error, not a pass. A required catalog assertion that fails can fail Discovery; an advisory one is shown but never fails the stage. A description-based deprecation check is advisory only.
 
 ## The stage is where the evidence is filed
 
@@ -60,7 +60,7 @@ Four graders file at a link without being checks you write in a list:
 | Groundedness judge | User value | Advisory only, run on demand; it has no score definition and never decides a link |
 | Rubric checks | User value | Advisory only: one row per suite criterion or authored question, graded with the goal completion judge; never decides a link |
 
-A **gating** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
+A **required** `toolCalledWith` is promoted into the matcher's expectations and graded there. An **advisory** one stays a predicate row, because promoting it would create an expectation that can fail the trial, which an advisory check must never do.
 
 ## What a suite is not measuring
 

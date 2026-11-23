@@ -8,7 +8,7 @@ mode: "wide"
 import AgentConnect from '/snippets/agent-connect.mdx';
 import CapabilitiesVisual from '/snippets/capabilities-visual.mdx';
 
-MCPJam is the open-source testing and evaluations platform for developers shipping **MCP servers, MCP apps, and ChatGPT apps**. Interactively test and debug tools, prompts, resources, and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible. Run evals on test cases, track accuracy over time, and gate regressions before they reach production.
+MCPJam lets you test and evaluate your **MCP server, MCP app or ChatGPT app** before you ship it. Test tools, prompts, resources and OAuth across 18 client configurations and 170+ LLMs, with every JSON-RPC message visible. Then run evals to track accuracy over time and catch regressions before they reach production. It's open source.
 
 <Frame>
   <img
@@ -31,26 +31,21 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
   <Tab title="In Inspector">
     <Steps>
       <Step title="Open Inspector">
-        Pick by where your MCP server runs:
+        Run this in your terminal (needs Node.js) and open the `localhost` link it prints:
 
-        - **Public HTTPS URL**: open the web app at [app.mcpjam.com](https://app.mcpjam.com). No install.
-        - **`localhost` or STDIO**: run `npx @mcpjam/inspector@latest` (needs Node.js), or download the desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe). The web app can't reach these servers.
-        - **Isolated in a container**: use [Docker](/installation#docker). Reach servers on your machine at `http://host.docker.internal:PORT`; STDIO commands run inside the container.
-
-        See [Installation](/installation#which-one-do-i-need) for the full comparison.
+        ```bash
+        npx @mcpjam/inspector@latest
+        ```
       </Step>
       <Step title="Connect a server">
-        On first launch, a **Welcome** overlay offers to connect your own server or try the hosted Excalidraw demo. Later, open **Connect** in the sidebar, choose **Servers**, and click **Add Server**. Signed out, the sidebar item is **Servers**.
-
-        - **HTTP**: paste a URL ending in `/mcp`. The web app accepts HTTPS only; the other options also accept HTTP. Add a bearer token, or use the [OAuth Debugger](/inspector/guided-oauth) if the server needs sign-in.
-        - **STDIO** (not in the web app): paste a command such as `npx -y @modelcontextprotocol/server-everything`.
+        MCPJam asks you to connect to your MCP server. Paste your server's URL, ending in `/mcp`, or a command such as `npx -y @modelcontextprotocol/server-everything`, and click **Connect**.
 
         <Check>
-          Your server shows **Connected**.
+          The dialog reads "Connected to" followed by your server's name.
         </Check>
       </Step>
       <Step title="Send your first prompt">
-        Click **Open Playground**. MCPJam fills in the prompt `What can this server do?`; press **Send** to watch the model call your tools. No API key or ChatGPT or Claude subscription needed.
+        Click **Open Playground**. MCPJam fills in the prompt `What can this server do?`; send it to watch the model call your tools. You don't need an API key or a ChatGPT or Claude subscription.
 
         Open the debug icons on any result to see tool input and output, widget state, CSP activity and the JSON-RPC messages. See [Playground](/inspector/playground).
       </Step>
@@ -101,6 +96,14 @@ Find what you want to test, then follow the guide for the tool you use. The MCP 
 | **Client compatibility**<br />Your server works in each client's configuration | [Host compatibility](/inspector/host-compat) | [`compat`](/cli/reference#compat-command) | — |
 | **Protocol versions**<br />Behavior on each MCP protocol version | [MCP protocol versions](/inspector/protocol-versions) | [Server inspection](/cli/server-inspection) | [server_info](/cli/mcp-server#tools) (negotiated version) |
 | **User value end to end**<br />Real prompts get users the outcome they asked for, across clients and models | [Evaluate](/evaluate/overview) | [Evals in CI](/cli/ci#evals-in-ci) | — |
+
+## Good to know
+
+- **You don't have a server yet.** When MCPJam asks you to connect, click **Try the Excalidraw demo server**.
+- **Your server has a public HTTPS URL.** Skip the install and open the web app at [app.mcpjam.com](https://app.mcpjam.com). It can't reach `localhost` or STDIO servers.
+- **You'd rather not use Node.js.** Download the desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe), or run the Inspector in [Docker](/installation#docker). See [Installation](/installation#which-one-do-i-need) to compare them.
+- **Your server needs sign-in.** Add a bearer token, or use the [OAuth Debugger](/inspector/guided-oauth).
+- **Adding another server.** Open **Connect** in the sidebar, choose **Servers**, and click **Add Server**. When you're signed out, the sidebar item is **Servers**.
 
 ## Get help
 
