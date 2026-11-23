@@ -155,4 +155,18 @@ describe("WebAccountsSettings", () => {
       screen.getByText(/ask a project admin to turn on Allow local runs/),
     ).toBeInTheDocument();
   });
+
+  it("tells a member their local app can use the accounts only when every one allows it", () => {
+    mount(false, [{ ...qa, allowLocalRuns: true }, evals]);
+    expect(
+      screen.getByText(/ask a project admin to turn on Allow local runs/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/including your local app's/)).toBeNull();
+    cleanup();
+    mount(false, [
+      { ...qa, allowLocalRuns: true },
+      { ...evals, allowLocalRuns: true },
+    ]);
+    expect(screen.getByText(/including your local app's/)).toBeInTheDocument();
+  });
 });
