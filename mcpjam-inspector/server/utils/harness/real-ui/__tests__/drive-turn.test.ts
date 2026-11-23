@@ -7,6 +7,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
+import { isChromiumInstalled } from "../../../browser-rendering-setup";
 import {
   startFixtureUpstream,
   type FixtureUpstream,
@@ -15,10 +16,25 @@ import {
   startFixtureVendor,
   type FixtureVendor,
 } from "../../../../test/support/web-clients/fixture-vendor";
-import { createMemorySendJournal, driveRealUiTurn } from "../drive-turn";
+import {
+  createMemorySendJournal,
+  driveRealUiTurn,
+  type SendJournal,
+} from "../drive-turn";
 import { createFixtureWebPageModule } from "../fixture-web";
-import { RealUiError } from "../page-module";
+import { RealUiError, type RealUiPageModule } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
+
+// Locally a missing browser skips the suite. CI's pinned Playwright image
+// ships Chromium, so there its absence fails instead of skipping these checks.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+if (process.env.CI && !CHROMIUM_AVAILABLE) {
+  throw new Error(
+    "The real-UI turn suite needs Chromium, which the pinned Playwright CI image installs.",
+  );
+}
+/** `describe`, skipped where the pinned Chromium isn't installed. */
+const inChromium = describe.skipIf(!CHROMIUM_AVAILABLE);
 
 let browser: Browser;
 const contexts: BrowserContext[] = [];
@@ -79,7 +95,7 @@ function turn(
 }
 
 // A real browser under a loaded test runner: each turn gets room to finish.
-describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
+inChromium("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   it("adds the connector, sends once, answers the app's approval and reads the saved chat", async () => {
     const steps: string[] = [];
     const driver = await signedInDriver();
@@ -121,6 +137,14 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
   });
 
+  it("is asked to approve the tool again once its connector was replaced", async () => {
+    expect((await turn(await signedInDriver())).approvalsAnswered).toBe(1);
+    vendor.connectors.set("MCPJam fixture", "http://127.0.0.1:9/elsewhere");
+    const again = await turn(await signedInDriver());
+    expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
+    expect(again.approvalsAnswered).toBe(1);
+  });
+
   it("continues in the chat an earlier attempt already sent, without sending again", async () => {
     const journal = createMemorySendJournal();
     await turn(await signedInDriver(), journal);
@@ -140,6 +164,35 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(again.resumed).toBe(true);
     expect(again.conversation.url).toBe(first.conversation.url);
     expect(vendor.sends).toHaveLength(2);
+  });
+
+  it("journals a chat it learns only after the reply, so a restart comes back to it", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    // A site that doesn't say which chat the send landed in.
+    const module: RealUiPageModule = {
+      ...fixture,
+      async send(driver, prompt, ctx) {
+        await fixture.send(driver, prompt, ctx);
+        return {};
+      },
+    };
+    const journal = createMemorySendJournal();
+    const first = await turn(await signedInDriver(), journal, { module });
+    const entry = await journal.read("turn-1");
+    expect(entry).toMatchObject({
+      state: "sent",
+      conversationUrl: first.conversation.url,
+    });
+    // Still the send's own time, from before its chat was created.
+    const chat = vendor.chats.get(first.conversation.conversationId);
+    expect(Date.parse(entry!.at)).toBeLessThanOrEqual(
+      Date.parse(chat!.createdAt),
+    );
+    // Another turn sends the same prompt in a newer chat before the restart.
+    await turn(await signedInDriver());
+    const again = await turn(await signedInDriver(), journal, { module });
+    expect(again.resumed).toBe(true);
+    expect(again.conversation.url).toBe(first.conversation.url);
   });
 
   it("replaces a connector whose URL only starts with the one it needs", async () => {
@@ -235,6 +288,131 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toEqual(["say hello"]);
   });
 
+  it("stops as send_ambiguous, keeping the sending record, when the journal can't record the sent prompt", async () => {
+    const memory = createMemorySendJournal();
+    const journal: SendJournal = {
+      ...memory,
+      async write(turnKey, entry) {
+        if (entry.state === "sent") throw new Error("The journal is down.");
+        return memory.write(turnKey, entry);
+      },
+    };
+    const failure = await turn(await signedInDriver(), journal).catch(
+      (error: unknown) => error,
+    );
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "send_ambiguous",
+      step: "send",
+    });
+    expect(await memory.read("turn-1")).toMatchObject({ state: "sending" });
+    expect(vendor.sends).toEqual(["say hello"]);
+  });
+
+  it("keeps a sign-in the page asks for after the click as needs_sign_in", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const failure = await turn(await signedInDriver(), undefined, {
+      module: {
+        ...fixture,
+        async send(driver, prompt, ctx) {
+          await fixture.send(driver, prompt, ctx);
+          throw new RealUiError({
+            kind: "needs_sign_in",
+            reason: "human_check",
+            step: "send",
+            message: "The site is asking to verify a person is there.",
+          });
+        },
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "needs_sign_in",
+      reason: "human_check",
+    });
+  });
+
+  it("sends once when two runs start the same turn together", async () => {
+    vendor.connectors.set("MCPJam fixture", upstream.url);
+    const memory = createMemorySendJournal();
+    // Neither run goes past its read until both have read: both find no send.
+    let reads = 0;
+    let bothRead = () => {};
+    const together = new Promise<void>((resolve) => (bothRead = resolve));
+    const journal: SendJournal = {
+      ...memory,
+      async read(turnKey) {
+        const entry = await memory.read(turnKey);
+        if (++reads === 2) bothRead();
+        await together;
+        return entry;
+      },
+    };
+    const drivers = [await signedInDriver(), await signedInDriver()];
+    const settled = await Promise.allSettled(
+      drivers.map((driver) => turn(driver, journal)),
+    );
+    expect(vendor.sends).toEqual(["say hello"]);
+    const failed = settled.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as RealUiError] : [],
+    );
+    expect(failed.map((error) => error.failure)).toMatchObject([
+      { kind: "send_ambiguous", step: "send" },
+    ]);
+  });
+
+  /** The fixture module, counting how often the turn asks it to send. */
+  function countingSends() {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const module: RealUiPageModule & { sends: number } = {
+      ...fixture,
+      sends: 0,
+      async send(driver, prompt, ctx) {
+        module.sends += 1;
+        return fixture.send(driver, prompt, ctx);
+      },
+    };
+    return module;
+  }
+
+  it("records and sends nothing when the run is stopped as the send step starts", async () => {
+    const stop = new AbortController();
+    const module = countingSends();
+    const journal = createMemorySendJournal();
+    const failure = await turn(await signedInDriver(), journal, {
+      module,
+      signal: stop.signal,
+      onStep: (step) => {
+        if (step === "send") stop.abort();
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({ step: "send" });
+    expect(module.sends).toBe(0);
+    expect(await journal.read("turn-1")).toBeUndefined();
+    expect(vendor.sends).toEqual([]);
+  });
+
+  it("does not click send when the run is stopped while the send is recorded", async () => {
+    const stop = new AbortController();
+    const module = countingSends();
+    const memory = createMemorySendJournal();
+    const journal: SendJournal = {
+      ...memory,
+      async claim(turnKey, entry) {
+        const claimed = await memory.claim(turnKey, entry);
+        stop.abort();
+        return claimed;
+      },
+    };
+    const failure = await turn(await signedInDriver(), journal, {
+      module,
+      signal: stop.signal,
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({ step: "send" });
+    expect(module.sends).toBe(0);
+    // Kept: an attempt after this one looks for the chat, never sends.
+    expect(await memory.read("turn-1")).toMatchObject({ state: "sending" });
+    expect(vendor.sends).toEqual([]);
+  });
+
   it("returns needs_sign_in on a human check and never sends", async () => {
     const driver = await signedInDriver();
     vendor.challenge = true;
@@ -243,6 +421,21 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
       kind: "needs_sign_in",
       reason: "human_check",
       step: "sign_in_check",
+    });
+    expect(vendor.sends).toEqual([]);
+  });
+
+  it("returns needs_sign_in when a human check shows in place of the connector list", async () => {
+    const failure = await turn(await signedInDriver(), undefined, {
+      // The check shows up only once the account has passed its sign-in check.
+      onStep: (step) => {
+        if (step === "connector") vendor.challenge = true;
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "needs_sign_in",
+      reason: "human_check",
+      step: "connector",
     });
     expect(vendor.sends).toEqual([]);
   });
@@ -374,6 +567,20 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     await expect(driver.navigate(`${vendor.url}/new`)).rejects.toThrow(/ERR_ABORTED/);
     await expect(driver.readText("body")).rejects.toMatchObject({ code: "site_blocked" });
     await page.unroute(`${vendor.url}/new`);
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
+  it("refuses a page that is already on another site when it is handed over", async () => {
+    const page = await newPage();
+    await page.goto(upstream.url);
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await expect(driver.readText("body")).rejects.toMatchObject({
+      code: "site_blocked",
+    });
+    await expect(
+      driver.evaluate(() => document.title, undefined),
+    ).rejects.toMatchObject({ code: "site_blocked" });
     await driver.navigate(`${vendor.url}/new`);
     expect(await driver.url()).toBe(`${vendor.url}/new`);
   });

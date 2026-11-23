@@ -11,7 +11,11 @@
  * Test-only. `fixture-web.ts` is the page module that drives it.
  */
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 
 type Chat = {
@@ -121,7 +125,9 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     connectors: new Map(),
     challenge: false,
   };
-  const alwaysAllowed = new Set<string>();
+  // The tools a person chose Always allow for, by connector name. A
+  // connector removed, or added again at another address, starts over.
+  const alwaysAllowed = new Map<string, Set<string>>();
 
   async function runTurn(chat: Chat, enabled: string[]) {
     try {
@@ -137,11 +143,11 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
         const listed = await rpc(url, init.sessionId, { id: 2, method: "tools/list" });
         const tool = (listed.result?.tools as Array<{ name: string }> | undefined)?.[0];
         if (!tool) continue;
-        const key = `${name}:${tool.name}`;
-        if (!alwaysAllowed.has(key)) {
+        const allowed = alwaysAllowed.get(name) ?? new Set<string>();
+        if (!allowed.has(tool.name)) {
           chat.state = "awaiting_approval";
           const always = await new Promise<boolean>((resolve) => (chat.approve = resolve));
-          if (always) alwaysAllowed.add(key);
+          if (always) alwaysAllowed.set(name, allowed.add(tool.name));
           chat.state = "running";
         }
         const toolUseId = `toolu_fixture_${randomUUID().slice(0, 8)}`;
@@ -166,7 +172,7 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     }
   }
 
-  const server = createServer(async (request, response) => {
+  const answer = async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://fixture.local");
     const cookie = /fixture_session=([^;]+)/.exec(request.headers.cookie ?? "")?.[1];
     const email = cookie ? decodeURIComponent(cookie) : undefined;
@@ -218,10 +224,15 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
       json(200, { email, workspace: "Fixture workspace" });
     } else if (url.pathname === "/api/connectors" && request.method === "POST") {
       const { name, url: target } = JSON.parse(await readBody(request)) as { name: string; url: string };
+      if (vendor.connectors.get(name) !== target) alwaysAllowed.delete(name);
       vendor.connectors.set(name, target);
       json(200, { ok: true });
     } else if (url.pathname.startsWith("/api/connectors/") && request.method === "DELETE") {
-      vendor.connectors.delete(decodeURIComponent(url.pathname.slice("/api/connectors/".length)));
+      const name = decodeURIComponent(
+        url.pathname.slice("/api/connectors/".length),
+      );
+      vendor.connectors.delete(name);
+      alwaysAllowed.delete(name);
       json(200, { ok: true });
     } else if (url.pathname === "/api/chats" && request.method === "POST") {
       const { prompt, connectors } = JSON.parse(await readBody(request)) as { prompt: string; connectors: string[] };
@@ -263,6 +274,18 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     } else {
       json(404, { error: "not found" });
     }
+  };
+  const server = createServer((request, response) => {
+    // Node ignores the promise a listener returns, so a failure is settled
+    // here rather than escape the test as an unhandled rejection.
+    void answer(request, response).catch((error: unknown) => {
+      // A client that hung up mid-request has no socket left to answer on.
+      if (response.destroyed || response.headersSent) return;
+      response.writeHead(error instanceof SyntaxError ? 400 : 500, {
+        "content-type": "application/json",
+      });
+      response.end(JSON.stringify({ error: String(error) }));
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;

@@ -4,12 +4,13 @@
  * connector, send the prompt exactly once, answer the app's own approval
  * prompts until the reply has finished, then read the saved conversation.
  *
- * EXACTLY ONCE. The journal records the send before the click. A run that
- * restarts and finds that record looks for a chat created since then that
- * holds the prompt, records it as sent and continues there; when no chat
- * holds it, the send may still have happened, so the turn stops as
- * `send_ambiguous` rather than send again. A send that fails after the
- * record stops the same way.
+ * EXACTLY ONCE. The journal records the send before the click, and only when
+ * the turn has no record yet, so of two runs at once one sends and the other
+ * stops as `send_ambiguous`. A run that restarts and finds that record looks
+ * for a chat created since then that holds the prompt, records it as sent and
+ * continues there; when no chat holds it, the send may still have happened,
+ * so the turn stops as `send_ambiguous` rather than send again. A send that
+ * fails after the record stops the same way.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 import {
@@ -31,6 +32,15 @@ export type SendJournalEntry =
 export interface SendJournal {
   read(turnKey: string): Promise<SendJournalEntry | undefined>;
   write(turnKey: string, entry: SendJournalEntry): Promise<void>;
+  /**
+   * Records `entry` only when `turnKey` has no entry, as one atomic step, and
+   * resolves true when it did. Of two runs on one turn, only the one whose
+   * claim succeeds may click send.
+   */
+  claim(
+    turnKey: string,
+    entry: { state: "sending"; at: string },
+  ): Promise<boolean>;
 }
 
 export function createMemorySendJournal(): SendJournal {
@@ -41,6 +51,13 @@ export function createMemorySendJournal(): SendJournal {
     },
     async write(turnKey, entry) {
       entries.set(turnKey, entry);
+    },
+    async claim(turnKey, entry) {
+      // No await comes between the check and the set, so no other claim can
+      // land between them.
+      if (entries.has(turnKey)) return false;
+      entries.set(turnKey, entry);
+      return true;
     },
   };
 }
@@ -84,8 +101,8 @@ export async function driveRealUiTurn(
   const ctx = { signal, timeoutMs: input.stepTimeoutMs ?? STEP_TIMEOUT_MS };
   let step: RealUiStep = "sign_in_check";
   let pending: PendingStep | undefined;
-  // From the journal's sending record until the send is confirmed, the click
-  // may have happened: the prompt may already be in a chat.
+  // From just before the click until the journal confirms the send, the
+  // prompt may already be in a chat.
   let sendUnconfirmed = false;
   const enter = (next: RealUiStep) => {
     step = next;
@@ -110,6 +127,8 @@ export async function driveRealUiTurn(
 
     let conversationUrl: string | undefined;
     let resumed = false;
+    // When the send began, for a send journaled before its chat was known.
+    let sentWithoutChatAt: string | undefined;
     const journaled = await input.journal.read(input.turnKey);
     if (journaled) {
       enter("send");
@@ -145,12 +164,28 @@ export async function driveRealUiTurn(
       await module.enableConnector(driver, input.connector.name, ctx);
       enter("send");
       const sendingAt = new Date().toISOString();
-      await input.journal.write(input.turnKey, {
+      // A run stopped by now, by its step callback too, records nothing and
+      // sends nothing.
+      signal?.throwIfAborted();
+      // Two runs on this turn can both have read no entry above. Only the one
+      // whose claim records the send goes on to click it.
+      const claimed = await input.journal.claim(input.turnKey, {
         state: "sending",
         at: sendingAt,
       });
-      sendUnconfirmed = true;
+      if (!claimed) {
+        throw new RealUiError({
+          kind: "send_ambiguous",
+          step: "send",
+          message:
+            "Another attempt at this turn already sent the prompt or is sending it, so it was not sent again.",
+        });
+      }
       input.beforeSend?.();
+      // A stop that came while the send was recorded still comes before the
+      // click. The record stays, so no later attempt sends it either.
+      signal?.throwIfAborted();
+      sendUnconfirmed = true;
       const sent = await module.send(driver, input.prompt, ctx);
       conversationUrl = sent.conversationUrl;
       await input.journal.write(input.turnKey, {
@@ -159,6 +194,7 @@ export async function driveRealUiTurn(
         ...(conversationUrl ? { conversationUrl } : {}),
       });
       sendUnconfirmed = false;
+      if (!conversationUrl) sentWithoutChatAt = sendingAt;
     }
 
     enter("reply");
@@ -184,6 +220,15 @@ export async function driveRealUiTurn(
       },
     );
     conversationUrl ??= await driver.url();
+    if (sentWithoutChatAt) {
+      // With its chat and the send's own time, so a restart comes straight
+      // back here rather than search and maybe stop as ambiguous.
+      await input.journal.write(input.turnKey, {
+        state: "sent",
+        at: sentWithoutChatAt,
+        conversationUrl,
+      });
+    }
 
     enter("read_conversation");
     const conversation = await module.readConversation(
@@ -194,10 +239,13 @@ export async function driveRealUiTurn(
     return { account, conversation, approvalsAnswered, finishedSignals, resumed };
   } catch (error) {
     const typed = asRealUiError(error, step);
-    // Once the journal says sending, a page that reads as changed may already
-    // have sent the prompt, so the turn ends as ambiguous, not as a change.
+    // Once the click may have happened, a page that reads as changed, or a
+    // failure that says nothing about the page (the journal's own write, say),
+    // may follow a prompt already sent: the turn ends as ambiguous. A failure
+    // a person must act on, such as a sign-in, keeps its kind.
     const failure =
-      sendUnconfirmed && typed.failure.kind === "page_changed"
+      sendUnconfirmed &&
+      (typed.failure.kind === "page_changed" || typed.failure.kind === "driver")
         ? { ...typed.failure, kind: "send_ambiguous" as const }
         : typed.failure;
     throw new RealUiError(failure, typed.pendingStep ?? pending);
