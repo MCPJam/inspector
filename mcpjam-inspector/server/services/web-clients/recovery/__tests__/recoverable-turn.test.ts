@@ -40,6 +40,7 @@ const STARTED_AT = Date.UTC(2026, 10, 20, 10);
 const fakeDriver: PageDriver = {
   kind: "playwright",
   canEvaluate: false,
+  playwrightSelectors: true,
   navigate: async () => {},
   url: async () => "https://claude.ai/new",
   evaluate: async () => {

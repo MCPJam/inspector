@@ -70,6 +70,7 @@ const request = (status: string) => ({
 const fakeDriver: PageDriver = {
   kind: "playwright",
   canEvaluate: false,
+  playwrightSelectors: true,
   navigate: async () => {},
   url: async () => "https://claude.ai/new",
   evaluate: async () => {
