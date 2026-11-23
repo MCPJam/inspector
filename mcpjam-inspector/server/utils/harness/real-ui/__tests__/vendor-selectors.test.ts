@@ -6,12 +6,15 @@
  * Evidence: fixture. The modules run against a driver that records each
  * selector instead of looking for it, along paths that reach every control
  * they use; a blank page in a real browser then counts each recorded one.
+ * Their approval answers also run in a real page, to show the dialog they
+ * look in is the run's connector's and no other.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { chatgptWebPageModule } from "../chatgpt-web";
 import { claudeWebPageModule } from "../claude-web";
 import type { PageDriver } from "../page-driver";
+import { createPlaywrightDriver } from "../playwright-driver";
 
 const CONNECTOR = { name: "MCPJam fixture 0a1b2c3d", url: "https://mcp.example.com/mcp/connector-1" };
 const PROMPT = "say hello";
@@ -129,7 +132,7 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
     await claude.openNewChat(driver, CTX);
     await claude.enableConnector(driver, CONNECTOR.name, CTX);
     await claude.send(driver, PROMPT, CTX);
-    await claude.answerApproval(driver);
+    await claude.answerApproval(driver, [CONNECTOR.name]);
     await claude.replySignals(driver);
     expect(await unparsed(driver.selectors)).toEqual([]);
   });
@@ -155,8 +158,35 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
     await chatgpt.openNewChat(fresh, CTX);
     await chatgpt.enableConnector(fresh, CONNECTOR.name, CTX);
     await chatgpt.send(fresh, PROMPT, CTX);
-    await chatgpt.answerApproval(fresh);
+    await chatgpt.answerApproval(fresh, [CONNECTOR.name]);
     await chatgpt.replySignals(fresh);
     expect(await unparsed([...fresh.selectors, ...listed.selectors])).toEqual([]);
+  });
+});
+
+describe("vendor approval prompts in a real page", { timeout: 60_000 }, () => {
+  /** A dialog asking to approve a tool from `connector`; a click on an answer titles the page with it. */
+  const prompt = (connector: string, answers: string[]) =>
+    `<div role="dialog"><p>Allow echo from ${connector}?</p>${answers
+      .map((answer) => `<button onclick="document.title = this.textContent">${answer}</button>`)
+      .join("")}</div>`;
+
+  it("answers the dialog that names the run's connector, and no other", async () => {
+    const page = await browser.newPage();
+    const driver = await createPlaywrightDriver(page, { sites: ["https://claude.ai", "https://chatgpt.com"] });
+    for (const [module, answers] of [
+      [claudeWebPageModule, ["Always allow", "Allow once"]],
+      [chatgptWebPageModule, ["Confirm"]],
+    ] as const) {
+      await page.setContent(prompt("Team Drive", [...answers]));
+      await expect(module.answerApproval(driver, [CONNECTOR.name])).rejects.toMatchObject({
+        failure: { kind: "connector_failed", step: "reply" },
+      });
+      expect(await page.title()).toBe("");
+      await page.setContent(prompt(CONNECTOR.name, [...answers]));
+      expect(await module.answerApproval(driver, [CONNECTOR.name])).toBe(true);
+      expect(await page.title()).toBe(answers[0]);
+    }
+    await page.close();
   });
 });

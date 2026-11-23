@@ -19,6 +19,7 @@ import {
 import type { PageDriver } from "./page-driver.js";
 import {
   RealUiError,
+  answerRunApproval,
   commonBlocker,
   cssString,
   needsSignIn,
@@ -292,15 +293,12 @@ export const claudeWebPageModule: RealUiPageModule = {
     return undefined;
   },
 
-  async answerApproval(driver) {
-    for (const name of ["Always allow", "Allow once", "Allow"]) {
-      const button = role("button", name);
-      if ((await driver.readText(button)) !== undefined) {
-        await driver.click(button);
-        return true;
-      }
-    }
-    return false;
+  async answerApproval(driver, connectorNames) {
+    return answerRunApproval(driver, {
+      site: "claude.ai",
+      connectorNames,
+      answers: ["Always allow", "Allow once", "Allow"],
+    });
   },
 
   async replySignals(driver) {

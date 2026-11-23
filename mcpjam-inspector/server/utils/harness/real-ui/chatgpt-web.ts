@@ -19,6 +19,7 @@ import {
 import type { PageDriver } from "./page-driver.js";
 import {
   RealUiError,
+  answerRunApproval,
   commonBlocker,
   cssString,
   needsSignIn,
@@ -180,15 +181,12 @@ export const chatgptWebPageModule: RealUiPageModule = {
     return undefined;
   },
 
-  async answerApproval(driver) {
-    for (const name of ["Always allow", "Allow", "Confirm"]) {
-      const button = role("button", name);
-      if ((await driver.readText(button)) !== undefined) {
-        await driver.click(button);
-        return true;
-      }
-    }
-    return false;
+  async answerApproval(driver, connectorNames) {
+    return answerRunApproval(driver, {
+      site: "chatgpt.com",
+      connectorNames,
+      answers: ["Always allow", "Allow", "Confirm"],
+    });
   },
 
   async replySignals(driver) {

@@ -179,13 +179,29 @@ describe("claude.ai", () => {
     });
   });
 
-  it("answers the app's approval with Always allow where it is offered", async () => {
+  it("answers Always allow in the approval dialog that names the run's connector", async () => {
+    const dialog = ':is(dialog, [role="dialog"], [role="alertdialog"]):has-text("MCPJam orders 1a2b3c4d")';
+    const driver = cannedDriver({
+      url: "https://claude.ai/chat/x",
+      texts: {
+        'role=button[name="Always allow"]': "Always allow",
+        [`${dialog} >> role=button[name="Always allow"]`]: "Always allow",
+        [`${dialog} >> role=button[name="Allow once"]`]: "Allow once",
+      },
+    });
+    expect(await claudeWebPageModule.answerApproval(driver, ["MCPJam orders 1a2b3c4d"])).toBe(true);
+    expect(driver.click).toHaveBeenCalledWith(`${dialog} >> role=button[name="Always allow"]`);
+  });
+
+  it("leaves an approval prompt from another connector unanswered and stops the turn", async () => {
     const driver = cannedDriver({
       url: "https://claude.ai/chat/x",
       texts: { 'role=button[name="Always allow"]': "Always allow", 'role=button[name="Allow once"]': "Allow once" },
     });
-    expect(await claudeWebPageModule.answerApproval(driver)).toBe(true);
-    expect(driver.click).toHaveBeenCalledWith('role=button[name="Always allow"]');
+    await expect(claudeWebPageModule.answerApproval(driver, ["MCPJam orders 1a2b3c4d"])).rejects.toMatchObject({
+      failure: { kind: "connector_failed", step: "reply" },
+    });
+    expect(driver.click).not.toHaveBeenCalled();
   });
 
   it("calls a reply finished only when every signal agrees", async () => {
@@ -284,6 +300,21 @@ describe("chatgpt.com", () => {
       toolCalls: [{ toolName: "echo", at: new Date(2000).toISOString() }],
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
+  });
+
+  it("leaves a bare Confirm that isn't the run's connector's approval unanswered and stops the turn", async () => {
+    const dialog = ':is(dialog, [role="dialog"], [role="alertdialog"]):has-text("MCPJam orders 1a2b3c4d")';
+    const other = cannedDriver({ url: "https://chatgpt.com/c/x", texts: { 'role=button[name="Confirm"]': "Confirm" } });
+    await expect(chatgptWebPageModule.answerApproval(other, ["MCPJam orders 1a2b3c4d"])).rejects.toMatchObject({
+      failure: { kind: "connector_failed", step: "reply" },
+    });
+    expect(other.click).not.toHaveBeenCalled();
+    const own = cannedDriver({
+      url: "https://chatgpt.com/c/x",
+      texts: { 'role=button[name="Confirm"]': "Confirm", [`${dialog} >> role=button[name="Confirm"]`]: "Confirm" },
+    });
+    expect(await chatgptWebPageModule.answerApproval(own, ["MCPJam orders 1a2b3c4d"])).toBe(true);
+    expect(own.click).toHaveBeenCalledWith(`${dialog} >> role=button[name="Confirm"]`);
   });
 
   it("stops waiting for a control at a human check, as the account's sign-in, not a changed page", async () => {
