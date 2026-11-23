@@ -2,7 +2,7 @@
  * The spans a web turn persists, and what each one lets a reader trust.
  */
 import { describe, expect, it } from "vitest";
-import { webTurnMessages, webTurnSpans, type WebToolCall } from "../web-client-trace";
+import { matchWebToolCalls, webTurnMessages, webTurnSpans, type WebToolCall } from "../web-client-trace";
 
 const call = (state: WebToolCall["state"], ledgerEntryId: string): WebToolCall => ({
   toolName: "echo",
@@ -66,5 +66,29 @@ describe("webTurnSpans", () => {
       ["step", "error"],
       ["tool", "ok"],
     ]);
+  });
+});
+
+describe("matchWebToolCalls", () => {
+  it("gives a refused call that carries no id the id its refusal was recorded under", () => {
+    const calls = matchWebToolCalls({
+      wire: [],
+      conversation: [{ toolName: "echo" }, { toolName: "echo" }, { toolName: "list", toolUseId: "toolu_1" }],
+      serverOfConnector: () => undefined,
+      blocked: [
+        { toolName: "echo", toolCallId: "web-blocked-1" },
+        { toolName: "list", toolCallId: "toolu_1" },
+      ],
+    });
+    // One refusal names one call; a call with the vendor's own id keeps it.
+    expect(calls.map((found) => [found.toolName, found.policyBlockId, found.toolUseId])).toEqual([
+      ["echo", "web-blocked-1", undefined],
+      ["echo", undefined, undefined],
+      ["list", undefined, "toolu_1"],
+    ]);
+    const ids = (webTurnMessages(saved, calls, "turn-1")[0]!.content as Array<{ toolCallId?: string }>)
+      .map((part) => part.toolCallId)
+      .slice(0, 3);
+    expect(ids).toEqual(["web-blocked-1", "web-call-turn-1-1", "toolu_1"]);
   });
 });

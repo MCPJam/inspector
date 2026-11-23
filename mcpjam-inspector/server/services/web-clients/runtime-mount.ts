@@ -14,11 +14,16 @@ import { WEB_CLIENTS_FEATURE_FLAG } from "@/shared/web-clients";
 import { createDefaultWebAccountRoutes } from "./account-routes-default.js";
 import { createHostedWebClientEnvironmentFactory } from "./hosted-web-client-runtime.js";
 import { createLocalWebClientEnvironmentFactory } from "./local-web-client-environment.js";
-import { setWebClientEnvironment } from "./web-client-environment.js";
+import {
+  setWebClientEnvironment,
+  webClientTurnsRunHosted,
+} from "./web-client-environment.js";
 
 export function mountWebClientRuntime(
   app: Hono,
-  options: { hosted: boolean; flagOn?: () => boolean },
+  options: { hosted: boolean; flagOn?: () => boolean } = {
+    hosted: webClientTurnsRunHosted(),
+  },
 ): void {
   app.route("/api/web-clients", createDefaultWebAccountRoutes());
   if (options.hosted) {

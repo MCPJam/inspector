@@ -75,6 +75,8 @@ type FixtureRun = {
   /** What the run did, in order, across restarts. */
   log: string[];
   result?: string;
+  /** The model's reply to the step, as the runtime read it. */
+  reply?: string;
   step?: PendingStep;
   restoredProfileVersion: number;
   browser: AccountBrowser;
@@ -102,6 +104,8 @@ function createWorld(signInMethod?: SignInMethod) {
     ledger: createInMemoryToolCallLedger(),
     /** One entry per tool the upstream server actually ran. */
     upstream: [] as string[],
+    /** The vendor's saved conversations: the model's reply, by run. */
+    conversation: new Map<string, string>(),
     notices,
     runs: new Map<string, FixtureRun>(),
     inFlight: [] as Promise<void>[],
@@ -193,6 +197,8 @@ function vendorTurn(
       upstreamStatus: 200,
       resultHash: hashPayload({ ok: true }),
     });
+    // The model has the tool's result and replies in its conversation.
+    world.conversation.set(run.runId, `Created the note ${run.runId}.`);
   }
   return behavior === "reply" ? undefined : { kind: "stream_dropped" };
 }
@@ -216,7 +222,9 @@ async function execute(
       });
       run.log.push(`reconcile: ${verdict.status}`);
       if (verdict.status === "reconciled") {
-        run.result = "completed from the ledger";
+        // The model already replied, so the reply is read, not asked for again.
+        run.reply = world.conversation.get(run.runId);
+        run.result = "completed from the vendor's conversation";
         return;
       }
       if (verdict.status === "ambiguous_execution") {
@@ -294,21 +302,56 @@ const RESUMED_AND_SENT = [
   "tool ran upstream",
 ];
 
+/**
+ * The first thing in a logged value that must not be there: a profile
+ * archive (any typed array), or a string holding the profile or a seat's
+ * address. Looks at every depth, at keys, and at an error's message, stack
+ * and cause, which `JSON.stringify` leaves out.
+ */
+function leakIn(value: unknown, seen = new Set<object>()): string | undefined {
+  if (typeof value === "string") {
+    return [PROFILE_TEXT, SEAT.accountEmail, OTHER_SEAT.accountEmail].find(
+      (secret) => value.includes(secret),
+    );
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return undefined;
+  }
+  seen.add(value);
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return "a profile archive";
+  }
+  const parts: unknown[] = Object.entries(value).flat();
+  if (value instanceof Error) {
+    parts.push(value.message, value.stack, value.cause);
+  }
+  for (const part of parts) {
+    const leak = leakIn(part, seen);
+    if (leak) return leak;
+  }
+  return undefined;
+}
+
 afterEach(() => {
   // Profiles and seat addresses never reach the logs.
-  const text = JSON.stringify(logged);
-  expect(text).not.toContain(PROFILE_TEXT);
-  expect(text).not.toContain(SEAT.accountEmail);
-  expect(text).not.toContain(OTHER_SEAT.accountEmail);
-  const values = logged
-    .flat()
-    .flatMap((value) =>
-      typeof value === "object" && value !== null
-        ? [value, ...Object.values(value)]
-        : [value],
-    );
-  expect(values.some((value) => value instanceof Uint8Array)).toBe(false);
+  expect(leakIn(logged)).toBeUndefined();
   logged.length = 0;
+});
+
+describe("the log check", () => {
+  it("finds a profile or a seat's address at any depth, errors included", () => {
+    expect(leakIn([["done", { runId: "run-1" }]])).toBeUndefined();
+    expect(
+      leakIn([["saved", { run: { profile: { archive: PROFILE } } }]]),
+    ).toBe("a profile archive");
+    expect(
+      leakIn([["failed", new Error(`signed in as ${SEAT.accountEmail}`)]]),
+    ).toBe(SEAT.accountEmail);
+    const cause = new Error(`signed in as ${SEAT.accountEmail}`);
+    expect(leakIn([["failed", new Error("refused", { cause })]])).toBe(
+      SEAT.accountEmail,
+    );
+  });
 });
 
 describe("web account recovery", () => {
@@ -717,7 +760,7 @@ describe("web account recovery", () => {
 });
 
 describe("a tool call runs once across recovery", () => {
-  it("takes a lost result from the ledger instead of running the tool again", async () => {
+  it("reads a lost reply from the vendor's conversation instead of running the tool again", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);
     await startRun(world, coordinator, "run-1", ["reply_lost"]);
@@ -729,7 +772,10 @@ describe("a tool call runs once across recovery", () => {
       "reconnect_browser",
       "reconcile: reconciled",
     ]);
-    expect(runOf(world, "run-1").result).toBe("completed from the ledger");
+    expect(runOf(world, "run-1").result).toBe(
+      "completed from the vendor's conversation",
+    );
+    expect(runOf(world, "run-1").reply).toBe("Created the note run-1.");
     expect(world.upstream).toEqual(["run-1"]);
     // A restarted process reads the same record.
     const verdict = await startProcess(world).reconcileBeforeResend({
@@ -916,6 +962,56 @@ describe("sign-in method", () => {
     expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
   });
 
+  it("signs a run in again, not reload, when the shared attempt saved the profile it failed on", async () => {
+    const method = {
+      id: "test-inbox",
+      signIn: vi.fn(async () => "signed_in" as const),
+    };
+    const world = createWorld(method);
+    // The first attempt's save lands, but its answer is slow.
+    let answerSave = () => {};
+    const slowAnswer = new Promise<void>((resolve) => {
+      answerSave = resolve;
+    });
+    const slowSave: WebReconnectBackend = {
+      ...world.backend,
+      saveWebAccountProfile: async (args) => {
+        const saved = await world.backend.saveWebAccountProfile(args);
+        if (saved.profileVersion === 2) await slowAnswer;
+        return saved;
+      },
+    };
+    const coordinator = startProcess(world, slowSave);
+    const report = (runId: string, restoredProfileVersion: number) =>
+      coordinator.reportNeedsSignIn({
+        projectId: PROJECT,
+        webAccountId: ACCOUNT,
+        runId,
+        pendingStep: { stepId: "step-1", startedAt: new Date().toISOString() },
+        reason: "signed_out",
+        browser: browserSignedInAs(SEAT),
+        restoredProfileVersion,
+      });
+
+    const first = report("run-1", 1);
+    await vi.waitFor(async () =>
+      expect((await accountOf(world)).profileVersion).toBe(2),
+    );
+    // run-2 restored that new profile and was signed out on it anyway, then
+    // found the first attempt still running.
+    const second = report("run-2", 2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    answerSave();
+
+    expect(await first).toEqual({ status: "signed_in" });
+    expect(await second).toEqual({ status: "signed_in" });
+    expect(method.signIn).toHaveBeenCalledTimes(2);
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      profileVersion: 3,
+    });
+  });
+
   it("asks once, then lets later runs join the request without another attempt", async () => {
     const method = {
       id: "test-inbox",
@@ -1044,6 +1140,37 @@ describe("in-memory reconnect backend", () => {
       ok: false,
       reason: "version_conflict",
       profileVersion: 2,
+    });
+  });
+
+  it("compares the stored email trimmed, as sameWebIdentity does", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "ready",
+        accountEmail: ` ${SEAT.accountEmail} `,
+        profileVersion: 1,
+      },
+    ]);
+    const reported = await backend.reportWebSignInRequired({
+      webAccountId: ACCOUNT,
+      runId: "run-1",
+      pendingStep: { stepId: "step-1", startedAt: "2026-11-20T10:00:00.000Z" },
+      reason: "signed_out",
+    });
+    if (!("requestId" in reported)) throw new Error("No request opened.");
+    const handback = (verifiedAccountEmail: string) =>
+      backend.handbackWebReconnect({
+        requestId: reported.requestId,
+        verifiedAccountEmail,
+      });
+
+    await expect(handback(OTHER_SEAT.accountEmail)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await handback(SEAT.accountEmail)).toEqual({
+      resumableRunIds: ["run-1"],
     });
   });
 });

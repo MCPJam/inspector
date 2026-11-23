@@ -2,8 +2,9 @@
  * A web client's suite iteration on the hosted runner.
  *
  * Its turn acts as the run's owner on the accounts the run froze, both read
- * from the run's row. An iteration that can't read the row stops as a setup
- * failure before any turn reaches the vendor; one that can starts its turn
+ * from the run's row. An iteration that can't read the row, or whose row
+ * names no frozen accounts, stops as a setup failure before any turn reaches
+ * the vendor; one that can starts its turn
  * with no box, since a web client never has one. Other runtimes keep the
  * best-effort read. The browser, the chat orchestration and the vendor's page
  * are mocked; the runner's routing and finalize are real, and so are the turn
@@ -103,14 +104,14 @@ const RUN = {
 };
 
 /** The run reads fine when the suite starts; `failIterationReads` fails the rest. */
-function convexClient(failIterationReads: boolean) {
+function convexClient(failIterationReads: boolean, run: unknown) {
   let runReads = 0;
   return {
     query: vi.fn(async (name: string) => {
       if (name !== "testSuites:getTestSuiteRun") return null;
       runReads += 1;
       if (failIterationReads && runReads > 1) throw new Error("fetch failed");
-      return RUN;
+      return run;
     }),
     mutation: vi.fn(async () => ({})),
     action: vi.fn(async () => undefined),
@@ -119,7 +120,10 @@ function convexClient(failIterationReads: boolean) {
 
 async function runCase(
   suiteHostConfig: Record<string, unknown>,
-  { failIterationReads }: { failIterationReads: boolean },
+  {
+    failIterationReads,
+    run = RUN,
+  }: { failIterationReads: boolean; run?: unknown },
 ) {
   const finished: Array<Record<string, unknown>> = [];
   await runEvalSuiteWithAiSdk({
@@ -151,7 +155,7 @@ async function runCase(
       environment: { servers: ["srv-1"] },
     },
     modelApiKeys: {},
-    convexClient: convexClient(failIterationReads),
+    convexClient: convexClient(failIterationReads, run),
     convexHttpUrl: "https://example.convex.site",
     convexAuthToken: "token",
     mcpClientManager: manager(),
@@ -180,6 +184,26 @@ describe("a web client iteration whose run can't be read", () => {
     const finished = await runCase(
       { harness: "claude-web" },
       { failIterationReads: true },
+    );
+
+    expect(assistantTurn).not.toHaveBeenCalled();
+    expect(finished).toEqual([
+      expect.objectContaining({
+        passed: false,
+        status: "setup_failed",
+        error:
+          "This run's web accounts couldn't be read, so this iteration stopped before any turn. Run it again.",
+      }),
+    ]);
+  });
+
+  it("stops as a setup failure when the run froze no accounts, never on the project's default", async () => {
+    const finished = await runCase(
+      { harness: "claude-web" },
+      {
+        failIterationReads: false,
+        run: { status: "running", createdBy: "user-owner" },
+      },
     );
 
     expect(assistantTurn).not.toHaveBeenCalled();

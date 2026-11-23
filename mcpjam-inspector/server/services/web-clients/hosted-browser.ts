@@ -208,7 +208,26 @@ export type WebClientHostedBrowser = {
   driver: PageDriver;
   /** The browser's profile as an archive, for save-profile. */
   exportProfile(): Promise<Uint8Array>;
+  /**
+   * Closes the hosted session. It never throws: it runs once the outcome is
+   * known, and a session that won't close is logged rather than changing it.
+   */
+  close(): Promise<void>;
 };
+
+async function closeHostedSession(args: { bearer: string; projectId: string; sessionId: string }): Promise<void> {
+  try {
+    await new BrowserSessionService().agentRequest("close", {
+      bearer: args.bearer,
+      projectId: args.projectId,
+      body: { sessionId: args.sessionId },
+    });
+  } catch (error) {
+    logger.warn("[web-clients] a hosted browser did not close", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /**
  * A chat to own the browser when the caller has none (sign-in, an eval
@@ -275,6 +294,9 @@ export async function openWebClientHostedBrowser(args: {
     policy,
     signal,
   });
+  const close = () => closeHostedSession({ bearer, projectId: args.projectId, sessionId: browser.browserSessionId });
+  // The session exists from here: one that never boots is closed, not left
+  // open with nobody to close it, and the caller hears why it didn't boot.
   const handle = await provisionConversationBrowser({
     bearer,
     projectId: args.projectId,
@@ -282,6 +304,9 @@ export async function openWebClientHostedBrowser(args: {
     // The account's own session, or a blank profile: never the person's.
     ownProfile: args.profileArchive ? { archive: args.profileArchive } : {},
     signal,
+  }).catch(async (error: unknown) => {
+    await close();
+    throw error;
   });
   const transport = sessionBrowserTransport({
     handle,
@@ -294,5 +319,6 @@ export async function openWebClientHostedBrowser(args: {
     driver: createHostedPageDriver(transport, { sites: WEB_CLIENT_SITES[args.vendor] }),
     exportProfile: () =>
       exportWebAccountProfile({ client: handle.client, policy, vendor: args.vendor }),
+    close,
   };
 }
