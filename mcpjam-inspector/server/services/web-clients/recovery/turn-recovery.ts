@@ -152,8 +152,8 @@ export function runFailureOf(failure: RealUiFailure): RunFailure | undefined {
  * takes only a chat created since then.
  */
 async function keepSendRecord(journal: SendJournal, turnKey: string, at: string) {
-  if (await journal.read(turnKey)) return;
-  await journal.write(turnKey, { state: "sending", at });
+  // A record already there stays, since it may name the chat the send made.
+  await journal.claim(turnKey, { state: "sending", at });
 }
 
 export async function runRecoverableWebTurn(

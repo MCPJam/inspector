@@ -103,7 +103,11 @@ function deps(answers: Record<string, unknown>) {
   const service: WebClientService = { read: answer, apply: answer };
   const environment: WebClientEnvironment = {
     publicBaseUrl: "https://inspector.example.test",
-    journal: { read: async () => undefined, write: async () => {} },
+    journal: {
+      read: async () => undefined,
+      write: async () => {},
+      claim: async () => true,
+    },
     pageModule: {
       ...createFixtureWebPageModule("https://claude.ai"),
       async signedIn() {
