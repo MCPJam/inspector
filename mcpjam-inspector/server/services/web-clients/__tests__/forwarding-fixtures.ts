@@ -165,11 +165,18 @@ export const ORIGIN = "https://inspector.example.test";
 /** claude.ai's MCP client, as the spike saw it: its own user agent and session, a bearer when it has one. */
 export function vendorClient(
   app: Hono,
-  options: { path: string; token?: string; protocolVersion?: string },
+  options: {
+    path: string;
+    token?: string;
+    protocolVersion?: string;
+    /** The scheme and Host the request names; the Inspector's own by default. */
+    origin?: string;
+  },
 ) {
   let sessionId: string | undefined;
   const post = async (body: unknown, headers: Record<string, string> = {}) => {
-    const response = await app.request(`${ORIGIN}${options.path}`, {
+    const url = `${options.origin ?? ORIGIN}${options.path}`;
+    const response = await app.request(url, {
       method: "POST",
       headers: {
         accept: "application/json, text/event-stream",
