@@ -125,6 +125,14 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
   });
 
+  it("is asked to approve the tool again once its connector was replaced", async () => {
+    expect((await turn(await signedInDriver())).approvalsAnswered).toBe(1);
+    vendor.connectors.set("MCPJam fixture", "http://127.0.0.1:9/elsewhere");
+    const again = await turn(await signedInDriver());
+    expect(vendor.connectors.get("MCPJam fixture")).toBe(upstream.url);
+    expect(again.approvalsAnswered).toBe(1);
+  });
+
   it("continues in the chat an earlier attempt already sent, without sending again", async () => {
     const journal = createMemorySendJournal();
     await turn(await signedInDriver(), journal);
