@@ -12,6 +12,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  MCPAuthError,
   MCPClientManager,
   ModernProtocolVersionRefused,
   ProtocolVersionPinUnsupported,
@@ -21,13 +22,14 @@ type Shape =
   /**
    * Modern server: refuses the probe with -32022 and lists `supported`.
    * `initialize` says how it answers the 2025 handshake for a 2025 version it
-   * listed: properly (`ok`, the default), with an HTTP 404 (`not-found`), or
-   * with an HTTP 400 carrying another JSON-RPC error (`bad-request`).
+   * listed: properly (`ok`, the default), with an HTTP 404 (`not-found`),
+   * with an HTTP 400 carrying another JSON-RPC error (`bad-request`), or with
+   * an HTTP 401 (`unauthorized`).
    */
   | {
       kind: "modern";
       supported: string[];
-      initialize?: "ok" | "not-found" | "bad-request";
+      initialize?: "ok" | "not-found" | "bad-request" | "unauthorized";
     }
   /** An old HTTP+SSE server: it does not take a POST at this URL at all. */
   | { kind: "sse-only" };
@@ -67,6 +69,10 @@ async function serve(shape: Shape) {
 
     if (isLegacyRequest && shape.initialize === "not-found") {
       res.writeHead(404).end();
+      return;
+    }
+    if (isLegacyRequest && shape.initialize === "unauthorized") {
+      res.writeHead(401, { "WWW-Authenticate": "Bearer" }).end("Unauthorized");
       return;
     }
     if (isLegacyRequest && shape.initialize === "bad-request") {
@@ -245,6 +251,20 @@ describe("the retry on a server already known to be modern", () => {
       expect(wire).toEqual(["POST server/discover", "POST initialize"]);
     }
   );
+
+  it("keeps an auth failure on the 2025 handshake an MCPAuthError", async () => {
+    const { connected, wire } = await connect({
+      kind: "modern",
+      supported: ["2099-01-01", "2025-06-18"],
+      initialize: "unauthorized",
+    });
+
+    const error = await failure(connected);
+
+    // The OAuth hooks key on this class; a plain Error would skip them.
+    expect(error).toBeInstanceOf(MCPAuthError);
+    expect(wire).toEqual(["POST server/discover", "POST initialize"]);
+  });
 
   it("says why SSE was not tried", async () => {
     const { connected } = await connect({

@@ -3629,6 +3629,18 @@ export class MCPClientManager {
     // The retry after such a refusal: the server is known to be modern, so a
     // 2025 handshake that failed for any other reason stops here as well.
     if (options?.knownModernServer) {
+      // Keep the auth classification, as the declared-transport exit does, so
+      // a 401/403 on the 2025 handshake still reaches the OAuth hooks.
+      const authCheck = isAuthError(streamableError);
+      if (authCheck.isAuth) {
+        throw new MCPAuthError(
+          `Authentication failed for MCP server "${serverId}": Streamable HTTP error: ${formatError(
+            streamableError
+          )}`,
+          authCheck.statusCode,
+          { cause: streamableError }
+        );
+      }
       throw new Error(
         connectionErrorMessage(
           serverId,
