@@ -18,6 +18,7 @@ import { finalizePassedForEval } from "./eval-tool-execution.js";
 import {
   gradeCallerVerdict,
   hasPlatformGateRows,
+  legacyRowsContradictVerdict,
 } from "./platform-gate-scores.js";
 import {
   evaluateToolCalls,
@@ -673,7 +674,13 @@ export function iterationToEvalResult(
     trace: iteration.captureError ? undefined : trace,
     widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
-      ...iterationScoreMetadata(iteration, options.evaluationConfig),
+      ...(legacyRowsContradictVerdict(
+        iteration,
+        passed,
+        options.evaluationConfig
+      )
+        ? {}
+        : iterationScoreMetadata(iteration, options.evaluationConfig)),
       iterationNumber: index + 1,
       retryCount: iteration.retryCount ?? 0,
       ...(iteration.captureError
@@ -724,7 +731,7 @@ export function runToEvalResults(
   run: EvalRunResult,
   options: RunToEvalResultsOptions
 ): EvalResultInput[] {
-  return run.iterationDetails.map((iteration, index) =>
+  const results = run.iterationDetails.map((iteration, index) =>
     iterationToEvalResult(iteration, index, {
       caseTitle:
         options.caseId !== undefined
@@ -740,6 +747,24 @@ export function runToEvalResults(
       intent: options.intent,
     })
   );
+  // When one legacy iteration had to drop its rows, the whole run drops them,
+  // so its iterations upload alike.
+  const dropRows = results.some((result, index) =>
+    legacyRowsContradictVerdict(
+      run.iterationDetails[index],
+      result.passed,
+      run.evaluationConfig
+    )
+  );
+  return dropRows ? results.map(withoutScoreMetadata) : results;
+}
+
+function withoutScoreMetadata(result: EvalResultInput): EvalResultInput {
+  if (!result.metadata) return result;
+  const metadata = { ...result.metadata };
+  delete metadata.scores;
+  delete metadata.evaluationConfig;
+  return { ...result, metadata };
 }
 
 /**

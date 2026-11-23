@@ -14,6 +14,7 @@ import {
   toolExecutionScoreResult,
 } from "./contract/platform-gates.js";
 import type {
+  EvaluationConfigSnapshot,
   ResolvedScoreDefinition,
   ScoreDefinition,
   ScoreResult,
@@ -44,6 +45,22 @@ export function hasPlatformGateRows(iteration: {
       (row) => row.scorerId === TOOL_EXECUTION_SCORER_ID
     ) ?? false
   );
+}
+
+/**
+ * Whether an iteration without platform rows would upload a failure next to
+ * score rows that derive a pass. That happens when the pre-platform check
+ * fails it on a tool or iteration error that none of its rows record; the
+ * upload then leaves those rows out rather than contradict its own verdict.
+ */
+export function legacyRowsContradictVerdict(
+  iteration: { scores?: ScoreResult[] },
+  passed: boolean,
+  evaluationConfig: EvaluationConfigSnapshot | undefined
+): boolean {
+  if (passed || !evaluationConfig || !iteration.scores?.length) return false;
+  if (hasPlatformGateRows(iteration)) return false;
+  return scoresPassed(iteration.scores, evaluationConfig.definitions);
 }
 
 /**

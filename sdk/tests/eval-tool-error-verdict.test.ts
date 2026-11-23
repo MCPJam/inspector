@@ -18,9 +18,14 @@ import { PromptResult } from "../src/PromptResult";
 import type { HostRunner } from "../src/HostRunner";
 import type { Evaluator } from "../src/evaluators/types";
 import {
+  iterationToEvalResult,
   promptsToEvalResult,
   runToEvalResults,
 } from "../src/eval-result-mapping";
+import {
+  fromLegacyTestOutcome,
+  legacyTestScoreDefinition,
+} from "../src/contract/adapters";
 import { buildEvaluationConfigSnapshot } from "../src/contract/derive";
 import { scoresPassed } from "../src/scorers/run";
 import { resolveScoreDefinition } from "../src/contract/derive";
@@ -490,6 +495,68 @@ describe("an iteration without platform rows", () => {
       runToEvalResults(older, { casePrefix: "r", failOnToolError: false })[0]
         .passed
     ).toBe(true);
+  });
+});
+
+describe("a legacy result whose rows pass", () => {
+  // An older SDK's iteration: test() passed and its only row says so, but the
+  // iteration errored, so the pre-platform check fails the upload.
+  async function legacyRun() {
+    const run = await customerCase().run(scriptedAgent(new Set()), {
+      iterations: 1,
+      concurrency: 1,
+      mcpjam: { enabled: false },
+    });
+    const config = buildEvaluationConfigSnapshot([legacyTestScoreDefinition()]);
+    const row = fromLegacyTestOutcome(config.definitions[0], true);
+    const [base] = run.iterationDetails;
+    return {
+      ...run,
+      evaluationConfig: config,
+      iterationDetails: [
+        { ...base, passed: true, scores: [row], error: "execution failed" },
+        { ...base, passed: true, scores: [row], error: undefined },
+      ],
+    };
+  }
+
+  it("leaves out the rows that would derive a pass", async () => {
+    const run = await legacyRun();
+    expect(
+      scoresPassed(
+        run.iterationDetails[0].scores ?? [],
+        run.evaluationConfig?.definitions ?? []
+      )
+    ).toBe(true);
+    const result = iterationToEvalResult(run.iterationDetails[0], 0, {
+      caseTitle: "legacy",
+      evaluationConfig: run.evaluationConfig,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.metadata).not.toHaveProperty("scores");
+    expect(result.metadata).not.toHaveProperty("evaluationConfig");
+  });
+
+  it("leaves them out for the whole run", async () => {
+    const results = runToEvalResults(await legacyRun(), {
+      casePrefix: "legacy",
+    });
+    expect(results.map((result) => result.passed)).toEqual([false, true]);
+    for (const result of results) {
+      expect(result.metadata).not.toHaveProperty("scores");
+      expect(result.metadata).not.toHaveProperty("evaluationConfig");
+    }
+  });
+
+  it("keeps them when the legacy check passes", async () => {
+    const run = await legacyRun();
+    const passing = { ...run, iterationDetails: [run.iterationDetails[1]] };
+    const [result] = runToEvalResults(passing, { casePrefix: "legacy" });
+    expect(result.passed).toBe(true);
+    expect(result.metadata).toMatchObject({
+      scores: run.iterationDetails[1].scores,
+      evaluationConfig: run.evaluationConfig,
+    });
   });
 });
 
