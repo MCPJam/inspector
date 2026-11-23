@@ -19,6 +19,7 @@ import {
 } from "@/shared/web-clients";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { logger } from "../../utils/logger.js";
+import { isOutsideRepository } from "../../utils/outside-repository.js";
 import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
@@ -28,13 +29,20 @@ import type {
   WebClientEnvironmentFactory,
 } from "./web-client-environment.js";
 
-/** Where this machine keeps a vendor's signed-in profile, outside any checkout. */
+/** Where this machine keeps a vendor's signed-in profile, outside this repository. */
 export function localWebClientProfileDir(
   vendor: WebClientVendor,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const root = env.MCPJAM_WEB_CLIENTS_PROFILE_DIR?.trim() || join(homedir(), ".mcpjam", "web-clients");
-  return join(root, `${vendor}-profile`);
+  const profileDir = join(root, `${vendor}-profile`);
+  // The profile holds a signed-in session, which a commit must never pick up.
+  if (!isOutsideRepository(profileDir)) {
+    throw new Error(
+      `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} browser profile is inside this Inspector's repository, where a commit could pick up your sign-in. Set MCPJAM_WEB_CLIENTS_PROFILE_DIR to a folder outside the repository, restart the Inspector, then run again.`,
+    );
+  }
+  return profileDir;
 }
 
 export type LaunchLocalBrowser = (

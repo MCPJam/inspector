@@ -93,7 +93,8 @@ server the client uses gets a capability connector in the registry above.
 
 1. Sign in once per vendor. The profile lives in
    `~/.mcpjam/web-clients/<vendor>-profile`, or under
-   `MCPJAM_WEB_CLIENTS_PROFILE_DIR` when you set it:
+   `MCPJAM_WEB_CLIENTS_PROFILE_DIR` when you set it to a folder outside the
+   repository (a turn refuses a profile inside it):
 
    ```sh
    npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts --sign-in --vendor chatgpt

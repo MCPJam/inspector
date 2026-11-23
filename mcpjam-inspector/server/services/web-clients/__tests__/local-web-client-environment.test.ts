@@ -13,6 +13,7 @@ import {
   createLocalWebClientEnvironmentFactory,
   localWebClientProfileDir,
 } from "../local-web-client-environment";
+import { REPOSITORY_ROOT } from "../../../utils/outside-repository";
 import { mountWebClientRuntime } from "../runtime-mount";
 import { setWebClientEnvironment, webClientEnvironmentFor } from "../web-client-environment";
 
@@ -193,9 +194,27 @@ describe("a local web client environment", () => {
     ).close();
   });
 
-  it("keeps profiles outside any checkout, under the folder the person chose", () => {
+  it("keeps profiles under the folder the person chose, never inside this repository", async () => {
     vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", "/home/someone/web-profiles");
     expect(localWebClientProfileDir("claude")).toBe(join("/home/someone/web-profiles", "claude-profile"));
+    // A commit from this checkout could carry the session, so a turn stops
+    // before it opens a browser there.
+    const inside = join(REPOSITORY_ROOT, "mcpjam-inspector", ".web-profiles");
+    vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", inside);
+    expect(() => localWebClientProfileDir("claude")).toThrow(
+      "The Claude web browser profile is inside this Inspector's repository",
+    );
+    const factory = createLocalWebClientEnvironmentFactory({
+      env: {
+        MCPJAM_INSPECTOR_PUBLIC_URL: "https://tunnel.example",
+        MCPJAM_WEB_CLIENTS_PROFILE_DIR: inside,
+      },
+    });
+    await expect(
+      factory({ runtimeId: "chatgpt-web", projectId: "p", runId: "r" }),
+    ).rejects.toThrow(
+      "Set MCPJAM_WEB_CLIENTS_PROFILE_DIR to a folder outside the repository",
+    );
   });
 });
 
