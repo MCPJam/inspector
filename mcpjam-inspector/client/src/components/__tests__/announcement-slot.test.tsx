@@ -1,5 +1,11 @@
 import { DialogDescription, DialogTitle } from "@mcpjam/design-system/dialog";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { useState } from "react";
 import { Toaster } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,12 +67,14 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-afterEach(async () => {
-  // Unmount while the timers are still fake. Sonner defers a dismissal by an
-  // animation frame; asked for under real timers, it can land on the next
-  // test's toast with the same id and hide it.
+afterEach(() => {
+  // Unmounting a shown toast makes sonner schedule its dismissal on a
+  // requestAnimationFrame, in module-level state that outlives the test. Left
+  // to the global cleanup, which runs on real timers, that frame fires at an
+  // arbitrary point in the next test and can dismiss the dark nudge it has just
+  // shown under the same id. Unmount and flush it here, on the fake clock.
   cleanup();
-  await act(async () => vi.runOnlyPendingTimersAsync());
+  vi.runOnlyPendingTimers();
   vi.useRealTimers();
 });
 
@@ -80,7 +88,9 @@ describe("proactive announcements", () => {
 
       expect(screen.getByText(DARK_NUDGE)).toBeVisible();
       expect(screen.queryByText(SPOTLIGHT)).not.toBeInTheDocument();
-      expect(localStorage.getItem(CONFORMANCE_SPOTLIGHT_STORAGE_KEY)).toBeNull();
+      expect(
+        localStorage.getItem(CONFORMANCE_SPOTLIGHT_STORAGE_KEY),
+      ).toBeNull();
 
       if (close === "dismissal") {
         fireEvent.click(screen.getByRole("button", { name: "Keep dark" }));
