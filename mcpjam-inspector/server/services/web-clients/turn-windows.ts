@@ -19,11 +19,16 @@ export type ToolCallRequest = {
   arguments: unknown;
   /** claude.ai's `_meta["claudecode/toolUseId"]`, when the client sends one. */
   toolUseId?: string;
+  /**
+   * The MCPJam user (WorkOS user id) whose OAuth token made the call, who
+   * need not be the user whose run opened the turn. A capability connector's
+   * calls name no user.
+   */
+  userId?: string;
 };
 
 export type ApprovalDecision =
-  | { allow: true }
-  | { allow: false; reason: string };
+  { allow: true } | { allow: false; reason: string };
 
 export type TurnWindowInit = {
   connectorId: string;

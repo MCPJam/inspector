@@ -63,6 +63,17 @@ function refusalOf(error: unknown): WebBackendRefusal | undefined {
   );
 }
 
+/** A refused reply's JSON body. A proxy's error page has none. */
+async function refusalBody(reply: Response): Promise<unknown> {
+  const text = await reply.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Not JSON: the status is all there is to report.
+    return undefined;
+  }
+}
+
 function webClientService(options: WebServiceOptions) {
   const env = options.env ?? process.env;
   const serviceToken = getServiceCredential(env);
@@ -122,8 +133,11 @@ function webClientService(options: WebServiceOptions) {
         },
         body: JSON.stringify(body),
       });
+      if (!reply.ok) {
+        const refusal = refusalOf(await refusalBody(reply));
+        throw refusal ?? new Error(`HTTP ${reply.status}`);
+      }
       const data: unknown = await reply.json();
-      if (!reply.ok) throw refusalOf(data) ?? new Error(`HTTP ${reply.status}`);
       return (data ?? {}) as Record<string, unknown>;
     },
     async upload(uploadUrl: string, sealed: Uint8Array) {
@@ -132,11 +146,16 @@ function webClientService(options: WebServiceOptions) {
         headers: { "content-type": "application/octet-stream" },
         body: new Uint8Array(sealed),
       });
+      if (!reply.ok) {
+        throw new Error(
+          `The encrypted profile was not uploaded: HTTP ${reply.status}.`,
+        );
+      }
       const { storageId } = ((await reply.json()) ?? {}) as Record<
         string,
         unknown
       >;
-      if (!reply.ok || typeof storageId !== "string") {
+      if (typeof storageId !== "string") {
         throw new Error("The encrypted profile was not uploaded.");
       }
       return storageId;

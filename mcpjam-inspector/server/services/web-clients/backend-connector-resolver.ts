@@ -88,7 +88,7 @@ export function webClientService(
 }
 
 /** The `code` of a backend refusal, or undefined for any other failure. */
-function refusalCode(error: unknown): string | undefined {
+export function refusalCode(error: unknown): string | undefined {
   if (
     !(error instanceof ConvexError) &&
     (error as Error | undefined)?.name !== "ConvexError"

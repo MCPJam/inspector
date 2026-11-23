@@ -44,6 +44,7 @@ import {
 } from "@/shared/harness-connection-api";
 import { isGatewayModelId } from "@/shared/harness-gateway-model";
 import {
+  HARNESS_DESCRIPTORS,
   harnessSurfaceRefusal,
   type HarnessSurface,
 } from "@/shared/harness-descriptors";
@@ -441,6 +442,22 @@ export function harnessReasoningEffortRefusalReason(args: {
 }
 
 /**
+ * Why a harness turn must not run with this system prompt, or `undefined`
+ * when it may. A web client's app runs on its own instructions, and typed
+ * into the user's message a prompt would change the chat being measured, so
+ * it is refused rather than dropped. Called from the pre-flight gate and the
+ * web turn itself, so the two can never disagree.
+ */
+export function harnessSystemPromptRefusalReason(args: {
+  adapter: HarnessRuntimeAdapter;
+  systemPrompt?: string;
+}): string | undefined {
+  const { adapter, systemPrompt } = args;
+  if (!adapter.webAccount || !systemPrompt?.trim()) return undefined;
+  return `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[adapter.id].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`;
+}
+
+/**
  * The approval half of this pre-flight, as a value both gate sites share.
  *
  * `runHarnessTurn` has to re-assert exactly these rules, because the eval,
@@ -615,6 +632,12 @@ export function checkHarnessRuntimeAvailable(args: {
    */
   reasoningEffort?: ModelReasoningEffort;
   /**
+   * The host's system prompt, when the caller has it. Refused with
+   * `setting-unsupported` for a runtime that can't take one. Absent ⇒ not
+   * checked here; the turn still refuses it.
+   */
+  systemPrompt?: string;
+  /**
    * The turn's saved model selection, when it has one. A `source: 'org'`
    * selection naming a connection that serves this harness's API is
    * admitted on the organization's own key instead of `model-not-hosted`;
@@ -708,6 +731,13 @@ export function checkHarnessRuntimeAvailable(args: {
   });
   if (effortRefusal) {
     return { ok: false, kind: "setting-unsupported", reason: effortRefusal };
+  }
+  const promptRefusal = harnessSystemPromptRefusalReason({
+    adapter,
+    systemPrompt: args.systemPrompt,
+  });
+  if (promptRefusal) {
+    return { ok: false, kind: "setting-unsupported", reason: promptRefusal };
   }
 
   // There is no MCP gate. Every adapter delivers the host's selected servers

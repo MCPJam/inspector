@@ -191,6 +191,9 @@ export function createLocalConnectorRoutes(
   });
   app.delete("/:connectorId", (c) => {
     const connectorId = c.req.param("connectorId");
+    // The runtime opens its turns in the same store, so only a connector
+    // registered here has its turn closed here.
+    if (!registry.has(connectorId)) return unknown(c);
     const window = turns.active(connectorId);
     if (window) turns.close(window.turnId);
     return registry.remove(connectorId) ? c.body(null, 204) : unknown(c);
@@ -224,7 +227,9 @@ export function createLocalConnectorRoutes(
     }
   });
   app.delete("/:connectorId/turn", (c) => {
-    const window = turns.active(c.req.param("connectorId"));
+    const connectorId = c.req.param("connectorId");
+    if (!registry.has(connectorId)) return unknown(c);
+    const window = turns.active(connectorId);
     if (window) turns.close(window.turnId);
     return c.body(null, 204);
   });

@@ -44,6 +44,7 @@ function recordedService(accounts = ACCOUNTS) {
     calls.push({ kind, command });
     if (command.action === "listWebAccounts") return accounts;
     if (command.action === "ensureWebConnector") return { connectorId: `conn-${String(command.serverId)}` };
+    if (command.action === "openWebTurnWindow") return { ok: true, window: {} };
     return null;
   };
   const service: WebClientService = {

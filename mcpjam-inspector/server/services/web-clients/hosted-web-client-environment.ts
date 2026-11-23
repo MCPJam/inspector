@@ -217,7 +217,16 @@ export function createHostedWebClientEnvironment(
         const answer = openAnswer.safeParse(
           await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor }),
         );
-        if (!answer.success || answer.data.ok) return;
+        // A reply this build can't read opened nothing it knows of, so the
+        // turn stops rather than run without its window.
+        if (!answer.success) {
+          throw new RealUiError({
+            kind: "driver",
+            step: "connector",
+            message: "MCPJam couldn't confirm the connector was ready for this turn.",
+          });
+        }
+        if (answer.data.ok) return;
         throw new RealUiError(
           answer.data.reason === "turn_running"
             ? {

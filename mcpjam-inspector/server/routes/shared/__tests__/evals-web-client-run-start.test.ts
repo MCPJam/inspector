@@ -114,12 +114,29 @@ describe("a web client's suite run start", () => {
       throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
     });
     await expect(start()).rejects.toMatchObject({
+      status: 400,
       message: "Web clients are off for this project.",
       details: { reason: "WEB_ACCOUNTS_UNAVAILABLE" },
     });
     expect(mocks.mutation).toHaveBeenCalledWith("testSuites:markSetupPendingIterationsFailed", {
       runId: "run-1",
       error: "Web clients are off for this project.",
+    });
+    expect(mocks.run).not.toHaveBeenCalled();
+  });
+
+  it("stops the run as a 503, not the caller's mistake, when the backend can't be reached", async () => {
+    startedRun(async () => {
+      throw new Error("fetch failed");
+    });
+    await expect(start()).rejects.toMatchObject({
+      status: 503,
+      message: expect.stringContaining("Run it again."),
+      details: { reason: "WEB_ACCOUNTS_UNAVAILABLE" },
+    });
+    expect(mocks.mutation).toHaveBeenCalledWith("testSuites:markSetupPendingIterationsFailed", {
+      runId: "run-1",
+      error: expect.stringContaining("Run it again."),
     });
     expect(mocks.run).not.toHaveBeenCalled();
   });
