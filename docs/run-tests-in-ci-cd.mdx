@@ -14,8 +14,8 @@ icon: "circle-check"
   <Card title="Check MCP Apps wiring" icon="app-window" href="#check-mcp-apps-wiring">
     Validate tool metadata and `ui://` resources.
   </Card>
-  <Card title="Test pull request code" icon="git-pull-request" href="#test-pull-request-code">
-    Run the MCPJam SDK tests checked into your repository.
+  <Card title="Test MCP tool responses" icon="flask" href="#test-mcp-tool-responses">
+    Call a tool with fixed inputs and check what it returns.
   </Card>
   <Card title="Run a hosted eval suite" icon="flask-conical" href="#run-a-hosted-eval-suite">
     Grade model responses to prompts in a saved MCPJam suite.
@@ -94,21 +94,21 @@ jobs:
         run: npx -y @mcpjam/cli@latest apps conformance --url "$MCP_SERVER_URL" --format human
 ```
 
-## Test pull request code
+## Test MCP tool responses
 
-1. Add a test that starts the server from your repository and [calls a tool with the MCPJam SDK](/sdk/quickstart#step-2-execute-tools-directly).
-2. Set `npm test` to run the tests once and exit.
-3. Commit your `package-lock.json`.
+1. Install the MCPJam SDK and the reference server with `npm install --save-dev @mcpjam/sdk @modelcontextprotocol/server-everything`.
+2. [Create the tool test](#create-the-tool-test).
+3. Add the test script with `npm pkg set 'scripts.test:mcp=node --test test/mcp-tools.test.mjs'`.
 4. Save this as `.github/workflows/mcpjam-tests.yml`.
 
 ```yaml .github/workflows/mcpjam-tests.yml
-name: MCPJam SDK tests
+name: MCPJam tool tests
 on: pull_request
 permissions:
   contents: read
 
 jobs:
-  mcp-sdk-tests:
+  mcp-tool-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -116,8 +116,41 @@ jobs:
         with:
           node-version: '24'
       - run: npm ci
-      - run: npm test
+      - run: npm run test:mcp
 ```
+
+### Create the tool test
+
+Save this as `test/mcp-tools.test.mjs`. The test starts a reference MCP server, calls its `echo` tool, and checks the response.
+
+```javascript test/mcp-tools.test.mjs
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { MCPClientManager } from "@mcpjam/sdk";
+
+test("echo returns the input message", async () => {
+  const manager = new MCPClientManager({
+    server: {
+      command: "npx",
+      args: ["--no-install", "@modelcontextprotocol/server-everything", "stdio"],
+    },
+  });
+  await manager.connectToServer("server");
+  try {
+    const result = await manager.executeTool("server", "echo", {
+      message: "works in CI",
+    });
+    assert.equal(result.isError ?? false, false);
+    assert.deepEqual(result.content, [{ type: "text", text: "Echo: works in CI" }]);
+  } finally {
+    await manager.disconnectServer("server");
+  }
+});
+```
+
+To test your own stdio server, replace the launch command and arguments, tool name, inputs, and expected response.
+
+Run `npm run test:mcp` locally, then commit the test file, `package.json`, and `package-lock.json` with the workflow.
 
 ## Run a hosted eval suite
 
