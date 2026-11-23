@@ -49,7 +49,7 @@ describe("local connector registration", () => {
         ...init,
         headers: { "content-type": "application/json" },
       });
-    return { app, control };
+    return { app, control, turns };
   }
 
   it("registers a capability connector, opens a turn that allows named tools, and forwards through it", async () => {
@@ -114,6 +114,20 @@ describe("local connector registration", () => {
     expect(
       await (await vendor.post(vendor.callToolRaw(3, "delete_all", "y"))).json(),
     ).toMatchObject({ id: 3, result: { content: [{ text: "echo: y" }] } });
+  });
+
+  it("leaves the turn of a connector it didn't register open", async () => {
+    const { control, turns } = setup();
+    // The runtime's turn on a backend connector, in the store both use.
+    const window = turns.open({
+      connectorId: "backend-connector",
+      runId: "run_1",
+      approve: async () => ({ allow: true }),
+    });
+    for (const path of ["/backend-connector/turn", "/backend-connector"]) {
+      expect((await control(path, { method: "DELETE" })).status).toBe(404);
+    }
+    expect(turns.active("backend-connector")?.turnId).toBe(window.turnId);
   });
 
   it("refuses registration with the flag off or a URL that is not http", async () => {
