@@ -237,7 +237,7 @@ describe("Convex reconnect backend", () => {
   });
 
   it.each([
-    // The seat matched, so a conflict is a request cancelled meanwhile.
+    // The request reads cancelled after the conflict: it was cancelled meanwhile.
     ["CONFLICT", "handbackWebReconnect", "cancelled"],
     ["NOT_FOUND", "handbackWebReconnect", "not_found"],
     ["WEB_ACCOUNT_NEEDS_SIGN_IN", "profile-key", "not_signed_in"],
@@ -245,8 +245,17 @@ describe("Convex reconnect backend", () => {
   ])(
     "answers a handback refused with %s from %s as %s",
     async (code, refusedBy, outcome) => {
+      let reads = 0;
       const deployment = stubDeployment({
-        listWebReconnectRequests: [OPEN_REQUEST],
+        // Open when the handback reads it, cancelled on any read after that.
+        get listWebReconnectRequests() {
+          reads += 1;
+          return [
+            reads === 1
+              ? OPEN_REQUEST
+              : { ...OPEN_REQUEST, status: "cancelled" },
+          ];
+        },
         listWebAccounts: [ACCOUNT_VIEW],
         "profile-key": profileKey(randomBytes(32)),
         saveWebAccountProfile: { ok: true, profileVersion: 4 },
