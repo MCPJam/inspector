@@ -4,18 +4,26 @@
  * a commit could pick it up. Node built-ins only, so a script can import it
  * before it loads any server code.
  */
-import { posix, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { dirname, posix, win32 } from "node:path";
 
 /**
- * The folder above `mcpjam-inspector/`. This file sits as deep under
- * `mcpjam-inspector/` as the server bundle (`dist/server/`) and the desktop
- * app's main bundle (`.vite/build/`), so the same climb finds it from source
- * and from either build.
+ * The folder above `mcpjam-inspector/`, found through the package's own
+ * `package.json`, so it is the same from source, the server bundle and the
+ * desktop app. Undefined when the package can't resolve itself: no checkout
+ * holds this code then, so no folder is inside one.
  */
-export const REPOSITORY_ROOT = fileURLToPath(
-  new URL("../../..", import.meta.url),
-);
+export const REPOSITORY_ROOT: string | undefined = (() => {
+  try {
+    const manifest = createRequire(import.meta.url).resolve(
+      "@mcpjam/inspector/package.json",
+    );
+    return dirname(dirname(manifest));
+  } catch {
+    // A bundle that leaves out the package's manifest isn't a checkout.
+    return undefined;
+  }
+})();
 
 /**
  * Whether `folder` is outside `root`. On Windows a folder on another drive
@@ -29,6 +37,7 @@ export function isOutsideRepository(
     paths = process.platform === "win32" ? win32 : posix,
   } = {},
 ): boolean {
+  if (root === undefined) return true;
   const fromRoot = paths.relative(root, folder);
   return (
     fromRoot === ".." ||
