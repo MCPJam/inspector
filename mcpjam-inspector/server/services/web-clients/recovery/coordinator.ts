@@ -204,10 +204,22 @@ export function createWebRecoveryCoordinator(
     if (!expected || !sameWebIdentity(expected, observed)) {
       return { status: "wrong_identity", expected, observed };
     }
+    const profile = await browser.captureProfile();
+    // A browser that changes seats during the capture would save another
+    // seat's profile as this one's, so the seat is read again after it and
+    // must be the same, workspace included (hence compared both ways).
+    const after = await browser.verifyAccount();
+    if (!after) return { status: "not_signed_in" };
+    if (
+      !sameWebIdentity(observed, after) ||
+      !sameWebIdentity(after, observed)
+    ) {
+      return { status: "wrong_identity", expected, observed: after };
+    }
     const saved = await backend.saveWebAccountProfile({
       webAccountId: account.webAccountId,
       expectedProfileVersion: account.profileVersion,
-      profile: await browser.captureProfile(),
+      profile,
       ...(savedFromRunId ? { savedFromRunId } : {}),
     });
     if (!saved.ok) {

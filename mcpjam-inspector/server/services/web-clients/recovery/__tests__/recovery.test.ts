@@ -599,6 +599,51 @@ describe("web account recovery", () => {
     expect(world.upstream).toEqual(["run-1"]);
   });
 
+  it.each([
+    ["another seat", OTHER_SEAT, "wrong_identity"],
+    [
+      "another workspace",
+      { ...SEAT, workspaceName: "Another workspace" },
+      "wrong_identity",
+    ],
+    ["no one", undefined, "not_signed_in"],
+  ] as const)(
+    "saves no profile when the browser switches to %s before the capture",
+    async (_label, later, status) => {
+      const world = createWorld();
+      const coordinator = startProcess(world);
+      const save = vi.spyOn(world.backend, "saveWebAccountProfile");
+      await startRun(world, coordinator, "run-1", ["sign_in_page"]);
+      const [request] = await requestsOf(world);
+      // The account's seat passes the check; then the browser changes seats,
+      // so the profile captured next is not that seat's.
+      let signedIn: WebIdentity | undefined = SEAT;
+      const switching = {
+        verifyAccount: vi.fn(async () => {
+          const shown = signedIn;
+          signedIn = later;
+          return shown;
+        }),
+        captureProfile: vi.fn(async () => PROFILE),
+      };
+
+      expect(
+        await coordinator.handback({
+          projectId: PROJECT,
+          requestId: request?.requestId ?? "",
+          browser: switching,
+        }),
+      ).toMatchObject({ status });
+      expect(save).not.toHaveBeenCalled();
+      expect(await accountOf(world)).toMatchObject({
+        status: "needs_sign_in",
+        profileVersion: 1,
+      });
+      expect((await requestsOf(world))[0]?.status).toBe("open");
+      expect(runOf(world, "run-1").log).toEqual(PAUSED);
+    },
+  );
+
   it("doesn't open a sign-in request when only the browser failed", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);
