@@ -6,14 +6,17 @@ import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 
 const mocks = vi.hoisted(() => ({
   flat: [] as AggregatedToolsState["flat"],
+  errorByServer: {} as AggregatedToolsState["errorByServer"],
   execute: vi.fn(),
+  refetch: vi.fn(),
 }));
 vi.mock("@/hooks/use-aggregated-tools", () => ({
   useAggregatedTools: () => ({
     flat: mocks.flat,
     collidingNames: [],
     loadingByServer: {},
-    refetch: vi.fn(),
+    errorByServer: mocks.errorByServer,
+    refetch: mocks.refetch,
   }),
 }));
 vi.mock("@/state/app-state-context", () => ({
@@ -41,8 +44,36 @@ vi.mock("@/components/ui-playground/ParametersForm", () => ({
 beforeEach(() => {
   useUIPlaygroundStore.getState().reset();
   mocks.flat = [];
+  mocks.errorByServer = {};
   mocks.execute.mockReset();
+  mocks.refetch.mockReset();
 });
+
+it("identifies a server whose tool listing failed and lets the user refresh", () => {
+  mocks.errorByServer = { bench: "Upstream failure" };
+  const { rerender } = render(
+    <MultiServerToolsPaneInner activeServerNames={["bench"]} />,
+  );
+
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Couldn't load tools from bench.",
+  );
+  fireEvent.click(screen.getByTitle("Refresh tools"));
+  expect(mocks.refetch).toHaveBeenCalledOnce();
+
+  mocks.errorByServer = {};
+  mocks.flat = [
+    {
+      serverId: "bench",
+      toolName: "echo",
+      tool: { name: "echo", inputSchema: { type: "object" } },
+    },
+  ];
+  rerender(<MultiServerToolsPaneInner activeServerNames={["bench"]} />);
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("button", { name: /^echo\b/ })).toBeInTheDocument();
+});
+
 it("restores the exact server and inputs when its tools arrive, retaining them after refresh", () => {
   const servers = ["other", "bench"];
   const view = render(
