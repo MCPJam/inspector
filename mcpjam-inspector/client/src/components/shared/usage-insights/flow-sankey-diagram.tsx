@@ -35,6 +35,7 @@ import {
   type SankeyLayoutNode,
 } from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
+import { useTerminalLabelGutter } from "./use-terminal-label-gutter";
 
 export type FlowStageColor = { node: string; head: string };
 
@@ -67,8 +68,9 @@ class HeaderPointerSensor extends PointerSensor {
 const pinnedColumnStrategy: SortingStrategy = () => null;
 
 const VIEW_WIDTH = 1160;
-/** Reserved to the right of the last column for its labels. */
-const LABEL_GUTTER = 260;
+const COLUMN_START_X = 40;
+const NODE_LABEL_GAP = 10;
+const LABEL_EDGE_PADDING = 16;
 /** Band at the top of the SVG holding the column headers. */
 const HEADER_HEIGHT = 26;
 /** Room for a last-column title plus the add-column control (icon or editor). */
@@ -138,7 +140,7 @@ export function FlowSankeyDiagram<S extends string>({
   ariaLabel,
   fillHeight = false,
   fillRemainingViewport = false,
-  scrollHorizontally = false,
+  contentLayout = false,
   labelForNode,
   headerContent,
   headerTrailing,
@@ -181,8 +183,8 @@ export function FlowSankeyDiagram<S extends string>({
    * The page must not grow with the SVG — that is what orphaned the ribbons.
    */
   fillRemainingViewport?: boolean;
-  /** Keep overflowing column controls reachable in a content-sized chart. */
-  scrollHorizontally?: boolean;
+  /** Fit the final column's labels and scroll any overflowing controls. */
+  contentLayout?: boolean;
   /** Persist a dragged permutation of `stages`. Omit to keep headers fixed. */
   onReorderStages?: (stages: S[]) => void;
   /** Block drag while a column editor is open so the pointer stays on the form. */
@@ -224,6 +226,15 @@ export function FlowSankeyDiagram<S extends string>({
   // full weight.
   const hasSelectionModel = onSelectNode !== undefined;
   const valueLabel = labelForNode ?? stageValueLabel;
+  const lastStage = stages.at(-1);
+  const { chartRef, labelGutter } = useTerminalLabelGutter(
+    contentLayout,
+    lastStage,
+    sankey,
+    valueLabel,
+    viewWidth,
+    COLUMN_START_X + NODE_LABEL_GAP + LABEL_EDGE_PADDING,
+  );
   const nodeSelectable = (node: InsightsSankeyNode<S>): boolean =>
     isSelectable ? isSelectable(node) : node.clickable;
   const linkSelectable = (
@@ -263,13 +274,14 @@ export function FlowSankeyDiagram<S extends string>({
 
   const layout = useMemo(() => {
     if (sankey.nodes.length === 0) return null;
-    const usable = viewWidth - LABEL_GUTTER;
+    const usable = viewWidth - labelGutter;
     const lastIndex = Math.max(1, stages.length - 1);
     const columnX = stages.map(
-      (_, index) => 40 + (index * (usable - SANKEY_NODE_WIDTH)) / lastIndex,
+      (_, index) =>
+        COLUMN_START_X + (index * (usable - SANKEY_NODE_WIDTH)) / lastIndex,
     );
     return layoutSankey(sankey, viewWidth, height, columnX, stages);
-  }, [sankey, height, stages, viewWidth]);
+  }, [sankey, height, stages, viewWidth, labelGutter]);
 
   const chartNeedsScroll =
     fillsPane &&
@@ -299,7 +311,7 @@ export function FlowSankeyDiagram<S extends string>({
         fillsPane && "min-h-0 flex-1",
         paneScrolls
           ? "overflow-auto"
-          : scrollHorizontally
+          : contentLayout
             ? "overflow-x-auto"
             : "overflow-hidden",
       )}
@@ -321,11 +333,13 @@ export function FlowSankeyDiagram<S extends string>({
           columnX={layout.columnX}
           viewWidth={viewWidth}
           minWidth={wideMinWidth}
+          fitTrailingHeader={contentLayout}
           onReorderStages={onReorderStages}
           reorderDisabled={reorderDisabled}
         />
       </div>
         <svg
+          ref={chartRef}
           viewBox={`0 0 ${viewWidth} ${height}`}
           style={wideMinWidth ? { minWidth: wideMinWidth } : undefined}
           role="group"
@@ -445,6 +459,7 @@ export function FlowSankeyDiagram<S extends string>({
                     emphasized={emphasized}
                     dimmed={hasSelectionModel && !selectable}
                     label={valueLabel(node)}
+                    terminal={contentLayout && node.stage === lastStage}
                   />
                 </FlowTarget>
               );
@@ -508,6 +523,7 @@ function FlowNodeShape<S extends string>({
   emphasized,
   dimmed,
   label,
+  terminal,
 }: {
   node: SankeyLayoutNode<S>;
   color: FlowStageColor;
@@ -515,8 +531,9 @@ function FlowNodeShape<S extends string>({
   /** The selection model refused this node; a diagram without one never dims. */
   dimmed: boolean;
   label: string;
+  terminal: boolean;
 }) {
-  const labelX = node.x + SANKEY_NODE_WIDTH + 10;
+  const labelX = node.x + SANKEY_NODE_WIDTH + NODE_LABEL_GAP;
   const anchor = "start";
 
   return (
@@ -531,6 +548,7 @@ function FlowNodeShape<S extends string>({
         fillOpacity={dimmed ? 0.45 : 1}
       />
       <text
+        data-terminal-label={terminal ? "" : undefined}
         x={labelX}
         y={node.y + 12}
         textAnchor={anchor}
@@ -540,6 +558,7 @@ function FlowNodeShape<S extends string>({
       </text>
       {node.height >= 26 ? (
         <text
+          data-terminal-label={terminal ? "" : undefined}
           x={labelX}
           y={node.y + 27}
           textAnchor={anchor}
@@ -562,6 +581,7 @@ function SankeyColumnHeaders<S extends string>({
   columnX,
   viewWidth,
   minWidth,
+  fitTrailingHeader,
   onReorderStages,
   reorderDisabled,
 }: {
@@ -574,6 +594,7 @@ function SankeyColumnHeaders<S extends string>({
   columnX: number[];
   viewWidth: number;
   minWidth?: number;
+  fitTrailingHeader: boolean;
   onReorderStages?: (stages: S[]) => void;
   reorderDisabled?: boolean;
 }) {
@@ -602,12 +623,15 @@ function SankeyColumnHeaders<S extends string>({
       style={{ minWidth, height: headerHeight }}
     >
       {stages.map((stage, index) => {
-        const trailing =
-          index === stages.length - 1 ? headerTrailing : undefined;
+        const isLast = index === stages.length - 1;
+        const trailing = isLast ? headerTrailing : undefined;
         const slot = HEADER_SLOT + (trailing ? TRAILING_SLOT : 0);
         const style: CSSProperties = {
           left: `${(columnX[index] / viewWidth) * 100}%`,
-          width: `${(slot / viewWidth) * 100}%`,
+          width:
+            fitTrailingHeader && isLast
+              ? "max-content"
+              : `${(slot / viewWidth) * 100}%`,
           height: headerHeight,
           color: stageColors[stage]?.head,
         };

@@ -599,7 +599,7 @@ export function SessionFlowSankey({
         ariaLabel="Session flow from goal through behavior and outcome to sentiment"
         fillHeight={fillHeight}
         fillRemainingViewport={scrollLayout === true}
-        scrollHorizontally={scrollLayout === "content"}
+        contentLayout={scrollLayout === "content"}
       />
     </div>
   );
