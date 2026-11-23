@@ -17,6 +17,7 @@
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { LedgerEntry } from "./tool-call-ledger.js";
+import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import type {
   ConversationToolCall,
   SavedConversation,
@@ -33,6 +34,8 @@ export type WebToolCall = {
   match: WebToolCallMatch;
   toolUseId?: string;
   ledgerEntryId?: string;
+  /** The id the run's tool policy refused a call under, when the vendor gave it none. */
+  policyBlockId?: string;
   serverId?: string;
   state?: LedgerEntry["state"];
   forwardedAt?: string;
@@ -44,6 +47,11 @@ export function matchWebToolCalls(args: {
   wire: readonly LedgerEntry[];
   conversation: readonly ConversationToolCall[];
   serverOfConnector: (connectorId: string) => string | undefined;
+  /** The calls the run's tool policy refused, which never reach the wire. */
+  blocked?: readonly Pick<
+    HarnessPolicyBlockRecord,
+    "toolName" | "toolCallId"
+  >[];
 }): WebToolCall[] {
   const byTime = (a: { at?: string }, b: { at?: string }) =>
     (a.at ?? "").localeCompare(b.at ?? "");
@@ -75,12 +83,33 @@ export function matchWebToolCalls(args: {
       ...(entry.settledAt ? { settledAt: entry.settledAt } : {}),
     });
   }
+  // A refused call that carries no id (ChatGPT's) takes the one its refusal
+  // was recorded under, by tool and in order, so the grade leaves it out by
+  // that id as it does a refused call that carries the vendor's own.
+  const refusedAs = new Map<ConversationToolCall, string>();
+  for (const block of args.blocked ?? []) {
+    if (
+      !block.toolCallId ||
+      narrated.some((call) => call.toolUseId === block.toolCallId)
+    )
+      continue;
+    const partner = narrated.find(
+      (call) =>
+        !paired.has(call) &&
+        !refusedAs.has(call) &&
+        !call.toolUseId &&
+        call.toolName === block.toolName,
+    );
+    if (partner) refusedAs.set(partner, block.toolCallId);
+  }
   for (const call of narrated) {
     if (paired.has(call)) continue;
+    const policyBlockId = refusedAs.get(call);
     calls.push({
       toolName: call.toolName,
       match: "narration-only",
       ...(call.toolUseId ? { toolUseId: call.toolUseId } : {}),
+      ...(policyBlockId ? { policyBlockId } : {}),
     });
   }
   return calls;
@@ -89,7 +118,10 @@ export function matchWebToolCalls(args: {
 // A call with no id of its own is named within its turn: the transcript keeps
 // every turn's calls, and two turns' first calls must not share a name.
 const callId = (call: WebToolCall, index: number, turnId: string) =>
-  call.toolUseId ?? call.ledgerEntryId ?? `web-call-${turnId}-${index}`;
+  call.toolUseId ??
+  call.ledgerEntryId ??
+  call.policyBlockId ??
+  `web-call-${turnId}-${index}`;
 
 /** The assistant's turn as the transcript stores it. */
 export function webTurnMessages(

@@ -123,11 +123,14 @@ export type WebAccountRouteDeps = {
 
 const account = z.object({
   webAccountId: z.string(),
-  vendor: z.enum(WEB_CLIENT_VENDORS),
+  // Any vendor parses: the backend can list one before this Inspector drives
+  // it, and that account must not break the routes for every other one.
+  vendor: z.string(),
   accountEmail: z.string().optional(),
   hasProfile: z.boolean().optional(),
   profileVersion: z.number().optional(),
 });
+const UNSUPPORTED_VENDOR = "This version of MCPJam can't sign in this kind of web account. Update MCPJam, then try again.";
 const signInBody = z.object({ projectId: z.string().min(1) });
 const saveBody = signInBody.extend({ browserSessionId: z.string().min(1).max(256) });
 
@@ -152,11 +155,14 @@ async function jsonBody(c: Context): Promise<unknown> {
 export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
   const app = new Hono();
 
-  const accountOf = async (actor: WebActor, projectId: string, webAccountId: string) =>
-    z
+  /** The account, with no vendor when it is one this Inspector can't drive. */
+  const accountOf = async (actor: WebActor, projectId: string, webAccountId: string) => {
+    const row = z
       .array(account.passthrough())
       .parse(await deps.service.read({ action: "listWebAccounts", projectId, ...actor }))
-      .find((row) => row.webAccountId === webAccountId);
+      .find((listed) => listed.webAccountId === webAccountId);
+    return row && { ...row, vendor: WEB_CLIENT_VENDORS.find((vendor) => vendor === row.vendor) };
+  };
 
   const guard = async (c: Context) => {
     if (!(await deps.isEnabled(c))) {
@@ -178,6 +184,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     if (manages !== true) return notManager(c, manages);
     const row = await accountOf(checked.actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
+    if (!row.vendor) return c.json({ error: UNSUPPORTED_VENDOR }, 404);
     const started = await deps.browser.start({
       actor: checked.actor,
       bearer: c.req.header("authorization") ?? "",
@@ -207,6 +214,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     if (manages !== true) return notManager(c, manages);
     const row = await accountOf(actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
+    if (!row.vendor) return c.json({ error: UNSUPPORTED_VENDOR }, 404);
     const browser = { actor, projectId, webAccountId, browserSessionId };
     let driver: PageDriver;
     try {

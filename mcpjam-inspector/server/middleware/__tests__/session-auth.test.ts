@@ -465,6 +465,7 @@ describe("scrubTokenFromUrl", () => {
       "--> DELETE /api/web-clients/local-connectors/SENTINEL_conn 204 1ms",
       "--> DELETE /api/web-clients/local-connectors/[redacted] 204 1ms",
     ],
+    ["<-- POST /mcp/SENTINEL_conn", "<-- POST /mcp/[redacted]"],
     [
       "<-- GET /files/a.png?X-Amz-Signature=SENTINEL_sig&X-Amz-Credential=SENTINEL_cred",
       "<-- GET /files/a.png?X-Amz-Signature=[redacted]&X-Amz-Credential=[redacted]",

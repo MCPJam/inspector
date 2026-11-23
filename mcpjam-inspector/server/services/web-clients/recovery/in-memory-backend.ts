@@ -112,7 +112,7 @@ export function createInMemoryWebReconnectBackend(
       if (request.status === "open") {
         // The backend checks the email only; the coordinator checks the rest.
         const email = verifiedAccountEmail.trim();
-        const known = account.accountEmail?.toLowerCase();
+        const known = account.accountEmail?.trim().toLowerCase();
         if (known && known !== email.toLowerCase()) {
           throw new WebBackendRefusal("CONFLICT", "Another seat signed in.");
         }

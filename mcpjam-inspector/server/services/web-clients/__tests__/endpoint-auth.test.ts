@@ -31,10 +31,18 @@ afterEach(() => {
 describe("default AuthKit verifier", () => {
   const ISSUER = "https://auth.example.test";
   const PATH = "/mcp/conn_oauth_1";
+  const connector = {
+    connectorId: "conn_oauth_1",
+    projectId: "proj_1",
+    serverId: "srv_1",
+    auth: "oauth" as const,
+  };
 
-  it("accepts an AuthKit token issued for this connector and refuses one for another resource", async () => {
+  /** The endpoint on AuthKit's own verifier, published at ORIGIN, with keys the test signs with. */
+  async function setup() {
     vi.stubEnv("WORKOS_CLIENT_ID", "client_web_clients_test");
     vi.stubEnv("AUTHKIT_DOMAIN", "auth.example.test");
+    vi.stubEnv("MCPJAM_INSPECTOR_PUBLIC_URL", ORIGIN);
     resetAuthKitJwksCacheForTests();
     const { publicKey, privateKey } = await generateKeyPair("RS256");
     const jwk = { ...(await exportJWK(publicKey)), kid: "k1", alg: "RS256" };
@@ -55,12 +63,6 @@ describe("default AuthKit verifier", () => {
         .sign(privateKey);
 
     const mayUse = vi.fn(async () => true);
-    const connector = {
-      connectorId: "conn_oauth_1",
-      projectId: "proj_1",
-      serverId: "srv_1",
-      auth: "oauth" as const,
-    };
     const app = new Hono();
     mountWebConnectorEndpoint(
       app,
@@ -77,7 +79,12 @@ describe("default AuthKit verifier", () => {
         isEnabled: async () => true,
       }),
     );
+    fixture.received.length = 0;
+    return { app, token, mayUse };
+  }
 
+  it("accepts an AuthKit token issued for this connector and refuses one for another resource", async () => {
+    const { app, token, mayUse } = await setup();
     const metadata = await app.request(
       `${ORIGIN}/.well-known/oauth-protected-resource${PATH}`,
     );
@@ -95,5 +102,25 @@ describe("default AuthKit verifier", () => {
       expect(response.status).toBe(401);
       expect(response.headers.get("www-authenticate")).toContain('error="invalid_token"');
     }
+  });
+
+  it("refuses a token for the origin the request's Host names when the configured public URL is another", async () => {
+    const { app, token, mayUse } = await setup();
+    // The caller picks the Host, so naming another resource's host must not
+    // make a token for that resource, from the same issuer, pass here.
+    const host = "https://mcp.example.test";
+    for (const audience of [`${host}${PATH}`, `${host}/mcp`]) {
+      const response = await vendorClient(app, {
+        origin: host,
+        path: PATH,
+        token: await token(audience),
+      }).initialize();
+      expect(response.status).toBe(401);
+      expect(response.headers.get("www-authenticate")).toBe(
+        `Bearer resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource${PATH}", error="invalid_token"`,
+      );
+    }
+    expect(mayUse).not.toHaveBeenCalled();
+    expect(fixture.received).toHaveLength(0);
   });
 });
