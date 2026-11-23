@@ -64,7 +64,7 @@ describe("useActorKey", () => {
   // Convex keeps the token it already holds when the cache is cleared, so
   // dropping the guest here left the app authenticated with no actor
   // (`app_load/actor_pending`) whenever the re-lookup failed.
-  it("keeps the guest when the guest cache is cleared under it", async () => {
+  it("keeps the guest when the guest cache is cleared under it", () => {
     let notify = () => {};
     mockState.subscribeGuestSessionChanges.mockImplementation(
       (listener: () => void) => {
@@ -88,7 +88,7 @@ describe("useActorKey", () => {
     expect(mockState.getOrCreateGuestSession).not.toHaveBeenCalled();
   });
 
-  it("follows a new guest session once it is cached", async () => {
+  it("follows a new guest session once it is cached", () => {
     let notify = () => {};
     mockState.subscribeGuestSessionChanges.mockImplementation(
       (listener: () => void) => {
