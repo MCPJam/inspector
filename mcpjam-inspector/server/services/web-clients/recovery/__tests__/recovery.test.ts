@@ -39,7 +39,7 @@ import {
   createInMemoryWebReconnectBackend,
   type WebReconnectNotice,
 } from "../in-memory-backend.js";
-import { reconcileWithLedger } from "../reconcile.js";
+import { reconcileWithLedger, type LedgerReader } from "../reconcile.js";
 
 const PROJECT = "project-1";
 const ACCOUNT = "web-account-1";
@@ -991,6 +991,45 @@ describe("a tool call runs once across recovery", () => {
     });
     expect(verdict.status).toBe(expected);
   });
+
+  it.each(["turn", "connector"] as const)(
+    "keeps a call's answer when the %s read saw it before it settled",
+    async (stale) => {
+      const ledger = createInMemoryToolCallLedger();
+      const step = {
+        stepId: "step-1",
+        startedAt: new Date().toISOString(),
+        turnId: "turn-1",
+      };
+      const call = ledger.forwarded({
+        connectorId: CONNECTOR,
+        runId: "run-1",
+        turnId: step.turnId,
+        jsonrpcId: "1",
+        toolName: "create_note",
+        argsHash: hashPayload({ title: "run-1" }),
+      });
+      // One read runs before the call settles, the other after.
+      const before = ledger.forTurn(step.turnId);
+      ledger.settle(call.id, { state: "result", upstreamStatus: 200 });
+      const reader: LedgerReader = {
+        find: (match) => (stale === "connector" ? before : ledger.find(match)),
+        forTurn: (turnId) =>
+          stale === "turn" ? before : ledger.forTurn(turnId),
+      };
+
+      expect(
+        await reconcileWithLedger(reader, {
+          runId: "run-1",
+          connectorIds: [CONNECTOR],
+          step,
+        }),
+      ).toEqual({
+        status: "reconciled",
+        calls: [expect.objectContaining({ id: call.id, state: "result" })],
+      });
+    },
+  );
 });
 
 describe("sign-in method", () => {
