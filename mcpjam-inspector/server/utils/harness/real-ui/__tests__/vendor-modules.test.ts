@@ -690,6 +690,21 @@ describe("the hosted driver", () => {
     await expect(driver.readText("main")).rejects.toMatchObject({ code: "failed" });
   });
 
+  it("refuses a key press aimed at an element, which the browser would send wherever focus is", async () => {
+    const send = vi.fn(async (_command: BrowserAgentCommand) => executed());
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    // Its reads and acts find elements with Playwright's engine in the browser.
+    expect(driver.playwrightSelectors).toBe(true);
+    await expect(driver.press("ArrowRight", '[data-testid="add-menu-connectors"]')).rejects.toMatchObject({
+      code: "unsupported",
+    });
+    expect(send).not.toHaveBeenCalled();
+    await driver.press("Escape");
+    expect(send.mock.calls.map(([command]) => command)).toEqual([
+      { op: "act", verb: "press", value: "Escape", observeAfter: "none" },
+    ]);
+  });
+
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {
     const send = vi.fn(async (command: { op: string; mode?: string }) =>
       command.op === "observe" && command.mode === "url"
