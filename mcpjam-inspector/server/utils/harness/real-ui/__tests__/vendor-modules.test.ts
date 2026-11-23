@@ -285,7 +285,7 @@ describe("chatgpt.com", () => {
         "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
         [`/backend-api/conversation/${id}`]: {
           mapping: {
-            a: { message: { author: { role: "user" }, content: { parts: ["say hello"] }, create_time: 1 } },
+            a: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["say hello"] }, create_time: 1 } },
             b: { message: { author: { role: "assistant" }, recipient: "fixture.echo", content: { parts: [""] }, create_time: 2 } },
             c: { message: { author: { role: "tool" }, content: { parts: ["echo: hello"] }, create_time: 3 } },
             d: { message: { author: { role: "assistant" }, recipient: "all", content: { parts: ["It said hello."] }, create_time: 4 } },
@@ -301,6 +301,34 @@ describe("chatgpt.com", () => {
       toolCalls: [{ toolName: "echo", at: new Date(2000).toISOString() }],
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
+  });
+
+  it("takes the prompt from the first message the person sees, not the account's hidden custom instructions", async () => {
+    const hidden = { is_visually_hidden_from_conversation: true };
+    const driver = cannedDriver({
+      url: `https://chatgpt.com/c/${id}`,
+      json: {
+        "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
+        [`/backend-api/conversation/${id}`]: {
+          mapping: {
+            root: { message: null },
+            instructions: {
+              message: {
+                author: { role: "user" },
+                content: { content_type: "user_editable_context", user_profile: "I build MCP servers.", user_instructions: "Be brief." },
+                metadata: { ...hidden, user_context_message_data: { about_user_message: "I build MCP servers." } },
+                create_time: null,
+              },
+            },
+            context: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Earlier context"] }, metadata: hidden, create_time: 0.5 } },
+            prompt: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["say hello"] }, create_time: 1 } },
+            reply: { message: { author: { role: "assistant" }, recipient: "all", content: { content_type: "text", parts: ["Hello."] }, create_time: 2 } },
+          },
+        },
+      },
+    });
+    const saved = await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 });
+    expect(saved).toMatchObject({ userPrompt: "say hello", replyText: "Hello." });
   });
 
   it("leaves a bare Confirm that isn't the run's connector's approval unanswered and stops the turn", async () => {

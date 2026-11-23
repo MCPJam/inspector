@@ -227,7 +227,14 @@ export const chatgptWebPageModule: RealUiPageModule = {
           ? { at: new Date(message.create_time * 1000).toISOString() }
           : {}),
       }));
-    const human = messages.find((message) => roleOf(message) === "user");
+    // The first prompt the person sees: ChatGPT files the account's custom
+    // instructions as a hidden user message ahead of it.
+    const human = messages.find(
+      (message) =>
+        roleOf(message) === "user" &&
+        record(message.content).content_type === "text" &&
+        record(message.metadata).is_visually_hidden_from_conversation !== true,
+    );
     const assistant = [...messages]
       .reverse()
       .find((message) => roleOf(message) === "assistant" && (!message.recipient || message.recipient === "all"));
