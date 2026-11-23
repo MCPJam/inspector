@@ -19,7 +19,8 @@ import { openWebClientHostedBrowser } from "./hosted-browser.js";
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
 import { actorFromBearer, restoreWebProfile } from "./hosted-web-client-runtime.js";
 import { createConvexWebReconnectBackend } from "./recovery/convex-backend.js";
-import { findSignInBrowser, keepSignInBrowser } from "./sign-in-browsers.js";
+import { findSignInBrowser, keepSignInBrowser, releaseSignInBrowser } from "./sign-in-browsers.js";
+import { BrowserSessionService } from "../browserd/session-service.js";
 import { PageDriverError } from "../../utils/harness/real-ui/page-driver.js";
 import { logger } from "../../utils/logger.js";
 
@@ -82,12 +83,28 @@ export function createDefaultWebAccountRoutes(): Hono {
           vendor,
           ...(profileArchive ? { profileArchive } : {}),
         });
-        keepSignInBrowser({ browser, actor, projectId, webAccountId });
+        const { browserSessionId } = browser;
+        keepSignInBrowser({
+          browser,
+          actor,
+          projectId,
+          webAccountId,
+          close: (closer = bearer) =>
+            new BrowserSessionService().agentRequest<void>("close", {
+              bearer: closer,
+              projectId,
+              body: { sessionId: browserSessionId },
+            }),
+        });
         try {
           await browser.driver.navigate(startUrl);
         } catch (error) {
+          if (!(error instanceof PageDriverError)) {
+            // The person never gets this browser's id, so nothing else would let it go.
+            releaseSignInBrowser({ browserSessionId, actor, projectId, webAccountId, bearer });
+            throw error;
+          }
           // The browser is open either way; the person can open the page there.
-          if (!(error instanceof PageDriverError)) throw error;
           logger.warn("[web-clients] the sign-in browser did not open the vendor's sign-in page", {
             code: error.code,
           });
@@ -99,6 +116,9 @@ export function createDefaultWebAccountRoutes(): Hono {
       },
       async captureProfile(args) {
         return signInBrowserOf(args).exportProfile();
+      },
+      async release(args) {
+        releaseSignInBrowser(args);
       },
     },
   });

@@ -76,6 +76,7 @@ describe("hosted recovery", () => {
       actor: ADMIN,
       projectId: "project-1",
       webAccountId: "web-account-1",
+      close: async () => {},
     });
     const source = await recovery.handbackEnvironment?.({
       actor: ADMIN,
@@ -108,6 +109,7 @@ describe("hosted recovery", () => {
       actor: ADMIN,
       projectId: "project-1",
       webAccountId: "web-account-1",
+      close: async () => {},
     });
     for (const handback of [
       { actor: ADMIN, projectId: "project-1" },

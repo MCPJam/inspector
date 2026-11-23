@@ -60,16 +60,17 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
       start: vi.fn(async () => ({ browserSessionId: "browser-session-1" })),
       driver: async () => claudePage("team@example.com"),
       captureProfile: async () => new Uint8Array([1, 2, 3]),
+      release: vi.fn(async () => undefined),
     },
     ...overrides,
   };
   return { app: createWebAccountRoutes(deps), deps, applied };
 }
 
-const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown) =>
+const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown, headers: Record<string, string> = {}) =>
   app.request(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 
@@ -109,9 +110,9 @@ describe("POST /accounts/:id/sign-in", () => {
 describe("POST /accounts/:id/save-profile", () => {
   const body = { projectId: "p1", browserSessionId: "browser-session-1" };
 
-  it("saves the profile against its version and marks the account verified", async () => {
+  it("saves the profile against its version, marks the account verified, and closes the browser", async () => {
     const { app, deps, applied } = routes();
-    expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toEqual({
+    expect(await (await post(app, "/accounts/acct-1/save-profile", body, { authorization: "Bearer saver" })).json()).toEqual({
       ok: true,
       accountEmail: "team@example.com",
       workspaceName: "Team",
@@ -130,6 +131,7 @@ describe("POST /accounts/:id/save-profile", () => {
         ...ACTOR,
       },
     ]);
+    expect(deps.browser.release).toHaveBeenCalledWith({ ...body, actor: ACTOR, webAccountId: "acct-1", bearer: "Bearer saver" });
   });
 
   it("answers not_signed_in, wrong_account and version_conflict without saving a wrong session", async () => {
@@ -156,5 +158,7 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
+    // The person can still save from the same browser.
+    for (const refused of [signedOut, other, raced]) expect(refused.deps.browser.release).not.toHaveBeenCalled();
   });
 });

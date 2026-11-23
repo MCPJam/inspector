@@ -16,7 +16,8 @@
  *     and marks the account verified. Answers `{ok:true, accountEmail,
  *     workspaceName?}` or `{ok:false, reason}` with `not_signed_in`,
  *     `wrong_account` or `version_conflict`. A browser this replica doesn't
- *     hold for the person, project and account answers 409.
+ *     hold for the person, project and account answers 409. Once the account
+ *     is saved, its browser closes; until then the person can save again.
  *
  * Admins only, acting as the signed-in user: the backend checks the actor's
  * project role on every call these make.
@@ -77,6 +78,14 @@ export interface SignInBrowser {
     webAccountId: string;
     browserSessionId: string;
   }): Promise<Uint8Array>;
+  /** Lets the browser go once the account is saved from it, closing it as `bearer` names the person. */
+  release(args: {
+    actor: WebActor;
+    projectId: string;
+    webAccountId: string;
+    browserSessionId: string;
+    bearer: string;
+  }): Promise<void>;
 }
 
 /**
@@ -224,6 +233,8 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       ...(identity.workspace ? { workspaceName: identity.workspace } : {}),
       ...actor,
     });
+    // Saved: the browser's work is done, and its id must not save the account again later.
+    await deps.browser.release({ actor, projectId, webAccountId, browserSessionId, bearer: c.req.header("authorization") ?? "" });
     return c.json({
       ok: true,
       accountEmail: identity.email,
