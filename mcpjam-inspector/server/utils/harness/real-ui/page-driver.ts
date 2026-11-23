@@ -18,6 +18,11 @@ export type PageDriverErrorCode =
   | "site_blocked"
   /** The command may or may not have run. Never retry it blindly. */
   | "unknown_outcome"
+  /**
+   * A person has the browser: they took control in its pane, or their hold
+   * lapsed without being handed back. Nothing ran and nothing was read.
+   */
+  | "person_has_browser"
   | "failed";
 
 export class PageDriverError extends Error {
