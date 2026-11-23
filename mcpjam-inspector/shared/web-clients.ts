@@ -47,6 +47,11 @@ export function webClientVendorForRuntime(
   );
 }
 
+/**
+ * Whether a runtime is Claude web or ChatGPT web. Its model access is
+ * external-account, like Cursor's, but on a project's web account (a
+ * signed-in browser profile), so no organization key or key check applies.
+ */
 export function isWebClientRuntimeId(
   runtimeId: string | null | undefined,
 ): runtimeId is WebClientRuntimeId {

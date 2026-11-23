@@ -172,8 +172,13 @@ export function createHostedWebClientEnvironment(
             .find((row) => row !== undefined)
         : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
       if (!chosen && deps.runWebAccountIds?.length) {
+        // An eval run's accounts are its suite's choice. A swarm's are the
+        // project's signed-in accounts, and it has no suite to choose in.
+        const nextStep = deps.iterationId
+          ? "Choose an account for the suite"
+          : "Ask an admin to sign one in from the client's Browser settings";
         throw new WebAccountUnavailableError(
-          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. Choose an account for the suite, then run again.`,
+          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. ${nextStep}, then run again.`,
         );
       }
       if (!chosen) throw noAccount(vendor);
@@ -215,7 +220,16 @@ export function createHostedWebClientEnvironment(
         const answer = openAnswer.safeParse(
           await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor }),
         );
-        if (!answer.success || answer.data.ok) return;
+        // A reply this build can't read opened nothing it knows of, so the
+        // turn stops rather than run without its window.
+        if (!answer.success) {
+          throw new RealUiError({
+            kind: "driver",
+            step: "connector",
+            message: "MCPJam couldn't confirm the connector was ready for this turn.",
+          });
+        }
+        if (answer.data.ok) return;
         throw new RealUiError(
           answer.data.reason === "turn_running"
             ? {

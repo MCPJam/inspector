@@ -10,6 +10,7 @@
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
 import type { WebClientVendor, WebConnectorAuth } from "@/shared/web-clients";
+import { HOSTED_MODE } from "../../config.js";
 import type { SendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import type { PageDriver } from "../../utils/harness/real-ui/page-driver.js";
 import type {
@@ -99,6 +100,16 @@ export type WebTurnContext = {
 export type WebClientEnvironmentFactory = (
   turn: WebTurnContext,
 ) => Promise<WebClientEnvironment>;
+
+/**
+ * Whether this server's turns run hosted, on the backend's accounts, rather
+ * than on this machine's profiles. The mount sets up the environment by it
+ * and a swarm takes its accounts by it, so a swarm session always holds the
+ * account its turns run on, whatever credentials the server also has.
+ */
+export function webClientTurnsRunHosted(): boolean {
+  return HOSTED_MODE;
+}
 
 let configured: WebClientEnvironment | WebClientEnvironmentFactory | undefined;
 

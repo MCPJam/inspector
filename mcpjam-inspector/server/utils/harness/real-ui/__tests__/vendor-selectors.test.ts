@@ -6,14 +6,17 @@
  * Evidence: fixture. The modules run against a driver that records each
  * selector instead of looking for it, along paths that reach every control
  * they use; a blank page in a real browser then counts each recorded one.
+ * Their approval answers also run in a real page, to show the dialog they
+ * look in is the run's connector's and no other.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { chatgptWebPageModule } from "../chatgpt-web";
 import { claudeWebPageModule } from "../claude-web";
 import type { PageDriver } from "../page-driver";
+import { createPlaywrightDriver } from "../playwright-driver";
 
-const CONNECTOR = { name: "MCPJam fixture", url: "https://mcp.example.com/mcp/connector-1" };
+const CONNECTOR = { name: "MCPJam fixture 0a1b2c3d", url: "https://mcp.example.com/mcp/connector-1" };
 const PROMPT = "say hello";
 const CTX = { timeoutMs: 1_000 };
 
@@ -37,6 +40,7 @@ function recordingDriver(options: {
     selectors,
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     async navigate(next) {
       url = next;
     },
@@ -98,7 +102,8 @@ async function unparsed(selectors: Iterable<string>): Promise<string[]> {
 describe("vendor page module selectors", { timeout: 60_000 }, () => {
   it("claude.ai: every selector from sign-in to the reply parses", async () => {
     // The connector is listed but not connected, so it is removed; adding it
-    // then meets the plan's limit until the other MCPJam connector goes too.
+    // then meets the plan's limit (read while waiting and again to check it)
+    // until the other MCPJam connector, on the run's endpoint, goes too.
     const driver = recordingDriver({
       url: "https://claude.ai/new",
       json: {
@@ -107,9 +112,9 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
       },
       shown: (selector, reads) => {
         if (selector === "role=dialog") {
-          return reads === 0 ? "Upgrade to add more connectors" : "Add custom connector";
+          return reads <= 1 ? "Upgrade to add more connectors" : "Add custom connector";
         }
-        if (selector.includes("name=/^View")) return "View MCPJam other";
+        if (selector.includes("name=/^View")) return "View MCPJam other 1a2b3c4d";
         if (selector.includes(`View ${CONNECTOR.name}`)) {
           return reads === 0 ? `View ${CONNECTOR.name}` : undefined;
         }
@@ -128,7 +133,7 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
     await claude.openNewChat(driver, CTX);
     await claude.enableConnector(driver, CONNECTOR.name, CTX);
     await claude.send(driver, PROMPT, CTX);
-    await claude.answerApproval(driver);
+    await claude.answerApproval(driver, [CONNECTOR.name]);
     await claude.replySignals(driver);
     expect(await unparsed(driver.selectors)).toEqual([]);
   });
@@ -154,8 +159,35 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
     await chatgpt.openNewChat(fresh, CTX);
     await chatgpt.enableConnector(fresh, CONNECTOR.name, CTX);
     await chatgpt.send(fresh, PROMPT, CTX);
-    await chatgpt.answerApproval(fresh);
+    await chatgpt.answerApproval(fresh, [CONNECTOR.name]);
     await chatgpt.replySignals(fresh);
     expect(await unparsed([...fresh.selectors, ...listed.selectors])).toEqual([]);
+  });
+});
+
+describe("vendor approval prompts in a real page", { timeout: 60_000 }, () => {
+  /** A dialog asking to approve a tool from `connector`; a click on an answer titles the page with it. */
+  const prompt = (connector: string, answers: string[]) =>
+    `<div role="dialog"><p>Allow echo from ${connector}?</p>${answers
+      .map((answer) => `<button onclick="document.title = this.textContent">${answer}</button>`)
+      .join("")}</div>`;
+
+  it("answers the dialog that names the run's connector, and no other", async () => {
+    const page = await browser.newPage();
+    const driver = await createPlaywrightDriver(page, { sites: ["https://claude.ai", "https://chatgpt.com"] });
+    for (const [module, answers] of [
+      [claudeWebPageModule, ["Always allow", "Allow once"]],
+      [chatgptWebPageModule, ["Confirm"]],
+    ] as const) {
+      await page.setContent(prompt("Team Drive", [...answers]));
+      await expect(module.answerApproval(driver, [CONNECTOR.name])).rejects.toMatchObject({
+        failure: { kind: "connector_failed", step: "reply" },
+      });
+      expect(await page.title()).toBe("");
+      await page.setContent(prompt(CONNECTOR.name, [...answers]));
+      expect(await module.answerApproval(driver, [CONNECTOR.name])).toBe(true);
+      expect(await page.title()).toBe(answers[0]);
+    }
+    await page.close();
   });
 });

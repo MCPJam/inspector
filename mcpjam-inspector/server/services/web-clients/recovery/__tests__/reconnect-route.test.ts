@@ -33,9 +33,11 @@ vi.mock("../../../../utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { sessionAuthMiddleware } from "../../../../middleware/session-auth.js";
 import { needsSignIn } from "../../../../utils/harness/real-ui/page-module.js";
 import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fixture-web.js";
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
+import { logger } from "../../../../utils/logger.js";
 import type { WebClientService } from "../../backend-connector-resolver.js";
 import {
   forgetSignInBrowsers,
@@ -43,6 +45,8 @@ import {
 } from "../../sign-in-browsers.js";
 import type { WebClientEnvironment } from "../../web-client-environment.js";
 import { createHostedWebRecovery } from "../hosted-recovery.js";
+import type { PendingStep } from "../backend.js";
+import { waitForResume } from "../paused-runs.js";
 import {
   createWebReconnectRoutes,
   type WebReconnectRouteDeps,
@@ -71,6 +75,7 @@ const request = (status: string) => ({
 const fakeDriver: PageDriver = {
   kind: "playwright",
   canEvaluate: false,
+  playwrightSelectors: true,
   navigate: async () => {},
   url: async () => "https://claude.ai/new",
   evaluate: async () => {
@@ -86,6 +91,7 @@ const fakeDriver: PageDriver = {
 let commands: Array<Record<string, unknown>>;
 let signedInAs: typeof SEAT | undefined;
 let closed: number;
+let closeFails: boolean;
 
 function deps(answers: Record<string, unknown>) {
   const answer = async (command: Record<string, unknown>) => {
@@ -113,6 +119,7 @@ function deps(answers: Record<string, unknown>) {
         driver: fakeDriver,
         close: async () => {
           closed += 1;
+          if (closeFails) throw new Error("The browser is already gone.");
         },
         captureProfile: async () => new TextEncoder().encode("fixture-profile"),
       };
@@ -185,17 +192,40 @@ beforeEach(() => {
   commands = [];
   signedInAs = SEAT;
   closed = 0;
+  closeFails = false;
   reported.mockClear();
+  vi.mocked(logger.warn).mockClear();
 });
 
 afterEach(() => forgetSignInBrowsers());
 
+/** The claimed run's step in `OPEN`. */
+const CLAIMED_STEP: PendingStep = {
+  stepId: "reply",
+  startedAt: "2026-11-20T10:00:00.000Z",
+};
+
+/** A turn of `run-1` paused in this process on `request-1`. */
+function pausedTurn() {
+  return waitForResume(
+    { requestId: "request-1", runId: "run-1" },
+    CLAIMED_STEP,
+    {
+      timeoutMs: 5_000,
+      pollMs: 60_000,
+      requestStatus: async () => "open",
+    },
+  );
+}
+
 describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
   it("hands the account back as the signed-in person and resumes its runs", async () => {
+    const turn = pausedTurn();
     expect(await post(OPEN)).toEqual({
       status: 200,
       body: { status: "resumed", resumedRuns: 1 },
     });
+    expect(await turn).toEqual(CLAIMED_STEP);
     expect(commands.map((command) => command.action)).toEqual([
       "listWebReconnectRequests",
       "listWebAccounts",
@@ -249,6 +279,16 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     expect((await post(OPEN, { "x-test-user": "user_flag_off" })).status).toBe(
       404,
     );
+    // With the flag off, the route isn't there for any body.
+    expect(
+      (
+        await post(
+          OPEN,
+          { "x-test-user": "user_flag_off" },
+          { project: "project-1" },
+        )
+      ).status,
+    ).toBe(404);
     expect((await post(OPEN, undefined, { project: "project-1" })).status).toBe(
       400,
     );
@@ -332,5 +372,53 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
       offline,
       expect.objectContaining({ hop: "mcpjam_internal" }),
     );
+  });
+
+  it("doesn't count a claimed run no turn here waits for as resumed", async () => {
+    expect(await post(OPEN)).toEqual({
+      status: 200,
+      body: { status: "resumed", resumedRuns: 0 },
+    });
+    expect(commands.map((command) => command.action)).toContain(
+      "claimResumableWebRuns",
+    );
+  });
+
+  it("answers the handback when its browser won't close", async () => {
+    closeFails = true;
+    const turn = pausedTurn();
+    expect(await post(OPEN)).toEqual({
+      status: 200,
+      body: { status: "resumed", resumedRuns: 1 },
+    });
+    expect(await turn).toEqual(CLAIMED_STEP);
+    expect(closed).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[web-recovery] The handback browser did not close",
+      expect.objectContaining({ message: "The browser is already gone." }),
+    );
+  });
+
+  it("passes session auth without a session token, as the app mounts it", async () => {
+    // A hosted browser holds no session token: the route checks the bearer.
+    const app = new Hono();
+    app.use("*", sessionAuthMiddleware);
+    app.route(
+      "/api/web-clients/reconnect",
+      createWebReconnectRoutes(deps(OPEN)),
+    );
+    const response = await app.request(
+      "/api/web-clients/reconnect/request-1/handback",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-test-user": "user_admin",
+        },
+        body: JSON.stringify({ projectId: "project-1" }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "resumed" });
   });
 });

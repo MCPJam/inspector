@@ -2,7 +2,7 @@ import { useCursorModels } from "./use-cursor-models";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
-import { harnessRunsOnWebAccount } from "@/shared/harness-descriptors";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
@@ -2210,7 +2210,7 @@ export function useChatSession(
   appToolsRegistryRef.current = appToolsRegistry;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
-  const defaultSystemPrompt = harnessRunsOnWebAccount(harnessModelTarget?.harnessId)
+  const defaultSystemPrompt = isWebClientRuntimeId(harnessModelTarget?.harnessId)
     ? ""
     : DEFAULT_SYSTEM_PROMPT;
   const initialTemperature = executionConfig?.temperature ?? 0.7;
