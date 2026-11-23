@@ -3890,7 +3890,8 @@ export async function runHarnessTurn(
             // Approval continuation can repeat a call already in saved history.
             // Keep its original input and card; only the result is new.
             const savedCall = toolCallLookupFor(() => messageHistory)(toolCallId);
-            if (savedCall) {
+            // An unverified saved call keeps no identity here, as at its result.
+            if (savedCall && !savedCall.unverified) {
               toolMeta.set(toolCallId, { ...toolMeta.get(toolCallId), ...savedCall });
               drainOpenToolCalls.add(toolCallId);
               continue;
@@ -3954,9 +3955,12 @@ export async function runHarnessTurn(
             drainOpenToolCalls.delete(toolCallId);
             const errorEvent =
               type === "tool-error" || type === "tool-output-error";
-            const historicalCall = toolCallLookupFor(() => messageHistory)(
+            const savedCall = toolCallLookupFor(() => messageHistory)(
               toolCallId,
             );
+            // The stream signer vouches for nothing on an unverified call, so
+            // its server and tool name must not attribute this result either.
+            const historicalCall = savedCall?.unverified ? undefined : savedCall;
             if (errorEvent) {
               // Ignore duplicate terminal events and errors for calls never issued.
               if (
