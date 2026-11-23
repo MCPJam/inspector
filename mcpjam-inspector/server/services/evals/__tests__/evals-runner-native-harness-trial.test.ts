@@ -174,15 +174,61 @@ async function runHarnessCase(
   )?.[1];
 }
 
-/** A suite run with `cases` cases of `runs` iterations each (the 2026-11-18 shape). */
+/**
+ * A suite run with `cases` cases of `runs` iterations each (the 2026-11-18
+ * shape). As in production, the backend precreates every row `pending`.
+ */
 async function runHarnessSuite(cases: number, runs: number) {
+  const rows = new Map<
+    string,
+    { _id: string; testCaseId: string; iterationNumber: number; status: string }
+  >();
+  for (let c = 1; c <= cases; c++) {
+    for (let i = 1; i <= runs; i++) {
+      const _id = `row-${c}-${i}`;
+      rows.set(_id, {
+        _id,
+        testCaseId: `case-${c}`,
+        iterationNumber: i,
+        status: "pending",
+      });
+    }
+  }
+  const setStatus = (args: unknown) => {
+    const { iterationId, status } = args as {
+      iterationId?: string;
+      status?: string;
+    };
+    const row = iterationId ? rows.get(iterationId) : undefined;
+    if (row && status) row.status = status;
+  };
   const recorder = {
     startIteration: vi.fn(
-      async () => `iter-${recorder.startIteration.mock.calls.length}`,
+      async (args: { testCaseId?: string; iterationNumber: number }) => {
+        const row = [...rows.values()].find(
+          (r) =>
+            r.testCaseId === args.testCaseId &&
+            r.iterationNumber === args.iterationNumber,
+        );
+        if (row) row.status = "running";
+        return row?._id;
+      },
     ),
     beginExecutionAttempt: vi.fn(async () => {}),
-    finishIteration: vi.fn(async () => {}),
+    finishIteration: vi.fn(async (args: unknown) => setStatus(args)),
     finalize: vi.fn(async () => {}),
+  };
+  const client = {
+    query: vi.fn(async (name: string) =>
+      name === "testSuites:getTestSuiteRunDetails"
+        ? { iterations: [...rows.values()].map((row) => ({ ...row })) }
+        : { status: "running" },
+    ),
+    mutation: vi.fn(async () => ({})),
+    action: vi.fn(async (name: string, args?: unknown) => {
+      if (name === "testSuites:updateTestIteration") setStatus(args);
+      return undefined;
+    }),
   };
   await runEvalSuiteWithAiSdk({
     suiteId: "suite-1",
@@ -202,7 +248,7 @@ async function runHarnessSuite(cases: number, runs: number) {
       environment: { servers: ["srv-1"] },
     },
     modelApiKeys: {},
-    convexClient: convexClient(),
+    convexClient: client,
     convexHttpUrl: "https://example.convex.site",
     convexAuthToken: "token",
     mcpClientManager: manager(),
@@ -210,16 +256,23 @@ async function runHarnessSuite(cases: number, runs: number) {
     harnessRuntimeVenue: "hosted",
     suiteHostConfig: { harness: "claude-code" },
   } as Parameters<typeof runEvalSuiteWithAiSdk>[0]);
-  return recorder;
+  const statuses: Record<string, number> = {};
+  for (const row of rows.values()) {
+    statuses[row.status] = (statuses[row.status] ?? 0) + 1;
+  }
+  return { recorder, statuses };
 }
 
 describe("a suite run whose organization's trial is used up (2026-11-18)", () => {
   it("stops asking for boxes and keeps every refusal out of Sentry", async () => {
     const error = vi.spyOn(logger, "error");
-    const recorder = await runHarnessSuite(20, 4);
+    const { recorder, statuses } = await runHarnessSuite(20, 4);
 
     // At most one refusal per case already in flight; none of 80 retried.
-    expect(provisionBox.mock.calls.length).toBeLessThanOrEqual(20);
+    const refused = provisionBox.mock.calls.length;
+    expect(refused).toBeLessThanOrEqual(20);
+    // Every other row is skipped; none is left pending or running.
+    expect(statuses).toEqual({ setup_failed: refused, skipped: 80 - refused });
     expect(error).not.toHaveBeenCalledWith(
       "[evals] iteration setup failed (prepareChatV2)",
       expect.anything(),
