@@ -57,7 +57,7 @@ it("identifies a server whose tool listing failed and lets the user refresh", ()
   );
 
   expect(screen.getByRole("status")).toHaveTextContent(
-    "Couldn't load tools from bench.",
+    "Couldn't load tools from bench. Use Refresh tools to try again.",
   );
   fireEvent.click(screen.getByTitle("Refresh tools"));
   expect(mocks.refetch).toHaveBeenCalledOnce();

@@ -582,8 +582,7 @@ function FlatToolList({
                 {serverConnectionControl}
                 {failedServerNames.length > 0 ? (
                   <p role="status" className="px-3 pb-2 text-xs text-destructive">
-                    Couldn't load tools from {failedServerNames.join(", ")}.
-                    Use Refresh tools to try again.
+                    {`Couldn't load tools from ${failedServerNames.join(", ")}. Use Refresh tools to try again.`}
                   </p>
                 ) : null}
                 <div className="space-y-0.5">
