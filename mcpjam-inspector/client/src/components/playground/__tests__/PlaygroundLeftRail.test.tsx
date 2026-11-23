@@ -582,7 +582,7 @@ describe("PlaygroundLeftRail — Compare panes", () => {
     expect(playgroundState.paneServers).toHaveBeenLastCalledWith(["Docs"]);
   });
 
-  it("reconnects an assigned server alongside working servers without changing the pane selection", async () => {
+  it("offers reconnect after an assigned server disconnects, preserving the pane selection", async () => {
     const onServerChosen = vi.fn();
     playgroundState.ensureServersReady.mockReset();
     playgroundState.ensureServersReady.mockResolvedValue({
@@ -593,7 +593,7 @@ describe("PlaygroundLeftRail — Compare panes", () => {
     });
     playgroundState.servers = {
       ...playgroundState.servers,
-      GitHub: createServer({ name: "GitHub", connectionStatus: "disconnected" }),
+      GitHub: createServer({ name: "GitHub", connectionStatus: "connecting" }),
     };
     useComparePaneStore.getState().publishPanes([
       {
@@ -607,6 +607,16 @@ describe("PlaygroundLeftRail — Compare panes", () => {
     ]);
 
     const { rerender } = render(<PlaygroundLeftRail />);
+    expect(screen.getByText(/GitHub.*Finishing setup/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reconnect a server" }),
+    ).toBeNull();
+
+    playgroundState.servers.GitHub = createServer({
+      name: "GitHub",
+      connectionStatus: "disconnected",
+    });
+    rerender(<PlaygroundLeftRail />);
     expect(playgroundState.paneServers).toHaveBeenLastCalledWith(["Docs"]);
     expect(screen.getByText(/GitHub.*Disconnected/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Reconnect a server" }));

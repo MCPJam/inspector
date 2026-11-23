@@ -58,7 +58,12 @@ export function PlaygroundServerConnectButton({
     };
   }, [onPendingChange]);
 
-  const names = Object.keys(servers);
+  const names = Object.keys(servers).filter(
+    (name) =>
+      onAddServer ||
+      name === pendingName ||
+      servers[name].connectionStatus !== "connecting",
+  );
   const pickerLabel = onAddServer
     ? "Connect a saved server"
     : "Reconnect a server";
@@ -134,6 +139,9 @@ export function PlaygroundServerConnectButton({
           : getConnectionStatusMeta(servers[name].connectionStatus),
       onConnect: ensureServersReady ? () => void connect(name) : undefined,
     }));
+
+  // A reconnect-only picker can stay open while its own attempt is pending.
+  if (!onAddServer && !open && names.length === 0) return null;
 
   return (
     <>
