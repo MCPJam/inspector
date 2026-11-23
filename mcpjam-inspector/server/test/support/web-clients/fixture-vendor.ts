@@ -11,7 +11,11 @@
  * Test-only. `fixture-web.ts` is the page module that drives it.
  */
 import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 
 type Chat = {
@@ -166,7 +170,7 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     }
   }
 
-  const server = createServer(async (request, response) => {
+  const answer = async (request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? "/", "http://fixture.local");
     const cookie = /fixture_session=([^;]+)/.exec(request.headers.cookie ?? "")?.[1];
     const email = cookie ? decodeURIComponent(cookie) : undefined;
@@ -263,6 +267,18 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     } else {
       json(404, { error: "not found" });
     }
+  };
+  const server = createServer((request, response) => {
+    // Node ignores the promise a listener returns, so a failure is settled
+    // here rather than escape the test as an unhandled rejection.
+    void answer(request, response).catch((error: unknown) => {
+      // A client that hung up mid-request has no socket left to answer on.
+      if (response.destroyed || response.headersSent) return;
+      response.writeHead(error instanceof SyntaxError ? 400 : 500, {
+        "content-type": "application/json",
+      });
+      response.end(JSON.stringify({ error: String(error) }));
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
