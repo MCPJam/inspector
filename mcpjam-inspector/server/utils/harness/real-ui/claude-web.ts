@@ -31,7 +31,7 @@ import {
   type RealUiStep,
   type StepContext,
 } from "./page-module.js";
-import { list, readVendorJson, record, text } from "./vendor-json.js";
+import { VendorStatusError, list, readVendorJson, record, text } from "./vendor-json.js";
 
 const ORIGIN = "https://claude.ai";
 const PANE = ".dframe-pane-primary";
@@ -67,14 +67,26 @@ async function onSite(driver: PageDriver): Promise<URL> {
 const waitVisible = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
   waitVisibleUnlessBlocked(driver, selector, ctx, { what, step, challengeSelectors: [CHALLENGE] });
 
+/** The organization the account's chats are kept in: the first that can chat. */
+async function chatOrganization(driver: PageDriver): Promise<Record<string, unknown>> {
+  const orgs = list(await readVendorJson(driver, `${ORIGIN}/api/organizations`)).map(record);
+  return orgs.find((org) => list(org.capabilities).includes("chat")) ?? orgs[0] ?? {};
+}
+
 async function organizationId(driver: PageDriver): Promise<string> {
-  const orgs = list(await readVendorJson(driver, `${ORIGIN}/api/organizations`));
-  const chat = orgs.find((org) =>
-    list(record(org).capabilities).includes("chat"),
-  );
-  const id = text(record(chat ?? orgs[0]).uuid);
+  const id = text((await chatOrganization(driver)).uuid);
   if (!id) throw pageChanged("read_conversation", "claude.ai named no organization for this account.");
   return id;
+}
+
+/** The signed-in account's email. An error answer names none, on either driver. */
+async function accountEmail(driver: PageDriver): Promise<string | undefined> {
+  try {
+    return text(record(await readVendorJson(driver, `${ORIGIN}/api/account`)).email_address);
+  } catch (error) {
+    if (error instanceof VendorStatusError) return undefined;
+    throw error;
+  }
 }
 
 async function connectorRowVisible(driver: PageDriver, name: string) {
@@ -159,12 +171,10 @@ export const claudeWebPageModule: RealUiPageModule = {
       throw needsSignIn("signed_out", "sign_in_check", "The Claude account is signed out.");
     }
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "sign_in_check");
-    const account = record(await readVendorJson(driver, `${ORIGIN}/api/account`));
-    const orgs = list(await readVendorJson(driver, `${ORIGIN}/api/organizations`));
-    return {
-      email: text(account.email_address),
-      workspace: text(record(orgs[0]).name),
-    };
+    const email = await accountEmail(driver);
+    if (!email) throw needsSignIn("signed_out", "sign_in_check", "The Claude account is signed out.");
+    // The organization whose chats the turn reads, not merely the first.
+    return { email, workspace: text((await chatOrganization(driver)).name) };
   },
 
   async blocker(driver) {

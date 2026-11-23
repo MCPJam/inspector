@@ -15,11 +15,15 @@ import { createHostedPageDriver } from "../hosted-driver";
 import { pollUntil, type PageDriver } from "../page-driver";
 import { readVendorJson } from "../vendor-json";
 
-/** A page that answers `readText` from a map and `fetch` from canned JSON. */
+/**
+ * A page that answers `readText` from a map and `fetch` from canned JSON, with
+ * the status `statuses` gives its path (200 otherwise).
+ */
 function cannedDriver(options: {
   url: string;
   texts?: Record<string, string>;
   json?: Record<string, unknown>;
+  statuses?: Record<string, number>;
 }): PageDriver {
   let url = options.url;
   return {
@@ -35,8 +39,9 @@ function cannedDriver(options: {
     async evaluate<T, A>(_fn: (arg: A) => T | Promise<T>, arg: A): Promise<T> {
       const target = (arg as { url: string }).url;
       const path = new URL(target).pathname + new URL(target).search;
-      const body = Object.entries(options.json ?? {}).find(([prefix]) => path.startsWith(prefix))?.[1];
-      return { status: body === undefined ? 404 : 200, text: JSON.stringify(body ?? {}) } as T;
+      const [prefix, body] = Object.entries(options.json ?? {}).find(([start]) => path.startsWith(start)) ?? [];
+      const status = body === undefined ? 404 : (options.statuses?.[prefix ?? ""] ?? 200);
+      return { status, text: JSON.stringify(body ?? {}) } as T;
     },
     waitFor: pollUntil,
     click: vi.fn(async () => undefined),
@@ -203,6 +208,45 @@ describe("claude.ai", () => {
       failure: { kind: "connector_failed", step: "reply" },
     });
     expect(driver.click).not.toHaveBeenCalled();
+  });
+
+  it("reports the organization its chats come from, not merely the first", async () => {
+    const driver = cannedDriver({
+      url: "https://claude.ai/new",
+      texts: { '[data-testid="chat-input"]': "" },
+      json: {
+        "/api/account": { email_address: "runner@example.com" },
+        "/api/organizations": [
+          { uuid: "org-api", name: "API only", capabilities: ["api"] },
+          { uuid: "org-chat", name: "Chat team", capabilities: ["chat"] },
+        ],
+      },
+    });
+    expect(await claudeWebPageModule.signedIn(driver, { timeoutMs: 1_000 })).toEqual({
+      email: "runner@example.com",
+      workspace: "Chat team",
+    });
+  });
+
+  it("reads an error answer from the account endpoint as signed out, in either browser", async () => {
+    const error = { type: "error", error: { type: "permission_error", message: "Not signed in" } };
+    const scripted = cannedDriver({
+      url: "https://claude.ai/new",
+      texts: { '[data-testid="chat-input"]': "" },
+      json: { "/api/account": error, "/api/organizations": [] },
+      statuses: { "/api/account": 403 },
+    });
+    // The hosted browser shows the error's JSON and no status.
+    const shown: PageDriver = {
+      ...cannedDriver({ url: "https://claude.ai/new", texts: { '[data-testid="chat-input"]': "" } }),
+      canEvaluate: false,
+      pageText: async () => JSON.stringify(error),
+    };
+    for (const driver of [scripted, shown]) {
+      await expect(claudeWebPageModule.signedIn(driver, { timeoutMs: 1_000 })).rejects.toMatchObject({
+        failure: { kind: "needs_sign_in", reason: "signed_out", step: "sign_in_check" },
+      });
+    }
   });
 
   it("calls a reply finished only when every signal agrees", async () => {

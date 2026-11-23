@@ -9,6 +9,14 @@
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
+/** The site's own API answered with an error status, so nothing it saved was read. */
+export class VendorStatusError extends PageDriverError {
+  constructor(readonly status: number) {
+    super("failed", `The site answered ${status} for its own saved data.`);
+    this.name = "VendorStatusError";
+  }
+}
+
 export async function readVendorJson(
   driver: PageDriver,
   url: string,
@@ -26,10 +34,7 @@ export async function readVendorJson(
       { url, headers },
     );
     if (result.status < 200 || result.status >= 300) {
-      throw new PageDriverError(
-        "failed",
-        `The site answered ${result.status} for its own saved data.`,
-      );
+      throw new VendorStatusError(result.status);
     }
     return JSON.parse(result.text);
   }
