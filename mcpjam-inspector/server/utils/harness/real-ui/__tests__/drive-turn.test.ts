@@ -405,6 +405,21 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toEqual([]);
   });
 
+  it("returns needs_sign_in when a human check shows in place of the connector list", async () => {
+    const failure = await turn(await signedInDriver(), undefined, {
+      // The check shows up only once the account has passed its sign-in check.
+      onStep: (step) => {
+        if (step === "connector") vendor.challenge = true;
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "needs_sign_in",
+      reason: "human_check",
+      step: "connector",
+    });
+    expect(vendor.sends).toEqual([]);
+  });
+
   it("returns needs_sign_in with the pending step when another account is signed in", async () => {
     const failure = await driveRealUiTurn({
       module: createFixtureWebPageModule(vendor.url),
