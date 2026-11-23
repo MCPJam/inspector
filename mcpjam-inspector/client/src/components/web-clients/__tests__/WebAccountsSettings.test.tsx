@@ -43,7 +43,9 @@ const evals = createWebAccountView({
 
 function mount(isAdmin: boolean, accounts: WebAccount[] = [qa, evals]) {
   mocks.accounts.mockReturnValue({ accounts, loaded: true, isAdmin });
-  render(<WebAccountsSettings projectId="project-1" vendor="claude" />);
+  render(
+    <WebAccountsSettings projectId="project-1" vendor="claude" />,
+  );
 }
 
 const call = (name: string) => mocks.mutations[`webClients:${name}`];
@@ -69,9 +71,7 @@ describe("WebAccountsSettings", () => {
     await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
     // Nothing on this screen signs an account in again, so nothing offers to.
     const remove = await screen.findByRole("menuitem", { name: "Remove" });
-    expect(
-      screen.queryByRole("menuitem", { name: "Sign in again" }),
-    ).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Reconnect" })).toBeNull();
     await user.click(remove);
     expect(await screen.findByRole("alertdialog")).toHaveTextContent(
@@ -103,26 +103,6 @@ describe("WebAccountsSettings", () => {
     });
   });
 
-  it("lets an admin stop local runs while only some accounts allow them", async () => {
-    const user = userEvent.setup();
-    mount(true, [{ ...qa, allowLocalRuns: true }, evals]);
-    const toggle = screen.getByRole("switch", { name: "Allow local runs" });
-    expect(toggle).toBeChecked();
-    await user.click(toggle);
-    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
-      "Stop local runs for this client?",
-    );
-    await user.click(screen.getByRole("button", { name: "Stop local runs" }));
-    await waitFor(() =>
-      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledTimes(2),
-    );
-    for (const webAccountId of ["wa-qa", "wa-evals"])
-      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledWith({
-        webAccountId,
-        allowLocalRuns: false,
-      });
-  });
-
   it("tells an admin when only some accounts allow local runs, and keeps the notes for all and none", () => {
     const notes = {
       some: "Some of these accounts' saved sign-ins can be used by members' local apps. Stop turns all of them off.",
@@ -151,6 +131,26 @@ describe("WebAccountsSettings", () => {
         else expect(screen.queryByText(note)).toBeNull();
       cleanup();
     }
+  });
+
+  it("lets an admin stop local runs while only some accounts allow them", async () => {
+    const user = userEvent.setup();
+    mount(true, [{ ...qa, allowLocalRuns: true }, evals]);
+    const toggle = screen.getByRole("switch", { name: "Allow local runs" });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Stop local runs for this client?",
+    );
+    await user.click(screen.getByRole("button", { name: "Stop local runs" }));
+    await waitFor(() =>
+      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledTimes(2),
+    );
+    for (const webAccountId of ["wa-qa", "wa-evals"])
+      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledWith({
+        webAccountId,
+        allowLocalRuns: false,
+      });
   });
 
   it("offers an admin no way to add an account until the pane can sign in", () => {
