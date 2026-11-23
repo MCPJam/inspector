@@ -7,6 +7,8 @@ const REFUSED_STATUSES = new Set([400, 403, 404, 409]);
 const MIN_RENEW_DELAY_MS = 5_000;
 /** The wait before retrying a renewal that failed for a transient reason. */
 const RETRY_DELAY_MS = 15_000;
+/** Too close to expiry for a renewal to arrive in time; the run stops with the token. */
+const MIN_RETRY_WINDOW_MS = 2_000;
 
 export type RenewResponse = { status: number; body: unknown };
 
@@ -39,7 +41,7 @@ function readError(body: unknown): string | null {
  * renewal. A refusal ends renewal and makes the next use of the token throw
  * `token_renewal_failed: <reason>`, so the run stops at its next call rather
  * than going on until the token expires. A transient failure is retried while
- * the token still has time left.
+ * the token still has time left. The writes that end the run use `last()`.
  */
 export function startJobBearer(options: {
   triggerId: string;
@@ -103,7 +105,12 @@ export function startJobBearer(options: {
       });
       return;
     }
-    if (expiresAt - now() > RETRY_DELAY_MS) schedule(RETRY_DELAY_MS);
+    // Near expiry the wait shrinks, so the last attempt lands while the
+    // token still works.
+    const remaining = expiresAt - now();
+    if (remaining > MIN_RETRY_WINDOW_MS) {
+      schedule(Math.min(RETRY_DELAY_MS, remaining / 2));
+    }
   }
 
   schedule(halfLife());
@@ -112,6 +119,7 @@ export function startJobBearer(options: {
       if (refused) throw new Error(`token_renewal_failed: ${refused}`);
       return token;
     },
+    last: () => token,
     onRenew(listener) {
       listeners.push(listener);
     },

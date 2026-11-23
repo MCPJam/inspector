@@ -531,6 +531,14 @@ export function failedTurnNeedsCapture(
   );
 }
 
+/** A renewing bearer is read on each evidence request, as the engine reads it on each step. */
+function evidenceReadAuthorization(
+  auth: RunAssistantTurnAuthContext,
+): string | (() => Promise<string>) {
+  const renewing = auth.turnAuthorization;
+  return renewing ? () => renewing.getAuthorization() : auth.token;
+}
+
 export async function driveHostedEvalTurn(
   params: DriveHostedEvalTurnParams,
   origin: "prompt" | "widget-follow-up" = "prompt",
@@ -1032,7 +1040,7 @@ export async function driveHostedEvalTurn(
   // disagree if the engine ever mutated the array between them.
   const { newMessages } = turnResult;
   const evidence = await reconcileTurnEvidence({
-    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(params.evalAuthContext.token) } : {}),
+    ...(params.harnessExecutionTarget ? { transport: createConvexEvidenceReadTransport(evidenceReadAuthorization(params.evalAuthContext)) } : {}),
     ...(params.evalIterationId ? { iterationId: params.evalIterationId } : {}),
     ...(harnessEvidence?.turnId ? { turnId: harnessEvidence.turnId } : {}),
     captureEnabled: harnessEvidence?.captureEnabled === true,

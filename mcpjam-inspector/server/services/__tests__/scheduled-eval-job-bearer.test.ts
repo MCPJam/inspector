@@ -81,6 +81,23 @@ describe("a scheduled run's job token", () => {
     expect(renew).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the last token for the writes that end the run", async () => {
+    const renew = vi.fn().mockResolvedValue({
+      status: 409,
+      body: { ok: false, error: "lease_lost" },
+    });
+    const bearer = bearerWith(renew);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const authorization = bearerTurnAuthorization(bearer)!;
+    await expect(authorization.getAuthorization()).rejects.toThrow(
+      "token_renewal_failed: lease_lost",
+    );
+    expect(await authorization.getCleanupAuthorization()).toBe(
+      "Bearer job-token-1",
+    );
+    expect(bearer.last()).toBe("job-token-1");
+  });
+
   it("retries a transient failure while the token has time left", async () => {
     const renew = vi
       .fn()
@@ -94,6 +111,20 @@ describe("a scheduled run's job token", () => {
     expect(renew).toHaveBeenCalledTimes(3);
     expect(bearerNow(bearer)).toBe("job-token-2");
     expect(bearer.refusal()).toBeNull();
+    bearer.stop();
+  });
+
+  it("makes its last attempt while the token still works", async () => {
+    const renew = vi.fn().mockRejectedValue(new Error("socket hang up"));
+    const bearer = bearerWith(renew);
+    // Half its life, then every 15 s: 60, 75, 90 and 105 s.
+    await vi.advanceTimersByTimeAsync(105_000);
+    expect(renew).toHaveBeenCalledTimes(4);
+    // 15 s left, so the next attempt waits half of it.
+    renew.mockResolvedValueOnce(renewed("job-token-2", T0 + 240_000));
+    await vi.advanceTimersByTimeAsync(7_500);
+    expect(renew).toHaveBeenCalledTimes(5);
+    expect(bearerNow(bearer)).toBe("job-token-2");
     bearer.stop();
   });
 

@@ -8,8 +8,21 @@ const loadSuiteConnectionIdSets = vi.fn();
 vi.mock("../evals/compat-runtime.js", () => ({
   loadSuiteHostConfig: (...args: unknown[]) => loadSuiteHostConfig(...args),
 }));
+/** Follows renewals through `setAuth`, as `ConvexHttpClient` does. */
+class FakeConvexClient {
+  constructor(public bearer: string) {}
+  setAuth(token: string) {
+    this.bearer = token;
+  }
+}
+const setupClients: FakeConvexClient[] = [];
+
 vi.mock("../evals/route-helpers.js", () => ({
-  createConvexClient: (bearer: string) => ({ bearer }),
+  createConvexClient: (bearer: string) => {
+    const client = new FakeConvexClient(bearer);
+    setupClients.push(client);
+    return client;
+  },
 }));
 vi.mock("../evals/suite-account-choices.js", () => ({
   loadSuiteConnectionIdSets: (...args: unknown[]) =>
@@ -229,6 +242,7 @@ describe("executeClaimedRun with the claim's job token", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(renewals).toEqual([{ triggerId: "trig-1", leaseToken: "lease-1" }]);
     expect(bearerNow(runBearer!)).toBe("job-token-2");
+    expect(setupClients.at(-1)?.bearer).toBe("job-token-2");
 
     finish();
     await running;

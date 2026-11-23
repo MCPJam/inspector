@@ -47,7 +47,7 @@ import {
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
 import { startJobBearer, type JobBearer } from "./scheduled-eval-job-bearer.js";
-import { bearerNow, type RunBearer } from "../utils/run-bearer.js";
+import { bearerNow, followBearer, type RunBearer } from "../utils/run-bearer.js";
 import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -236,6 +236,7 @@ export async function executeClaimedRun(
             claimed.organizationId,
           );
     const convex = createConvexClient(bearerNow(bearer));
+    followBearer(bearer, (token) => convex.setAuth(token));
     // Environment claims connect the environment's authoritatively resolved
     // closed set, not the suite's saved selection — the saved selection
     // predates (or ignores) the pinned environment. The SAME resolution is

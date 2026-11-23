@@ -8,6 +8,12 @@ import type { TurnAuthorization } from "../services/turn-authorization.js";
  */
 export interface RenewingBearer {
   current(): string;
+  /**
+   * The last token the backend issued, even after it refused to renew. Only
+   * for the writes that end a run: an iteration's terminal state, its
+   * uploads, cleanup. The backend still checks it, and it expires on its own.
+   */
+  last(): string;
   /** Called with each renewed token, for a client that keeps one. */
   onRenew(listener: (token: string) => void): void;
 }
@@ -18,6 +24,23 @@ export type RunBearer = string | RenewingBearer;
 /** The token to send now. */
 export function bearerNow(bearer: RunBearer): string {
   return typeof bearer === "string" ? bearer : bearer.current();
+}
+
+/**
+ * The token for the writes that end a run, which must land after a refused
+ * renewal so the run's end is recorded with the reason it stopped. See
+ * {@link RenewingBearer.last}.
+ */
+export function bearerForCleanup(bearer: RunBearer): string {
+  return typeof bearer === "string" ? bearer : bearer.last();
+}
+
+/** An auth header, or a function that returns the current one. */
+export type AuthHeaderSource = string | (() => string);
+
+/** The auth header to send now. */
+export function authHeaderNow(source: AuthHeaderSource): string {
+  return typeof source === "function" ? source() : source;
 }
 
 /** Applies the token now and again on every renewal (`ConvexHttpClient.setAuth`). */
@@ -38,11 +61,10 @@ export function bearerTurnAuthorization(
   bearer: RunBearer,
 ): TurnAuthorization | undefined {
   if (typeof bearer === "string") return undefined;
-  const authorization = async () => `Bearer ${bearer.current()}`;
   return {
     start: () => {},
-    getAuthorization: authorization,
-    getCleanupAuthorization: authorization,
+    getAuthorization: async () => `Bearer ${bearer.current()}`,
+    getCleanupAuthorization: async () => `Bearer ${bearer.last()}`,
     dispose: () => {},
   };
 }

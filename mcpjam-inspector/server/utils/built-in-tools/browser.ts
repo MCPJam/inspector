@@ -130,6 +130,7 @@ import {
   createSecretScrubber,
   MIN_SCRUBBABLE_LENGTH,
 } from "../../../shared/secret-scrubber";
+import { authHeaderNow, type AuthHeaderSource } from "../run-bearer.js";
 
 // Re-exported so the server's existing importers keep their one import site;
 // the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
@@ -240,7 +241,7 @@ export interface BrowserToolsOptions {
     holder?: { kind: "human" | "script" };
   }) => void;
   /** Bearer authorization forwarded to the control plane. */
-  authHeader: string;
+  authHeader: AuthHeaderSource;
   /** Local guest sessions have no member-owned cloud metadata or profiles. */
   localGuest?: boolean;
   /** Project whose computer this turn drives. */
@@ -843,7 +844,7 @@ class BrowserTurnState {
   async handle(signal?: AbortSignal): Promise<BrowserSessionHandle> {
     await this.verifyConsent();
     this.session ??= this.ensure({
-      bearer: this.opts.authHeader,
+      bearer: authHeaderNow(this.opts.authHeader),
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),

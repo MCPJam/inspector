@@ -308,10 +308,12 @@ import type {
   EvalStreamToolCall,
 } from "@/shared/eval-stream-events";
 import {
+  bearerForCleanup,
   bearerNow,
   bearerTurnAuthorization,
   type RunBearer,
 } from "../utils/run-bearer.js";
+import type { RunAssistantTurnAuthContext } from "../utils/assistant-turn.js";
 
 /**
  * Max render-check (`widget_probe`) cases that may execute at once. Each one
@@ -2248,7 +2250,7 @@ async function finalizeIterationWithBrowserArtifacts(args: {
       convexClient: args.convexClient,
       finishParams: {
         ...args.finishParams,
-        convexAuthToken: bearerNow(args.convexAuthToken),
+        convexAuthToken: bearerForCleanup(args.convexAuthToken),
       },
     },
   });
@@ -5797,7 +5799,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: acc.conversationMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(bearerNow(convexAuthToken), iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
     // PR (this change): the resolved system prompt now flows through
     // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix`
@@ -6085,7 +6087,7 @@ const runLocalIteration = async ({
       injectOpenAiCompat,
       messages: failMessages,
       mcpClientManager,
-      uploadTarget: evalSnapshotUploadTarget(bearerNow(convexAuthToken), iterationId),
+      uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
     });
 
     // PR6: SSE failure signal only in streaming mode (batch has no emit).
@@ -6625,7 +6627,7 @@ const runHostedIterationWithBrowser = async (
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
-            authHeader: bearerNow(convexAuthToken),
+            authHeader: () => bearerNow(convexAuthToken),
             projectId: builtInTarget.projectId,
             requireToolApproval: appliedToolApproval(
               "eval",
@@ -6738,6 +6740,7 @@ const runHostedIterationWithBrowser = async (
     await box?.release();
   };
   let prepared: PrepareChatV2Result;
+  let evalAuthContext: RunAssistantTurnAuthContext;
   try {
     throwIfDescriptionOverrideOnHarness(
       toolDescriptionOverride,
@@ -7044,6 +7047,16 @@ const runHostedIterationWithBrowser = async (
         sandboxId: sandboxBinding.sandboxId,
       });
     }
+    // Inside the try: a renewal refused during setup reaches the catch, which
+    // releases the box and records the setup failure. `runAssistantTurn`
+    // sends `token` on each per-step Convex fetch, or reads
+    // `turnAuthorization` on each step when the bearer renews.
+    const turnAuthorization = bearerTurnAuthorization(convexAuthToken);
+    evalAuthContext = {
+      kind: "user_bearer",
+      token: `Bearer ${bearerNow(convexAuthToken)}`,
+      ...(turnAuthorization ? { turnAuthorization } : {}),
+    };
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
@@ -7124,17 +7137,8 @@ const runHostedIterationWithBrowser = async (
   // approval handling. Eval owns the per-turn `runAssistantTurn` call,
   // SSE callback wiring (text deltas via `onLiveTextDelta`, tool
   // call/result/step events via the PR 5b-pre callbacks), failure
-  // detection, persistence, and grading.
-  //
-  // `runAssistantTurn` reads `authContext.token` and forwards it as the
-  // Authorization header on the per-step Convex fetch — same shape used
-  // by `runIterationViaBackend` above (PR 3/4d).
-  const turnAuthorization = bearerTurnAuthorization(convexAuthToken);
-  const evalAuthContext = {
-    kind: "user_bearer" as const,
-    token: `Bearer ${bearerNow(convexAuthToken)}`,
-    ...(turnAuthorization ? { turnAuthorization } : {}),
-  };
+  // detection, persistence, and grading. The auth context is built at the
+  // end of the setup try above.
 
   // Cursor review fix (mirrors PR 4b for the non-stream backend
   // runner): the engine swallows AbortError internally (sets its
@@ -7628,7 +7632,7 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     messages: messageHistory,
     mcpClientManager,
-    uploadTarget: evalSnapshotUploadTarget(bearerNow(convexAuthToken), iterationId),
+    uploadTarget: evalSnapshotUploadTarget(bearerForCleanup(convexAuthToken), iterationId),
   });
   // PR (this change): the resolved system prompt now flows through
   // `appendEvalTurnTrace.systemPrompt`. The `withSystemPrefix` closure
