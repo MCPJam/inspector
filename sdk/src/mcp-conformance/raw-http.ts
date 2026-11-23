@@ -33,6 +33,7 @@ import {
   encodeMcpHeaderValue,
   scanXMcpHeaderDeclarations,
 } from "../mcp-client-manager/mcp-header-mirror.js";
+import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
   createCapturingFetch,
@@ -432,10 +433,17 @@ export function legacyHeaders(options: {
  * address a stateful server. Returns the exchange verbatim plus the minted
  * session id (absent for a stateless legacy server — that is a legitimate
  * outcome, not an error).
+ *
+ * `unsupportedVersion` is set when the server answered with a protocol version
+ * MCPJam does not support. "If the client does not support the version in the
+ * server's response, it SHOULD disconnect", so a caller that sees it sends
+ * nothing more on that session.
  */
-export async function legacyInitialize(
-  ctx: RawHttpCheckContext
-): Promise<{ result: RawHttpResult; sessionId?: string }> {
+export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
+  result: RawHttpResult;
+  sessionId?: string;
+  unsupportedVersion?: string;
+}> {
   const result = await rawRequest(ctx, {
     headers: legacyHeaders({}),
     body: {
@@ -451,7 +459,20 @@ export async function legacyInitialize(
     },
   });
 
-  return { result, sessionId: result.headers["mcp-session-id"] };
+  const answeredVersion = jsonRpcResult(result)?.protocolVersion;
+  return {
+    result,
+    sessionId: result.headers["mcp-session-id"],
+    ...(typeof answeredVersion === "string" &&
+    !isKnownProtocolVersion(answeredVersion)
+      ? { unsupportedVersion: answeredVersion }
+      : {}),
+  };
+}
+
+/** Why a raw legacy check stopped after `initialize`, in plain words. */
+export function unsupportedVersionStop(version: string): string {
+  return `The server answered initialize with protocol version "${version}", which MCPJam does not support. A client should disconnect in that case, so this check sent nothing more and could not run.`;
 }
 
 /**

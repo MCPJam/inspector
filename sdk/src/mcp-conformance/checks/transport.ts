@@ -22,6 +22,7 @@ import {
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
+  unsupportedVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -150,12 +151,16 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   body: unknown;
   contentType: string;
   isMcpLayerResponse: boolean;
+  /** The answered protocol version, when MCPJam does not support it. */
+  unsupportedVersion?: string;
 }> {
-  const { result, sessionId } = await legacyInitialize(ctx);
+  const { result, sessionId, unsupportedVersion } =
+    await legacyInitialize(ctx);
   return {
     ok: isOk(result),
     status: result.status,
     sessionId,
+    unsupportedVersion,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -453,6 +458,30 @@ export async function runTransportChecks(
                   "Streamable HTTP session could not be initialized",
                   { status: session.status },
                 ),
+          );
+        }
+      }
+
+      return results;
+    }
+
+    // The checks above read the `initialize` answer itself. The ones below
+    // send more requests on the session, which a client does not do once the
+    // server has picked a version it cannot speak.
+    if (session.unsupportedVersion !== undefined) {
+      for (const id of [
+        "server-accepts-multiple-post-streams",
+        "server-sse-streams-functional",
+        "notification-post-accepted",
+        "get-stream-or-405",
+      ] as const) {
+        if (selectedCheckIds.has(id)) {
+          results.push(
+            couldNotRunResult(
+              TRANSPORT_CHECK_METADATA[id],
+              unsupportedVersionStop(session.unsupportedVersion),
+              { negotiatedProtocolVersion: session.unsupportedVersion },
+            ),
           );
         }
       }
