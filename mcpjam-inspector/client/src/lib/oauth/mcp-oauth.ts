@@ -3693,8 +3693,9 @@ export async function handleOAuthCallback(
         protocolVersion: storedSession.protocolVersion,
       });
       if (!security.ok) {
-        clearOAuthFlowSession(serverName);
-        localStorage.removeItem(OAUTH_PENDING_STORAGE_KEY);
+        // A callback from an older browser tab carries that attempt's state.
+        // Clearing here would strand the newer attempt the user is finishing.
+        clearPendingOAuthAttempt(serverName, options.callbackState);
         return { success: false, error: security.error, serverName };
       }
       let state = cloneFlowState(storedSession.state);

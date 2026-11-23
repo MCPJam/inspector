@@ -70,6 +70,16 @@ import {
   OAUTH_PENDING_STORAGE_KEY,
 } from "@/lib/oauth/mcp-oauth";
 import {
+  ABANDONED_SIGN_IN_MESSAGE,
+  REPLACED_SIGN_IN_MESSAGE,
+  rememberAbandonedSignIn,
+  takeAbandonedSignIn,
+} from "@/lib/oauth/abandoned-sign-ins";
+import {
+  SIGN_IN_TIMED_OUT_MESSAGE,
+  useSignInTimeout,
+} from "./use-sign-in-timeout";
+import {
   buildOAuthRequest,
   selectStoredResourceUrl,
   type BuiltOAuthRequest,
@@ -3114,8 +3124,15 @@ export function useServerState({
       state: string | null,
       iss: string | null,
       hostedCallbackContext: ReturnType<typeof getHostedOAuthCallbackContext>,
-      isCancelled: () => boolean = () => false,
+      isCallerCancelled: () => boolean = () => false,
     ) => {
+      // Set when the exchange starts. Cancel, the sign-in timeout and a newer
+      // connect each advance the server's op token, and every write after
+      // the exchange yields to them.
+      let claim: { name: string; token: number } | undefined;
+      const isCancelled = () =>
+        isCallerCancelled() ||
+        (claim !== undefined && isStaleOp(claim.name, claim.token));
       const finishDiagnostic = startDesktopOperation("oauth_callback");
       const pendingServerName = localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
       const isHostedProjectCallback =
@@ -3185,6 +3202,8 @@ export function useServerState({
         const callbackServer = connectingName
           ? effectiveServers[connectingName]
           : undefined;
+        if (connectingName)
+          claim = { name: connectingName, token: nextOpToken(connectingName) };
         if (connectingName && callbackServer)
           dispatch({
             type: "CONNECT_REQUEST",
@@ -3663,6 +3682,40 @@ export function useServerState({
       ? localStorage.getItem(`mcp-oauth-issued-state-${pendingServer}`)
       : null;
     if (oauthCallbackHandledRef.current.has(attempt)) return;
+    // The issued state names the attempt that owns the pending key, the
+    // return hash and the hosted context. A callback carrying another state
+    // belongs to an attempt that was cancelled, timed out or replaced, and
+    // must not write to any of them. Read from storage so this holds after a
+    // renderer reload.
+    const wasAbandoned = Boolean(code || error) && takeAbandonedSignIn(state);
+    const newerAttemptOwnsKey =
+      Boolean(code || error) &&
+      !(hostedOAuthCallbackContext && !isHostedProjectCallback) &&
+      issuedState !== null &&
+      issuedState !== state;
+    if (wasAbandoned || newerAttemptOwnsKey) {
+      oauthCallbackHandledRef.current.add(attempt);
+      consumeOAuthCallbackParams(callbackAttempt);
+      // Back to where the newer attempt, if any, started; its return hash
+      // stays for its own callback.
+      navigateApp(
+        newerAttemptOwnsKey && hostedOAuthCallbackContext?.returnPath
+          ? resolveHostedOAuthReturnPath(hostedOAuthCallbackContext)
+          : restorePathAfterOAuthCallback(
+              window.location.pathname,
+              (newerAttemptOwnsKey &&
+                localStorage.getItem("mcp-oauth-return-hash")) ||
+                "",
+            ),
+        { replace: true },
+      );
+      toast.error(
+        newerAttemptOwnsKey
+          ? REPLACED_SIGN_IN_MESSAGE
+          : ABANDONED_SIGN_IN_MESSAGE,
+      );
+      return;
+    }
     if (isHostedProjectCallback && (code || error)) {
       const access = checkProjectOAuthAccess(
         hostedOAuthCallbackContext,
@@ -3670,8 +3723,6 @@ export function useServerState({
       );
       if (access === "wait") return;
       if (access !== "allow") {
-        // A delayed result must not discard a newer authorization attempt.
-        if (issuedState && issuedState !== state) return;
         oauthCallbackHandledRef.current.add(attempt);
         recoverProjectOAuth(hostedOAuthCallbackContext, access, state);
         return;
@@ -5488,7 +5539,7 @@ export function useServerState({
   // Used by host-switch auto-disconnect, where we want to drop the runtime
   // connection but keep the server entry intact so the user can re-connect
   // (or another host can require it) without re-adding the server.
-  const handleRuntimeDisconnect = useCallback(
+  const abandonConnectAttempt = useCallback(
     (serverName: string) => {
       // Invalidate any connect/reconnect that is still awaiting I/O. Without
       // this, a late completion can overwrite this disconnect with success or
@@ -5498,14 +5549,33 @@ export function useServerState({
         serverCheckQueue.cancelServer(queuedScope.projectId, serverName);
       nextOpToken(serverName);
       clearAutoOAuthEscalation(serverName);
+      rememberAbandonedSignIn(serverName);
       clearPendingOAuthAttempt(serverName);
       if (readHostedOAuthPendingMarker()?.serverName === serverName) {
         clearHostedOAuthPendingState();
       }
+    },
+    [clearAutoOAuthEscalation],
+  );
+  const handleRuntimeDisconnect = useCallback(
+    (serverName: string) => {
+      abandonConnectAttempt(serverName);
       dispatch({ type: "DISCONNECT", name: serverName });
     },
-    [clearAutoOAuthEscalation, dispatch],
+    [abandonConnectAttempt, dispatch],
   );
+  useSignInTimeout({
+    servers: effectiveServers,
+    getOpToken: (serverName) => opTokenRef.current.get(serverName) ?? 0,
+    onTimeout: (serverName) => {
+      abandonConnectAttempt(serverName);
+      dispatch({
+        type: "CONNECT_FAILURE",
+        name: serverName,
+        error: SIGN_IN_TIMED_OUT_MESSAGE,
+      });
+    },
+  });
 
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
     // Slice 5: env removal handled by Convex deleteServer; only OAuth local
@@ -6244,6 +6314,7 @@ export function useServerState({
             // orchestrator treats a tokenless auto server as
             // ready-unauthenticated instead of redirecting.
             interactiveOAuthConfirmed: autoInteractiveConfirmed,
+            shouldContinue: () => !isStaleOp(serverName, token),
           },
         );
         if (authResult.kind === "redirect") {

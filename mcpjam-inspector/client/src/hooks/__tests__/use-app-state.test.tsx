@@ -922,4 +922,30 @@ describe("useAppState active organization recovery", () => {
       vi.useRealTimers();
     }
   });
+
+  it("clears the sign-in key when Back returns from the sign-in page in local mode", async () => {
+    localStorage.setItem("mcp-oauth-pending", "demo-server");
+    localStorage.setItem("mcp-oauth-return-hash", "#servers");
+
+    renderHook(() =>
+      useAppState({
+        currentUserId: null,
+        currentActorKey: "guest",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+    await waitFor(() => expect(useProjectStateMock).toHaveBeenCalled());
+
+    const pageShow = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    act(() => {
+      window.dispatchEvent(pageShow);
+    });
+
+    expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+    expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
+  });
 });

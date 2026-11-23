@@ -36,7 +36,6 @@ import {
 import { clearPendingQuickConnect } from "@/lib/quick-connect-pending";
 import { hasPendingOAuthCallback } from "@/lib/oauth-callback-inbox";
 import { useProjectQueries, shouldQueryProjectId } from "./useProjects";
-import { HOSTED_MODE } from "@/lib/config";
 import { OAUTH_AUTHORIZATION_CANCELLED_MESSAGE } from "@/lib/hosted-oauth-resume";
 import { connectOutcomeTracker } from "@/lib/connect-outcome-telemetry";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
@@ -528,8 +527,6 @@ export function useAppState({
   }, [oauthCallbackLocation, pendingDashboardOAuth]);
 
   useEffect(() => {
-    if (!HOSTED_MODE) return;
-
     const handlePageShow = (event: PageTransitionEvent) => {
       if (!isHistoryRestore(event) || hasHostedOAuthCallbackParams()) {
         return;

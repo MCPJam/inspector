@@ -98,6 +98,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
       <ServerConnectionCard
         server={server}
         onDisconnect={vi.fn()}
+        onCancelSignIn={vi.fn()}
         onReconnect={onReconnect}
       />
     );
@@ -127,6 +128,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
       <ServerConnectionCard
         server={server}
         onDisconnect={vi.fn()}
+        onCancelSignIn={vi.fn()}
         onReconnect={onReconnect}
       />
     );
@@ -153,6 +155,7 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         server={server}
         hostedServerId="hosted-server-1"
         onDisconnect={vi.fn()}
+        onCancelSignIn={vi.fn()}
         onReconnect={vi.fn().mockResolvedValue(undefined)}
       />
     );

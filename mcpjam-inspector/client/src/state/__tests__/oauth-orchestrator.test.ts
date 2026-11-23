@@ -91,6 +91,41 @@ describe("ensureAuthorizedForReconnect", () => {
     expect(result).toEqual({ kind: "redirect" });
   });
 
+  it("runs the browser flow under the caller's attempt", async () => {
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    const shouldContinue = vi.fn(() => true);
+
+    await ensureAuthorizedForReconnect(createServer({ oauthTokens: undefined }), {
+      allowInteractiveOAuthFlow: true,
+      shouldContinue,
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith(expect.anything(), {
+      shouldContinue,
+    });
+  });
+
+  it("neither clears nor starts anything for an attempt that already ended", async () => {
+    const beforeRedirect = vi.fn();
+
+    const result = await ensureAuthorizedForReconnect(
+      createServer({ oauthTokens: undefined }),
+      {
+        allowInteractiveOAuthFlow: true,
+        beforeRedirect,
+        shouldContinue: () => false,
+      },
+    );
+
+    expect(result).toEqual({
+      kind: "error",
+      error: "OAuth authorization was canceled.",
+    });
+    expect(clearOAuthDataMock).not.toHaveBeenCalled();
+    expect(beforeRedirect).not.toHaveBeenCalled();
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+  });
+
   it("uses fresh negotiated evidence for Auto without turning it into a pin", async () => {
     initiateOAuthMock.mockResolvedValue({ success: true });
 

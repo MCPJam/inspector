@@ -911,6 +911,7 @@ function ServersTabBody({
     projectServers,
     handleConnect,
     handleDisconnect,
+    handleRuntimeDisconnect,
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
@@ -936,6 +937,7 @@ function ServersTabBody({
       projectServers={projectServers}
       onConnect={handleConnect}
       onDisconnect={handleDisconnect}
+      onCancelSignIn={handleRuntimeDisconnect}
       onReconnect={handleReconnect}
       onUpdate={handleUpdate}
       onRemove={handleRemoveServer}

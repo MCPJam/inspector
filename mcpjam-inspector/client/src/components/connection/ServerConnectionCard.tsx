@@ -41,6 +41,7 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
+import { ServerCardCancelSignIn } from "./ServerCardSignInControls";
 import {
   SERVER_CARD_CLASS_NAME,
   SERVER_CARD_INTERACTIVE_CLASS_NAME,
@@ -103,6 +104,8 @@ function isContextMenuExemptTarget(target: EventTarget | null): boolean {
 interface ServerConnectionCardProps {
   server: ServerWithName;
   onDisconnect: (serverName: string) => void;
+  /** Ends a browser sign-in and clears what it left in storage. */
+  onCancelSignIn: (serverName: string) => void;
   onReconnect: (
     serverName: string,
     options?: {
@@ -147,6 +150,7 @@ interface ServerConnectionCardProps {
 export function ServerConnectionCard({
   server,
   onDisconnect,
+  onCancelSignIn,
   onReconnect,
   onRemove,
   serverTunnelUrl,
@@ -254,10 +258,11 @@ export function ServerConnectionCard({
     server.connectionStatus === "failed" && Boolean(server.lastError);
   const oauthFailureStep = getOAuthTraceFailureStep(server.lastOAuthTrace);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
+  const isSigningIn = server.connectionStatus === "oauth-flow";
   const isPendingConnection =
     Boolean(checkQueueState) ||
     server.connectionStatus === "connecting" ||
-    server.connectionStatus === "oauth-flow";
+    isSigningIn;
   const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
@@ -667,9 +672,16 @@ export function ServerConnectionCard({
                   </span>
                 </span>
 
+                {isSigningIn && (
+                  <ServerCardCancelSignIn
+                    serverName={server.name}
+                    onCancelSignIn={onCancelSignIn}
+                  />
+                )}
+
                 <Switch
                   data-server-card-context-menu-exempt
-                  checked={Boolean(checkQueueState) || server.connectionStatus === "connected"}
+                  checked={Boolean(checkQueueState) || server.connectionStatus === "connected" || isSigningIn}
                   onCheckedChange={(checked) => {
                     track("connection_switch_toggled", {
                       location: "server_connection_card",
@@ -682,7 +694,10 @@ export function ServerConnectionCard({
                     }
                     if (!checked) {
                       serverCheckQueue.cancelServer(checkProjectId, server.name);
-                      onDisconnect(server.name);
+                      // handleDisconnect would leave the sign-in key and
+                      // verifier behind.
+                      if (isSigningIn) onCancelSignIn(server.name);
+                      else onDisconnect(server.name);
                     } else {
                       serverCheckQueue.markManual(checkProjectId, server.name);
                       void handleReconnect(getSwitchReconnectOptions());
