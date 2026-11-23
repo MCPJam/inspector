@@ -5,7 +5,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomBytes } from "node:crypto";
-import { sessionBrowserTransport, webClientBrowserPolicy } from "../hosted-browser";
+import {
+  exportWebAccountProfile,
+  sessionBrowserTransport,
+  webClientBrowserPolicy,
+} from "../hosted-browser";
 import { createHostedWebClientEnvironment } from "../hosted-web-client-environment";
 import { createHostedWebClientEnvironmentFactory, restoreWebProfile } from "../hosted-web-client-runtime";
 import { sealWebProfile } from "../recovery/profile-cipher";
@@ -168,6 +172,45 @@ describe("the session transport", () => {
       "https://auth.openai.com",
       "https://signin.example",
     ]);
+  });
+});
+
+describe("saving a web account's profile", () => {
+  const statusWith = (features: string[]) =>
+    vi.fn(async () => ({ kind: "ok" as const, bootId: "boot-1", features }));
+  const archive = new Uint8Array([31, 139]);
+
+  it("leaves MCPJam's sign-in page out of the archive, and keeps the vendor's sites", async () => {
+    const exportProfile = vi.fn(async () => archive);
+    const saved = await exportWebAccountProfile({
+      client: { exportProfile, status: statusWith(["profile-export-exclusions"]) },
+      policy: webClientBrowserPolicy("chatgpt", ["https://signin.example"]),
+      vendor: "chatgpt",
+    });
+    expect(saved).toBe(archive);
+    expect(exportProfile).toHaveBeenCalledWith({ excludeOrigins: ["https://signin.example"] });
+  });
+
+  it("saves nothing from a browser that would keep the sign-in session", async () => {
+    const exportProfile = vi.fn(async () => archive);
+    await expect(
+      exportWebAccountProfile({
+        client: { exportProfile, status: statusWith(["element-text"]) },
+        policy: webClientBrowserPolicy("chatgpt", ["https://signin.example"]),
+        vendor: "chatgpt",
+      }),
+    ).rejects.toThrow("can't save the account yet");
+    expect(exportProfile).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing more of a browser with no other site to leave out", async () => {
+    const exportProfile = vi.fn(async () => archive);
+    await exportWebAccountProfile({
+      client: { exportProfile, status: statusWith([]) },
+      policy: webClientBrowserPolicy("claude", []),
+      vendor: "claude",
+    });
+    expect(exportProfile).toHaveBeenCalledWith({ excludeOrigins: [] });
   });
 });
 

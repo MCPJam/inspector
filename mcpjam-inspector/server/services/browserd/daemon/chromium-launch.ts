@@ -1023,7 +1023,25 @@ export type AnyContext = {
   close(): Promise<void>;
   /** Present on a real Playwright context; absent in unit-test fakes. */
   newCDPSession?(page: AnyPage): Promise<CdpLike>;
+  /** Present on a real Playwright context; absent in unit-test fakes. */
+  clearCookies?(options?: { domain?: string | RegExp }): Promise<void>;
 };
+
+/**
+ * Every cookie domain a browser sends to `host`'s pages: the host itself and
+ * each parent domain, with or without the leading dot of a domain cookie.
+ */
+export function cookieDomainsFor(host: string): RegExp {
+  const name = host.toLowerCase();
+  const labels = name.split(".");
+  // An address or a single-label host has no parent domain to set cookies on.
+  const domains =
+    labels.length < 2 || /^[\d.]+$/.test(name) || name.includes(":")
+      ? [name]
+      : labels.slice(0, -1).map((_, start) => labels.slice(start).join("."));
+  const escaped = domains.map((domain) => domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^\\.?(?:${escaped.join("|")})$`, "i");
+}
 
 /**
  * Adapt a persistent Playwright context to `DriverContext`. A persistent context
@@ -1097,6 +1115,23 @@ export function adaptContext(
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
+    },
+    async clearOriginData(origins) {
+      if (origins.length === 0) return;
+      if (!context.newCDPSession || !context.clearCookies) {
+        throw new Error("This browser can't clear a site's data.");
+      }
+      const page = context.pages()[0] ?? (await context.newPage());
+      const cdp = await context.newCDPSession(page);
+      for (const origin of origins) {
+        // Local and session storage, IndexedDB, Cache Storage, service
+        // workers: every store Chromium keeps for the origin, in its own
+        // formats, which an archive can't be filtered for afterwards.
+        await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+        // Cookies by domain as well: one set for a parent domain is sent to
+        // the origin too, and is not the origin's own storage.
+        await context.clearCookies({ domain: cookieDomainsFor(new URL(origin).hostname) });
+      }
     },
     async close() {
       // Ephemeral mode owns a Browser above the context, and closing only the

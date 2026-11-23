@@ -19,6 +19,7 @@ import {
   assertOnSites,
   pollUntil,
   type PageDriver,
+  type PageDriverErrorCode,
 } from "./page-driver.js";
 
 /** Sends one command; the caller supplies the session and its credentials. */
@@ -27,6 +28,17 @@ export type BrowserCommandTransport = (
 ) => Promise<BrowserAgentResult>;
 
 type Executed = Extract<BrowserAgentResult, { status: "executed" }>;
+
+/**
+ * The driver's code for a command that was refused or a read that failed. A
+ * person holding the browser gets its own code because the turn can wait for
+ * them; anything else is a plain failure, never an element that is absent.
+ */
+function failureCode(code: string | undefined): PageDriverErrorCode {
+  if (code === "origin_not_allowed") return "site_blocked";
+  if (code === "lease_held" || code === "lease_parked") return "person_has_browser";
+  return "failed";
+}
 
 export function createHostedPageDriver(
   send: BrowserCommandTransport,
@@ -41,9 +53,7 @@ export function createHostedPageDriver(
       );
     }
     if (result.status === "refused") {
-      const code =
-        result.refusal.code === "origin_not_allowed" ? "site_blocked" : "failed";
-      throw new PageDriverError(code, result.refusal.message);
+      throw new PageDriverError(failureCode(result.refusal.code), result.refusal.message);
     }
     return result;
   };
@@ -99,7 +109,7 @@ export function createHostedPageDriver(
       if (result.error?.code === "unknown_selector") return undefined;
       // Anything else is a read that failed, never an element that is absent.
       throw new PageDriverError(
-        result.error?.code === "origin_not_allowed" ? "site_blocked" : "failed",
+        failureCode(result.error?.code),
         result.error?.message ?? "The browser could not read the page.",
       );
     },

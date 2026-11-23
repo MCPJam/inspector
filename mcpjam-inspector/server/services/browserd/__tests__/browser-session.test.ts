@@ -2223,6 +2223,12 @@ describe("ensureBrowserSession — the activity wrapper forwards every capabilit
       new Uint8Array([7, 8, 9]),
     );
     expect(exportProfile).toHaveBeenCalledTimes(1);
+    // The origins to leave out travel too: dropped here, the archive would
+    // keep the very session the caller asked to clear.
+    await handle.client.exportProfile!({ excludeOrigins: ["https://signin.example"] });
+    expect(exportProfile).toHaveBeenLastCalledWith({
+      excludeOrigins: ["https://signin.example"],
+    });
   });
 
   it("does not invent a capability the client lacks", async () => {
