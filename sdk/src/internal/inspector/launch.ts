@@ -73,7 +73,11 @@ function quoteCmdArgument(arg: string): string {
   }
   // Backslashes before a quote are escapes to the argv parser, so a trailing
   // backslash would swallow the closing quote and the next argument.
-  return `"${arg.replace(/(\\+)$/, "$1$1")}"`;
+  let end = arg.length;
+  while (end > 0 && arg[end - 1] === "\\") {
+    end--;
+  }
+  return `"${arg}${arg.slice(end)}"`;
 }
 
 export async function startInspector(
