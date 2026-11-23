@@ -37,8 +37,9 @@ node mcpjam-inspector/scripts/inspector-driver.mjs sweep            # every surf
   message with a `reason`; never allowlist an error your change introduced.
 - A page that lands somewhere other than what was asked for fails with
   `wrong-route`: a surface must end on one of its own route patterns, a path
-  or URL on the same path. When a redirect is the intended behaviour, add an
-  allowlist rule of kind `wrong-route` that says why.
+  or URL on the same path, and on the same project when it names one. When
+  a redirect is the intended behaviour, add an allowlist rule of kind
+  `wrong-route` that says why.
 - `--base-url` and `--token` work in place of the two variables. The token
   is seeded into that origin's storage only, the way the access link signs a
   browser in.

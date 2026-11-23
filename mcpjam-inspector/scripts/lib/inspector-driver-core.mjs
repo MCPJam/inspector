@@ -210,7 +210,7 @@ export function findAllowRule(rules, issue) {
 
 const SECRET_PARAM = /token|secret|key|code|session|password|signature/i;
 
-/** Query values that may carry a credential never reach the report. */
+/** URL userinfo and credential-like query values never reach a report. */
 export function redactUrl(raw) {
   if (raw.startsWith("data:")) return `${raw.slice(0, 40)}...`;
   let url;
@@ -219,6 +219,8 @@ export function redactUrl(raw) {
   } catch {
     return raw;
   }
+  url.username = "";
+  url.password = "";
   for (const key of [...url.searchParams.keys()]) {
     if (SECRET_PARAM.test(key)) url.searchParams.set(key, "REDACTED");
   }
@@ -286,17 +288,25 @@ export function routeMismatch({ requestedUrl, finalUrl, surface }) {
     final.origin === requested.origin &&
     (surface
       ? surface.routePatterns.some((pattern) => matchesPattern(landed, pattern))
-      : landed === logicalPath(requested.pathname));
+      : requested.pathname.startsWith("/p/")
+        ? final.pathname === requested.pathname
+        : landed === logicalPath(requested.pathname));
   if (ok) return null;
   const wanted = surface
     ? `surface ${surface.id} (${surface.canonicalPath})`
     : redactUrl(requested.href);
+  // A same-origin landing is named by path alone, so no allowlist rule written
+  // as `landed on /...` can match a landing on another instance.
+  const redacted = new URL(redactUrl(final.href));
+  const landedOn =
+    final.origin === requested.origin
+      ? `${redacted.pathname}${redacted.search}${redacted.hash}`
+      : redacted.href;
   // The project id varies per account, so an allowlist rule can match the rest.
-  const landedOn = redactUrl(final.href).replace(
-    /^([a-z]+:\/\/[^/]+)\/p\/[^/?#]+/,
+  return `asked for ${wanted}, landed on ${landedOn.replace(
+    /^([a-z]+:\/\/[^/]+)?\/p\/[^/?#]+/,
     "$1/p/<id>",
-  );
-  return `asked for ${wanted}, landed on ${landedOn}`;
+  )}`;
 }
 
 /** One line, bounded, so a report stays greppable. */

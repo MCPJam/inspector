@@ -218,6 +218,24 @@ test("the shipped allowlist parses and every rule says why", () => {
   );
   const rules = parseAllowlist(JSON.parse(readFileSync(path, "utf8")), path);
   for (const rule of rules) assert.ok(rule.reason.length > 10);
+  const evals = {
+    id: "evals",
+    canonicalPath: "/evals",
+    routePatterns: ["evals"],
+  };
+  const redirect = (finalUrl) => ({
+    kind: "wrong-route",
+    text: routeMismatch({
+      requestedUrl: `${BASE}/evals`,
+      finalUrl,
+      surface: evals,
+    }),
+  });
+  assert.ok(findAllowRule(rules, redirect(`${BASE}/p/abc/evaluate`)));
+  assert.equal(
+    findAllowRule(rules, redirect("http://127.0.0.1:6275/p/abc/evaluate")),
+    undefined,
+  );
 });
 
 test("failing kinds are errors, failed requests and 4xx/5xx, never warnings", () => {
@@ -275,6 +293,10 @@ test("credentials in URLs are redacted", () => {
     "http://x/cb?code=REDACTED&state=1&access_token=REDACTED",
   );
   assert.equal(redactUrl(`http://x/#token=${TOKEN}`), "http://x/#REDACTED");
+  assert.equal(
+    redactUrl("https://alice:pw@x/tools?code=c"),
+    "https://x/tools?code=REDACTED",
+  );
   assert.equal(redactUrl("not a url"), "not a url");
 });
 
@@ -296,7 +318,7 @@ test("fill values and URL credentials stay out of steps and free text", () => {
   });
   assert.equal(
     redactText(
-      'locator.fill("hunter2") at http://x/a?session=s1, then ws://y/?key=k',
+      'locator.fill("hunter2") at http://x/a?session=s1, then ws://u:pw@y/?key=k',
       ["hunter2"],
     ),
     'locator.fill("[redacted]") at http://x/a?session=REDACTED, then ws://y/?key=REDACTED',
@@ -322,14 +344,25 @@ test("a page that lands off the requested route is named, a match is not", () =>
   assert.equal(at(`${BASE}/p/abc`, home, `${BASE}/home`), null);
   assert.equal(
     at(`${BASE}/p/abc/servers`, evals),
-    `asked for surface evals (/evals), landed on ${BASE}/p/<id>/servers`,
+    "asked for surface evals (/evals), landed on /p/<id>/servers",
   );
   assert.match(at(`${BASE}/p/abc/evals/suite`, evals), /landed on/);
-  assert.match(at("http://elsewhere/evals", evals), /landed on/);
+  assert.equal(
+    at("http://elsewhere/p/abc/evals", evals),
+    "asked for surface evals (/evals), landed on http://elsewhere/p/<id>/evals",
+  );
   assert.equal(at(`${BASE}/p/abc/tools`, null, `${BASE}/tools?x=1`), null);
   assert.equal(
     at(`${BASE}/sign-in`, null, `${BASE}/tools?code=c`),
-    `asked for ${BASE}/tools?code=REDACTED, landed on ${BASE}/sign-in`,
+    `asked for ${BASE}/tools?code=REDACTED, landed on /sign-in`,
+  );
+  assert.equal(
+    at(`${BASE}/p/abc/servers`, null, `${BASE}/p/abc/servers`),
+    null,
+  );
+  assert.equal(
+    at(`${BASE}/p/other/servers`, null, `${BASE}/p/abc/servers`),
+    `asked for ${BASE}/p/abc/servers, landed on /p/<id>/servers`,
   );
 });
 
