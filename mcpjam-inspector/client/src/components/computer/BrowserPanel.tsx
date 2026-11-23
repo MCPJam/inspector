@@ -437,7 +437,13 @@ export function BrowserPanel({
         setError(null);
         await refresh();
       } catch {
-        if (generation === panelGeneration.current) setError("Could not change control of the browser. Try again.");
+        if (generation === panelGeneration.current) {
+          setError(
+            action === "acquire"
+              ? "Couldn't take control of the browser. Select Take control to try again."
+              : "Couldn't hand the browser back to the agent. Select Hand back to the agent to try again.",
+          );
+        }
       } finally {
         if (generation === panelGeneration.current) setBusy(false);
       }
