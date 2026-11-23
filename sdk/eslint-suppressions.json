@@ -150,7 +150,7 @@
   },
   "src/conformance-outcome.ts": {
     "prettier/prettier": {
-      "count": 2
+      "count": 1
     }
   },
   "src/conformance-profile.ts": {
@@ -160,7 +160,7 @@
   },
   "src/conformance-reporting.ts": {
     "prettier/prettier": {
-      "count": 66
+      "count": 69
     }
   },
   "src/conformance-run-reporter.ts": {
@@ -824,7 +824,7 @@
   },
   "src/mcp-conformance/checks/protocol.ts": {
     "prettier/prettier": {
-      "count": 12
+      "count": 14
     }
   },
   "src/mcp-conformance/checks/resources.ts": {
@@ -844,7 +844,7 @@
   },
   "src/mcp-conformance/checks/transport.ts": {
     "prettier/prettier": {
-      "count": 98
+      "count": 100
     }
   },
   "src/mcp-conformance/checks/wire.ts": {
@@ -864,11 +864,16 @@
   },
   "src/mcp-conformance/raw-http.ts": {
     "prettier/prettier": {
-      "count": 3
+      "count": 4
     }
   },
   "src/mcp-conformance/raw-listen.ts": {
     "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "src/mcp-conformance/readiness.ts": {
+    "prettier/prettier": {
       "count": 1
     }
   },
@@ -1709,7 +1714,7 @@
   },
   "src/server-features/next-step.ts": {
     "prettier/prettier": {
-      "count": 7
+      "count": 9
     }
   },
   "src/server-features/probe-value-keys.ts": {
@@ -1769,6 +1774,11 @@
     }
   },
   "src/suite-file-run/types.ts": {
+    "prettier/prettier": {
+      "count": 1
+    }
+  },
+  "src/tasks-conformance/shapes.ts": {
     "prettier/prettier": {
       "count": 1
     }
@@ -2102,7 +2112,7 @@
       "count": 1
     },
     "prettier/prettier": {
-      "count": 18
+      "count": 20
     }
   },
   "tests/conformance-run.test.ts": {
@@ -2407,7 +2417,7 @@
   },
   "tests/mcp-conformance/checks.test.ts": {
     "prettier/prettier": {
-      "count": 179
+      "count": 244
     }
   },
   "tests/mcp-conformance/era.integration.test.ts": {
@@ -2422,7 +2432,7 @@
   },
   "tests/mcp-conformance/fixtures.integration.test.ts": {
     "prettier/prettier": {
-      "count": 33
+      "count": 40
     }
   },
   "tests/mcp-conformance/header-cases.integration.test.ts": {
@@ -2433,6 +2443,16 @@
   "tests/mcp-conformance/pagination-empty-cursor.test.ts": {
     "prettier/prettier": {
       "count": 2
+    }
+  },
+  "tests/mcp-conformance/readiness-tool-order.integration.test.ts": {
+    "prefer-const": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/readiness.unit.test.ts": {
+    "prettier/prettier": {
+      "count": 4
     }
   },
   "tests/mcp-conformance/retired-check-ids.unit.test.ts": {
@@ -2452,6 +2472,11 @@
   },
   "tests/mcp-conformance/server-discover-identity.test.ts": {
     "no-useless-assignment": {
+      "count": 1
+    }
+  },
+  "tests/mcp-conformance/unsupported-version-stop.unit.test.ts": {
+    "prettier/prettier": {
       "count": 1
     }
   },
@@ -3311,7 +3336,7 @@
   },
   "tests/tasks-conformance/scenarios.integration.test.ts": {
     "prettier/prettier": {
-      "count": 28
+      "count": 38
     }
   },
   "tests/tasks-ext-era-gate.test.ts": {
