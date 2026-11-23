@@ -102,8 +102,8 @@ async function unparsed(selectors: Iterable<string>): Promise<string[]> {
 describe("vendor page module selectors", { timeout: 60_000 }, () => {
   it("claude.ai: every selector from sign-in to the reply parses", async () => {
     // The connector is listed but not connected, so it is removed; adding it
-    // then meets the plan's limit until the other MCPJam connector, on the
-    // run's endpoint, goes too.
+    // then meets the plan's limit (read while waiting and again to check it)
+    // until the other MCPJam connector, on the run's endpoint, goes too.
     const driver = recordingDriver({
       url: "https://claude.ai/new",
       json: {
@@ -112,7 +112,7 @@ describe("vendor page module selectors", { timeout: 60_000 }, () => {
       },
       shown: (selector, reads) => {
         if (selector === "role=dialog") {
-          return reads === 0 ? "Upgrade to add more connectors" : "Add custom connector";
+          return reads <= 1 ? "Upgrade to add more connectors" : "Add custom connector";
         }
         if (selector.includes("name=/^View")) return "View MCPJam other 1a2b3c4d";
         if (selector.includes(`View ${CONNECTOR.name}`)) {

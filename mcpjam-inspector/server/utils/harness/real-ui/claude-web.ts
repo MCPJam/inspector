@@ -132,8 +132,10 @@ async function addConnector(
   await driver.click(`${PANE} >> ${role("button", "Add connector")}`);
   await driver.click(role("menuitem", "Add custom connector"));
   const dialog = "role=dialog";
-  const body = (await driver.readText(dialog)) ?? "";
-  if (PLAN_LIMIT.test(body) || /upgrade/i.test(body)) {
+  // The form, or a plan wall in its place. Another mention of upgrading is
+  // no wall: a plan wall here lets ensureConnector remove a connector.
+  await waitVisible(driver, dialog, ctx, "the add connector form", "connector");
+  if (PLAN_LIMIT.test((await driver.readText(dialog)) ?? "")) {
     throw new RealUiError({
       kind: "plan_limit",
       step: "connector",

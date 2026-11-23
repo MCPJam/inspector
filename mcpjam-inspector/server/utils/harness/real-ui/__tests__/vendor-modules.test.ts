@@ -317,6 +317,18 @@ describe("claude.ai", () => {
       await claudeWebPageModule.ensureConnector(driver, connector, ctx);
       expect(rows).toEqual([{ ...connector, connected: true }]);
     });
+
+    it("waits for the add dialog, and counts only a plan wall as the plan's limit", async () => {
+      const person = { name: "Drive", url: "https://drive.example/mcp", connected: true };
+      const late = claudeConnectors([person], (_rows, reads) => (reads === 0 ? undefined : PLAN_WALL));
+      await expect(claudeWebPageModule.ensureConnector(late, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit" },
+      });
+      const rows = [person];
+      const upsell = claudeConnectors(rows, () => `${ADD_FORM} Upgrade to Max for higher usage.`);
+      await claudeWebPageModule.ensureConnector(upsell, connector, ctx);
+      expect(rows.map((row) => row.name)).toEqual(["Drive", connector.name]);
+    });
   });
 });
 
