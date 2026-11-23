@@ -1,6 +1,15 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   createStaticConnectorResolver,
   type UpstreamTarget,
@@ -768,6 +777,13 @@ describe("forwarding endpoint: OAuth", () => {
   const verifyBearer = vi.fn(async (token: string) =>
     token === "good-token" ? { userId: "user_01" } : undefined,
   );
+  // Connector URLs are published on ORIGIN, whatever Host a request names.
+  beforeEach(() => {
+    vi.stubEnv("MCPJAM_INSPECTOR_PUBLIC_URL", ORIGIN);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   it("answers 401 with the protected-resource metadata URL, and serves that metadata", async () => {
     const { app } = setup({ auth: "oauth", deps: { verifyBearer } });
@@ -779,8 +795,9 @@ describe("forwarding endpoint: OAuth", () => {
     const invalid = await vendorClient(app, { path: PATH, token: "bad" }).initialize();
     expect(invalid.headers.get("www-authenticate")).toContain('error="invalid_token"');
 
+    // Both documents name the configured origin, not the Host asked for.
     const metadata = await app.request(
-      `http://inspector.example.test/.well-known/oauth-protected-resource${PATH}`,
+      `http://mcp.example.test/.well-known/oauth-protected-resource${PATH}`,
       { headers: { "x-forwarded-proto": "https" } },
     );
     expect(await metadata.json()).toEqual({
@@ -789,7 +806,9 @@ describe("forwarding endpoint: OAuth", () => {
       bearer_methods_supported: ["header"],
     });
     expect(headerNames(metadata)).toEqual(["content-type"]);
-    const root = await app.request(`${ORIGIN}/.well-known/oauth-protected-resource`);
+    const root = await app.request(
+      "https://mcp.example.test/.well-known/oauth-protected-resource",
+    );
     expect((await root.json()).resource).toBe(`${ORIGIN}/mcp`);
     expect(fixture.received).toHaveLength(0);
   });
@@ -810,5 +829,30 @@ describe("forwarding endpoint: OAuth", () => {
     }).initialize();
     expect(refused.status).toBe(403);
     expect(fixture.received).toHaveLength(0);
+  });
+
+  it("serves no OAuth connector without a usable public URL, and capability connectors still forward", async () => {
+    verifyBearer.mockClear();
+    vi.stubEnv("BASE_URL", "");
+    const status = async (app: Hono, token?: string) =>
+      (await vendorClient(app, { path: PATH, token }).initialize()).status;
+    // Unset, a bare host and a host with a port all give no http(s) origin.
+    for (const configured of [
+      "",
+      "inspector.example.test",
+      "inspector.example.test:443",
+    ]) {
+      vi.stubEnv("MCPJAM_INSPECTOR_PUBLIC_URL", configured);
+      const { app } = setup({ auth: "oauth", deps: { verifyBearer } });
+      expect(await status(app)).toBe(404);
+      expect(await status(app, "good-token")).toBe(404);
+      for (const metadata of [PATH, ""]) {
+        const url = `${ORIGIN}/.well-known/oauth-protected-resource${metadata}`;
+        expect((await app.request(url)).status).toBe(404);
+      }
+      expect(fixture.received).toHaveLength(0);
+    }
+    expect(verifyBearer).not.toHaveBeenCalled();
+    expect(await status(setup().app)).toBe(200);
   });
 });

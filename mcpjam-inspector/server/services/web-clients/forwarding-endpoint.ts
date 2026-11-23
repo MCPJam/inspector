@@ -28,6 +28,7 @@ import {
   nativeRequestHeaders,
   nativeResponseHeaders,
 } from "../../utils/harness/forwarding/native-wire.js";
+import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 import type {
@@ -157,15 +158,12 @@ function observe(action: () => void): void {
   }
 }
 
-/** The edge or tunnel terminates TLS, so only the scheme comes from a forwarded header. */
-function publicOrigin(request: Request): string {
-  const url = new URL(request.url);
-  const proto = request.headers
-    .get("x-forwarded-proto")
-    ?.split(",")[0]
-    ?.trim();
-  if (proto === "https" || proto === "http") url.protocol = `${proto}:`;
-  return url.origin;
+/** Connector URLs' origin as configured, never the Host header: the caller picks that. */
+function publicOrigin(): string | undefined {
+  const configured = configuredInspectorPublicUrl();
+  if (!configured || !URL.canParse(configured)) return undefined;
+  const url = new URL(configured);
+  return /^https?:$/.test(url.protocol) ? url.origin : undefined;
 }
 
 function bearerToken(header: string | undefined): string | undefined {
@@ -293,15 +291,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       webClientsEnabledFor(context.userId));
   const app = new Hono();
   const notFound = (c: Context) => c.json({ error: COPY.notFound }, 404);
-  const resourceOf = (origin: string, connectorId: string) =>
-    `${origin}${webConnectorPath(connectorId)}`;
 
   /** RFC 9728 protected-resource metadata, with MCPJam's AuthKit as the authorization server. */
-  const metadata = async (c: Context, resource: string) => {
+  const metadata = async (c: Context, path: string) => {
+    const origin = publicOrigin();
     const servers = await authorizationServers();
-    if (servers.length === 0) return notFound(c);
+    if (!origin || servers.length === 0) return notFound(c);
     return c.json({
-      resource,
+      resource: `${origin}${path}`,
       authorization_servers: servers,
       bearer_methods_supported: ["header"],
     });
@@ -316,14 +313,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     if (!connector) return notFound(c);
     if (connector.auth !== "oauth")
       return (await isEnabled(connector, {})) ? { connector } : notFound(c);
-    const origin = publicOrigin(c.req.raw);
+    const origin = publicOrigin();
+    // No token's audience can be checked without it, so no OAuth connector is served.
+    if (!origin) return notFound(c);
     const token = bearerToken(c.req.header("authorization"));
+    const resource = `${origin}${webConnectorPath(connectorId)}`;
     const verified = token
       ? await verifyBearer(token, {
-          audiences: [
-            resourceOf(origin, connectorId),
-            `${origin}${WEB_CONNECTOR_PATH_PREFIX}`,
-          ],
+          audiences: [resource, `${origin}${WEB_CONNECTOR_PATH_PREFIX}`],
         })
       : undefined;
     if (!verified) {
@@ -669,14 +666,14 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       const connectorId = c.req.param("connectorId");
       const connector = await deps.resolver.resolve(connectorId);
       if (connector?.auth !== "oauth") return notFound(c);
-      return metadata(c, resourceOf(publicOrigin(c.req.raw), connectorId));
+      return metadata(c, webConnectorPath(connectorId));
     },
   );
   // A client that misses the document above falls back to this one, which
   // can't name one connector: it names the `/mcp` family, and `admit`
   // accepts a token for the family on every connector its user may use.
   app.get("/.well-known/oauth-protected-resource", (c) =>
-    metadata(c, `${publicOrigin(c.req.raw)}${WEB_CONNECTOR_PATH_PREFIX}`),
+    metadata(c, WEB_CONNECTOR_PATH_PREFIX),
   );
 
   app.all(`${WEB_CONNECTOR_PATH_PREFIX}/:connectorId`, async (c) => {
