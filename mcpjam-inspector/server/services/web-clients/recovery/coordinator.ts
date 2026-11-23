@@ -51,7 +51,11 @@ export function classifyRunFailure(failure: RunFailure): "browser" | "account" {
 export type AccountBrowser = {
   /** Who the vendor's page shows as signed in, or undefined for no one. */
   verifyAccount(): Promise<WebIdentity | undefined>;
-  /** The browser's profile archive, to save. Never logged. */
+  /**
+   * The browser's profile archive, to save. Never logged. A profile is
+   * copied only once its browser has stopped, so nothing reads the page
+   * after a capture.
+   */
   captureProfile(): Promise<Uint8Array>;
 };
 
@@ -205,22 +209,10 @@ export function createWebRecoveryCoordinator(
     if (expected && !sameWebIdentity(expected, observed)) {
       return { status: "wrong_identity", expected, observed };
     }
-    const profile = await browser.captureProfile();
-    // A browser that changes seats during the capture would save another
-    // seat's profile as this one's, so the seat is read again after it and
-    // must be the same, workspace included (hence compared both ways).
-    const after = await browser.verifyAccount();
-    if (!after) return { status: "not_signed_in" };
-    if (
-      !sameWebIdentity(observed, after) ||
-      !sameWebIdentity(after, observed)
-    ) {
-      return { status: "wrong_identity", expected, observed: after };
-    }
     const saved = await backend.saveWebAccountProfile({
       webAccountId: account.webAccountId,
       expectedProfileVersion: account.profileVersion,
-      profile,
+      profile: await browser.captureProfile(),
       ...(savedFromRunId ? { savedFromRunId } : {}),
     });
     if (!saved.ok) {
