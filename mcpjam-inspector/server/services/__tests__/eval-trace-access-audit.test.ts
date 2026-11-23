@@ -8,6 +8,7 @@ vi.mock("../../utils/route-error-report.js", () => ({
 }));
 
 import { recordEvalIterationRead } from "../eval-trace-access-audit.js";
+import { isCallerAbort } from "../../utils/error-origin-capture.js";
 
 const audit = {
   convexAuthToken: "user-jwt",
@@ -39,6 +40,32 @@ describe("recordEvalIterationRead", () => {
     );
     expect(init.headers["x-inspector-service-token"]).toBe("svc-token");
     expect(init.headers.authorization).toBe("Bearer user-jwt");
+  });
+
+  it("reports its own deadline as ours, not as a caller leaving", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "svc-token");
+    vi.useFakeTimers();
+    // Like real `fetch`, reject with the signal's reason.
+    fetchMock.mockImplementation(
+      (_url: unknown, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () =>
+            reject(init.signal?.reason),
+          );
+        }),
+    );
+    try {
+      const pending = recordEvalIterationRead(audit);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(reportRouteFailureMock).toHaveBeenCalledTimes(1);
+    const [, error, options] = reportRouteFailureMock.mock.calls[0]!;
+    expect(options.hop).toBe("mcpjam_internal");
+    expect(isCallerAbort(error)).toBe(false);
   });
 
   it("skips quietly on a self-hosted server: hosted-only by design, not a failure", async () => {

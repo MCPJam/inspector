@@ -267,7 +267,11 @@ function createTranscriptionSignal(inboundSignal?: AbortSignal): {
   let didTimeOut = false;
   const timeout = setTimeout(() => {
     didTimeOut = true;
-    controller.abort();
+    // Our own deadline: a `TimeoutError` is still reported as ours, where a
+    // bare `abort()` would read as the caller leaving.
+    controller.abort(
+      new DOMException("Voice transcription timed out", "TimeoutError"),
+    );
   }, STT_TIMEOUT_MS);
   const abortFromInbound = () => controller.abort();
 

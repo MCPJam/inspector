@@ -108,8 +108,13 @@ export async function recordEvalIterationRead(
   // that is not one.
   if (!hasServiceCredential()) return;
   const controller = new AbortController();
+  // A `TimeoutError`, not a bare `abort()`: the reporter below treats an
+  // `AbortError` as a caller leaving and never pages on it.
   const timeout = setTimeout(
-    () => controller.abort(),
+    () =>
+      controller.abort(
+        new DOMException("Eval trace-read audit timed out", "TimeoutError"),
+      ),
     AUDIT_REQUEST_TIMEOUT_MS
   );
   try {

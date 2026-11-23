@@ -8,6 +8,27 @@ vi.mock("../../../utils/guest-spend-ip.js", async (importActual) => ({
   hashGuestSpendIp: vi.fn().mockResolvedValue("guest-ip-hash"),
 }));
 
+// The real reporter and logger run, so the deadline tests assert on what
+// reaches Sentry.
+const { captureExceptionMock } = vi.hoisted(() => ({
+  captureExceptionMock: vi.fn(),
+}));
+
+vi.mock("@sentry/node", () => ({
+  captureException: captureExceptionMock,
+  captureMessage: vi.fn(),
+  withScope: (callback: (scope: unknown) => unknown) => callback({}),
+}));
+
+/** A hung upstream that, like real `fetch`, rejects with the signal's reason. */
+function hangUntilAborted(_url: unknown, init?: RequestInit) {
+  return new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (!(signal instanceof AbortSignal)) return;
+    signal.addEventListener("abort", () => reject(signal.reason));
+  });
+}
+
 const ORIGINAL_ENV = {
   CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
   INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
@@ -54,6 +75,7 @@ describe("audio transcriptions route", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     if (ORIGINAL_ENV.CONVEX_HTTP_URL === undefined) {
       delete process.env.CONVEX_HTTP_URL;
     } else {
@@ -467,5 +489,51 @@ describe("audio transcriptions route", () => {
     await expect(response.json()).resolves.toEqual({
       error: "Voice transcription timed out. Try a shorter recording.",
     });
+  });
+
+  it("reports our own transcription deadline to Sentry", async () => {
+    vi.stubEnv("DO_NOT_TRACK", "");
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.useFakeTimers();
+    vi.mocked(fetch).mockImplementation(hangUntilAborted);
+
+    const responsePromise = app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        input_audio: { data: "UklGRiQA", format: "webm" },
+      }),
+    });
+    await vi.advanceTimersByTimeAsync(55_000);
+
+    expect((await responsePromise).status).toBe(504);
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report a transcription its caller cancelled", async () => {
+    vi.stubEnv("DO_NOT_TRACK", "");
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+    vi.mocked(fetch).mockImplementation(hangUntilAborted);
+    const caller = new AbortController();
+
+    const responsePromise = app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      signal: caller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
+      body: JSON.stringify({
+        input_audio: { data: "UklGRiQA", format: "webm" },
+      }),
+    });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    caller.abort();
+
+    expect((await responsePromise).status).toBe(502);
+    expect(captureExceptionMock).not.toHaveBeenCalled();
   });
 });
