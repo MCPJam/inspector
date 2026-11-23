@@ -1,8 +1,10 @@
 /**
  * Recovery's hosted setup: it acts as the run's person on the backend, reads
  * the ledger there, and hands an account back only from the sign-in browser
- * that same person opened for that same account.
+ * that same person opened for that same account. A hosted Inspector turns it
+ * on at startup only when it has the backend service.
  */
+import { Hono } from "hono";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../../utils/logger.js", () => ({
@@ -16,8 +18,14 @@ import {
   forgetSignInBrowsers,
   keepSignInBrowser,
 } from "../../sign-in-browsers.js";
+import { mountWebClientRuntime } from "../../runtime-mount.js";
+import { setWebClientEnvironment } from "../../web-client-environment.js";
 import { createHostedWebRecovery } from "../hosted-recovery.js";
-import { SignInBrowserAccountMismatchError } from "../turn-recovery.js";
+import {
+  setWebRecovery,
+  SignInBrowserAccountMismatchError,
+  webRecovery,
+} from "../turn-recovery.js";
 
 const ADMIN = { actorExternalId: "user_admin" };
 const OTHER = { actorExternalId: "user_other" };
@@ -128,5 +136,27 @@ describe("hosted recovery", () => {
         JSON.stringify(handback),
       ).toBeUndefined();
     }
+  });
+});
+
+describe("a hosted Inspector's startup", () => {
+  afterEach(() => {
+    setWebRecovery(undefined);
+    setWebClientEnvironment(undefined);
+    vi.unstubAllEnvs();
+  });
+
+  it("turns recovery on with the backend service", () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "fixture-service-token");
+    vi.stubEnv("CONVEX_URL", "https://fixture-deployment-123.convex.cloud");
+    mountWebClientRuntime(new Hono(), { hosted: true });
+    expect(webRecovery()?.handbackEnvironment).toBeTypeOf("function");
+  });
+
+  it("leaves recovery off without the backend service", () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    vi.stubEnv("CONVEX_URL", "");
+    mountWebClientRuntime(new Hono(), { hosted: true });
+    expect(webRecovery()).toBeUndefined();
   });
 });
