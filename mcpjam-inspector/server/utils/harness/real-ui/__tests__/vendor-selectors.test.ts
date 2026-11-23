@@ -40,6 +40,7 @@ function recordingDriver(options: {
     selectors,
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     async navigate(next) {
       url = next;
     },

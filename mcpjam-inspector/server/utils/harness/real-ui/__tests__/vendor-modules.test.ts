@@ -25,6 +25,7 @@ function cannedDriver(options: {
   return {
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     async navigate(next) {
       url = next;
     },
@@ -350,6 +351,37 @@ describe("the hosted driver", () => {
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, undefined)).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("refuses a read only Playwright's selector engine resolves, and sends nothing for it", async () => {
+    const send = vi.fn(async () => executed({ a11y: "button" }));
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    expect(driver.playwrightSelectors).toBe(false);
+    for (const selector of [
+      'role=button[name="Add connector"]',
+      '.dframe-pane-primary >> [placeholder="Search"]',
+      "text=Step 2 of 2",
+      ':is(dialog, [role="dialog"]):has-text("MCPJam")',
+    ]) {
+      await expect(driver.readText(selector)).rejects.toMatchObject({ code: "unsupported" });
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(await driver.readText('input[type="password"], [data-testid="chat-input"]')).toBe("button");
+  });
+
+  it("keeps the claude.ai and chatgpt.com modules off it until its reads take their selectors", async () => {
+    const send = vi.fn(async () => executed({ url: "https://claude.ai/new", a11y: "textbox" }));
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    for (const [module, sites] of [
+      [claudeWebPageModule, WEB_CLIENT_SITES.claude],
+      [chatgptWebPageModule, WEB_CLIENT_SITES.chatgpt],
+    ] as const) {
+      const driver = createHostedPageDriver(send, { sites });
+      await expect(module.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
+        failure: { kind: "driver", step: "connector" },
+      });
+    }
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {

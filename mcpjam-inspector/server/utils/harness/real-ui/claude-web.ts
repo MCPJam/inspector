@@ -24,6 +24,7 @@ import {
   cssString,
   needsSignIn,
   pageChanged,
+  requirePlaywrightSelectors,
   waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
@@ -179,6 +180,7 @@ export const claudeWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
+    requirePlaywrightSelectors(driver, "connector", "claude.ai");
     const origin = URL.canParse(connector.url) ? new URL(connector.url).origin : "";
     if (!origin || !isMcpjamName(connector.name) || !isForwardingEndpoint(connector.url, origin)) {
       throw new RealUiError({

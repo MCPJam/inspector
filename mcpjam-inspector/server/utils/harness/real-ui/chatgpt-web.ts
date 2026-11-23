@@ -24,6 +24,7 @@ import {
   cssString,
   needsSignIn,
   pageChanged,
+  requirePlaywrightSelectors,
   waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
@@ -99,6 +100,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
+    requirePlaywrightSelectors(driver, "connector", "chatgpt.com");
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
     await driver.click(PLUS);

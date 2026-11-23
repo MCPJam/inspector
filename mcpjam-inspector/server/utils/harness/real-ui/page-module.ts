@@ -238,6 +238,19 @@ export async function waitVisibleUnlessBlocked(
 }
 
 /**
+ * Stops a module written in Playwright's selectors on a driver whose reads
+ * take CSS only, before its first such read: each one there would refuse.
+ */
+export function requirePlaywrightSelectors(driver: PageDriver, step: RealUiStep, site: string): void {
+  if (driver.playwrightSelectors) return;
+  throw new RealUiError({
+    kind: "driver",
+    step,
+    message: `MCPJam can't use ${site} in the hosted browser yet. Run this client from the local app.`,
+  });
+}
+
+/**
  * Answers the app's approval prompt for one of the run's own connectors: the
  * first of `answers` in a dialog that names one. Always allow is granted to
  * the run's connectors only (decision E3), so an approval prompt anywhere

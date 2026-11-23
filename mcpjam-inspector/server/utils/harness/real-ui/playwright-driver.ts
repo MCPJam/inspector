@@ -89,6 +89,7 @@ export async function createPlaywrightDriver(
   return {
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     async navigate(url) {
       assertOnSites(url, sites);
       const before = departures;
