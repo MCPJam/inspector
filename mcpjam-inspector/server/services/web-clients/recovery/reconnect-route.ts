@@ -70,6 +70,13 @@ export function createWebReconnectRoutes(
     if (typeof userId !== "string" || !userId || c.get("guestId")) {
       return c.json({ error: "Sign in to hand this account back." }, 401);
     }
+    // With the flag off the route answers as if it weren't there, whatever the body.
+    if (!deps || !(await deps.enabledFor(userId))) {
+      return c.json(
+        { error: "Web accounts aren't available on this server." },
+        404,
+      );
+    }
     let raw: unknown;
     try {
       raw = await c.req.json();
@@ -85,12 +92,6 @@ export function createWebReconnectRoutes(
       );
     }
     const actor = { actorExternalId: userId };
-    if (!deps || !(await deps.enabledFor(userId))) {
-      return c.json(
-        { error: "Web accounts aren't available on this server." },
-        404,
-      );
-    }
     const environment = await deps.environmentFor({
       actor,
       projectId: body.data.projectId,

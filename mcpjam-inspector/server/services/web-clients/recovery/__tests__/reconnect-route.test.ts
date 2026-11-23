@@ -270,6 +270,16 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     expect((await post(OPEN, { "x-test-user": "user_flag_off" })).status).toBe(
       404,
     );
+    // With the flag off, the route isn't there for any body.
+    expect(
+      (
+        await post(
+          OPEN,
+          { "x-test-user": "user_flag_off" },
+          { project: "project-1" },
+        )
+      ).status,
+    ).toBe(404);
     expect((await post(OPEN, undefined, { project: "project-1" })).status).toBe(
       400,
     );
