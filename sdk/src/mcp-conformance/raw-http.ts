@@ -1,4 +1,5 @@
 import { withAbortSignalFetch } from "../abort-signal.js";
+import { needsSetupDetails } from "../conformance-input.js";
 /**
  * The single raw-HTTP harness the conformance raw checks drive (Phase 7 §15.5).
  *
@@ -28,7 +29,11 @@ import {
   LOG_LEVEL_META_KEY,
   PROTOCOL_VERSION_META_KEY,
 } from "@modelcontextprotocol/client";
-import { encodeMcpHeaderValue } from "../mcp-client-manager/mcp-header-mirror.js";
+import {
+  buildMcpParamHeaders,
+  encodeMcpHeaderValue,
+  scanXMcpHeaderDeclarations,
+} from "../mcp-client-manager/mcp-header-mirror.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
@@ -326,6 +331,85 @@ export function modernHeaders(options: {
   };
 }
 
+/** JSON-RPC code of a `HeaderMismatch` refusal, sent with HTTP 400. */
+const HEADER_MISMATCH_CODE = -32020;
+
+/**
+ * The `Mcp-Param-*` headers a conforming client sends with a `tools/call`:
+ * one for each argument the tool's `inputSchema` marks with `x-mcp-header`
+ * and the call carries a value for. "Conforming clients MUST mirror the
+ * designated parameter values into HTTP headers."
+ *
+ * None when the schema is unknown, declares nothing, or declares it in a way
+ * the spec does not allow (there is then no valid header to build).
+ */
+export function mcpParamHeaders(
+  inputSchema: unknown,
+  args: unknown
+): Record<string, string> {
+  if (inputSchema === undefined) return {};
+  const scan = scanXMcpHeaderDeclarations(inputSchema);
+  return scan.valid ? buildMcpParamHeaders(scan.declarations, args) : {};
+}
+
+/** Whether the server refused the request's headers: HTTP 400, `-32020`. */
+export function isHeaderMismatch(result: RawHttpResult): boolean {
+  return (
+    result.status === 400 &&
+    jsonRpcError(result)?.code === HEADER_MISMATCH_CODE
+  );
+}
+
+/**
+ * Send a normal `tools/call` the way a conforming client does: with the
+ * `Mcp-Param-*` headers the tool asks for, and one more try when the server
+ * still refuses them. "If the server rejects a request with a HeaderMismatch
+ * error ... the client SHOULD call `tools/list` to check for changes to the
+ * tool's `inputSchema`, then retry the original request with the appropriate
+ * headers."
+ *
+ * For the calls a check makes to get a result it can grade. A check that sends
+ * a bad header on purpose builds its own request and does not come through
+ * here.
+ */
+export async function mirroredToolCall(options: {
+  /** The arguments in the request body. */
+  args: unknown;
+  /** The tool's `inputSchema` as the run last saw it, if it saw it. */
+  inputSchema: () => Promise<unknown>;
+  /** Lists the tools again and returns the tool's `inputSchema` now. */
+  refreshInputSchema: () => Promise<unknown>;
+  /** Sends the call with these `Mcp-Param-*` headers. `attempt` is 0, then 1. */
+  send: (
+    paramHeaders: Record<string, string>,
+    attempt: 0 | 1
+  ) => Promise<RawHttpResult>;
+}): Promise<RawHttpResult> {
+  let known: unknown;
+  try {
+    known = await options.inputSchema();
+  } catch {
+    // The listing could not be read, so the schema is unknown. The call still
+    // goes out, with no `Mcp-Param-*` headers, as it would for an unlisted tool.
+    known = undefined;
+  }
+  const first = await options.send(mcpParamHeaders(known, options.args), 0);
+  if (!isHeaderMismatch(first)) {
+    return first;
+  }
+
+  let refreshed: unknown;
+  try {
+    refreshed = await options.refreshInputSchema();
+  } catch {
+    // The listing could not be read again, so there is nothing new to retry
+    // with. The refusal stands as the answer.
+    return first;
+  }
+  if (refreshed === undefined) return first;
+  return await options.send(mcpParamHeaders(refreshed, options.args), 1);
+}
+
 /**
  * Headers for a 2025-era raw probe. The session id is a plain header there,
  * so — unlike the modern `Mcp-*` family — a probe can carry or omit it freely.
@@ -351,16 +435,30 @@ export function legacyHeaders(options: {
  * session id (absent for a stateless legacy server — that is a legitimate
  * outcome, not an error).
  *
- * `unsupportedVersion` is set when the server answered with a protocol version
- * MCPJam does not support. "If the client does not support the version in the
- * server's response, it SHOULD disconnect", so a caller that sees it sends
- * nothing more on that session.
+ * `negotiatedVersion` is the version the server answered with, when MCPJam
+ * supports it. "The protocol version sent by the client SHOULD be the one
+ * negotiated during initialization", so a caller sends it in
+ * `MCP-Protocol-Version` on the requests that follow, the closing DELETE
+ * included.
+ *
+ * `versionStop` is set whenever the answered version is not the one the run
+ * uses. A server answers with another version only when it does not support
+ * the one it was asked for ("If the server supports the requested protocol
+ * version, it MUST respond with the same version"). A version MCPJam does not
+ * support is one case: "If the client does not support the version in the
+ * server's response, it SHOULD disconnect". A version MCPJam does support but
+ * the run does not use is the other: a run is about one version, so it stops
+ * instead of quietly grading another. Either way a caller that sees it sends
+ * nothing more on that session but the closing DELETE.
  */
 export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
   result: RawHttpResult;
   sessionId?: string;
-  unsupportedVersion?: string;
+  negotiatedVersion?: string;
+  versionStop?: LegacyVersionStop;
 }> {
+  const requestedVersion =
+    ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
   const result = await rawRequest(ctx, {
     headers: legacyHeaders({}),
     body: {
@@ -368,8 +466,7 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
       id: 1,
       method: "initialize",
       params: {
-        protocolVersion:
-          ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+        protocolVersion: requestedVersion,
         capabilities: {},
         clientInfo: { ...CONFORMANCE_CLIENT_INFO },
       },
@@ -377,14 +474,63 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
   });
 
   const answeredVersion = jsonRpcResult(result)?.protocolVersion;
+  if (typeof answeredVersion !== "string") {
+    return { result, sessionId: result.headers["mcp-session-id"] };
+  }
+  const supported = isKnownProtocolVersion(answeredVersion);
   return {
     result,
     sessionId: result.headers["mcp-session-id"],
-    ...(typeof answeredVersion === "string" &&
-    !isKnownProtocolVersion(answeredVersion)
-      ? { unsupportedVersion: answeredVersion }
+    ...(supported ? { negotiatedVersion: answeredVersion } : {}),
+    ...(answeredVersion !== requestedVersion
+      ? {
+          versionStop: {
+            requestedVersion,
+            answeredVersion,
+            message: supported
+              ? differentVersionStop(requestedVersion, answeredVersion)
+              : unsupportedVersionStop(answeredVersion),
+          },
+        }
       : {}),
   };
+}
+
+/** Why a raw legacy check stopped right after `initialize`. */
+export interface LegacyVersionStop {
+  /** The version the run uses, sent in `initialize`. */
+  requestedVersion: string;
+  /** The version the server answered with. */
+  answeredVersion: string;
+  /** The reason, in plain words, for the check's "could not run". */
+  message: string;
+}
+
+/**
+ * `details` for a check that stopped on a {@link LegacyVersionStop}.
+ *
+ * When the server answered with a version MCPJam speaks, the run simply asked
+ * for one the server does not support, which the spec lets it do. That is the
+ * caller's choice of version, not a fault in the server, so the check is
+ * marked as a setup gap: it costs no points and the run stays incomplete, like
+ * a missing login. A version MCPJam does not speak is not something the caller
+ * can pick around, so that stop keeps the plain "could not run".
+ */
+export function versionStopDetails(
+  stop: LegacyVersionStop
+): Record<string, unknown> {
+  return {
+    requestedProtocolVersion: stop.requestedVersion,
+    negotiatedProtocolVersion: stop.answeredVersion,
+    ...(isKnownProtocolVersion(stop.answeredVersion)
+      ? needsSetupDetails("protocolVersion", stop.message)
+      : {}),
+  };
+}
+
+/** The server answered with a version MCPJam speaks, but not the run's. */
+function differentVersionStop(requested: string, answered: string): string {
+  return `The server does not support protocol version ${requested}, which this run uses: it answered initialize with ${answered}. This check sent nothing more and could not run. Run it on ${answered} instead.`;
 }
 
 /** Why a raw legacy check stopped after `initialize`, in plain words. */

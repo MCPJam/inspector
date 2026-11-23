@@ -1,5 +1,36 @@
 # `@mcpjam/sdk` changelog
 
+## 10.13.0
+
+### Minor Changes
+
+- [#7987](https://github.com/MCPJam/inspector/pull/7987) [`159a5a6`](https://github.com/MCPJam/inspector/commit/159a5a6765a5cd0e4e42075a4333ed14eecaf005) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add `MCPClientManager.ensureManagedClient(serverId)`, which waits for a connection the manager queued at construction before handing over the server's client. Reading `getManagedClient` right after building a manager with servers can find the connect still running.
+
+### Patch Changes
+
+- [#8039](https://github.com/MCPJam/inspector/pull/8039) [`f310b2a`](https://github.com/MCPJam/inspector/commit/f310b2a6cc59680d5c24ff2f195a353318e121dd) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - MCPJam's client now refuses to call a tool as a task on a 2025-11-25 server that did not declare `tasks.requests.tools.call`, instead of sending a call the spec forbids. It throws `MCPTasksWireError`, which the hosted Inspector already reports as a 400 `TASKS_UNSUPPORTED`.
+
+- [#8043](https://github.com/MCPJam/inspector/pull/8043) [`92ec2f3`](https://github.com/MCPJam/inspector/commit/92ec2f34a6d96ad595dc9561bbab5fd845a51a77) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - MCPJam's client now refuses to call a tool as a task on a 2025-11-25 server when the tool has no `taskSupport`, or has it set to `forbidden`, instead of sending a call the spec forbids. It throws `MCPTasksWireError`, and `mcpjam tools call --task` reports it as `TASKS_UNSUPPORTED`.
+
+- [#8033](https://github.com/MCPJam/inspector/pull/8033) [`27f1868`](https://github.com/MCPJam/inspector/commit/27f1868fa980b58f40195692774b06840d2675ce) Thanks [@ZeHuari](https://github.com/ZeHuari)! - Two conformance results that could never go wrong now report what they actually saw.
+  
+  - The tool-order advice asks the server for its tool list a second time instead of reading the cached copy. On a 2026-07-28 server that sends `ttlMs`, it used to compare the list with itself and never warned. It also stays silent when a tool was added or removed between the two listings: the spec asks for a stable order only while the set of tools is unchanged.
+  - Tool Output Schema Honored no longer passes a result whose output schema is written in a JSON Schema dialect other than 2020-12 or draft-07. Those results were never validated. The check now shows as "Not run" and names the tool and the dialect.
+
+- [#8070](https://github.com/MCPJam/inspector/pull/8070) [`ec1d83a`](https://github.com/MCPJam/inspector/commit/ec1d83ab20fe099feaf35ff910d7f3f70115a79e) Thanks [@ZeHuari](https://github.com/ZeHuari)! - The 2026-07-28 protocol checks that send their own named request now write `Mcp-Name` the way a client must: plain ASCII as it is, and Base64-encoded when the name is not plain ASCII or looks like the `=?base64?…?=` marker. A server with such a tool, resource or prompt used to refuse the request, and the check behind it could not run.
+
+- [#8087](https://github.com/MCPJam/inspector/pull/8087) [`075294c`](https://github.com/MCPJam/inspector/commit/075294cfee570ea7381cbdcb0e9be8e9df66ee72) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Two hand-built requests in the 2025-era protocol checks now carry the `MCP-Protocol-Version` header, which 2025-06-18 and later require on every request after `initialize`: the fake-method request that Invalid Method Error sends, and the DELETE that closes the session after the transport checks. A server that checks this header strictly could refuse those requests and fail Invalid Method Error for it.
+
+- [#8069](https://github.com/MCPJam/inspector/pull/8069) [`b235a4e`](https://github.com/MCPJam/inspector/commit/b235a4ea65734df075400927bf2201cbd35d8f5a) Thanks [@ZeHuari](https://github.com/ZeHuari)! - The protocol checks that open their own 2025-era session stop when the server answers `initialize` with a protocol version MCPJam does not support. They used to keep sending requests on that session and could report the checks as passed. Invalid Method Error, Multiple POST Streams, Functional SSE Streams, Notification POST Accepted and GET Stream Or 405 now show "could not run" with the version the server picked.
+
+- [#8073](https://github.com/MCPJam/inspector/pull/8073) [`bfbdc71`](https://github.com/MCPJam/inspector/commit/bfbdc718115a29465d7af1db807b8520735ef840) Thanks [@ZeHuari](https://github.com/ZeHuari)! - The 2026-07-28 protocol checks that call a tool by hand now send the `Mcp-Param-*` headers the tool asks for with `x-mcp-header`, and retry once after a fresh `tools/list` when the server answers `-32020`. A probe tool with such an argument used to be refused on every call: Undeclared Client Capability then failed the server for it, and Tool Output Schema Honored, Logs Require A Log Level and the log-level advice could not run.
+
+- [#8038](https://github.com/MCPJam/inspector/pull/8038) [`730b122`](https://github.com/MCPJam/inspector/commit/730b122632df63605a2acc0aac0df1547e4c676b) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Tasks checks no longer call a tool as a task on a 2025-11-25 server that did not declare `tasks.requests.tools.call`. The spec forbids that call, whatever the tool's own `taskSupport` says. The three checks that need a task (Result Type Discipline, TTL And Poll Interval Shapes, and Completed Task Carries Its Result) now show as not applicable instead of failing or not running.
+
+- [#8041](https://github.com/MCPJam/inspector/pull/8041) [`a994412`](https://github.com/MCPJam/inspector/commit/a994412a8d49c0ab4268522b1575374c6b7d0b40) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Tasks checks no longer call the picked tool as a task on a 2025-11-25 server when that tool has no `taskSupport`, or has it set to `forbidden`. The spec forbids that call. The three checks that need a task now show as could not run, and the message names the tools that can run as a task.
+
+- [#8046](https://github.com/MCPJam/inspector/pull/8046) [`cc679b7`](https://github.com/MCPJam/inspector/commit/cc679b7edeaaa4342fe6537a6bcccc9ab38ac1a1) Thanks [@ZeHuari](https://github.com/ZeHuari)! - The tool-order advice now runs only on 2026-07-28. The deterministic-order SHOULD is new in that revision, so a run on 2025-11-25 or older no longer shows it or lists the tools a second time.
+
 ## 10.12.0
 
 ### Minor Changes
