@@ -50,7 +50,6 @@
             "icon": "rocket",
             "pages": [
               "index",
-              "getting-started",
               "installation",
               "hosted/overview",
               "inspector/connecting-servers",
@@ -299,6 +298,10 @@
     "dark": "/logo/mcp_jam_dark.png"
   },
   "redirects": [
+    {
+      "source": "/getting-started",
+      "destination": "/"
+    },
     {
       "source": "/inspector/evals",
       "destination": "/evaluate/overview"
@@ -776,7 +779,7 @@
     "404": {
       "redirect": false,
       "title": "Lost in the inspector?",
-      "description": "Try the [getting started guide](/getting-started), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
+      "description": "Try the [docs home](/), the [CLI overview](/cli/overview), or the [SDK reference](/sdk/index). Related pages are listed below."
     }
   }
 }
