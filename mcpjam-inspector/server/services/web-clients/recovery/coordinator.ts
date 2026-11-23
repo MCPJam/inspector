@@ -147,7 +147,7 @@ const HANDBACK_REFUSALS: Partial<
 };
 
 type VerifiedSession =
-  | { status: "saved"; identity: WebIdentity }
+  | { status: "saved"; identity: WebIdentity; profileVersion: number }
   | { status: "not_signed_in" }
   | { status: "wrong_identity"; expected?: WebIdentity; observed: WebIdentity };
 
@@ -156,8 +156,11 @@ export function createWebRecoveryCoordinator(
 ): WebRecoveryCoordinator {
   const { backend } = deps;
   const signInMethodFor = deps.signInMethodFor ?? (() => NO_SIGN_IN_METHOD);
-  /** One sign-in attempt per account at a time in this process. */
-  const attempts = new Map<string, Promise<boolean>>();
+  /**
+   * One sign-in attempt per account at a time in this process, with the
+   * profile version it saved, or undefined when it saved none.
+   */
+  const attempts = new Map<string, Promise<number | undefined>>();
 
   async function findAccount(projectId: string, webAccountId: string) {
     const accounts = await backend.listWebAccounts({ projectId });
@@ -213,20 +216,24 @@ export function createWebRecoveryCoordinator(
         webAccountId: account.webAccountId,
       });
     }
-    return { status: "saved", identity: observed };
+    return {
+      status: "saved",
+      identity: observed,
+      profileVersion: saved.profileVersion,
+    };
   }
 
   async function attemptSignIn(
     method: SignInMethod,
     report: AccountFailureReport & { reason: SignInReason },
     account: WebAccountRecord,
-  ): Promise<boolean> {
+  ): Promise<number | undefined> {
     const { projectId, webAccountId, reason, browser, runId } = report;
     try {
       const context = { projectId, webAccountId, reason, browser };
-      if ((await method.signIn(context)) !== "signed_in") return false;
+      if ((await method.signIn(context)) !== "signed_in") return undefined;
       const session = await saveVerifiedSession(account, browser, runId);
-      if (session.status === "saved") return true;
+      if (session.status === "saved") return session.profileVersion;
       logger.warn("[web-recovery] The sign-in method's session was refused", {
         method: method.id,
         outcome: session.status,
@@ -236,7 +243,7 @@ export function createWebRecoveryCoordinator(
         method: method.id,
       });
     }
-    return false;
+    return undefined;
   }
 
   /** Whether this run, another run's browser, or no one signed in. */
@@ -251,12 +258,20 @@ export function createWebRecoveryCoordinator(
     });
     if (method.id === NO_SIGN_IN_METHOD.id) return "needs_person";
     const running = attempts.get(webAccountId);
-    if (running) return (await running) ? "elsewhere" : "needs_person";
+    if (running) {
+      const saved = await running;
+      if (saved === undefined) return "needs_person";
+      // A run reloads only a profile newer than the one it failed on. When
+      // the attempt saved none newer, the run makes its own attempt.
+      const restored = report.restoredProfileVersion;
+      if (restored === undefined || saved > restored) return "elsewhere";
+      return signInWithoutPerson(report, account);
+    }
     const attempt = attemptSignIn(method, report, account).finally(() =>
       attempts.delete(webAccountId),
     );
     attempts.set(webAccountId, attempt);
-    return (await attempt) ? "here" : "needs_person";
+    return (await attempt) === undefined ? "needs_person" : "here";
   }
 
   async function reportNeedsSignIn(

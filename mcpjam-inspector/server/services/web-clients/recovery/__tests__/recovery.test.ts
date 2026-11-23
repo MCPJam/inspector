@@ -915,6 +915,56 @@ describe("sign-in method", () => {
     expect(world.upstream.sort()).toEqual(["run-1", "run-2"]);
   });
 
+  it("signs a run in again, not reload, when the shared attempt saved the profile it failed on", async () => {
+    const method = {
+      id: "test-inbox",
+      signIn: vi.fn(async () => "signed_in" as const),
+    };
+    const world = createWorld(method);
+    // The first attempt's save lands, but its answer is slow.
+    let answerSave = () => {};
+    const slowAnswer = new Promise<void>((resolve) => {
+      answerSave = resolve;
+    });
+    const slowSave: WebReconnectBackend = {
+      ...world.backend,
+      saveWebAccountProfile: async (args) => {
+        const saved = await world.backend.saveWebAccountProfile(args);
+        if (saved.profileVersion === 2) await slowAnswer;
+        return saved;
+      },
+    };
+    const coordinator = startProcess(world, slowSave);
+    const report = (runId: string, restoredProfileVersion: number) =>
+      coordinator.reportNeedsSignIn({
+        projectId: PROJECT,
+        webAccountId: ACCOUNT,
+        runId,
+        pendingStep: { stepId: "step-1", startedAt: new Date().toISOString() },
+        reason: "signed_out",
+        browser: browserSignedInAs(SEAT),
+        restoredProfileVersion,
+      });
+
+    const first = report("run-1", 1);
+    await vi.waitFor(async () =>
+      expect((await accountOf(world)).profileVersion).toBe(2),
+    );
+    // run-2 restored that new profile and was signed out on it anyway, then
+    // found the first attempt still running.
+    const second = report("run-2", 2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    answerSave();
+
+    expect(await first).toEqual({ status: "signed_in" });
+    expect(await second).toEqual({ status: "signed_in" });
+    expect(method.signIn).toHaveBeenCalledTimes(2);
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      profileVersion: 3,
+    });
+  });
+
   it("asks once, then lets later runs join the request without another attempt", async () => {
     const method = {
       id: "test-inbox",
