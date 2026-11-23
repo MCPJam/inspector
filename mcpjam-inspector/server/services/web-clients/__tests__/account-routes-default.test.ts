@@ -98,6 +98,7 @@ function claudePage(): PageDriver {
   return {
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     navigate: async () => undefined,
     url: async () => "https://claude.ai/new",
     evaluate: async (fn, arg) => fn(arg),
