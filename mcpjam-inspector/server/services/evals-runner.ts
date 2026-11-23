@@ -4075,10 +4075,6 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
-  const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
-    (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), bearerNow(convexAuthToken),
-      orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
-      { scope: "unattended" }) ? "local" : "hosted");
   // One resolution for the whole run. When the launch response carried frozen
   // budgets we consume them verbatim — they are the decision, already made,
   // against the platform ceilings; org ceilings apply once the backend
@@ -4178,6 +4174,12 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
+    // Inside the setup `try`: reading a job token whose renewal was refused
+    // throws, and the catch below is what marks the precreated rows failed.
+    const harnessRuntimeVenue = requestedHarnessRuntimeVenue ??
+      (await shouldUseLocalHarness(harnessOfHostConfig(suiteHostConfig), bearerNow(convexAuthToken),
+        orgModelConfigTarget && "projectId" in orgModelConfigTarget ? orgModelConfigTarget.projectId : undefined,
+        { scope: "unattended" }) ? "local" : "hosted");
     toolDescriptionOverride = readToolDescriptionOverrideMarker(
       toolDescriptionOverrideRaw,
     );

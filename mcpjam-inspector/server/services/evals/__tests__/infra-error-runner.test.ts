@@ -106,6 +106,8 @@ async function runSuite(
   budgets = defaultEvalExecutionBudgets(),
   provider = "openai",
   convexAuthToken: RunBearer = "token",
+  /** Setup may throw: return the error, and list the rows as the run's details. */
+  setupMayFail = false,
 ) {
   const rows = Array.from({ length: runs }, (_, index) => ({
     _id: `iter-${index + 1}`,
@@ -129,7 +131,11 @@ async function runSuite(
     finalize: vi.fn(async () => {}),
   };
   const convexClient = {
-    query: vi.fn(async () => ({ status: "running" })),
+    query: vi.fn(async (name: string) =>
+      setupMayFail && name === "testSuites:getTestSuiteRunDetails"
+        ? { iterations: rows }
+        : { status: "running" },
+    ),
     mutation: vi.fn(async () => ({})),
     action: vi.fn(async () => undefined),
   };
@@ -143,7 +149,7 @@ async function runSuite(
     getAllToolsMetadata: vi.fn(() => ({})),
     executeTool: vi.fn(),
   };
-  await runEvalSuiteWithAiSdk({
+  const run = runEvalSuiteWithAiSdk({
     suiteId: "suite-1",
     runId: "run-1",
     recorder,
@@ -174,7 +180,15 @@ async function runSuite(
     mcpClientManager: manager,
     executionBudgets: budgets,
   } as any);
-  return { rows, recorder };
+  if (!setupMayFail) {
+    await run;
+    return { rows, recorder, setupError: undefined };
+  }
+  const setupError = await run.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  return { rows, recorder, setupError };
 }
 
 beforeEach(() => {
@@ -574,5 +588,29 @@ describe("a scheduled run whose job token the backend stops renewing", () => {
       passed: false,
       error: expect.stringContaining(REFUSAL),
     });
+  });
+
+  it("refused before the run starts: its rows end setup_failed, not pending", async () => {
+    const { bearer, refuse } = refusableBearer();
+    refuse();
+    const { rows, recorder, setupError } = await runSuite(
+      2,
+      "gpt-4-turbo",
+      undefined,
+      undefined,
+      bearer,
+      true,
+    );
+    expect(String(setupError)).toContain(REFUSAL);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: "setup_failed",
+        passed: false,
+        error: expect.stringContaining(REFUSAL),
+      });
+    }
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed" }),
+    );
   });
 });
