@@ -114,13 +114,14 @@ export function runFailureOf(failure: RealUiFailure): RunFailure | undefined {
   }
 }
 
-/** Records the prompt as possibly sent, so the turn looks for its chat first. */
-async function keepSendRecord(journal: SendJournal, turnKey: string) {
+/**
+ * Records the prompt as possibly sent by the attempt that began at `at`, so
+ * the turn looks for its chat first. The send came after `at`, and the turn
+ * takes only a chat created since then.
+ */
+async function keepSendRecord(journal: SendJournal, turnKey: string, at: string) {
   if (await journal.read(turnKey)) return;
-  await journal.write(turnKey, {
-    state: "sending",
-    at: new Date().toISOString(),
-  });
+  await journal.write(turnKey, { state: "sending", at });
 }
 
 export async function runRecoverableWebTurn(
@@ -221,7 +222,11 @@ export async function runRecoverableWebTurn(
     }
     if (last) return result;
     if (verdict.status === "reconciled" || SENT_STEPS.has(step.stepId)) {
-      await keepSendRecord(environment.journal, result.turnId);
+      await keepSendRecord(
+        environment.journal,
+        result.turnId,
+        new Date(result.startedAt).toISOString(),
+      );
     }
     attempt = { ...input, turnId: result.turnId };
   }
