@@ -111,8 +111,11 @@ server the client uses gets a capability connector in the registry above.
    with "Needs sign-in"; sign in with step 1, then run again.
 
 A server reaches the vendor's app with the URL and headers this Inspector
-connects to it with, so a server must be connected over HTTP. One turn at a
-time uses a profile.
+connects to it with, so a server must be connected over HTTP, with an access
+token rather than a refresh token. Each server keeps one connector per vendor,
+and a refreshed token replaces the old one in it. One turn at a time uses a
+profile: a turn that finds it open in another Inspector or a sign-in window
+stops as already running, and you send again once that one is done.
 
 ## Opening turn windows from the runtime
 
