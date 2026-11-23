@@ -273,6 +273,35 @@ describe("Convex reconnect backend", () => {
     },
   );
 
+  it("keeps the status of a refusal whose body isn't JSON", async () => {
+    const badGateway = () =>
+      new Response("<html><body>502 Bad Gateway</body></html>", {
+        status: 502,
+        headers: { "content-type": "text/html" },
+      });
+    const save = (options: { env: typeof ENV; fetchImpl: typeof fetch }) =>
+      createConvexWebReconnectBackend(ACTOR, options).saveWebAccountProfile({
+        webAccountId: ACCOUNT,
+        expectedProfileVersion: 3,
+        profile: PROFILE,
+      });
+    // The profile-key route is behind a proxy that fails.
+    await expect(
+      save({ env: ENV, fetchImpl: async () => badGateway() }),
+    ).rejects.toThrow("HTTP 502");
+    // The key is issued, then storage fails.
+    const deployment = stubDeployment({
+      "profile-key": profileKey(randomBytes(32)),
+    });
+    const storageDown: typeof fetch = async (input, init) =>
+      String(input).endsWith("/upload")
+        ? badGateway()
+        : deployment.fetchImpl(input, init);
+    await expect(save({ env: ENV, fetchImpl: storageDown })).rejects.toThrow(
+      "The encrypted profile was not uploaded: HTTP 502.",
+    );
+  });
+
   it("passes other refusals and network failures on unchanged", async () => {
     const forbidden = stubDeployment({
       listWebReconnectRequests: new WebBackendRefusal("FORBIDDEN"),
