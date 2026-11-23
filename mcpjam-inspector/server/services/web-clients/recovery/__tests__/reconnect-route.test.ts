@@ -36,6 +36,7 @@ vi.mock("../../../../utils/logger.js", () => ({
 import { needsSignIn } from "../../../../utils/harness/real-ui/page-module.js";
 import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fixture-web.js";
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
+import { logger } from "../../../../utils/logger.js";
 import type { WebClientService } from "../../backend-connector-resolver.js";
 import type { WebClientEnvironment } from "../../web-client-environment.js";
 import type { PendingStep } from "../backend.js";
@@ -83,6 +84,7 @@ const fakeDriver: PageDriver = {
 let commands: Array<Record<string, unknown>>;
 let signedInAs: typeof SEAT | undefined;
 let closed: number;
+let closeFails: boolean;
 
 function deps(answers: Record<string, unknown>) {
   const answer = async (command: Record<string, unknown>) => {
@@ -110,6 +112,7 @@ function deps(answers: Record<string, unknown>) {
         driver: fakeDriver,
         close: async () => {
           closed += 1;
+          if (closeFails) throw new Error("The browser is already gone.");
         },
         captureProfile: async () => new TextEncoder().encode("fixture-profile"),
       };
@@ -182,7 +185,9 @@ beforeEach(() => {
   commands = [];
   signedInAs = SEAT;
   closed = 0;
+  closeFails = false;
   reported.mockClear();
+  vi.mocked(logger.warn).mockClear();
 });
 
 /** The claimed run's step in `OPEN`. */
@@ -301,6 +306,21 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     });
     expect(commands.map((command) => command.action)).toContain(
       "claimResumableWebRuns",
+    );
+  });
+
+  it("answers the handback when its browser won't close", async () => {
+    closeFails = true;
+    const turn = pausedTurn();
+    expect(await post(OPEN)).toEqual({
+      status: 200,
+      body: { status: "resumed", resumedRuns: 1 },
+    });
+    expect(await turn).toEqual(CLAIMED_STEP);
+    expect(closed).toBe(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "[web-recovery] The handback browser did not close",
+      expect.objectContaining({ message: "The browser is already gone." }),
     );
   });
 });

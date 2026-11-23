@@ -12,6 +12,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../../middleware/require-verified-auth.js";
+import { logger } from "../../../utils/logger.js";
 import { reportRouteFailure } from "../../../utils/route-error-report.js";
 import { getServiceCredential } from "../../service-credential.js";
 import {
@@ -147,7 +148,13 @@ export function createWebReconnectRoutes(
         502,
       );
     } finally {
-      await browser?.close();
+      // The handback's answer stands even when its browser won't close.
+      await browser?.close().catch((error: unknown) => {
+        logger.warn("[web-recovery] The handback browser did not close", {
+          requestId: c.req.param("requestId"),
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   });
   return routes;

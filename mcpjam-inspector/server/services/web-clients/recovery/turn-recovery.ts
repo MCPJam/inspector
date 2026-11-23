@@ -16,6 +16,7 @@ import type {
   RealUiFailure,
   RealUiStep,
 } from "../../../utils/harness/real-ui/page-module.js";
+import { logger } from "../../../utils/logger.js";
 import {
   runWebClientTurn,
   type WebClientTurnInput,
@@ -160,7 +161,13 @@ export async function runRecoverableWebTurn(
         ...(restored !== undefined ? { restoredProfileVersion: restored } : {}),
       });
     } finally {
-      await browser.close();
+      // A browser that won't close must not fail the recovery it served.
+      await browser.close().catch((error: unknown) => {
+        logger.warn("[web-recovery] The account's browser did not close", {
+          runId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   };
   let attempt = input;

@@ -6,8 +6,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const warned = vi.hoisted(() => vi.fn());
 vi.mock("../../../../utils/logger.js", () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: { debug: vi.fn(), info: vi.fn(), warn: warned, error: vi.fn() },
 }));
 const ran = vi.hoisted(() =>
   vi.fn<(input: WebClientTurnInput) => Promise<WebClientTurnResult>>(),
@@ -15,6 +16,7 @@ const ran = vi.hoisted(() =>
 vi.mock("../../run-web-client-turn.js", () => ({ runWebClientTurn: ran }));
 
 import { createMemorySendJournal } from "../../../../utils/harness/real-ui/drive-turn.js";
+import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fixture-web.js";
 import type {
   PendingStep,
   RealUiFailure,
@@ -124,13 +126,29 @@ function account(webAccountId: string, seat: WebIdentity): WebAccountRecord {
 function environmentOn(
   webAccountId: string,
   script: Array<() => WebClientTurnResult>,
+  browser: { seat?: WebIdentity; close?: () => Promise<void> } = {},
 ): WebClientEnvironment {
   const environment: WebClientEnvironment = {
     publicBaseUrl: "https://inspector.example.test",
     journal: createMemorySendJournal(),
+    pageModule: {
+      ...createFixtureWebPageModule("https://claude.ai"),
+      signedIn: async () => ({
+        email: browser.seat?.accountEmail,
+        workspace: browser.seat?.workspaceName,
+      }),
+    },
     resolveAccount: async () => ({ webAccountId }),
     ensureConnector: async () => ({ connectorId: "connector-1" }),
-    openBrowser: async () => ({ driver: fakeDriver, close: async () => {} }),
+    async openBrowser() {
+      // A browser that can save its profile offers `captureProfile`.
+      const handle = {
+        driver: fakeDriver,
+        close: browser.close ?? (async () => {}),
+        captureProfile: async () => new TextEncoder().encode("fixture-profile"),
+      };
+      return handle;
+    },
   };
   scripts.set(environment, script);
   return environment;
@@ -158,6 +176,7 @@ const SEAT_B = { accountEmail: "b@example.com", workspaceName: "B's team" };
 
 beforeEach(() => {
   scripts.clear();
+  warned.mockClear();
   ran.mockReset();
   ran.mockImplementation(async ({ environment }) => {
     const next = scripts.get(environment)?.shift();
@@ -314,5 +333,34 @@ describe("runRecoverableWebTurn", () => {
         calls: [{ toolName: "create_note" }],
       },
     });
+  });
+
+  it("carries the turn on when the browser a sign-in used won't close", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const environment = environmentOn("account-a", [signedOut, replied()], {
+      seat: SEAT_A,
+      close: async () => {
+        throw new Error("The browser is already gone.");
+      },
+    });
+
+    const result = await runRecoverableWebTurn(playgroundTurn(environment), {
+      backendFor: () => backend,
+      ledger: createInMemoryToolCallLedger(),
+      // Signs the account in without a person, in the run's own browser.
+      signInMethodFor: () => ({
+        id: "test-inbox",
+        signIn: async () => "signed_in",
+      }),
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(triesOf(environment)).toBe(2);
+    expect(warned).toHaveBeenCalledWith(
+      "[web-recovery] The account's browser did not close",
+      expect.objectContaining({ message: "The browser is already gone." }),
+    );
   });
 });
