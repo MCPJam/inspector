@@ -227,13 +227,6 @@ describe("webTurnApprover", () => {
       allow: false,
       reason: SYNTHETIC_SESSION_APPROVAL_DENIAL,
     });
-    expect(
-      await webTurnApprover({
-        requireToolApproval: true,
-        answer: "person",
-        askPerson: async () => ({ allow: true }),
-      })(call),
-    ).toEqual({ allow: true });
     expect((await webTurnApprover({ requireToolApproval: true, answer: "person" })(call)).allow).toBe(false);
   });
 });

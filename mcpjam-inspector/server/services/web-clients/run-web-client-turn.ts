@@ -68,8 +68,6 @@ export type WebTurnApproval = {
   /** The host's switch as the turn's origin applies it (`appliedToolApproval`). */
   requireToolApproval: boolean;
   answer: TurnApprovalPolicy["answer"];
-  /** Asks the person, where the turn has one to ask. */
-  askPerson?: (call: ToolCallRequest) => Promise<ApprovalDecision>;
 };
 
 /** The run's sealed tool policy by server id (`harnessToolPolicy`), and where its refusals go. */
@@ -167,7 +165,6 @@ export function webTurnApprover(
     if (approval.answer === "deny") {
       return { allow: false, reason: SYNTHETIC_SESSION_APPROVAL_DENIAL };
     }
-    if (approval.askPerson) return approval.askPerson(call);
     return {
       allow: false,
       reason: "This tool call needs a person's approval, and nobody can answer during this run.",
