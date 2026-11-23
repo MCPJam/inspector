@@ -43,9 +43,7 @@ const evals = createWebAccountView({
 
 function mount(isAdmin: boolean, accounts: WebAccount[] = [qa, evals]) {
   mocks.accounts.mockReturnValue({ accounts, loaded: true, isAdmin });
-  render(
-    <WebAccountsSettings projectId="project-1" vendor="claude" />,
-  );
+  render(<WebAccountsSettings projectId="project-1" vendor="claude" />);
 }
 
 const call = (name: string) => mocks.mutations[`webClients:${name}`];
@@ -71,7 +69,9 @@ describe("WebAccountsSettings", () => {
     await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
     // Nothing on this screen signs an account in again, so nothing offers to.
     const remove = await screen.findByRole("menuitem", { name: "Remove" });
-    expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "Sign in again" }),
+    ).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "Reconnect" })).toBeNull();
     await user.click(remove);
     expect(await screen.findByRole("alertdialog")).toHaveTextContent(
@@ -123,6 +123,36 @@ describe("WebAccountsSettings", () => {
       });
   });
 
+  it("tells an admin when only some accounts allow local runs, and keeps the notes for all and none", () => {
+    const notes = {
+      some: "Some of these accounts' saved sign-ins can be used by members' local apps. Stop turns all of them off.",
+      all: "Members' local apps can use these accounts' saved sign-ins.",
+      none: "Members' hosted runs use these accounts. Turn this on so their local apps can too.",
+    };
+    const states: Array<[keyof typeof notes, WebAccount[]]> = [
+      ["some", [{ ...qa, allowLocalRuns: true }, evals]],
+      [
+        "all",
+        [
+          { ...qa, allowLocalRuns: true },
+          { ...evals, allowLocalRuns: true },
+        ],
+      ],
+      ["none", [qa, evals]],
+    ];
+    for (const [state, accounts] of states) {
+      mount(true, accounts);
+      const toggle = screen.getByRole("switch", { name: "Allow local runs" });
+      // Mixed stays on, so Stop is one step away.
+      if (state === "none") expect(toggle).not.toBeChecked();
+      else expect(toggle).toBeChecked();
+      for (const [other, note] of Object.entries(notes))
+        if (other === state) expect(screen.getByText(note)).toBeInTheDocument();
+        else expect(screen.queryByText(note)).toBeNull();
+      cleanup();
+    }
+  });
+
   it("offers an admin no way to add an account until the pane can sign in", () => {
     mount(true, []);
     expect(
@@ -162,6 +192,8 @@ describe("WebAccountsSettings", () => {
       screen.getByText(/ask a project admin to turn on Allow local runs/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/including your local app's/)).toBeNull();
+    // The mixed note names Stop, which only an admin's switch offers.
+    expect(screen.queryByText(/Some of these accounts/)).toBeNull();
     cleanup();
     mount(false, [
       { ...qa, allowLocalRuns: true },
