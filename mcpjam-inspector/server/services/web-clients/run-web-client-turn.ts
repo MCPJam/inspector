@@ -153,7 +153,10 @@ export function webTurnApprover(
           reason: decided.reason,
           classification: decided.classification,
           at: Date.now(),
-          ...(call.toolUseId ? { toolCallId: call.toolUseId } : {}),
+          // The grade leaves a refused call out by this id. ChatGPT sends
+          // none, so the refusal names the call, and the transcript's call
+          // takes the same id (`matchWebToolCalls`).
+          toolCallId: call.toolUseId ?? `web-blocked-${randomUUID()}`,
           ...(serverId ? { serverId } : {}),
         });
         return { allow: false, reason: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decided.reason}` };
@@ -217,11 +220,13 @@ export async function runWebClientTurn(
   const serverOfConnector = new Map<string, string>();
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
+  const blocked: HarnessPolicyBlockRecord[] = [];
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
       conversation,
       serverOfConnector: (connectorId) => serverOfConnector.get(connectorId),
+      blocked,
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
@@ -241,7 +246,14 @@ export async function runWebClientTurn(
     }
     const approve = webTurnApprover(
       input.approval,
-      input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
+      input.toolPolicy && {
+        ...input.toolPolicy,
+        serverOf: (id) => serverOfConnector.get(id),
+        onBlock: (block) => {
+          blocked.push(block);
+          input.toolPolicy?.onBlock?.(block);
+        },
+      },
     );
     for (const connectorId of serverOfConnector.keys()) {
       try {
