@@ -51,6 +51,7 @@ import {
   HOSTED_DISPLAY,
   type BrowserCommand,
   type BrowserCommandSecret,
+  type BrowserdProfileExportOptions,
 } from "./protocol";
 import type {
   BrowserContextMode,
@@ -146,7 +147,7 @@ export interface SessionClient {
   record?(args: BrowserdRecordArgs): Promise<BrowserdRecordResult>;
   recordStatus?(): Promise<BrowserdRecordState>;
   /** Export the persistent profile after the daemon queue has drained. */
-  exportProfile?(): Promise<Uint8Array>;
+  exportProfile?(options?: BrowserdProfileExportOptions): Promise<Uint8Array>;
   /** Serve a workspace port on the browser box's loopback (hosted only). */
   previewGrant?: PreviewGrantClient["previewGrant"];
 }
@@ -1199,7 +1200,7 @@ function withActivityTouches(
     // panel answers `profile_export_unavailable` on a browser that would have
     // exported fine.
     ...(client.exportProfile
-      ? { exportProfile: () => client.exportProfile!() }
+      ? { exportProfile: (options) => client.exportProfile!(options) }
       : {}),
     // Same rule: without it a hosted session cannot open the workspace's apps.
     ...(client.previewGrant

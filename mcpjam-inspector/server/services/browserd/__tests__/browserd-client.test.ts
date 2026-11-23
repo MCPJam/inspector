@@ -494,3 +494,29 @@ describe("BrowserdClient — /v1/record", () => {
     expect(await refused.client.recordStatus()).toEqual({ active: false });
   });
 });
+
+describe("BrowserdClient.exportProfile", () => {
+  const archive = () =>
+    new Response(new Uint8Array([31, 139]), {
+      status: 200,
+      headers: { "content-type": "application/gzip" },
+    });
+
+  it("names the origins to leave out of the archive", async () => {
+    const { client, calls } = makeClient(archive());
+    await client.exportProfile({ excludeOrigins: ["https://signin.example"] });
+    expect(calls[0]?.url).toBe("https://box-8791.e2b.dev/v1/profile/export");
+    expect(calls[0]?.init.body).toBe(
+      JSON.stringify({ excludeOrigins: ["https://signin.example"] }),
+    );
+    expect(new Headers(calls[0]?.init.headers).get("content-type")).toBe(
+      "application/json",
+    );
+  });
+
+  it("sends a bare export when nothing is left out", async () => {
+    const { client, calls } = makeClient(archive());
+    await client.exportProfile();
+    expect(calls[0]?.init.body).toBeUndefined();
+  });
+});
