@@ -40,7 +40,12 @@
  * compatibility catalog; the last two are the MCP-protocol client. None of them
  * are renamed here, and nothing inside the opaque config blob is touched.
  */
-import { hostConfigForCaller } from "./host-config-compat.js";
+import {
+  acceptsModelVisibleStructuredContent,
+  configKeepingStoredRule,
+  hostConfigForCaller,
+  policyKeepingStoredRule,
+} from "./host-config-compat.js";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { z } from "zod";
@@ -939,18 +944,19 @@ async function updateClientHandler(c: Context) {
   try {
     if (body.config !== undefined) {
       // The whole-config branch keeps `updateHost`'s replacement semantics; the
-      // preflight read is only for the specific model-clearing 400.
-      assertConfigKeepsPinnedModel(
-        await readHostDetail(token, projectId, clientId, "scope"),
-        body.config,
-      );
+      // preflight read serves the model-clearing 400 and keeps a client rule
+      // the caller couldn't read.
+      const current = await readHostDetail(token, projectId, clientId, "scope");
+      assertConfigKeepsPinnedModel(current, body.config);
       await convexClient.mutation(
         "hosts:updateHost" as any,
         {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          input: normalizeConfigForWrite(body.config),
+          input: normalizeConfigForWrite(
+            configKeepingStoredRule(c, body.config, current.config),
+          ),
           ...tokens,
         } as any,
       );
@@ -958,13 +964,29 @@ async function updateClientHandler(c: Context) {
       // Rename-only and partial edits both go through the partial mutation: it
       // owns the "no effective change writes nothing" rule, which a rename
       // through `updateHost` would violate by bumping `updatedAt`.
+      let set = body.set === undefined ? undefined : setForWrite(body.set);
+      if (
+        set !== undefined &&
+        "modelVisibleMcpToolResults" in set &&
+        !acceptsModelVisibleStructuredContent(c)
+      ) {
+        const current = await readHostDetail(token, projectId, clientId, "scope");
+        set = {
+          ...set,
+          modelVisibleMcpToolResults: policyKeepingStoredRule(
+            c,
+            set.modelVisibleMcpToolResults,
+            current.config,
+          ),
+        };
+      }
       await convexClient.mutation(
         "hosts:updateHostFields" as any,
         {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          ...(body.set === undefined ? {} : { set: setForWrite(body.set) }),
+          ...(set === undefined ? {} : { set }),
           ...tokens,
         } as any,
       );
@@ -991,11 +1013,11 @@ async function updateHostAliasHandler(c: Context) {
   const updateArgs: Record<string, unknown> = { hostId, projectId };
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.config !== undefined) {
-    assertConfigKeepsPinnedModel(
-      await readHostDetail(token, projectId, hostId, "scope"),
-      body.config,
+    const current = await readHostDetail(token, projectId, hostId, "scope");
+    assertConfigKeepsPinnedModel(current, body.config);
+    updateArgs.input = normalizeConfigForWrite(
+      configKeepingStoredRule(c, body.config, current.config),
     );
-    updateArgs.input = normalizeConfigForWrite(body.config);
   }
   const convexClient = createConvexClient(token);
   try {

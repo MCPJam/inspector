@@ -298,6 +298,86 @@ describe("v1 client routes", () => {
         structuredContent: "fallback",
       });
     });
+
+    const write = (
+      path: string,
+      body: unknown,
+      headers: Record<string, string> = {},
+    ) =>
+      makeApp().request(`/api/v1/projects/p1xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/${path}`, {
+        method: "PATCH",
+        headers: {
+          Authorization: "Bearer tok",
+          "Content-Type": "application/json",
+          ...headers,
+        },
+        body: JSON.stringify(body),
+      });
+    const writtenWith = (mutation: string) =>
+      convexMutationMock.mock.calls.find(([name]) => name === mutation)?.[1];
+
+    it("keeps the rule when a caller that couldn't read it writes the config back", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": withRule });
+      const res = await write("clients/h1", {
+        expectedConfigId: "hc1",
+        config: {
+          modelId: "gpt-4o-mini",
+          modelVisibleMcpToolResults: { directContent: { image: false } },
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(writtenWith("hosts:updateHost").input).toEqual({
+        modelId: "gpt-4o-mini",
+        modelVisibleMcpToolResults: {
+          directContent: { image: false },
+          structuredContent: "fallback",
+        },
+      });
+    });
+
+    it("keeps the rule through a header-less `set`, including a cleared policy", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": withRule });
+      await write("clients/h1", {
+        expectedConfigId: "hc1",
+        set: { modelVisibleMcpToolResults: null },
+      });
+      expect(writtenWith("hosts:updateHostFields").set).toEqual({
+        modelVisibleMcpToolResults: { structuredContent: "fallback" },
+      });
+    });
+
+    it("writes a rule the caller names, and lets a caller that reads the rule remove it", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": withRule });
+      await write("clients/h1", {
+        expectedConfigId: "hc1",
+        set: { modelVisibleMcpToolResults: { structuredContent: "preferred" } },
+      });
+      expect(writtenWith("hosts:updateHostFields").set).toEqual({
+        modelVisibleMcpToolResults: { structuredContent: "preferred" },
+      });
+      convexMutationMock.mockClear();
+      await write(
+        "clients/h1",
+        { expectedConfigId: "hc1", config: { modelId: "gpt-4o-mini" } },
+        { "x-mcpjam-host-config-features": "model-visible-structured-content" },
+      );
+      expect(writtenWith("hosts:updateHost").input).toEqual({
+        modelId: "gpt-4o-mini",
+      });
+    });
+
+    it("keeps the rule through the deprecated /hosts replacement", async () => {
+      convexMutationMock.mockResolvedValue({ hostId: "h1" });
+      mockQuery({ "hosts:getHost": withRule });
+      await write("hosts/h1", { config: { modelId: "gpt-4o-mini" } });
+      expect(writtenWith("hosts:updateHost").input).toEqual({
+        modelId: "gpt-4o-mini",
+        modelVisibleMcpToolResults: { structuredContent: "fallback" },
+      });
+    });
   });
 
   describe("POST create", () => {
