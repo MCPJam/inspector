@@ -301,21 +301,56 @@ const RESUMED_AND_SENT = [
   "tool ran upstream",
 ];
 
+/**
+ * The first thing in a logged value that must not be there: a profile
+ * archive (any typed array), or a string holding the profile or a seat's
+ * address. Looks at every depth, at keys, and at an error's message, stack
+ * and cause, which `JSON.stringify` leaves out.
+ */
+function leakIn(value: unknown, seen = new Set<object>()): string | undefined {
+  if (typeof value === "string") {
+    return [PROFILE_TEXT, SEAT.accountEmail, OTHER_SEAT.accountEmail].find(
+      (secret) => value.includes(secret),
+    );
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return undefined;
+  }
+  seen.add(value);
+  if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
+    return "a profile archive";
+  }
+  const parts: unknown[] = Object.entries(value).flat();
+  if (value instanceof Error) {
+    parts.push(value.message, value.stack, value.cause);
+  }
+  for (const part of parts) {
+    const leak = leakIn(part, seen);
+    if (leak) return leak;
+  }
+  return undefined;
+}
+
 afterEach(() => {
   // Profiles and seat addresses never reach the logs.
-  const text = JSON.stringify(logged);
-  expect(text).not.toContain(PROFILE_TEXT);
-  expect(text).not.toContain(SEAT.accountEmail);
-  expect(text).not.toContain(OTHER_SEAT.accountEmail);
-  const values = logged
-    .flat()
-    .flatMap((value) =>
-      typeof value === "object" && value !== null
-        ? [value, ...Object.values(value)]
-        : [value],
-    );
-  expect(values.some((value) => value instanceof Uint8Array)).toBe(false);
+  expect(leakIn(logged)).toBeUndefined();
   logged.length = 0;
+});
+
+describe("the log check", () => {
+  it("finds a profile or a seat's address at any depth, errors included", () => {
+    expect(leakIn([["done", { runId: "run-1" }]])).toBeUndefined();
+    expect(
+      leakIn([["saved", { run: { profile: { archive: PROFILE } } }]]),
+    ).toBe("a profile archive");
+    expect(
+      leakIn([["failed", new Error(`signed in as ${SEAT.accountEmail}`)]]),
+    ).toBe(SEAT.accountEmail);
+    const cause = new Error(`signed in as ${SEAT.accountEmail}`);
+    expect(leakIn([["failed", new Error("refused", { cause })]])).toBe(
+      SEAT.accountEmail,
+    );
+  });
 });
 
 describe("web account recovery", () => {
