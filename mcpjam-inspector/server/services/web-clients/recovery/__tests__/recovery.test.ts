@@ -746,6 +746,7 @@ describe("web account recovery", () => {
     await world.backend.handbackWebReconnect({
       requestId: request?.requestId ?? "",
       verifiedAccountEmail: SEAT.accountEmail,
+      verifiedWorkspace: SEAT.workspaceName,
     });
     const started: string[] = [];
     const sweeper = createWebRecoveryCoordinator({
@@ -1197,7 +1198,11 @@ describe("in-memory reconnect backend", () => {
       await backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
     ).toEqual([]);
     const handback = (verifiedAccountEmail: string, id = requestId) =>
-      backend.handbackWebReconnect({ requestId: id, verifiedAccountEmail });
+      backend.handbackWebReconnect({
+        requestId: id,
+        verifiedAccountEmail,
+        verifiedWorkspace: SEAT.workspaceName,
+      });
     await expect(handback(OTHER_SEAT.accountEmail)).rejects.toMatchObject({
       code: "CONFLICT",
     });
@@ -1267,5 +1272,40 @@ describe("in-memory reconnect backend", () => {
     expect(await handback(SEAT.accountEmail)).toEqual({
       resumableRunIds: ["run-1"],
     });
+  });
+
+  it("refuses the recorded email in another workspace, not the same seat written differently", async () => {
+    const world = createWorld();
+    const reported = await world.backend.reportWebSignInRequired({
+      webAccountId: ACCOUNT,
+      runId: "run-1",
+      pendingStep: { stepId: "step-1", startedAt: "2026-11-20T10:00:00.000Z" },
+      reason: "signed_out",
+    });
+    if (!("requestId" in reported)) throw new Error("No request opened.");
+    const handback = (
+      verifiedAccountEmail: string,
+      verifiedWorkspace?: string,
+    ) =>
+      world.backend.handbackWebReconnect({
+        requestId: reported.requestId,
+        verifiedAccountEmail,
+        ...(verifiedWorkspace ? { verifiedWorkspace } : {}),
+      });
+
+    for (const workspace of ["Another workspace", undefined]) {
+      await expect(
+        handback(SEAT.accountEmail, workspace),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    }
+    expect(await accountOf(world)).toMatchObject({
+      status: "needs_sign_in",
+      workspaceName: SEAT.workspaceName,
+    });
+    expect((await requestsOf(world))[0]?.status).toBe("open");
+    expect(await handback(" SEAT@Example.com ", " test WORKSPACE ")).toEqual({
+      resumableRunIds: ["run-1"],
+    });
+    expect(await accountOf(world)).toMatchObject({ status: "ready" });
   });
 });
