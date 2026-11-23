@@ -3625,6 +3625,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       // Bare client: advertises an empty capabilities object and negotiates no
       // MCP Apps/UI extension (no `mimeTypes`). Replace the SDK default

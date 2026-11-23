@@ -172,6 +172,7 @@ describe("seedHostTemplate", () => {
       "vscode",
       "goose",
       "grokbot",
+      "notion",
     ]);
 
     for (const id of ALL_IDS) {

@@ -6343,7 +6343,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       temperature: 1,
       requireToolApproval: false,
       respectToolVisibility: true,
-      progressiveToolDiscovery: false,
+      progressiveToolDiscovery: true,
       serverIds: [],
       optionalServerIds: [],
       builtInToolIds: [],
