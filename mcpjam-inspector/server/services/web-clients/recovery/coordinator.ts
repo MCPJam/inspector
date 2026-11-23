@@ -201,7 +201,8 @@ export function createWebRecoveryCoordinator(
     if (!observed) return { status: "not_signed_in" };
     const expected = identityOf(account);
     // Another seat's session saved here would run the project's account as someone else.
-    if (!expected || !sameWebIdentity(expected, observed)) {
+    // A new account has no seat to compare yet: handing it back records this one.
+    if (expected && !sameWebIdentity(expected, observed)) {
       return { status: "wrong_identity", expected, observed };
     }
     const profile = await browser.captureProfile();
@@ -223,7 +224,8 @@ export function createWebRecoveryCoordinator(
       ...(savedFromRunId ? { savedFromRunId } : {}),
     });
     if (!saved.ok) {
-      // Only verified sign-ins save, so the newer profile is this seat's too.
+      // Only verified sign-ins save, so the newer profile is this seat's too,
+      // unless the account had no seat yet and another seat's first sign-in won.
       logger.info("[web-recovery] Kept a newer saved profile", {
         webAccountId: account.webAccountId,
       });

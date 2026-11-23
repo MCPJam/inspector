@@ -644,6 +644,57 @@ describe("web account recovery", () => {
     },
   );
 
+  it("records the seat a new account is first handed back with, then holds it", async () => {
+    const world = createWorld();
+    // No one has signed this account in yet: it has no seat and no profile.
+    world.backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "needs_sign_in",
+        profileVersion: 0,
+      },
+    ]);
+    const coordinator = startProcess(world);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"], {
+      restoredProfileVersion: 0,
+    });
+    const [request] = await requestsOf(world);
+
+    const accepted = await coordinator.handback({
+      projectId: PROJECT,
+      requestId: request?.requestId ?? "",
+      browser: browserSignedInAs(SEAT),
+    });
+    await settle(world);
+    expect(accepted).toMatchObject({ status: "resumed" });
+    expect(runOf(world, "run-1").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      ...SEAT,
+      profileVersion: 1,
+    });
+
+    // The recorded seat holds from then on.
+    await startRun(world, coordinator, "run-2", ["sign_in_page"]);
+    const [next] = await requestsOf(world);
+    expect(
+      await coordinator.handback({
+        projectId: PROJECT,
+        requestId: next?.requestId ?? "",
+        browser: browserSignedInAs(OTHER_SEAT),
+      }),
+    ).toEqual({
+      status: "wrong_identity",
+      expected: SEAT,
+      observed: OTHER_SEAT,
+    });
+    expect(await accountOf(world)).toMatchObject({
+      ...SEAT,
+      profileVersion: 1,
+    });
+  });
+
   it("doesn't open a sign-in request when only the browser failed", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);
