@@ -2105,7 +2105,7 @@ describe("useServerState OAuth callback failures", () => {
       await waitFor(() =>
         expect(toastError).toHaveBeenCalledWith(
           errorToastMessage(
-            "An earlier sign-in finished after a newer one started. Finish the newer sign-in in your browser."
+            "This sign-in was replaced by a newer one. Finish that one in your browser."
           ),
           { duration: 8000 }
         )
