@@ -4,12 +4,13 @@
  * connector, send the prompt exactly once, answer the app's own approval
  * prompts until the reply has finished, then read the saved conversation.
  *
- * EXACTLY ONCE. The journal records the send before the click. A run that
- * restarts and finds that record looks for a chat created since then that
- * holds the prompt, records it as sent and continues there; when no chat
- * holds it, the send may still have happened, so the turn stops as
- * `send_ambiguous` rather than send again. A send that fails after the
- * record stops the same way.
+ * EXACTLY ONCE. The journal records the send before the click, and only when
+ * the turn has no record yet, so of two runs at once one sends and the other
+ * stops as `send_ambiguous`. A run that restarts and finds that record looks
+ * for a chat created since then that holds the prompt, records it as sent and
+ * continues there; when no chat holds it, the send may still have happened,
+ * so the turn stops as `send_ambiguous` rather than send again. A send that
+ * fails after the record stops the same way.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 import {
@@ -31,6 +32,15 @@ export type SendJournalEntry =
 export interface SendJournal {
   read(turnKey: string): Promise<SendJournalEntry | undefined>;
   write(turnKey: string, entry: SendJournalEntry): Promise<void>;
+  /**
+   * Records `entry` only when `turnKey` has no entry, as one atomic step, and
+   * resolves true when it did. Of two runs on one turn, only the one whose
+   * claim succeeds may click send.
+   */
+  claim(
+    turnKey: string,
+    entry: { state: "sending"; at: string },
+  ): Promise<boolean>;
 }
 
 export function createMemorySendJournal(): SendJournal {
@@ -41,6 +51,13 @@ export function createMemorySendJournal(): SendJournal {
     },
     async write(turnKey, entry) {
       entries.set(turnKey, entry);
+    },
+    async claim(turnKey, entry) {
+      // No await comes between the check and the set, so no other claim can
+      // land between them.
+      if (entries.has(turnKey)) return false;
+      entries.set(turnKey, entry);
+      return true;
     },
   };
 }
@@ -145,10 +162,20 @@ export async function driveRealUiTurn(
       await module.enableConnector(driver, input.connector.name, ctx);
       enter("send");
       const sendingAt = new Date().toISOString();
-      await input.journal.write(input.turnKey, {
+      // Two runs on this turn can both have read no entry above. Only the one
+      // whose claim records the send goes on to click it.
+      const claimed = await input.journal.claim(input.turnKey, {
         state: "sending",
         at: sendingAt,
       });
+      if (!claimed) {
+        throw new RealUiError({
+          kind: "send_ambiguous",
+          step: "send",
+          message:
+            "Another attempt at this turn already sent the prompt or is sending it, so it was not sent again.",
+        });
+      }
       sendUnconfirmed = true;
       input.beforeSend?.();
       const sent = await module.send(driver, input.prompt, ctx);

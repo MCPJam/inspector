@@ -15,7 +15,11 @@ import {
   startFixtureVendor,
   type FixtureVendor,
 } from "../../../../test/support/web-clients/fixture-vendor";
-import { createMemorySendJournal, driveRealUiTurn } from "../drive-turn";
+import {
+  createMemorySendJournal,
+  driveRealUiTurn,
+  type SendJournal,
+} from "../drive-turn";
 import { createFixtureWebPageModule } from "../fixture-web";
 import { RealUiError } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
@@ -233,6 +237,35 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     });
     expect(await journal.read("turn-1")).toMatchObject({ state: "sending" });
     expect(vendor.sends).toEqual(["say hello"]);
+  });
+
+  it("sends once when two runs start the same turn together", async () => {
+    vendor.connectors.set("MCPJam fixture", upstream.url);
+    const memory = createMemorySendJournal();
+    // Neither run goes past its read until both have read: both find no send.
+    let reads = 0;
+    let bothRead = () => {};
+    const together = new Promise<void>((resolve) => (bothRead = resolve));
+    const journal: SendJournal = {
+      ...memory,
+      async read(turnKey) {
+        const entry = await memory.read(turnKey);
+        if (++reads === 2) bothRead();
+        await together;
+        return entry;
+      },
+    };
+    const drivers = [await signedInDriver(), await signedInDriver()];
+    const settled = await Promise.allSettled(
+      drivers.map((driver) => turn(driver, journal)),
+    );
+    expect(vendor.sends).toEqual(["say hello"]);
+    const failed = settled.flatMap((result) =>
+      result.status === "rejected" ? [result.reason as RealUiError] : [],
+    );
+    expect(failed.map((error) => error.failure)).toMatchObject([
+      { kind: "send_ambiguous", step: "send" },
+    ]);
   });
 
   it("returns needs_sign_in on a human check and never sends", async () => {
