@@ -343,11 +343,6 @@ const CAPACITY_CODES = new Set(["at_capacity", "sandbox_at_capacity"]);
 const SANDBOX_GONE_CODES = new Set(["sandbox_not_found", "sandbox_expiring"]);
 
 /**
- * A typed setup failure counts only on a known code or a status that says our
- * side failed (408, 429, 5xx). A 400/403/404/422 from the control plane or the
- * broker is a refusal of this request, not an outage: unclassified.
- */
-/**
  * A web client turn that stopped on the vendor's page, by its failure kind: a
  * broken step is the run's failure, never the server's. Two kinds stay
  * unclassified on purpose, since the server under test can cause them: the
@@ -376,6 +371,11 @@ const WEB_CLIENT_ROWS: Record<string, Row> = {
   },
 };
 
+/**
+ * A typed setup failure counts only on a known code or a status that says our
+ * side failed (408, 429, 5xx). A 400/403/404/422 from the control plane or the
+ * broker is a refusal of this request, not an outage: unclassified.
+ */
 function classifySetup(
   layer: "sandbox" | "platform",
   code: string | undefined,
