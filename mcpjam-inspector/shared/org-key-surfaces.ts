@@ -1,5 +1,6 @@
 import type { Harness } from "@mcpjam/sdk/host-config/internal";
-import { HARNESS_DESCRIPTORS, harnessRunsOnWebAccount } from "./harness-descriptors";
+import { HARNESS_DESCRIPTORS } from "./harness-descriptors";
+import { isWebClientRuntimeId } from "./web-clients";
 
 /** What a member reads when the org has no usable Cursor key. */
 export const ORG_KEY_MISSING_MESSAGE =
@@ -15,7 +16,7 @@ export function orgKeyHarnessName(
   const descriptor = HARNESS_DESCRIPTORS[harnessId as Harness];
   // A web account is the project's, not an organization key.
   return descriptor.modelAccess === "external-account" &&
-    !harnessRunsOnWebAccount(harnessId)
+    !isWebClientRuntimeId(harnessId)
     ? descriptor.displayName
     : undefined;
 }

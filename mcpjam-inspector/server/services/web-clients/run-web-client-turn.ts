@@ -68,8 +68,6 @@ export type WebTurnApproval = {
   /** The host's switch as the turn's origin applies it (`appliedToolApproval`). */
   requireToolApproval: boolean;
   answer: TurnApprovalPolicy["answer"];
-  /** Asks the person, where the turn has one to ask. */
-  askPerson?: (call: ToolCallRequest) => Promise<ApprovalDecision>;
 };
 
 /** The run's sealed tool policy by server id (`harnessToolPolicy`), and where its refusals go. */
@@ -187,7 +185,10 @@ export function webTurnApprover(
           reason: decided.reason,
           classification: decided.classification,
           at: Date.now(),
-          ...(call.toolUseId ? { toolCallId: call.toolUseId } : {}),
+          // The grade leaves a refused call out by this id. ChatGPT sends
+          // none, so the refusal names the call, and the transcript's call
+          // takes the same id (`matchWebToolCalls`).
+          toolCallId: call.toolUseId ?? `web-blocked-${randomUUID()}`,
           ...(serverId ? { serverId } : {}),
         });
         return { allow: false, reason: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decided.reason}` };
@@ -198,7 +199,6 @@ export function webTurnApprover(
     if (approval.answer === "deny") {
       return { allow: false, reason: SYNTHETIC_SESSION_APPROVAL_DENIAL };
     }
-    if (approval.askPerson) return approval.askPerson(call);
     return {
       allow: false,
       reason: "This tool call needs a person's approval, and nobody can answer during this run.",
@@ -252,11 +252,13 @@ export async function runWebClientTurn(
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
   let webAccountId: string | undefined;
+  const blocked: HarnessPolicyBlockRecord[] = [];
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
       conversation,
       serverOfConnector: (connectorId) => serverOfConnector.get(connectorId),
+      blocked,
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
@@ -278,7 +280,14 @@ export async function runWebClientTurn(
     await openWindows(
       webTurnApprover(
         input.approval,
-        input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
+        input.toolPolicy && {
+          ...input.toolPolicy,
+          serverOf: (id) => serverOfConnector.get(id),
+          onBlock: (block) => {
+            blocked.push(block);
+            input.toolPolicy?.onBlock?.(block);
+          },
+        },
       ),
     );
     browser = await env.openBrowser({
@@ -380,13 +389,26 @@ export async function runWebClientTurn(
     }
   }
 
-  /** A durable close that fails stays pending, so the next call retries it. */
+  /**
+   * A durable close that fails stays pending, so the next call retries it.
+   * It never throws: the turn's own result or error stands.
+   */
   async function closeWindows() {
     for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    if (opened.length > 0) await env.turnGate?.close(turnId);
-    opened.length = 0;
+    try {
+      if (opened.length > 0) await env.turnGate?.close(turnId);
+      opened.length = 0;
+    } catch (error) {
+      // Failing a turn that already ran would lose its evidence and make a
+      // caller send the prompt again, and a window nobody closes lapses on
+      // the backend.
+      logger.warn("[web-clients] the turn's durable window did not close", {
+        runtimeId: input.runtimeId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /** Closes this turn's windows and browser, whichever way it ended; the browser closes either way. */
@@ -396,7 +418,7 @@ export async function runWebClientTurn(
     try {
       await closeWindows();
     } finally {
-      await open?.close();
+      await closeBrowser(open);
     }
   }
 
@@ -411,6 +433,22 @@ export async function runWebClientTurn(
       logger.warn("[web-clients] the turn's outcome could not be recorded on the account", {
         runtimeId: input.runtimeId,
         ok: outcome.ok,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * The turn's result is the evidence, so a browser that won't close is
+   * logged and never thrown in its place.
+   */
+  async function closeBrowser(open: typeof browser) {
+    try {
+      await open?.close();
+    } catch (error) {
+      redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
+      logger.warn("[web-clients] the turn's browser did not close", {
+        runtimeId: input.runtimeId,
         message: error instanceof Error ? error.message : String(error),
       });
     }

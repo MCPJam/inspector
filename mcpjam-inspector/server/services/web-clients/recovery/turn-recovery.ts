@@ -16,6 +16,7 @@ import type {
   RealUiFailure,
   RealUiStep,
 } from "../../../utils/harness/real-ui/page-module.js";
+import { logger } from "../../../utils/logger.js";
 import {
   runWebClientTurn,
   type WebClientTurnInput,
@@ -64,6 +65,20 @@ export type HandbackBrowsers = Pick<
   "openBrowser" | "pageModule"
 >;
 
+/**
+ * Thrown by `openBrowser` when the browser a handback names was opened for
+ * another web account. Nothing is saved or resumed, and the same browser can
+ * never hand this account back, so the person signs this account in instead.
+ */
+export class SignInBrowserAccountMismatchError extends Error {
+  constructor() {
+    super(
+      "The browser you signed in with belongs to another account. Open this account's sign-in page, then finish.",
+    );
+    this.name = "SignInBrowserAccountMismatchError";
+  }
+}
+
 export type WebRecoverySetup = {
   /**
    * The reconnect backend, acting for the run's person. Undefined when the
@@ -105,6 +120,7 @@ export function webRecovery(): WebRecoverySetup | undefined {
 
 const MAX_PAUSE_MS = 15 * 60_000;
 const POLL_MS = 5_000;
+/** Tries of one turn in all: the first, and at most 2 retries. */
 const MAX_ATTEMPTS = 3;
 /** Steps after which the prompt may already be in the vendor's chat. */
 const SENT_STEPS: ReadonlySet<string> = new Set([
@@ -130,13 +146,14 @@ export function runFailureOf(failure: RealUiFailure): RunFailure | undefined {
   }
 }
 
-/** Records the prompt as possibly sent, so the turn looks for its chat first. */
-async function keepSendRecord(journal: SendJournal, turnKey: string) {
+/**
+ * Records the prompt as possibly sent by the attempt that began at `at`, so
+ * the turn looks for its chat first. The send came after `at`, and the turn
+ * takes only a chat created since then.
+ */
+async function keepSendRecord(journal: SendJournal, turnKey: string, at: string) {
   if (await journal.read(turnKey)) return;
-  await journal.write(turnKey, {
-    state: "sending",
-    at: new Date().toISOString(),
-  });
+  await journal.write(turnKey, { state: "sending", at });
 }
 
 export async function runRecoverableWebTurn(
@@ -184,7 +201,13 @@ export async function runRecoverableWebTurn(
         ...(restored !== undefined ? { restoredProfileVersion: restored } : {}),
       });
     } finally {
-      await browser.close();
+      // A browser that won't close must not fail the recovery it served.
+      await browser.close().catch((error: unknown) => {
+        logger.warn("[web-recovery] The account's browser did not close", {
+          runId,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   };
   let attempt = input;
@@ -192,7 +215,10 @@ export async function runRecoverableWebTurn(
     const result = await runWebClientTurn(attempt);
     if (result.ok) return result;
     const failure = runFailureOf(result.failure);
-    if (!failure || tried >= MAX_ATTEMPTS) return result;
+    if (!failure) return result;
+    // The last try is not sent again, but its sign-out still opens the
+    // account's sign-in request, and its calls are still read from the ledger.
+    const last = tried >= MAX_ATTEMPTS;
     const step: PendingStep = result.pendingStep ?? {
       stepId: result.failure.step,
       startedAt: new Date(result.startedAt).toISOString(),
@@ -210,8 +236,11 @@ export async function runRecoverableWebTurn(
         step: result.failure.step,
         message: result.failure.message,
       } as const;
+      // No try is left to carry the turn on after a handback.
+      if (last) return { ...result, stop: paused };
       onPaused?.(paused);
-      const resumed = await waitForResume(runId, step, {
+      const waitingOn = { requestId: outcome.requestId, runId };
+      const resumed = await waitForResume(waitingOn, step, {
         ...(input.signal ? { signal: input.signal } : {}),
         timeoutMs: setup.maxPauseMs ?? MAX_PAUSE_MS,
         pollMs: setup.pollMs ?? POLL_MS,
@@ -230,8 +259,13 @@ export async function runRecoverableWebTurn(
       }));
       return { ...result, stop: { kind: "ambiguous_execution", calls } };
     }
+    if (last) return result;
     if (verdict.status === "reconciled" || SENT_STEPS.has(step.stepId)) {
-      await keepSendRecord(environment.journal, result.turnId);
+      await keepSendRecord(
+        environment.journal,
+        result.turnId,
+        new Date(result.startedAt).toISOString(),
+      );
     }
     attempt = { ...input, turnId: result.turnId };
   }

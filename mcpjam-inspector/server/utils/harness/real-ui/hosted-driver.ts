@@ -80,6 +80,8 @@ export function createHostedPageDriver(
   return {
     kind: "hosted",
     canEvaluate: false,
+    // Reads and acts find their element with Playwright's engine in the browser.
+    playwrightSelectors: true,
     async navigate(url) {
       assertOnSites(url, options.sites);
       const result = await run({ op: "navigate", url, observeAfter: "none" });
@@ -100,7 +102,14 @@ export function createHostedPageDriver(
     waitFor: pollUntil,
     click: (selector) => act("click", selector),
     type: (selector, text) => act("type", selector, text),
-    press: (key, selector) => act("press", selector, key),
+    async press(key, selector) {
+      // The browser presses where focus is and takes no selector for a key,
+      // so a key meant for one element is refused rather than sent to another.
+      if (selector) {
+        throw new PageDriverError("unsupported", `The hosted browser can't press ${key} on ${selector}.`);
+      }
+      await act("press", undefined, key);
+    },
     async readText(selector) {
       // The element's `innerText`, found by Playwright's engine in the
       // browser: the same element and text the Playwright driver reads.

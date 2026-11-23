@@ -5,10 +5,8 @@ import type { HostDetail } from "@/hooks/useClients";
 import type { ModelDefinition } from "@/shared/types";
 import { resolvePlaygroundClientColumn } from "../playground-client-columns";
 import { harnessPickerModels } from "../harness-model-locks";
-import {
-  HARNESS_DESCRIPTORS,
-  harnessRunsOnWebAccount,
-} from "@/shared/harness-descriptors";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 const hosted: ModelDefinition = {
   id: "openai/gpt-5",
@@ -224,7 +222,7 @@ describe("each column reads the catalog through its own harness", () => {
     it(`${harnessId}: resolves its saved model on its own list, not the lead's`, () => {
       if (
         HARNESS_DESCRIPTORS[harnessId].modelAccess === "external-account" &&
-        !harnessRunsOnWebAccount(harnessId)
+        !isWebClientRuntimeId(harnessId)
       ) {
         // Its account picks the model: the sentinel is what runs.
         const auto = resolve(clientOn({ harness: harnessId }, "cursor/auto"), [

@@ -620,7 +620,11 @@ describe("infra evidence reaches the turn outcome untouched", () => {
       );
     });
     const params = baseParams();
-    expect(await driveHostedEvalTurn(params)).toMatchObject({ kind: "failed" });
+    // The page stopped, so the run failed: it stays out of the server's pass rate.
+    expect(await driveHostedEvalTurn(params)).toMatchObject({
+      kind: "failed",
+      errorInfra: { source: "web_client", code: "driver" },
+    });
     expect(params.acc.capturedSpans).toEqual([sent]);
   });
 });

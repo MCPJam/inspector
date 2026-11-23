@@ -15,6 +15,7 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type ModelMessage,
+  type UIMessageChunk,
 } from "ai";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { approvalAnswerOf } from "@/shared/tool-approval";
@@ -27,11 +28,18 @@ import type { PersistedTurnTrace } from "../../utils/chat-ingestion.js";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { buildHarnessMcpAtTurn } from "../../utils/harness/harness-mcp-receipt.js";
 import { resolveHarnessMcpPlan } from "../../utils/harness/harness-mcp-plan.js";
-import type { HarnessUnavailableKind } from "../../utils/harness/harness-availability.js";
+import {
+  harnessSystemPromptRefusalReason,
+  type HarnessUnavailableKind,
+} from "../../utils/harness/harness-availability.js";
 import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessToolApprovalRefusalReason } from "../../utils/harness/harness-tool-approval.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import type { RealUiFailure } from "../../utils/harness/real-ui/page-module.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+} from "../../utils/history-provenance.js";
 import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
@@ -131,12 +139,12 @@ function refuseUnsupportedSettings(runtimeId: WebClientRuntimeId, options: MCPJa
     hasSelectedMcpServers: (options.selectedServers?.length ?? 0) > 0,
   });
   if (approvalRefusal) throw new WebClientTurnRefusedError("tool-approval", approvalRefusal);
-  if (options.systemPrompt?.trim()) {
-    throw new WebClientTurnRefusedError(
-      "setting-unsupported",
-      `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[runtimeId].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`,
-    );
-  }
+  const promptRefusal = harnessSystemPromptRefusalReason({
+    adapter,
+    systemPrompt: options.systemPrompt,
+  });
+  if (promptRefusal)
+    throw new WebClientTurnRefusedError("setting-unsupported", promptRefusal);
   const latest = lastUserMessage(options.messages);
   if (latest && typeof latest.content !== "string" && latest.content.some((part) => part.type !== "text")) {
     throw new WebClientTurnRefusedError(
@@ -295,6 +303,14 @@ export async function runWebClientHarnessTurn(
   };
 
   if (streamSink === "none") return run();
+  // The reply is signed as this server's own as it streams (MJ-009), as every
+  // engine's is, so it stays in model context when the conversation goes on
+  // with another client. A no-op where nothing can be signed.
+  const provenance = historyProvenanceContextFor(
+    options.projectId,
+    options.chatSessionId,
+  );
+  const signChunk = provenance && createUiChunkProvenanceSigner(provenance);
   let settled: ChatEngineLoopResult = { messageHistory: messages, aborted: false };
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
@@ -322,6 +338,16 @@ export async function runWebClientHarnessTurn(
       return settled.turnTrace;
     },
     aborted: false,
-    response: createUIMessageStreamResponse({ stream }),
+    response: createUIMessageStreamResponse({
+      stream: signChunk
+        ? stream.pipeThrough(
+            new TransformStream<UIMessageChunk, UIMessageChunk>({
+              transform(chunk, controller) {
+                for (const out of signChunk(chunk)) controller.enqueue(out);
+              },
+            }),
+          )
+        : stream,
+    }),
   };
 }

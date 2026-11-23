@@ -30,6 +30,7 @@ function claudePage(email: string | undefined): PageDriver {
   return {
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     navigate: async () => undefined,
     url: async () => "https://claude.ai/new",
     evaluate: async (fn, arg) => fn(arg),
@@ -60,16 +61,17 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
       start: vi.fn(async () => ({ browserSessionId: "browser-session-1" })),
       driver: async () => claudePage("team@example.com"),
       captureProfile: async () => new Uint8Array([1, 2, 3]),
+      release: vi.fn(async () => undefined),
     },
     ...overrides,
   };
   return { app: createWebAccountRoutes(deps), deps, applied };
 }
 
-const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown) =>
+const post = (app: ReturnType<typeof routes>["app"], path: string, body: unknown, headers: Record<string, string> = {}) =>
   app.request(path, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
 
@@ -98,20 +100,22 @@ describe("POST /accounts/:id/sign-in", () => {
     expect((await post(routes({ isEnabled: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(404);
   });
 
-  it("refuses a member, and never restores a saved session when the role is unknown", async () => {
-    expect((await post(routes({ mayManage: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
+  it("refuses a member, and anyone the backend can't say manages accounts, opening no browser", async () => {
+    const member = routes({ mayManage: async () => false });
+    expect((await post(member.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
     const unknown = routes({ mayManage: async () => undefined });
-    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(200);
-    expect(unknown.deps.browser.start).toHaveBeenCalledWith(expect.objectContaining({ restoreProfile: false }));
+    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(503);
+    expect(member.deps.browser.start).not.toHaveBeenCalled();
+    expect(unknown.deps.browser.start).not.toHaveBeenCalled();
   });
 });
 
 describe("POST /accounts/:id/save-profile", () => {
   const body = { projectId: "p1", browserSessionId: "browser-session-1" };
 
-  it("saves the profile against its version and marks the account verified", async () => {
+  it("saves the profile against its version, marks the account verified, and closes the browser", async () => {
     const { app, deps, applied } = routes();
-    expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toEqual({
+    expect(await (await post(app, "/accounts/acct-1/save-profile", body, { authorization: "Bearer saver" })).json()).toEqual({
       ok: true,
       accountEmail: "team@example.com",
       workspaceName: "Team",
@@ -130,6 +134,7 @@ describe("POST /accounts/:id/save-profile", () => {
         ...ACTOR,
       },
     ]);
+    expect(deps.browser.release).toHaveBeenCalledWith({ ...body, actor: ACTOR, webAccountId: "acct-1", bearer: "Bearer saver" });
   });
 
   it("answers not_signed_in, wrong_account and version_conflict without saving a wrong session", async () => {
@@ -156,5 +161,111 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
+    // The person fixes the first two in the same browser; someone else's save ends it.
+    expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
+    expect(other.deps.browser.release).not.toHaveBeenCalled();
+    expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the browser when reading it or saving from it fails", async () => {
+    const unreadable = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The browser went away.");
+          },
+        }),
+      },
+    });
+    expect((await post(unreadable.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(unreadable.deps.browser.release).toHaveBeenCalledTimes(1);
+    const offline = routes({
+      saveProfile: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    expect((await post(offline.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(offline.deps.browser.release).toHaveBeenCalledTimes(1);
+    expect(offline.applied).toEqual([]);
+  });
+
+  it("refuses a save for anyone the backend can't say manages accounts, reading no browser", async () => {
+    const driver = vi.fn(async () => claudePage("team@example.com"));
+    const unknown = routes({ mayManage: async () => undefined, browser: { ...routes().deps.browser, driver } });
+    expect((await post(unknown.app, "/accounts/acct-1/save-profile", body)).status).toBe(503);
+    expect(driver).not.toHaveBeenCalled();
+    expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("closes the browser once the save is over: saved, saved first by someone else, or failed", async () => {
+    const saved = routes();
+    expect((await post(saved.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const raced = routes({
+      saveProfile: async () => ({ ok: false, reason: "version_conflict", profileVersion: 5 }),
+    });
+    expect((await post(raced.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const exportFailed = routes({
+      browser: {
+        ...routes().deps.browser,
+        captureProfile: async () => {
+          throw new Error("The export stopped.");
+        },
+      },
+    });
+    const pageGone = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The page closed.");
+          },
+        }),
+      },
+    });
+    for (const failed of [exportFailed, pageGone]) {
+      expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    }
+    for (const { deps } of [saved, raced, exportFailed, pageGone]) {
+      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1", bearer: "" });
+    }
+  });
+
+  it("keeps the browser open while the person finishes signing in or switches accounts", async () => {
+    for (const email of [undefined, "someone@example.com"]) {
+      const { app, deps } = routes({
+        browser: { ...routes().deps.browser, driver: async () => claudePage(email) },
+      });
+      expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toMatchObject({ ok: false });
+      expect(deps.browser.release).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe("an account of a vendor this Inspector doesn't drive yet", () => {
+  const service = {
+    read: async () => [{ webAccountId: "acct-2", vendor: "another-vendor" }, ROW],
+    apply: async () => null,
+  };
+
+  it("leaves both routes working for the project's other accounts", async () => {
+    const { app } = routes({ service });
+    expect(await (await post(app, "/accounts/acct-1/sign-in", { projectId: "p1" })).json()).toEqual({
+      browserSessionId: "browser-session-1",
+    });
+    const saved = await post(app, "/accounts/acct-1/save-profile", { projectId: "p1", browserSessionId: "browser-session-1" });
+    expect(await saved.json()).toMatchObject({ ok: true, accountEmail: "team@example.com" });
+  });
+
+  it("refuses to sign that account in, and says why", async () => {
+    const { app, deps } = routes({ service });
+    const response = await post(app, "/accounts/acct-2/sign-in", { projectId: "p1" });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "This version of MCPJam can't sign in this kind of web account. Update MCPJam, then try again.",
+    });
+    expect(deps.browser.start).not.toHaveBeenCalled();
   });
 });

@@ -23,8 +23,10 @@ export type PendingStep = {
   /** The runtime's own name for the step, such as the prompt's index. */
   stepId: string;
   /**
-   * When the step first started, as `toISOString()` writes it: the ledger
-   * compares it as text. Calls forwarded earlier are not this step's.
+   * When the step first started, as `toISOString()` writes it. Calls
+   * forwarded earlier are not this step's. The ledger here and the backend's
+   * `findWebToolCalls` both parse it and compare it as a time. One that
+   * doesn't parse bounds nothing here but matches no call there.
    */
   startedAt: string;
   /** The turn the step opened on its connector, once it got that far. */
