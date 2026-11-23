@@ -452,28 +452,37 @@ describe("mcp replay route", () => {
     vi.unstubAllGlobals();
   });
 
-  it("answers a gating judge the suite cannot honour with 409 and the backend's sentence, and reports nothing", async () => {
-    vi.stubEnv("DO_NOT_TRACK", "");
-    const message =
-      "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
-    startSuiteRunWithRecorderMock.mockRejectedValueOnce(
-      new ConvexError({
-        code: "JUDGE_GATE_NOT_AVAILABLE",
-        message,
-        gradingEngineMode: "off",
-      }),
-    );
-
-    const response = await replayRun();
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toEqual({
-      code: "CONFLICT",
-      error: message,
-      details: { code: "JUDGE_GATE_NOT_AVAILABLE" },
+  describe("a replay the backend refuses", () => {
+    beforeEach(() => {
+      vi.stubEnv("DO_NOT_TRACK", "");
+      captureExceptionMock.mockReset();
     });
-    expect(captureExceptionMock).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("answers a gating judge the suite cannot honour with 409 and the backend's sentence, and reports nothing", async () => {
+      const message =
+        "A gating judge requires the grading engine in enforce mode, otherwise its verdict would be computed and then ignored. The run was not started.";
+      startSuiteRunWithRecorderMock.mockRejectedValueOnce(
+        new ConvexError({
+          code: "JUDGE_GATE_NOT_AVAILABLE",
+          message,
+          gradingEngineMode: "off",
+        }),
+      );
+
+      const response = await replayRun();
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        code: "CONFLICT",
+        error: message,
+        details: { code: "JUDGE_GATE_NOT_AVAILABLE" },
+      });
+      expect(captureExceptionMock).not.toHaveBeenCalled();
+    });
   });
 
   // `passCriteria` here was a bare, unbounded `z.object({ minimumPassRate:

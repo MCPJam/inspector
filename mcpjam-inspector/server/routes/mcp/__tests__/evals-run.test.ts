@@ -492,6 +492,27 @@ describe("local eval runs", () => {
       expect(mocks.captureException).not.toHaveBeenCalled();
     });
 
+    it("answers an authorization refusal with 403 and its message, and reports nothing", async () => {
+      const message =
+        "Insufficient permissions for run.launch: requires editor";
+      mocks.prepareEvalRun.mockRejectedValueOnce(
+        new ConvexError({ kind: "forbidden", action: "run.launch", message }),
+      );
+
+      const response = await post(
+        createApp(createMockMcpClientManager()),
+        "run",
+        runSuiteBody,
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toEqual({
+        code: "FORBIDDEN",
+        error: message,
+      });
+      expect(mocks.captureException).not.toHaveBeenCalled();
+    });
+
     it("still answers a failure with no backend code with 500 and reports it", async () => {
       mocks.prepareEvalRun.mockRejectedValueOnce(new Error("snapshot failed"));
 
