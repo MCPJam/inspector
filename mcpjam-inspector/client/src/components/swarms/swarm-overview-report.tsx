@@ -161,11 +161,11 @@ function OverviewSessionFlow({ row, projectId }: { row: OverviewWave; projectId:
   if (breakdown === null) {
     return <p className="text-sm text-muted-foreground">No session flow yet.</p>;
   }
+  // The report scrolls around the chart, so the chart uses its content height.
   return (
     <SessionFlowSankey
       hideTitle
       goalGroupsByJourney
-      scrollLayout
       breakdown={breakdown}
       selection={selection}
       onSelectNode={selectFlow}

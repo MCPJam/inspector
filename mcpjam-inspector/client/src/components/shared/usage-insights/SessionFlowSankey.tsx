@@ -80,7 +80,8 @@ export interface SessionFlowSankeyProps {
   /**
    * Opt into the leftover-pane chrome: the diagram bleeds to its already-
    * padded owning container (no card padding, no `border-b`) and fills that
-   * parent, scrolling columns under sticky titles. This is the swarm
+   * parent, scrolling columns under sticky titles. Only use this when the
+   * parent height is constrained independently of the diagram. This is the swarm
    * Insights opt-in and is NOT implied by `!fillHeight` — the plain
    * embedded callers (BenchReport, the explanatory opt-in) keep the card
    * chrome.
