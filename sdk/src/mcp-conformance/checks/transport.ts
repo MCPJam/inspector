@@ -4,6 +4,8 @@ import type {
   RawHttpCheckContext,
 } from "../types.js";
 import { CHECK_ERAS } from "../types.js";
+import { jsonRpcResult } from "../raw-http.js";
+import { concurrentProbe, PING_ANSWERED_AS_JSON } from "./concurrent-probe.js";
 import {
   blockedResult,
   errorMessage,
@@ -153,6 +155,8 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   sessionId?: string;
   body: unknown;
   contentType: string;
+  /** The capabilities the `initialize` answer declared, as sent. */
+  capabilities: unknown;
   isMcpLayerResponse: boolean;
   /** The answered protocol version, when MCPJam supports it. */
   negotiatedVersion?: string;
@@ -169,6 +173,7 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
     versionStop,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
+    capabilities: jsonRpcResult(result)?.capabilities,
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
     // a JSON-RPC error IS the server's own response, so response-framing MUSTs
     // still bind to it; a non-2xx without one came from something in front of
@@ -516,6 +521,7 @@ export async function runTransportChecks(
       const streamVersion =
         ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
       const multiStreamStartedAt = Date.now();
+      const probe = concurrentProbe(session.capabilities);
       const settledResponses = await Promise.allSettled(
         Array.from({ length: 3 }).map((_, index) =>
           rawRequest(ctx, {
@@ -526,12 +532,7 @@ export async function runTransportChecks(
               }),
               Accept: "text/event-stream, application/json",
             },
-            body: {
-              jsonrpc: "2.0",
-              id: 1000 + index,
-              method: "tools/list",
-              params: {},
-            },
+            body: probe.body(1000 + index),
           }).then((response) =>
             // A polled answer needs a call-back; the three wait at once.
             resumePolledStream(ctx, response, {
@@ -572,6 +573,7 @@ export async function runTransportChecks(
                 TRANSPORT_CHECK_METADATA["server-accepts-multiple-post-streams"],
                 Date.now() - multiStreamStartedAt,
                 {
+                  probeMethod: probe.method,
                   statuses,
                   contentTypes,
                 },
@@ -617,12 +619,19 @@ export async function runTransportChecks(
                     requestErrors,
                   },
                 )
+              : probe.capability === undefined
+              ? notApplicableResult(
+                  TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
+                  PING_ANSWERED_AS_JSON,
+                  { probeMethod: probe.method, contentTypes },
+                )
               : passedResult(
                   TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
                   Date.now() - multiStreamStartedAt,
                   {
                     message:
                       "Concurrent requests returned JSON responses instead of SSE streams",
+                    probeMethod: probe.method,
                     contentTypes,
                   },
                 ),
@@ -661,6 +670,7 @@ export async function runTransportChecks(
                   TRANSPORT_CHECK_METADATA["server-sse-streams-functional"],
                   Date.now() - multiStreamStartedAt,
                   {
+                    probeMethod: probe.method,
                     eventCounts,
                     sseStreamCount: sseResponses.length,
                     ...polling.resumedDetail,
