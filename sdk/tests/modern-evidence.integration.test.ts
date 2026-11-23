@@ -659,6 +659,27 @@ describe("SEP-2243 -32020 recovery on the MRTR path", () => {
     expect(sentHeaders()).toEqual(["deliberately-wrong"]);
   });
 
+  it("does not resend when the caller set a different Mcp-Param-* header", async () => {
+    // The fresh list would add `Mcp-Param-Message`, which the caller did not
+    // set. The caller's own probe header still means: leave the refusal alone.
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      listingsWithoutTheMark: 1,
+    });
+    await expect(
+      manager.executeTool(
+        "fixture",
+        "tool-0",
+        { message: "hi" },
+        { headers: { "mcp-param-probe": "x" } }
+      )
+    ).rejects.toThrow(/Mcp-Param-Message header is absent/);
+
+    expect(sentHeaders()).toEqual([undefined]);
+    expect(listWalks()).toBe(1);
+  });
+
   it("does not list again or resend with mirroring off", async () => {
     // `mirrorToolParamHeaders: false` simulates a client that never sends the
     // headers. The refusal is the point, so nothing may fix it.

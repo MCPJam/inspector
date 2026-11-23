@@ -231,6 +231,7 @@ import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
   buildMcpParamHeaders,
+  MCP_PARAM_HEADER_PREFIX,
   scanXMcpHeaderDeclarations,
   stripXMcpHeaderAnnotations,
   type XMcpHeaderDeclaration,
@@ -5003,6 +5004,15 @@ export class MCPClientManager {
               return await send(sent);
             } catch (error) {
               if (!isHeaderMismatchError(error)) throw error;
+              // A caller that set its own `Mcp-Param-*` header is probing the
+              // server's refusal on purpose; fixing other headers would hide it.
+              if (
+                Object.keys(callerHeaders ?? {}).some((name) =>
+                  name.toLowerCase().startsWith(MCP_PARAM_HEADER_PREFIX)
+                )
+              ) {
+                throw error;
+              }
               const fresh = await this.freshXMcpHeaderDeclarations(
                 serverId,
                 client,
