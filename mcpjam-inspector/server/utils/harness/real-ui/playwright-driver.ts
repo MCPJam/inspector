@@ -58,7 +58,13 @@ export async function createPlaywrightDriver(
       "The driver runs only in Chromium, which can stop a redirect before it leaves the vendor's sites.",
     );
   }
-  let leftFor: string | undefined;
+  // A page handed over already off its sites is refused from the start, as
+  // if it had just left them, so nothing reads it before a navigate lands.
+  const current = page.url();
+  let leftFor =
+    current === "about:blank" || urlOnSites(current, sites)
+      ? undefined
+      : new URL(current).origin;
   let departures = 0;
   page.on("framenavigated", (frame) => {
     if (frame !== page.mainFrame()) return;
