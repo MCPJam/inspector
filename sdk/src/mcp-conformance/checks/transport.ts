@@ -153,14 +153,17 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   isMcpLayerResponse: boolean;
   /** The answered protocol version, when MCPJam does not support it. */
   unsupportedVersion?: string;
+  /** The answered protocol version, when MCPJam supports it. */
+  negotiatedVersion?: string;
 }> {
-  const { result, sessionId, unsupportedVersion } =
+  const { result, sessionId, unsupportedVersion, negotiatedVersion } =
     await legacyInitialize(ctx);
   return {
     ok: isOk(result),
     status: result.status,
     sessionId,
     unsupportedVersion,
+    negotiatedVersion,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -240,14 +243,25 @@ async function modernPostResponseContentTypeCheck(
 async function terminateSession(
   ctx: RawHttpCheckContext,
   sessionId: string | undefined,
+  negotiatedVersion: string | undefined,
 ): Promise<void> {
   if (!sessionId) {
     return;
   }
 
+  // The version header rides on every request after initialize
+  // (2025-06-18 and later), the closing DELETE included, and carries the
+  // version the server agreed to: a server that answered an older version
+  // may refuse the one we asked for, and the session would stay open.
   await rawRequest(ctx, {
     method: "DELETE",
-    headers: legacyHeaders({ sessionId }),
+    headers: legacyHeaders({
+      protocolVersion:
+        negotiatedVersion ??
+        ctx.config.protocolVersion ??
+        DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId,
+    }),
   }).catch(() => undefined);
 }
 
@@ -749,7 +763,7 @@ export async function runTransportChecks(
       }
     }
   } finally {
-    await terminateSession(ctx, sessionId);
+    await terminateSession(ctx, sessionId, session?.negotiatedVersion);
   }
 
   return results;
