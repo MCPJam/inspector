@@ -308,6 +308,9 @@ export async function runWebClientTurn(
       toolCalls: wireCalls(page.conversation.toolCalls),
     };
   } catch (error) {
+    // A Stop goes up as the run's own cancellation: no page failed, and an
+    // abort's message is read-only, so redacting it would throw instead.
+    if (input.signal?.aborted && error === input.signal.reason) throw error;
     redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
     if (!(error instanceof RealUiError)) throw error;
     logger.warn("[web-clients] turn stopped", {
@@ -353,6 +356,8 @@ export async function runWebClientTurn(
     const deadline = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
     const connectorIds = [...serverOfConnector.keys()].sort();
     for (;;) {
+      // A stopped run takes no connector, so it opens no browser either.
+      input.signal?.throwIfAborted();
       try {
         for (const connectorId of connectorIds) {
           windows.open({ connectorId, runId: input.runId, turnId, approve });
@@ -363,7 +368,7 @@ export async function runWebClientTurn(
       } catch (error) {
         if (!connectorBusy(error)) throw error;
         await closeWindows();
-        if (Date.now() >= deadline || input.signal?.aborted) {
+        if (Date.now() >= deadline) {
           throw new RealUiError({
             kind: "turn_running",
             step: "connector",

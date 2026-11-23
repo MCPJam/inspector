@@ -220,6 +220,10 @@ export async function runWebClientHarnessTurn(
     } catch (error) {
       // The run's account is gone, so the run's pool stops handing it out.
       if (error instanceof WebAccountUnavailableError) runContext?.onAccountLost?.(error.message);
+      // A Stop while the turn still waited its turn, before any page was
+      // driven, ends it as the person's too, like a Stop on the page below.
+      if (options.abortSignal?.aborted)
+        return { messageHistory: messages, aborted: true };
       throw error;
     }
     const traceOf = (failed: boolean): PersistedTurnTrace => ({

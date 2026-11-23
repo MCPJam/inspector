@@ -175,6 +175,37 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     expect(openBrowser).not.toHaveBeenCalled();
   });
 
+  it("ends the wait on a Stop as the run's cancellation, never as a busy connector", async () => {
+    windows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    const stop = new AbortController();
+    const openBrowser = vi.fn();
+    const onOutcome = vi.fn(async () => {});
+    const result = runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: { ...environment(), openBrowser, onOutcome },
+      turnWindows: windows,
+      ledger,
+      signal: stop.signal,
+      connectorPollMs: 25,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    stop.abort();
+    await expect(result).rejects.toBe(stop.signal.reason);
+    expect(windows.active("conn-orders")?.turnId).toBe("other-turn");
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(onOutcome).not.toHaveBeenCalled();
+  });
+
   it("holds no window while another replica's turn has the connector", async () => {
     let refusals = 2;
     const heldWhileRefused: Array<string | undefined> = [];
@@ -428,6 +459,29 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
     // An eval iteration reads this as the run's failure, out of the pass rate.
     expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "needs_sign_in" });
     expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
+  });
+
+  it("ends a Stop during the connector wait as the person's, and opens no browser when the connector frees", async () => {
+    const openBrowser = vi.fn();
+    setWebClientEnvironment({ ...environment(), openBrowser });
+    webClientTurnWindows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    const stop = new AbortController();
+    const result = runHarnessTurn(
+      options({ abortSignal: stop.signal }),
+      "none",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // The other run lets go of the connector just as this one is stopped.
+    stop.abort();
+    webClientTurnWindows.close("other-turn");
+    await expect(result).resolves.toMatchObject({ aborted: true });
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(webClientTurnWindows.active("conn-orders")).toBeUndefined();
   });
 
   it("acts as the eval run's owner on its frozen accounts, one account on per iteration", async () => {
