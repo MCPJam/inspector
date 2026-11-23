@@ -31,7 +31,14 @@ import {
   type RealUiStep,
   type StepContext,
 } from "./page-module.js";
-import { VendorStatusError, list, readVendorJson, record, text } from "./vendor-json.js";
+import {
+  VendorStatusError,
+  createdSince,
+  list,
+  readVendorJson,
+  record,
+  text,
+} from "./vendor-json.js";
 
 const ORIGIN = "https://claude.ai";
 const PANE = ".dframe-pane-primary";
@@ -286,9 +293,10 @@ export const claudeWebPageModule: RealUiPageModule = {
     return { conversationUrl };
   },
 
-  async findSent(driver, prompt) {
-    // The newest chats are listed first; the prompt's own chat is the one
-    // whose first message is exactly this prompt.
+  async findSent(driver, prompt, _ctx, since) {
+    // The newest chats are listed first; the prompt's own chat is one
+    // claude.ai created since the send began whose first message is exactly
+    // this prompt.
     const org = await organizationId(driver);
     const chats = list(
       await readVendorJson(
@@ -298,7 +306,7 @@ export const claudeWebPageModule: RealUiPageModule = {
     );
     for (const chat of chats) {
       const id = text(record(chat).uuid);
-      if (!id) continue;
+      if (!id || !createdSince(record(chat).created_at, since)) continue;
       const saved = await this.readConversation(driver, `${ORIGIN}/chat/${id}`, {
         timeoutMs: 15_000,
       });

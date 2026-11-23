@@ -162,6 +162,30 @@ describe("claude.ai", () => {
     });
   });
 
+  it("finds its own chat after a restart, and never one created before the send began", async () => {
+    const earlier = "22222222-2222-3333-4444-555555555555";
+    const asked = (prompt: string) => ({
+      chat_messages: [{ sender: "human", content: [{ type: "text", text: prompt }], created_at: "2026-11-23T10:00:05Z" }],
+    });
+    const driver = cannedDriver({
+      url: "https://claude.ai/new",
+      json: {
+        "/api/organizations/org-1/chat_conversations?": [
+          { uuid: id, created_at: "2026-11-23T10:00:05Z" },
+          { uuid: earlier, created_at: "2026-11-23T09:00:00Z" },
+        ],
+        [`/api/organizations/org-1/chat_conversations/${id}`]: asked("say hello"),
+        [`/api/organizations/org-1/chat_conversations/${earlier}`]: asked("say hello"),
+        "/api/organizations": [{ uuid: "org-1", name: "Team", capabilities: ["chat"] }],
+      },
+    });
+    const ctx = { timeoutMs: 1_000 };
+    expect(await claudeWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:00Z")).toEqual({
+      conversationUrl: `https://claude.ai/chat/${id}`,
+    });
+    expect(await claudeWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:10Z")).toBeUndefined();
+  });
+
   it("names a Cloudflare check as needs_sign_in and a plan wall as plan_limit", async () => {
     const challenged = cannedDriver({
       url: "https://claude.ai/new",
@@ -357,6 +381,37 @@ describe("chatgpt.com", () => {
       toolCalls: [{ toolName: "echo", at: new Date(2000).toISOString() }],
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
+  });
+
+  it("finds its own chat after a restart, and never one created before the send began", async () => {
+    const earlier = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const asked = (prompt: string) => ({
+      mapping: {
+        a: { message: { author: { role: "user" }, content: { content_type: "text", parts: [prompt] }, create_time: 1 } },
+      },
+    });
+    const driver = cannedDriver({
+      url: "https://chatgpt.com/",
+      json: {
+        "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
+        "/backend-api/conversations?": {
+          items: [
+            { id, create_time: "2026-11-23T10:00:05.123456+00:00" },
+            { id: earlier, create_time: Date.parse("2026-11-23T09:00:00Z") / 1000 },
+          ],
+        },
+        [`/backend-api/conversation/${id}`]: asked("say hello"),
+        [`/backend-api/conversation/${earlier}`]: asked("say hello"),
+      },
+    });
+    const ctx = { timeoutMs: 1_000 };
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:00Z")).toEqual({
+      conversationUrl: `https://chatgpt.com/c/${id}`,
+    });
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:10Z")).toBeUndefined();
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T08:00:00Z")).toEqual({
+      conversationUrl: `https://chatgpt.com/c/${id}`,
+    });
   });
 
   it("takes the prompt from the first message the person sees, not the account's hidden custom instructions", async () => {

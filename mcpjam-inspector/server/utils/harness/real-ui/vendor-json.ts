@@ -81,6 +81,21 @@ export function text(value: unknown): string | undefined {
 }
 
 /**
+ * Whether a chat the site stamped `created`, an ISO time or epoch seconds,
+ * began at or after `since`. A missing or unreadable stamp is not: nothing
+ * shows the chat is the turn's own.
+ */
+export function createdSince(created: unknown, since: string): boolean {
+  const at =
+    typeof created === "number"
+      ? created * 1000
+      : typeof created === "string"
+        ? Date.parse(created)
+        : Number.NaN;
+  return at >= Date.parse(since);
+}
+
+/**
  * The site's answer as JSON. A sign-in or error page in its place fails as
  * the driver's own typed failure, and its text stays out of the message,
  * since the page can show the account's details.

@@ -31,7 +31,13 @@ import {
   type RealUiStep,
   type StepContext,
 } from "./page-module.js";
-import { list, readVendorJson, record, text } from "./vendor-json.js";
+import {
+  createdSince,
+  list,
+  readVendorJson,
+  record,
+  text,
+} from "./vendor-json.js";
 
 const ORIGIN = "https://chatgpt.com";
 const COMPOSER = "#prompt-textarea";
@@ -166,7 +172,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
     return { conversationUrl };
   },
 
-  async findSent(driver, prompt) {
+  async findSent(driver, prompt, _ctx, since) {
     const token = text((await session(driver)).accessToken);
     if (!token) return undefined;
     const page = record(
@@ -176,7 +182,8 @@ export const chatgptWebPageModule: RealUiPageModule = {
     );
     for (const item of list(page.items)) {
       const id = text(record(item).id);
-      if (!id) continue;
+      // Only a chat chatgpt.com created since the send began can be this turn's.
+      if (!id || !createdSince(record(item).create_time, since)) continue;
       const saved = await this.readConversation(driver, `${ORIGIN}/c/${id}`, { timeoutMs: 15_000 });
       if (saved.userPrompt === prompt) return { conversationUrl: saved.url };
     }
