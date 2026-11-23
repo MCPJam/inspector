@@ -92,6 +92,8 @@ describe("FlowSankeyDiagram", () => {
           true,
         );
       const { rerender } = render(chart(SANKEY));
+      const svg = screen.getByRole("group", { name: "Failed trials" });
+      expect(svg.style.minWidth).toBe("");
       const lastColumn = () => screen.getByText("Reason").parentElement;
       const lastX = () => Number(lastColumn()?.getAttribute("data-column-x"));
       const originalX = lastX();
@@ -99,6 +101,10 @@ describe("FlowSankeyDiagram", () => {
       const longLabelX = lastX();
       expect(longLabelX).toBeGreaterThan(originalX);
       expect(lastColumn()).toHaveStyle({ width: "max-content" });
+      expect(svg).toHaveStyle({ minWidth: "432px" });
+      expect(screen.getByTestId("sankey-column-headers")).toHaveStyle({
+        minWidth: svg.style.minWidth,
+      });
 
       rerender(chartWithFinalLabel("Skipped"));
       expect(lastX()).toBeGreaterThan(longLabelX);

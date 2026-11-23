@@ -257,11 +257,15 @@ export function FlowSankeyDiagram<S extends string>({
 
   // Extra columns need a floor wider than the pane. Stretch and header %
   // must use that drawn width — using the pane's client width is what
-  // letterboxed the SVG (`xMid` + meet) and slid the bars off the titles
-  // until someone deleted a column and the floor fit again.
-  const wideMinWidth = stages.length > 4 ? stages.length * 190 : undefined;
+  // letterboxed the SVG and slid the bars off the titles. Overview also
+  // scrolls on narrow panes so adjacent header controls stay tappable.
+  const wideMinWidth =
+    stages.length > 4
+      ? stages.length * 190
+      : contentLayout && stages.length > 1
+        ? stages.length * 144
+        : undefined;
   const drawnWidth = Math.max(chartPaneSize.width, wideMinWidth ?? 0);
-
   const height = useMemo(() => {
     if (!fillsPane || drawnWidth <= 0 || chartPaneSize.height <= 0) {
       return contentHeight;
