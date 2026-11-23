@@ -6,6 +6,7 @@
  * risk running the tool twice.
  */
 import { createHash, randomUUID } from "node:crypto";
+import { stableStringifyJson } from "@mcpjam/sdk/widget-runtime";
 
 export type LedgerState = "forwarded" | "result" | "error" | "lost";
 
@@ -34,7 +35,12 @@ export type LedgerMatch = {
   toolUseId?: string;
   argsHash?: string;
   toolName?: string;
-  /** ISO timestamp; entries forwarded before it are ignored. */
+  /**
+   * ISO timestamp; entries forwarded before it are ignored. Compared as a
+   * time, so precision and offset don't matter. One that doesn't parse sets
+   * no bound: matching too much can only hold a step back, never send a call
+   * twice.
+   */
   since?: string;
 };
 
@@ -71,26 +77,64 @@ export interface DurableToolCallLedger {
 }
 
 /** Stable JSON with sorted keys, so equal arguments hash equally. */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  return `{${keys
-    .map(
-      (key) =>
-        `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`,
-    )
-    .join(",")}}`;
-}
-
 export function hashPayload(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value)).digest("hex");
+  // `tools/call` arguments are optional: a call without them hashes as null.
+  return createHash("sha256")
+    .update(stableStringifyJson(value ?? null))
+    .digest("hex");
 }
 
-export function createInMemoryToolCallLedger(): ToolCallLedger {
+/**
+ * How long a call stays here after its answer. Its turn reads it while the
+ * turn runs, pauses for a person included, or just after, so a day is far
+ * longer than any reader needs.
+ */
+const SETTLED_RETENTION_MS = 24 * 60 * 60_000;
+
+function addTo(index: Map<string, Set<string>>, key: string, id: string) {
+  const ids = index.get(key);
+  if (ids) ids.add(id);
+  else index.set(key, new Set([id]));
+}
+
+function removeFrom(index: Map<string, Set<string>>, key: string, id: string) {
+  const ids = index.get(key);
+  if (!ids) return;
+  ids.delete(id);
+  if (ids.size === 0) index.delete(key);
+}
+
+/**
+ * Calls are kept by turn and by connector, so a read looks only at its own.
+ * A call still waiting for its answer is never dropped: it is the one a
+ * reconcile must find, because it may have run.
+ */
+export function createInMemoryToolCallLedger(
+  options: { retentionMs?: number } = {},
+): ToolCallLedger {
+  const retentionMs = options.retentionMs ?? SETTLED_RETENTION_MS;
   const entries = new Map<string, LedgerEntry>();
+  const byTurn = new Map<string, Set<string>>();
+  const byConnector = new Map<string, Set<string>>();
+  // Settled ids in the order they settled, so the oldest are dropped first.
+  const settledAtMs = new Map<string, number>();
+  const pick = (ids: Set<string> | undefined) =>
+    [...(ids ?? [])].flatMap((id) => entries.get(id) ?? []);
+  const prune = () => {
+    const cutoff = Date.now() - retentionMs;
+    for (const [id, at] of settledAtMs) {
+      if (at > cutoff) break;
+      settledAtMs.delete(id);
+      const entry = entries.get(id);
+      if (!entry) continue;
+      entries.delete(id);
+      removeFrom(byConnector, entry.connectorId, id);
+      if (entry.turnId !== undefined) removeFrom(byTurn, entry.turnId, id);
+    }
+  };
   return {
     forwarded(entry) {
+      prune();
       const recorded: LedgerEntry = {
         ...entry,
         id: randomUUID(),
@@ -98,30 +142,37 @@ export function createInMemoryToolCallLedger(): ToolCallLedger {
         forwardedAt: new Date().toISOString(),
       };
       entries.set(recorded.id, recorded);
+      addTo(byConnector, recorded.connectorId, recorded.id);
+      if (recorded.turnId !== undefined)
+        addTo(byTurn, recorded.turnId, recorded.id);
       return recorded;
     },
     settle(id, outcome) {
       const entry = entries.get(id);
       // A settled entry keeps its first outcome: a late duplicate can't rewrite it.
       if (!entry || entry.state !== "forwarded") return;
+      const now = new Date();
       entries.set(id, {
         ...entry,
         ...outcome,
-        settledAt: new Date().toISOString(),
+        settledAt: now.toISOString(),
       });
+      settledAtMs.set(id, now.getTime());
+      prune();
     },
     forTurn(turnId) {
-      return [...entries.values()].filter((entry) => entry.turnId === turnId);
+      return pick(byTurn.get(turnId));
     },
     find(match) {
-      return [...entries.values()].filter(
+      const since =
+        match.since === undefined ? Number.NaN : Date.parse(match.since);
+      return pick(byConnector.get(match.connectorId)).filter(
         (entry) =>
-          entry.connectorId === match.connectorId &&
           (match.toolUseId === undefined ||
             entry.toolUseId === match.toolUseId) &&
           (match.argsHash === undefined || entry.argsHash === match.argsHash) &&
           (match.toolName === undefined || entry.toolName === match.toolName) &&
-          (match.since === undefined || entry.forwardedAt >= match.since),
+          (Number.isNaN(since) || Date.parse(entry.forwardedAt) >= since),
       );
     },
   };
