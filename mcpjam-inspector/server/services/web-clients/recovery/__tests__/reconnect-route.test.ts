@@ -5,7 +5,7 @@
  */
 import { Hono } from "hono";
 import { ConvexError } from "convex/values";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../../middleware/bearer-auth.js", () => ({
   bearerAuthMiddleware: async (
@@ -37,7 +37,12 @@ import { needsSignIn } from "../../../../utils/harness/real-ui/page-module.js";
 import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fixture-web.js";
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
 import type { WebClientService } from "../../backend-connector-resolver.js";
+import {
+  forgetSignInBrowsers,
+  keepSignInBrowser,
+} from "../../sign-in-browsers.js";
 import type { WebClientEnvironment } from "../../web-client-environment.js";
+import { createHostedWebRecovery } from "../hosted-recovery.js";
 import {
   createWebReconnectRoutes,
   type WebReconnectRouteDeps,
@@ -183,6 +188,8 @@ beforeEach(() => {
   reported.mockClear();
 });
 
+afterEach(() => forgetSignInBrowsers());
+
 describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
   it("hands the account back as the signed-in person and resumes its runs", async () => {
     expect(await post(OPEN)).toEqual({
@@ -273,6 +280,46 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
       projectId: "project-1",
       browserSessionId: "browser-1",
     });
+  });
+
+  it("says a sign-in browser opened for another account can't hand this one back, and reports no failure", async () => {
+    keepSignInBrowser({
+      browser: {
+        browserSessionId: "browser-2",
+        chatSessionId: "chat-2",
+        driver: fakeDriver,
+        exportProfile: async () => new TextEncoder().encode("other-profile"),
+      },
+      actor: { actorExternalId: "user_admin" },
+      projectId: "project-1",
+      webAccountId: "web-account-2",
+      close: async () => {},
+    });
+    const hosted = createHostedWebRecovery({
+      read: async () => null,
+      apply: async () => null,
+    });
+    const answered = await post(
+      OPEN,
+      undefined,
+      { projectId: "project-1", browserSessionId: "browser-2" },
+      {
+        environmentFor: async (handback) =>
+          hosted.handbackEnvironment?.(handback),
+      },
+    );
+    expect(answered).toEqual({
+      status: 409,
+      body: {
+        error:
+          "The browser you signed in with belongs to another account. Open this account's sign-in page, then finish.",
+      },
+    });
+    expect(reported).not.toHaveBeenCalled();
+    expect(commands.map((command) => command.action)).toEqual([
+      "listWebReconnectRequests",
+      "listWebAccounts",
+    ]);
   });
 
   it("reports a backend failure and says the runs are still paused", async () => {

@@ -17,6 +17,7 @@ import {
   keepSignInBrowser,
 } from "../../sign-in-browsers.js";
 import { createHostedWebRecovery } from "../hosted-recovery.js";
+import { SignInBrowserAccountMismatchError } from "../turn-recovery.js";
 
 const ADMIN = { actorExternalId: "user_admin" };
 const OTHER = { actorExternalId: "user_other" };
@@ -98,7 +99,7 @@ describe("hosted recovery", () => {
         webAccountId: "web-account-2",
         sites: ["https://claude.ai"],
       }),
-    ).rejects.toThrow(/another account/);
+    ).rejects.toBeInstanceOf(SignInBrowserAccountMismatchError);
   });
 
   it("finds no browser without its id, for another person, or in another project", async () => {

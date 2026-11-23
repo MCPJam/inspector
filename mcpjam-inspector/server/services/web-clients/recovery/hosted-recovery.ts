@@ -12,7 +12,10 @@ import {
   createConvexLedgerReader,
   createConvexWebReconnectBackend,
 } from "./convex-backend.js";
-import type { WebRecoverySetup } from "./turn-recovery.js";
+import {
+  SignInBrowserAccountMismatchError,
+  type WebRecoverySetup,
+} from "./turn-recovery.js";
 
 export function createHostedWebRecovery(
   service: WebClientService,
@@ -28,11 +31,7 @@ export function createHostedWebRecovery(
       return {
         async openBrowser({ webAccountId }) {
           const browser = findSignInBrowser({ ...held, webAccountId });
-          if (!browser) {
-            throw new Error(
-              "The browser you signed in with belongs to another account. Open this account's sign-in page, then finish.",
-            );
-          }
+          if (!browser) throw new SignInBrowserAccountMismatchError();
           return {
             driver: browser.driver,
             // The person's browser stays theirs; the handback only reads it.

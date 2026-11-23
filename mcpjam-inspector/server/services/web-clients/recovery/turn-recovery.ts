@@ -64,6 +64,20 @@ export type HandbackBrowsers = Pick<
   "openBrowser" | "pageModule"
 >;
 
+/**
+ * Thrown by `openBrowser` when the browser a handback names was opened for
+ * another web account. Nothing is saved or resumed, and the same browser can
+ * never hand this account back, so the person signs this account in instead.
+ */
+export class SignInBrowserAccountMismatchError extends Error {
+  constructor() {
+    super(
+      "The browser you signed in with belongs to another account. Open this account's sign-in page, then finish.",
+    );
+    this.name = "SignInBrowserAccountMismatchError";
+  }
+}
+
 export type WebRecoverySetup = {
   /**
    * The reconnect backend, acting for the run's person. Undefined when the

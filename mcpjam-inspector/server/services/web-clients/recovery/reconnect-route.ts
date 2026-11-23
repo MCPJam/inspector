@@ -7,7 +7,9 @@
  * the runs that waited. The backend decides who may hand an account back.
  *
  * Answers `{ status: "resumed", resumedRuns }`, or `{ status }` with
- * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`.
+ * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`. A sign-in
+ * browser this server doesn't hold, or one opened for another account,
+ * answers 409 with what the person does next.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -29,7 +31,11 @@ import {
 } from "./convex-backend.js";
 import { createWebRecoveryCoordinator } from "./coordinator.js";
 import { resumeWebRun } from "./paused-runs.js";
-import { webRecovery, type HandbackBrowsers } from "./turn-recovery.js";
+import {
+  SignInBrowserAccountMismatchError,
+  webRecovery,
+  type HandbackBrowsers,
+} from "./turn-recovery.js";
 
 export type WebReconnectRouteDeps = {
   service: WebClientService;
@@ -141,6 +147,10 @@ export function createWebReconnectRoutes(
       ).length;
       return c.json({ status: "resumed", resumedRuns });
     } catch (error) {
+      // Not an outage: trying again with the same browser can't succeed.
+      if (error instanceof SignInBrowserAccountMismatchError) {
+        return c.json({ error: error.message }, 409);
+      }
       reportRouteFailure("A web account could not be handed back", error, {
         source: "web-clients.reconnect.handback",
         hop: "mcpjam_internal",
