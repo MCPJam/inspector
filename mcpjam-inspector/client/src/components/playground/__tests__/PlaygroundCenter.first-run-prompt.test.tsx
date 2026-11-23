@@ -112,4 +112,14 @@ describe("PlaygroundCenter first-run prompt handoff", () => {
     mockPlaygroundMain.mock.lastCall?.[0].onAutoRunStarted();
     expect(readHomeChecklistAutorun()).toBeNull();
   });
+
+  it("drops Home's prompt when the user sends before the auto-run commits", () => {
+    writeHomeChecklistAutorun({
+      prompt: "What can this server do?",
+      progressKey: "k",
+    });
+    render(<PlaygroundCenter enableMultiModelChat />);
+    fireEvent.click(screen.getByRole("button", { name: "Send first message" }));
+    expect(readHomeChecklistAutorun()).toBeNull();
+  });
 });

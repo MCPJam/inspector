@@ -136,8 +136,10 @@ export function PlaygroundCenter({
         onFirstMessageSent={
           isFirstRunUnfinished || firstRunPrompt || homeAutorun
             ? () => {
-                // A deferred auto-run is sent from the composer instead.
+                // A deferred auto-run is sent from the composer instead, and
+                // a send before the auto-run commits makes it moot.
                 if (homeAutorun) {
+                  clearHomeChecklistAutorun();
                   updateChecklistProgress(homeAutorun.progressKey, {
                     chat: true,
                   });
