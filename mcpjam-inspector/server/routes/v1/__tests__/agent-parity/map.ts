@@ -70,6 +70,12 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * module → a one-line reason.
  */
 export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "projectAccessRequests:requestProjectAccess":
+    "A person asks from the screen a project link shows when they lack access; agents work in projects they already belong to",
+  "projectAccessRequests:getProjectAccessRequest":
+    "Feeds the page an owner opens from the request email or bell to approve it; agents do not decide access requests",
+  "projectAccessRequests:decideProjectAccessRequest":
+    "Grants a person access to a project and can add them to the organization; owners decide in the app or from the email",
   "chatSessionPromote:findSimilarPlaygroundPrompt":
     "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
   "serverFeatureEvidence:getForServer":
