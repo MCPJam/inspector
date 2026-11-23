@@ -167,6 +167,47 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toEqual([]);
   });
 
+  it("resumes a send journaled as sending in its own chat, and records it for the next restart", async () => {
+    const journal = createMemorySendJournal();
+    await journal.write("turn-1", {
+      state: "sending",
+      at: new Date().toISOString(),
+    });
+    // The prompt went out, but the run stopped before the journal said so.
+    const own = await turn(await signedInDriver());
+    const resumed = await turn(await signedInDriver(), journal);
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.conversation.url).toBe(own.conversation.url);
+    expect(await journal.read("turn-1")).toMatchObject({
+      state: "sent",
+      conversationUrl: own.conversation.url,
+    });
+    // Another turn sends the same prompt in a newer chat before a second restart.
+    const other = await turn(await signedInDriver());
+    expect(other.conversation.url).not.toBe(own.conversation.url);
+    const again = await turn(await signedInDriver(), journal);
+    expect(again.conversation.url).toBe(own.conversation.url);
+    expect(vendor.sends).toHaveLength(2);
+  });
+
+  it("stops as send_ambiguous rather than take a chat from before the send began", async () => {
+    // An earlier turn's chat holds the same prompt.
+    await turn(await signedInDriver());
+    const journal = createMemorySendJournal();
+    await journal.write("turn-1", {
+      state: "sending",
+      at: new Date().toISOString(),
+    });
+    const failure = await turn(await signedInDriver(), journal).catch(
+      (error: unknown) => error,
+    );
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "send_ambiguous",
+      step: "send",
+    });
+    expect(vendor.sends).toHaveLength(1);
+  });
+
   it("returns needs_sign_in on a human check and never sends", async () => {
     const driver = await signedInDriver();
     vendor.challenge = true;

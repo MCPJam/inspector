@@ -111,10 +111,11 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
       return { conversationUrl };
     },
 
-    async findSent(driver, prompt) {
+    async findSent(driver, prompt, _ctx, since) {
       for (const chat of list(await readVendorJson(driver, `${origin}/api/chats`))) {
         const id = text(record(chat).id);
-        if (!id) continue;
+        const created = Date.parse(text(record(chat).createdAt) ?? "");
+        if (!id || !(created >= Date.parse(since))) continue;
         const saved = await this.readConversation(driver, `${origin}/chat/${id}`, {
           timeoutMs: 5_000,
         });

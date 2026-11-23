@@ -133,11 +133,16 @@ export interface RealUiPageModule {
     prompt: string,
     ctx: StepContext,
   ): Promise<{ conversationUrl?: string }>;
-  /** After a restart: the chat that already holds this prompt, if any. */
+  /**
+   * After a restart: the chat that already holds this prompt, if any. Only a
+   * chat the site created at or after `since`, when the send began, counts:
+   * an earlier one with the same prompt is another turn's.
+   */
   findSent(
     driver: PageDriver,
     prompt: string,
     ctx: StepContext,
+    since: string,
   ): Promise<{ conversationUrl: string } | undefined>;
   /** Answers the app's own tool approval prompt; true when it answered one. */
   answerApproval(driver: PageDriver): Promise<boolean>;
