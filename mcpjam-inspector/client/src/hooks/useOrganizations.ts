@@ -28,6 +28,8 @@ export interface Organization {
    * surfaces (today: the spend budget) hide themselves for it.
    */
   isPersonal?: boolean;
+  /** Personal or Work, from getMyOrganizations; unset on older rows. */
+  kind?: "personal" | "work";
   /**
    * Enterprise privacy: sessions with this organization in view are replayed
    * `masked`, and its members are identified to analytics by id alone (see

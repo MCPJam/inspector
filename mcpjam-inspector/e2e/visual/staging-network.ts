@@ -119,14 +119,24 @@ export async function declineStagingAnalytics(context: BrowserContext) {
 }
 
 /**
- * The home page's "What's new" row stamps when the user first saw it
- * (productUpdates:initializeIfNeeded, components/home/ProductUpdatesRow.tsx) on
- * every signed-in mount. That is a write, so the policy never allows it. The
- * guard withholds it instead: it answers the page with a failed mutation and
- * never forwards the frame, so staging is not written and no write is left in
- * flight to hold up the reload. The app already treats that failure as
- * non-fatal. Only the exact no-argument call is withheld.
+ * Writes the app makes on its own that the policy never allows. The guard
+ * withholds them instead: it answers the page with a failed mutation and never
+ * forwards the frame, so staging is not written and no write is left in flight
+ * to hold up the reload. The app treats each failure as non-fatal. Only these
+ * exact calls are withheld, as `[udfPath, JSON of args]`:
+ *
+ * - The home page's "What's new" row stamps when the user first saw it
+ *   (components/home/ProductUpdatesRow.tsx) on every signed-in mount.
+ * - The company step after the role question (hooks/useWorkOrganizations.ts)
+ *   resolves the company once, and its Continue saves the choice. A failed
+ *   resolve shows no step; a failed Continue still leaves it.
  */
+const WITHHELD_WRITES: ReadonlyArray<readonly [string, string]> = [
+  ["productUpdates:initializeIfNeeded", "[{}]"],
+  ["workOrganizations:resolveSignupCompany", "[{}]"],
+  ["workOrganizations:completeCompanyStep", '[{"choice":"continue"}]'],
+];
+
 export function refuseWithheldWrite(raw: string): string | null {
   let message: unknown;
   try {
@@ -140,12 +150,19 @@ export function refuseWithheldWrite(raw: string): string | null {
     !("type" in message) ||
     message.type !== "Mutation" ||
     !("udfPath" in message) ||
-    message.udfPath !== "productUpdates:initializeIfNeeded" ||
     !("requestId" in message) ||
     typeof message.requestId !== "number" ||
     !("args" in message) ||
-    JSON.stringify(message.args) !== "[{}]" ||
     "componentPath" in message
+  )
+    return null;
+  const udfPath = message.udfPath;
+  const args = JSON.stringify(message.args);
+  if (
+    !WITHHELD_WRITES.some(
+      ([withheldPath, withheldArgs]) =>
+        udfPath === withheldPath && args === withheldArgs,
+    )
   )
     return null;
   return JSON.stringify({

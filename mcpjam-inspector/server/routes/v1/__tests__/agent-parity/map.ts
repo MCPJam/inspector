@@ -92,6 +92,14 @@ export const NOT_EXPOSED: Readonly<Record<string, string>> = {
     "A suite's Claude web and ChatGPT web account choices, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
   "webClientReconnect:*":
     "Runs waiting for a Claude web or ChatGPT web sign-in, behind the web-clients-enabled flag; their v1 routes follow with the web account API",
+  "workOrganizations:getSignupCompanyStep":
+    "Onboarding and settings UI; agent routes later",
+  "workOrganizations:resolveSignupCompany":
+    "Onboarding and settings UI; agent routes later",
+  "workOrganizations:completeCompanyStep":
+    "Onboarding and settings UI; agent routes later",
+  "projectAccessRequests:listForOrganization":
+    "Onboarding and settings UI; agent routes later",
 };
 
 /**

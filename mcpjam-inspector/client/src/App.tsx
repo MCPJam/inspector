@@ -236,6 +236,8 @@ import {
 import LoadingScreen from "./components/LoadingScreen";
 import { StartupScreen } from "./components/startup/StartupScreen";
 import { OccupationGate } from "./components/signup/OccupationGate";
+import { CompanyStep } from "./components/signup/CompanyStep";
+import { useSignupCompanyStep } from "./hooks/useWorkOrganizations";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type {
@@ -3194,6 +3196,19 @@ export default function App() {
     return "home";
   }, []);
   const isHostedChatRoute = isScenarioChatRoute;
+  // New signups answer the role question, then meet the company step.
+  const isNewSignup =
+    !isHostedChatRoute &&
+    !!workOsUser &&
+    isAuthenticated &&
+    currentUser?.isAnonymous !== true &&
+    typeof currentUser?.createdAt === "number" &&
+    currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS;
+  const needsRole = isNewSignup && !currentUser?.occupation?.trim();
+  const companyGate = useSignupCompanyStep({
+    eligible: isNewSignup,
+    roleGateShown: needsRole,
+  });
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
@@ -6378,19 +6393,24 @@ export default function App() {
     return <UserSetupError />;
   }
 
-  if (
-    !isHostedChatRoute &&
-    !!workOsUser &&
-    isAuthenticated &&
-    currentUser?.isAnonymous !== true &&
-    typeof currentUser?.createdAt === "number" &&
-    currentUser.createdAt >= OCCUPATION_GATE_ROLLOUT_MS &&
-    !currentUser?.occupation?.trim()
-  ) {
+  if (needsRole || companyGate.kind === "resolving") {
     return (
       <OccupationGate
         userId={workOsUser?.id ?? null}
         email={workOsUser?.email}
+        busy={companyGate.kind === "resolving"}
+      />
+    );
+  }
+  if (companyGate.kind === "show") {
+    return (
+      <CompanyStep
+        step={companyGate.step}
+        personalOrganizationName={companyGate.personalOrganizationName}
+        userId={workOsUser?.id ?? null}
+        email={workOsUser?.email}
+        actions={companyGate.actions}
+        onDone={companyGate.finish}
       />
     );
   }

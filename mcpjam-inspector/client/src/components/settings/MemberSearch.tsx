@@ -105,9 +105,12 @@ export function MemberSearch({
 export function MemberListHeader({
   activeCount,
   pendingCount = 0,
+  requestCount = 0,
 }: {
   activeCount?: number;
   pendingCount?: number;
+  /** Requests to join the organization, listed above the members. */
+  requestCount?: number;
 } = {}) {
   return (
     <div className="flex items-center justify-between border-b border-border bg-muted/30 px-3 py-3 text-xs font-medium text-foreground">
@@ -117,7 +120,11 @@ export function MemberListHeader({
         {activeCount !== undefined && (
           <span className="font-normal text-muted-foreground">
             ({activeCount} active
-            {pendingCount > 0 ? ` · ${pendingCount} pending` : ""})
+            {pendingCount > 0 ? ` · ${pendingCount} pending` : ""}
+            {requestCount > 0
+              ? ` · ${requestCount} ${requestCount === 1 ? "request" : "requests"}`
+              : ""}
+            )
           </span>
         )}
       </span>

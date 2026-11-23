@@ -97,6 +97,11 @@ import { OrganizationSecuritySection } from "./organization/OrganizationSecurity
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
+import {
+  JoinRequestRows,
+  joinRequestMatches,
+} from "./organization/JoinRequestRows";
+import { useOrganizationJoinRequests } from "@/hooks/useWorkOrganizations";
 import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
 import {
   resolveSlackSettingsTab,
@@ -732,6 +737,10 @@ function OrganizationPage({
     enabled: isAuthenticated,
     includeSeatPaymentIntent: true,
   });
+  const joinRequests = useOrganizationJoinRequests({
+    organizationId: organization._id,
+    enabled: canEdit,
+  });
   const unlimitedCredits = useUnlimitedCredits();
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
@@ -893,6 +902,9 @@ function OrganizationPage({
 
   const [memberSearch, setMemberSearch] = useState("");
   const [memberRoleFilter, setMemberRoleFilter] = useState("all");
+  const shownJoinRequests = joinRequests.requests.filter((request) =>
+    joinRequestMatches(request, memberSearch, memberRoleFilter),
+  );
   const handleLogoClick = () => {
     if (canEdit) {
       fileInputRef.current?.click();
@@ -2044,6 +2056,12 @@ function OrganizationPage({
                         membersLoading ? undefined : activeMembers.length
                       }
                       pendingCount={pendingMembers.length}
+                      requestCount={joinRequests.requests.length}
+                    />
+                    <JoinRequestRows
+                      requests={shownJoinRequests}
+                      organizationName={organization.name}
+                      decide={joinRequests.decide}
                     />
                     {membersLoading ? (
                       <div className="flex items-center gap-2 py-3 text-muted-foreground">
@@ -2130,6 +2148,7 @@ function OrganizationPage({
                       </div>
                     ) : null}
                     {!membersLoading &&
+                      shownJoinRequests.length === 0 &&
                       ![...activeMembers, ...pendingMembers].some((member) =>
                         matchesMember(
                           member,

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast as sonnerToast } from "sonner";
+import { ConvexError } from "convex/values";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { ImageUploadError } from "@/lib/image-upload";
 
@@ -22,19 +23,33 @@ const mockChangeMemberRole = vi.fn();
 const mockTransferOrganizationOwnership = vi.fn();
 const mockRemoveMember = vi.fn();
 const mockUploadImage = vi.fn();
+// Convex reads and writes by function name; unnamed ones answer nothing.
+const mockConvexQuery = vi.fn(
+  (_name: string, _args: unknown): unknown => undefined,
+);
+const mockDecideRequest = vi.fn();
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
-vi.mock("convex/react", () => ({
-  useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
-  // `SettingsNav` reaches `useGithubChecksAvailability`, which queries Convex.
-  // Without this the mock is missing an export the tree now needs.
-  useQuery: () => undefined,
-  useMutation: () => vi.fn(),
-  useAction: () => vi.fn(),
-}));
+vi.mock("convex/react", async () => {
+  const { getFunctionName } = await import("convex/server");
+  const nameOf = (ref: unknown) =>
+    typeof ref === "string" ? ref : getFunctionName(ref as never);
+  return {
+    useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+    // `SettingsNav` reaches `useGithubChecksAvailability`, which queries Convex.
+    // Without this the mock is missing an export the tree now needs.
+    useQuery: (ref: unknown, args: unknown) =>
+      mockConvexQuery(nameOf(ref), args),
+    useMutation: (ref: unknown) =>
+      nameOf(ref) === "projectAccessRequests:decideProjectAccessRequest"
+        ? mockDecideRequest
+        : vi.fn(),
+    useAction: () => vi.fn(),
+  };
+});
 
 // SettingsNav (rendered inside the members admin area) resolves GitHub
 // Checks tab availability itself via a hook that calls convex/react's
@@ -976,6 +991,88 @@ describe("OrganizationsTab member management", () => {
     });
     await waitFor(() => {
       expect(finishSeatPayment).toHaveBeenCalledWith("seat-payment-2");
+    });
+  });
+
+  describe("join requests", () => {
+    const listName = "projectAccessRequests:listForOrganization";
+    beforeEach(() => {
+      mockConvexQuery.mockImplementation((name, args) =>
+        name === listName && args !== "skip"
+          ? [
+              {
+                requestId: "req_jo",
+                userId: "user_jo",
+                name: "Jo Chen",
+                email: "jo@acme.com",
+                requestedAt: Date.now(),
+              },
+            ]
+          : undefined,
+      );
+    });
+
+    function expectRequestRow() {
+      expect(mockConvexQuery).toHaveBeenCalledWith(listName, {
+        organizationId: "org-1",
+      });
+      expect(screen.getByText("Jo Chen")).toBeInTheDocument();
+      expect(screen.getByText("Requested")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Approve Jo Chen" }),
+      ).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: "Decline Jo Chen" }),
+      ).toBeEnabled();
+      expect(screen.getByText("(3 active · 1 request)")).toBeInTheDocument();
+    }
+
+    it("shows a request with Approve and Decline to an owner", () => {
+      render(<OrganizationsTab organizationId="org-1" section="members" />);
+      expectRequestRow();
+    });
+
+    it("shows the same request to an admin, and BA-8's refusal when a seat needs the owner", async () => {
+      currentUserEmail = "admin@example.com";
+      mockDecideRequest.mockRejectedValue(
+        new ConvexError({ code: "SEAT_PAYMENT_OWNER_REQUIRED", message: "x" }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="members" />);
+      expectRequestRow();
+
+      fireEvent.click(screen.getByRole("button", { name: "Approve Jo Chen" }));
+      await waitFor(() =>
+        expectErrorToast("An organization owner has to approve this"),
+      );
+      expect(mockDecideRequest).toHaveBeenCalledWith({
+        requestId: "req_jo",
+        decision: "approve",
+      });
+    });
+
+    it("says no members were found only when no request matches either", () => {
+      render(<OrganizationsTab organizationId="org-1" section="members" />);
+      const search = screen.getByRole("textbox", { name: "Search members" });
+
+      fireEvent.change(search, { target: { value: "jo@acme" } });
+      expect(screen.getByText("Jo Chen")).toBeInTheDocument();
+      expect(screen.queryByText("No members found.")).not.toBeInTheDocument();
+
+      fireEvent.change(search, { target: { value: "riley" } });
+      expect(screen.queryByText("Jo Chen")).not.toBeInTheDocument();
+      expect(screen.getByText("No members found.")).toBeInTheDocument();
+    });
+
+    it("never lists requests for a member", () => {
+      currentUserEmail = "member@example.com";
+      render(<OrganizationsTab organizationId="org-1" section="members" />);
+      expect(mockConvexQuery).toHaveBeenCalledWith(listName, "skip");
+      expect(mockConvexQuery).not.toHaveBeenCalledWith(
+        listName,
+        expect.objectContaining({ organizationId: "org-1" }),
+      );
+      expect(screen.queryByText("Jo Chen")).not.toBeInTheDocument();
+      expect(screen.queryByText(/request/)).not.toBeInTheDocument();
     });
   });
 });

@@ -31,6 +31,7 @@ import {
   outcomeOfEarlierDecision,
   outcomeOfRefusal,
   requesterLabel,
+  requestTargetName,
   type Outcome,
 } from "./access-request-outcome";
 
@@ -137,7 +138,8 @@ function AccessRequestReview({ request }: { request: AccessRequest }) {
       <div className="w-full max-w-md space-y-4" data-testid="access-request">
         <div className="space-y-1">
           <h1 className="text-lg font-semibold">
-            {who} asked for access to {request.project.name}
+            {who} {request.project ? "asked for access to" : "asked to join"}{" "}
+            {requestTargetName(request)}
           </h1>
           {request.requester.name ? (
             <p className="text-sm text-muted-foreground">
@@ -156,9 +158,11 @@ function AccessRequestReview({ request }: { request: AccessRequest }) {
         ) : (
           <>
             <p className="text-sm">
-              {request.requesterInOrganization
-                ? `Approving gives ${who} editor access to this project.`
-                : `Approving adds ${who} to your organization as a guest, with editor access to this project only.`}
+              {!request.project
+                ? `Approving adds ${who} to ${request.organizationName} as a member.`
+                : request.requesterInOrganization
+                  ? `Approving gives ${who} editor access to this project.`
+                  : `Approving adds ${who} to your organization as a guest, with editor access to this project only.`}
             </p>
             {refusal ? (
               <OutcomeNotice
