@@ -598,7 +598,7 @@ mcpjamAgent.post("/", async (c) => {
       );
     }
     const routeError = mapRuntimeError(error, {
-      capture: agentRouteCapture("web.mcpjam-agent"),
+      capture: agentRouteCapture("web.mcpjam-agent", c.req.raw),
     });
     return webError(
       c,
@@ -781,7 +781,7 @@ mcpjamAgent.post("/widget-content", async (c) => {
     }
   } catch (error) {
     const routeError = mapRuntimeError(error, {
-      capture: agentRouteCapture("web.mcpjam-agent.widget-content"),
+      capture: agentRouteCapture("web.mcpjam-agent.widget-content", c.req.raw),
     });
     return webError(
       c,

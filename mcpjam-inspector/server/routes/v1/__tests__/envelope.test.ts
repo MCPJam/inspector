@@ -663,4 +663,13 @@ describe("v1OnError — a caller who left", () => {
       expect(capturedFor(turnAbort(), new AbortController(), path)).toBe(true);
     },
   );
+
+  it("does not let Ask MCPJam's capture-everything rule page for the user pressing Stop", () => {
+    const request = new AbortController();
+    request.abort(CLOSED);
+
+    expect(
+      capturedFor(turnAbort(), request, "/api/v1/projects/proj_1/agent"),
+    ).toBe(false);
+  });
 });

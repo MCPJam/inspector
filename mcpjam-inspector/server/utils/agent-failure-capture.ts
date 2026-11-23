@@ -64,10 +64,23 @@ export const MCPJAM_AGENT_FAILURE_CAPTURE: FailureCapture = {
  * reaches Sentry, classified by the status and code it is answered with. The
  * capture is decided inside the mapping, because that is where the error is
  * first stamped.
+ *
+ * Takes the inbound request (`c.req.raw`): once its signal has aborted, the
+ * caller went away, which is the user pressing Stop, so the rule returns no
+ * policy and the origin policy decides alone. The request-log backstop skips an
+ * aborted request for the same reason. A deadline of ours that fires while the
+ * caller is still connected is captured as before.
  */
 export const agentRouteCapture =
-  (source: string) => (mapped: { status: number; code: string }) =>
-    agentCapturePolicy({ source, httpStatus: mapped.status, code: mapped.code });
+  (source: string, request: Request) =>
+  (mapped: { status: number; code: string }): CapturePolicy | undefined =>
+    request.signal.aborted
+      ? undefined
+      : agentCapturePolicy({
+          source,
+          httpStatus: mapped.status,
+          code: mapped.code,
+        });
 
 /**
  * The MCP server an error names, when it names one.
