@@ -127,6 +127,26 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     expect(call?.params).toMatchObject({ name: "echo", arguments: { message: "say hello" } });
   });
 
+  it("stops as turn_running when another run has the connector, and leaves its window alone", async () => {
+    // Two compared runs, or two Playground panes, on one account and server.
+    windows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
+    const openBrowser = vi.fn();
+    const result = await runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: { ...environment(), openBrowser },
+      turnWindows: windows,
+      ledger,
+    });
+    expect(result).toMatchObject({ ok: false, infrastructure: true, failure: { kind: "turn_running", step: "connector" } });
+    expect(windows.active("conn-orders")?.turnId).toBe("other-turn");
+    expect(openBrowser).not.toHaveBeenCalled();
+  });
+
   it("lets MCPJam's gate refuse a call before it reaches the server", async () => {
     const result = await turn({ requireToolApproval: true, answer: "deny" });
     expect(result.ok).toBe(true);
@@ -136,6 +156,46 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
       expect(result.toolCalls).toEqual([
         expect.objectContaining({ toolName: "echo", match: "narration-only" }),
       ]);
+    }
+  });
+
+  it("keeps the turn's result when its browser won't close, and logs the close", async () => {
+    vendor.challenge = true;
+    const warn = vi.spyOn(logger, "warn");
+    const env = environment();
+    try {
+      const result = await runWebClientTurn({
+        runtimeId: "claude-web",
+        projectId: "project-1",
+        serverIds: ["orders"],
+        prompt: "say hello",
+        runId: "run-1",
+        approval: ALLOW,
+        environment: {
+          ...env,
+          async openBrowser(args) {
+            const opened = await env.openBrowser(args);
+            return {
+              driver: opened.driver,
+              async close() {
+                await opened.close();
+                throw new Error("The browser was already gone.");
+              },
+            };
+          },
+        },
+        turnWindows: windows,
+        ledger,
+        stepTimeoutMs: 10_000,
+        replyTimeoutMs: 20_000,
+      });
+      expect(result).toMatchObject({ ok: false, failure: { kind: "needs_sign_in", reason: "human_check" } });
+      expect(warn).toHaveBeenCalledWith(
+        "[web-clients] the turn's browser did not close",
+        expect.objectContaining({ message: "The browser was already gone." }),
+      );
+    } finally {
+      warn.mockRestore();
     }
   });
 
@@ -282,13 +342,6 @@ describe("webTurnApprover", () => {
       allow: false,
       reason: SYNTHETIC_SESSION_APPROVAL_DENIAL,
     });
-    expect(
-      await webTurnApprover({
-        requireToolApproval: true,
-        answer: "person",
-        askPerson: async () => ({ allow: true }),
-      })(call),
-    ).toEqual({ allow: true });
     expect((await webTurnApprover({ requireToolApproval: true, answer: "person" })(call)).allow).toBe(false);
   });
 });
@@ -354,6 +407,28 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
     expect(persisted).toHaveLength(1);
   });
 
+  it("signs the reply it streams, so it stays in context when another client takes the chat", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
+    const { historyProvenanceContextFor, verifyAssistantText } = await import("../../../utils/history-provenance");
+    try {
+      await useProcessStores();
+      const result = await runHarnessTurn(
+        options({ sourceType: "direct", evalIterationId: undefined, chatSessionId: "chat-1" }),
+        "ui",
+      );
+      const chunks = (await result.response!.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data: {"))
+        .map((line) => JSON.parse(line.slice("data: ".length)) as { type: string; providerMetadata?: { mcpjam?: { textSig?: string } } });
+      const signature = chunks.find((chunk) => chunk.type === "text-end")?.providerMetadata?.mcpjam?.textSig;
+      const chat = historyProvenanceContextFor("project-1", "chat-1")!;
+      expect(verifyAssistantText(chat, "echo said: echo: say hello", signature)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("opens a new chat for every iteration", async () => {
     await useProcessStores();
     await runHarnessTurn(options({ evalIterationId: "iteration-1" }), "none");
@@ -376,5 +451,18 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
 
   it("refuses to start when this server has no web client environment", async () => {
     await expect(runHarnessTurn(options(), "none")).rejects.toThrow(/isn't set up on this server/);
+  });
+});
+
+describe("a turn on a connector another run holds", () => {
+  it("tells the person to wait for that run, and files the stop as the run's failure", async () => {
+    const { webClientFailureEvidenceOf, webClientFailureMessage } = await import("../web-client-harness-turn");
+    const busy = { kind: "turn_running", step: "connector", message: "Another run is already using this connector." } as const;
+    expect(webClientFailureMessage("Claude web", busy)).toBe(
+      "Another run is already using this connector. Wait for it to finish, then send again.",
+    );
+    expect(webClientFailureEvidenceOf(new WebClientRunError(busy, "stopped"))).toEqual({ source: "web_client", code: "turn_running" });
+    // Only a stop on the page is evidence; any other error says nothing about whose it was.
+    expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
   });
 });

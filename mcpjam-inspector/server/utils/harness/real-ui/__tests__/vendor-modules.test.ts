@@ -20,27 +20,29 @@ import { readVendorJson } from "../vendor-json";
 
 /**
  * A page that answers `readText` from a map, and runs `evaluate` for real
- * against a `fetch` that serves canned JSON by path.
+ * against a `fetch` that serves canned JSON by path, with the status
+ * `statuses` gives its path (200 otherwise).
  */
 function cannedDriver(options: {
   url: string;
   texts?: Record<string, string>;
   json?: Record<string, unknown>;
+  statuses?: Record<string, number>;
 }): PageDriver {
   let url = options.url;
   vi.stubGlobal("fetch", async (target: string) => {
     const parsed = new URL(target);
     const path = parsed.pathname + parsed.search;
-    const body = Object.entries(options.json ?? {}).find(([prefix]) =>
-      path.startsWith(prefix),
-    )?.[1];
+    const [prefix, body] =
+      Object.entries(options.json ?? {}).find(([start]) => path.startsWith(start)) ?? [];
     return new Response(JSON.stringify(body ?? {}), {
-      status: body === undefined ? 404 : 200,
+      status: body === undefined ? 404 : (options.statuses?.[prefix ?? ""] ?? 200),
     });
   });
   return {
     kind: "playwright",
     canEvaluate: true,
+    playwrightSelectors: true,
     async navigate(next) {
       url = next;
     },
@@ -63,6 +65,72 @@ function cannedDriver(options: {
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+type ConnectorRow = { name: string; url: string; connected: boolean };
+
+/**
+ * claude.ai's connector settings as the module drives them: a View and a More
+ * options button per connector, named after it; the open connector's name,
+ * address and Disconnect in the pane; and the add dialog `dialog` shows, by
+ * the connectors there and how many times it was read.
+ */
+function claudeConnectors(
+  rows: ConnectorRow[],
+  dialog: (rows: ConnectorRow[], reads: number) => string | undefined,
+): PageDriver {
+  let open: ConnectorRow | undefined;
+  let removing: ConnectorRow | undefined;
+  let dialogReads = 0;
+  const form = { name: "", url: "" };
+  /** The connector whose `${action} <name>` button the selector names, exactly or by pattern. */
+  const rowFor = (selector: string, action: string) => {
+    const named = /^\.dframe-pane-primary >> role=button\[name=(?:"(.*)"|\/(.*)\/)\]$/.exec(selector);
+    if (!named) return undefined;
+    const label = (row: ConnectorRow) => `${action} ${row.name}`;
+    return rows.find((row) =>
+      named[1] !== undefined ? named[1] === label(row) : new RegExp(named[2]).test(label(row)),
+    );
+  };
+  return {
+    ...cannedDriver({ url: "https://claude.ai/new" }),
+    async readText(selector) {
+      switch (selector) {
+        case '.dframe-pane-primary [placeholder="Search"]':
+          return "";
+        case ".dframe-pane-primary":
+          return open && `${open.name} ${open.url}`;
+        case '.dframe-pane-primary >> role=button[name="Disconnect"]':
+          return open?.connected ? "Disconnect" : undefined;
+        case "role=dialog":
+          return dialog(rows, dialogReads++);
+        case "role=dialog >> text=Step 2 of 2":
+          return "Step 2 of 2";
+        case 'role=dialog >> role=button[name="Add"]':
+          return "Add";
+      }
+      const row = rowFor(selector, "View");
+      return row && `View ${row.name}`;
+    },
+    type: vi.fn(async (selector: string, value: string) => {
+      if (selector.endsWith('[placeholder="Name"]')) form.name = value;
+      if (selector.endsWith('[placeholder="MCP server URL"]')) form.url = value;
+    }),
+    click: vi.fn(async (selector: string) => {
+      open = rowFor(selector, "View") ?? open;
+      removing = rowFor(selector, "More options for") ?? removing;
+      if (selector === "role=dialog >> role=button[name=/^(Remove|Delete)$/]" && removing) {
+        rows.splice(rows.indexOf(removing), 1);
+      }
+      if (selector === 'role=dialog >> role=button[name="Add"]') {
+        open = { ...form, connected: true };
+        rows.push(open);
+      }
+    }),
+  };
+}
+
+const PLAN_WALL = "Upgrade to add more connectors";
+const ADD_FORM = "Add custom connector. Name. MCP server URL.";
 
 describe("page module pins", () => {
   it("pins each vendor module to the version its runtime declares", () => {
@@ -107,6 +175,30 @@ describe("claude.ai", () => {
     });
   });
 
+  it("finds its own chat after a restart, and never one created before the send began", async () => {
+    const earlier = "22222222-2222-3333-4444-555555555555";
+    const asked = (prompt: string) => ({
+      chat_messages: [{ sender: "human", content: [{ type: "text", text: prompt }], created_at: "2026-11-23T10:00:05Z" }],
+    });
+    const driver = cannedDriver({
+      url: "https://claude.ai/new",
+      json: {
+        "/api/organizations/org-1/chat_conversations?": [
+          { uuid: id, created_at: "2026-11-23T10:00:05Z" },
+          { uuid: earlier, created_at: "2026-11-23T09:00:00Z" },
+        ],
+        [`/api/organizations/org-1/chat_conversations/${id}`]: asked("say hello"),
+        [`/api/organizations/org-1/chat_conversations/${earlier}`]: asked("say hello"),
+        "/api/organizations": [{ uuid: "org-1", name: "Team", capabilities: ["chat"] }],
+      },
+    });
+    const ctx = { timeoutMs: 1_000 };
+    expect(await claudeWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:00Z")).toEqual({
+      conversationUrl: `https://claude.ai/chat/${id}`,
+    });
+    expect(await claudeWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:10Z")).toBeUndefined();
+  });
+
   it("names a Cloudflare check as needs_sign_in and a plan wall as plan_limit", async () => {
     const challenged = cannedDriver({
       url: "https://claude.ai/new",
@@ -130,13 +222,68 @@ describe("claude.ai", () => {
     });
   });
 
-  it("answers the app's approval with Always allow where it is offered", async () => {
+  it("answers Always allow in the approval dialog that names the run's connector", async () => {
+    const dialog = ':is(dialog, [role="dialog"], [role="alertdialog"]):has-text("MCPJam orders 1a2b3c4d")';
+    const driver = cannedDriver({
+      url: "https://claude.ai/chat/x",
+      texts: {
+        'role=button[name="Always allow"]': "Always allow",
+        [`${dialog} >> role=button[name="Always allow"]`]: "Always allow",
+        [`${dialog} >> role=button[name="Allow once"]`]: "Allow once",
+      },
+    });
+    expect(await claudeWebPageModule.answerApproval(driver, ["MCPJam orders 1a2b3c4d"])).toBe(true);
+    expect(driver.click).toHaveBeenCalledWith(`${dialog} >> role=button[name="Always allow"]`);
+  });
+
+  it("leaves an approval prompt from another connector unanswered and stops the turn", async () => {
     const driver = cannedDriver({
       url: "https://claude.ai/chat/x",
       texts: { 'role=button[name="Always allow"]': "Always allow", 'role=button[name="Allow once"]': "Allow once" },
     });
-    expect(await claudeWebPageModule.answerApproval(driver)).toBe(true);
-    expect(driver.click).toHaveBeenCalledWith('role=button[name="Always allow"]');
+    await expect(claudeWebPageModule.answerApproval(driver, ["MCPJam orders 1a2b3c4d"])).rejects.toMatchObject({
+      failure: { kind: "connector_failed", step: "reply" },
+    });
+    expect(driver.click).not.toHaveBeenCalled();
+  });
+
+  it("reports the organization its chats come from, not merely the first", async () => {
+    const driver = cannedDriver({
+      url: "https://claude.ai/new",
+      texts: { '[data-testid="chat-input"]': "" },
+      json: {
+        "/api/account": { email_address: "runner@example.com" },
+        "/api/organizations": [
+          { uuid: "org-api", name: "API only", capabilities: ["api"] },
+          { uuid: "org-chat", name: "Chat team", capabilities: ["chat"] },
+        ],
+      },
+    });
+    expect(await claudeWebPageModule.signedIn(driver, { timeoutMs: 1_000 })).toEqual({
+      email: "runner@example.com",
+      workspace: "Chat team",
+    });
+  });
+
+  it("reads an error answer from the account endpoint as signed out, in either browser", async () => {
+    const error = { type: "error", error: { type: "permission_error", message: "Not signed in" } };
+    const scripted = cannedDriver({
+      url: "https://claude.ai/new",
+      texts: { '[data-testid="chat-input"]': "" },
+      json: { "/api/account": error, "/api/organizations": [] },
+      statuses: { "/api/account": 403 },
+    });
+    // The hosted browser shows the error's JSON and no status.
+    const shown: PageDriver = {
+      ...cannedDriver({ url: "https://claude.ai/new", texts: { '[data-testid="chat-input"]': "" } }),
+      canEvaluate: false,
+      pageText: async () => JSON.stringify(error),
+    };
+    for (const driver of [scripted, shown]) {
+      await expect(claudeWebPageModule.signedIn(driver, { timeoutMs: 1_000 })).rejects.toMatchObject({
+        failure: { kind: "needs_sign_in", reason: "signed_out", step: "sign_in_check" },
+      });
+    }
   });
 
   it("calls a reply finished only when every signal agrees", async () => {
@@ -160,40 +307,88 @@ describe("claude.ai", () => {
   });
 
   describe("on a plan with no room for another connector", () => {
-    const connector = { name: "MCPJam billing 5e6f7a8b", url: "https://inspector.example/mcp/billing" };
-    /** The add dialog asks for an upgrade, and the search shows one MCPJam connector. */
-    const walled = (shown: string) =>
-      cannedDriver({
-        url: "https://claude.ai/customize/connectors/yours",
-        texts: {
-          '.dframe-pane-primary [placeholder="Search"]': "",
-          "role=dialog": "Upgrade to add more connectors",
-          ".dframe-pane-primary >> role=button[name=/^View MCPJam/]": `View ${shown}`,
-        },
-      });
+    const connector = { name: "MCPJam billing 5e6f7a8b", url: "https://inspector.example/mcp/connector-1" };
+    const ctx = { timeoutMs: 300 };
 
     it("stops with plan_limit rather than remove a connector the turn selected", async () => {
-      const driver = walled("MCPJam orders 1a2b3c4d");
+      const rows = [{ name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-2", connected: true }];
+      const driver = claudeConnectors(rows, () => PLAN_WALL);
       await expect(
-        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [
-          "MCPJam orders 1a2b3c4d",
-          connector.name,
-        ]),
+        claudeWebPageModule.ensureConnector(driver, connector, ctx, ["MCPJam orders 1a2b3c4d", connector.name]),
       ).rejects.toMatchObject({
         failure: { kind: "plan_limit", step: "connector", message: expect.stringContaining("each server this run uses") },
       });
+      expect(rows.map((row) => row.name)).toEqual(["MCPJam orders 1a2b3c4d"]);
       expect(driver.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
     });
 
     it("still makes room by removing one another run added", async () => {
-      const driver = walled("MCPJam stale 9a8b7c6d");
-      // The canned dialog still asks for an upgrade, so the second add fails too.
+      const rows = [{ name: "MCPJam stale 9a8b7c6d", url: "https://inspector.example/mcp/connector-0", connected: false }];
+      const driver = claudeConnectors(rows, (shown) => (shown.length > 0 ? PLAN_WALL : ADD_FORM));
+      await claudeWebPageModule.ensureConnector(driver, connector, ctx, [connector.name]);
+      expect(rows).toEqual([{ ...connector, connected: true }]);
+    });
+  });
+
+  describe("its connector", () => {
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    const ctx = { timeoutMs: 300 };
+
+    it("adds no connector under a name MCPJam doesn't reserve", async () => {
+      const driver = claudeConnectors([], () => ADD_FORM);
       await expect(
-        claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 }, [connector.name]),
-      ).rejects.toMatchObject({ failure: { kind: "plan_limit" } });
-      expect(driver.click).toHaveBeenCalledWith(
-        '.dframe-pane-primary >> role=button[name="More options for MCPJam stale 9a8b7c6d"]',
-      );
+        claudeWebPageModule.ensureConnector(driver, { ...connector, name: "MCPJam" }, ctx),
+      ).rejects.toMatchObject({ failure: { kind: "connector_failed", step: "connector" } });
+      expect(driver.type).not.toHaveBeenCalled();
+    });
+
+    it("never removes a person's own MCPJam connector to make room on a full plan", async () => {
+      const rows = [{ name: "MCPJam", url: "https://mcp.mcpjam.com/mcp", connected: true }];
+      const driver = claudeConnectors(rows, () => PLAN_WALL);
+      await expect(claudeWebPageModule.ensureConnector(driver, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit", step: "connector" },
+      });
+      expect(rows.map((row) => row.name)).toEqual(["MCPJam"]);
+      expect(driver.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("keeps a connector under MCPJam's name whose address isn't this run's forwarding endpoint", async () => {
+      const rows = [
+        { name: "MCPJam billing 5e6f7a8b", url: "https://billing.example.com/mcp", connected: true },
+        { name: "MCPJam stale 9a8b7c6d", url: "https://old-tunnel.example/mcp/connector-0", connected: true },
+      ];
+      const full = claudeConnectors(rows, () => PLAN_WALL);
+      await expect(claudeWebPageModule.ensureConnector(full, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit" },
+      });
+      // The same name as the run's, at another address, is not MCPJam's to replace.
+      const taken = [{ name: connector.name, url: "https://elsewhere.example/mcp", connected: false }];
+      const same = claudeConnectors(taken, () => ADD_FORM);
+      await expect(claudeWebPageModule.ensureConnector(same, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "connector_failed", step: "connector" },
+      });
+      expect([...rows, ...taken]).toHaveLength(3);
+      expect(full.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+      expect(same.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("makes room by removing one MCPJam added on this run's endpoint, then adds the run's", async () => {
+      const rows = [{ name: "MCPJam stale 9a8b7c6d", url: "https://inspector.example/mcp/connector-0", connected: false }];
+      const driver = claudeConnectors(rows, (shown) => (shown.length > 0 ? PLAN_WALL : ADD_FORM));
+      await claudeWebPageModule.ensureConnector(driver, connector, ctx);
+      expect(rows).toEqual([{ ...connector, connected: true }]);
+    });
+
+    it("waits for the add dialog, and counts only a plan wall as the plan's limit", async () => {
+      const person = { name: "Drive", url: "https://drive.example/mcp", connected: true };
+      const late = claudeConnectors([person], (_rows, reads) => (reads === 0 ? undefined : PLAN_WALL));
+      await expect(claudeWebPageModule.ensureConnector(late, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit" },
+      });
+      const rows = [person];
+      const upsell = claudeConnectors(rows, () => `${ADD_FORM} Upgrade to Max for higher usage.`);
+      await claudeWebPageModule.ensureConnector(upsell, connector, ctx);
+      expect(rows.map((row) => row.name)).toEqual(["Drive", connector.name]);
     });
   });
 });
@@ -207,7 +402,7 @@ describe("chatgpt.com", () => {
         "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
         [`/backend-api/conversation/${id}`]: {
           mapping: {
-            a: { message: { author: { role: "user" }, content: { parts: ["say hello"] }, create_time: 1 } },
+            a: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["say hello"] }, create_time: 1 } },
             b: { message: { author: { role: "assistant" }, recipient: "fixture.echo", content: { parts: [""] }, create_time: 2 } },
             c: { message: { author: { role: "tool" }, content: { parts: ["echo: hello"] }, create_time: 3 } },
             d: { message: { author: { role: "assistant" }, recipient: "all", content: { parts: ["It said hello."] }, create_time: 4 } },
@@ -223,6 +418,80 @@ describe("chatgpt.com", () => {
       toolCalls: [{ toolName: "echo", at: new Date(2000).toISOString() }],
     });
     expect(saved.toolCalls[0]).not.toHaveProperty("toolUseId");
+  });
+
+  it("finds its own chat after a restart, and never one created before the send began", async () => {
+    const earlier = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const asked = (prompt: string) => ({
+      mapping: {
+        a: { message: { author: { role: "user" }, content: { content_type: "text", parts: [prompt] }, create_time: 1 } },
+      },
+    });
+    const driver = cannedDriver({
+      url: "https://chatgpt.com/",
+      json: {
+        "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
+        "/backend-api/conversations?": {
+          items: [
+            { id, create_time: "2026-11-23T10:00:05.123456+00:00" },
+            { id: earlier, create_time: Date.parse("2026-11-23T09:00:00Z") / 1000 },
+          ],
+        },
+        [`/backend-api/conversation/${id}`]: asked("say hello"),
+        [`/backend-api/conversation/${earlier}`]: asked("say hello"),
+      },
+    });
+    const ctx = { timeoutMs: 1_000 };
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:00Z")).toEqual({
+      conversationUrl: `https://chatgpt.com/c/${id}`,
+    });
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T10:00:10Z")).toBeUndefined();
+    expect(await chatgptWebPageModule.findSent(driver, "say hello", ctx, "2026-11-23T08:00:00Z")).toEqual({
+      conversationUrl: `https://chatgpt.com/c/${id}`,
+    });
+  });
+
+  it("takes the prompt from the first message the person sees, not the account's hidden custom instructions", async () => {
+    const hidden = { is_visually_hidden_from_conversation: true };
+    const driver = cannedDriver({
+      url: `https://chatgpt.com/c/${id}`,
+      json: {
+        "/api/auth/session": { accessToken: "token", user: { email: "a@example.com" } },
+        [`/backend-api/conversation/${id}`]: {
+          mapping: {
+            root: { message: null },
+            instructions: {
+              message: {
+                author: { role: "user" },
+                content: { content_type: "user_editable_context", user_profile: "I build MCP servers.", user_instructions: "Be brief." },
+                metadata: { ...hidden, user_context_message_data: { about_user_message: "I build MCP servers." } },
+                create_time: null,
+              },
+            },
+            context: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["Earlier context"] }, metadata: hidden, create_time: 0.5 } },
+            prompt: { message: { author: { role: "user" }, content: { content_type: "text", parts: ["say hello"] }, create_time: 1 } },
+            reply: { message: { author: { role: "assistant" }, recipient: "all", content: { content_type: "text", parts: ["Hello."] }, create_time: 2 } },
+          },
+        },
+      },
+    });
+    const saved = await chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 });
+    expect(saved).toMatchObject({ userPrompt: "say hello", replyText: "Hello." });
+  });
+
+  it("leaves a bare Confirm that isn't the run's connector's approval unanswered and stops the turn", async () => {
+    const dialog = ':is(dialog, [role="dialog"], [role="alertdialog"]):has-text("MCPJam orders 1a2b3c4d")';
+    const other = cannedDriver({ url: "https://chatgpt.com/c/x", texts: { 'role=button[name="Confirm"]': "Confirm" } });
+    await expect(chatgptWebPageModule.answerApproval(other, ["MCPJam orders 1a2b3c4d"])).rejects.toMatchObject({
+      failure: { kind: "connector_failed", step: "reply" },
+    });
+    expect(other.click).not.toHaveBeenCalled();
+    const own = cannedDriver({
+      url: "https://chatgpt.com/c/x",
+      texts: { 'role=button[name="Confirm"]': "Confirm", [`${dialog} >> role=button[name="Confirm"]`]: "Confirm" },
+    });
+    expect(await chatgptWebPageModule.answerApproval(own, ["MCPJam orders 1a2b3c4d"])).toBe(true);
+    expect(own.click).toHaveBeenCalledWith(`${dialog} >> role=button[name="Confirm"]`);
   });
 
   it("stops waiting for a control at a human check, as the account's sign-in, not a changed page", async () => {
@@ -327,6 +596,37 @@ describe("the hosted driver", () => {
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("refuses a read only Playwright's selector engine resolves, and sends nothing for it", async () => {
+    const send = vi.fn(async () => executed({ a11y: "button" }));
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    expect(driver.playwrightSelectors).toBe(false);
+    for (const selector of [
+      'role=button[name="Add connector"]',
+      '.dframe-pane-primary >> [placeholder="Search"]',
+      "text=Step 2 of 2",
+      ':is(dialog, [role="dialog"]):has-text("MCPJam")',
+    ]) {
+      await expect(driver.readText(selector)).rejects.toMatchObject({ code: "unsupported" });
+    }
+    expect(send).not.toHaveBeenCalled();
+    expect(await driver.readText('input[type="password"], [data-testid="chat-input"]')).toBe("button");
+  });
+
+  it("keeps the claude.ai and chatgpt.com modules off it until its reads take their selectors", async () => {
+    const send = vi.fn(async () => executed({ url: "https://claude.ai/new", a11y: "textbox" }));
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    for (const [module, sites] of [
+      [claudeWebPageModule, WEB_CLIENT_SITES.claude],
+      [chatgptWebPageModule, WEB_CLIENT_SITES.chatgpt],
+    ] as const) {
+      const driver = createHostedPageDriver(send, { sites });
+      await expect(module.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
+        failure: { kind: "driver", step: "connector" },
+      });
+    }
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("reads a site's JSON from the page's text, and goes back to the page it was on", async () => {

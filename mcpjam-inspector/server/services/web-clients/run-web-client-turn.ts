@@ -54,6 +54,7 @@ import {
   type ToolCallLedger,
 } from "./tool-call-ledger.js";
 import {
+  TurnWindowConflictError,
   webClientTurnWindows,
   type ApprovalDecision,
   type ToolCallRequest,
@@ -67,8 +68,6 @@ export type WebTurnApproval = {
   /** The host's switch as the turn's origin applies it (`appliedToolApproval`). */
   requireToolApproval: boolean;
   answer: TurnApprovalPolicy["answer"];
-  /** Asks the person, where the turn has one to ask. */
-  askPerson?: (call: ToolCallRequest) => Promise<ApprovalDecision>;
 };
 
 /** The run's sealed tool policy by server id (`harnessToolPolicy`), and where its refusals go. */
@@ -152,7 +151,10 @@ export function webTurnApprover(
           reason: decided.reason,
           classification: decided.classification,
           at: Date.now(),
-          ...(call.toolUseId ? { toolCallId: call.toolUseId } : {}),
+          // The grade leaves a refused call out by this id. ChatGPT sends
+          // none, so the refusal names the call, and the transcript's call
+          // takes the same id (`matchWebToolCalls`).
+          toolCallId: call.toolUseId ?? `web-blocked-${randomUUID()}`,
           ...(serverId ? { serverId } : {}),
         });
         return { allow: false, reason: `${HARNESS_POLICY_BLOCK_TEXT_PREFIX}${decided.reason}` };
@@ -163,7 +165,6 @@ export function webTurnApprover(
     if (approval.answer === "deny") {
       return { allow: false, reason: SYNTHETIC_SESSION_APPROVAL_DENIAL };
     }
-    if (approval.askPerson) return approval.askPerson(call);
     return {
       allow: false,
       reason: "This tool call needs a person's approval, and nobody can answer during this run.",
@@ -217,11 +218,13 @@ export async function runWebClientTurn(
   const opened: string[] = [];
   let browser: Awaited<ReturnType<WebClientEnvironment["openBrowser"]>> | undefined;
   let webAccountId: string | undefined;
+  const blocked: HarnessPolicyBlockRecord[] = [];
   const wireCalls = (conversation: Parameters<typeof matchWebToolCalls>[0]["conversation"]) =>
     matchWebToolCalls({
       wire: ledger.forTurn(turnId),
       conversation,
       serverOfConnector: (connectorId) => serverOfConnector.get(connectorId),
+      blocked,
     });
   try {
     const account = await env.resolveAccount({ projectId: input.projectId, vendor });
@@ -242,10 +245,29 @@ export async function runWebClientTurn(
     }
     const approve = webTurnApprover(
       input.approval,
-      input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
+      input.toolPolicy && {
+        ...input.toolPolicy,
+        serverOf: (id) => serverOfConnector.get(id),
+        onBlock: (block) => {
+          blocked.push(block);
+          input.toolPolicy?.onBlock?.(block);
+        },
+      },
     );
     for (const connectorId of serverOfConnector.keys()) {
-      windows.open({ connectorId, runId: input.runId, turnId, approve });
+      try {
+        windows.open({ connectorId, runId: input.runId, turnId, approve });
+      } catch (error) {
+        // One turn at a time per connector: the endpoint attributes each call
+        // to the connector's open turn. Another run holding it stops this one
+        // as the run's failure, never the server's.
+        if (!(error instanceof TurnWindowConflictError)) throw error;
+        throw new RealUiError({
+          kind: "turn_running",
+          step: "connector",
+          message: "Another run is already using this connector.",
+        });
+      }
       opened.push(connectorId);
       await env.turnGate?.open({ connectorId, runId: input.runId, turnId });
     }
@@ -334,7 +356,7 @@ export async function runWebClientTurn(
         message: error instanceof Error ? error.message : String(error),
       });
     } finally {
-      await open?.close();
+      await closeBrowser(open);
     }
   }
 
@@ -349,6 +371,22 @@ export async function runWebClientTurn(
       logger.warn("[web-clients] the turn's outcome could not be recorded on the account", {
         runtimeId: input.runtimeId,
         ok: outcome.ok,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /**
+   * The turn's result is the evidence, so a browser that won't close is
+   * logged and never thrown in its place.
+   */
+  async function closeBrowser(open: typeof browser) {
+    try {
+      await open?.close();
+    } catch (error) {
+      redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
+      logger.warn("[web-clients] the turn's browser did not close", {
+        runtimeId: input.runtimeId,
         message: error instanceof Error ? error.message : String(error),
       });
     }

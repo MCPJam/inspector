@@ -104,6 +104,12 @@ export function hostedForwardingSurface(facts: {
  * back to; a website has no such route, so its vendor's MCP client always
  * reaches the servers through the forwarding endpoint, which gates, records
  * and forwards each call. Admission is not asked: there is nothing to bridge.
+ *
+ * So none of the planner's reasons applies to it, the forwarding flag,
+ * enrollment, the plane and an empty server list included: with no servers
+ * there is simply nothing to forward. Its off switch is `web-clients-enabled`,
+ * which the forwarding endpoint checks on every request to a connector, not
+ * `HARNESS_NATIVE_FORWARDING`.
  */
 const WEB_CONNECTOR_PLAN: HarnessMcpPlan = {
   upstream: "harness",
