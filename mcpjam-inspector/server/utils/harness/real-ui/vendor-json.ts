@@ -10,6 +10,14 @@
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 
+/** The site's own API answered with an error status, so nothing it saved was read. */
+export class VendorStatusError extends PageDriverError {
+  constructor(readonly status: number) {
+    super("failed", `The site answered ${status} for its own saved data.`);
+    this.name = "VendorStatusError";
+  }
+}
+
 export async function readVendorJson(
   driver: PageDriver,
   url: string,
@@ -27,12 +35,9 @@ export async function readVendorJson(
       { url, headers },
     );
     if (result.status < 200 || result.status >= 300) {
-      throw new PageDriverError(
-        "failed",
-        `The site answered ${result.status} for its own saved data.`,
-      );
+      throw new VendorStatusError(result.status);
     }
-    return JSON.parse(result.text);
+    return parsedJson(result.text);
   }
   if (Object.keys(headers).length > 0) {
     throw new PageDriverError(
@@ -79,4 +84,35 @@ export function list(value: unknown): unknown[] {
 
 export function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Whether a chat the site stamped `created`, an ISO time or epoch seconds,
+ * began at or after `since`. A missing or unreadable stamp is not: nothing
+ * shows the chat is the turn's own.
+ */
+export function createdSince(created: unknown, since: string): boolean {
+  const at =
+    typeof created === "number"
+      ? created * 1000
+      : typeof created === "string"
+        ? Date.parse(created)
+        : Number.NaN;
+  return at >= Date.parse(since);
+}
+
+/**
+ * The site's answer as JSON. A sign-in or error page in its place fails as
+ * the driver's own typed failure, and its text stays out of the message,
+ * since the page can show the account's details.
+ */
+function parsedJson(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new PageDriverError(
+      "failed",
+      "The site answered with a page instead of its own saved data.",
+    );
+  }
 }

@@ -31,6 +31,13 @@ vi.mock("../../web-clients/backend-connector-resolver.js", async () => ({
   )),
   webClientService: () => ({ read: (command: unknown) => readAccountsMock(command), apply: vi.fn() }),
 }));
+// A hosted server, where a swarm takes the project's accounts.
+vi.mock("../../web-clients/web-client-environment.js", async () => ({
+  ...(await vi.importActual<
+    typeof import("../../web-clients/web-client-environment.js")
+  >("../../web-clients/web-client-environment.js")),
+  webClientTurnsRunHosted: () => true,
+}));
 vi.mock("../../web-clients/hosted-web-client-runtime.js", async () => ({
   ...(await vi.importActual<typeof import("../../web-clients/hosted-web-client-runtime.js")>(
     "../../web-clients/hosted-web-client-runtime.js",

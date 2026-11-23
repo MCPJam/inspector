@@ -1,7 +1,8 @@
 /**
  * What the local tracer prints when its turn stops: the step and the
  * failure, never the connector's URL or id, since the id is the connector's
- * credential.
+ * credential. Its check that the profile stays outside the repository is the
+ * server's own, tested in outside-repository.test.ts.
  */
 import { describe, expect, it } from "vitest";
 import { stoppedLine } from "../../../../scripts/web-clients-local-tracer";

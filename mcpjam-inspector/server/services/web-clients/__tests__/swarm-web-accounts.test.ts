@@ -5,6 +5,7 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import { createSwarmWebAccounts, createWebAccountPool, type SwarmWebSession } from "../swarm-web-accounts";
+import { webClientTurnsRunHosted } from "../web-client-environment";
 import { WebAccountUnavailableError } from "../web-client-run";
 
 const NONE = "No account is signed in.";
@@ -79,6 +80,7 @@ describe("a swarm's web accounts", () => {
         projectId: "project-1",
         runId: "swarm-run-1",
         getBearer: async () => "delegated-token",
+        hosted: true,
         service: { read, apply: vi.fn() },
         actorOf: async () => ({ actorUserId: "owner-1" }),
       }),
@@ -117,15 +119,64 @@ describe("a swarm's web accounts", () => {
       projectId: "project-1",
       runId: "swarm-run-1",
       getBearer: async () => "token",
-      service: null,
+      hosted: false,
     });
     const session = await accounts.acquire("claude-web");
     expect(session?.run.webAccountIds).toEqual(["local:claude"]);
     session?.lease.release();
   });
 
+  it("runs one session at a time on this machine's profile when a local Inspector holds the service credential", async () => {
+    // This test process isn't hosted, so the mount gives it the local environment.
+    expect(webClientTurnsRunHosted()).toBe(false);
+    const read = vi.fn(async () => rows);
+    const accounts = createSwarmWebAccounts({
+      projectId: "project-1",
+      runId: "swarm-run-3",
+      getBearer: async () => "token",
+      service: { read, apply: vi.fn() },
+      actorOf: async () => ({ actorUserId: "owner-1" }),
+    });
+    const first = await accounts.acquire("chatgpt-web");
+    let second: SwarmWebSession | undefined;
+    const waiting = accounts
+      .acquire("chatgpt-web")
+      .then((session) => (second = session));
+    await settled();
+    // The project's two signed-in accounts would put both sessions on the one profile at once.
+    expect(second).toBeUndefined();
+    first?.lease.release();
+    await waiting;
+    expect([first?.run.webAccountIds, second?.run.webAccountIds]).toEqual([
+      ["local:chatgpt"],
+      ["local:chatgpt"],
+    ]);
+    expect(read).not.toHaveBeenCalled();
+    second?.lease.release();
+  });
+
+  it("holds no account on a hosted server without the backend, so the turn says it isn't set up", async () => {
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "");
+    try {
+      const accounts = createSwarmWebAccounts({
+        projectId: "project-1",
+        runId: "swarm-run-4",
+        getBearer: async () => "token",
+        hosted: true,
+      });
+      expect(await accounts.acquire("chatgpt-web")).toBeUndefined();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   const localSwarm = () =>
-    createSwarmWebAccounts({ projectId: "project-1", runId: "swarm-run-2", getBearer: async () => "token", service: null });
+    createSwarmWebAccounts({
+      projectId: "project-1",
+      runId: "swarm-run-2",
+      getBearer: async () => "token",
+      hosted: false,
+    });
 
   it("makes a second local swarm wait for this machine's profile until the first is done with it", async () => {
     const first = localSwarm();

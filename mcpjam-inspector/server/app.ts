@@ -360,7 +360,7 @@ export async function createHonoApp() {
   app.use("/api/web/*", webBodyLimit());
 
   // API Routes
-  mountWebClientRuntime(app, { hosted: HOSTED_MODE });
+  mountWebClientRuntime(app);
   if (!HOSTED_MODE) {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
