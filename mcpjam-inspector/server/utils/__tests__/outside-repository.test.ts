@@ -3,26 +3,24 @@
  * than the working directory, and the folders that count as outside it.
  * Evidence: fixture.
  */
-import { join, posix, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { REPOSITORY_ROOT, isOutsideRepository } from "../outside-repository";
 
 describe("a folder outside the repository", () => {
-  it("finds the repository from the module, wherever the process runs", () => {
+  it("finds the repository from the package's own manifest, wherever the process runs", () => {
     // This test sits in mcpjam-inspector/server/utils/__tests__.
-    expect(REPOSITORY_ROOT).toBe(
-      fileURLToPath(new URL("../../../../", import.meta.url)),
+    const root = REPOSITORY_ROOT;
+    if (root === undefined) throw new Error("The package didn't resolve its own manifest.");
+    expect(root).toBe(
+      resolve(fileURLToPath(new URL("../../../../", import.meta.url))),
     );
-    expect(isOutsideRepository(REPOSITORY_ROOT)).toBe(false);
+    expect(isOutsideRepository(root)).toBe(false);
     expect(
-      isOutsideRepository(
-        join(REPOSITORY_ROOT, "mcpjam-inspector", ".profiles"),
-      ),
+      isOutsideRepository(join(root, "mcpjam-inspector", ".profiles")),
     ).toBe(false);
-    expect(isOutsideRepository(join(REPOSITORY_ROOT, "..", "profiles"))).toBe(
-      true,
-    );
+    expect(isOutsideRepository(join(root, "..", "profiles"))).toBe(true);
   });
 
   it("tells a sibling folder from one inside whose name starts with dots", () => {
