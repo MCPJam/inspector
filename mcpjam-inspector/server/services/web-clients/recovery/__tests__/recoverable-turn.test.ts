@@ -15,7 +15,10 @@ const ran = vi.hoisted(() =>
 vi.mock("../../run-web-client-turn.js", () => ({ runWebClientTurn: ran }));
 
 import { createMemorySendJournal } from "../../../../utils/harness/real-ui/drive-turn.js";
-import type { RealUiFailure } from "../../../../utils/harness/real-ui/page-module.js";
+import type {
+  PendingStep,
+  RealUiFailure,
+} from "../../../../utils/harness/real-ui/page-module.js";
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
 import type {
   WebClientTurnInput,
@@ -47,7 +50,10 @@ const fakeDriver: PageDriver = {
   readText: async () => undefined,
 };
 
-function failed(failure: RealUiFailure): () => WebClientTurnResult {
+function failed(
+  failure: RealUiFailure,
+  pendingStep?: PendingStep,
+): () => WebClientTurnResult {
   return () => ({
     ok: false,
     turnId: "turn-1",
@@ -55,6 +61,7 @@ function failed(failure: RealUiFailure): () => WebClientTurnResult {
     endedAt: STARTED_AT + 1,
     infrastructure: true,
     failure,
+    ...(pendingStep ? { pendingStep } : {}),
     toolCalls: [],
   });
 }
@@ -64,6 +71,11 @@ const signedOut = failed({
   reason: "signed_out",
   step: "sign_in_check",
   message: "Signed out.",
+});
+const crashed = failed({
+  kind: "driver",
+  step: "new_chat",
+  message: "The browser closed.",
 });
 
 function replied(): () => WebClientTurnResult {
@@ -222,5 +234,85 @@ describe("runRecoverableWebTurn", () => {
       stop: { kind: "paused_for_person", requestId: requestB },
     });
     expect(triesOf(b)).toBe(1);
+  });
+
+  it("opens the account's sign-in request when the last try finds it signed out", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const onPaused = vi.fn();
+    const environment = environmentOn("account-a", [
+      crashed,
+      crashed,
+      signedOut,
+    ]);
+
+    const result = await runRecoverableWebTurn(
+      playgroundTurn(environment),
+      { backendFor: () => backend, ledger: createInMemoryToolCallLedger() },
+      onPaused,
+    );
+
+    expect(triesOf(environment)).toBe(3);
+    const requests = await backend.listWebReconnectRequests({
+      projectId: PROJECT,
+    });
+    expect(requests).toEqual([
+      expect.objectContaining({ status: "open", waitingRunCount: 1 }),
+    ]);
+    expect(result).toMatchObject({
+      ok: false,
+      stop: {
+        kind: "paused_for_person",
+        requestId: requests[0]?.requestId,
+      },
+    });
+    // No try is left to resume, so the turn doesn't wait for a handback.
+    expect(onPaused).not.toHaveBeenCalled();
+  });
+
+  it("stops as ambiguous when the last try's call got no answer", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const ledger = createInMemoryToolCallLedger();
+    const timedOut = failed(
+      { kind: "reply_timeout", step: "reply", message: "No reply." },
+      {
+        stepId: "reply",
+        startedAt: new Date(STARTED_AT).toISOString(),
+        turnId: "turn-1",
+      },
+    );
+    const environment = environmentOn("account-a", [
+      crashed,
+      crashed,
+      () => {
+        // The tool reached the server on the last try, and no answer came.
+        ledger.forwarded({
+          connectorId: "connector-1",
+          turnId: "turn-1",
+          runId: "playground",
+          jsonrpcId: "1",
+          toolName: "create_note",
+          argsHash: "args-hash",
+        });
+        return timedOut();
+      },
+    ]);
+
+    const result = await runRecoverableWebTurn(playgroundTurn(environment), {
+      backendFor: () => backend,
+      ledger,
+    });
+
+    expect(triesOf(environment)).toBe(3);
+    expect(result).toMatchObject({
+      ok: false,
+      stop: {
+        kind: "ambiguous_execution",
+        calls: [{ toolName: "create_note" }],
+      },
+    });
   });
 });

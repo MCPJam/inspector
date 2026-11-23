@@ -87,6 +87,7 @@ export function webRecovery(): WebRecoverySetup | undefined {
 
 const MAX_PAUSE_MS = 15 * 60_000;
 const POLL_MS = 5_000;
+/** Tries of one turn in all: the first, and at most 2 retries. */
 const MAX_ATTEMPTS = 3;
 /** Steps after which the prompt may already be in the vendor's chat. */
 const SENT_STEPS: ReadonlySet<string> = new Set([
@@ -167,7 +168,10 @@ export async function runRecoverableWebTurn(
     const result = await runWebClientTurn(attempt);
     if (result.ok) return result;
     const failure = runFailureOf(result.failure);
-    if (!failure || tried >= MAX_ATTEMPTS) return result;
+    if (!failure) return result;
+    // The last try is not sent again, but its sign-out still opens the
+    // account's sign-in request, and its calls are still read from the ledger.
+    const last = tried >= MAX_ATTEMPTS;
     const step: PendingStep = result.pendingStep ?? {
       stepId: result.failure.step,
       startedAt: new Date(result.startedAt).toISOString(),
@@ -185,6 +189,8 @@ export async function runRecoverableWebTurn(
         step: result.failure.step,
         message: result.failure.message,
       } as const;
+      // No try is left to carry the turn on after a handback.
+      if (last) return { ...result, stop: paused };
       onPaused?.(paused);
       const waitingOn = { requestId: outcome.requestId, runId };
       const resumed = await waitForResume(waitingOn, step, {
@@ -206,6 +212,7 @@ export async function runRecoverableWebTurn(
       }));
       return { ...result, stop: { kind: "ambiguous_execution", calls } };
     }
+    if (last) return result;
     if (verdict.status === "reconciled" || SENT_STEPS.has(step.stepId)) {
       await keepSendRecord(environment.journal, result.turnId);
     }
