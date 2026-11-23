@@ -268,6 +268,48 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toEqual(["say hello"]);
   });
 
+  it("stops as send_ambiguous, keeping the sending record, when the journal can't record the sent prompt", async () => {
+    const memory = createMemorySendJournal();
+    const journal: SendJournal = {
+      ...memory,
+      async write(turnKey, entry) {
+        if (entry.state === "sent") throw new Error("The journal is down.");
+        return memory.write(turnKey, entry);
+      },
+    };
+    const failure = await turn(await signedInDriver(), journal).catch(
+      (error: unknown) => error,
+    );
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "send_ambiguous",
+      step: "send",
+    });
+    expect(await memory.read("turn-1")).toMatchObject({ state: "sending" });
+    expect(vendor.sends).toEqual(["say hello"]);
+  });
+
+  it("keeps a sign-in the page asks for after the click as needs_sign_in", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const failure = await turn(await signedInDriver(), undefined, {
+      module: {
+        ...fixture,
+        async send(driver, prompt, ctx) {
+          await fixture.send(driver, prompt, ctx);
+          throw new RealUiError({
+            kind: "needs_sign_in",
+            reason: "human_check",
+            step: "send",
+            message: "The site is asking to verify a person is there.",
+          });
+        },
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "needs_sign_in",
+      reason: "human_check",
+    });
+  });
+
   it("sends once when two runs start the same turn together", async () => {
     vendor.connectors.set("MCPJam fixture", upstream.url);
     const memory = createMemorySendJournal();

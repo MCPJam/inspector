@@ -239,11 +239,13 @@ export async function driveRealUiTurn(
     return { account, conversation, approvalsAnswered, finishedSignals, resumed };
   } catch (error) {
     const typed = asRealUiError(error, step);
-    // Once the click may have happened, a page that reads as changed may
-    // already have sent the prompt, so the turn ends as ambiguous, not as a
-    // change.
+    // Once the click may have happened, a page that reads as changed, or a
+    // failure that says nothing about the page (the journal's own write, say),
+    // may follow a prompt already sent: the turn ends as ambiguous. A failure
+    // a person must act on, such as a sign-in, keeps its kind.
     const failure =
-      sendUnconfirmed && typed.failure.kind === "page_changed"
+      sendUnconfirmed &&
+      (typed.failure.kind === "page_changed" || typed.failure.kind === "driver")
         ? { ...typed.failure, kind: "send_ambiguous" as const }
         : typed.failure;
     throw new RealUiError(failure, typed.pendingStep ?? pending);
