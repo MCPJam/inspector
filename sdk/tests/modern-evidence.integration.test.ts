@@ -524,6 +524,196 @@ describe("SEP-2243 mirroring disabled (mirrorToolParamHeaders: false)", () => {
 });
 
 /**
+ * SEP-2243 recovery on the MRTR path. Every connected server gets an MRTR
+ * collector, so every modern `tools/call` goes out as an MRTR leg, and those
+ * do not go through upstream `callTool` or its retry. The spec (2026-07-28
+ * Streamable HTTP, Client Behavior): after a `-32020` the client SHOULD call
+ * `tools/list` to check for changes to the tool's `inputSchema`, then retry
+ * with the appropriate headers.
+ */
+describe("SEP-2243 -32020 recovery on the MRTR path", () => {
+  let served: ServedMultiPageFixture | undefined;
+  let manager: MCPClientManager | undefined;
+
+  afterEach(async () => {
+    await manager?.disconnectAllServers().catch(() => {});
+    await served?.close();
+    served = undefined;
+    manager = undefined;
+  });
+
+  async function connect(
+    fixtureOptions: Parameters<typeof serveMultiPageFixtureOnPort>[0],
+    config: { mirrorToolParamHeaders?: boolean } = {}
+  ): Promise<MCPClientManager> {
+    served = await serveMultiPageFixtureOnPort(fixtureOptions);
+    manager = new MCPClientManager();
+    await manager.connectToServer("fixture", {
+      url: served.url,
+      mcpProtocolVersion: "2026-07-28",
+      timeout: 10_000,
+      ...config,
+    });
+    // This is what sends `executeTool` down the MRTR path.
+    manager.setMrtrInputCollector("fixture", async () => {
+      throw new Error("tool-0 completes on the first leg; must not elicit");
+    });
+    return manager;
+  }
+
+  const byMethod = (method: string) =>
+    served!.exchanges.filter(
+      (e) => getWireField(e.request.json, "method") === method
+    );
+  /** The `Mcp-Param-Message` header of each `tools/call`, in order. */
+  const sentHeaders = () =>
+    byMethod("tools/call").map((e) => e.request.headers["mcp-param-message"]);
+  /** Full `tools/list` walks: each one starts with a page that has no cursor. */
+  const listWalks = () =>
+    byMethod("tools/list").filter(
+      (e) => getWireField(e.request.json, "params.cursor") === undefined
+    ).length;
+  const mismatch = { code: -32020, message: "Mcp-Param-Message mismatch" };
+  // The client may keep each list for a minute, so it holds on to the stale
+  // one instead of listing again before the call.
+  const CACHED = { toolsListTtlMs: 60_000 } as const;
+
+  it("lists the tools again and resends once with the fresh headers", async () => {
+    // The first list has no mark, so the first call goes out without the
+    // header and is refused. The second list has the mark.
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      listingsWithoutTheMark: 1,
+    });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).resolves.toBeTruthy();
+
+    expect(sentHeaders()).toEqual([undefined, "hi"]);
+    expect(listWalks()).toBe(2);
+  });
+
+  it("keeps the fresh list, so the next call is right the first time", async () => {
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      listingsWithoutTheMark: 1,
+    });
+    await manager.executeTool("fixture", "tool-0", { message: "one" });
+    const walks = listWalks();
+    await manager.executeTool("fixture", "tool-0", { message: "two" });
+
+    expect(sentHeaders()).toEqual([undefined, "one", "two"]);
+    expect(listWalks()).toBe(walks);
+  });
+
+  it("resends only once when the server refuses the fresh headers too", async () => {
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      listingsWithoutTheMark: 1,
+      refuseEveryParamHeader: true,
+    });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).rejects.toThrow(/Mcp-Param-Message header is not accepted/);
+
+    expect(sentHeaders()).toEqual([undefined, "hi"]);
+  });
+
+  it("does not resend when the fresh list changes nothing", async () => {
+    // `tool-0` is never listed, so no list can give it a mark.
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      hideFromList: ["tool-0"],
+    });
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).rejects.toThrow(/Mcp-Param-Message header is absent/);
+
+    expect(sentHeaders()).toEqual([undefined]);
+    // It did look: the first walk, then one more after the refusal.
+    expect(listWalks()).toBe(2);
+  });
+
+  it("does not resend a caller's own Mcp-Param-* header", async () => {
+    // The caller's header wins over the mirrored one, so the fresh marks
+    // cannot change what goes out, and the same request would be refused.
+    const manager = await connect({
+      ...CACHED,
+      requireParamHeaders: true,
+      listingsWithoutTheMark: 1,
+      refuseEveryParamHeader: true,
+    });
+    await expect(
+      manager.executeTool(
+        "fixture",
+        "tool-0",
+        { message: "hi" },
+        { headers: { "Mcp-Param-Message": "deliberately-wrong" } }
+      )
+    ).rejects.toThrow(/Mcp-Param-Message header is not accepted/);
+
+    expect(sentHeaders()).toEqual(["deliberately-wrong"]);
+  });
+
+  it("does not list again or resend with mirroring off", async () => {
+    // `mirrorToolParamHeaders: false` simulates a client that never sends the
+    // headers. The refusal is the point, so nothing may fix it.
+    const manager = await connect(
+      { requireParamHeaders: true },
+      { mirrorToolParamHeaders: false }
+    );
+    await expect(
+      manager.executeTool("fixture", "tool-0", { message: "hi" })
+    ).rejects.toThrow(/Mcp-Param-Message header is absent/);
+
+    expect(sentHeaders()).toEqual([undefined]);
+    expect(byMethod("tools/list")).toHaveLength(0);
+  });
+
+  it("mrtrToolParamHeadersAfterMismatch gives the hosted path the fresh headers", async () => {
+    const manager = await connect({ ...CACHED, listingsWithoutTheMark: 1 });
+    const args = { message: "hi" };
+    // From the stale list: nothing to mirror, so the step went out bare.
+    const sent = await manager.mrtrToolParamHeaders("fixture", "tool-0", args);
+    expect(sent).toEqual({});
+    const afterMismatch = (error: unknown, headers: Record<string, string>) =>
+      manager.mrtrToolParamHeadersAfterMismatch("fixture", "tool-0", args, {
+        error,
+        headers,
+      });
+
+    expect(await afterMismatch(mismatch, sent)).toEqual({
+      "Mcp-Param-Message": "hi",
+    });
+    // Not a -32020: headers cannot fix it.
+    expect(
+      await afterMismatch(new Error("connection reset"), sent)
+    ).toBeUndefined();
+    // Already the fresh headers: the same request would be refused again.
+    expect(
+      await afterMismatch(mismatch, { "mcp-param-message": "hi" })
+    ).toBeUndefined();
+  });
+
+  it("mrtrToolParamHeadersAfterMismatch never resends under the omit knob", async () => {
+    const manager = await connect({}, { mirrorToolParamHeaders: false });
+    expect(
+      await manager.mrtrToolParamHeadersAfterMismatch(
+        "fixture",
+        "tool-0",
+        { message: "hi" },
+        { error: mismatch, headers: {} }
+      )
+    ).toBeUndefined();
+    expect(byMethod("tools/list")).toHaveLength(0);
+  });
+});
+
+/**
  * The per-era cancellation-suppression flags — the host-config knob
  * (`mcpProfile.toolCallCancellation.{legacy,modern}: false`) modeling a host
  * that ends the turn locally and tells the server nothing.

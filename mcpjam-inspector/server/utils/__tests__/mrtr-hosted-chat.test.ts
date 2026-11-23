@@ -361,4 +361,66 @@ describe("resolveMrtrChatResume — Mcp-Param-* on a resume leg", () => {
 
     expect(manager.mrtrToolParamHeaders).not.toHaveBeenCalled();
   });
+
+  /** The server's refusal of the step's headers (HTTP 400, JSON-RPC -32020). */
+  const headerMismatch = () =>
+    Object.assign(new Error("Mcp-Param-Region header is absent"), {
+      code: -32020,
+    });
+
+  it("resends once with the fresh headers after a -32020", async () => {
+    // The cached marks were stale: the step went out with no header and the
+    // server refused it. The manager lists again and returns the right ones.
+    const mismatch = headerMismatch();
+    const requestWithSchema = vi
+      .fn()
+      .mockRejectedValueOnce(mismatch)
+      .mockResolvedValueOnce({ content: [{ type: "text", text: "ok" }] });
+    const manager = makeManager({
+      getManagedClient: vi.fn().mockReturnValue({ requestWithSchema }),
+      mrtrToolParamHeaders: vi.fn().mockResolvedValue({}),
+      mrtrToolParamHeadersAfterMismatch: vi
+        .fn()
+        .mockResolvedValue({ "Mcp-Param-Region": "us-east" }),
+    });
+
+    const res = await resolveMrtrChatResume(
+      baseDeps(resumeThatDrives(), manager),
+    );
+
+    expect(res.kind).toBe("complete");
+    expect(manager.mrtrToolParamHeadersAfterMismatch).toHaveBeenCalledWith(
+      "srv-1",
+      "execute-sql",
+      { region: "us-east", query: "select 1" },
+      { error: mismatch, headers: {} },
+    );
+    expect(requestWithSchema).toHaveBeenCalledTimes(2);
+    expect(requestWithSchema.mock.calls[0]?.[2]?.headers).toBeUndefined();
+    expect(requestWithSchema.mock.calls[1]?.[2]?.headers).toEqual({
+      "Mcp-Param-Region": "us-east",
+    });
+  });
+
+  it("does not resend when the manager says it cannot help", async () => {
+    // `undefined`: not a -32020, mirroring is off, the fresh list failed, or
+    // the headers did not change. The server's refusal stands.
+    const requestWithSchema = vi.fn().mockRejectedValue(headerMismatch());
+    const manager = makeManager({
+      getManagedClient: vi.fn().mockReturnValue({ requestWithSchema }),
+      mrtrToolParamHeaders: vi.fn().mockResolvedValue({}),
+      mrtrToolParamHeadersAfterMismatch: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const res = await resolveMrtrChatResume(
+      baseDeps(resumeThatDrives(), manager),
+    );
+
+    expect(requestWithSchema).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({
+      kind: "halted",
+      outcome: "failed",
+      reason: "Mcp-Param-Region header is absent",
+    });
+  });
 });
