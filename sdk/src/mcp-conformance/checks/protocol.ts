@@ -85,7 +85,14 @@ async function sendInvalidMethodProbe(
     return { unsupportedVersion };
   }
   return await rawRequest(ctx, {
-    headers: legacyHeaders({ sessionId }),
+    // Only the method name is the test. 2025-06-18 and later require the
+    // version header on every request after initialize, so it is sent here
+    // like on any other request.
+    headers: legacyHeaders({
+      protocolVersion:
+        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId,
+    }),
     body: {
       jsonrpc: "2.0",
       id: 99,

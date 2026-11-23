@@ -245,9 +245,15 @@ async function terminateSession(
     return;
   }
 
+  // The version header rides on every request after initialize
+  // (2025-06-18 and later), the closing DELETE included.
   await rawRequest(ctx, {
     method: "DELETE",
-    headers: legacyHeaders({ sessionId }),
+    headers: legacyHeaders({
+      protocolVersion:
+        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+      sessionId,
+    }),
   }).catch(() => undefined);
 }
 

@@ -259,6 +259,90 @@ describe("mcp conformance unit checks", () => {
     expect(result.categorySummary.core.total).toBe(0);
   });
 
+  it.each(["2025-06-18", "2025-11-25"])(
+    "sends MCP-Protocol-Version on the invalid-method probe after initialize on %s",
+    async (version) => {
+      mockedOperations.withEphemeralClient.mockImplementation(
+        async (_config, fn) =>
+          fn(
+            {
+              getManagedClient: vi.fn().mockReturnValue({}),
+              getInitializationInfo: vi.fn().mockReturnValue({
+                protocolVersion: version,
+              }),
+            } as any,
+            "server-1",
+          ),
+      );
+      const sent: Array<{ method?: string; headers: Headers }> = [];
+      const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+        sent.push({ method: body.method, headers: new Headers(init?.headers) });
+
+        if (body.method === "initialize") {
+          return jsonResponse(
+            { jsonrpc: "2.0", id: 1, result: { protocolVersion: version } },
+            { headers: { "mcp-session-id": "session-1" } },
+          );
+        }
+
+        return jsonResponse({
+          jsonrpc: "2.0",
+          id: 99,
+          error: { code: -32601, message: "Method not found" },
+        });
+      }) as typeof fetch;
+
+      const result = await new MCPConformanceTest({
+        serverUrl: "https://example.com/mcp",
+        protocolVersion: version,
+        checkIds: ["protocol-invalid-method-error"],
+        fetchFn,
+      }).run();
+
+      expect(result.checks[0]).toMatchObject({
+        id: "protocol-invalid-method-error",
+        status: "passed",
+      });
+      const initialize = sent.find((request) => request.method === "initialize");
+      const probe = sent.find(
+        (request) => request.method === "nonexistent/method_that_does_not_exist",
+      );
+      // The header belongs to the requests AFTER initialize, not to it.
+      expect(initialize?.headers.has("mcp-protocol-version")).toBe(false);
+      expect(probe?.headers.get("mcp-protocol-version")).toBe(version);
+      expect(probe?.headers.get("mcp-session-id")).toBe("session-1");
+    },
+  );
+
+  it("sends MCP-Protocol-Version on the DELETE that closes a transport probe session", async () => {
+    const deletes: Headers[] = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deletes.push(new Headers(init.headers));
+        return new Response(null, { status: 200 });
+      }
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: {} },
+        { headers: { "mcp-session-id": "session-close-1" } },
+      );
+    }) as typeof fetch;
+    const base = createTransportContext(fetchFn);
+
+    const results = await runTransportChecks(
+      { ...base, config: { ...base.config, protocolVersion: "2025-06-18" } } as any,
+      new Set(["server-sse-polling-session"]),
+    );
+
+    expect(results[0]).toMatchObject({
+      id: "server-sse-polling-session",
+      status: "passed",
+    });
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].get("mcp-protocol-version")).toBe("2025-06-18");
+    expect(deletes[0].get("mcp-session-id")).toBe("session-close-1");
+  });
+
   it("does not count truncated SSE frames as complete events", async () => {
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
