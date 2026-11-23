@@ -2364,12 +2364,13 @@ async function captureLogProbe(
   options: Parameters<typeof modernProbe>[1]
 ): Promise<
   | { response: RawHttpResult; attempts: RawHttpResult[] }
-  | { unavailable: MCPCheckResult }
+  | { unavailable: MCPCheckResult; attempts: RawHttpResult[] }
 > {
+  // A tool call may be sent twice (refused for its headers, then retried).
+  // `attempts` keeps every answer that came back, also when a later try
+  // throws; `response` is the last one.
+  const attempts: RawHttpResult[] = [];
   try {
-    // A tool call may be sent twice (refused for its headers, then retried).
-    // `attempts` keeps both answers; `response` is the last one.
-    const attempts: RawHttpResult[] = [];
     if (options.method === "tools/call" && options.name !== undefined) {
       const response = await modernToolCall(
         ctx,
@@ -2380,7 +2381,8 @@ async function captureLogProbe(
       return { response, attempts };
     }
     const response = await track(state, modernProbe(ctx, options));
-    return { response, attempts: [response] };
+    attempts.push(response);
+    return { response, attempts };
   } catch (error) {
     return {
       unavailable: couldNotRunResult(
@@ -2388,6 +2390,7 @@ async function captureLogProbe(
         `Could not complete the logging probe: ${errorMessage(error)}`,
         { probedTool: options.name, requestedLogLevel: options.logLevel }
       ),
+      attempts,
     };
   }
 }
@@ -2449,11 +2452,10 @@ async function runLogLevelCheck(
         }
       : { id: 7900, method: "server/discover" }
   );
-  if ("unavailable" in silent) return silent.unavailable;
-
   // Every answer to the silent call counts, a refused first try included: a
   // log on a request that asked for none is the violation, whether or not the
-  // request went on to succeed.
+  // request went on to succeed. So the logs are read before an unfinished
+  // retry can turn the check into "could not run".
   const unrequested = silent.attempts.flatMap(logRecords);
   if (unrequested.length > 0) {
     return failedResult(
@@ -2466,6 +2468,7 @@ async function runLogLevelCheck(
       }
     );
   }
+  if ("unavailable" in silent) return silent.unavailable;
 
   if (!probe) {
     return couldNotRunResult(

@@ -33,6 +33,11 @@ export interface RegionServerOptions {
   brokenListing?: { nth: number; how: "malformed" | "unreachable" };
   /** Send one log notification along with every refusal. */
   logOnRefusal?: boolean;
+  /**
+   * Do not answer one `tools/call`, counted from 1: the scripted `fetch`
+   * rejects as a dropped connection would.
+   */
+  unreachableCall?: number;
 }
 
 export interface RegionServerRequest {
@@ -61,11 +66,20 @@ export class ListingUnreachable extends Error {
   }
 }
 
+/** Thrown by the server function for a `tools/call` it does not answer. */
+export class CallUnreachable extends Error {
+  constructor() {
+    super("connection reset");
+    this.name = "CallUnreachable";
+  }
+}
+
 export function createRegionServer(
   options: RegionServerOptions,
   log: RegionServerLog
 ): (request: RegionServerRequest) => RegionServerAnswer {
   let listings = 0;
+  let toolCalls = 0;
 
   return (request) => {
     const ok = (result: Record<string, unknown>): RegionServerAnswer => ({
@@ -150,6 +164,10 @@ export function createRegionServer(
         log.push(
           `tools/call Mcp-Param-Region=${request.paramRegion ?? "(none)"}`
         );
+        toolCalls += 1;
+        if (options.unreachableCall === toolCalls) {
+          throw new CallUnreachable();
+        }
         if (options.alwaysRefuse) {
           return refuse("Mcp-Param-Region header is not accepted");
         }

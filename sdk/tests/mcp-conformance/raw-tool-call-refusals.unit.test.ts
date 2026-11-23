@@ -187,6 +187,46 @@ describe("Logs Require A Log Level and a refused first try", () => {
     );
   });
 
+  it("still fails it when the retry then gets no answer", async () => {
+    const log: RegionServerLog = [];
+    // Same refused, logging first try, but the retry is a dropped connection.
+    // The log already came back, so it is not lost to "could not run".
+    const check = byId(
+      await runChecks(
+        [LOGS],
+        { listingsWithoutTheMark: 1, logOnRefusal: true, unreachableCall: 2 },
+        log
+      ),
+      LOGS
+    );
+
+    expect(calls(log)).toHaveLength(2);
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain(
+      "emitted 1 log notification(s) for a request that carried no modern log level"
+    );
+  });
+
+  it("could not run when the retry gets no answer and nothing logged", async () => {
+    const log: RegionServerLog = [];
+    const check = byId(
+      await runChecks(
+        [LOGS],
+        { listingsWithoutTheMark: 1, unreachableCall: 2 },
+        log
+      ),
+      LOGS
+    );
+
+    expect([check.status, check.skipReason]).toEqual([
+      "skipped",
+      "could-not-run",
+    ]);
+    expect(check.error?.message).toContain(
+      "Could not complete the logging probe"
+    );
+  });
+
   it("does not blame a server whose refusal carried no log", async () => {
     const log: RegionServerLog = [];
     const check = byId(
