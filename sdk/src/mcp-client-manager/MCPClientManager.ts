@@ -1,3 +1,5 @@
+import { validBetaHttpEventTypes, withEventsBetaRouting } from "./events-beta-routing.js";
+import { readServerEventTypes } from "../server-list-reads.js";
 import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
 import {
@@ -711,10 +713,12 @@ export class MCPClientManager {
   ): Promise<EventsListResultWire> {
     return this.runRetryableReadOperation(serverId, options, (client) => {
       this.assertEventsDeclared(serverId, "events/list", options);
-      return listEventsExt(
+      const result = listEventsExt(
         { client, options: this.withTimeout(serverId, options) },
         params
       );
+      return this.getEventsSupport(serverId).beta && this.getInitializationInfo(serverId)?.transport === "streamable-http"
+        ? result.then(validBetaHttpEventTypes) : result;
     });
   }
 
@@ -4638,7 +4642,11 @@ export class MCPClientManager {
       config.suppressListenChannel === true && options?.listenGuard !== false
         ? wrapFetchForNoListenChannel(logged)
         : logged;
-    return wrapFetchForTaskRouting(listenGuarded);
+    const routed = wrapFetchForTaskRouting(listenGuarded);
+    return options?.listenGuard === false ? routed : withEventsBetaRouting(
+      routed, () => this.eventsCapabilityCapture.betaCatalogVersion(serverId),
+      signal => readServerEventTypes(this, serverId, { signal }),
+    );
   }
 
   private cacheToolsMetadata(
