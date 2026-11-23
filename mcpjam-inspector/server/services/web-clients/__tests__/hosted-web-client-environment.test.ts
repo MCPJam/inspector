@@ -84,8 +84,19 @@ describe("the hosted environment's backend calls", () => {
     for (const id of ["acct-removed", "acct-gpt"]) {
       await expect(
         environment(service, { runWebAccountIds: [id] }).resolveAccount({ projectId: "p", vendor: "claude" }),
-      ).rejects.toThrow("Claude web accounts this run uses were removed");
+      ).rejects.toThrow(
+        "The Claude web accounts this run uses were removed from the project. Choose an account for the suite, then run again.",
+      );
     }
+    // A swarm's turn names no eval iteration, and a swarm has no suite.
+    await expect(
+      environment(service, {
+        runWebAccountIds: ["acct-removed"],
+        iterationId: undefined,
+      }).resolveAccount({ projectId: "p", vendor: "claude" }),
+    ).rejects.toThrow(
+      "The Claude web accounts this run uses were removed from the project. Ask an admin to sign one in from the client's Browser settings, then run again.",
+    );
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
       accountEmail: "runner@example.com",
