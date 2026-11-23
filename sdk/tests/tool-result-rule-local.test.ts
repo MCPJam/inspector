@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { withCatalogStructuredContentRule } from "../src/suite-file-run/preflight.js";
 import { seedHostTemplate } from "../src/host-config/templates/index.js";
-import type { HostCompatCatalog } from "../src/host-compat/catalog.js";
+import {
+  bundledHostCompatCatalog,
+  type HostCompatCatalog,
+} from "../src/host-compat/catalog.js";
+import { structuredContentRuleOf } from "../src/mcp-client-manager/tool-result-rule.js";
 import {
   HOST_CONFIG_FEATURES,
   HOST_CONFIG_FEATURES_HEADER,
@@ -41,6 +45,27 @@ describe("local runs take the catalog row's client rule (KES-1007)", () => {
     expect(
       withCatalogStructuredContentRule("claude-desktop", seeded, catalogWith())
     ).toBe(seeded);
+  });
+
+  it("the bundled catalog carries a rule for the measured clients only", () => {
+    const rules = Object.entries(bundledHostCompatCatalog().hostsById)
+      .map(([id, host]) => [
+        id,
+        structuredContentRuleOf(host.modelVisibleMcpToolResults),
+      ])
+      .filter(([, rule]) => rule !== undefined);
+    expect(Object.fromEntries(rules)).toEqual({
+      "claude-desktop": "fallback",
+      "claude-code": "preferred",
+      "codex-cli": "preferred",
+    });
+    const local = withCatalogStructuredContentRule(
+      "claude-desktop",
+      seedHostTemplate("claude-desktop")
+    ) as { modelVisibleMcpToolResults?: { structuredContent?: string } };
+    expect(local.modelVisibleMcpToolResults?.structuredContent).toBe(
+      "fallback"
+    );
   });
 });
 
