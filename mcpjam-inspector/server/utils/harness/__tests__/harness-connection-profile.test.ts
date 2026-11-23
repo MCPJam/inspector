@@ -130,7 +130,12 @@ it("gives a harness turn the same admission and fingerprint once the client rule
   const claudeCode = { directContent: { image: false } };
   // With the rule left in, the strict profile schema would refuse native
   // forwarding; harness turns remove it before any of this runs.
-  expect(isEnhancedModelPolicy({ ...codexCli, structuredContent: "preferred" } as never)).toBe(false);
+  expect(
+    isEnhancedModelPolicy({
+      ...codexCli,
+      structuredContent: "preferred",
+    } as never),
+  ).toBe(false);
   for (const policy of [codexCli, claudeCode]) {
     const stripped = withoutStructuredContentRule({
       ...policy,

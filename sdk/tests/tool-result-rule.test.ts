@@ -105,7 +105,9 @@ describe("projectToolResultByRule — what each measured client shows", () => {
       content: [],
       structuredContent: "done",
     } as unknown as CallToolResult;
-    expect(await projectToolResultByRule(stringStructured, "preferred")).toEqual({
+    expect(
+      await projectToolResultByRule(stringStructured, "preferred")
+    ).toEqual({
       type: "text",
       value: '"done"',
     });
@@ -154,7 +156,11 @@ describe("projectToolResultByRule — what each measured client shows", () => {
       content: [
         {
           type: "resource",
-          resource: { uri: "file:///a.txt", text: "VIS-RESOURCE", _meta: { x: 1 } },
+          resource: {
+            uri: "file:///a.txt",
+            text: "VIS-RESOURCE",
+            _meta: { x: 1 },
+          },
           _meta: { y: 2 },
         },
         { type: "resource_link", uri: "file:///b.txt", name: "VIS-LINK" },
@@ -173,7 +179,11 @@ describe("projectToolResultByRule — what each measured client shows", () => {
       content: [
         {
           type: "resource",
-          resource: { uri: "file:///a.pdf", blob: "JVBERg==", mimeType: "application/pdf" },
+          resource: {
+            uri: "file:///a.pdf",
+            blob: "JVBERg==",
+            mimeType: "application/pdf",
+          },
         },
       ],
     } as unknown as CallToolResult;
@@ -184,7 +194,12 @@ describe("projectToolResultByRule — what each measured client shows", () => {
   });
 
   it("sends one copy of duplicated data: a 171 KiB duplicate fixture stays near 171 KiB", async () => {
-    const data = { rows: Array.from({ length: 2600 }, (_, i) => ({ id: i, name: `row-${i}-${"x".repeat(40)}` })) };
+    const data = {
+      rows: Array.from({ length: 2600 }, (_, i) => ({
+        id: i,
+        name: `row-${i}-${"x".repeat(40)}`,
+      })),
+    };
     const json = JSON.stringify(data);
     const duplicate = {
       content: [{ type: "text", text: json }],
@@ -201,7 +216,10 @@ describe("projectToolResultByRule — what each measured client shows", () => {
 
   it("sends a marker instead of an empty tool result", async () => {
     expect(
-      await projectToolResultByRule({ content: [] } as unknown as CallToolResult, "both")
+      await projectToolResultByRule(
+        { content: [] } as unknown as CallToolResult,
+        "both"
+      )
     ).toEqual({ type: "text", value: EMPTY_TOOL_RESULT_TEXT });
   });
 });
@@ -217,10 +235,12 @@ describe("projectMcpToolResultForModel — the rule replaces the App scrub when 
   });
 
   it("keeps today's projection when the host sets no rule", async () => {
-    expect(await projectMcpToolResultForModel(distinct, undefined, {})).toEqual({
-      type: "json",
-      value: distinct,
-    });
+    expect(await projectMcpToolResultForModel(distinct, undefined, {})).toEqual(
+      {
+        type: "json",
+        value: distinct,
+      }
+    );
     expect(
       await projectMcpToolResultForModel(structuredOnly, appToolMeta, {})
     ).toEqual({ type: "json", value: { content: [] } });
@@ -241,7 +261,10 @@ describe("structuredContentRuleOf and withoutStructuredContentRule", () => {
     expect(withoutStructuredContentRule(undefined)).toBeUndefined();
     expect(withoutStructuredContentRule(images)).toBe(images);
     expect(
-      withoutStructuredContentRule({ ...images, structuredContent: "preferred" })
+      withoutStructuredContentRule({
+        ...images,
+        structuredContent: "preferred",
+      })
     ).toEqual(images);
     expect(
       withoutStructuredContentRule({ structuredContent: "fallback" })
@@ -278,7 +301,9 @@ describe("canonicalizeHostConfigV2 — modelVisibleMcpToolResults.structuredCont
         "directContent",
         "structuredContent",
       ]);
-      expect(canonical.modelVisibleMcpToolResults?.structuredContent).toBe(rule);
+      expect(canonical.modelVisibleMcpToolResults?.structuredContent).toBe(
+        rule
+      );
     }
   });
 
@@ -315,7 +340,9 @@ describe("canonicalizeHostConfigV2 — modelVisibleMcpToolResults.structuredCont
 
 describe("resolveModelVisibleMcpToolResults — the rule", () => {
   it("carries the rule only when set", () => {
-    expect("structuredContent" in resolveModelVisibleMcpToolResults(undefined)).toBe(false);
+    expect(
+      "structuredContent" in resolveModelVisibleMcpToolResults(undefined)
+    ).toBe(false);
     expect(
       "structuredContent" in
         resolveModelVisibleMcpToolResults({ directContent: { image: false } })

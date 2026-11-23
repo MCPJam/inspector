@@ -58,7 +58,10 @@ describe("PlatformApiClient declares the host-config keys it understands", () =>
       getAuth: () => "sk_test",
       fetch: fetchMock as unknown as typeof fetch,
     }).getMe();
-    const headers = fetchMock.mock.calls[0][1].headers as Record<string, string>;
+    const headers = fetchMock.mock.calls[0][1].headers as Record<
+      string,
+      string
+    >;
     expect(headers[HOST_CONFIG_FEATURES_HEADER]).toBe(HOST_CONFIG_FEATURES);
   });
 });

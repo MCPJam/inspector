@@ -316,7 +316,10 @@ export async function mapMcpImageToolOutputs(
       // Earlier turns replay under the host's client rule, so a second turn
       // sees no more of a result than the first one did.
       const rule = structuredContentRuleOf(options.modelVisibleMcpToolResults);
-      if (rule && Array.isArray((rawOutputValue as { content?: unknown }).content)) {
+      if (
+        rule &&
+        Array.isArray((rawOutputValue as { content?: unknown }).content)
+      ) {
         const ruleServerId =
           (toolCallId ? serverIdByToolCallId.get(toolCallId) : undefined) ??
           (hasImageResourceLinkCandidate(rawOutputValue)
@@ -333,7 +336,11 @@ export async function mapMcpImageToolOutputs(
             rule,
             {
               modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
-              readResource: linkedResourceReaderForPart(part, ruleServerId, options),
+              readResource: linkedResourceReaderForPart(
+                part,
+                ruleServerId,
+                options,
+              ),
               abortSignal: options.abortSignal,
             },
           ),

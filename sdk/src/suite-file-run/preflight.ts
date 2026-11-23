@@ -330,9 +330,13 @@ export function withCatalogStructuredContentRule(
   const rule = getCatalogHost(catalog, id)?.modelVisibleMcpToolResults
     ?.structuredContent;
   if (!rule) return seeded;
-  const policy = (seeded as { modelVisibleMcpToolResults?: ModelVisibleMcpToolResults })
-    .modelVisibleMcpToolResults;
-  return { ...seeded, modelVisibleMcpToolResults: { ...policy, structuredContent: rule } };
+  const policy = (
+    seeded as { modelVisibleMcpToolResults?: ModelVisibleMcpToolResults }
+  ).modelVisibleMcpToolResults;
+  return {
+    ...seeded,
+    modelVisibleMcpToolResults: { ...policy, structuredContent: rule },
+  };
 }
 
 function resolveHost(hostTemplateId: string): ResolvedLocalHost {
