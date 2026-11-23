@@ -61,9 +61,11 @@ export function ClientsPill({
   const { isAuthenticated } = useConvexAuth();
   const { hosts: listedHosts, isLoading } = useHostList({ isAuthenticated, projectId });
   const webClientsEnabled = useWebClientsEnabled();
+  // A web client picked while its flag was on keeps its row, so it can be
+  // unticked; it can't be picked again until the flag is back.
   const hosts = useMemo(
-    () => pickableHosts(listedHosts, webClientsEnabled),
-    [listedHosts, webClientsEnabled],
+    () => pickableHosts(listedHosts, webClientsEnabled, value),
+    [listedHosts, webClientsEnabled, value],
   );
   const [open, setOpen] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
@@ -77,7 +79,7 @@ export function ClientsPill({
         (selected.length + 1) * budget.choiceCount <= budget.maxTargets));
   const selectedHosts = selected.map((hostId) => ({
     hostId,
-    host: hosts.find((item) => item.hostId === hostId),
+    host: listedHosts.find((item) => item.hostId === hostId),
   }));
   const triggerLabel =
     (actionLabel ?? selected.length === 0)

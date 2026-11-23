@@ -50,6 +50,17 @@ describe("web accounts helpers", () => {
     ]);
   });
 
+  it("keeps a web client already picked, in place, while the flag is off", () => {
+    const hosts = [
+      { hostId: "code", runtime: "claude-code" },
+      { hostId: "web", runtime: "chatgpt-web" },
+      { hostId: "web-2", runtime: "claude-web" },
+    ];
+    expect(
+      pickableHosts(hosts, false, ["web", null]).map((h) => h.hostId),
+    ).toEqual(["code", "web"]);
+  });
+
   it("names each vendor's site", () => {
     expect(webClientSite("claude")).toBe("claude.ai");
     expect(webClientSite("chatgpt")).toBe("chatgpt.com");

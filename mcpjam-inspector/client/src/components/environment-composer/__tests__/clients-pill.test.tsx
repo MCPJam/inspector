@@ -91,6 +91,41 @@ describe("ClientsPill web clients", () => {
       webClients.enabled = false;
     }
   });
+
+  it("keeps a web client the suite already uses, by name, so it can be unticked with the flag off", async () => {
+    const before = hostsMock.hosts;
+    hostsMock.hosts = [
+      ...before,
+      {
+        ...before[0]!,
+        hostId: "host-web",
+        name: "ChatGPT web",
+        runtime: "chatgpt-web",
+      } as (typeof before)[number],
+    ];
+    webClients.enabled = false;
+    try {
+      const onChange = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <ClientsPill
+          projectId="proj-1"
+          value={["host-web"]}
+          onChange={onChange}
+          max={4}
+          testId="clients"
+        />,
+      );
+      expect(screen.getByTestId("clients")).toHaveTextContent("ChatGPT web");
+      await user.click(screen.getByTestId("clients"));
+      const row = screen.getByRole("checkbox", { name: "ChatGPT web" });
+      expect(row).toBeChecked();
+      await user.click(row);
+      expect(onChange).toHaveBeenCalledWith([]);
+    } finally {
+      hostsMock.hosts = before;
+    }
+  });
 });
 
 describe("ClientsPill create", () => {
