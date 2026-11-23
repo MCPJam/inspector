@@ -158,7 +158,33 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
-    // The person can still save from the same browser.
-    for (const refused of [signedOut, other, raced]) expect(refused.deps.browser.release).not.toHaveBeenCalled();
+    // The person fixes the first two in the same browser; someone else's save ends it.
+    expect(signedOut.deps.browser.release).not.toHaveBeenCalled();
+    expect(other.deps.browser.release).not.toHaveBeenCalled();
+    expect(raced.deps.browser.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the browser when reading it or saving from it fails", async () => {
+    const unreadable = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The browser went away.");
+          },
+        }),
+      },
+    });
+    expect((await post(unreadable.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(unreadable.deps.browser.release).toHaveBeenCalledTimes(1);
+    const offline = routes({
+      saveProfile: async () => {
+        throw new Error("socket hang up");
+      },
+    });
+    expect((await post(offline.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    expect(offline.deps.browser.release).toHaveBeenCalledTimes(1);
+    expect(offline.applied).toEqual([]);
   });
 });

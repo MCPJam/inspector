@@ -7,8 +7,8 @@
  *
  * One process's: a request on another replica finds none, and the person
  * starts the sign-in again. A browser is let go, and its hosted session
- * closed, once save-profile saves the account from it, when its sign-in page
- * fails to open, or two hours after it opened, so an old id saves nothing.
+ * closed, once save-profile is done with it, when its sign-in page fails to
+ * open, or two hours after it opened, so an old id saves nothing.
  */
 import type { WebClientHostedBrowser } from "./hosted-browser.js";
 import type { WebActor } from "./hosted-web-client-environment.js";
@@ -66,8 +66,8 @@ export function signInBrowserAccount(args: {
 }
 
 /**
- * Lets the person's sign-in browser for this account go, once the account is
- * saved from it or its sign-in failed, and closes it as `bearer` names them.
+ * Lets the person's sign-in browser for this account go once its sign-in is
+ * over, and closes it as `bearer` names them.
  */
 export function releaseSignInBrowser(args: {
   browserSessionId: string;
