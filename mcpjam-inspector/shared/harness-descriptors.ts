@@ -222,21 +222,6 @@ export const HARNESS_DESCRIPTORS = {
   { unavailableOn: Partial<Record<HarnessSurface, string>>; [fact: string]: unknown }
 >;
 
-/**
- * Whether a runtime runs on a project's web account (a signed-in browser
- * profile on the vendor's website) rather than on a key. Such a runtime is
- * external-account too, but no organization key or key check applies to it.
- */
-export function harnessRunsOnWebAccount(id: string | null | undefined): boolean {
-  if (!id || !Object.hasOwn(HARNESS_DESCRIPTORS, id)) return false;
-  const credential: unknown = HARNESS_DESCRIPTORS[id as Harness].credential;
-  return (
-    typeof credential === "object" &&
-    credential !== null &&
-    (credential as { kind?: unknown }).kind === "web-account"
-  );
-}
-
 /** Why `id` does not run on `surface`, or `undefined` where it does. */
 export function harnessSurfaceRefusal(id: Harness, surface: HarnessSurface): string | undefined {
   const unavailableOn: Partial<Record<HarnessSurface, string>> = HARNESS_DESCRIPTORS[id].unavailableOn;

@@ -28,6 +28,23 @@ export type BrowserCommandTransport = (
 
 type Executed = Extract<BrowserAgentResult, { status: "executed" }>;
 
+/**
+ * Whether a read finds its element with Playwright's selector engine, as an
+ * act already finds its target. Reads go through CDP's `DOM.querySelector`,
+ * which takes CSS only, so a `role=`, `text=` or `>>` read would find nothing
+ * and pass for an absent element. While this is false the driver refuses
+ * those reads, and the claude.ai and chatgpt.com modules, written in them,
+ * refuse to run here. Turning it on lifts both.
+ */
+const READS_PLAYWRIGHT_SELECTORS = false;
+
+/**
+ * A selector only Playwright reads: an engine prefix (`role=`, `text=`,
+ * `internal:…=`), quoted text, XPath, a `>>` chain, or its own pseudo-classes.
+ */
+const PLAYWRIGHT_ONLY =
+  /^\s*(?:[\w+:*-]+=|["']|\(*\/\/|\.\.)|>>|:(?:has-text|text|text-is|text-matches|visible|light|nth-match|left-of|right-of|above|below|near)\b/;
+
 export function createHostedPageDriver(
   send: BrowserCommandTransport,
   options: { sites: readonly string[] },
@@ -70,6 +87,7 @@ export function createHostedPageDriver(
   return {
     kind: "hosted",
     canEvaluate: false,
+    playwrightSelectors: READS_PLAYWRIGHT_SELECTORS,
     async navigate(url) {
       assertOnSites(url, options.sites);
       const result = await run({ op: "navigate", url, observeAfter: "none" });
@@ -92,6 +110,9 @@ export function createHostedPageDriver(
     type: (selector, text) => act("type", selector, text),
     press: (key, selector) => act("press", selector, key),
     async readText(selector) {
+      if (!READS_PLAYWRIGHT_SELECTORS && PLAYWRIGHT_ONLY.test(selector)) {
+        throw new PageDriverError("unsupported", `The hosted browser reads by CSS selector only, so it can't read ${selector}.`);
+      }
       // The accessibility tree scoped to the element is the closest the API
       // has to an element's text: its names are the text a person sees.
       const result = await run({

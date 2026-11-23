@@ -5,9 +5,11 @@
  * prompts until the reply has finished, then read the saved conversation.
  *
  * EXACTLY ONCE. The journal records the send before the click. A run that
- * restarts and finds that record looks for the chat that already holds the
- * prompt and continues there; when no chat holds it, the send may still have
- * happened, so the turn stops as `send_ambiguous` rather than send again.
+ * restarts and finds that record looks for a chat created since then that
+ * holds the prompt, records it as sent and continues there; when no chat
+ * holds it, the send may still have happened, so the turn stops as
+ * `send_ambiguous` rather than send again. A send that fails after the
+ * record stops the same way.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 import {
@@ -20,6 +22,7 @@ import {
   type WebAccountIdentity,
 } from "./page-module.js";
 
+/** `at` is when the send began, just before the click, in both states. */
 export type SendJournalEntry =
   | { state: "sending"; at: string }
   | { state: "sent"; at: string; conversationUrl?: string };
@@ -82,6 +85,9 @@ export async function driveRealUiTurn(
   const ctx = { signal, timeoutMs: input.stepTimeoutMs ?? STEP_TIMEOUT_MS };
   let step: RealUiStep = "sign_in_check";
   let pending: PendingStep | undefined;
+  // From the journal's sending record until the send is confirmed, the click
+  // may have happened: the prompt may already be in a chat.
+  let sendUnconfirmed = false;
   const enter = (next: RealUiStep) => {
     step = next;
     pending = { stepId: next, startedAt: new Date().toISOString(), turnId: input.turnKey };
@@ -112,11 +118,12 @@ export async function driveRealUiTurn(
     if (journaled) {
       enter("send");
       // A sent entry names its own chat. Another turn may have sent the same
-      // prompt since, so the newest chat holding it can be someone else's.
+      // prompt since, so the newest chat holding it can be someone else's,
+      // and one from before the send began always is.
       const found =
         journaled.state === "sent" && journaled.conversationUrl
           ? { conversationUrl: journaled.conversationUrl }
-          : await module.findSent(driver, input.prompt, ctx);
+          : await module.findSent(driver, input.prompt, ctx, journaled.at);
       if (!found) {
         throw new RealUiError({
           kind: "send_ambiguous",
@@ -127,6 +134,13 @@ export async function driveRealUiTurn(
       }
       conversationUrl = found.conversationUrl;
       resumed = true;
+      // Recorded with its chat, so a later restart comes straight back here
+      // rather than search again and take a newer chat with the same prompt.
+      await input.journal.write(input.turnKey, {
+        state: "sent",
+        at: journaled.at,
+        conversationUrl,
+      });
       await driver.navigate(conversationUrl);
     } else {
       enter("new_chat");
@@ -136,18 +150,21 @@ export async function driveRealUiTurn(
         await module.enableConnector(driver, connector.name, ctx);
       }
       enter("send");
+      const sendingAt = new Date().toISOString();
       await input.journal.write(input.turnKey, {
         state: "sending",
-        at: new Date().toISOString(),
+        at: sendingAt,
       });
+      sendUnconfirmed = true;
       input.beforeSend?.();
       const sent = await module.send(driver, input.prompt, ctx);
       conversationUrl = sent.conversationUrl;
       await input.journal.write(input.turnKey, {
         state: "sent",
-        at: new Date().toISOString(),
+        at: sendingAt,
         ...(conversationUrl ? { conversationUrl } : {}),
       });
+      sendUnconfirmed = false;
     }
 
     enter("reply");
@@ -157,7 +174,7 @@ export async function driveRealUiTurn(
       async () => {
         const blocked = await module.blocker(driver);
         if (blocked) throw new RealUiError({ ...blocked, step: "reply" });
-        if (await module.answerApproval(driver)) {
+        if (await module.answerApproval(driver, selected)) {
           approvalsAnswered += 1;
           return false;
         }
@@ -183,7 +200,13 @@ export async function driveRealUiTurn(
     return { account, conversation, approvalsAnswered, finishedSignals, resumed };
   } catch (error) {
     const typed = asRealUiError(error, step);
-    throw new RealUiError(typed.failure, typed.pendingStep ?? pending);
+    // Once the journal says sending, a page that reads as changed may already
+    // have sent the prompt, so the turn ends as ambiguous, not as a change.
+    const failure =
+      sendUnconfirmed && typed.failure.kind === "page_changed"
+        ? { ...typed.failure, kind: "send_ambiguous" as const }
+        : typed.failure;
+    throw new RealUiError(failure, typed.pendingStep ?? pending);
   }
 }
 

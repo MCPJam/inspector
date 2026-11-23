@@ -61,11 +61,14 @@ const CLIENT_COPY: typeof SERVER_COPY = {
  */
 export function LocalRunsControl({
   allowed,
+  allowedNote,
   listVersion,
   onChange,
   noun = "server",
 }: {
   allowed: boolean;
+  /** Replaces the note while allowed, for a caller where only some of the accounts allow it. */
+  allowedNote?: string;
   /** Changes each time the account list reloads, so the switch knows its save was reconciled. */
   listVersion?: number;
   onChange: (allowed: boolean) => Promise<void>;
@@ -116,7 +119,7 @@ export function LocalRunsControl({
         </Label>
         <p className="text-xs text-muted-foreground">
           {allowed
-            ? words.allowedNote
+            ? (allowedNote ?? words.allowedNote)
             : "Members' hosted runs use these accounts. Turn this on so their local apps can too."}
         </p>
       </div>

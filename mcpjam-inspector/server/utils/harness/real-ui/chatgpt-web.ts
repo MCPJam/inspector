@@ -19,17 +19,25 @@ import {
 import type { PageDriver } from "./page-driver.js";
 import {
   RealUiError,
+  answerRunApproval,
   commonBlocker,
   cssString,
   needsSignIn,
   pageChanged,
+  requirePlaywrightSelectors,
   waitVisibleUnlessBlocked,
   type ConversationToolCall,
   type RealUiPageModule,
   type RealUiStep,
   type StepContext,
 } from "./page-module.js";
-import { list, readVendorJson, record, text } from "./vendor-json.js";
+import {
+  createdSince,
+  list,
+  readVendorJson,
+  record,
+  text,
+} from "./vendor-json.js";
 
 const ORIGIN = "https://chatgpt.com";
 const COMPOSER = "#prompt-textarea";
@@ -98,6 +106,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
+    requirePlaywrightSelectors(driver, "connector", "chatgpt.com");
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
     await driver.click(PLUS);
@@ -163,7 +172,7 @@ export const chatgptWebPageModule: RealUiPageModule = {
     return { conversationUrl };
   },
 
-  async findSent(driver, prompt) {
+  async findSent(driver, prompt, _ctx, since) {
     const token = text((await session(driver)).accessToken);
     if (!token) return undefined;
     const page = record(
@@ -173,22 +182,20 @@ export const chatgptWebPageModule: RealUiPageModule = {
     );
     for (const item of list(page.items)) {
       const id = text(record(item).id);
-      if (!id) continue;
+      // Only a chat chatgpt.com created since the send began can be this turn's.
+      if (!id || !createdSince(record(item).create_time, since)) continue;
       const saved = await this.readConversation(driver, `${ORIGIN}/c/${id}`, { timeoutMs: 15_000 });
       if (saved.userPrompt === prompt) return { conversationUrl: saved.url };
     }
     return undefined;
   },
 
-  async answerApproval(driver) {
-    for (const name of ["Always allow", "Allow", "Confirm"]) {
-      const button = role("button", name);
-      if ((await driver.readText(button)) !== undefined) {
-        await driver.click(button);
-        return true;
-      }
-    }
-    return false;
+  async answerApproval(driver, connectorNames) {
+    return answerRunApproval(driver, {
+      site: "chatgpt.com",
+      connectorNames,
+      answers: ["Always allow", "Allow", "Confirm"],
+    });
   },
 
   async replySignals(driver) {
@@ -227,7 +234,14 @@ export const chatgptWebPageModule: RealUiPageModule = {
           ? { at: new Date(message.create_time * 1000).toISOString() }
           : {}),
       }));
-    const human = messages.find((message) => roleOf(message) === "user");
+    // The first prompt the person sees: ChatGPT files the account's custom
+    // instructions as a hidden user message ahead of it.
+    const human = messages.find(
+      (message) =>
+        roleOf(message) === "user" &&
+        record(message.content).content_type === "text" &&
+        record(message.metadata).is_visually_hidden_from_conversation !== true,
+    );
     const assistant = [...messages]
       .reverse()
       .find((message) => roleOf(message) === "assistant" && (!message.recipient || message.recipient === "all"));

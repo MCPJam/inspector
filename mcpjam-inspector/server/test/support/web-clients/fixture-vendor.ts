@@ -18,6 +18,8 @@ import type { AddressInfo } from "node:net";
 type Chat = {
   id: string;
   prompt: string;
+  /** When the backend created it, as `toISOString()` writes it. */
+  createdAt: string;
   state: "running" | "awaiting_approval" | "done";
   reply: string;
   toolCalls: Array<{ toolUseId?: string; name: string; at: string }>;
@@ -228,12 +230,24 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     } else if (url.pathname === "/api/chats" && request.method === "POST") {
       const { prompt, connectors } = JSON.parse(await readBody(request)) as { prompt: string; connectors: string[] };
       vendor.sends.push(prompt);
-      const chat: Chat = { id: randomUUID(), prompt, state: "running", reply: "", toolCalls: [] };
+      const chat: Chat = {
+        id: randomUUID(),
+        prompt,
+        createdAt: new Date().toISOString(),
+        state: "running",
+        reply: "",
+        toolCalls: [],
+      };
       vendor.chats.set(chat.id, chat);
       void runTurn(chat, connectors);
       json(200, { id: chat.id });
     } else if (url.pathname === "/api/chats" && request.method === "GET") {
-      json(200, [...vendor.chats.values()].reverse().map((chat) => ({ id: chat.id })));
+      json(
+        200,
+        [...vendor.chats.values()]
+          .reverse()
+          .map((chat) => ({ id: chat.id, createdAt: chat.createdAt })),
+      );
     } else if (chatMatch && chatMatch[2] && request.method === "POST") {
       vendor.chats.get(chatMatch[1]!)?.approve?.((await readBody(request)) === "true");
       json(200, { ok: true });
