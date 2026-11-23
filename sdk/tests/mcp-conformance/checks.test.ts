@@ -315,6 +315,57 @@ describe("mcp conformance unit checks", () => {
     },
   );
 
+  it("sends the version the server agreed to, not the pin, on the invalid-method probe", async () => {
+    mockedOperations.withEphemeralClient.mockImplementation(
+      async (_config, fn) =>
+        fn(
+          {
+            getManagedClient: vi.fn().mockReturnValue({}),
+            getInitializationInfo: vi.fn().mockReturnValue({
+              protocolVersion: "2025-06-18",
+            }),
+          } as any,
+          "server-1",
+        ),
+    );
+    const sent: Array<{ method?: string; headers: Headers }> = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
+      sent.push({ method: body.method, headers: new Headers(init?.headers) });
+
+      if (body.method === "initialize") {
+        // A server whose newest version is 2025-06-18 answers a 2025-11-25
+        // request with the version it does speak.
+        return jsonResponse(
+          { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } },
+          { headers: { "mcp-session-id": "session-older" } },
+        );
+      }
+
+      return jsonResponse({
+        jsonrpc: "2.0",
+        id: 99,
+        error: { code: -32601, message: "Method not found" },
+      });
+    }) as typeof fetch;
+
+    const result = await new MCPConformanceTest({
+      serverUrl: "https://example.com/mcp",
+      protocolVersion: "2025-11-25",
+      checkIds: ["protocol-invalid-method-error"],
+      fetchFn,
+    }).run();
+
+    expect(result.checks[0]).toMatchObject({
+      id: "protocol-invalid-method-error",
+      status: "passed",
+    });
+    const probe = sent.find(
+      (request) => request.method === "nonexistent/method_that_does_not_exist",
+    );
+    expect(probe?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
+  });
+
   it("sends MCP-Protocol-Version on the DELETE that closes a transport probe session", async () => {
     const deletes: Headers[] = [];
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {

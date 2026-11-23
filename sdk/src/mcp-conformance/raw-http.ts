@@ -355,11 +355,17 @@ export function legacyHeaders(options: {
  * MCPJam does not support. "If the client does not support the version in the
  * server's response, it SHOULD disconnect", so a caller that sees it sends
  * nothing more on that session.
+ *
+ * `negotiatedVersion` is the supported version the server answered with. It
+ * can differ from the one asked for, and "the protocol version sent by the
+ * client SHOULD be the one negotiated during initialization", so a caller
+ * sends it in `MCP-Protocol-Version` on the requests that follow.
  */
 export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
   result: RawHttpResult;
   sessionId?: string;
   unsupportedVersion?: string;
+  negotiatedVersion?: string;
 }> {
   const result = await rawRequest(ctx, {
     headers: legacyHeaders({}),
@@ -380,9 +386,10 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
   return {
     result,
     sessionId: result.headers["mcp-session-id"],
-    ...(typeof answeredVersion === "string" &&
-    !isKnownProtocolVersion(answeredVersion)
-      ? { unsupportedVersion: answeredVersion }
+    ...(typeof answeredVersion === "string"
+      ? isKnownProtocolVersion(answeredVersion)
+        ? { negotiatedVersion: answeredVersion }
+        : { unsupportedVersion: answeredVersion }
       : {}),
   };
 }

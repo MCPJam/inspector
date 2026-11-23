@@ -78,7 +78,8 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId, unsupportedVersion } = await legacyInitialize(ctx);
+  const { sessionId, unsupportedVersion, negotiatedVersion } =
+    await legacyInitialize(ctx);
   if (unsupportedVersion !== undefined) {
     // The handshake did not end in a version this client can speak, so the
     // probe is not sent: there is no session to send it on.
@@ -87,10 +88,13 @@ async function sendInvalidMethodProbe(
   return await rawRequest(ctx, {
     // Only the method name is the test. 2025-06-18 and later require the
     // version header on every request after initialize, so it is sent here
-    // like on any other request.
+    // like on any other request, with the version the server agreed to: a
+    // server that answered an older version may refuse the one we asked for.
     headers: legacyHeaders({
       protocolVersion:
-        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+        negotiatedVersion ??
+        ctx.config.protocolVersion ??
+        DEFAULT_LEGACY_PROTOCOL_VERSION,
       sessionId,
     }),
     body: {
