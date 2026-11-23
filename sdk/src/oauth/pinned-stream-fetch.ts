@@ -617,6 +617,8 @@ export function createPinnedStreamingFetch(
     ) {
       currentHeaders["accept-encoding"] = "identity";
     }
+    // http.request sends no User-Agent, unlike fetch. Same default as oauth-proxy.
+    currentHeaders["user-agent"] ??= "MCP-Inspector/1.0";
 
     try {
       for (let hop = 0; ; hop += 1) {

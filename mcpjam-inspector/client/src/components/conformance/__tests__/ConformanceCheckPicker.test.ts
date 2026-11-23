@@ -42,9 +42,15 @@ describe("protocol advice picks", () => {
   it("lists only the advice a pinned version can give", () => {
     const legacy = protocolAdviceCatalog("2025-11-25").map((entry) => entry.id);
     expect(legacy).not.toContain("readiness-log-level-filtering");
+    expect(legacy).not.toContain("readiness-tool-order-deterministic");
     expect(
       protocolAdviceCatalog("2026-07-28").map((entry) => entry.id),
-    ).toContain("readiness-log-level-filtering");
+    ).toEqual(
+      expect.arrayContaining([
+        "readiness-log-level-filtering",
+        "readiness-tool-order-deterministic",
+      ]),
+    );
     // Auto lists all of it and tags the era-only ones.
     expect(
       protocolAdviceCatalog("auto").find(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MCPClientManager } from "../src/mcp-client-manager";
+import { MCPClientManager, MCPTasksWireError } from "../src/mcp-client-manager";
 import { resolveTasksWire } from "../src/mcp-client-manager/tasks-dispatch.js";
 import type { ManagedMcpClient } from "../src/mcp-client-manager/managed-mcp-client.js";
 
@@ -30,9 +30,17 @@ function seedManager(options: {
   capabilities?: Record<string, unknown>;
   requestResult?: unknown;
   callToolResult?: unknown;
-}): { manager: MCPClientManager; calls: Recorded[]; serverId: string } {
+  /** What `tools/list` returns. Not recorded in `calls`. */
+  tools?: Array<Record<string, unknown>>;
+}): {
+  manager: MCPClientManager;
+  calls: Recorded[];
+  serverId: string;
+  listToolsOptions: Array<{ timeout?: number } | undefined>;
+} {
   const serverId = options.serverId ?? "srv";
   const calls: Recorded[] = [];
+  const listToolsOptions: Array<{ timeout?: number } | undefined> = [];
   const manager = new MCPClientManager();
 
   const client = {
@@ -55,6 +63,23 @@ function seedManager(options: {
       );
       return options.callToolResult ?? { content: [] };
     },
+    // A task call first checks the tool's `taskSupport` (2025-11-25
+    // tasks.mdx:115); by default the probed tool allows it.
+    listTools: async (
+      _params: unknown,
+      lookupOptions?: { timeout?: number }
+    ) => {
+      listToolsOptions.push(lookupOptions);
+      return {
+        tools: options.tools ?? [
+          {
+            name: "long_tool",
+            inputSchema: {},
+            execution: { taskSupport: "optional" },
+          },
+        ],
+      };
+    },
   } as unknown as ManagedMcpClient;
 
   (manager as any).registeredServers.set(serverId, {
@@ -63,7 +88,7 @@ function seedManager(options: {
   });
   (manager as any).liveClientStates.set(serverId, { client });
 
-  return { manager, calls, serverId };
+  return { manager, calls, serverId, listToolsOptions };
 }
 
 describe("resolveTasksWire", () => {
@@ -163,6 +188,89 @@ describe("executeTool legacy task wire", () => {
       manager.executeTool(serverId, "long_tool", {}, undefined, { ttl: 1000 })
     ).rejects.toThrow(/does not speak the 2025-11-25 tasks wire/);
     expect(calls).toEqual([]);
+  });
+
+  it("throws (and sends nothing) when the server did not declare tasks.requests.tools.call", async () => {
+    // `tasks.cancel` alone puts the connection on the legacy wire, but
+    // 2025-11-25 tasks.mdx:113 forbids calling any of its tools as a task.
+    const { manager, calls, serverId } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: { tools: {}, tasks: { cancel: true } },
+    });
+
+    const attempt = manager.executeTool(
+      serverId,
+      "long_tool",
+      {},
+      undefined,
+      {}
+    );
+    await expect(attempt).rejects.toBeInstanceOf(MCPTasksWireError);
+    await expect(attempt).rejects.toThrow(/tasks\.requests\.tools\.call/);
+    expect(calls).toEqual([]);
+  });
+
+  // 2025-11-25 tasks.mdx:115: a tool whose taskSupport is missing or
+  // "forbidden" MUST NOT be called as a task, even on a server that accepts
+  // task tool calls. Nothing may be sent.
+  for (const [label, tools, reason] of [
+    [
+      "has no taskSupport",
+      [{ name: "long_tool", inputSchema: {} }],
+      /"long_tool" on server "srv" has no taskSupport/,
+    ],
+    [
+      'has taskSupport "forbidden"',
+      [
+        {
+          name: "long_tool",
+          inputSchema: {},
+          execution: { taskSupport: "forbidden" },
+        },
+      ],
+      /has taskSupport "forbidden"/,
+    ],
+    [
+      "is not listed",
+      [],
+      /is not listed by the server, so its taskSupport is unknown/,
+    ],
+  ] as const) {
+    it(`throws (and sends nothing) when the tool ${label}`, async () => {
+      const { manager, calls, serverId } = seedManager({
+        protocolVersion: "2025-11-25",
+        capabilities: LEGACY_TASK_CAPS as never,
+        tools: tools as unknown as Array<Record<string, unknown>>,
+      });
+
+      const attempt = manager.executeTool(
+        serverId,
+        "long_tool",
+        {},
+        undefined,
+        {}
+      );
+      await expect(attempt).rejects.toBeInstanceOf(MCPTasksWireError);
+      await expect(attempt).rejects.toThrow(reason);
+      expect(calls).toEqual([]);
+    });
+  }
+
+  it("gives the taskSupport lookup the server's timeout unless the caller sets one", async () => {
+    // The task call itself uses the server's configured timeout (1000 here),
+    // so the `tools/list` check before it must not fall back to the SDK default.
+    const { manager, serverId, listToolsOptions } = seedManager({
+      protocolVersion: "2025-11-25",
+      capabilities: LEGACY_TASK_CAPS as never,
+      requestResult: { task: { taskId: "t-3", status: "working" } },
+    });
+
+    await manager.executeTool(serverId, "long_tool", {}, undefined, {});
+    await manager.executeTool(serverId, "long_tool", {}, { timeout: 5000 }, {});
+
+    expect(listToolsOptions.map((lookup) => lookup?.timeout)).toEqual([
+      1000, 5000,
+    ]);
   });
 
   it("leaves non-task calls byte-identical on every version", async () => {
