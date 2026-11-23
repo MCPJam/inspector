@@ -159,3 +159,29 @@ describe("POST /accounts/:id/save-profile", () => {
     expect(raced.applied).toEqual([]);
   });
 });
+
+describe("an account of a vendor this Inspector doesn't drive yet", () => {
+  const service = {
+    read: async () => [{ webAccountId: "acct-2", vendor: "another-vendor" }, ROW],
+    apply: async () => null,
+  };
+
+  it("leaves both routes working for the project's other accounts", async () => {
+    const { app } = routes({ service });
+    expect(await (await post(app, "/accounts/acct-1/sign-in", { projectId: "p1" })).json()).toEqual({
+      browserSessionId: "browser-session-1",
+    });
+    const saved = await post(app, "/accounts/acct-1/save-profile", { projectId: "p1", browserSessionId: "browser-session-1" });
+    expect(await saved.json()).toMatchObject({ ok: true, accountEmail: "team@example.com" });
+  });
+
+  it("refuses to sign that account in, and says why", async () => {
+    const { app, deps } = routes({ service });
+    const response = await post(app, "/accounts/acct-2/sign-in", { projectId: "p1" });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: "This version of MCPJam can't sign in this kind of web account. Update MCPJam, then try again.",
+    });
+    expect(deps.browser.start).not.toHaveBeenCalled();
+  });
+});
