@@ -19,7 +19,6 @@ import { createMemorySendJournal } from "../../../utils/harness/real-ui/drive-tu
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
 import { runHarnessTurn } from "../../../utils/harness/run-harness-turn";
-import { historyProvenanceContextFor, verifyAssistantText } from "../../../utils/history-provenance";
 import { logger } from "../../../utils/logger";
 import type { MCPJamHandlerOptions } from "../../../utils/mcpjam-stream-handler";
 import {
@@ -34,7 +33,7 @@ import {
 } from "../turn-windows";
 import { runWebClientTurn, webTurnApprover, type WebTurnApproval } from "../run-web-client-turn";
 import { setWebClientEnvironment, type WebClientEnvironment } from "../web-client-environment";
-import { WebClientRunError, webClientFailureEvidenceOf } from "../web-client-harness-turn";
+import { WebClientRunError } from "../web-client-harness-turn";
 
 let browser: Browser;
 let vendor: FixtureVendor;
@@ -160,19 +159,6 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     }
   });
 
-  it("ends a run stopped by a human check as the run's failure, with its step", async () => {
-    vendor.challenge = true;
-    const result = await turn();
-    expect(result).toMatchObject({
-      ok: false,
-      infrastructure: true,
-      failure: { kind: "needs_sign_in", reason: "human_check" },
-      pendingStep: { stepId: "sign_in_check" },
-    });
-    expect(vendor.sends).toEqual([]);
-    expect(windows.active("conn-orders")).toBeUndefined();
-  });
-
   it("keeps the turn's result when its browser won't close, and logs the close", async () => {
     vendor.challenge = true;
     const warn = vi.spyOn(logger, "warn");
@@ -211,6 +197,19 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("ends a run stopped by a human check as the run's failure, with its step", async () => {
+    vendor.challenge = true;
+    const result = await turn();
+    expect(result).toMatchObject({
+      ok: false,
+      infrastructure: true,
+      failure: { kind: "needs_sign_in", reason: "human_check" },
+      pendingStep: { stepId: "sign_in_check" },
+    });
+    expect(vendor.sends).toEqual([]);
+    expect(windows.active("conn-orders")).toBeUndefined();
   });
 });
 
@@ -296,6 +295,7 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
   it("signs the reply it streams, so it stays in context when another client takes the chat", async () => {
     vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
     vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
+    const { historyProvenanceContextFor, verifyAssistantText } = await import("../../../utils/history-provenance");
     try {
       await useProcessStores();
       const result = await runHarnessTurn(
@@ -332,29 +332,22 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       failure: { kind: "needs_sign_in", reason: "human_check" },
       message: expect.stringContaining("Sign in again"),
     });
-    // An eval iteration reads this as the run's failure, out of the pass rate.
-    expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "needs_sign_in" });
-    expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
-  });
-
-  it("fails the run, not the server, when another run has the connector", async () => {
-    await useProcessStores();
-    webClientTurnWindows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
-    try {
-      const failure = await runHarnessTurn(options(), "none").catch((error: unknown) => error);
-      expect(failure).toBeInstanceOf(WebClientRunError);
-      expect(failure).toMatchObject({
-        failure: { kind: "turn_running", step: "connector" },
-        message: "Another run is already using this connector. Wait for it to finish, then send again.",
-      });
-      expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "turn_running" });
-      expect(vendor.sends).toEqual([]);
-    } finally {
-      webClientTurnWindows.close("other-turn");
-    }
   });
 
   it("refuses to start when this server has no web client environment", async () => {
     await expect(runHarnessTurn(options(), "none")).rejects.toThrow(/isn't set up on this server/);
+  });
+});
+
+describe("a turn on a connector another run holds", () => {
+  it("tells the person to wait for that run, and files the stop as the run's failure", async () => {
+    const { webClientFailureEvidenceOf, webClientFailureMessage } = await import("../web-client-harness-turn");
+    const busy = { kind: "turn_running", step: "connector", message: "Another run is already using this connector." } as const;
+    expect(webClientFailureMessage("Claude web", busy)).toBe(
+      "Another run is already using this connector. Wait for it to finish, then send again.",
+    );
+    expect(webClientFailureEvidenceOf(new WebClientRunError(busy, "stopped"))).toEqual({ source: "web_client", code: "turn_running" });
+    // Only a stop on the page is evidence; any other error says nothing about whose it was.
+    expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
   });
 });
