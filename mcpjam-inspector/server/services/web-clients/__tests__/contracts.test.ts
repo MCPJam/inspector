@@ -61,6 +61,35 @@ describe("tool call ledger", () => {
   });
 });
 
+describe("tool call ledger time bounds", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("compares since as a time, whatever its precision or offset", () => {
+    vi.useFakeTimers();
+    const ledger = createInMemoryToolCallLedger();
+    const send = (toolUseId: string) =>
+      ledger.forwarded({
+        connectorId: "c1",
+        turnId: "t1",
+        jsonrpcId: toolUseId,
+        toolName: "echo",
+        toolUseId,
+        argsHash: hashPayload({}),
+      });
+    vi.setSystemTime(new Date("2026-11-20T11:59:59.900Z"));
+    send("before");
+    vi.setSystemTime(new Date("2026-11-20T12:00:00.500Z"));
+    send("after");
+    const ids = (since: string) =>
+      ledger.find({ connectorId: "c1", since }).map((e) => e.toolUseId);
+    expect(ids("2026-11-20T12:00:00Z")).toEqual(["after"]);
+    expect(ids("2026-11-20T14:00:00+02:00")).toEqual(["after"]);
+    expect(ids("not a time")).toEqual(["before", "after"]);
+  });
+});
+
 describe("tool call ledger retention", () => {
   afterEach(() => {
     vi.useRealTimers();

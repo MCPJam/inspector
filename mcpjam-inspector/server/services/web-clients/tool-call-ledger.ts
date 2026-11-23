@@ -33,7 +33,12 @@ export type LedgerMatch = {
   toolUseId?: string;
   argsHash?: string;
   toolName?: string;
-  /** ISO timestamp; entries forwarded before it are ignored. */
+  /**
+   * ISO timestamp; entries forwarded before it are ignored. Compared as a
+   * time, so precision and offset don't matter. One that doesn't parse sets
+   * no bound: matching too much can only hold a step back, never send a call
+   * twice.
+   */
   since?: string;
 };
 
@@ -141,13 +146,15 @@ export function createInMemoryToolCallLedger(
       return pick(byTurn.get(turnId));
     },
     find(match) {
+      const since =
+        match.since === undefined ? Number.NaN : Date.parse(match.since);
       return pick(byConnector.get(match.connectorId)).filter(
         (entry) =>
           (match.toolUseId === undefined ||
             entry.toolUseId === match.toolUseId) &&
           (match.argsHash === undefined || entry.argsHash === match.argsHash) &&
           (match.toolName === undefined || entry.toolName === match.toolName) &&
-          (match.since === undefined || entry.forwardedAt >= match.since),
+          (Number.isNaN(since) || Date.parse(entry.forwardedAt) >= since),
       );
     },
   };
