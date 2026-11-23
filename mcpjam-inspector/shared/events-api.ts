@@ -13,6 +13,7 @@
  */
 
 export type EventsProfileIdView =
+  | "beta@c77b843"
   | "draft@28ec35e"
   | "chatgpt@2026-11-05"
   | "chatgpt@2026-09-30";
