@@ -75,9 +75,15 @@ vi.mock("@/lib/web-accounts/clients", () => ({
   webClientVendorOfHost: () => webClient.vendor,
 }));
 vi.mock("@/components/web-clients/WebAccountsSettings", () => ({
-  WebAccountsSettings: ({ vendor, hostId }: { vendor: string; hostId: string }) => (
+  WebAccountsSettings: ({
+    vendor,
+    projectId,
+  }: {
+    vendor: string;
+    projectId: string;
+  }) => (
     <p>
-      {vendor} accounts for {hostId}
+      {vendor} accounts for {projectId}
     </p>
   ),
 }));
@@ -132,7 +138,7 @@ describe("ToolsTab", () => {
         onDraftChange={vi.fn()}
       />,
     );
-    expect(screen.getByText("claude accounts for host-1")).toBeInTheDocument();
+    expect(screen.getByText("claude accounts for project-1")).toBeInTheDocument();
     unmount();
     flags.webClients = false;
     render(
