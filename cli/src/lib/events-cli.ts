@@ -29,10 +29,12 @@ import {
   type MCPServerConfig,
 } from "@mcpjam/sdk";
 import {
+  BETA_PROFILE_ID,
   CHATGPT_2026_09_30_PROFILE_ID,
   CHATGPT_PROFILE_ID,
   DRAFT_PROFILE_ID,
   getEventsProfile,
+  hasEventsProfileCapability,
   type EventsProfile,
   type EventsProfileId,
 } from "@mcpjam/sdk/events";
@@ -41,6 +43,8 @@ import { parseJsonRecord } from "./server-config.js";
 
 /** The short `--profile` names and the dated profile ids they select. */
 export const EVENTS_PROFILE_ALIASES: Readonly<Record<string, EventsProfileId>> = {
+  beta: BETA_PROFILE_ID,
+  [BETA_PROFILE_ID]: BETA_PROFILE_ID,
   draft: DRAFT_PROFILE_ID,
   chatgpt: CHATGPT_PROFILE_ID,
   [DRAFT_PROFILE_ID]: DRAFT_PROFILE_ID,
@@ -53,7 +57,7 @@ export function parseEventsProfile(value: string | undefined): EventsProfile {
   const id = EVENTS_PROFILE_ALIASES[key];
   if (!id) {
     throw usageError(
-      `Unknown --profile "${key}". Use "draft" (${DRAFT_PROFILE_ID}) or "chatgpt" (${CHATGPT_PROFILE_ID}).`,
+      `Unknown --profile "${key}". Use "beta" (${BETA_PROFILE_ID}), "draft" (${DRAFT_PROFILE_ID}) or "chatgpt" (${CHATGPT_PROFILE_ID}).`,
     );
   }
   return getEventsProfile(id);
@@ -110,9 +114,10 @@ export function applyEventsProtocolVersion(
 export function eventsNotDeclaredError(
   support: EventsSupport,
   serverLabel: string,
+  placement = "capabilities.events",
 ): CliError {
   const reason = support.handshakeObserved
-    ? "the server did not declare `capabilities.events` in its handshake"
+    ? `the server did not declare \`${placement}\` in its handshake`
     : "the server's handshake was not observed on this connection, so its events capability is unknown";
   return cliError(
     "EVENTS_NOT_DECLARED",
@@ -130,13 +135,14 @@ export function eventsNotDeclaredError(
 export function assertEventsDeclaredOrForced(
   manager: MCPClientManager,
   serverId: string,
-  args: { force?: boolean; serverLabel: string; warn: (message: string) => void },
+  args: { profile: EventsProfile; force?: boolean; serverLabel: string; warn: (message: string) => void },
 ): EventsSupport {
   const support = manager.getEventsSupport(serverId);
-  if (!support.declared) {
-    if (!args.force) throw eventsNotDeclaredError(support, args.serverLabel);
+  if (!hasEventsProfileCapability(support, args.profile.id)) {
+    const placement = args.profile.capabilityPlacement.value;
+    if (!args.force) throw eventsNotDeclaredError(support, args.serverLabel, placement);
     args.warn(
-      "Warning: the server did not declare `capabilities.events`; sending events/* anyway because of --force.",
+      `Warning: the server did not declare \`${placement}\`; sending events/* anyway because of --force.`,
     );
   }
   return support;

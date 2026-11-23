@@ -456,6 +456,7 @@ export {
   NotYetSupportedInStateless,
   StatelessRequiresHttpTransport,
   PaginatedToolHeaderDiscoveryUnsupported,
+  ModernProtocolVersionRefused,
   ProtocolVersionPinUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";

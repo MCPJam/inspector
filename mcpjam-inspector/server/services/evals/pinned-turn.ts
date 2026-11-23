@@ -86,6 +86,21 @@ export interface PinnedTurnResult {
 }
 
 /**
+ * What a pinned call returned, kept as grading evidence. Its transcript entry
+ * is the one-line summary only, so an assertion about the call's result reads
+ * this instead (see `pinned-call-grading.ts`).
+ */
+export interface PinnedCallEvidence {
+  toolCallId?: string;
+  /** The call's result as `runPinnedTurn` reports it, a thrown call's error
+   *  included. Absent when no call was made (blocked by policy, no tool
+   *  selected, server not connected) or the server returned nothing. */
+  result?: unknown;
+  /** True when the call failed: an `isError` result or a thrown call. */
+  isError: boolean;
+}
+
+/**
  * Everything a pinned turn contributes to an iteration, derived once from the
  * pinned spec + `runPinnedTurn`'s result. Engine-agnostic: the local and
  * hosted step handlers apply the same accounting to their own acc shapes
@@ -109,6 +124,8 @@ export interface PinnedTurnAccounting {
   /** Set ⇒ fatal setup failure (server not connected). */
   iterationError?: string;
   setupFailure: boolean;
+  /** The call's own result, which the text-only message pair leaves out. */
+  evidence: PinnedCallEvidence;
 }
 
 export function buildPinnedTurnAccounting(
@@ -125,6 +142,13 @@ export function buildPinnedTurnAccounting(
     toolErrors: result.toolError ? [result.toolError] : [],
     ...(result.iterationError ? { iterationError: result.iterationError } : {}),
     setupFailure: result.iterationError !== undefined,
+    evidence: {
+      ...(result.toolCallId ? { toolCallId: result.toolCallId } : {}),
+      ...(result.toolCall && result.toolResult !== undefined
+        ? { result: result.toolResult }
+        : {}),
+      isError: result.toolError !== undefined,
+    },
   };
 }
 
