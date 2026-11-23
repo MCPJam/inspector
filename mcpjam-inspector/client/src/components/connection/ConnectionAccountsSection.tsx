@@ -86,8 +86,8 @@ function captionOf(
 export interface AccountListTerms {
   /** The row's note when the account can't be used until someone acts. */
   needsReauth: string;
-  /** The row menu's way to fix it. */
-  reauthenticate: string;
+  /** The row menu's way to fix it. Without one, the menu offers none. */
+  reauthenticate?: string;
   /** What removing an account deletes. */
   removeBody: string;
 }
@@ -394,16 +394,18 @@ export function ConnectionAccountsList({
                         Set as default
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        void onAuthenticate({
-                          kind: "replace",
-                          credentialId: connection.connectionId,
-                        })
-                      }
-                    >
-                      {terms.reauthenticate}
-                    </DropdownMenuItem>
+                    {terms.reauthenticate ? (
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          void onAuthenticate({
+                            kind: "replace",
+                            credentialId: connection.connectionId,
+                          })
+                        }
+                      >
+                        {terms.reauthenticate}
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onSelect={() => setRemoving(connection)}

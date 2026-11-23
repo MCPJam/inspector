@@ -18,7 +18,8 @@ import type { WebClientVendor } from "@/shared/web-clients";
 /** A web account is a saved sign-in to the vendor's site, so it is signed into. */
 export const WEB_ACCOUNT_TERMS: AccountListTerms = {
   needsReauth: "Needs sign-in",
-  reauthenticate: "Sign in again",
+  // No `reauthenticate`: nothing here can sign a saved account in again, so
+  // the row's menu doesn't offer it.
   removeBody: "MCPJam will remove this account and its saved sign-in.",
 };
 
@@ -42,8 +43,9 @@ export function WebAccountsSettings({
   const setDefault = useMutation(webAccountsApi.setDefault);
   const remove = useMutation(webAccountsApi.remove);
   const setAllowLocalRuns = useMutation(webAccountsApi.setAllowLocalRuns);
-  const localRunsAllowed =
-    accounts.length > 0 && accounts.every((account) => account.allowLocalRuns);
+  // On while any account allows local runs, so Stop revokes a mixed state in
+  // one step instead of after allowing the rest.
+  const localRunsAllowed = accounts.some((account) => account.allowLocalRuns);
   return (
     <FocusBlock
       title="Accounts"
