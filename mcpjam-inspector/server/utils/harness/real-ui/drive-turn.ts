@@ -8,7 +8,8 @@
  * restarts and finds that record looks for a chat created since then that
  * holds the prompt, records it as sent and continues there; when no chat
  * holds it, the send may still have happened, so the turn stops as
- * `send_ambiguous` rather than send again.
+ * `send_ambiguous` rather than send again. A send that fails after the
+ * record stops the same way.
  */
 import { PageDriverError, type PageDriver } from "./page-driver.js";
 import {
@@ -83,6 +84,9 @@ export async function driveRealUiTurn(
   const ctx = { signal, timeoutMs: input.stepTimeoutMs ?? STEP_TIMEOUT_MS };
   let step: RealUiStep = "sign_in_check";
   let pending: PendingStep | undefined;
+  // From the journal's sending record until the send is confirmed, the click
+  // may have happened: the prompt may already be in a chat.
+  let sendUnconfirmed = false;
   const enter = (next: RealUiStep) => {
     step = next;
     pending = { stepId: next, startedAt: new Date().toISOString(), turnId: input.turnKey };
@@ -145,6 +149,7 @@ export async function driveRealUiTurn(
         state: "sending",
         at: sendingAt,
       });
+      sendUnconfirmed = true;
       input.beforeSend?.();
       const sent = await module.send(driver, input.prompt, ctx);
       conversationUrl = sent.conversationUrl;
@@ -153,6 +158,7 @@ export async function driveRealUiTurn(
         at: sendingAt,
         ...(conversationUrl ? { conversationUrl } : {}),
       });
+      sendUnconfirmed = false;
     }
 
     enter("reply");
@@ -188,7 +194,13 @@ export async function driveRealUiTurn(
     return { account, conversation, approvalsAnswered, finishedSignals, resumed };
   } catch (error) {
     const typed = asRealUiError(error, step);
-    throw new RealUiError(typed.failure, typed.pendingStep ?? pending);
+    // Once the journal says sending, a page that reads as changed may already
+    // have sent the prompt, so the turn ends as ambiguous, not as a change.
+    const failure =
+      sendUnconfirmed && typed.failure.kind === "page_changed"
+        ? { ...typed.failure, kind: "send_ambiguous" as const }
+        : typed.failure;
+    throw new RealUiError(failure, typed.pendingStep ?? pending);
   }
 }
 

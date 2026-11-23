@@ -60,7 +60,11 @@ async function signedInDriver() {
   return createPlaywrightDriver(page, { sites: [vendor.url] });
 }
 
-function turn(driver: Awaited<ReturnType<typeof signedInDriver>>, journal = createMemorySendJournal()) {
+function turn(
+  driver: Awaited<ReturnType<typeof signedInDriver>>,
+  journal = createMemorySendJournal(),
+  overrides: Partial<Parameters<typeof driveRealUiTurn>[0]> = {},
+) {
   return driveRealUiTurn({
     module: createFixtureWebPageModule(vendor.url),
     driver,
@@ -70,6 +74,7 @@ function turn(driver: Awaited<ReturnType<typeof signedInDriver>>, journal = crea
     turnKey: "turn-1",
     stepTimeoutMs: 10_000,
     replyTimeoutMs: 20_000,
+    ...overrides,
   });
 }
 
@@ -206,6 +211,28 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
       step: "send",
     });
     expect(vendor.sends).toHaveLength(1);
+  });
+
+  it("stops as send_ambiguous when the send fails after the journal says sending", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const journal = createMemorySendJournal();
+    const failure = await turn(await signedInDriver(), journal, {
+      module: {
+        ...fixture,
+        // The prompt goes out, then a control the module expects is missing.
+        async send(driver, prompt, ctx) {
+          const sent = await fixture.send(driver, prompt, ctx);
+          await driver.click('[data-testid="send-receipt"]');
+          return sent;
+        },
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({
+      kind: "send_ambiguous",
+      step: "send",
+    });
+    expect(await journal.read("turn-1")).toMatchObject({ state: "sending" });
+    expect(vendor.sends).toEqual(["say hello"]);
   });
 
   it("returns needs_sign_in on a human check and never sends", async () => {
