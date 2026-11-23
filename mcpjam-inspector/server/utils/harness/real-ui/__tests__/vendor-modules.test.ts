@@ -260,7 +260,7 @@ describe("chatgpt.com's connector step", () => {
       url: "https://chatgpt.com/",
       texts: { ...base, "role=dialog >> role=button[name=/^(\\+|Add)$/]": "+" },
     });
-    // The form never closes in a canned page, so the step ends waiting.
+    // The form never opens in this canned page, so the step ends waiting.
     await expect(
       chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
     ).rejects.toMatchObject({ code: "timeout" });
@@ -270,6 +270,33 @@ describe("chatgpt.com's connector step", () => {
       "role=dialog >> role=button[name=/^(\\+|Add)$/]",
       'role=menuitem[name="Add custom MCP server"]',
     ]);
+  });
+
+  // The Plugins panel is a dialog too, with its own Add button, and it stays
+  // open under the add server form.
+  const panel = { ...base, "role=dialog": "Plugins", "role=dialog >> role=button[name=/^(\\+|Add)$/]": "Add" };
+  const form = 'role=dialog >> internal:has="role=textbox[name=/url/i]"';
+
+  it("waits for the add server form, not the Plugins panel it opens over", async () => {
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts: panel });
+    await expect(
+      chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
+    ).rejects.toMatchObject({ code: "timeout", message: "Timed out waiting for the add server form." });
+    expect(driver.type).not.toHaveBeenCalled();
+  });
+
+  it("fills in the form and is done when it closes, with the Plugins panel still open", async () => {
+    const texts: Record<string, string> = { ...panel, [form]: "Add custom MCP server" };
+    const driver = cannedDriver({ url: "https://chatgpt.com/", texts });
+    vi.mocked(driver.click).mockImplementation(async (selector) => {
+      if (selector.startsWith(form)) delete texts[form];
+    });
+    await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
+    expect(vi.mocked(driver.type).mock.calls).toEqual([
+      [`${form} >> role=textbox[name=/name/i]`, connector.name],
+      [`${form} >> role=textbox[name=/url/i]`, connector.url],
+    ]);
+    expect(driver.click).toHaveBeenLastCalledWith(`${form} >> role=button[name=/^(Create|Add|Connect)$/]`);
   });
 });
 

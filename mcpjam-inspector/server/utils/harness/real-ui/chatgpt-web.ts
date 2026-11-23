@@ -125,7 +125,9 @@ export const chatgptWebPageModule: RealUiPageModule = {
     await driver.click(add);
     await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item", "connector");
     await driver.click(role("menuitem", "Add custom MCP server"));
-    const dialog = "role=dialog";
+    // The form opens over the Plugins panel, a dialog too, so the form is the
+    // dialog with the URL field; the panel's own Add button never matches.
+    const dialog = 'role=dialog >> internal:has="role=textbox[name=/url/i]"';
     await waitVisible(driver, dialog, ctx, "the add server form", "connector");
     await driver.type(`${dialog} >> role=textbox[name=/name/i]`, connector.name);
     await driver.type(`${dialog} >> role=textbox[name=/url/i]`, connector.url);
