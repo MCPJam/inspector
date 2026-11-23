@@ -54,6 +54,7 @@ import {
   type ToolCallLedger,
 } from "./tool-call-ledger.js";
 import {
+  TurnWindowConflictError,
   webClientTurnWindows,
   type ApprovalDecision,
   type ToolCallRequest,
@@ -243,7 +244,19 @@ export async function runWebClientTurn(
       input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
     );
     for (const connectorId of serverOfConnector.keys()) {
-      windows.open({ connectorId, runId: input.runId, turnId, approve });
+      try {
+        windows.open({ connectorId, runId: input.runId, turnId, approve });
+      } catch (error) {
+        // One turn at a time per connector: the endpoint attributes each call
+        // to the connector's open turn. Another run holding it stops this one
+        // as the run's failure, never the server's.
+        if (!(error instanceof TurnWindowConflictError)) throw error;
+        throw new RealUiError({
+          kind: "turn_running",
+          step: "connector",
+          message: "Another run is already using this connector.",
+        });
+      }
       opened.push(connectorId);
     }
     browser = await env.openBrowser({

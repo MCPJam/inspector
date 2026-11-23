@@ -62,6 +62,8 @@ export function webClientFailureMessage(name: string, failure: RealUiFailure): s
       return `${failure.message} The server was not graded.`;
     case "send_ambiguous":
       return `${failure.message} Open the chat in ${name} to see whether it ran.`;
+    case "turn_running":
+      return `${failure.message} Wait for it to finish, then send again.`;
     default:
       return `${name} stopped before the reply finished. ${failure.message} The server was not graded; retry the run.`;
   }

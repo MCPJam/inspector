@@ -8,7 +8,7 @@
  * Evidence: fixture. The end to end test with the real endpoint is
  * `web-client-e2e.test.ts`.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { chromium, type Browser } from "playwright";
 import { MCPClientManager } from "@mcpjam/sdk";
 import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
@@ -124,6 +124,26 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     expect(windows.active("conn-orders")).toBeUndefined();
     const call = upstream.received.find((r) => r.method === "tools/call");
     expect(call?.params).toMatchObject({ name: "echo", arguments: { message: "say hello" } });
+  });
+
+  it("stops as turn_running when another run has the connector, and leaves its window alone", async () => {
+    // Two compared runs, or two Playground panes, on one account and server.
+    windows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
+    const openBrowser = vi.fn();
+    const result = await runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: { ...environment(), openBrowser },
+      turnWindows: windows,
+      ledger,
+    });
+    expect(result).toMatchObject({ ok: false, infrastructure: true, failure: { kind: "turn_running", step: "connector" } });
+    expect(windows.active("conn-orders")?.turnId).toBe("other-turn");
+    expect(openBrowser).not.toHaveBeenCalled();
   });
 
   it("lets MCPJam's gate refuse a call before it reaches the server", async () => {
@@ -256,6 +276,22 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       failure: { kind: "needs_sign_in", reason: "human_check" },
       message: expect.stringContaining("Sign in again"),
     });
+  });
+
+  it("fails the run, not the server, when another run has the connector", async () => {
+    await useProcessStores();
+    webClientTurnWindows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
+    try {
+      const failure = await runHarnessTurn(options(), "none").catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(WebClientRunError);
+      expect(failure).toMatchObject({
+        failure: { kind: "turn_running", step: "connector" },
+        message: "Another run is already using this connector. Wait for it to finish, then send again.",
+      });
+      expect(vendor.sends).toEqual([]);
+    } finally {
+      webClientTurnWindows.close("other-turn");
+    }
   });
 
   it("refuses to start when this server has no web client environment", async () => {
