@@ -132,6 +132,8 @@ export function BrowserPanel({
   const visibleRef = useRef(true);
   /** Bumped whenever this panel changes which browser it is looking at. */
   const panelGeneration = useRef(0);
+  /** Bumped whenever this panel takes control or hands it back. */
+  const leaseChanges = useRef(0);
   /** The live browser token, reused until it is nearly expired. */
   const tokenCache = useRef<{
     key: string;
@@ -276,7 +278,14 @@ export function BrowserPanel({
     // with B's token, cannot connect, and leaves the viewer broken until some
     // later refresh happens to fix it.
     const generation = panelGeneration.current;
-    const stale = () => panelGeneration.current !== generation;
+    // Likewise a read from before this panel took control or handed it back.
+    // It can land after the change, with the old lease, and set `holding`
+    // back; nothing reads the lease again on its own, so the panel would stay
+    // that way. The change's own refresh reads it afresh.
+    const leaseChange = leaseChanges.current;
+    const stale = () =>
+      panelGeneration.current !== generation ||
+      leaseChanges.current !== leaseChange;
     try {
       const res = await authorized(`/session${ensure || wake ? "?ensure=1" : ""}`);
       const body = await res.json();
@@ -423,6 +432,7 @@ export function BrowserPanel({
           );
           return;
         }
+        leaseChanges.current += 1;
         setHolding(action === "acquire");
         setError(null);
         await refresh();

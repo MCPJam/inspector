@@ -164,6 +164,54 @@ describe("BrowserPanel token discipline", () => {
     expect(stream.props?.viewOnly).toBe(false);
   });
 
+  it("keeps control when a read from before taking it lands after", async () => {
+    mintProject.mockResolvedValue({
+      token: "tok",
+      expiresAt: Date.now() + 600_000,
+    });
+    let held = false;
+    let landLate: (() => void) | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/lease")) {
+          held = true;
+          return Response.json({
+            ok: true,
+            lease: { state: "held", holder: "member" },
+          });
+        }
+        // Each read answers with the lease as it was when the read started.
+        const answer = Response.json({
+          sessionId: "s1",
+          bootId: "b1",
+          yours: held,
+          lease: held ? { state: "held", holder: "member" } : { state: "free" },
+        });
+        // The first read that `ensure` starts is slow, and lands last.
+        if (url.endsWith("?ensure=1") && !landLate) {
+          return new Promise<Response>((resolve) => {
+            landLate = () => resolve(answer);
+          });
+        }
+        return answer;
+      }),
+    );
+    const { rerender } = render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    rerender(<BrowserPanel projectId="p1" ensure />);
+    await act(async () => {});
+    expect(landLate).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Take control" }));
+    });
+    expect(screen.getByText("You have control")).toBeTruthy();
+    await act(async () => landLate!());
+    expect(screen.getByText("You have control")).toBeTruthy();
+    expect(stream.props?.viewOnly).toBe(false);
+  });
+
   it("pings /input-ping for the stream's input at most once a minute", async () => {
     mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
