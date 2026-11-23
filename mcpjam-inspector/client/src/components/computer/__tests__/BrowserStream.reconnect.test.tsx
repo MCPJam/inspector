@@ -1,6 +1,6 @@
 /**
  * How the browser stream ends and starts again: a gone browser goes to the
- * panel, "Reconnect stream" restarts the retry budget, and a person's input
+ * panel, "Reconnect browser" restarts the retry budget, and a person's input
  * reaches `onInput` only while they have control.
  */
 import { act, fireEvent, render, screen } from "@testing-library/react";
@@ -74,7 +74,7 @@ it("hands a gone browser (4404) to the panel instead of retrying", async () => {
   expect(p.mintToken).toHaveBeenCalledOnce();
 });
 
-it("restarts the retry budget when a person presses Reconnect stream", async () => {
+it("restarts the retry budget when a person presses Reconnect browser", async () => {
   const p = props();
   render(<BrowserStream {...p} viewOnly={false} />);
   await settle();
@@ -90,7 +90,7 @@ it("restarts the retry budget when a person presses Reconnect stream", async () 
   expect(sockets).toHaveLength(6);
   expect(screen.getByText("The connection to the browser dropped.")).toBeTruthy();
 
-  fireEvent.click(screen.getByRole("button", { name: "Reconnect stream" }));
+  fireEvent.click(screen.getByRole("button", { name: "Reconnect browser" }));
   await settle();
   expect(sockets).toHaveLength(7);
 
@@ -98,7 +98,7 @@ it("restarts the retry budget when a person presses Reconnect stream", async () 
   closeLatest(1006);
   await settle(10_000);
   expect(sockets).toHaveLength(8);
-  expect(screen.queryByRole("button", { name: "Reconnect stream" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Reconnect browser" })).toBeNull();
   expect(p.onSessionGone).not.toHaveBeenCalled();
 });
 

@@ -278,7 +278,7 @@ export function BrowserStream({
               consecutiveRef.current = 0;
               setAttempt((n) => n + 1);
             }}>
-              Reconnect stream
+              Reconnect browser
             </Button>
           )}
         </div>
