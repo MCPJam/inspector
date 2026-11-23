@@ -163,7 +163,10 @@ export function buildBashTool(
       };
       if (engine === "e2b") {
         return annotate(
-          await runComputerCommand({ ...execArgs, source: "chat" }, runner)
+          await runComputerCommand(
+            { ...execArgs, authHeader: opts.authHeader, source: "chat" },
+            runner,
+          )
         );
       }
       if (engine === "delegated") {

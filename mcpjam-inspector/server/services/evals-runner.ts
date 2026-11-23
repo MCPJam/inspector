@@ -2707,8 +2707,10 @@ function postEvalOrgLocalUsage(args: {
     ...(event.calls ? { calls: event.calls } : {}),
     ...(event.finishReason ? { finishReason: event.finishReason } : {}),
     sourceType: "eval",
+    // Records a model call that already happened, so after a refused renewal
+    // it still goes out with the last token issued rather than throwing here.
     ...(args.convexAuthToken
-      ? { authHeader: `Bearer ${bearerNow(args.convexAuthToken)}` }
+      ? { authHeader: `Bearer ${bearerForCleanup(args.convexAuthToken)}` }
       : {}),
     ...(args.selectedServers.length ? { serverIds: args.selectedServers } : {}),
     ...(args.iterationId ? { evalIterationId: String(args.iterationId) } : {}),

@@ -71,6 +71,7 @@ import {
   harnessFailureEvidenceOf,
 } from "../../../utils/harness/harness-provider-error";
 import { HARNESS_PROXY_REFUSAL_STATUS } from "@/shared/harness-proxy-refusal-reasons";
+import type { RunBearer } from "../../../utils/run-bearer.js";
 
 type Turn = (opts: any) => Promise<unknown>;
 
@@ -104,6 +105,7 @@ async function runSuite(
   model: string,
   budgets = defaultEvalExecutionBudgets(),
   provider = "openai",
+  convexAuthToken: RunBearer = "token",
 ) {
   const rows = Array.from({ length: runs }, (_, index) => ({
     _id: `iter-${index + 1}`,
@@ -168,7 +170,7 @@ async function runSuite(
     modelApiKeys: { openai: "sk-test" },
     convexClient,
     convexHttpUrl: "https://example.convex.site",
-    convexAuthToken: "token",
+    convexAuthToken,
     mcpClientManager: manager,
     executionBudgets: budgets,
   } as any);
@@ -501,5 +503,76 @@ describe("local runner — the provider's own typed answer", () => {
     const { rows } = await runSuite(1, "gpt-4-turbo");
     expect(rows[0]).toMatchObject({ status: "completed", passed: false });
     expect(rows[0]).not.toHaveProperty("infraError");
+  });
+});
+
+describe("a scheduled run whose job token the backend stops renewing", () => {
+  const REFUSAL = "token_renewal_failed: owner_not_member";
+
+  /** A job token that works until `refuse()`, as the worker's does. */
+  function refusableBearer() {
+    let refused = false;
+    const bearer: RunBearer = {
+      current: () => {
+        if (refused) throw new Error(REFUSAL);
+        return "job-token-1";
+      },
+      last: () => "job-token-1",
+      onRenew: () => {},
+    };
+    return { bearer, refuse: () => (refused = true) };
+  }
+
+  it("hosted: the iteration still ends as a failure that names the reason", async () => {
+    const { bearer, refuse } = refusableBearer();
+    assistantTurnMock.mockImplementationOnce(async (opts: any) => {
+      refuse();
+      // The engine reads the authorization on each step and reports a failed
+      // read as the turn's error.
+      const error: Error = await opts.authContext.turnAuthorization
+        .getAuthorization()
+        .catch((caught: Error) => caught);
+      opts.onEngineError?.({
+        rawText: error.message,
+        promptIndex: 0,
+        message: error.message,
+        phase: "stream",
+      });
+      return { messages: opts.messages, turnTrace: { spans: [] } };
+    });
+    const { rows } = await runSuite(
+      1,
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      bearer,
+    );
+    // An engine error with no typed infra evidence is written as a measured
+    // failure, as the uncategorized cases above are.
+    expect(rows[0]).toMatchObject({
+      status: "completed",
+      passed: false,
+      error: REFUSAL,
+    });
+  });
+
+  it("local: the iteration still ends as a failure that names the reason", async () => {
+    const { bearer, refuse } = refusableBearer();
+    streamTextMock.mockImplementationOnce(() => {
+      refuse();
+      throw new Error(REFUSAL);
+    });
+    const { rows } = await runSuite(
+      1,
+      "gpt-4-turbo",
+      undefined,
+      undefined,
+      bearer,
+    );
+    expect(rows[0]).toMatchObject({
+      status: "failed",
+      passed: false,
+      error: expect.stringContaining(REFUSAL),
+    });
   });
 });

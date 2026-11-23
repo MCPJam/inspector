@@ -31,7 +31,7 @@ import {
   PREVIEW_TUNNEL_STATE,
   PREVIEW_TUNNEL_VERSION,
 } from "./tunnel-sidecar.js";
-import { authHeaderNow, type AuthHeaderSource } from "../../utils/run-bearer.js";
+import type { AuthHeaderSource } from "../../utils/run-bearer.js";
 
 export type WorkspacePreviewErrorCode =
   | "private_workspace"
@@ -290,7 +290,7 @@ export function personalComputerWorkspace(args: {
 }): () => Promise<PreviewWorkspace | undefined> {
   return async () => {
     const ready = await ensureComputerReady({
-      bearer: authHeaderNow(args.authHeader),
+      bearer: args.authHeader,
       projectId: args.projectId,
       ...(args.executionScope ? { executionScope: args.executionScope } : {}),
     });
