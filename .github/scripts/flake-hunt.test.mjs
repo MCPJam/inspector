@@ -299,6 +299,23 @@ test("hunt does not compare runs of different events on the same commit", () =>
     assert.equal(result.summary.flakedJobs, 0);
   }));
 
+test("hunt counts a job that passed inside a later cancelled run", () =>
+  withCache(async (cache) => {
+    const result = await huntWith(
+      cache,
+      50,
+      fakeGh([], {
+        runs: [ghRun(8, { conclusion: "failure" }), ghRun(9, { conclusion: "cancelled", created_at: `${today}T02:00:00Z` })],
+        jobs: {
+          "8/1": [ghJob(70, "Inspector Tests 3/6", "failure", "2026-11-21T01:00:00Z"), ghJob(71, "Packaging", "failure", "2026-11-21T01:00:00Z")],
+          "9/1": [ghJob(90, "Inspector Tests 3/6", "success", "2026-11-21T02:00:00Z"), ghJob(91, "Packaging", "cancelled", "2026-11-21T02:00:00Z")],
+        },
+      }),
+    );
+    assert.equal(result.summary.flakedJobs, 1);
+    assert.equal(result.ranking.tests[0].name, "Suite > opens the dialog");
+  }));
+
 test("hunt keeps each repository's run lists apart in a shared cache", () =>
   withCache(async (cache) => {
     await huntWith(cache, 50, fakeGh([]), ["--repo", "a/one"]);

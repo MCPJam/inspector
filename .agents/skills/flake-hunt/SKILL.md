@@ -24,9 +24,11 @@ node .github/scripts/flake-hunt.mjs --cache <dir on a disk with room>
 | `--max-calls N`     | `1000`                          | stops before spending more; the report says so  |
 | `--top N`, `--json` | `20`, off                       | length and format of the output                 |
 
-A cold 14-day run of `test.yml` costs a few hundred calls; a warm rerun costs
-the last two days' run lists if it is the same day. Keep `--max-calls` well under what
-`rate_limit` reports, since other agents use the same token.
+A cold 14-day run of `test.yml` costs a few hundred calls. A warm rerun on the
+same UTC day refetches the run lists of today and the two days before once they
+are an hour old, plus job lists for new attempts and logs for newly flaked
+jobs. Keep `--max-calls` well under what `rate_limit` reports, since other
+agents use the same token.
 
 Each entry is a test, a Vitest unhandled error (ranked under the test file it
 came from), a Playwright failure, or a job whose log named no test (ranked

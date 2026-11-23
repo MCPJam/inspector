@@ -215,12 +215,13 @@ function retriedCommits(runs) {
 
 // Every attempt of every run on one commit, with its job list. A successful
 // attempt's jobs are fetched too: a job it skipped or did not run did not pass.
+// A cancelled attempt can hold jobs that finished before the cancel.
 async function triesOf(github, cache, repo, group) {
   const tries = [];
   for (const run of group) {
     for (let attempt = 1; attempt <= run.attempt; attempt += 1) {
       const final = attempt === run.attempt;
-      if (final && !["success", "failure", "timed_out"].includes(run.conclusion)) continue;
+      if (final && !["success", "failure", "timed_out", "cancelled"].includes(run.conclusion)) continue;
       const jobs = await listJobs(github, cache, repo, run.id, attempt);
       const starts = jobs.map((job) => job.startedAt).filter(Boolean).sort();
       tries.push({ runId: run.id, attempt, startedAt: starts[0] ?? run.createdAt, jobs });
