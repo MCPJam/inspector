@@ -12,8 +12,25 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+
+/** The repository this script is in, wherever the command runs from. */
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+
+/**
+ * Whether `folder` (an absolute path) is outside the repository. On Windows a
+ * folder on another drive has no path relative to the repository, and
+ * `relative` answers with the folder's absolute path.
+ */
+export function isOutsideRepository(
+  folder: string,
+  { root = REPO_ROOT, paths = process.platform === "win32" ? win32 : posix } = {},
+): boolean {
+  const fromRoot = paths.relative(root, folder);
+  return fromRoot === ".." || fromRoot.startsWith(`..${paths.sep}`) || paths.isAbsolute(fromRoot);
+}
 
 /** Generated files the server code imports come from these build steps. */
 const SETUP =
@@ -37,7 +54,7 @@ async function main() {
     },
   });
   const profile = resolve(values.profile);
-  if (!relative(resolve(".."), profile).startsWith("..")) {
+  if (!isOutsideRepository(profile)) {
     fail("Keep the browser profile outside the repository. Pass --profile with a folder in your home directory.");
   }
   if (values["sign-in"]) {
