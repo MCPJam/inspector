@@ -14,25 +14,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, posix, resolve, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-
-/** The repository this script is in, wherever the command runs from. */
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-
-/**
- * Whether `folder` (an absolute path) is outside the repository. On Windows a
- * folder on another drive has no path relative to the repository, and
- * `relative` answers with the folder's absolute path.
- */
-export function isOutsideRepository(
-  folder: string,
-  { root = REPO_ROOT, paths = process.platform === "win32" ? win32 : posix } = {},
-): boolean {
-  const fromRoot = paths.relative(root, folder);
-  return fromRoot === ".." || fromRoot.startsWith(`..${paths.sep}`) || paths.isAbsolute(fromRoot);
-}
+import { isOutsideRepository } from "../server/utils/outside-repository";
 
 /** Generated files the server code imports come from these build steps. */
 const SETUP =
