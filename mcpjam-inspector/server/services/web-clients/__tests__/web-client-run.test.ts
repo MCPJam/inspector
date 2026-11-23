@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import { actorForRun } from "../hosted-web-client-runtime";
 import {
-  recordEvalRunWebAccounts,
+  freezeEvalRunWebAccounts,
   rotateRunAccounts,
   webClientRunOfEvalRun,
 } from "../web-client-run";
@@ -34,12 +34,19 @@ describe("an eval run's web client context", () => {
     });
   });
 
-  it("is nothing for another runtime or a quick run, and no frozen list for an older run", () => {
+  it("is nothing for another runtime or a quick run", () => {
     expect(webClientRunOfEvalRun({ harness: "claude-code", runId: "run-1", run })).toBeUndefined();
     expect(webClientRunOfEvalRun({ harness: "claude-web", runId: null, run })).toBeUndefined();
+  });
+
+  it("is unread for a row that doesn't name its owner and frozen accounts, never the default account", () => {
+    for (const row of [{ createdBy: "user-owner" }, { webAccountsAtRun: run.webAccountsAtRun }, null, "row"]) {
+      expect(webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: row })).toBeNull();
+    }
+    // Frozen with no account for its vendor: the run names none, and its turns use none.
     expect(
-      webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: { createdBy: "user-owner" } }),
-    ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" } });
+      webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: { createdBy: "user-owner", webAccountsAtRun: [] } }),
+    ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" }, webAccountIds: [] });
   });
 
   it("starts each iteration one account on, keeps an iteration's turns together, and keeps runs apart", () => {
@@ -56,31 +63,47 @@ describe("an eval run's web client context", () => {
 });
 
 describe("freezing the run's web accounts", () => {
-  it("records them for the run's vendor", async () => {
+  const freeze = (mutation: () => Promise<unknown>, harness = "claude-web") => {
+    const failRun = vi.fn(async () => undefined);
+    const frozen = freezeEvalRunWebAccounts({ convexClient: { mutation }, runId: "run-1", harness, failRun });
+    return { frozen, failRun };
+  };
+
+  it("records them for the run's vendor, and none for another runtime", async () => {
     const mutation = vi.fn(async () => []);
-    expect(await recordEvalRunWebAccounts({ convexClient: { mutation }, runId: "run-1", vendor: "chatgpt" })).toEqual({
-      ok: true,
-    });
+    await freeze(mutation, "chatgpt-web").frozen;
     expect(mutation).toHaveBeenCalledWith("webClientSuites:recordWebAccountsAtRun", {
       runId: "run-1",
       vendor: "chatgpt",
     });
+    await freeze(mutation, "claude-code").frozen;
+    expect(mutation).toHaveBeenCalledTimes(1);
   });
 
-  it("stops the run with the backend's own words, or says to run again", async () => {
-    const refused = vi.fn(async () => {
+  it("fails the run with the backend's refusal as a 400 in its own words", async () => {
+    const { frozen, failRun } = freeze(async () => {
       throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
     });
-    expect(
-      await recordEvalRunWebAccounts({ convexClient: { mutation: refused }, runId: "run-1", vendor: "claude" }),
-    ).toEqual({ ok: false, reason: "Web clients are off for this project." });
-    const lost = vi.fn(async () => {
-      throw new Error("fetch failed");
+    await expect(frozen).rejects.toMatchObject({
+      status: 400,
+      message: "Web clients are off for this project.",
+      details: { reason: "WEB_ACCOUNTS_UNAVAILABLE" },
     });
-    expect(await recordEvalRunWebAccounts({ convexClient: { mutation: lost }, runId: "run-1", vendor: "claude" })).toEqual({
-      ok: false,
-      reason: expect.stringContaining("Run it again."),
-    });
+    expect(failRun).toHaveBeenCalledWith("Web clients are off for this project.");
+  });
+
+  it("fails the run as a 503 when the backend couldn't answer, never as the caller's mistake", async () => {
+    for (const lost of [new Error("fetch failed"), new Error("[Request ID: 1] Server Error")]) {
+      const { frozen, failRun } = freeze(async () => {
+        throw lost;
+      });
+      await expect(frozen).rejects.toMatchObject({
+        status: 503,
+        message: expect.stringContaining("Run it again."),
+        details: { reason: "WEB_ACCOUNTS_UNAVAILABLE" },
+      });
+      expect(failRun).toHaveBeenCalledWith(expect.stringContaining("Run it again."));
+    }
   });
 });
 

@@ -1,10 +1,11 @@
 /**
  * Before a step is sent again, after a restart or a lost reply, the ledger
  * says whether its tool calls already reached the upstream server. Resending a
- * prompt makes the vendor's model call its tools again, so a call the upstream
- * answered is taken from the record instead, and a call forwarded with no
- * answer may have run: the step stops and says so rather than risk running the
- * tool twice.
+ * prompt makes the vendor's model call its tools again. When the upstream
+ * answered every call, the vendor's model has the results and the step's
+ * reply is read from the vendor's conversation instead. A call forwarded with
+ * no answer may have run: the step stops and says so rather than risk running
+ * the tool twice.
  */
 import type { LedgerEntry, LedgerMatch } from "../tool-call-ledger.js";
 import type { PendingStep } from "./backend.js";
@@ -31,7 +32,12 @@ export type ReconcileInput = {
 export type ReconcileOutcome =
   /** No call reached the upstream since the step started, so sending is safe. */
   | { status: "send" }
-  /** The upstream answered every call. The step is taken from these records. */
+  /**
+   * The upstream answered every call, so the step is not sent again: its
+   * reply is read from the vendor's conversation. The ledger keeps only a
+   * hash of each result, so these records say only that the calls were
+   * answered.
+   */
   | { status: "reconciled"; calls: LedgerEntry[] }
   /** These calls were forwarded and never answered. They may have run. */
   | { status: "ambiguous_execution"; calls: LedgerEntry[] };

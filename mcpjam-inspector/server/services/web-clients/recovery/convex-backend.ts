@@ -121,6 +121,17 @@ function refusalOf(error: unknown): WebBackendRefusal | undefined {
   );
 }
 
+/** A refused reply's JSON body. A proxy's error page has none. */
+async function refusalBody(reply: Response): Promise<unknown> {
+  const text = await reply.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Not JSON: the status is all there is to report.
+    return undefined;
+  }
+}
+
 /** Commands carry no undefined field: Convex refuses one. */
 function defined(command: Command): Record<string, unknown> {
   return Object.fromEntries(
@@ -162,8 +173,10 @@ async function postJson(
       signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS),
     },
   );
+  if (!reply.ok) {
+    throw refusalOf(await refusalBody(reply)) ?? new Error(`HTTP ${reply.status}`);
+  }
   const data: unknown = await reply.json();
-  if (!reply.ok) throw refusalOf(data) ?? new Error(`HTTP ${reply.status}`);
   return data;
 }
 
@@ -179,10 +192,13 @@ async function upload(
     body: new Uint8Array(sealed),
     signal: AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
   });
+  if (!reply.ok) {
+    throw new Error(`The encrypted profile was not uploaded: HTTP ${reply.status}.`);
+  }
   const answer = z
     .object({ storageId: z.string() })
     .safeParse(await reply.json());
-  if (!reply.ok || !answer.success) {
+  if (!answer.success) {
     throw new Error("The encrypted profile was not uploaded.");
   }
   return answer.data.storageId;

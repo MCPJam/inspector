@@ -14,8 +14,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { isOutsideRepository } from "../server/utils/outside-repository";
 
 /** Generated files the server code imports come from these build steps. */
 const SETUP =
@@ -53,7 +54,7 @@ async function main() {
   // The same folder a local Inspector's web clients open (localWebClientProfileDir).
   const profiles = process.env.MCPJAM_WEB_CLIENTS_PROFILE_DIR?.trim() || join(homedir(), ".mcpjam", "web-clients");
   const profile = resolve(values.profile ?? join(profiles, `${vendor}-profile`));
-  if (!relative(resolve(".."), profile).startsWith("..")) {
+  if (!isOutsideRepository(profile)) {
     fail("Keep the browser profile outside the repository. Pass --profile with a folder in your home directory.");
   }
   if (values["sign-in"]) {

@@ -14,6 +14,7 @@ import {
   localWebClientProfileDir,
 } from "../local-web-client-environment";
 import { runWebClientTurn } from "../run-web-client-turn";
+import { REPOSITORY_ROOT } from "../../../utils/outside-repository";
 import { mountWebClientRuntime } from "../runtime-mount";
 import { createInMemoryToolCallLedger } from "../tool-call-ledger";
 import { createInMemoryTurnWindowStore } from "../turn-windows";
@@ -32,6 +33,25 @@ const SERVERS = {
         ? { command: "node", args: ["server.js"] }
         : undefined,
 };
+
+/**
+ * A page in a Chromium context that takes the driver's routes and its
+ * session for pausing document requests; `route` stands in for the context's.
+ */
+function chromiumPage(route: () => Promise<void> = async () => {}) {
+  const context = {
+    browser: () => ({ browserType: () => ({ name: () => "chromium" }) }),
+    route,
+    on: () => {},
+    pages: () => [],
+    newCDPSession: async () => ({
+      send: async (method: string) =>
+        method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main" } } } : {},
+      on: () => {},
+    }),
+  };
+  return { context: () => context, on: () => {} } as never;
+}
 
 function environment(over: Partial<Parameters<typeof createLocalWebClientEnvironment>[0]> = {}) {
   return createLocalWebClientEnvironment({
@@ -66,6 +86,59 @@ describe("a local web client environment", () => {
     expect(claude.connectorId).not.toBe(first.connectorId);
   });
 
+  it("keeps the vendor's connector through a token refresh and forwards with the new token", async () => {
+    const registry = createLocalConnectorRegistry();
+    let accessToken = "token-1";
+    const env = environment({
+      registry,
+      servers: {
+        getServerConfig: () => ({
+          url: "http://localhost:3000/mcp",
+          accessToken,
+        }),
+      },
+    });
+    const args = {
+      projectId: "p",
+      webAccountId: "local:chatgpt",
+      serverId: "orders",
+      auth: "oauth" as const,
+    };
+    const first = await env.ensureConnector(args);
+    accessToken = "token-2";
+    expect(await env.ensureConnector(args)).toEqual(first);
+    expect(registry.list()).toHaveLength(1);
+    const connector = await registry.resolver.resolve(first.connectorId);
+    expect((await registry.resolver.upstream(connector!, {})).headers).toEqual({
+      authorization: "Bearer token-2",
+    });
+  });
+
+  it("refuses a server that signs in with a refresh token rather than forward it without one", async () => {
+    const registry = createLocalConnectorRegistry();
+    const env = environment({
+      registry,
+      servers: {
+        getServerConfig: () => ({
+          url: "http://localhost:3000/mcp",
+          refreshToken: "refresh-1",
+          clientId: "client-1",
+        }),
+      },
+    });
+    await expect(
+      env.ensureConnector({
+        projectId: "p",
+        webAccountId: "local:chatgpt",
+        serverId: "billing",
+        auth: "oauth",
+      }),
+    ).rejects.toThrow(
+      "billing signs in with a refresh token, so the vendor's app can't use its sign-in.",
+    );
+    expect(registry.list()).toEqual([]);
+  });
+
   it("refuses a server the vendor's app can't reach by URL", async () => {
     await expect(
       environment().ensureConnector({ projectId: "p", webAccountId: "local:chatgpt", serverId: "shell", auth: "oauth" }),
@@ -74,7 +147,7 @@ describe("a local web client environment", () => {
 
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {
     const close = vi.fn(async () => {});
-    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close }));
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close }));
     const env = environment({ launch, profileWaitMs: 60, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const browser = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
@@ -90,7 +163,7 @@ describe("a local web client environment", () => {
   });
 
   it("lets a second turn on the same profile wait for the first browser to close", async () => {
-    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close: async () => {} }));
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close: async () => {} }));
     const env = environment({ launch, profilePollMs: 10 });
     const sites = ["https://chatgpt.com"];
     const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
@@ -104,7 +177,7 @@ describe("a local web client environment", () => {
 
   it("stops waiting for the profile when the run stops, and launches nothing once it frees", async () => {
     const launch = vi.fn(async () => ({
-      page: { route: async () => {}, on: () => {} } as never,
+      page: chromiumPage(),
       close: async () => {},
     }));
     const env = environment({
@@ -132,7 +205,7 @@ describe("a local web client environment", () => {
 
   it("gives a turn one deadline for a busy connector and then a busy profile", async () => {
     const launch = vi.fn(async () => ({
-      page: { route: async () => {}, on: () => {} } as never,
+      page: chromiumPage(),
       close: async () => {},
     }));
     // On its own, the wait for this busy profile would last 10 seconds.
@@ -198,22 +271,69 @@ describe("a local web client environment", () => {
       closing = true;
       openedWhileClosing = await env.openBrowser({ webAccountId: "local:chatgpt", sites }).catch((error: unknown) => error);
     });
-    const page = {
-      route: async () => {
-        throw new Error("The page could not be routed.");
-      },
-      on: () => {},
-    };
+    const page = chromiumPage(async () => {
+      throw new Error("The page could not be routed.");
+    });
     // A turn that finds the profile in use stops at once rather than waiting.
-    const env = environment({ launch: vi.fn(async () => ({ page: page as never, close })), profileWaitMs: 0 });
+    const env = environment({ launch: vi.fn(async () => ({ page, close })), profileWaitMs: 0 });
     await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("The page could not be routed.");
     expect(close).toHaveBeenCalledTimes(1);
     expect(openedWhileClosing).toMatchObject({ failure: { kind: "turn_running" } });
   });
 
-  it("keeps profiles outside any checkout, under the folder the person chose", () => {
+  it("stops as turn_running when another process has the profile open", async () => {
+    const sites = ["https://chatgpt.com"];
+    // Playwright's words for it: its chromium.ts quotes Chromium's log line,
+    // and its process launcher logs Chromium's profile-in-use exit code.
+    const inUse = [
+      "browserType.launchPersistentContext: Failed to create a ProcessSingleton for your profile directory. This usually means that the profile is already in use by another instance of Chromium.",
+      "browserType.launchPersistentContext: Opening in existing browser session. This usually means that the profile is already in use by another instance of Chromium.",
+      "browserType.launchPersistentContext: Failed to launch the browser process.\nBrowser logs:\n\nCall log:\n  - [pid=4242] <process did exit: exitCode=21, signal=null>",
+    ];
+    const launch = vi.fn(async () => ({
+      page: chromiumPage(),
+      close: async () => {},
+    }));
+    const env = environment({ launch });
+    for (const message of inUse) {
+      launch.mockRejectedValueOnce(new Error(message));
+      await expect(
+        env.openBrowser({ webAccountId: "local:chatgpt", sites }),
+      ).rejects.toMatchObject({
+        failure: {
+          kind: "turn_running",
+          message:
+            "Another Inspector or a sign-in window has this machine's ChatGPT web browser open.",
+        },
+      });
+    }
+    // This process holds nothing, so the next turn opens the profile.
+    await (
+      await env.openBrowser({ webAccountId: "local:chatgpt", sites })
+    ).close();
+  });
+
+  it("keeps profiles under the folder the person chose, never inside this repository", async () => {
     vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", "/home/someone/web-profiles");
     expect(localWebClientProfileDir("claude")).toBe(join("/home/someone/web-profiles", "claude-profile"));
+    // A commit from this checkout could carry the session, so a turn stops
+    // before it opens a browser there.
+    const inside = join(REPOSITORY_ROOT, "mcpjam-inspector", ".web-profiles");
+    vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", inside);
+    expect(() => localWebClientProfileDir("claude")).toThrow(
+      "The Claude web browser profile is inside this Inspector's repository",
+    );
+    const factory = createLocalWebClientEnvironmentFactory({
+      env: {
+        MCPJAM_INSPECTOR_PUBLIC_URL: "https://tunnel.example",
+        MCPJAM_WEB_CLIENTS_PROFILE_DIR: inside,
+      },
+    });
+    await expect(
+      factory({ runtimeId: "chatgpt-web", projectId: "p", runId: "r" }),
+    ).rejects.toThrow(
+      "Set MCPJAM_WEB_CLIENTS_PROFILE_DIR to a folder outside the repository",
+    );
   });
 });
 

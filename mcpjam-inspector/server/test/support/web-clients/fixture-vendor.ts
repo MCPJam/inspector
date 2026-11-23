@@ -6,7 +6,8 @@
  * chats and sends a prompt. The backend then dials each enabled connector,
  * lists its tools, asks the page to approve the call (Always allow / Allow
  * once), and calls the first tool with `_meta["claudecode/toolUseId"]`, as
- * claude.ai's client does. Each chat is saved as JSON the page module reads.
+ * claude.ai's client does, or with no id, as chatgpt.com's does. Each chat is
+ * saved as JSON the page module reads.
  *
  * Test-only. `fixture-web.ts` is the page module that drives it.
  */
@@ -17,9 +18,11 @@ import type { AddressInfo } from "node:net";
 type Chat = {
   id: string;
   prompt: string;
+  /** When the backend created it, as `toISOString()` writes it. */
+  createdAt: string;
   state: "running" | "awaiting_approval" | "done";
   reply: string;
-  toolCalls: Array<{ toolUseId: string; name: string; at: string }>;
+  toolCalls: Array<{ toolUseId?: string; name: string; at: string }>;
   approve?: (always: boolean) => void;
 };
 
@@ -31,6 +34,8 @@ export type FixtureVendor = {
   connectors: Map<string, string>;
   /** Shows a human check on every page while set. */
   challenge: boolean;
+  /** Calls tools with no tool use id, on the wire or in the chat, as chatgpt.com does. */
+  withoutToolUseIds: boolean;
   /** Where `/redirect` sends the page, like a vendor link to another site. */
   redirectTo?: string;
   close(): Promise<void>;
@@ -118,6 +123,7 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     chats: new Map(),
     connectors: new Map(),
     challenge: false,
+    withoutToolUseIds: false,
   };
   const alwaysAllowed = new Set<string>();
 
@@ -142,15 +148,15 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
           if (always) alwaysAllowed.add(key);
           chat.state = "running";
         }
-        const toolUseId = `toolu_fixture_${randomUUID().slice(0, 8)}`;
-        chat.toolCalls.push({ toolUseId, name: tool.name, at: new Date().toISOString() });
+        const toolUseId = vendor.withoutToolUseIds ? undefined : `toolu_fixture_${randomUUID().slice(0, 8)}`;
+        chat.toolCalls.push({ ...(toolUseId ? { toolUseId } : {}), name: tool.name, at: new Date().toISOString() });
         const called = await rpc(url, init.sessionId, {
           id: 3,
           method: "tools/call",
           params: {
             name: tool.name,
             arguments: { message: chat.prompt },
-            _meta: { "claudecode/toolUseId": toolUseId, progressToken: 7 },
+            _meta: { ...(toolUseId ? { "claudecode/toolUseId": toolUseId } : {}), progressToken: 7 },
           },
         });
         const content = called.result?.content as Array<{ text?: string }> | undefined;
@@ -224,12 +230,24 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
     } else if (url.pathname === "/api/chats" && request.method === "POST") {
       const { prompt, connectors } = JSON.parse(await readBody(request)) as { prompt: string; connectors: string[] };
       vendor.sends.push(prompt);
-      const chat: Chat = { id: randomUUID(), prompt, state: "running", reply: "", toolCalls: [] };
+      const chat: Chat = {
+        id: randomUUID(),
+        prompt,
+        createdAt: new Date().toISOString(),
+        state: "running",
+        reply: "",
+        toolCalls: [],
+      };
       vendor.chats.set(chat.id, chat);
       void runTurn(chat, connectors);
       json(200, { id: chat.id });
     } else if (url.pathname === "/api/chats" && request.method === "GET") {
-      json(200, [...vendor.chats.values()].reverse().map((chat) => ({ id: chat.id })));
+      json(
+        200,
+        [...vendor.chats.values()]
+          .reverse()
+          .map((chat) => ({ id: chat.id, createdAt: chat.createdAt })),
+      );
     } else if (chatMatch && chatMatch[2] && request.method === "POST") {
       vendor.chats.get(chatMatch[1]!)?.approve?.((await readBody(request)) === "true");
       json(200, { ok: true });

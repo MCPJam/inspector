@@ -41,7 +41,7 @@ import {
   resolveOrgKeyCredentialPlan,
 } from "./external-account-credentials.js";
 import { getHarnessAdapter, harnessUsesExternalAccount } from "./registry.js";
-import { harnessRunsOnWebAccount } from "@/shared/harness-descriptors";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type PlaygroundBoxReason = "credential" | "compare" | "conversation";
 
@@ -60,7 +60,7 @@ export function playgroundHarnessBoxReason(args: {
   }
   // External-account like Cursor, but on a web account, not an org key: the
   // vendor's own app runs the turn, so a box would sit idle.
-  if (harnessRunsOnWebAccount(args.harnessId)) return null;
+  if (isWebClientRuntimeId(args.harnessId)) return null;
   if (harnessUsesExternalAccount(args.harnessId)) return "credential";
   if (args.comparePane) return "compare";
   return "conversation";
