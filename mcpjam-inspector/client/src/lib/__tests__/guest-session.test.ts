@@ -875,6 +875,28 @@ describe("guest-session module", () => {
     });
   });
 
+  describe("getCachedGuestId", () => {
+    it("names a guest whose session is inside the expiry buffer until a clear", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            guestId: "g",
+            token: "t",
+            expiresAt: Date.now() + 60_000,
+          }),
+      } as Response);
+
+      await guestSession.getOrCreateGuestSession();
+      expect(guestSession.getCachedGuestSession()).toBeNull();
+      expect(guestSession.getCachedGuestId()).toBe("g");
+
+      guestSession.clearGuestSession();
+      expect(guestSession.getCachedGuestId()).toBeNull();
+    });
+  });
+
   describe("clearGuestSession", () => {
     it("drops only the in-memory cache, no localStorage call needed", async () => {
       vi.mocked(global.fetch).mockResolvedValue({

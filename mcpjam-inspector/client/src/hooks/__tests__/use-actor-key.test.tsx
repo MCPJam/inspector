@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
     user: null as { id: string } | null,
     isLoading: false,
   },
+  getCachedGuestId: vi.fn(),
   getCachedGuestSession: vi.fn(),
   getOrCreateGuestSession: vi.fn(),
   subscribeGuestSessionChanges: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/lib/guest-session", () => ({
+  getCachedGuestId: mockState.getCachedGuestId,
   getCachedGuestSession: mockState.getCachedGuestSession,
   getOrCreateGuestSession: mockState.getOrCreateGuestSession,
   subscribeGuestSessionChanges: mockState.subscribeGuestSessionChanges,
@@ -27,6 +29,10 @@ describe("useActorKey", () => {
     mockState.auth = { user: null, isLoading: false };
     mockState.getCachedGuestSession.mockReset();
     mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getCachedGuestId.mockReset();
+    mockState.getCachedGuestId.mockImplementation(
+      () => mockState.getCachedGuestSession()?.guestId ?? null,
+    );
     mockState.getOrCreateGuestSession.mockReset();
     mockState.getOrCreateGuestSession.mockResolvedValue(null);
     mockState.subscribeGuestSessionChanges.mockReset();
@@ -109,6 +115,31 @@ describe("useActorKey", () => {
       token: "token_2",
       expiresAt: Date.now() + 60_000,
     });
+    act(() => notify());
+
+    expect(result.current).toBe("guest_2");
+  });
+
+  // A browser clock running ahead puts a session that was just cached inside
+  // the expiry buffer, so the fresh-only read returns null for it.
+  it("follows a new guest when its session is inside the expiry buffer", () => {
+    let notify = () => {};
+    mockState.subscribeGuestSessionChanges.mockImplementation(
+      (listener: () => void) => {
+        notify = listener;
+        return () => {};
+      },
+    );
+    mockState.getCachedGuestSession.mockReturnValue({
+      guestId: "guest_1",
+      token: "token_1",
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const { result } = renderHook(() => useActorKey());
+
+    mockState.getCachedGuestSession.mockReturnValue(null);
+    mockState.getCachedGuestId.mockReturnValue("guest_2");
     act(() => notify());
 
     expect(result.current).toBe("guest_2");

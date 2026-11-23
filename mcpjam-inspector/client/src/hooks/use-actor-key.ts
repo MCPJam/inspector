@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
+  getCachedGuestId,
   getCachedGuestSession,
   getOrCreateGuestSession,
   subscribeGuestSessionChanges,
@@ -26,12 +27,16 @@ export function useActorKey(): string | null {
 
   useEffect(() => {
     return subscribeGuestSessionChanges(() => {
-      // A cleared cache is not a different guest: the cookie still resolves
-      // the same one, and Convex keeps the token it already holds. Resetting
-      // here would leave Convex authenticated with no actor whenever the
-      // re-lookup below fails. Only a newly cached session changes the guest;
-      // sign-out is handled by the effect after this one.
-      const nextGuestId = getCachedGuestSession()?.guestId;
+      // An empty cache keeps the current guest. clearGuestSession() leaves the
+      // cookie, so it resolves the same guest, and Convex keeps the token it
+      // already holds; resetting here would leave Convex authenticated with
+      // no actor whenever the re-lookup below fails.
+      // revokeGuestSessionAndCookie() also empties the cache but expires the
+      // cookie. Its callers run while signed in, so user.id wins, and the
+      // sign-out effect after this one drops the guest.
+      // getCachedGuestId() skips the expiry buffer, so a rotation to another
+      // guest is followed even when the browser clock runs ahead.
+      const nextGuestId = getCachedGuestId();
       if (nextGuestId) setGuestId(nextGuestId);
     });
   }, []);
