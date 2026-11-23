@@ -329,6 +329,32 @@ describe("WebAccountReconnectPage", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
+  it("shows the newer open request when an older email's request is finished", async () => {
+    state.data["webClientReconnect:listWebReconnectRequests"] = [
+      { ...request, requestId: "req-2", openedAt: 3, waitingRunCount: 3 },
+      { ...request, status: "resolved", resolvedAt: 2 },
+    ];
+    state.handback.mockResolvedValue({ status: "resumed", resumedRuns: 3 });
+    visit(withRequest);
+    const page = screen.getByTestId("web-account-reconnect");
+    expect(page).toHaveTextContent(
+      "The sign-in request in your link is finished, and its runs resumed.",
+    );
+    expect(page).toHaveTextContent("3 runs wait for this account");
+    expect(page).not.toHaveTextContent("This account was signed in again");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Take over the browser" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Finish and resume runs" }),
+    );
+    expect(state.handback).toHaveBeenCalledWith(
+      "project-1",
+      "req-2",
+      "session-1",
+    );
+  });
+
   it("says when the account isn't in the project", () => {
     state.data["webClients:listWebAccounts"] = [];
     visit(withRequest);

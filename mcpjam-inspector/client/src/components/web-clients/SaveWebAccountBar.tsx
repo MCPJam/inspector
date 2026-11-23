@@ -2,9 +2,11 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { describeConvexFailure } from "@/lib/convex-error";
 import { webClientName, webClientSite } from "@/lib/web-accounts/clients";
-import type { SaveProfileResult } from "@/lib/web-accounts/routes";
+import {
+  webAccountFailureMessage,
+  type SaveProfileResult,
+} from "@/lib/web-accounts/routes";
 import type { WebClientVendor } from "@/shared/web-clients";
 
 type SaveRefusal = Extract<SaveProfileResult, { ok: false }>["reason"];
@@ -52,9 +54,12 @@ export function SaveWebAccountBar({
         toast.success(`${result.accountEmail} saved for the project.`);
       else setProblem(refusalText(result.reason, site, expectedEmail));
     } catch (failure) {
-      const fallback = "Couldn't save the account. Try again.";
-      const refusal = describeConvexFailure(failure, fallback);
-      setProblem(refusal.refusal ? refusal.message : fallback);
+      setProblem(
+        webAccountFailureMessage(
+          failure,
+          "Couldn't save the account. Try again.",
+        ),
+      );
     } finally {
       setSaving(false);
     }

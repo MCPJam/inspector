@@ -46,7 +46,8 @@ export function WebAccountsSettings({
   // On while any account allows local runs, so Stop revokes a mixed state in
   // one step instead of after allowing the rest.
   const localRunsAllowed = accounts.some((account) => account.allowLocalRuns);
-  // A member reads the notice under the list as covering every account in it.
+  // The notes under the list and under the switch read as covering every
+  // account, so a mixed state can't use the words for all of them.
   const everyAccountAllowsLocalRuns =
     accounts.length > 0 && accounts.every((account) => account.allowLocalRuns);
   return (
@@ -65,6 +66,11 @@ export function WebAccountsSettings({
             <LocalRunsControl
               noun="client"
               allowed={localRunsAllowed}
+              allowedNote={
+                everyAccountAllowsLocalRuns
+                  ? undefined
+                  : "Some of these accounts' saved sign-ins can be used by members' local apps. Stop turns all of them off."
+              }
               onChange={async (allowLocalRuns) => {
                 await Promise.all(
                   accounts.map(({ webAccountId }) =>

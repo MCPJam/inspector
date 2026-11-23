@@ -130,11 +130,13 @@ function Reconnect({
   const named = requestId
     ? ofAccount.find((r) => r.requestId === requestId)
     : undefined;
-  // The email names its request; Sign in again from settings names none. A
-  // named request that's gone falls back to the account's open one, so its
-  // waiting runs still resume.
-  const request =
-    named ?? ofAccount.find((r) => r.status === "open");
+  // The email names its request; Sign in again from settings names none.
+  // Either way the account's open request comes first: every waiting run
+  // shares it, so a link to a request that's gone or closed still resumes
+  // the runs waiting now.
+  const request = ofAccount.find((r) => r.status === "open") ?? named;
+  // An older email's request, closed since: the page still says how it ended.
+  const earlier = named !== request ? named : undefined;
   const gone = !!requestId && !request;
   const site = webClientSite(account.vendor);
   const open = !gone && (!request || request.status === "open");
@@ -203,6 +205,14 @@ function Reconnect({
           {webAccountName(account)} on {webClientName(account.vendor)}
         </p>
       </header>
+      {earlier ? (
+        <p className="text-sm text-muted-foreground">
+          {earlier.status === "resolved"
+            ? "The sign-in request in your link is finished, and its runs resumed."
+            : "The sign-in request in your link is closed."}{" "}
+          Since then, a run found this account signed out again.
+        </p>
+      ) : null}
       <dl className="space-y-2.5 text-sm">
         {rows.map(([term, detail]) => (
           <div key={term} className="space-y-0.5">
