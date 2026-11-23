@@ -260,6 +260,21 @@ describe("reportRouteFailure", () => {
     expect(captureException).not.toHaveBeenCalled();
   });
 
+  it("never promotes a frozen aborted request either", () => {
+    // A frozen error cannot carry the capture stamp, so it is reported through
+    // an `ensureStampable` wrapper whose own name is `Error`.
+    const controller = new AbortController();
+    controller.abort();
+    const { origin } = reportRouteFailure(
+      "Error in /chat-v2",
+      Object.freeze(controller.signal.reason),
+      { source: "web.chat-v2", hop: "mcpjam_internal" },
+    );
+
+    expect(origin).toBe("ambiguous");
+    expect(captureException).not.toHaveBeenCalled();
+  });
+
   it("STILL promotes a timeout on an internal hop", () => {
     // `AbortSignal.timeout` fires a `TimeoutError`, which can be our own
     // deadline running out; only an abort is the caller leaving.

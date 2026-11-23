@@ -112,8 +112,11 @@ const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
  * promoted. An internal deadline should abort with a reason or use
  * `AbortSignal.timeout` (a `TimeoutError`, still promoted); one built on a bare
  * `controller.abort()` is indistinguishable from the caller leaving.
+ *
+ * Reads the top-level name only. A caller that wraps the error before deciding
+ * must ask about the original, since the wrapper carries its own name.
  */
-function isCallerAbort(error: unknown): boolean {
+export function isCallerAbort(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   try {
     return (error as { name?: unknown }).name === "AbortError";
