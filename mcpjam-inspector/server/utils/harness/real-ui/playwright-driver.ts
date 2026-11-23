@@ -11,10 +11,12 @@
  * could open any site on the account's cookies, so another page is closed as
  * it opens, and the context's routes refuse its requests until it is gone.
  *
- * Playwright routes only the first request of a redirect chain, so an
- * allowed page that redirects elsewhere can't be stopped before it loads.
- * When the page lands off the sites anyway, it goes to a blank page and the
- * driver refuses every command until a `navigate` lands back on one of them.
+ * Playwright routes only the first request of a redirect chain, so each
+ * document request of the main frame, every hop of a chain included, is also
+ * paused over CDP and failed before it is sent when it leaves the sites. That
+ * is why the driver runs only in Chromium. If the page lands off the sites
+ * anyway, it goes to a blank page and the driver refuses every command until
+ * a `navigate` lands back on one of them.
  */
 import type { Frame, Page, Request } from "playwright";
 import {
@@ -50,6 +52,12 @@ export async function createPlaywrightDriver(
 ): Promise<PageDriver> {
   const sites = options.sites;
   const context = page.context();
+  if (context.browser()?.browserType().name() !== "chromium") {
+    throw new PageDriverError(
+      "unsupported",
+      "The driver runs only in Chromium, which can stop a redirect before it leaves the vendor's sites.",
+    );
+  }
   let leftFor: string | undefined;
   let departures = 0;
   page.on("framenavigated", (frame) => {
@@ -114,6 +122,40 @@ export async function createPlaywrightDriver(
   context.on("page", closeOther);
   context.pages().forEach(closeOther);
 
+  // The routes above never see a redirect's later hops. Here every document
+  // request of the main frame is paused before it is sent, and one that
+  // leaves the sites is failed, so the other site never receives it.
+  let stops = 0;
+  let stoppedAt: string | undefined;
+  const cdp = await context.newCDPSession(page);
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  cdp.on("Fetch.requestPaused", ({ requestId, frameId, request }) => {
+    const leaves =
+      frameId === frameTree.frame.id && !urlOnSites(request.url, sites);
+    if (leaves) {
+      stops += 1;
+      stoppedAt = new URL(request.url).origin;
+    }
+    const answered: Promise<unknown> = leaves
+      ? cdp.send("Fetch.failRequest", {
+          requestId,
+          errorReason: "BlockedByClient",
+        })
+      : cdp.send("Fetch.continueRequest", { requestId });
+    void answered.catch((error: unknown) => {
+      // The page closed, or its navigation was cancelled, while the request
+      // was paused: nothing was sent either way.
+      logger.debug("[web-clients] a paused document request had no answer", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      { urlPattern: "*", resourceType: "Document", requestStage: "Request" },
+    ],
+  });
+
   const locate = (selector: string) => page.locator(selector).first();
   const act = async (selector: string, run: () => Promise<void>) => {
     stayOnSites();
@@ -129,9 +171,18 @@ export async function createPlaywrightDriver(
     async navigate(url) {
       assertOnSites(url, sites);
       const before = departures;
+      const stopsBefore = stops;
       try {
         await page.goto(url, { waitUntil: "domcontentloaded" });
       } catch (error) {
+        // A hop off the sites was failed before it was sent, which ends the
+        // navigation in the browser's own error page.
+        if (stops !== stopsBefore) {
+          throw new PageDriverError(
+            "site_blocked",
+            `The page was sent to ${stoppedAt}, outside the sites this browser may open.`,
+          );
+        }
         // Sending the page away interrupts the navigation that left; that
         // ends as site_blocked below. Any other failure is the caller's.
         if (departures === before) {

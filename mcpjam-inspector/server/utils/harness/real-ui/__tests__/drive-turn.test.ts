@@ -41,6 +41,12 @@ afterEach(async () => {
   await upstream.close();
 });
 
+/**
+ * A page off the sites that no request carries, so neither the routes nor
+ * CDP see it land: what the driver's blank page is the second line for.
+ */
+const LANDED_WITHOUT_A_REQUEST = "data:text/html,<p>elsewhere</p>";
+
 /** A page in a context of its own: a driver closes every other page in its context. */
 async function newPage() {
   const context = await browser.newContext();
@@ -260,12 +266,24 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     },
   );
 
-  it("leaves a site that redirects elsewhere, and acts on nothing until it navigates back", async () => {
+  it("stops a redirect off its sites before the other site gets the request", async () => {
     const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
     vendor.redirectTo = `${upstream.url}/`;
     await expect(driver.navigate(`${vendor.url}/redirect`)).rejects.toMatchObject({ code: "site_blocked" });
+    expect(upstream.requests).toEqual([]);
+    // The browser shows its own error page in place of the other site.
+    await expect.poll(() => page.url()).toMatch(/^chrome-error:/);
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
+  it("goes blank when the page lands off its sites anyway, and acts on nothing until it navigates back", async () => {
+    const page = await newPage();
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
+    await page.goto(LANDED_WITHOUT_A_REQUEST, { waitUntil: "commit" });
     await expect.poll(() => page.url()).toBe("about:blank");
     await expect(driver.readText("body")).rejects.toMatchObject({ code: "site_blocked" });
     await driver.navigate(`${vendor.url}/new`);
@@ -275,8 +293,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   it("keeps refusing when the way back fails before it lands", async () => {
     const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
-    vendor.redirectTo = `${upstream.url}/`;
-    await expect(driver.navigate(`${vendor.url}/redirect`)).rejects.toMatchObject({ code: "site_blocked" });
+    await page.goto(LANDED_WITHOUT_A_REQUEST, { waitUntil: "commit" });
     await expect.poll(() => page.url()).toBe("about:blank");
     // An aborted navigation never commits, so the page stays where it was.
     await page.route(`${vendor.url}/new`, (route) => route.abort("aborted"));
