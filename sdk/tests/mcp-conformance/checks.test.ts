@@ -394,6 +394,32 @@ describe("mcp conformance unit checks", () => {
     expect(deletes[0].get("mcp-session-id")).toBe("session-close-1");
   });
 
+  it("sends the version the server agreed to, not the pin, on the closing DELETE", async () => {
+    const deletes: Headers[] = [];
+    const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === "DELETE") {
+        deletes.push(new Headers(init.headers));
+        return new Response(null, { status: 200 });
+      }
+      // A server whose newest version is 2025-06-18 answers a 2025-11-25
+      // request with the version it does speak.
+      return jsonResponse(
+        { jsonrpc: "2.0", id: 1, result: { protocolVersion: "2025-06-18" } },
+        { headers: { "mcp-session-id": "session-older-close" } },
+      );
+    }) as typeof fetch;
+    const base = createTransportContext(fetchFn);
+
+    await runTransportChecks(
+      { ...base, config: { ...base.config, protocolVersion: "2025-11-25" } } as any,
+      new Set(["server-sse-polling-session"]),
+    );
+
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].get("mcp-protocol-version")).toBe("2025-06-18");
+    expect(deletes[0].get("mcp-session-id")).toBe("session-older-close");
+  });
+
   it("does not count truncated SSE frames as complete events", async () => {
     const fetchFn = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { method?: string };
