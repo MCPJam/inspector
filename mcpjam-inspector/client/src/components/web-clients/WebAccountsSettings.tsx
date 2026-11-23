@@ -43,8 +43,9 @@ export function WebAccountsSettings({
   const setDefault = useMutation(webAccountsApi.setDefault);
   const remove = useMutation(webAccountsApi.remove);
   const setAllowLocalRuns = useMutation(webAccountsApi.setAllowLocalRuns);
-  const localRunsAllowed =
-    accounts.length > 0 && accounts.every((account) => account.allowLocalRuns);
+  // On while any account allows local runs, so Stop revokes a mixed state in
+  // one step instead of after allowing the rest.
+  const localRunsAllowed = accounts.some((account) => account.allowLocalRuns);
   return (
     <FocusBlock
       title="Accounts"
