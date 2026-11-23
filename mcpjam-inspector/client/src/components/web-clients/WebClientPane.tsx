@@ -3,12 +3,12 @@ import { useMutation } from "convex/react";
 import { KeyRound, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { describeConvexFailure } from "@/lib/convex-error";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
 import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   saveWebAccountProfile,
   startWebAccountSignIn,
+  webAccountFailureMessage,
 } from "@/lib/web-accounts/routes";
 import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
@@ -131,9 +131,12 @@ export function useWebClientPane({
         chatSessionId: started.chatSessionId ?? started.browserSessionId,
       });
     } catch (failure) {
-      const fallback = `Couldn't open a browser to sign in to ${site}. Try again.`;
-      const refusal = describeConvexFailure(failure, fallback);
-      toast.error(refusal.refusal ? refusal.message : fallback);
+      toast.error(
+        webAccountFailureMessage(
+          failure,
+          `Couldn't open a browser to sign in to ${site}. Try again.`,
+        ),
+      );
     } finally {
       setStarting(false);
     }

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { getFunctionName } from "convex/server";
+import { WebApiError } from "@/lib/apis/web/base";
 import type { WebReconnectRequest } from "@/lib/web-accounts/api";
 import { createWebAccountView } from "@/test/factories";
 import { WebAccountReconnectPage } from "../WebAccountReconnectPage";
@@ -26,6 +27,13 @@ vi.mock("posthog-js/react", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  // Like Convex's: a failed read throws during render.
+  useQuery: (query: never, args: unknown) => {
+    if (args === "skip") return undefined;
+    const value = state.data[getFunctionName(query)];
+    if (value instanceof Error) throw value;
+    return value;
+  },
   useQueries: (queries: Record<string, { query: never }>) =>
     Object.fromEntries(
       Object.entries(queries).map(([key, { query }]) => [
@@ -40,7 +48,8 @@ vi.mock("@/hooks/useProjects", () => ({
     isLoading: false,
   }),
 }));
-vi.mock("@/lib/web-accounts/routes", () => ({
+vi.mock("@/lib/web-accounts/routes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/web-accounts/routes")>()),
   startWebAccountSignIn: state.signIn,
   saveWebAccountProfile: state.save,
   handBackWebReconnect: state.handback,
@@ -226,6 +235,87 @@ describe("WebAccountReconnectPage", () => {
     expect(
       screen.getByRole("button", { name: "Take over the browser" }),
     ).toBeEnabled();
+  });
+
+  it("shows the route's own refusal when the browser can't open", async () => {
+    const refusal =
+      "Only a project admin can sign in a web account. Ask an admin to sign it in.";
+    state.signIn.mockRejectedValue(new WebApiError(403, refusal, refusal));
+    visit(withRequest);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Take over the browser" }),
+    );
+    expect(await screen.findByTestId("reconnect-outcome")).toHaveTextContent(
+      refusal,
+    );
+  });
+
+  it("never hands another account's request this account's browser", async () => {
+    state.data["webClientReconnect:listWebReconnectRequests"] = [
+      request,
+      {
+        ...request,
+        requestId: "req-other",
+        webAccountId: "wa-other",
+        reason: "chatgpt.com showed its sign-in page.",
+      },
+    ];
+    state.handback.mockResolvedValue({ status: "resumed", resumedRuns: 2 });
+    visit("/web-accounts/wa-1/reconnect?request=req-other&project=project-1");
+    const page = screen.getByTestId("web-account-reconnect");
+    expect(page).not.toHaveTextContent("chatgpt.com showed its sign-in page.");
+    expect(page).toHaveTextContent("claude.ai showed its sign-in page.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Take over the browser" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Finish and resume runs" }),
+    );
+    expect(state.handback).toHaveBeenCalledWith(
+      "project-1",
+      "req-1",
+      "session-1",
+    );
+  });
+
+  it("falls back to the account's open request when the named one is gone", async () => {
+    state.handback.mockResolvedValue({ status: "resumed", resumedRuns: 2 });
+    visit("/web-accounts/wa-1/reconnect?request=req-gone&project=project-1");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Take over the browser" }),
+    );
+    // Not the save-profile path: runs still wait on the open request.
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Finish and resume runs" }),
+    );
+    expect(state.handback).toHaveBeenCalledWith(
+      "project-1",
+      "req-1",
+      "session-1",
+    );
+    expect(state.save).not.toHaveBeenCalled();
+  });
+
+  it("says a named request no longer exists when none is open", () => {
+    state.data["webClientReconnect:listWebReconnectRequests"] = [];
+    visit("/web-accounts/wa-1/reconnect?request=req-gone&project=project-1");
+    expect(screen.getByTestId("web-account-reconnect")).toHaveTextContent(
+      "This sign-in request no longer exists, and no runs wait on this account.",
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
+  it("lets a failed read reach the route's error screen", () => {
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.data["webClients:listWebAccounts"] = new Error(
+      "The list didn't load.",
+    );
+    try {
+      // Not "Couldn't find this web account": the account may well exist.
+      expect(() => visit(withRequest)).toThrow("The list didn't load.");
+    } finally {
+      quiet.mockRestore();
+    }
   });
 
   it("shows a closed request's result without actions", () => {

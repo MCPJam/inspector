@@ -1,20 +1,14 @@
 import { useState, type ReactNode } from "react";
 import { useParams, useSearchParams } from "react-router";
-import { useConvexAuth } from "convex/react";
-import { getFunctionName } from "convex/server";
+import { useConvexAuth, useQuery } from "convex/react";
 import { CircleAlert, CircleCheck, Link2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Alert, AlertTitle } from "@mcpjam/design-system/alert";
 import { Button } from "@mcpjam/design-system/button";
-import { useSoftQuery } from "@/hooks/use-soft-query";
 import { useCanManageProjectClients } from "@/hooks/useProjects";
 import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { copyToClipboard } from "@/lib/clipboard";
-import {
-  webAccountsApi,
-  type WebAccount,
-  type WebReconnectRequest,
-} from "@/lib/web-accounts/api";
+import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   webAccountName,
   webClientName,
@@ -24,6 +18,7 @@ import {
   handBackWebReconnect,
   saveWebAccountProfile,
   startWebAccountSignIn,
+  webAccountFailureMessage,
   type HandbackResult,
 } from "@/lib/web-accounts/routes";
 import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
@@ -69,9 +64,9 @@ function handbackOutcome(
 
 /**
  * Where an admin signs a web account in again: from the email a waiting run
- * sends, from Take over on a paused run, or from Sign in again in a client's
- * settings. With runs waiting, finishing hands the account back so they
- * resume; with none, it saves the sign-in for the project.
+ * sends, or from Sign in again in a client's settings. With runs waiting,
+ * finishing hands the account back so they resume; with none, it saves the
+ * sign-in for the project.
  */
 export function WebAccountReconnectPage() {
   const { webAccountId } = useParams();
@@ -99,14 +94,10 @@ function Reconnect({
 }) {
   const { isAuthenticated } = useConvexAuth();
   const args = isAuthenticated ? { projectId } : "skip";
-  const accounts = useSoftQuery<WebAccount[]>(
-    getFunctionName(webAccountsApi.list),
-    args,
-  );
-  const requests = useSoftQuery<WebReconnectRequest[]>(
-    getFunctionName(webAccountsApi.reconnectRequests),
-    args,
-  );
+  // The data this page is about: a failed read throws to the route's error
+  // screen rather than passing for an account that isn't there.
+  const accounts = useQuery(webAccountsApi.list, args);
+  const requests = useQuery(webAccountsApi.reconnectRequests, args);
   const role = useCanManageProjectClients({ isAuthenticated, projectId });
   const [signIn, setSignIn] = useState<{
     browserSessionId: string;
@@ -115,8 +106,8 @@ function Reconnect({
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome>();
 
-  const account = accounts.data?.find((a) => a.webAccountId === webAccountId);
-  if (accounts.error || requests.error || (accounts.data && !account))
+  const account = accounts?.find((a) => a.webAccountId === webAccountId);
+  if (accounts && !account)
     return (
       <Page>
         <p role="alert" className="text-sm text-destructive">
@@ -125,7 +116,7 @@ function Reconnect({
         </p>
       </Page>
     );
-  if (!account || !requests.data || role.isLoading)
+  if (!account || !requests || role.isLoading)
     return (
       <Page>
         <p role="status" className="text-sm text-muted-foreground">
@@ -133,24 +124,31 @@ function Reconnect({
         </p>
       </Page>
     );
-  // The email names its request; Sign in again from settings finds the
-  // account's open one, so its waiting runs resume either way.
-  const request = requests.data.find((r) =>
-    requestId
-      ? r.requestId === requestId
-      : r.webAccountId === webAccountId && r.status === "open",
-  );
+  // Only this account's requests count: a link naming another account's
+  // request must not hand that request this account's browser.
+  const ofAccount = requests.filter((r) => r.webAccountId === webAccountId);
+  const named = requestId
+    ? ofAccount.find((r) => r.requestId === requestId)
+    : undefined;
+  // The email names its request; Sign in again from settings names none. A
+  // named request that's gone falls back to the account's open one, so its
+  // waiting runs still resume.
+  const request =
+    named ?? ofAccount.find((r) => r.status === "open");
+  const gone = !!requestId && !request;
   const site = webClientSite(account.vendor);
-  const open = !request || request.status === "open";
+  const open = !gone && (!request || request.status === "open");
 
   const run = async (step: () => Promise<void>, fallback: string) => {
     setBusy(true);
     setOutcome(undefined);
     try {
       await step();
-    } catch {
-      // A route failure says nothing a person can act on beyond trying again.
-      setOutcome({ tone: "warning", text: fallback });
+    } catch (failure) {
+      setOutcome({
+        tone: "warning",
+        text: webAccountFailureMessage(failure, fallback),
+      });
     } finally {
       setBusy(false);
     }
@@ -225,9 +223,11 @@ function Reconnect({
       ) : null}
       {!open ? (
         <p className="text-sm text-muted-foreground">
-          {request?.status === "resolved"
-            ? "This account was signed in again, and its waiting runs resumed."
-            : "This request was closed because the account was removed."}
+          {gone
+            ? "This sign-in request no longer exists, and no runs wait on this account. Check the account in its client's Browser settings."
+            : request?.status === "resolved"
+              ? "This account was signed in again, and its waiting runs resumed."
+              : "This request was closed because the account was removed."}
         </p>
       ) : !role.canManage ? (
         <div className="space-y-2 text-sm text-muted-foreground">

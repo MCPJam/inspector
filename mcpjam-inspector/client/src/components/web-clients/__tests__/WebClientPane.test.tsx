@@ -1,6 +1,7 @@
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { WebApiError } from "@/lib/apis/web/base";
 import type { WebAccount } from "@/lib/web-accounts/api";
 import type { SaveProfileResult } from "@/lib/web-accounts/routes";
 import { createWebAccountView } from "@/test/factories";
@@ -22,7 +23,8 @@ vi.mock("@/lib/browser-shell/chat-handoff", () => ({ releaseBrowserForChat: mock
 vi.mock("sonner", () => ({ toast: mocks.toast }));
 vi.mock("@/hooks/use-web-accounts", () => ({ useWebAccounts: mocks.accounts }));
 vi.mock("convex/react", () => ({ useMutation: () => mocks.create }));
-vi.mock("@/lib/web-accounts/routes", () => ({
+vi.mock("@/lib/web-accounts/routes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/web-accounts/routes")>()),
   startWebAccountSignIn: mocks.signIn,
   saveWebAccountProfile: mocks.save,
 }));
@@ -238,6 +240,17 @@ describe("useWebClientPane", () => {
       ),
     );
     expect(screen.getByRole("button", { name: "Sign in again" })).toBeEnabled();
+  });
+
+  it("shows the route's own refusal when the sign-in browser can't open", async () => {
+    const refusal =
+      "Only a project admin can sign in a web account. Ask an admin to sign it in.";
+    mocks.signIn.mockRejectedValue(new WebApiError(403, refusal, refusal));
+    mount({ isAdmin: true, accounts: [signedOut] });
+    await userEvent.click(screen.getByRole("button", { name: "Sign in again" }));
+    await waitFor(() =>
+      expect(mocks.toast.error).toHaveBeenCalledWith(refusal),
+    );
   });
 
   it("waits for the account list before choosing a view", () => {

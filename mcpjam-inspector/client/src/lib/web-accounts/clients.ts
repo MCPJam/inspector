@@ -50,16 +50,16 @@ export function runAccountOf(accounts: readonly WebAccount[]) {
 }
 
 /** How the chip and the suite name an account: its address, else its name. */
+export function webAccountName(account: WebAccount): string {
+  return account.accountEmail || account.label;
+}
+
 /**
  * Whether anyone ever signed this account in. A new account also reads
  * `needs_sign_in`, but the site never signed it out, so it is told apart.
  */
 export function webAccountWasSignedIn(account: WebAccount): boolean {
   return account.hasProfile || account.lastVerifiedAt !== undefined;
-}
-
-export function webAccountName(account: WebAccount): string {
-  return account.accountEmail || account.label;
 }
 
 /**
