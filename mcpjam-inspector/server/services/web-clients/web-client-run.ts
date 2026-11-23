@@ -9,11 +9,9 @@
  */
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
-import {
-  webClientVendorForRuntime,
-  type WebClientVendor,
-} from "@/shared/web-clients";
+import { webClientVendorForRuntime } from "@/shared/web-clients";
 import { convexErrorData } from "../../routes/v1/convex-errors.js";
+import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
 import { logger } from "../../utils/logger.js";
 
 export type WebClientRunContext = {
@@ -90,32 +88,37 @@ export function rotateRunAccounts(args: {
 }
 
 /**
- * Freezes the accounts a web client's eval run uses, before any turn. The
- * backend's refusal (web clients off for the project, no access) is the
- * run's reason to stop, in the backend's words.
+ * Freezes the accounts a web client's eval run uses, before any turn; a run
+ * on another runtime freezes none. A run whose accounts can't be frozen is
+ * failed before it executes (`failRun`), then refused: with 400 in the
+ * backend's words when it refused (web clients off for the project, no
+ * access), and with 503 when it couldn't answer, since a later run can work.
  */
-export async function recordEvalRunWebAccounts(args: {
+export async function freezeEvalRunWebAccounts(args: {
   convexClient: Pick<ConvexHttpClient, "mutation">;
   runId: string;
-  vendor: WebClientVendor;
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  harness: string | undefined;
+  failRun(reason: string): Promise<void>;
+}): Promise<void> {
+  const vendor = webClientVendorForRuntime(args.harness);
+  if (!vendor) return;
   try {
     await args.convexClient.mutation(
       "webClientSuites:recordWebAccountsAtRun" as never,
-      { runId: args.runId, vendor: args.vendor } as never,
+      { runId: args.runId, vendor } as never,
     );
-    return { ok: true };
   } catch (error) {
-    const message = convexErrorData(error)?.message;
-    if (typeof message === "string" && message.trim()) {
-      return { ok: false, reason: message };
+    const details = { reason: "WEB_ACCOUNTS_UNAVAILABLE" };
+    const refusal = convexErrorData(error)?.message;
+    if (typeof refusal === "string" && refusal.trim()) {
+      await args.failRun(refusal);
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, refusal, details);
     }
     logger.warn("[web-clients] recording the run's web accounts failed", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return {
-      ok: false,
-      reason: "This run's web accounts couldn't be recorded, so it stopped before any turn. Run it again.",
-    };
+    const reason = "This run's web accounts couldn't be recorded, so it stopped before any turn. Run it again.";
+    await args.failRun(reason);
+    throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, reason, details);
   }
 }
