@@ -127,6 +127,8 @@ export async function driveRealUiTurn(
 
     let conversationUrl: string | undefined;
     let resumed = false;
+    // When the send began, for a send journaled before its chat was known.
+    let sentWithoutChatAt: string | undefined;
     const journaled = await input.journal.read(input.turnKey);
     if (journaled) {
       enter("send");
@@ -192,6 +194,7 @@ export async function driveRealUiTurn(
         ...(conversationUrl ? { conversationUrl } : {}),
       });
       sendUnconfirmed = false;
+      if (!conversationUrl) sentWithoutChatAt = sendingAt;
     }
 
     enter("reply");
@@ -217,6 +220,15 @@ export async function driveRealUiTurn(
       },
     );
     conversationUrl ??= await driver.url();
+    if (sentWithoutChatAt) {
+      // With its chat and the send's own time, so a restart comes straight
+      // back here rather than search and maybe stop as ambiguous.
+      await input.journal.write(input.turnKey, {
+        state: "sent",
+        at: sentWithoutChatAt,
+        conversationUrl,
+      });
+    }
 
     enter("read_conversation");
     const conversation = await module.readConversation(

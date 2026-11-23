@@ -146,6 +146,35 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(vendor.sends).toHaveLength(2);
   });
 
+  it("journals a chat it learns only after the reply, so a restart comes back to it", async () => {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    // A site that doesn't say which chat the send landed in.
+    const module: RealUiPageModule = {
+      ...fixture,
+      async send(driver, prompt, ctx) {
+        await fixture.send(driver, prompt, ctx);
+        return {};
+      },
+    };
+    const journal = createMemorySendJournal();
+    const first = await turn(await signedInDriver(), journal, { module });
+    const entry = await journal.read("turn-1");
+    expect(entry).toMatchObject({
+      state: "sent",
+      conversationUrl: first.conversation.url,
+    });
+    // Still the send's own time, from before its chat was created.
+    const chat = vendor.chats.get(first.conversation.conversationId);
+    expect(Date.parse(entry!.at)).toBeLessThanOrEqual(
+      Date.parse(chat!.createdAt),
+    );
+    // Another turn sends the same prompt in a newer chat before the restart.
+    await turn(await signedInDriver());
+    const again = await turn(await signedInDriver(), journal, { module });
+    expect(again.resumed).toBe(true);
+    expect(again.conversation.url).toBe(first.conversation.url);
+  });
+
   it("replaces a connector whose URL only starts with the one it needs", async () => {
     vendor.connectors.set("MCPJam fixture", `${upstream.url}-old`);
     await turn(await signedInDriver());
