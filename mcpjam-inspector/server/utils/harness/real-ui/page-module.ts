@@ -11,6 +11,10 @@
  * Every one is a failure of the run, never of the project's server: nothing
  * about the server was measured when the page could not be driven.
  */
+import type {
+  PendingStep,
+  SignInReason,
+} from "../../../services/web-clients/recovery/backend.js";
 import type { PageDriver } from "./page-driver.js";
 
 export type RealUiStep =
@@ -22,22 +26,18 @@ export type RealUiStep =
   | "reply"
   | "read_conversation";
 
-/** Why a person has to act before the run can continue. */
-export type NeedsSignInReason =
-  | "signed_out"
-  /** A "Verify you are human" check or similar. Never answered by MCPJam. */
-  | "human_check"
-  | "password"
-  | "mfa"
-  | "consent"
-  /** Signed in, but not as the account the project saved. */
-  | "wrong_account";
-
 /**
- * The step a run was on, kept for each step so a stopped run can be resumed
- * from it once a person has finished signing in.
+ * Why a person has to act before the run can continue: the reasons recovery
+ * records. A `human_check` ("Verify you are human" or similar) is never
+ * answered by MCPJam, and `wrong_account` is signed in, but not as the
+ * account the project saved.
  */
-export type PendingStep = { stepId: RealUiStep; startedAt: string; turnId?: string };
+export type NeedsSignInReason = SignInReason;
+
+// The step a run was on, kept for each step so a stopped run can be resumed
+// from it once a person has finished signing in. Recovery stores it as given;
+// a page turn's `stepId` is a `RealUiStep`.
+export type { PendingStep };
 
 export type RealUiFailure =
   | {
