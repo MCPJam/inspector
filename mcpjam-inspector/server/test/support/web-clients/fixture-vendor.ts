@@ -228,7 +228,9 @@ export async function startFixtureVendor(): Promise<FixtureVendor> {
       vendor.connectors.set(name, target);
       json(200, { ok: true });
     } else if (url.pathname.startsWith("/api/connectors/") && request.method === "DELETE") {
-      const name = decodeURIComponent(url.pathname.slice("/api/connectors/".length));
+      const name = decodeURIComponent(
+        url.pathname.slice("/api/connectors/".length),
+      );
       vendor.connectors.delete(name);
       alwaysAllowed.delete(name);
       json(200, { ok: true });

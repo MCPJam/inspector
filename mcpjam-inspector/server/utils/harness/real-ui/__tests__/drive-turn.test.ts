@@ -33,6 +33,8 @@ if (process.env.CI && !CHROMIUM_AVAILABLE) {
     "The real-UI turn suite needs Chromium, which the pinned Playwright CI image installs.",
   );
 }
+/** `describe`, skipped where the pinned Chromium isn't installed. */
+const inChromium = describe.skipIf(!CHROMIUM_AVAILABLE);
 
 let browser: Browser;
 const contexts: BrowserContext[] = [];
@@ -93,7 +95,7 @@ function turn(
 }
 
 // A real browser under a loaded test runner: each turn gets room to finish.
-describe.skipIf(!CHROMIUM_AVAILABLE)("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
+inChromium("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   it("adds the connector, sends once, answers the app's approval and reads the saved chat", async () => {
     const steps: string[] = [];
     const driver = await signedInDriver();
