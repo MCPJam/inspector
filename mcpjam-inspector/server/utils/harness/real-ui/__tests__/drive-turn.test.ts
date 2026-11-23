@@ -7,6 +7,7 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { chromium, type Browser, type BrowserContext } from "playwright";
+import { isChromiumInstalled } from "../../../browser-rendering-setup";
 import {
   startFixtureUpstream,
   type FixtureUpstream,
@@ -23,6 +24,15 @@ import {
 import { createFixtureWebPageModule } from "../fixture-web";
 import { RealUiError, type RealUiPageModule } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
+
+// Locally a missing browser skips the suite. CI's pinned Playwright image
+// ships Chromium, so there its absence fails instead of skipping these checks.
+const CHROMIUM_AVAILABLE = await isChromiumInstalled();
+if (process.env.CI && !CHROMIUM_AVAILABLE) {
+  throw new Error(
+    "The real-UI turn suite needs Chromium, which the pinned Playwright CI image installs.",
+  );
+}
 
 let browser: Browser;
 const contexts: BrowserContext[] = [];
@@ -83,7 +93,7 @@ function turn(
 }
 
 // A real browser under a loaded test runner: each turn gets room to finish.
-describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
+describe.skipIf(!CHROMIUM_AVAILABLE)("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   it("adds the connector, sends once, answers the app's approval and reads the saved chat", async () => {
     const steps: string[] = [];
     const driver = await signedInDriver();
