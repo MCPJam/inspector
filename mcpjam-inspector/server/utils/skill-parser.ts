@@ -1,8 +1,8 @@
-import { splitSkillMarkdown } from "@mcpjam/sdk";
-import matter from "gray-matter";
 import fs from "fs/promises";
 import path from "path";
+import { stringify as stringifyYaml } from "yaml";
 import { logger } from "./logger";
+import { readSkillDocument } from "../../shared/skill-document";
 import {
   isValidSkillName,
   type Skill,
@@ -198,14 +198,6 @@ export function parseSkillFile(
   return parseSkillFileWithFrontmatter(fileContent, skillPath)?.skill ?? null;
 }
 
-/** The Inspector accepts YAML frontmatter; skill files cannot select a parser. */
-export function readSkillDocument(fileContent: string) {
-  // Preserve the optional BOM, explicit YAML marker and trailing blanks accepted
-  // by older skill files while passing only the standard delimiter to the SDK.
-  const markdown = fileContent.replace(/^\uFEFF?---(?:yaml)?[ \t]*(?=\r?\n)/, "---");
-  return splitSkillMarkdown(markdown);
-}
-
 export function parseSkillFileWithFrontmatter(
   fileContent: string,
   skillPath: string,
@@ -283,9 +275,13 @@ export function generateSkillFileContent(
   description: string,
   content: string,
 ): string {
-  // Quotes a description that YAML would misread, such as "Fetches: weather".
-  // A string first argument is parsed as a document of its own, which strips a
-  // body that opens with `---` and merges its keys into the frontmatter; the
-  // `{ content }` form keeps the body as written.
-  return matter.stringify({ content }, { name, description });
+  // The YAML 1.2 core schema `readSkillDocument` parses with, so a value it
+  // would misread, such as "Fetches: weather" or the name "0o12", is quoted
+  // and reads back as the same string. `lineWidth: 0` keeps a long
+  // description on one line. The body is appended as written, never parsed.
+  const frontmatter = stringifyYaml(
+    { name, description },
+    { schema: "core", lineWidth: 0 },
+  );
+  return `---\n${frontmatter}---\n\n${content}`;
 }

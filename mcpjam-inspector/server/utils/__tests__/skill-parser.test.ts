@@ -8,6 +8,7 @@ vi.mock("../logger", () => ({
   logger: mockLogger,
 }));
 
+import { readSkillDocument } from "../../../shared/skill-document";
 import { generateSkillFileContent, parseSkillFile } from "../skill-parser";
 
 const INVALID_YAML = "---\nname: my-skill\ndescription: [unclosed\n---\nBody\n";
@@ -53,6 +54,17 @@ describe("parseSkillFile", () => {
       mockLogger.warn.mock.calls[0],
     );
   });
+
+  it("never runs a ---js frontmatter block", () => {
+    const evaluated = globalThis as { skillFrontmatterRan?: boolean };
+    const skill = parseSkillFile(
+      "---js\n(globalThis.skillFrontmatterRan = true, { name: 'my-skill', description: 'x' })\n---\nBody\n",
+      "my-skill/SKILL.md",
+    );
+
+    expect(skill).toBeNull();
+    expect(evaluated.skillFrontmatterRan).toBeUndefined();
+  });
 });
 
 describe("generateSkillFileContent", () => {
@@ -69,6 +81,39 @@ describe("generateSkillFileContent", () => {
       content: "Body",
       path: "weather/SKILL.md",
     });
+  });
+
+  it("writes names that YAML 1.2 reads as other types so they parse back as strings", () => {
+    for (const name of ["0o12", "123", "null", "on"]) {
+      const fileContent = generateSkillFileContent(
+        name,
+        "Does a thing",
+        "Body",
+      );
+
+      expect(parseSkillFile(fileContent, `${name}/SKILL.md`)?.name).toBe(name);
+    }
+  });
+
+  it("writes frontmatter the upload dialog's reader returns unchanged", () => {
+    const description = "Fetches: weather data. ".repeat(10).trim();
+    const fileContent = generateSkillFileContent("on", description, "Body");
+
+    expect(readSkillDocument(fileContent).frontmatter).toEqual({
+      name: "on",
+      description,
+    });
+    expect(fileContent).not.toContain(">-");
+  });
+
+  it("writes a ---javascript body as text without running it", () => {
+    const evaluated = globalThis as { skillBodyRan?: boolean };
+    const body =
+      "---javascript\n(globalThis.skillBodyRan = true, {})\n---\nBody";
+    const fileContent = generateSkillFileContent("weather", "Weather", body);
+
+    expect(evaluated.skillBodyRan).toBeUndefined();
+    expect(parseSkillFile(fileContent, "weather/SKILL.md")?.content).toBe(body);
   });
 
   it("keeps a body that opens with its own --- block as written", () => {
