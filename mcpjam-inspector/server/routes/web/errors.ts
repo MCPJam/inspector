@@ -11,6 +11,7 @@ import {
 } from "@mcpjam/sdk";
 import { extractInsufficientScopeChallenge } from "../../utils/mcp-error-serialize.js";
 import {
+  isRequestSignalAbort,
   markOriginCaptureHandled,
   maybeCaptureOriginError,
   type CapturePolicy,
@@ -535,6 +536,12 @@ export interface MapRuntimeErrorOptions {
   capture?: (mapped: { status: number; code: string }) =>
     | CapturePolicy
     | undefined;
+  /**
+   * The inbound request's signal (`c.req.raw.signal`). A failure caused by the
+   * caller leaving promotes nothing, whatever `boundary` declares. See
+   * `isRequestSignalAbort`.
+   */
+  requestSignal?: AbortSignal;
 }
 
 /**
@@ -565,8 +572,12 @@ export interface MapRuntimeErrorOptions {
  */
 function effectiveBoundary(
   routeError: WebRouteError,
-  options: MapRuntimeErrorOptions | undefined
+  options: MapRuntimeErrorOptions | undefined,
+  // What the route threw. `routeError` is our own wrapper when the mapper
+  // built it, and never carries the caller's abort.
+  original: unknown,
 ): OriginCaptureBoundary | undefined {
+  if (isRequestSignalAbort(original, options?.requestSignal)) return undefined;
   if (options?.boundary !== "mcpjam_internal") return options?.boundary;
   return routeError.status >= 500 &&
     routeError.code === ErrorCode.INTERNAL_ERROR
@@ -621,7 +632,7 @@ export function mapRuntimeError(
     });
     const decision = maybeCaptureOriginError(error, error.normalized, {
       source: "web.mapRuntimeError",
-      boundary: effectiveBoundary(error, options),
+      boundary: effectiveBoundary(error, options, error),
       extra: { status: error.status, code: error.code },
       ...(capture ? { capture } : {}),
     });
@@ -643,7 +654,7 @@ export function mapRuntimeError(
   });
   const decision = maybeCaptureOriginError(routeError, routeError.normalized, {
     source: "web.mapRuntimeError",
-    boundary: effectiveBoundary(routeError, options),
+    boundary: effectiveBoundary(routeError, options, error),
     extra: { status: routeError.status, code: routeError.code },
     ...(capture ? { capture } : {}),
   });

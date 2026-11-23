@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import {
   ensureStampable,
   isCallerAbort,
+  isRequestSignalAbort,
   maybeCaptureOriginError,
   type CapturePolicy,
   type OriginCaptureBoundary,
@@ -228,39 +229,6 @@ function isUserServerHopFault(error: unknown): boolean {
       }
       current = (current as { cause?: unknown }).cause;
     } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-/**
- * Did the failure come from the request's own signal aborting?
- *
- * `@hono/node-server` aborts `c.req.raw.signal` with a STRING reason when the
- * client disconnects ("Client connection prematurely closed."), and `fetch`
- * rejects with that same value, so a closed tab reaches the catch with no
- * `AbortError` name for `isCallerAbort` to see. Identity with the reason is
- * what proves it. Our own deadlines (`AbortSignal.timeout`, a controller of
- * our own) abort with a different value, so they are still promoted.
- */
-function isRequestSignalAbort(
-  error: unknown,
-  signal: AbortSignal | undefined,
-): boolean {
-  if (!signal?.aborted) return false;
-  const seen = new Set<unknown>();
-  let current: unknown = error;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
-    if (current === signal.reason) return true;
-    if (typeof current !== "object" || current === null || seen.has(current)) {
-      return false;
-    }
-    seen.add(current);
-    try {
-      current = (current as { cause?: unknown }).cause;
-    } catch {
-      // Proxy `get` trap. See `isUserServerHopFault`.
       return false;
     }
   }
