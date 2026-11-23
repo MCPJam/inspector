@@ -68,7 +68,12 @@ function quoteCmdArgument(arg: string): string {
       `Cannot pass ${JSON.stringify(arg)} to npx through cmd.exe safely.`,
     );
   }
-  return /^[\w@./:=-]+$/.test(arg) ? arg : `"${arg}"`;
+  if (/^[\w@./:=-]+$/.test(arg)) {
+    return arg;
+  }
+  // Backslashes before a quote are escapes to the argv parser, so a trailing
+  // backslash would swallow the closing quote and the next argument.
+  return `"${arg.replace(/(\\+)$/, "$1$1")}"`;
 }
 
 export async function startInspector(

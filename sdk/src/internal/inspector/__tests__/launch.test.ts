@@ -11,7 +11,7 @@ function spawnFromChildNode(invocation: NpxInvocation) {
     const { spawnSync } = require("node:child_process");
     const { command, args, shell } = JSON.parse(process.argv[1]);
     const result = spawnSync(command, args, { shell, stdio: "inherit" });
-    process.exit(result.status ?? 1);
+    process.exitCode = result.status ?? 1;
   `;
   return spawnSync(
     process.execPath,
@@ -50,6 +50,16 @@ describe("npxInvocation", () => {
       args: [],
       shell: true,
     });
+  });
+
+  it("doubles a trailing backslash before the closing quote", () => {
+    expect(
+      npxInvocation(
+        ["--prefix", "C:\\my work\\", "--version"],
+        "win32",
+        noNpxCli,
+      ).command,
+    ).toBe('npx.cmd --prefix "C:\\my work\\\\" --version');
   });
 
   it.each(['say "hi"', "%PATH%", "x!y", "two\nlines"])(
