@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  buildMrtrToolResultMessage,
   resolveMrtrChatResume,
   spliceMrtrToolResult,
   type ResolveMrtrChatResumeDeps,
@@ -421,6 +422,43 @@ describe("resolveMrtrChatResume — Mcp-Param-* on a resume leg", () => {
       kind: "halted",
       outcome: "failed",
       reason: "Mcp-Param-Region header is absent",
+    });
+  });
+});
+
+describe("buildMrtrToolResultMessage — the host's client rule (KES-1007)", () => {
+  const result = {
+    content: [{ type: "text", text: "VIS-CONTENT" }],
+    structuredContent: { token: "VIS-STRUCTURED" },
+    _meta: { token: "VIS-META" },
+  };
+
+  it("projects a resumed call by the rule and keeps the raw result for the UI", async () => {
+    const message = await buildMrtrToolResultMessage(
+      "call-1",
+      "probe",
+      "srv-1",
+      result as any,
+      { structuredContent: "fallback" },
+      makeManager() as any,
+    );
+    const part = (message.content as any[])[0];
+    expect(part.output).toEqual({ type: "text", value: "VIS-CONTENT" });
+    expect(part.result).toBe(result);
+  });
+
+  it("keeps today's JSON projection without a rule", async () => {
+    const message = await buildMrtrToolResultMessage(
+      "call-1",
+      "probe",
+      "srv-1",
+      result as any,
+      undefined,
+      makeManager() as any,
+    );
+    expect((message.content as any[])[0].output).toEqual({
+      type: "json",
+      value: result,
     });
   });
 });

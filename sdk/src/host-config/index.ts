@@ -46,6 +46,7 @@ export type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,

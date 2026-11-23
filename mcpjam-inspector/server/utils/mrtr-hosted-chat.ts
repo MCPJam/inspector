@@ -45,6 +45,8 @@ import type { ModelMessage, ToolResultPart } from "ai";
 import type { UIMessageChunk } from "ai";
 import {
   mcpCallToolResultToModelOutputWithLinkedResources,
+  projectToolResultByRule,
+  structuredContentRuleOf,
   type MCPClientManager,
   type McpLinkedResourceReader,
   type InputResponses,
@@ -243,14 +245,23 @@ export async function buildMrtrToolResultMessage(
       readOptions?.abortSignal ? { signal: readOptions.abortSignal } : undefined,
     );
   let output: ToolResultPart["output"];
-  try {
-    const mapped = (await mcpCallToolResultToModelOutputWithLinkedResources(
-      result as any,
-      { modelVisibleMcpToolResults, readResource },
-    )) as ToolResultPart["output"] | undefined;
-    output = mapped ?? ({ type: "json", value: result as unknown } as any);
-  } catch {
-    output = { type: "json", value: result as unknown } as any;
+  const rule = structuredContentRuleOf(modelVisibleMcpToolResults);
+  if (rule) {
+    // The host's client rule, as the live tool path applies it.
+    output = (await projectToolResultByRule(result, rule, {
+      modelVisibleMcpToolResults,
+      readResource,
+    })) as ToolResultPart["output"];
+  } else {
+    try {
+      const mapped = (await mcpCallToolResultToModelOutputWithLinkedResources(
+        result as any,
+        { modelVisibleMcpToolResults, readResource },
+      )) as ToolResultPart["output"] | undefined;
+      output = mapped ?? ({ type: "json", value: result as unknown } as any);
+    } catch {
+      output = { type: "json", value: result as unknown } as any;
+    }
   }
   const providerOptions = mergeMcpToolOriginMetadata(undefined, serverId);
   return {

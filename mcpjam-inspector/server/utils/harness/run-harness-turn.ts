@@ -330,6 +330,7 @@ import {
   type HarnessPolicyBlockEvent,
 } from "./harness-policy-block-channel.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import {
   harnessScopeStepUpServerMatches,
   matchHarnessScopeStepUpToolCall,
@@ -862,7 +863,7 @@ export async function runHarnessTurn(
     onLiveTextDelta,
     requireToolApproval,
     approvalMode,
-    modelVisibleMcpToolResults,
+    modelVisibleMcpToolResults: hostModelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
     chatSessionId,
@@ -894,6 +895,11 @@ export async function runHarnessTurn(
     createHarnessScopeStepUpContinuation,
     turnTiming,
   } = options;
+  // Harness runs keep today's projection even when the client row records its
+  // rule (KES-1007): admission, fingerprints and relayed results stay as they were.
+  const modelVisibleMcpToolResults = withoutStructuredContentRule(
+    hostModelVisibleMcpToolResults,
+  );
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
