@@ -138,6 +138,7 @@ export function FlowSankeyDiagram<S extends string>({
   ariaLabel,
   fillHeight = false,
   fillRemainingViewport = false,
+  scrollHorizontally = false,
   labelForNode,
   headerContent,
   headerTrailing,
@@ -180,6 +181,8 @@ export function FlowSankeyDiagram<S extends string>({
    * The page must not grow with the SVG — that is what orphaned the ribbons.
    */
   fillRemainingViewport?: boolean;
+  /** Keep overflowing column controls reachable in a content-sized chart. */
+  scrollHorizontally?: boolean;
   /** Persist a dragged permutation of `stages`. Omit to keep headers fixed. */
   onReorderStages?: (stages: S[]) => void;
   /** Block drag while a column editor is open so the pointer stays on the form. */
@@ -294,7 +297,11 @@ export function FlowSankeyDiagram<S extends string>({
       className={cn(
         "relative z-0 w-full min-w-0",
         fillsPane && "min-h-0 flex-1",
-        paneScrolls ? "overflow-auto" : "overflow-hidden",
+        paneScrolls
+          ? "overflow-auto"
+          : scrollHorizontally
+            ? "overflow-x-auto"
+            : "overflow-hidden",
       )}
     >
       <div

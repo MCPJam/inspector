@@ -166,6 +166,7 @@ function OverviewSessionFlow({ row, projectId }: { row: OverviewWave; projectId:
     <SessionFlowSankey
       hideTitle
       goalGroupsByJourney
+      scrollLayout="content"
       breakdown={breakdown}
       selection={selection}
       onSelectNode={selectFlow}

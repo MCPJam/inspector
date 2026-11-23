@@ -656,7 +656,7 @@ describe("describeSwarmIdentity", () => {
 });
 
 describe("Overview — history and report", () => {
-  it("uses content height for a populated flow in the scrolling report", async () => {
+  it("uses content height and allows horizontal scrolling for column controls", async () => {
     usageBreakdown = {
       themes: [],
       userBreakdown: [],
@@ -692,6 +692,9 @@ describe("Overview — history and report", () => {
     ).toBeInTheDocument();
     expect(report.getByTestId("scenario-insights-sankey")).not.toHaveAttribute(
       "data-fill-remaining",
+    );
+    expect(report.getByTestId("sankey-chart-pane")).toHaveClass(
+      "overflow-x-auto",
     );
   });
 

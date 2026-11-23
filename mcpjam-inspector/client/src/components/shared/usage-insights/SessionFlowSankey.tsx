@@ -78,15 +78,11 @@ export interface SessionFlowSankeyProps {
    */
   fillHeight?: boolean;
   /**
-   * Opt into the leftover-pane chrome: the diagram bleeds to its already-
-   * padded owning container (no card padding, no `border-b`) and fills that
-   * parent, scrolling columns under sticky titles. Only use this when the
-   * parent height is constrained independently of the diagram. This is the swarm
-   * Insights opt-in and is NOT implied by `!fillHeight` — the plain
-   * embedded callers (BenchReport, the explanatory opt-in) keep the card
-   * chrome.
+   * Use the owning container's padding and scroll the chart horizontally.
+   * `true` also fills a parent with an independently constrained height.
+   * Use `"content"` in a report whose height grows with the chart.
    */
-  scrollLayout?: boolean;
+  scrollLayout?: boolean | "content";
   /**
    * localStorage slot for a dragged column permutation. Omit for an
    * ephemeral order that resets on remount (embedded / opt-in callers).
@@ -458,7 +454,7 @@ export function SessionFlowSankey({
       )}
       data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
-      data-fill-remaining={scrollLayout ? "true" : undefined}
+      data-fill-remaining={scrollLayout === true ? "true" : undefined}
     >
       {scan?.truncated ? (
         <div
@@ -602,7 +598,8 @@ export function SessionFlowSankey({
         }
         ariaLabel="Session flow from goal through behavior and outcome to sentiment"
         fillHeight={fillHeight}
-        fillRemainingViewport={scrollLayout}
+        fillRemainingViewport={scrollLayout === true}
+        scrollHorizontally={scrollLayout === "content"}
       />
     </div>
   );
