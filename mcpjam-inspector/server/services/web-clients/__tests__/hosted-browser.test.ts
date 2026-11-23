@@ -287,4 +287,13 @@ describe("the durable turn gate's answers", () => {
       failure: { kind: "connector_not_found" },
     });
   });
+
+  it("stops the turn on a reply it can't read, never opening it ungated", async () => {
+    const window = { connectorId: "c", runId: "run-1", turnId: "t" };
+    for (const answer of [undefined, null, { ok: "yes" }, { ok: false, reason: "paused" }]) {
+      await expect(gate(answer).open(window)).rejects.toMatchObject({
+        failure: { kind: "driver", step: "connector" },
+      });
+    }
+  });
 });

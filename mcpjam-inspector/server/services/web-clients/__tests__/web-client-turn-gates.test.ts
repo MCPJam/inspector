@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { chromium, type Browser } from "playwright";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { extractToolCallsExcludingPolicyBlocks } from "@/shared/eval-tool-call-projection";
 import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { startFixtureUpstream, type FixtureUpstream } from "../../../test/support/web-clients/fixture-upstream";
 import { startFixtureVendor, type FixtureVendor } from "../../../test/support/web-clients/fixture-vendor";
@@ -137,6 +138,25 @@ describe("the run's tool policy on a web turn", { timeout: 90_000 }, () => {
         toolCallId: chat!.toolCalls[0]!.toolUseId,
       }),
     ]);
+  });
+
+  it("leaves a call it refused out of the grade on ChatGPT, which sends no tool use id", async () => {
+    vendor.withoutToolUseIds = true;
+    const blocks: HarnessPolicyBlockRecord[] = [];
+    const result = await runHarnessTurn(
+      options({
+        harness: "chatgpt-web",
+        modelId: "openai/gpt-5.5",
+        harnessToolPolicy: { orders: DENY_ECHO },
+        onHarnessPolicyBlocks: (found) => void blocks.push(...found),
+      }),
+      "none",
+    );
+    expect(toolCalls()).toEqual([]);
+    // The eval's grade: every call the transcript shows, less the refused ones.
+    const refused = new Set(blocks.flatMap((block) => (block.toolCallId ? [block.toolCallId] : [])));
+    expect(refused.size).toBe(1);
+    expect(extractToolCallsExcludingPolicyBlocks({ messages: result.messageHistory }, refused)).toEqual([]);
   });
 
   it("decides by the snapshot before the switch, and leaves a server it doesn't cover to the switch", async () => {

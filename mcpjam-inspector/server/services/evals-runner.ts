@@ -101,6 +101,7 @@ import {
 } from "./evals/harness-admission.js";
 import { isWebClientRuntimeId } from "@/shared/web-clients";
 import {
+  WEB_CLIENT_RUN_UNREAD,
   webClientRunOfEvalRun,
   type WebClientRunContext,
 } from "./web-clients/web-client-run.js";
@@ -6370,11 +6371,13 @@ const runHostedIterationWithBrowser = async (
         "testSuites:getTestSuiteRun" as any,
         { runId },
       );
-      webClientRun = webClientRunOfEvalRun({
+      const fromRow = webClientRunOfEvalRun({
         harness: harnessOfHostConfig(suiteHostConfig),
         runId,
         run: currentRun,
       });
+      if (fromRow === null) webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
+      else webClientRun = fromRow;
       if (currentRun?.status === "cancelled") {
         return {
           // A cancelled / deleted-run iteration never executed — never score it
@@ -6423,8 +6426,7 @@ const runHostedIterationWithBrowser = async (
           runId,
           error: errorMessage,
         });
-        webClientRunUnread =
-          "This run's web accounts couldn't be read, so this iteration stopped before any turn. Run it again.";
+        webClientRunUnread = WEB_CLIENT_RUN_UNREAD;
       }
     }
   }

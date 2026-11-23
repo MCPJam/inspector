@@ -18,11 +18,16 @@ import { createHostedWebClientEnvironmentFactory } from "./hosted-web-client-run
 import { createLocalWebClientEnvironmentFactory } from "./local-web-client-environment.js";
 import { createHostedWebRecovery } from "./recovery/hosted-recovery.js";
 import { setWebRecovery } from "./recovery/turn-recovery.js";
-import { setWebClientEnvironment } from "./web-client-environment.js";
+import {
+  setWebClientEnvironment,
+  webClientTurnsRunHosted,
+} from "./web-client-environment.js";
 
 export function mountWebClientRuntime(
   app: Hono,
-  options: { hosted: boolean; flagOn?: () => boolean },
+  options: { hosted: boolean; flagOn?: () => boolean } = {
+    hosted: webClientTurnsRunHosted(),
+  },
 ): void {
   app.route("/api/web-clients", createDefaultWebAccountRoutes());
   if (options.hosted) {

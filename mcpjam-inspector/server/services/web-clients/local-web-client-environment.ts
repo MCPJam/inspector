@@ -8,7 +8,6 @@
  * There is no backend here: no saved profiles, no durable turn gate and no
  * account status. The profile on disk is the account.
  */
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HttpServerConfig, MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
@@ -20,22 +19,31 @@ import {
 } from "@/shared/web-clients";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
 import { logger } from "../../utils/logger.js";
+import { isOutsideRepository } from "../../utils/outside-repository.js";
 import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.js";
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
 import { localWebConnectors, type LocalConnectorRegistry } from "./local-connectors.js";
+import { pause } from "./run-web-client-turn.js";
 import type {
   WebClientEnvironment,
   WebClientEnvironmentFactory,
 } from "./web-client-environment.js";
 
-/** Where this machine keeps a vendor's signed-in profile, outside any checkout. */
+/** Where this machine keeps a vendor's signed-in profile, outside this repository. */
 export function localWebClientProfileDir(
   vendor: WebClientVendor,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const root = env.MCPJAM_WEB_CLIENTS_PROFILE_DIR?.trim() || join(homedir(), ".mcpjam", "web-clients");
-  return join(root, `${vendor}-profile`);
+  const profileDir = join(root, `${vendor}-profile`);
+  // The profile holds a signed-in session, which a commit must never pick up.
+  if (!isOutsideRepository(profileDir)) {
+    throw new Error(
+      `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} browser profile is inside this Inspector's repository, where a commit could pick up your sign-in. Set MCPJAM_WEB_CLIENTS_PROFILE_DIR to a folder outside the repository, restart the Inspector, then run again.`,
+    );
+  }
+  return profileDir;
 }
 
 export type LaunchLocalBrowser = (
@@ -53,11 +61,21 @@ const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
 /**
- * How long a turn waits for another turn's browser on the same profile, as
- * it waits for a busy connector: compared runs and panes take turns.
+ * How long a caller that brings no deadline of its own waits for another
+ * turn's browser on the same profile: compared runs and panes take turns. A
+ * turn brings one, shared with its wait for a busy connector.
  */
 const PROFILE_WAIT_MS = 10 * 60_000;
 const PROFILE_POLL_MS = 1_000;
+/**
+ * Chromium refusing a profile another process has open, such as another
+ * Inspector's turn or the tracer's sign-in window. Playwright's launch error
+ * quotes Chromium's log line for it (`profileInUseError` in its
+ * `chromium.ts`), and its call log carries Chromium's profile-in-use exit
+ * code when the browser exited first.
+ */
+const PROFILE_IN_USE =
+  /Failed to create a ProcessSingleton for your profile directory|Opening in existing browser session|exitCode=21\b/;
 /** Connectors this process registered, so later turns reuse the vendor's saved one. */
 const connectorsByUpstream = new Map<string, string>();
 
@@ -75,13 +93,25 @@ async function upstreamOf(
   new Headers(config.requestInit?.headers).forEach((value, name) => {
     headers[name] = value;
   });
-  const token = await bearerOf(config);
+  const token = await bearerOf(serverId, config);
   if (token && !headers.authorization) headers.authorization = `Bearer ${token}`;
   return { url: String(config.url), headers };
 }
 
 /** The token this Inspector currently sends the server, however it holds it. */
-async function bearerOf(config: HttpServerConfig): Promise<string | undefined> {
+async function bearerOf(
+  serverId: string,
+  config: HttpServerConfig,
+): Promise<string | undefined> {
+  // The client manager exchanges a refresh token inside its own connection
+  // and keeps the access token there. Exchanging it again here would spend a
+  // single-use refresh token under that connection, so the server is refused
+  // rather than forwarded without its credential.
+  if (config.refreshToken?.trim()) {
+    throw new Error(
+      `${serverId} signs in with a refresh token, so the vendor's app can't use its sign-in. Connect it with an access token, then run again.`,
+    );
+  }
   if (config.accessToken) return config.accessToken;
   const provider = config.authProvider;
   if (!provider) return undefined;
@@ -112,19 +142,25 @@ export function createLocalWebClientEnvironment(deps: {
 
     async ensureConnector({ serverId }) {
       const upstream = await upstreamOf(serverId, deps.servers?.getServerConfig(serverId));
-      const key = createHash("sha256")
-        .update(JSON.stringify([deps.vendor, serverId, upstream.url, Object.entries(upstream.headers).sort()]))
-        .digest("hex");
+      // Not keyed on the headers: a refreshed token updates the connector the
+      // vendor's app saved, rather than adding one while the old one keeps
+      // forwarding with the old token.
+      const key = JSON.stringify([deps.vendor, serverId, upstream.url]);
       const kept = connectorsByUpstream.get(key);
-      if (kept && registry.has(kept)) return { connectorId: kept };
+      if (kept && registry.setHeaders(kept, upstream.headers))
+        return { connectorId: kept };
       const { connectorId } = registry.register({ upstreamUrl: upstream.url, headers: upstream.headers, serverId });
       connectorsByUpstream.set(key, connectorId);
       return { connectorId };
     },
 
-    async openBrowser({ sites }) {
-      const deadline = Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
-      while (openProfiles.has(deps.profileDir)) {
+    async openBrowser({ sites, signal, waitUntil }) {
+      const deadline =
+        waitUntil ?? Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
+      for (;;) {
+        // A stopped run launches nothing, even once the profile frees.
+        signal?.throwIfAborted();
+        if (!openProfiles.has(deps.profileDir)) break;
         if (Date.now() >= deadline) {
           throw new RealUiError({
             kind: "turn_running",
@@ -132,7 +168,7 @@ export function createLocalWebClientEnvironment(deps: {
             message: `Another turn is using this machine's ${name} browser.`,
           });
         }
-        await new Promise((resolve) => setTimeout(resolve, deps.profilePollMs ?? PROFILE_POLL_MS));
+        await pause(deps.profilePollMs ?? PROFILE_POLL_MS, signal);
       }
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;
@@ -158,6 +194,17 @@ export function createLocalWebClientEnvironment(deps: {
           });
         });
         openProfiles.delete(deps.profileDir);
+        if (
+          !launched &&
+          error instanceof Error &&
+          PROFILE_IN_USE.test(error.message)
+        ) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: `Another Inspector or a sign-in window has this machine's ${name} browser open.`,
+          });
+        }
         throw error;
       }
     },

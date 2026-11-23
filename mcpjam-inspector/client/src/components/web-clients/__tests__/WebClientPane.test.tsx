@@ -253,6 +253,21 @@ describe("useWebClientPane", () => {
     );
   });
 
+  it("shows the route's own refusal when the save can't go through", async () => {
+    const refusal =
+      "This web account is not in the project. Refresh the list, then try again.";
+    mocks.save.mockRejectedValueOnce(new WebApiError(404, refusal, refusal));
+    mount({ isAdmin: true, accounts: [signedOut] });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Sign in again" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Save for the project" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(refusal);
+    expect(screen.getByTestId("sign-in-browser")).toBeInTheDocument();
+  });
+
   it("waits for the account list before choosing a view", () => {
     mount({ loaded: false });
     expect(screen.getByRole("status")).toHaveTextContent("Loading accounts…");

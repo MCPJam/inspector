@@ -21,6 +21,7 @@ import {
   BROWSERD_PROTOCOL_VERSION,
   profileExportRequest,
   type BrowserCommand,
+  type BrowserdProfileExportOptions,
 } from "./protocol";
 import {
   decodePaneCommand,
@@ -509,7 +510,7 @@ export class BrowserdClient {
   }
 
   /** Download a drained persistent profile snapshot from browserd. */
-  async exportProfile(options?: Parameters<typeof profileExportRequest>[0]): Promise<Uint8Array> {
+  async exportProfile(options?: BrowserdProfileExportOptions): Promise<Uint8Array> {
     const res = await this.request("/v1/profile/export", profileExportRequest(options), true);
     if (!res.ok) {
       throw new BrowserdClientError(
