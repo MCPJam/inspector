@@ -1,7 +1,12 @@
 import { act, render, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const auth = vi.hoisted(() => ({ isAuthenticated: false, publicPage: false }));
+const auth = vi.hoisted(() => ({
+  isAuthenticated: false,
+  publicPage: false,
+  workOsUser: null as { id: string } | null,
+  workOsLoading: false,
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
@@ -13,7 +18,10 @@ vi.mock("../vanity-landing-hosts", () => ({
   shouldSkipGuestSession: () => auth.publicPage,
 }));
 vi.mock("@/hooks/use-inspector-auth", () => ({
-  useInspectorAuth: () => ({ user: null }),
+  useInspectorAuth: () => ({
+    user: auth.workOsUser,
+    isLoading: auth.workOsLoading,
+  }),
 }));
 const reportCaught = vi.hoisted(() => vi.fn());
 vi.mock("../error-reporting", () => ({ reportCaught }));
@@ -57,6 +65,8 @@ describe("StartupStatusTracker", () => {
     reportCaught.mockReset();
     auth.isAuthenticated = false;
     auth.publicPage = false;
+    auth.workOsUser = null;
+    auth.workOsLoading = false;
     useSessionRefreshStore.setState({ status: "idle", kind: null });
   });
 
@@ -184,6 +194,37 @@ describe("StartupStatusTracker", () => {
       act(() => reportUserReadiness(true, true));
       expect(desktop.record).toHaveBeenLastCalledWith(
         expect.objectContaining({ stage: "ready" }),
+      );
+    } finally {
+      Reflect.deleteProperty(window, "electronAPI");
+    }
+  });
+
+  it("reports WorkOS identity, not guest Convex authentication, and never the user ID", () => {
+    desktop.record.mockClear();
+    Object.defineProperty(window, "electronAPI", {
+      value: { diagnostics: { record: vi.fn() } },
+      configurable: true,
+    });
+    auth.isAuthenticated = true;
+    auth.workOsLoading = true;
+    try {
+      const view = render(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "loading" }),
+      );
+      auth.workOsLoading = false;
+      view.rerender(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "guest" }),
+      );
+      auth.workOsUser = { id: "private-user" };
+      view.rerender(<StartupStatusTracker />);
+      expect(desktop.record).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auth: "signed_in" }),
+      );
+      expect(JSON.stringify(desktop.record.mock.calls)).not.toContain(
+        "private-user",
       );
     } finally {
       Reflect.deleteProperty(window, "electronAPI");
