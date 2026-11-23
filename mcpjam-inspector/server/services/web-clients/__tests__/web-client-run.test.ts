@@ -34,12 +34,19 @@ describe("an eval run's web client context", () => {
     });
   });
 
-  it("is nothing for another runtime or a quick run, and no frozen list for an older run", () => {
+  it("is nothing for another runtime or a quick run", () => {
     expect(webClientRunOfEvalRun({ harness: "claude-code", runId: "run-1", run })).toBeUndefined();
     expect(webClientRunOfEvalRun({ harness: "claude-web", runId: null, run })).toBeUndefined();
+  });
+
+  it("is unread for a row that doesn't name its owner and frozen accounts, never the default account", () => {
+    for (const row of [{ createdBy: "user-owner" }, { webAccountsAtRun: run.webAccountsAtRun }, null, "row"]) {
+      expect(webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: row })).toBeNull();
+    }
+    // Frozen with no account for its vendor: the run names none, and its turns use none.
     expect(
-      webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: { createdBy: "user-owner" } }),
-    ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" } });
+      webClientRunOfEvalRun({ harness: "claude-web", runId: "run-1", run: { createdBy: "user-owner", webAccountsAtRun: [] } }),
+    ).toEqual({ runId: "run-1", actor: { actorUserId: "user-owner" }, webAccountIds: [] });
   });
 
   it("starts each iteration one account on, keeps an iteration's turns together, and keeps runs apart", () => {
