@@ -27,7 +27,7 @@ Your server never meets a user directly. A user types into a client; the client'
 - **Case**: one user prompt, or a short conversation, plus the outcome you expect.
   - Example: given "What does note 7 say?", the reply contains note 7's text.
 - **Client**: the MCP client configuration the run emulates, such as a desktop chat app or an IDE agent.
-- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results: MCPJam Harness, or a vendor's own, such as Claude Code's or Codex's. See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
+- **Harness**: the agent loop that sends the prompt to the model, runs the tool calls the model asks for, and returns the results: MCPJam Harness, or a vendor's own, such as Claude Code's or Codex's (in limited rollout). See [the client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment).
 - **Model**: any model you pick, from MCPJam or your own provider.
 - **Suite**: a group of cases, run on each client and model pair you choose, several times each.
 

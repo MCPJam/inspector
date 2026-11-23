@@ -113,7 +113,7 @@ The web app is HTTPS-only and has no install. Terminal and Desktop support HTTP/
 | Local STDIO servers | No | ✓ | ✓ | Inside the container |
 | Skills | No | ✓ | ✓ | ✓ |
 | Shareable server URLs | ✓ | No | No | No |
-| Always on latest version | ✓ | Re-download to update | Per-run (`@latest`) | Re-pull to update |
+| Always on latest version | ✓ | Updates itself | Per-run (`@latest`) | Re-pull to update |
 
 If your server is local (running on `localhost`), the web app cannot reach it; pick **Desktop** or **Terminal**, or **Docker** with `host.docker.internal`. If you want teammates to one-click into the same server, pick **Web App**.
 
@@ -371,7 +371,7 @@ You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same 
 
 The terminal and desktop installs accept both shapes in the same file. The hosted web app accepts HTTP/SHTTP entries only; STDIO entries are ignored because the hosted runtime cannot spawn local processes.
 
-For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#3-playground-byok-bring-your-own-key).
+For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#playground-byok-not-an-mcpjam-key).
 
 ### Start with Verbose Logging
 
@@ -415,8 +415,8 @@ npx @mcpjam/inspector@latest -v
   <Accordion title="Where are my files saved?" icon="folder">
     It depends what you mean. The word covers three different things:
 
-    - **OAuth credentials** from `mcpjam oauth login`: `~/.mcpjam/config.json`. Override per command with `--credentials-out`. See [CLI OAuth login](/cli/oauth-login).
+    - **OAuth credentials** from `mcpjam oauth login`: printed to stdout, and saved to a file only when you pass `--credentials-out <path>`. See [CLI OAuth login](/cli/oauth-login).
     - **Eval results**: uploaded to your MCPJam project when `MCPJAM_API_KEY` is set to an MCPJam API key (`sk_…`). See [Saving Results](/sdk/concepts/saving-results).
-    - **Inspector UI changes** (server config, client edits): persisted via the **Save** button in the project view.
+    - **Inspector settings**: the hosted app keeps servers in your project; Terminal and Desktop store config locally on disk. Client edits are saved when you click **Save client**.
   </Accordion>
 </AccordionGroup>

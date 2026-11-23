@@ -22,7 +22,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | Tools (`tools/list`, `tools/call`) | ✅ Supported | **Tools** tab and **Playground**. See [MCP Inspector](/inspector/tools-prompts-resources#tools) and [Playground](/inspector/playground). |
 | Tool output schemas and `structuredContent` | ✅ Supported | **Tools** tab checks `structuredContent` against the tool's `outputSchema`. See [MCP Inspector](/inspector/tools-prompts-resources#tools). |
 | Resources (`resources/list`, `resources/read`) | ✅ Supported | **Resources** tab. See [MCP Inspector](/inspector/tools-prompts-resources#resources). |
-| Resource templates (`resources/templates/list`) | ✅ Supported | **Resources** tab. See [MCP Inspector](/inspector/tools-prompts-resources#resources). |
+| Resource templates (`resources/templates/list`) | ◐ Partial | **Resources** tab in the local inspector (Terminal, Desktop, Docker); the hosted app hides templates. See [MCP Inspector](/inspector/tools-prompts-resources#resources). |
 | Resource subscriptions (`resources/subscribe`, and `subscriptions/listen` on 2026-07-28) | ◐ Partial | **Subscriptions** panel in the **Resources** tab. Local inspector only; the hosted app does not show it. See [Subscription stream panel](/inspector/tools-prompts-resources#subscription-stream-panel). |
 | Prompts (`prompts/list`, `prompts/get`) | ✅ Supported | **Prompts** tab. See [MCP Inspector](/inspector/tools-prompts-resources#prompts). |
 | Completion (`completion/complete`) | ◐ Partial | **Conformance** checks that your server answers `completion/complete`. Prompt and template arguments are not autocompleted in the UI. See [Protocol conformance](/sdk/reference/protocol-conformance). |
@@ -86,7 +86,7 @@ This page lists each capability in the MCP specification and its extensions, whe
 | --- | --- | --- |
 | MCP Apps (SEP-1865, `io.modelcontextprotocol/ui`, `ui://` resources) | ✅ Supported | **Playground** renders widgets in a sandboxed iframe. See [Playground](/inspector/playground) and [MCP Apps conformance](/cli/apps-conformance). |
 | OpenAI Apps SDK (`openai/outputTemplate`, `window.openai`) | ✅ Supported | **Playground** injects the `window.openai` shim for hosts that use it, such as ChatGPT. See [Host compatibility](/inspector/host-compat). |
-| Skills | ✅ Supported | **Skills** tab, then use them in **Playground**. See [Skills](/inspector/skills). |
+| Skills | ◐ Partial | **Skills** tab, then use them in **Playground**. Always shown in the local inspector; in the hosted app it appears only where Skills has rolled out. See [Skills](/inspector/skills). |
 | Skills over MCP (SEP-2640, `io.modelcontextprotocol/skills`, `skill://`) | ✅ Supported | Turn on **Skills over MCP** for the client. See [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills). |
 | Tasks (2025-11-25 `tasks/*`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |
 | Tasks extension (SEP-2663, `io.modelcontextprotocol/tasks`) | ✅ Supported | **Tasks** tab and `mcpjam` CLI. See [MCP Tasks](/cli/tasks) and [MCP Tasks conformance](/cli/tasks-conformance). |

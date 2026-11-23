@@ -140,6 +140,7 @@ Your server is never tested on its own. Each iteration runs inside one client en
   - The agent loop that runs the conversation. It sends the prompt and the tools to the model, runs each tool call the model asks for on the right server, and loops until the model gives its final reply or the suite's timeout ends it.
   - The client's **Harness** section picks **MCPJam Harness** or the client's native runtime: Claude Agent SDK for Claude Code, Codex App Server for Codex, or the GitHub Copilot CLI, Cursor CLI or OpenCode runtime. A client with no native runtime always uses MCPJam Harness.
   - A native runtime is the vendor's own agent loop, so the run uses that agent's way of loading tools and prompting the model. Claude Agent SDK, GitHub Copilot CLI and Cursor CLI also connect to your servers themselves, as the real agent would.
+  - Native runtimes are in limited rollout, so they may not appear in your workspace yet.
   - A native runtime runs only models it supports. Cursor CLI needs a Cursor key in AI providers, and native harness turns can be limited by your plan.
 - **Model**
   - The model for this pair. It can differ from the client's default, so one client can run several models.

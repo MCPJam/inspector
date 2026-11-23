@@ -40,7 +40,7 @@ There are four ways to use MCPJam: your **coding agent** runs MCPJam's tools for
         See [Installation](/installation#which-one-do-i-need) for the full comparison.
       </Step>
       <Step title="Connect a server">
-        On first launch, a **Welcome** overlay offers to connect your own server or try the hosted Excalidraw demo. Later, open **Connect** in the sidebar, choose **Servers**, and click **Add Server**.
+        On first launch, a **Welcome** overlay offers to connect your own server or try the hosted Excalidraw demo. Later, open **Connect** in the sidebar, choose **Servers**, and click **Add Server**. Signed out, the sidebar item is **Servers**.
 
         - **HTTP**: paste a URL ending in `/mcp`. The web app accepts HTTPS only; the other options also accept HTTP. Add a bearer token, or use the [OAuth Debugger](/inspector/guided-oauth) if the server needs sign-in.
         - **STDIO** (not in the web app): paste a command such as `npx -y @modelcontextprotocol/server-everything`.
@@ -93,7 +93,7 @@ Find what you want to test, then follow the guide for the tool you use. The MCP 
 | **Elicitation and multi-round input**<br />The server asks the user for input mid-call and resumes with the answer | [Elicitation requests](/inspector/tools-prompts-resources#elicitation-requests) | [Tools, Resources & Prompts](/cli/tools-resources-prompts) | — |
 | **Notifications and logs**<br />`list_changed`, log messages and resource updates arrive in a live session | [Tracing & debugging](/inspector/debugging) | [MCPJam as an MCP server](/cli/mcp-server) | [get_notifications](/cli/mcp-server#exercising-the-target) |
 | **MCP Events**<br />The server declares events and delivers them by push, poll or webhook | — | [MCP Events](/cli/events) | — |
-| **MCP Tasks**<br />Long-running calls create, report and finish tasks | — | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) | — |
+| **MCP Tasks**<br />Long-running calls create, report and finish tasks | [Tasks tab](/inspector/mcp-support#extensions) | [MCP Tasks](/cli/tasks), [Tasks conformance](/cli/tasks-conformance) | — |
 | **Skills over MCP**<br />The server serves skills a client can list and load | [Skills over MCP](/inspector/skills#skills-over-mcp-server-provided-skills) | [Skills from the CLI](/inspector/skills#inspecting-a-server%E2%80%99s-skills-from-the-cli) | [list_skills, get_skill](/cli/mcp-server#skills-over-mcp) |
 | **OAuth**<br />Each step of the authorization flow, across protocol versions | [OAuth Debugger](/inspector/guided-oauth) | [OAuth conformance](/cli/oauth-conformance), [OAuth login](/cli/oauth-login) | [probe_server](/cli/mcp-server#stateless-diagnostics) (auth discovery) |
 | **Enterprise sign-in (XAA)**<br />Cross-app access token exchange | [XAA Debugger](/inspector/xaa-debugger) | [XAA Debugger (CLI)](/cli/xaa) | — |
