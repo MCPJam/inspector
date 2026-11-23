@@ -139,8 +139,8 @@ export function writeGeneratedModule(path, contents) {
   if (existsSync(path) && readFileSync(path, "utf8") === contents) return;
   mkdirSync(dirname(path), { recursive: true });
   const temp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-  writeFileSync(temp, contents);
   try {
+    writeFileSync(temp, contents);
     renameWhenUnlocked(temp, path);
   } catch (error) {
     rmSync(temp, { force: true });
