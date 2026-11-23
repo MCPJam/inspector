@@ -394,7 +394,7 @@ export function exercisedImportSpecifiers(source) {
   }
   const restCode = rest.join("");
   const mentioned = (name) =>
-    new RegExp(`(?<![\\w$.])${name.replace(/\$/g, "\\$")}(?![\\w$])`).test(
+    new RegExp(`(?<![\\w$.])${name.replace(/[\\$]/g, "\\$&")}(?![\\w$])`).test(
       restCode,
     );
   const out = importSpecifiers(source);
@@ -408,7 +408,8 @@ export function exercisedImportSpecifiers(source) {
 
 const TEST_CALL =
   /(?<![\w$.])(?:it|test)(?:\.(?:only|concurrent|sequential|serial|fails|each))*(?:\s*<[^;()]*>)?\s*[(`]/g;
-const SKIPPED_TEST = /(?<![\w$.])(?:xit|xtest|(?:it|test)\.(?:skip|todo))\s*[(`]/;
+const SKIPPED_TEST =
+  /(?<![\w$.])(?:xit|xtest|(?:it|test)(?:\.(?:only|concurrent|sequential|serial|fails|each))*\.(?:skip|todo)(?:\.(?:only|concurrent|sequential|serial|fails|each))*)\s*([(`])/g;
 const SKIPPED_SUITE =
   /(?<![\w$.])(?:xdescribe|(?:test\.)?describe\.(?:skip|todo))\s*\(/g;
 
@@ -426,7 +427,8 @@ function closingParen(code, open) {
  * `describe.skip`/`xdescribe` block. `it.skip`, `it.todo` and `xit` declare
  * nothing that runs. A file with no test call and no skip at all gets its
  * tests from a shared suite helper, and counts. A runtime skip
- * (`test.skip(condition)` inside a suite, `describe.skipIf`) is not detected.
+ * (`test.skip(condition, reason)`, `describe.skipIf`) is not detected, so only
+ * a skip with a quoted title (or an `.each` table) declares a test.
  */
 export function runsTests(source) {
   const { code } = bareCode(source);
@@ -434,7 +436,12 @@ export function runsTests(source) {
     const open = m.index + m[0].length - 1;
     return [open, closingParen(code, open)];
   });
-  let declares = skipped.length > 0 || SKIPPED_TEST.test(code);
+  const titled = (m) =>
+    m[1] === "`" ||
+    m[0].includes(".each") ||
+    /^\s*["'`]/.test(source.slice(m.index + m[0].length));
+  let declares =
+    skipped.length > 0 || [...code.matchAll(SKIPPED_TEST)].some(titled);
   for (const match of code.matchAll(TEST_CALL)) {
     const at = match.index;
     if (!skipped.some(([from, to]) => at > from && at < to)) return true;

@@ -276,6 +276,9 @@ test("a file whose every test is skipped runs nothing", () => {
     `test.describe.skip("suite", () => { test("a", async () => {}); });`,
     `xdescribe("suite", () => { it.each([1])("a %s", () => {}); });`,
     `const ok = /x/.test("it(x)"); it.skip("a", () => {}); // it("b", () => {})`,
+    `test.concurrent.skip("a", () => {});`,
+    `test.skip.concurrent("a", () => {});`,
+    `it.skip.each([1])("a %s", () => {});`,
   ];
   for (const source of skipped) assert.equal(runsTests(source), false, source);
   const runs = [
@@ -285,6 +288,9 @@ test("a file whose every test is skipped runs nothing", () => {
     "it.each<[number]>([[1]])('%s', (n) => {});",
     "test.only(`x`, () => {});",
     `import { describeColdLoad } from "./support"; describeColdLoad({ label: "x" });`,
+    `test.concurrent.skip("a", () => {}); test.concurrent("b", () => {});`,
+    `import { describeColdLoad } from "./support"; test.skip(false, "not disabled"); describeColdLoad({ label: "x" });`,
+    `import { describeColdLoad } from "./support"; test.skip(({ browserName }) => browserName === "webkit", "x"); describeColdLoad({});`,
   ];
   for (const source of runs) assert.equal(runsTests(source), true, source);
 });
