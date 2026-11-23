@@ -2,7 +2,7 @@ export const ABANDONED_SIGN_IN_MESSAGE =
   "This sign-in was canceled or timed out. Reconnect the server to sign in again.";
 
 export const REPLACED_SIGN_IN_MESSAGE =
-  "An earlier sign-in finished after a newer one started. Finish the newer sign-in in your browser.";
+  "This sign-in was replaced by a newer one. Finish that one in your browser.";
 
 // The issued `state` of each sign-in the app stopped waiting for (cancel or
 // timeout), the same value a callback must match to own its attempt. The
