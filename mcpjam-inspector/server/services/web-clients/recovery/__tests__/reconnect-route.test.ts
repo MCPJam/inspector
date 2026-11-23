@@ -33,6 +33,7 @@ vi.mock("../../../../utils/logger.js", () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+import { sessionAuthMiddleware } from "../../../../middleware/session-auth.js";
 import { needsSignIn } from "../../../../utils/harness/real-ui/page-module.js";
 import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fixture-web.js";
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
@@ -332,5 +333,28 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
       "[web-recovery] The handback browser did not close",
       expect.objectContaining({ message: "The browser is already gone." }),
     );
+  });
+
+  it("passes session auth without a session token, as the app mounts it", async () => {
+    // A hosted browser holds no session token: the route checks the bearer.
+    const app = new Hono();
+    app.use("*", sessionAuthMiddleware);
+    app.route(
+      "/api/web-clients/reconnect",
+      createWebReconnectRoutes(deps(OPEN)),
+    );
+    const response = await app.request(
+      "/api/web-clients/reconnect/request-1/handback",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-test-user": "user_admin",
+        },
+        body: JSON.stringify({ projectId: "project-1" }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ status: "resumed" });
   });
 });
