@@ -27,7 +27,6 @@ import {
   RealUiError,
   answerRunApproval,
   commonBlocker,
-  cssString,
   needsSignIn,
   pageChanged,
   requirePlaywrightSelectors,
@@ -58,9 +57,6 @@ const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
 
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
-
-const role = (kind: string, name: string) =>
-  `role=${kind}[name="${cssString(name)}"]`;
 
 /** ChatGPT's own API takes the session's access token, read from the page. */
 async function session(driver: PageDriver): Promise<Record<string, unknown>> {
