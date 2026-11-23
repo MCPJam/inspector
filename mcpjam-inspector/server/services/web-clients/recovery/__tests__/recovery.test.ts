@@ -650,6 +650,45 @@ describe("web account recovery", () => {
     });
   });
 
+  it("refuses a new account's handback once another seat was recorded after the account was read", async () => {
+    const world = createWorld();
+    // An admin verified OTHER_SEAT for the new account after this process
+    // read it, so the process still reads the account with no seat.
+    world.backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "needs_sign_in",
+        ...OTHER_SEAT,
+        profileVersion: 0,
+      },
+    ]);
+    const readBefore: WebReconnectBackend = {
+      ...world.backend,
+      listWebAccounts: async (args) =>
+        (await world.backend.listWebAccounts(args)).map(
+          ({ accountEmail: _email, workspaceName: _workspace, ...account }) =>
+            account,
+        ),
+    };
+    const coordinator = startProcess(world, readBefore);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"], {
+      restoredProfileVersion: 0,
+    });
+    const [request] = await requestsOf(world);
+
+    expect(
+      await coordinator.handback({
+        projectId: PROJECT,
+        requestId: request?.requestId ?? "",
+        browser: browserSignedInAs(SEAT),
+      }),
+    ).toEqual({ status: "wrong_identity", observed: SEAT });
+    expect((await requestsOf(world))[0]?.status).toBe("open");
+    expect(runOf(world, "run-1").log).toEqual(PAUSED);
+    expect(await accountOf(world)).toMatchObject(OTHER_SEAT);
+  });
+
   it("doesn't open a sign-in request when only the browser failed", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);

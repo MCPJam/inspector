@@ -353,10 +353,15 @@ export function createWebRecoveryCoordinator(
           ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
         });
       } catch (error) {
-        // The seat matched above, so a conflict means the request was
-        // cancelled after it was read.
+        // A conflict is a request cancelled since it was read, or another
+        // seat recorded since the account was read: one with no seat takes
+        // the first one verified for it.
         if (error instanceof WebBackendRefusal && error.code === "CONFLICT") {
-          return { status: "cancelled" };
+          const latest = (
+            await backend.listWebReconnectRequests({ projectId })
+          ).find((one) => one.requestId === requestId);
+          if (latest?.status === "cancelled") return { status: "cancelled" };
+          return { status: "wrong_identity", observed: session.identity };
         }
         throw error;
       }
