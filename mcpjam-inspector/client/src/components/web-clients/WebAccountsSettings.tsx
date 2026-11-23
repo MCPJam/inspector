@@ -43,6 +43,9 @@ export function WebAccountsSettings({
   // On while any account allows local runs, so Stop revokes a mixed state in
   // one step instead of after allowing the rest.
   const localRunsAllowed = accounts.some((account) => account.allowLocalRuns);
+  // A member reads the notice under the list as covering every account in it.
+  const everyAccountAllowsLocalRuns =
+    accounts.length > 0 && accounts.every((account) => account.allowLocalRuns);
   return (
     <FocusBlock
       title="Accounts"
@@ -52,7 +55,7 @@ export function WebAccountsSettings({
         connections={accounts.map(webAccountAsConnection)}
         shared={loaded ? true : undefined}
         isAdmin={isAdmin}
-        localDeliveryAllowed={localRunsAllowed}
+        localDeliveryAllowed={everyAccountAllowsLocalRuns}
         terms={WEB_ACCOUNT_TERMS}
         sharingControl={
           isAdmin && accounts.length ? (
