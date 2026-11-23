@@ -21,7 +21,7 @@ import { RealUiError } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
 
 let browser: Browser;
-let context: BrowserContext;
+const contexts: BrowserContext[] = [];
 let vendor: FixtureVendor;
 let upstream: FixtureUpstream;
 
@@ -34,16 +34,22 @@ afterAll(async () => {
 beforeEach(async () => {
   vendor = await startFixtureVendor();
   upstream = await startFixtureUpstream();
-  context = await browser.newContext();
 });
 afterEach(async () => {
-  await context.close();
+  await Promise.all(contexts.splice(0).map((context) => context.close()));
   await vendor.close();
   await upstream.close();
 });
 
+/** A page in a context of its own: a driver closes every other page in its context. */
+async function newPage() {
+  const context = await browser.newContext();
+  contexts.push(context);
+  return context.newPage();
+}
+
 async function signedInDriver() {
-  const page = await context.newPage();
+  const page = await newPage();
   await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
   return createPlaywrightDriver(page, { sites: [vendor.url] });
 }
@@ -191,7 +197,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   });
 
   it("returns needs_sign_in when the account is signed out", async () => {
-    const page = await context.newPage();
+    const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     const failure = await turn(driver).catch((error: unknown) => error);
     expect((failure as RealUiError).failure).toMatchObject({
@@ -202,7 +208,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   });
 
   it("keeps the signed-in browser on its own sites", async () => {
-    const page = await context.newPage();
+    const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     await expect(driver.navigate(upstream.url)).rejects.toMatchObject({
       code: "site_blocked",
@@ -218,8 +224,44 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(new URL(page.url()).origin).not.toBe(new URL(upstream.url).origin);
   });
 
+  it.each([
+    ["window.open", "script"],
+    ["a target=_blank link", "link"],
+  ])(
+    "closes a page opened by %s before it loads another site",
+    async (_how, opener) => {
+      const page = await newPage();
+      const driver = await createPlaywrightDriver(page, {
+        sites: [vendor.url],
+      });
+      await driver.navigate(`${vendor.url}/sign-in?as=runner@example.com`);
+      // What a reply can put in front of the driver: a link to another site.
+      await page.evaluate((target) => {
+        const link = Object.assign(document.createElement("a"), {
+          href: target,
+          target: "_blank",
+          id: "elsewhere",
+          textContent: "elsewhere",
+        });
+        document.body.append(link);
+      }, upstream.url);
+      const opened = page.waitForEvent("popup");
+      if (opener === "script") {
+        await page.evaluate((target) => {
+          window.open(target);
+        }, upstream.url);
+      } else {
+        await driver.click("#elsewhere");
+      }
+      const popup = await opened;
+      await expect.poll(() => popup.isClosed(), { timeout: 10_000 }).toBe(true);
+      expect(page.context().pages()).toHaveLength(1);
+      expect(upstream.requests).toEqual([]);
+    },
+  );
+
   it("leaves a site that redirects elsewhere, and acts on nothing until it navigates back", async () => {
-    const page = await context.newPage();
+    const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     await page.goto(`${vendor.url}/sign-in?as=runner@example.com`);
     vendor.redirectTo = `${upstream.url}/`;
@@ -231,7 +273,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   });
 
   it("keeps refusing when the way back fails before it lands", async () => {
-    const page = await context.newPage();
+    const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     vendor.redirectTo = `${upstream.url}/`;
     await expect(driver.navigate(`${vendor.url}/redirect`)).rejects.toMatchObject({ code: "site_blocked" });
@@ -246,7 +288,7 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
   });
 
   it("reports a navigation that fails on its own site as that failure, not as leaving", async () => {
-    const page = await context.newPage();
+    const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
     await page.route(`${vendor.url}/new`, (route) => route.abort("failed"));
     const failure = await driver.navigate(`${vendor.url}/new`).catch((error: unknown) => error);

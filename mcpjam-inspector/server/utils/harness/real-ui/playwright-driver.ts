@@ -7,12 +7,16 @@
  * refuses it before trying. Subresources load as the site asks, since the
  * vendor's own pages pull scripts and frames from elsewhere.
  *
+ * The driver's page is the only page in its context. A popup or a new tab
+ * could open any site on the account's cookies, so another page is closed as
+ * it opens, and the context's routes refuse its requests until it is gone.
+ *
  * Playwright routes only the first request of a redirect chain, so an
  * allowed page that redirects elsewhere can't be stopped before it loads.
  * When the page lands off the sites anyway, it goes to a blank page and the
  * driver refuses every command until a `navigate` lands back on one of them.
  */
-import type { Page } from "playwright";
+import type { Frame, Page, Request } from "playwright";
 import {
   PageDriverError,
   assertOnSites,
@@ -26,11 +30,26 @@ const ACTION_TIMEOUT_MS = 15_000;
 const READ_TIMEOUT_MS = 2_000;
 const VANISHED = /TimeoutError|Execution context was destroyed|frame was detached/;
 
+/**
+ * The frame a request comes from. Playwright has none for a service worker's
+ * request, or for a navigation sent before its frame exists, such as a
+ * popup's first one; its `frame()` throws for those.
+ */
+function frameOf(request: Request): Frame | undefined {
+  if (request.serviceWorker()) return undefined;
+  try {
+    return request.frame();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function createPlaywrightDriver(
   page: Page,
   options: { sites: readonly string[] },
 ): Promise<PageDriver> {
   const sites = options.sites;
+  const context = page.context();
   let leftFor: string | undefined;
   let departures = 0;
   page.on("framenavigated", (frame) => {
@@ -66,16 +85,34 @@ export async function createPlaywrightDriver(
   const liftIfBack = () => {
     if (leftFor && urlOnSites(page.url(), sites)) leftFor = undefined;
   };
-  await page.route("**/*", async (route) => {
-    const request = route.request();
-    const topLevel =
-      request.isNavigationRequest() && request.frame() === page.mainFrame();
-    if (topLevel && !urlOnSites(request.url(), sites)) {
-      await route.abort("blockedbyclient");
-      return;
-    }
-    await route.continue();
+  // Every page in the context goes through these routes, so a page other than
+  // the driver's loads nothing before it closes. A popup's first navigation is
+  // sent before its frame exists, so a navigation from an unknown frame is
+  // refused as well.
+  const allowed = (request: Request): boolean => {
+    const frame = frameOf(request);
+    if (!frame) return !request.isNavigationRequest();
+    if (frame.page() !== page) return false;
+    return (
+      frame !== page.mainFrame() ||
+      !request.isNavigationRequest() ||
+      urlOnSites(request.url(), sites)
+    );
+  };
+  await context.route("**/*", async (route) => {
+    if (allowed(route.request())) await route.continue();
+    else await route.abort("blockedbyclient");
   });
+  const closeOther = (other: Page) => {
+    if (other === page) return;
+    void other.close().catch((error: unknown) => {
+      logger.warn("[web-clients] a page beside the driver's did not close", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+  context.on("page", closeOther);
+  context.pages().forEach(closeOther);
 
   const locate = (selector: string) => page.locator(selector).first();
   const act = async (selector: string, run: () => Promise<void>) => {
