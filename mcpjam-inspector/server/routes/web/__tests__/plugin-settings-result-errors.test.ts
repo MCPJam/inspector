@@ -202,7 +202,7 @@ it("reports an unexpected pre-dispatch failure once without exposing its details
   expect(response.status).toBe(503);
   expect(JSON.stringify(await response.json())).not.toContain(error.message);
   expect(f.report).toHaveBeenCalledExactlyOnceWith(
-    "Plugin Settings request failed", error, { source: "web.pluginSettings", hop: "mcpjam_internal" },
+    "Plugin Settings request failed", error, { source: "web.pluginSettings", hop: "mcpjam_internal", requestSignal: expect.any(AbortSignal) },
   );
   expect(f.execute).not.toHaveBeenCalled();
 });

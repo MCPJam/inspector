@@ -329,6 +329,7 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   reportRouteFailure("[webmcp] unhandled route error", error, {
     source: "mcp.webmcp-inspector",
     hop: "mcpjam_internal",
+    requestSignal: c.req.raw.signal,
   });
   // A hosted deployment answers with a generic sentence and the request id;
   // the failure itself is in the report above, joined by that id. A local

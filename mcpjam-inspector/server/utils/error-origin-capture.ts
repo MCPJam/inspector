@@ -115,6 +115,11 @@ const PROMOTING_BOUNDARIES: ReadonlySet<OriginCaptureBoundary> = new Set([
  *
  * Reads the top-level name only. A caller that wraps the error before deciding
  * must ask about the original, since the wrapper carries its own name.
+ *
+ * Only an abort relayed as a DOMException (a bare `controller.abort()`) has
+ * this name. `@hono/node-server` aborts the request's own signal with a string
+ * reason, so a disconnect that reaches `fetch` through `c.req.raw.signal` is
+ * recognized by `reportRouteFailure`'s `requestSignal` instead.
  */
 export function isCallerAbort(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;

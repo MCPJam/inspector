@@ -38,7 +38,7 @@ vi.mock("../../../utils/route-error-report.js", () => ({
   reportRouteFailure: reportMock,
 }));
 
-function postTest(body: Record<string, unknown>) {
+function postTest(body: Record<string, unknown>, signal?: AbortSignal) {
   const app = new Hono();
   app.use("/api/*", requestLogContextMiddleware);
   app.route("/api/web/org-gateway-test", orgGatewayTest);
@@ -49,6 +49,7 @@ function postTest(body: Record<string, unknown>) {
       Authorization: "Bearer caller-token",
     },
     body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
   });
 }
 
@@ -137,6 +138,23 @@ describe("POST /api/web/org-gateway-test", () => {
     expect(res.status).toBe(502);
     expect(gatewayFetch).not.toHaveBeenCalled();
     expect(reportMock).toHaveBeenCalledOnce();
+  });
+
+  it("hands the request's signal to the report when the caller leaves", async () => {
+    // @hono/node-server aborts with this string, and fetch rejects with it.
+    const closed = "Client connection prematurely closed.";
+    const caller = new AbortController();
+    queryMock.mockImplementation(async () => {
+      caller.abort(closed);
+      throw closed;
+    });
+
+    await postTest(REQUEST, caller.signal);
+
+    expect(reportMock).toHaveBeenCalledOnce();
+    const [, error, options] = reportMock.mock.calls[0]!;
+    expect(error).toBe(closed);
+    expect(options.requestSignal.reason).toBe(closed);
   });
 
   it("refuses a malformed organization id with 403 before asking the backend", async () => {

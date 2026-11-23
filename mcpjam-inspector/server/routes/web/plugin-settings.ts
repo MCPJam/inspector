@@ -168,6 +168,7 @@ async function route(c: Context, run: () => Promise<Response>) {
     reportRouteFailure("Plugin Settings request failed", error, {
       source: "web.pluginSettings",
       hop: "mcpjam_internal",
+      requestSignal: c.req.raw.signal,
     });
     return c.json(failure("SETTINGS_UNAVAILABLE"), 503);
   }
