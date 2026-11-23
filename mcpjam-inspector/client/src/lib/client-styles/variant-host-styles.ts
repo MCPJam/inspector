@@ -186,6 +186,7 @@ export const CODEX_CLI_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "OpenAI Codex in a terminal",
     logoSrc: codexLogo,
     family: "chatgpt",
+    terminal: "codex",
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: CodexShineIndicator,
   },

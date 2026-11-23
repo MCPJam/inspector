@@ -3,7 +3,10 @@ import {
   CHATGPT_COMPOSER_CLASSES,
   CLAUDE_COMPOSER_CLASSES,
 } from "@/lib/client-styles";
-import { getScenarioHostFamily } from "@/lib/scenario-client-style";
+import {
+  getScenarioHostFamily,
+  getScenarioTerminalClient,
+} from "@/lib/scenario-client-style";
 
 /** Pure shared composer appearance; no session, model or execution ownership. */
 export function hostComposerClasses(
@@ -11,6 +14,13 @@ export function hostComposerClasses(
   dark: boolean,
 ) {
   const theme = dark ? "dark" : "light";
+  const terminal = getScenarioTerminalClient(hostStyle);
+  if (terminal === "claude-code") {
+    return "scenario-host-composer border-y border-border bg-background";
+  }
+  if (terminal === "codex") {
+    return "scenario-host-composer border border-border bg-muted/50";
+  }
   return getScenarioHostFamily(hostStyle) === "chatgpt"
     ? cn(
         "scenario-host-composer rounded-[1.75rem]",

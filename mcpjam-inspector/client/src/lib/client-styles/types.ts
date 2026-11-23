@@ -245,6 +245,8 @@ export interface HostChatUi {
   logoSrcByTheme?: Record<HostThemeMode, string>;
   /** Visual rendering family this host maps onto. */
   family: HostStyleFamily;
+  /** Terminal presentation for a CLI preset. */
+  terminal?: "claude-code" | "codex";
   resolveChatBackground: (theme: HostThemeMode) => string;
   /**
    * Brand thinking/loading indicator. Honors `prefers-reduced-motion`

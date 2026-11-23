@@ -28,6 +28,7 @@ import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/lo
 import {
   getScenarioChatBackground,
   getScenarioHostFamily,
+  getScenarioTerminalClient,
 } from "@/lib/scenario-client-style";
 import {
   LIVE_CHAT_REASONING_DISPLAY_MODE,
@@ -332,6 +333,7 @@ export function Thread({
     fullscreenChatInput.trim().length > 0;
 
   const scenarioHostStyle = useScenarioHostStyle();
+  const terminal = getScenarioTerminalClient(scenarioHostStyle);
   const scenarioHostTheme = useScenarioHostTheme();
   const hasBrandIndicator =
     useResolvedHostStyleForIndicator(model.provider) !== null;
@@ -431,7 +433,10 @@ export function Thread({
           lastRenderableMessageId={lastRenderableMessageId}
           contentClassName={
             contentClassName ??
-            cn(TRANSCRIPT_COLUMN_CLASS, "pt-8 pb-16 space-y-8")
+            cn(
+              TRANSCRIPT_COLUMN_CLASS,
+              terminal ? "space-y-3 pb-6 pt-5" : "space-y-8 pb-16 pt-8",
+            )
           }
           getMessageWrapperProps={getMessageWrapperProps}
           renderUserMessageActions={renderUserMessageActions}

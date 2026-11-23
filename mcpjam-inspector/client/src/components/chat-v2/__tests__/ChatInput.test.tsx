@@ -339,6 +339,28 @@ describe("ChatInput", () => {
         "dark:bg-transparent"
       );
     });
+
+    it.each([
+      ["claude-code", "❯"],
+      ["codex", "›"],
+      ["codex-cli", "›"],
+    ])("shows a terminal prompt for %s", (hostStyle, marker) => {
+      const { rerender } = render(
+        <ScenarioHostStyleProvider value={hostStyle}>
+          <ChatInput {...defaultProps} />
+        </ScenarioHostStyleProvider>,
+      );
+      expect(screen.getByText(marker)).toHaveAttribute("aria-hidden", "true");
+      expect(screen.getByRole("textbox")).toHaveClass("font-mono");
+
+      rerender(
+        <ScenarioHostStyleProvider value={hostStyle}>
+          <ChatInput {...defaultProps} sharedClientComposer />
+        </ScenarioHostStyleProvider>,
+      );
+      expect(screen.queryByText(marker)).not.toBeInTheDocument();
+      expect(screen.getByRole("textbox")).not.toHaveClass("font-mono");
+    });
   });
 
   describe("input handling", () => {

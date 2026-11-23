@@ -6436,6 +6436,7 @@ export function PlaygroundMain({
     />
   );
   const sharedChatInputProps = {
+    sharedClientComposer: isMultiHostMode,
     hideExecutionControls: isMultiHostMode,
     showContextPopover: tester ? false : !isMultiHostMode,
     mentions: composerMentions.mentions,

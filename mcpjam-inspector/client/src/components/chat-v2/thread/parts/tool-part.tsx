@@ -75,7 +75,11 @@ import {
 import { useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
+import {
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
+import { getScenarioTerminalClient } from "@/lib/scenario-client-style";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
@@ -248,6 +252,7 @@ export function ToolPart({
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const scenarioHostTheme = useScenarioHostTheme();
+  const terminal = getScenarioTerminalClient(useScenarioHostStyle());
   const resolvedThemeMode = scenarioHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
@@ -1049,24 +1054,40 @@ export function ToolPart({
   }
 
   return (
-    <div className="@container rounded-lg border text-xs border-border/50 bg-background/70">
+    <div
+      className={cn(
+        "@container text-xs",
+        terminal
+          ? "font-mono text-muted-foreground"
+          : "rounded-lg border border-border/50 bg-background/70",
+      )}
+    >
       <div
         role="button"
         tabIndex={hideDiagnosticsUI ? -1 : 0}
-        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer"
+        className={cn(
+          "flex w-full items-center justify-between gap-2 px-3 text-left text-[11px] font-semibold uppercase tracking-wide text-muted-foreground cursor-pointer",
+          terminal ? "py-0.5 hover:bg-muted/50" : "py-2",
+        )}
         onClick={toggleExpanded}
         onKeyDown={handleHeaderKeyDown}
         aria-expanded={isExpanded}
       >
         <span className="inline-flex items-center gap-2 font-medium normal-case text-foreground min-w-0">
           <span className="inline-flex items-center gap-2 min-w-0">
-            <img
-              src="/mcp.svg"
-              alt=""
-              role="presentation"
-              aria-hidden="true"
-              className={`${mcpIconClassName} shrink-0`}
-            />
+            {terminal ? (
+              <span aria-hidden="true" className="shrink-0 text-muted-foreground">
+                {terminal === "claude-code" ? "└" : "•"}
+              </span>
+            ) : (
+              <img
+                src="/mcp.svg"
+                alt=""
+                role="presentation"
+                aria-hidden="true"
+                className={`${mcpIconClassName} shrink-0`}
+              />
+            )}
             <span className="font-mono text-xs tracking-tight text-muted-foreground/80 truncate">
               {displayLabel}
             </span>

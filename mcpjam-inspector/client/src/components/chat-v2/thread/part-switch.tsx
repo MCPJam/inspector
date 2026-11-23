@@ -1009,7 +1009,13 @@ function LivePartSwitch({
 
   switch (part.type) {
     case "text":
-      return <TextPart text={part.text} role={role} />;
+      return (
+        <TextPart
+          text={part.text}
+          role={role}
+          showTerminalMarker={role === "assistant"}
+        />
+      );
     case "reasoning":
       return (
         <ReasoningPart

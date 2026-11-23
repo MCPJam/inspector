@@ -195,6 +195,7 @@ export function resolveEffectiveHostStyle(args: {
       : preset.chatUi.loadingIndicator;
 
   const chatUi: HostChatUi = {
+    ...preset.chatUi,
     label: override.label ?? preset.chatUi.label,
     shortLabel: override.shortLabel ?? preset.chatUi.shortLabel,
     pickerDescription:
