@@ -119,7 +119,11 @@ function connectorBusy(error: unknown): boolean {
   );
 }
 
-function pause(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Waits `ms`, or less once `signal` stops the run. It never rejects, so the
+ * caller checks the signal after.
+ */
+export function pause(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     if (signal?.aborted) return resolve();
     const timer = setTimeout(resolve, ms);
@@ -286,6 +290,7 @@ export async function runWebClientTurn(
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
       sites: module.sites.length ? module.sites : WEB_CLIENT_SITES[vendor],
+      ...(input.signal ? { signal: input.signal } : {}),
     });
     const page = await driveRealUiTurn({
       module,

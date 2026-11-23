@@ -99,6 +99,34 @@ describe("a local web client environment", () => {
     expect(launch).toHaveBeenCalledTimes(2);
   });
 
+  it("stops waiting for the profile when the run stops, and launches nothing once it frees", async () => {
+    const launch = vi.fn(async () => ({
+      page: { route: async () => {}, on: () => {} } as never,
+      close: async () => {},
+    }));
+    const env = environment({
+      launch,
+      profileDir: "/profiles/stopped-run",
+      profilePollMs: 10,
+    });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+    });
+    const stop = new AbortController();
+    const second = env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+      signal: stop.signal,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop.abort();
+    await first.close();
+    await expect(second).rejects.toBe(stop.signal.reason);
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
   it("closes a browser it couldn't drive before freeing its profile", async () => {
     const sites = ["https://chatgpt.com"];
     // While the browser closes, another turn asks for the same profile.

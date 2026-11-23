@@ -24,6 +24,7 @@ import { createMemorySendJournal } from "../../utils/harness/real-ui/drive-turn.
 import { RealUiError } from "../../utils/harness/real-ui/page-module.js";
 import { createPlaywrightDriver } from "../../utils/harness/real-ui/playwright-driver.js";
 import { localWebConnectors, type LocalConnectorRegistry } from "./local-connectors.js";
+import { pause } from "./run-web-client-turn.js";
 import type {
   WebClientEnvironment,
   WebClientEnvironmentFactory,
@@ -122,9 +123,12 @@ export function createLocalWebClientEnvironment(deps: {
       return { connectorId };
     },
 
-    async openBrowser({ sites }) {
+    async openBrowser({ sites, signal }) {
       const deadline = Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
-      while (openProfiles.has(deps.profileDir)) {
+      for (;;) {
+        // A stopped run launches nothing, even once the profile frees.
+        signal?.throwIfAborted();
+        if (!openProfiles.has(deps.profileDir)) break;
         if (Date.now() >= deadline) {
           throw new RealUiError({
             kind: "turn_running",
@@ -132,7 +136,7 @@ export function createLocalWebClientEnvironment(deps: {
             message: `Another turn is using this machine's ${name} browser.`,
           });
         }
-        await new Promise((resolve) => setTimeout(resolve, deps.profilePollMs ?? PROFILE_POLL_MS));
+        await pause(deps.profilePollMs ?? PROFILE_POLL_MS, signal);
       }
       openProfiles.add(deps.profileDir);
       let launched: Awaited<ReturnType<LaunchLocalBrowser>> | undefined;

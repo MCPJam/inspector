@@ -56,10 +56,14 @@ export interface WebClientEnvironment {
     serverId: string;
     auth: WebConnectorAuth;
   }): Promise<{ connectorId: string }>;
-  /** A browser on the account's profile, kept to `sites`. Closed by the turn. */
+  /**
+   * A browser on the account's profile, kept to `sites`. Closed by the turn.
+   * A wait for a profile another turn has open ends when `signal` stops the run.
+   */
   openBrowser(args: {
     webAccountId: string;
     sites: readonly string[];
+    signal?: AbortSignal;
   }): Promise<{ driver: PageDriver; close(): Promise<void> }>;
   /** Records how the turn ended on the account, after the browser closed. */
   onOutcome?(outcome: WebTurnOutcome): Promise<void>;
