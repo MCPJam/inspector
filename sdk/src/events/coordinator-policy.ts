@@ -149,6 +149,26 @@ export function computeRefreshAt(args: {
   return Math.max(args.now + 1_000, args.refreshBefore - lead);
 }
 
+/**
+ * When to retry a failed step. A live webhook grant MUST be refreshed before
+ * `refreshBefore`, so a backoff that would land past it is cut to half the
+ * remaining grant: retries keep landing before the deadline as it nears,
+ * without a tight loop. Past the deadline, or with no expiry, the backoff
+ * stands.
+ */
+export function computeRetryAt(args: {
+  now: number;
+  backoffMs: number;
+  refreshBefore?: number | null;
+}): number {
+  const retryAt = args.now + args.backoffMs;
+  if (args.refreshBefore == null || args.now >= args.refreshBefore) {
+    return retryAt;
+  }
+  const halfRemaining = Math.floor((args.refreshBefore - args.now) / 2);
+  return Math.min(retryAt, args.now + Math.max(BASE_BACKOFF_MS, halfRemaining));
+}
+
 /** Exponential backoff shared in spirit with tasks' pure backoff helpers. */
 export function computeBackoffMs(failures: number, maxBackoffMs: number): number {
   const exponent = Math.min(Math.max(failures - 1, 0), 20);

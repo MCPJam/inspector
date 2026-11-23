@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import { EventsCoordinator } from "../coordinator.js";
+import { computeRetryAt } from "../coordinator-policy.js";
+import { MemoryEventInbox } from "../memory-inbox.js";
+import { DRAFT_PROFILE_ID } from "../profiles.js";
+import type { EventsRpcPort, SubscriptionRecord } from "../types.js";
+
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+/**
+ * Drives the coordinator the way the runtimes do: apply the patch, wait until
+ * `nextActionAt`, step again. Every grant is 1 h, and the server is
+ * unreachable for `outageMs` from the first refresh attempt.
+ */
+async function driveWebhook(outageMs: number) {
+  let now = 0;
+  let outageStart: number | undefined;
+  const attempts: Array<{ at: number; ok: boolean }> = [];
+  const rpc = {
+    subscribe: async () => {
+      if (attempts.length > 0 && outageStart === undefined) outageStart = now;
+      const down = outageStart !== undefined && now < outageStart + outageMs;
+      attempts.push({ at: now, ok: !down });
+      if (down) throw new Error("fetch failed: ECONNRESET");
+      return {
+        id: "srv_sub",
+        refreshBefore: new Date(now + HOUR).toISOString(),
+        cursor: null,
+      };
+    },
+  } as unknown as EventsRpcPort;
+  const inbox = new MemoryEventInbox({ publicOrigin: "https://h" });
+  const coordinator = new EventsCoordinator({
+    rpc: async () => rpc,
+    inbox: async () => inbox,
+    clock: { now: () => now },
+  });
+  let record: SubscriptionRecord = {
+    id: "esub_refresh",
+    projectId: "p",
+    environmentId: null,
+    bindingKey: "b",
+    serverId: "srv_1",
+    profile: DRAFT_PROFILE_ID,
+    eventName: "thing.happened",
+    arguments: {},
+    mode: "webhook",
+    desiredState: "active",
+    observedState: "pending",
+    generation: 1,
+    nextActionAt: 0,
+    consecutiveFailures: 0,
+  };
+  let grantedUntil = 0;
+  let lapsed = false;
+  while (now < 2 * HOUR) {
+    const outcome = await coordinator.step(record);
+    record = {
+      ...record,
+      ...outcome.patch,
+      nextActionAt: outcome.nextActionAt,
+    };
+    if (attempts[attempts.length - 1]!.ok) grantedUntil = record.refreshBefore!;
+    if (outcome.nextActionAt >= grantedUntil) lapsed = true;
+    now = outcome.nextActionAt;
+  }
+  return { attempts, lapsed };
+}
+
+describe("webhook refresh before refreshBefore", () => {
+  it("refreshes ahead of every grant while the server is healthy", async () => {
+    const { attempts, lapsed } = await driveWebhook(0);
+    expect(lapsed).toBe(false);
+    expect(attempts.every((attempt) => attempt.ok)).toBe(true);
+  });
+
+  it("keeps retrying before refreshBefore through an outage that ends in time", async () => {
+    // The first refresh is due at 54 min. Before the fix the backoff jumped
+    // from 59.25 to 64.58 min and the 1 h grant lapsed.
+    const { attempts, lapsed } = await driveWebhook(5.5 * MINUTE);
+    expect(lapsed).toBe(false);
+    const recovered = attempts.find((attempt, i) => i > 0 && attempt.ok)!;
+    expect(recovered.at).toBeGreaterThanOrEqual(54 * MINUTE + 5.5 * MINUTE);
+    expect(recovered.at).toBeLessThan(HOUR);
+  });
+});
+
+describe("computeRetryAt", () => {
+  it("cuts a backoff that would pass refreshBefore to half the remaining grant", () => {
+    expect(
+      computeRetryAt({
+        now: 0,
+        backoffMs: 10 * MINUTE,
+        refreshBefore: 4 * MINUTE,
+      })
+    ).toBe(2 * MINUTE);
+  });
+
+  it("keeps the backoff when it already lands before refreshBefore", () => {
+    expect(
+      computeRetryAt({ now: 0, backoffMs: 5_000, refreshBefore: HOUR })
+    ).toBe(5_000);
+  });
+
+  it("keeps the backoff past the deadline or for a grant with no expiry", () => {
+    expect(
+      computeRetryAt({ now: HOUR, backoffMs: 5_000, refreshBefore: HOUR })
+    ).toBe(HOUR + 5_000);
+    expect(
+      computeRetryAt({ now: 0, backoffMs: 5_000, refreshBefore: null })
+    ).toBe(5_000);
+    expect(computeRetryAt({ now: 0, backoffMs: 5_000 })).toBe(5_000);
+  });
+
+  it("never schedules sooner than the base backoff", () => {
+    expect(
+      computeRetryAt({ now: 0, backoffMs: 60_000, refreshBefore: 4_000 })
+    ).toBe(5_000);
+  });
+});
