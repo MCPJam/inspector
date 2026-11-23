@@ -6178,8 +6178,9 @@ test("eval update refuses both iteration flags rather than preferring one", asyn
       run.stderr,
       /Use either --min-iterations or --iterations, not both/
     );
-    // A floor RAISES a case's own count and a default REPLACES it, so a case at
-    // 7 resolves to 7 under a floor of 3 and to 3 under a default of 3.
+    // A floor RAISES a case's own count and a case's own count overrides a
+    // default, so a case at 2 resolves to 3 under a floor of 3 and to 2 under a
+    // default of 3.
     assert.match(run.stderr, /raises a case's own count/);
     assert.equal(fixture.createBodies.length, 0);
   } finally {

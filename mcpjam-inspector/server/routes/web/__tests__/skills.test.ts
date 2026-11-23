@@ -164,6 +164,21 @@ describe("POST /api/web/skills/create with raw skillMd", () => {
     updatedAt: 1,
   };
 
+  it.each(["js", "javascript", "json"])(
+    "rejects a file that selects the %s frontmatter engine",
+    async (language) => {
+      const res = await post("/api/web/skills/create", {
+        projectId: PROJECT_ID,
+        name: "sample",
+        description: "example",
+        content: "instructions",
+        skillMd: `---${language}\n{"name":"sample","description":"example"}\n---\ninstructions`,
+      });
+      expect(res.status).toBe(400);
+      expect(createCloudSkill).not.toHaveBeenCalled();
+    },
+  );
+
   it("parses skillMd server-side and forwards extraFrontmatter to createCloudSkill", async () => {
     vi.mocked(createCloudSkill).mockResolvedValue(created);
     const skillMd = [

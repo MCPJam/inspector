@@ -1975,8 +1975,9 @@ export interface PlatformEvalSuiteSettingsBase {
    * API deployments.
    *
    * A FLOOR, not a default: it RAISES a case's own count and never lowers it,
-   * where `verdictPolicyDefaults.repetitions` REPLACES it. A case at 7
-   * resolves to 7 under a floor of 3 and to 3 under a default count of 3.
+   * where `verdictPolicyDefaults.repetitions` applies only to a case that sets
+   * no count of its own. A case at 2 resolves to 3 under a floor of 3 and to 2
+   * under a default count of 3; a case at 7 resolves to 7 under either.
    */
   minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
