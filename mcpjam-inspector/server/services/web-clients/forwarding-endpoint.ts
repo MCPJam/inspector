@@ -342,6 +342,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
     connectorId: string,
     window: TurnWindow | undefined,
     call: RpcRequest,
+    userId: string | undefined,
   ): Promise<string | undefined> => {
     if (!window) return COPY.noTurn;
     const params = paramsOf(call);
@@ -356,6 +357,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
         toolName: params.name,
         arguments: params.arguments,
         ...(toolUseId ? { toolUseId } : {}),
+        ...(userId ? { userId } : {}),
       });
     } catch (error) {
       reportRouteFailure("Web connector tool approval failed", error, {
@@ -451,7 +453,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
 
     const refusals = new Map<RpcId, string>();
     for (const call of body.messages.filter(isToolCall)) {
-      const reason = await decide(connectorId, window, call);
+      const reason = await decide(connectorId, window, call, args.userId);
       if (reason) refusals.set(call.id, reason);
     }
     if (refusals.size > 0)
@@ -545,6 +547,7 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
           jsonrpcId: call.id,
           toolName: String(params.name),
           ...(toolUseId ? { toolUseId } : {}),
+          ...(args.userId ? { userId: args.userId } : {}),
           argsHash: hashPayload(params.arguments ?? {}),
         });
         pending.set(call.id, { entryId: entry.id });

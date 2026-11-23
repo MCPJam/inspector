@@ -831,6 +831,29 @@ describe("forwarding endpoint: OAuth", () => {
     expect(fixture.received).toHaveLength(0);
   });
 
+  it("tells the approval and the ledger which member's token made each call", async () => {
+    const { app, approvals, ledger, openTurn } = setup({
+      auth: "oauth",
+      deps: { verifyBearer: async (token) => ({ userId: `user_${token}` }) },
+    });
+    const window = openTurn();
+    // Any member's token passes the gate, so a call under this run need not
+    // be its owner's: the approval and the ledger see whose it was.
+    for (const [id, member] of [
+      [5, "a"],
+      [6, "b"],
+    ] as const) {
+      const vendor = vendorClient(app, { path: PATH, token: member });
+      const response = await vendor.post(
+        vendor.callToolRaw(id, "echo", member),
+      );
+      expect(await response.json()).toMatchObject({ id, result: {} });
+    }
+    expect(approvals.map((call) => call.userId)).toEqual(["user_a", "user_b"]);
+    const recorded = ledger.forTurn(window.turnId);
+    expect(recorded.map((entry) => entry.userId)).toEqual(["user_a", "user_b"]);
+  });
+
   it("serves no OAuth connector without a usable public URL, and capability connectors still forward", async () => {
     verifyBearer.mockClear();
     vi.stubEnv("BASE_URL", "");
