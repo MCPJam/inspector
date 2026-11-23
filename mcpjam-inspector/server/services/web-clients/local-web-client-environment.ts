@@ -8,7 +8,6 @@
  * There is no backend here: no saved profiles, no durable turn gate and no
  * account status. The profile on disk is the account.
  */
-import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HttpServerConfig, MCPClientManager, MCPServerConfig } from "@mcpjam/sdk";
@@ -69,13 +68,25 @@ async function upstreamOf(
   new Headers(config.requestInit?.headers).forEach((value, name) => {
     headers[name] = value;
   });
-  const token = await bearerOf(config);
+  const token = await bearerOf(serverId, config);
   if (token && !headers.authorization) headers.authorization = `Bearer ${token}`;
   return { url: String(config.url), headers };
 }
 
 /** The token this Inspector currently sends the server, however it holds it. */
-async function bearerOf(config: HttpServerConfig): Promise<string | undefined> {
+async function bearerOf(
+  serverId: string,
+  config: HttpServerConfig,
+): Promise<string | undefined> {
+  // The client manager exchanges a refresh token inside its own connection
+  // and keeps the access token there. Exchanging it again here would spend a
+  // single-use refresh token under that connection, so the server is refused
+  // rather than forwarded without its credential.
+  if (config.refreshToken?.trim()) {
+    throw new Error(
+      `${serverId} signs in with a refresh token, so the vendor's app can't use its sign-in. Connect it with an access token, then run again.`,
+    );
+  }
   if (config.accessToken) return config.accessToken;
   const provider = config.authProvider;
   if (!provider) return undefined;
@@ -104,11 +115,13 @@ export function createLocalWebClientEnvironment(deps: {
 
     async ensureConnector({ serverId }) {
       const upstream = await upstreamOf(serverId, deps.servers?.getServerConfig(serverId));
-      const key = createHash("sha256")
-        .update(JSON.stringify([deps.vendor, serverId, upstream.url, Object.entries(upstream.headers).sort()]))
-        .digest("hex");
+      // Not keyed on the headers: a refreshed token updates the connector the
+      // vendor's app saved, rather than adding one while the old one keeps
+      // forwarding with the old token.
+      const key = JSON.stringify([deps.vendor, serverId, upstream.url]);
       const kept = connectorsByUpstream.get(key);
-      if (kept && registry.has(kept)) return { connectorId: kept };
+      if (kept && registry.setHeaders(kept, upstream.headers))
+        return { connectorId: kept };
       const { connectorId } = registry.register({ upstreamUrl: upstream.url, headers: upstream.headers, serverId });
       connectorsByUpstream.set(key, connectorId);
       return { connectorId };

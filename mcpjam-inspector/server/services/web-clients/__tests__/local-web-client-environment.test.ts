@@ -63,6 +63,59 @@ describe("a local web client environment", () => {
     expect(claude.connectorId).not.toBe(first.connectorId);
   });
 
+  it("keeps the vendor's connector through a token refresh and forwards with the new token", async () => {
+    const registry = createLocalConnectorRegistry();
+    let accessToken = "token-1";
+    const env = environment({
+      registry,
+      servers: {
+        getServerConfig: () => ({
+          url: "http://localhost:3000/mcp",
+          accessToken,
+        }),
+      },
+    });
+    const args = {
+      projectId: "p",
+      webAccountId: "local:chatgpt",
+      serverId: "orders",
+      auth: "oauth" as const,
+    };
+    const first = await env.ensureConnector(args);
+    accessToken = "token-2";
+    expect(await env.ensureConnector(args)).toEqual(first);
+    expect(registry.list()).toHaveLength(1);
+    const connector = await registry.resolver.resolve(first.connectorId);
+    expect((await registry.resolver.upstream(connector!, {})).headers).toEqual({
+      authorization: "Bearer token-2",
+    });
+  });
+
+  it("refuses a server that signs in with a refresh token rather than forward it without one", async () => {
+    const registry = createLocalConnectorRegistry();
+    const env = environment({
+      registry,
+      servers: {
+        getServerConfig: () => ({
+          url: "http://localhost:3000/mcp",
+          refreshToken: "refresh-1",
+          clientId: "client-1",
+        }),
+      },
+    });
+    await expect(
+      env.ensureConnector({
+        projectId: "p",
+        webAccountId: "local:chatgpt",
+        serverId: "billing",
+        auth: "oauth",
+      }),
+    ).rejects.toThrow(
+      "billing signs in with a refresh token, so the vendor's app can't use its sign-in.",
+    );
+    expect(registry.list()).toEqual([]);
+  });
+
   it("refuses a server the vendor's app can't reach by URL", async () => {
     await expect(
       environment().ensureConnector({ projectId: "p", webAccountId: "local:chatgpt", serverId: "shell", auth: "oauth" }),
