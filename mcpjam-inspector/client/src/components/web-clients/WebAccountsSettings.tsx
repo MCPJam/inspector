@@ -6,8 +6,6 @@ import {
 import { LocalRunsControl } from "@/components/connection/LocalRunsControl";
 import { FocusBlock } from "@/components/hosts/redesigned/focus/primitives";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
-import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { savePreviewedHostId } from "@/lib/previewed-client-storage";
 import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   webAccountAsConnection,
@@ -26,16 +24,15 @@ export const WEB_ACCOUNT_TERMS: AccountListTerms = {
 /**
  * The client's accounts on its Browser settings tab, in the list MCP servers
  * share, with the same rules: admins manage, members' runs use them, and
- * local apps get them only when an admin allows it. Signing in happens in the
- * playground's pane, in the browser the runs use.
+ * local apps get them only when an admin allows it. Accounts are added and
+ * signed in from the playground's pane, in the browser the runs use, so the
+ * list here offers neither.
  */
 export function WebAccountsSettings({
   projectId,
-  hostId,
   vendor,
 }: {
   projectId: string;
-  hostId: string;
   vendor: WebClientVendor;
 }) {
   const { accounts, loaded, isAdmin } = useWebAccounts(projectId, vendor);
@@ -72,10 +69,6 @@ export function WebAccountsSettings({
             />
           ) : null
         }
-        onAuthenticate={() => {
-          savePreviewedHostId(projectId, hostId);
-          navigateApp(routePaths.playground);
-        }}
         onUpdate={async ({ connectionId: webAccountId }, operation, label) => {
           if (operation === "label")
             await rename({ webAccountId, label: label ?? "" });

@@ -9,8 +9,6 @@ import { WebAccountsSettings } from "../WebAccountsSettings";
 const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   mutations: {} as Record<string, ReturnType<typeof vi.fn>>,
-  navigate: vi.fn(),
-  savePreviewed: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
@@ -21,13 +19,6 @@ vi.mock("convex/react", () => ({
     mocks.mutations[name] ??= vi.fn().mockResolvedValue(null);
     return mocks.mutations[name];
   },
-}));
-vi.mock("@/lib/app-navigation", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
-  navigateApp: mocks.navigate,
-}));
-vi.mock("@/lib/previewed-client-storage", () => ({
-  savePreviewedHostId: mocks.savePreviewed,
 }));
 
 // Radix menus read pointer capture, which jsdom does not implement.
@@ -53,11 +44,7 @@ const evals = createWebAccountView({
 function mount(isAdmin: boolean, accounts: WebAccount[] = [qa, evals]) {
   mocks.accounts.mockReturnValue({ accounts, loaded: true, isAdmin });
   render(
-    <WebAccountsSettings
-      projectId="project-1"
-      hostId="host-1"
-      vendor="claude"
-    />,
+    <WebAccountsSettings projectId="project-1" vendor="claude" />,
   );
 }
 
@@ -136,14 +123,11 @@ describe("WebAccountsSettings", () => {
       });
   });
 
-  it("sends an admin to the playground's pane to sign in", async () => {
-    const user = userEvent.setup();
+  it("offers an admin no way to add an account until the pane can sign in", () => {
     mount(true, []);
-    await user.click(
-      screen.getByRole("button", { name: "Connect an account" }),
-    );
-    expect(mocks.savePreviewed).toHaveBeenCalledWith("project-1", "host-1");
-    expect(mocks.navigate).toHaveBeenCalledWith("/playground");
+    expect(
+      screen.queryByRole("button", { name: /Connect an account/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("sets the default and renames through the web account functions", async () => {

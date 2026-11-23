@@ -211,7 +211,8 @@ export function ConnectionAccountsList({
   onReload?: () => void;
   isAdmin: boolean;
   sharingControl?: ReactNode;
-  onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
+  /** Adds an account or signs one in again. Without it the list offers neither. */
+  onAuthenticate?: (intent: ConnectionIntent) => void | Promise<void>;
   onUpdate: (
     connection: OAuthConnection,
     operation: "label" | "default" | "delete",
@@ -394,7 +395,7 @@ export function ConnectionAccountsList({
                         Set as default
                       </DropdownMenuItem>
                     )}
-                    {terms.reauthenticate ? (
+                    {terms.reauthenticate && onAuthenticate ? (
                       <DropdownMenuItem
                         onSelect={() =>
                           void onAuthenticate({
@@ -421,7 +422,7 @@ export function ConnectionAccountsList({
       </div>
 
       {/* Hidden until the list answers: adding depends on the server's mode. */}
-      {shared !== undefined && canManage && (
+      {shared !== undefined && canManage && onAuthenticate && (
         <button
           type="button"
           disabled={busy || atAccountLimit}
