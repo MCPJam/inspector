@@ -3,6 +3,7 @@ import {
   allModelsOutOfCredits,
   applyOutOfCreditsLocks,
   isOutOfCreditsLocked,
+  orgKeysDisallowedRow,
   OUT_OF_CREDITS_MODEL_REASON,
 } from "../available-models";
 import {
@@ -121,6 +122,17 @@ describe("applyOutOfCreditsLocks", () => {
     expect(haiku?.disabled).toBe(true);
     expect(haiku?.disabledReason).toBe(reason);
     expect(isOutOfCreditsLocked(haiku)).toBe(true);
+  });
+
+  it("drops the credit lock when the organization policy locks the row", () => {
+    const [creditLocked] = applyOutOfCreditsLocks(
+      [model("anthropic/claude-haiku-4.5")],
+      EMPTY_LOCK
+    );
+    const policyLocked = orgKeysDisallowedRow(creditLocked);
+
+    expect(policyLocked.disabled).toBe(true);
+    expect(isOutOfCreditsLocked(policyLocked)).toBe(false);
   });
 });
 

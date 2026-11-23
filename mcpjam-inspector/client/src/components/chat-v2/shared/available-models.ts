@@ -407,7 +407,7 @@ export function savedModelRow(
  * switched to another model.
  */
 export function orgKeysDisallowedRow(row: ModelDefinition): ModelDefinition {
-  const { warningReason: _warning, ...rest } = row;
+  const { warningReason: _warning, disabledReasonCode: _code, ...rest } = row;
   return { ...rest, disabled: true, disabledReason: ORG_KEYS_MODEL_REASON };
 }
 
