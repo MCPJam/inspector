@@ -243,6 +243,10 @@ describe("useWebClientPane", () => {
   it("waits for the account list before choosing a view", () => {
     mount({ loaded: false });
     expect(screen.getByRole("status")).toHaveTextContent("Loading accounts…");
+    // Not "No account yet": the project may well have one.
+    expect(screen.getByTestId("web-account-chip")).toHaveTextContent(
+      "Loading account…",
+    );
   });
 
   it("runs on this computer's browser with the person's own sign-in", () => {
@@ -274,6 +278,15 @@ describe("WebAccountChip", () => {
     expect(screen.getByTestId("web-account-chip")).toHaveTextContent(
       "No account yet",
     );
+  });
+
+  it("claims nothing about the account until the list loads", () => {
+    render(<WebAccountChip vendor="claude" hostId="host-1" loaded={false} />);
+    const chip = screen.getByRole("button", {
+      name: "Claude web account loading. Open Browser settings",
+    });
+    expect(chip).toHaveTextContent("Loading account…");
+    expect(chip).not.toHaveTextContent("No account yet");
   });
 });
 

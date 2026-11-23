@@ -348,20 +348,22 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     signedIn: isConvexAuthenticated,
   });
   const webClientPane = webClientVendor !== undefined;
+  // A web client's pane skips the workspace flag, but not the backend's
+  // hosted-browser availability: its page still runs in a hosted browser.
   const canBrowseResolved =
-    webClientPane ||
-    (workspaceState !== undefined && browsersEnabled !== undefined);
+    browsersEnabled !== undefined &&
+    (webClientPane || workspaceState !== undefined);
   const canBrowse =
-    webClientPane ||
-    (workspaceState === true &&
-      browsersEnabled === true &&
-      browserPanelAvailable({
-        sessionHasBrowser,
-        hostHasBrowser: !!browserToolIds?.includes("browser"),
-        selectedEngine: browserEngine.selectedEngine,
-        isAuthenticated: isConvexAuthenticated,
-        localBrowserRunning,
-      }));
+    browsersEnabled === true &&
+    (webClientPane ||
+      (workspaceState === true &&
+        browserPanelAvailable({
+          sessionHasBrowser,
+          hostHasBrowser: !!browserToolIds?.includes("browser"),
+          selectedEngine: browserEngine.selectedEngine,
+          isAuthenticated: isConvexAuthenticated,
+          localBrowserRunning,
+        })));
   const showBrowser = browserOpen && canBrowse;
 
   // The browser takes its room from the Sessions rail, ONCE. Doing it on every

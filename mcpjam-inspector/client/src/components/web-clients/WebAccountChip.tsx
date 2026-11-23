@@ -14,12 +14,15 @@ export function WebAccountChip({
   vendor,
   hostId,
   account,
+  loaded = true,
   local = false,
 }: {
   vendor: WebClientVendor;
   hostId: string;
   /** The account runs use; absent when the project has none. */
   account?: WebAccount;
+  /** Whether the project's accounts have loaded; until then none is known. */
+  loaded?: boolean;
   /** The chat runs in this computer's browser with the person's own sign-in. */
   local?: boolean;
 }) {
@@ -27,7 +30,9 @@ export function WebAccountChip({
     ? "Your own sign-in"
     : account
       ? webAccountName(account)
-      : "No account yet";
+      : loaded
+        ? "No account yet"
+        : "Loading account…";
   const status = local
     ? "This computer"
     : account?.status === "needs_sign_in"
@@ -39,7 +44,11 @@ export function WebAccountChip({
       variant="ghost"
       size="sm"
       className="h-7 min-w-0 max-w-full gap-1.5 px-2 text-xs"
-      aria-label={`${webClientName(vendor)} account: ${name}${status ? `, ${status}` : ""}. Open Browser settings`}
+      aria-label={
+        local || account || loaded
+          ? `${webClientName(vendor)} account: ${name}${status ? `, ${status}` : ""}. Open Browser settings`
+          : `${webClientName(vendor)} account loading. Open Browser settings`
+      }
       title="Open Browser settings"
       data-testid="web-account-chip"
       onClick={() => navigateApp(buildHostFocusTabPath(hostId, "browser"))}
