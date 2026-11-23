@@ -18,6 +18,8 @@ export type LedgerEntry = {
   jsonrpcId: string | number | null;
   toolName: string;
   toolUseId?: string;
+  /** The MCPJam user whose OAuth token made the call; a capability connector names none. */
+  userId?: string;
   /** SHA-256 of the canonical JSON arguments, never the arguments themselves. */
   argsHash: string;
   state: LedgerState;
