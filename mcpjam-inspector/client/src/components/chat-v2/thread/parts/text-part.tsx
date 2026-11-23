@@ -1,6 +1,5 @@
 import type { UIMessage } from "@ai-sdk/react";
-import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
-import { getScenarioTerminalClient } from "@/lib/scenario-client-style";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 
 import { MemoizedMarkdown } from "../memomized-markdown";
 import "./terminal-chat.css";
@@ -14,16 +13,16 @@ export function TextPart({
   role: UIMessage["role"];
   showTerminalMarker?: boolean;
 }) {
-  const terminal = getScenarioTerminalClient(useScenarioHostStyle());
+  const terminal = usePlaygroundTerminalPresentation();
   if (terminal) {
     return (
       <div
-        data-terminal-markdown={terminal}
+        data-terminal-markdown={terminal.variant}
         className="flex min-w-0 gap-2 font-mono text-[13px] leading-5 text-foreground"
       >
         {showTerminalMarker && (
           <span aria-hidden="true" className="shrink-0 text-muted-foreground">
-            {terminal === "claude-code" ? "⏺" : "•"}
+            {terminal.reply}
           </span>
         )}
         <div className="min-w-0 flex-1 break-words">

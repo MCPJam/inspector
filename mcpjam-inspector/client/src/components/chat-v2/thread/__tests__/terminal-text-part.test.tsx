@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
+import { PlaygroundTerminalPresentationProvider } from "@/contexts/playground-terminal-presentation";
 import { TextPart } from "../parts/text-part";
 
 describe("terminal replies", () => {
@@ -14,7 +15,9 @@ describe("terminal replies", () => {
       const text = "| Product | Price |\n| --- | ---: |\n| AirPods | $129 |";
       render(
         <ScenarioHostStyleProvider value={hostStyle}>
-          <TextPart role="assistant" text={text} showTerminalMarker />
+          <PlaygroundTerminalPresentationProvider value>
+            <TextPart role="assistant" text={text} showTerminalMarker />
+          </PlaygroundTerminalPresentationProvider>
         </ScenarioHostStyleProvider>,
       );
 
@@ -35,7 +38,9 @@ describe("terminal replies", () => {
     const text = "- AirPods\n- Price: $129";
     const { rerender } = render(
       <ScenarioHostStyleProvider value="claude-code">
-        <TextPart role="assistant" text={text} showTerminalMarker />
+        <PlaygroundTerminalPresentationProvider value>
+          <TextPart role="assistant" text={text} showTerminalMarker />
+        </PlaygroundTerminalPresentationProvider>
       </ScenarioHostStyleProvider>,
     );
     expect(
@@ -45,12 +50,26 @@ describe("terminal replies", () => {
 
     rerender(
       <ScenarioHostStyleProvider value="claude">
-        <TextPart role="assistant" text={text} showTerminalMarker />
+        <PlaygroundTerminalPresentationProvider value>
+          <TextPart role="assistant" text={text} showTerminalMarker />
+        </PlaygroundTerminalPresentationProvider>
       </ScenarioHostStyleProvider>,
     );
     expect(
       screen.getByText("AirPods").closest("[data-terminal-markdown]"),
     ).toBeNull();
     expect(screen.getByRole("list")).toBeVisible();
+  });
+
+  it("keeps the regular transcript for a CLI client outside Playground", () => {
+    render(
+      <ScenarioHostStyleProvider value="claude-code">
+        <TextPart role="assistant" text="AirPods" showTerminalMarker />
+      </ScenarioHostStyleProvider>,
+    );
+    expect(
+      screen.getByText("AirPods").closest("[data-terminal-markdown]"),
+    ).toBeNull();
+    expect(screen.queryByText("⏺")).not.toBeInTheDocument();
   });
 });

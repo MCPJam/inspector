@@ -19,6 +19,7 @@ import {
   ScenarioHostStyleProvider,
   ScenarioHostThemeProvider,
 } from "@/contexts/scenario-client-style-context";
+import { PlaygroundTerminalPresentationProvider } from "@/contexts/playground-terminal-presentation";
 import type { ModelDefinition } from "@/shared/types";
 import { authFetch } from "@/lib/session-token";
 
@@ -347,15 +348,22 @@ describe("ChatInput", () => {
     ])("shows a terminal prompt for %s", (hostStyle, marker) => {
       const { rerender } = render(
         <ScenarioHostStyleProvider value={hostStyle}>
-          <ChatInput {...defaultProps} />
+          <PlaygroundTerminalPresentationProvider value>
+            <ChatInput {...defaultProps} />
+          </PlaygroundTerminalPresentationProvider>
         </ScenarioHostStyleProvider>,
       );
       expect(screen.getByText(marker)).toHaveAttribute("aria-hidden", "true");
-      expect(screen.getByRole("textbox")).toHaveClass("font-mono");
+      const input = screen.getByRole("textbox");
+      expect(input).toHaveClass("font-mono", "min-h-0", "md:text-[13px]");
+      expect(input).not.toHaveClass("min-h-16");
+      expect(input).not.toHaveClass("md:text-sm");
 
       rerender(
         <ScenarioHostStyleProvider value={hostStyle}>
-          <ChatInput {...defaultProps} sharedClientComposer />
+          <PlaygroundTerminalPresentationProvider value>
+            <ChatInput {...defaultProps} sharedClientComposer />
+          </PlaygroundTerminalPresentationProvider>
         </ScenarioHostStyleProvider>,
       );
       expect(screen.queryByText(marker)).not.toBeInTheDocument();

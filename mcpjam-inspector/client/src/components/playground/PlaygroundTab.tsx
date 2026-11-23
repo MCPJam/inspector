@@ -25,6 +25,7 @@ import type { ImperativePanelHandle } from "react-resizable-panels";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { PlaygroundRightRail } from "@/components/playground/PlaygroundRightRail";
 import { ExtensionWorkspaceProvider } from "@/components/host-workspace/ExtensionWorkspaceProvider";
+import { PlaygroundTerminalPresentationProvider } from "@/contexts/playground-terminal-presentation";
 import {
   ExtensionRailBridge,
   readRightRailSize,
@@ -622,20 +623,22 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
               browserExpanded && showBrowser && "hidden",
             )}
           >
-            <PlaygroundCenter
-              activeProjectId={props.activeProjectId}
-              serverName={props.serverName}
-              enableMultiModelChat={true}
-              onSaveHostContext={props.onSaveHostContext}
-              ensureServersReady={props.ensureServersReady}
-              playgroundServerSelectorProps={
-                props.playgroundServerSelectorProps
-              }
-              evalChatHandoff={props.evalChatHandoff}
-              onEvalChatHandoffConsumed={props.onEvalChatHandoffConsumed}
-              firstRunPrompt={props.firstRunPrompt}
-              onFirstRunPromptConsumed={props.onFirstRunPromptConsumed}
-            />
+            <PlaygroundTerminalPresentationProvider value>
+              <PlaygroundCenter
+                activeProjectId={props.activeProjectId}
+                serverName={props.serverName}
+                enableMultiModelChat={true}
+                onSaveHostContext={props.onSaveHostContext}
+                ensureServersReady={props.ensureServersReady}
+                playgroundServerSelectorProps={
+                  props.playgroundServerSelectorProps
+                }
+                evalChatHandoff={props.evalChatHandoff}
+                onEvalChatHandoffConsumed={props.onEvalChatHandoffConsumed}
+                firstRunPrompt={props.firstRunPrompt}
+                onFirstRunPromptConsumed={props.onFirstRunPromptConsumed}
+              />
+            </PlaygroundTerminalPresentationProvider>
           </ResizablePanel>
           {showBrowser ? (
             <>

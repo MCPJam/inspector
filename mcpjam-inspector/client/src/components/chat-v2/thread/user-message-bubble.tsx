@@ -10,10 +10,8 @@ import {
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  getScenarioHostFamily,
-  getScenarioTerminalClient,
-} from "@/lib/scenario-client-style";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
+import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 
 interface UserMessageBubbleProps {
@@ -30,18 +28,18 @@ export function UserMessageBubble({
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
   const isDarkScenarioTheme = resolvedThemeMode === "dark";
-  const terminal = getScenarioTerminalClient(scenarioHostStyle);
+  const terminal = usePlaygroundTerminalPresentation();
   if (terminal) {
     return (
       <div
-        data-terminal-client={terminal}
+        data-terminal-client={terminal.variant}
         className={cn(
           "flex max-h-[70vh] w-full min-w-0 gap-2 overflow-auto overscroll-contain bg-muted px-2 py-1.5 font-mono text-[13px] leading-5 text-foreground",
           className,
         )}
       >
         <span aria-hidden="true" className="shrink-0 text-muted-foreground">
-          {terminal === "claude-code" ? "❯" : "›"}
+          {terminal.prompt}
         </span>
         <div className="min-w-0 flex-1">{children}</div>
       </div>

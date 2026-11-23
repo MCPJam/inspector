@@ -115,6 +115,7 @@ import {
   useScenarioHostStyle,
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
@@ -124,7 +125,6 @@ import {
 import { ClientStylePillSelector } from "@/components/shared/ClientStylePillSelector";
 import {
   getScenarioHostFamily,
-  getScenarioTerminalClient,
   type ScenarioHostStyle,
 } from "@/lib/scenario-client-style";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
@@ -629,6 +629,7 @@ export function ChatInput({
     [clientSelector?.cloudProjectId, skillsEnabled],
   );
   const scenarioHostStyle = useScenarioHostStyle();
+  const terminalPresentation = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
   const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
@@ -1640,14 +1641,13 @@ export function ChatInput({
   };
 
   const composerHostStyle =
-    sharedClientComposer && getScenarioTerminalClient(scenarioHostStyle)
-      ? null
-      : scenarioHostStyle;
+    sharedClientComposer && terminalPresentation ? null : scenarioHostStyle;
   const scenarioHostFamily = getScenarioHostFamily(composerHostStyle);
-  const terminal = getScenarioTerminalClient(composerHostStyle);
+  const terminal = sharedClientComposer ? undefined : terminalPresentation;
   const composerClasses = hostComposerClasses(
     composerHostStyle,
     isDarkScenarioTheme,
+    terminal?.variant,
   );
   const activeSubmitButtonClasses =
     scenarioHostFamily === "chatgpt"
@@ -1891,7 +1891,7 @@ export function ChatInput({
                 aria-hidden="true"
                 className="pointer-events-none absolute left-2 top-2 font-mono text-[13px] leading-5 text-muted-foreground"
               >
-                {terminal === "claude-code" ? "❯" : "›"}
+                {terminal.prompt}
               </span>
             )}
             <TextareaAutosize
@@ -1915,7 +1915,7 @@ export function ChatInput({
                 "w-full resize-none overflow-y-auto overscroll-contain border-none bg-transparent dark:bg-transparent",
                 "pt-2 text-foreground placeholder:text-muted-foreground/70",
                 terminal
-                  ? "pb-2 pl-7 pr-2 font-mono text-[13px] leading-5"
+                  ? "min-h-0 pb-2 pl-7 pr-2 font-mono text-[13px] leading-5 md:text-[13px]"
                   : "min-h-[64px] px-4 pb-3 text-base",
                 "outline-none focus-visible:outline-none focus-visible:ring-0 shadow-none focus-visible:shadow-none",
                 voiceInputState === "recording" && "italic text-muted-foreground",

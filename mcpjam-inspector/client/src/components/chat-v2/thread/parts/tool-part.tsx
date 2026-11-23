@@ -75,11 +75,8 @@ import {
 import { useEffectiveHostContext } from "@/contexts/saved-client-context";
 import { useOpenBrowserOnBrowsing } from "@/hooks/useOpenBrowserOnBrowsing";
 import { extractHostDisplayModes } from "@/lib/client-config";
-import {
-  useScenarioHostStyle,
-  useScenarioHostTheme,
-} from "@/contexts/scenario-client-style-context";
-import { getScenarioTerminalClient } from "@/lib/scenario-client-style";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
 import { webSearchRefusalCodeOf } from "@/lib/web-search-refusal";
@@ -252,7 +249,7 @@ export function ToolPart({
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const scenarioHostTheme = useScenarioHostTheme();
-  const terminal = getScenarioTerminalClient(useScenarioHostStyle());
+  const terminal = usePlaygroundTerminalPresentation();
   const resolvedThemeMode = scenarioHostTheme ?? themeMode;
   const mcpIconClassName =
     resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
@@ -1077,7 +1074,7 @@ export function ToolPart({
           <span className="inline-flex items-center gap-2 min-w-0">
             {terminal ? (
               <span aria-hidden="true" className="shrink-0 text-muted-foreground">
-                {terminal === "claude-code" ? "└" : "•"}
+                {terminal.tool}
               </span>
             ) : (
               <img

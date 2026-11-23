@@ -82,6 +82,7 @@ import { PerplexityMarkIndicator } from "./indicators/perplexity-mark";
 import { ClineMarkIndicator } from "./indicators/cline-mark";
 import { NotionShimmerIndicator } from "./indicators/notion-shimmer";
 import { MistralSpinnerIndicator } from "./indicators/mistral-spinner";
+import { CLAUDE_CODE_TERMINAL, CODEX_TERMINAL } from "./terminal-presentations";
 import type { HostStyleDefinition, HostThemeMode } from "./types";
 import { HOST_STYLE_CAPABILITIES } from "@/shared/host-style-capabilities";
 import {
@@ -221,7 +222,7 @@ export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "Anthropic Claude Code CLI chrome",
     logoSrc: claudeCodeLogo,
     family: "claude",
-    terminal: "claude-code",
+    terminal: CLAUDE_CODE_TERMINAL,
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeCodeCliIndicator,
   },
@@ -448,6 +449,11 @@ export const COPILOT_HOST_STYLE: HostStyleDefinition = {
 };
 
 /**
+ * Codex is a CLI without a widget surface. We mirror ChatGPT's MCP profile
+ * because the OpenAI Apps SDK would be the right protocol for a Codex-adjacent
+ * widget surface. Codex itself never renders an iframe, so its widget profile
+ * is unused in practice.
+ *
  * Codex's terminal presentation uses ChatGPT's neutral light/dark palette.
  * Its shimmering activity indicator shares CSS with Cursor.
  */
@@ -469,7 +475,7 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
     pickerDescription: "OpenAI Codex CLI-style chrome",
     logoSrc: codexLogo,
     family: "chatgpt",
-    terminal: "codex",
+    terminal: CODEX_TERMINAL,
     resolveChatBackground: (theme) => CHATGPT_CHAT_BACKGROUND[theme],
     loadingIndicator: CodexShineIndicator,
   },

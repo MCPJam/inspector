@@ -14,6 +14,7 @@ import {
   useScenarioHostStyle,
   useScenarioHostTheme,
 } from "@/contexts/scenario-client-style-context";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -28,7 +29,6 @@ import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/lo
 import {
   getScenarioChatBackground,
   getScenarioHostFamily,
-  getScenarioTerminalClient,
 } from "@/lib/scenario-client-style";
 import {
   LIVE_CHAT_REASONING_DISPLAY_MODE,
@@ -333,7 +333,7 @@ export function Thread({
     fullscreenChatInput.trim().length > 0;
 
   const scenarioHostStyle = useScenarioHostStyle();
-  const terminal = getScenarioTerminalClient(scenarioHostStyle);
+  const terminal = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const hasBrandIndicator =
     useResolvedHostStyleForIndicator(model.provider) !== null;

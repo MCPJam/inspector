@@ -153,12 +153,6 @@ export function getScenarioChatBackground(
   }).chatUi.resolveChatBackground(themeMode);
 }
 
-export function getScenarioTerminalClient(
-  hostStyle: ScenarioHostStyle | null | undefined,
-): HostChatUi["terminal"] {
-  return getHostStyleOrDefault(hostStyle).chatUi.terminal;
-}
-
 export function getScenarioShellStyle(
   hostStyle: ScenarioHostStyle,
   themeMode: HostThemeMode,

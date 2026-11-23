@@ -9,7 +9,7 @@ import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-acti
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
 import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
-import { getScenarioTerminalClient } from "@/lib/scenario-client-style";
+import { usePlaygroundTerminalPresentation } from "@/contexts/playground-terminal-presentation";
 import { UserContextCard } from "./user-context-card";
 import { getUserContextBlocks } from "@/shared/user-context-message";
 import { PartSwitch } from "./part-switch";
@@ -495,7 +495,7 @@ function MessageViewImpl({
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const scenarioHostStyle = useScenarioHostStyle();
-  const terminal = getScenarioTerminalClient(scenarioHostStyle);
+  const terminal = usePlaygroundTerminalPresentation();
   const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
