@@ -1095,4 +1095,35 @@ describe("in-memory reconnect backend", () => {
       profileVersion: 2,
     });
   });
+
+  it("compares the stored email trimmed, as sameWebIdentity does", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "ready",
+        accountEmail: ` ${SEAT.accountEmail} `,
+        profileVersion: 1,
+      },
+    ]);
+    const reported = await backend.reportWebSignInRequired({
+      webAccountId: ACCOUNT,
+      runId: "run-1",
+      pendingStep: { stepId: "step-1", startedAt: "2026-11-20T10:00:00.000Z" },
+      reason: "signed_out",
+    });
+    if (!("requestId" in reported)) throw new Error("No request opened.");
+    const handback = (verifiedAccountEmail: string) =>
+      backend.handbackWebReconnect({
+        requestId: reported.requestId,
+        verifiedAccountEmail,
+      });
+
+    await expect(handback(OTHER_SEAT.accountEmail)).rejects.toMatchObject({
+      code: "CONFLICT",
+    });
+    expect(await handback(SEAT.accountEmail)).toEqual({
+      resumableRunIds: ["run-1"],
+    });
+  });
 });
