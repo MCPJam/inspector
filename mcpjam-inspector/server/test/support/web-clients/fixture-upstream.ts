@@ -6,7 +6,12 @@
  * JSON responses only, one tool (`echo`), no sessions. Enough for a vendor's
  * MCP client to initialize, list and call through the forwarding endpoint.
  */
-import { createServer, type IncomingHttpHeaders } from "node:http";
+import {
+  createServer,
+  type IncomingHttpHeaders,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import type { AddressInfo } from "node:net";
 
 export type UpstreamReceipt = {
@@ -37,7 +42,7 @@ const ECHO_TOOL = {
 export async function startFixtureUpstream(): Promise<FixtureUpstream> {
   const received: UpstreamReceipt[] = [];
   const requests: string[] = [];
-  const server = createServer(async (request, response) => {
+  const answer = async (request: IncomingMessage, response: ServerResponse) => {
     requests.push(`${request.method} ${request.url}`);
     if (request.method !== "POST") {
       response.writeHead(405).end();
@@ -89,6 +94,27 @@ export async function startFixtureUpstream(): Promise<FixtureUpstream> {
           : { jsonrpc: "2.0", id: body.id, result },
       ),
     );
+  };
+  const server = createServer((request, response) => {
+    // Node ignores the promise a listener returns, so a failure is settled
+    // here rather than escape the test as an unhandled rejection.
+    void answer(request, response).catch((error: unknown) => {
+      // A client that hung up mid-request has no socket left to answer on.
+      if (response.destroyed || response.headersSent) return;
+      const parse = error instanceof SyntaxError;
+      response.writeHead(parse ? 400 : 500, {
+        "content-type": "application/json",
+      });
+      response.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: null,
+          error: parse
+            ? { code: -32700, message: "Parse error" }
+            : { code: -32603, message: String(error) },
+        }),
+      );
+    });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
