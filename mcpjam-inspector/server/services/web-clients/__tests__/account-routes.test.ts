@@ -60,6 +60,7 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
       start: vi.fn(async () => ({ browserSessionId: "browser-session-1" })),
       driver: async () => claudePage("team@example.com"),
       captureProfile: async () => new Uint8Array([1, 2, 3]),
+      release: vi.fn(async () => undefined),
     },
     ...overrides,
   };
@@ -166,5 +167,49 @@ describe("POST /accounts/:id/save-profile", () => {
     expect((await post(unknown.app, "/accounts/acct-1/save-profile", body)).status).toBe(503);
     expect(driver).not.toHaveBeenCalled();
     expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("closes the browser once the save is over: saved, saved first by someone else, or failed", async () => {
+    const saved = routes();
+    expect((await post(saved.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const raced = routes({
+      saveProfile: async () => ({ ok: false, reason: "version_conflict", profileVersion: 5 }),
+    });
+    expect((await post(raced.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const exportFailed = routes({
+      browser: {
+        ...routes().deps.browser,
+        captureProfile: async () => {
+          throw new Error("The export stopped.");
+        },
+      },
+    });
+    const pageGone = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The page closed.");
+          },
+        }),
+      },
+    });
+    for (const failed of [exportFailed, pageGone]) {
+      expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    }
+    for (const { deps } of [saved, raced, exportFailed, pageGone]) {
+      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1" });
+    }
+  });
+
+  it("keeps the browser open while the person finishes signing in or switches accounts", async () => {
+    for (const email of [undefined, "someone@example.com"]) {
+      const { app, deps } = routes({
+        browser: { ...routes().deps.browser, driver: async () => claudePage(email) },
+      });
+      expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toMatchObject({ ok: false });
+      expect(deps.browser.release).not.toHaveBeenCalled();
+    }
   });
 });

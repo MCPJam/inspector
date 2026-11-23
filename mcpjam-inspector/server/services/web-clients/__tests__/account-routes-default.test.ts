@@ -2,10 +2,11 @@
  * The deployed account routes keep each sign-in browser for the person,
  * project and account that opened it. Another person's id, or the opener's
  * id sent for another account, finds no browser: nothing is read from it or
- * exported, and the route says to start the sign-in again. Only a backend
- * that says the person manages the project's web accounts opens one: a
- * backend without that check is refused like a member. The backend, the
- * hosted browser and the person's session are fixtures; the routes and the
+ * exported, and the route says to start the sign-in again. A browser closes
+ * once its save is over, or two hours after it opened. Only a backend that
+ * says the person manages the project's web accounts opens one: a backend
+ * without that check is refused like a member. The backend, the hosted
+ * browser and the person's session are fixtures; the routes and the
  * claude.ai page module are real. Evidence: fixture.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +21,7 @@ const fixture = vi.hoisted(() => ({
   /** The backend's answer to the manage check. */
   manage: (async () => ({ allowed: true })) as () => Promise<unknown>,
   open: vi.fn(),
+  close: vi.fn(async () => undefined),
   exportProfile: vi.fn(async () => new Uint8Array([1, 2, 3])),
   saveWebAccountProfile: vi.fn(async () => ({
     ok: true as const,
@@ -74,6 +76,7 @@ vi.mock("../hosted-browser.js", () => ({
       chatSessionId: "chat-1",
       driver: fixture.page,
       exportProfile: fixture.exportProfile,
+      close: fixture.close,
     };
   },
 }));
@@ -131,11 +134,13 @@ beforeEach(() => {
   fixture.page = claudePage();
   fixture.manage = async () => ({ allowed: true });
   fixture.open.mockClear();
+  fixture.close.mockClear();
   fixture.exportProfile.mockClear();
   fixture.saveWebAccountProfile.mockClear();
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -257,5 +262,82 @@ describe("who may open a sign-in browser on the deployed routes", () => {
       expect(response.status).toBe(500);
     }
     expect(fixture.open).not.toHaveBeenCalled();
+  });
+});
+
+describe("a sign-in browser's life on the deployed routes", () => {
+  const save = { projectId: "p1", browserSessionId: "browser-session-1" };
+
+  it("closes once its profile is saved, and its id opens nothing after", async () => {
+    const app = createDefaultWebAccountRoutes();
+    await post(app, "user_a", "/accounts/acct-1/sign-in", { projectId: "p1" });
+    expect(
+      await (
+        await post(app, "user_a", "/accounts/acct-1/save-profile", save)
+      ).json(),
+    ).toMatchObject({ ok: true });
+    expect(fixture.close).toHaveBeenCalledTimes(1);
+    const again = await post(
+      app,
+      "user_a",
+      "/accounts/acct-1/save-profile",
+      save,
+    );
+    expect(again.status).toBe(409);
+    expect(fixture.exportProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays open while the person finishes signing in", async () => {
+    const app = createDefaultWebAccountRoutes();
+    await post(app, "user_a", "/accounts/acct-1/sign-in", { projectId: "p1" });
+    // The page the kept browser drives, still on the sign-in page.
+    const page = fixture.page as PageDriver;
+    Object.assign(page, { url: async () => "https://claude.ai/login" });
+    expect(
+      await (
+        await post(app, "user_a", "/accounts/acct-1/save-profile", save)
+      ).json(),
+    ).toEqual({
+      ok: false,
+      reason: "not_signed_in",
+    });
+    expect(fixture.close).not.toHaveBeenCalled();
+    Object.assign(page, { url: async () => "https://claude.ai/new" });
+    expect(
+      await (
+        await post(app, "user_a", "/accounts/acct-1/save-profile", save)
+      ).json(),
+    ).toMatchObject({ ok: true });
+    expect(fixture.close).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes when the save fails", async () => {
+    const app = createDefaultWebAccountRoutes();
+    await post(app, "user_a", "/accounts/acct-1/sign-in", { projectId: "p1" });
+    fixture.saveWebAccountProfile.mockRejectedValueOnce(
+      new Error("The upload stopped."),
+    );
+    expect(
+      (await post(app, "user_a", "/accounts/acct-1/save-profile", save)).status,
+    ).toBe(500);
+    expect(fixture.close).toHaveBeenCalledTimes(1);
+    expect(
+      (await post(app, "user_a", "/accounts/acct-1/save-profile", save)).status,
+    ).toBe(409);
+  });
+
+  it("closes two hours after it opened when nobody saved it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const app = createDefaultWebAccountRoutes();
+    await post(app, "user_a", "/accounts/acct-1/sign-in", { projectId: "p1" });
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000 - 1);
+    expect(fixture.close).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(fixture.close).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+    expect(
+      (await post(app, "user_a", "/accounts/acct-1/save-profile", save)).status,
+    ).toBe(409);
+    expect(fixture.exportProfile).not.toHaveBeenCalled();
   });
 });

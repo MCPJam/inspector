@@ -28,10 +28,33 @@ const bearerOf = (c: Context) => c.req.header("authorization") ?? "";
  * browser. Only this replica holds them: save-profile on another one finds
  * none, and the person starts the sign-in again.
  */
-const signInBrowsers = new Map<
-  string,
-  { browser: WebClientHostedBrowser; actor: WebActor; projectId: string; webAccountId: string }
->();
+type KeptSignInBrowser = {
+  browser: WebClientHostedBrowser;
+  actor: WebActor;
+  projectId: string;
+  webAccountId: string;
+  expiry: NodeJS.Timeout;
+};
+const signInBrowsers = new Map<string, KeptSignInBrowser>();
+/** Long past any sign-in: a browser nobody saved by then is closed. */
+const SIGN_IN_BROWSER_KEEP_MS = 2 * 60 * 60_000;
+
+function keepSignInBrowser(entry: Omit<KeptSignInBrowser, "expiry">): void {
+  const id = entry.browser.browserSessionId;
+  clearTimeout(signInBrowsers.get(id)?.expiry);
+  const expiry = setTimeout(() => void releaseSignInBrowser(id), SIGN_IN_BROWSER_KEEP_MS);
+  expiry.unref();
+  signInBrowsers.set(id, { ...entry, expiry });
+}
+
+/** Forgets the browser and closes it, which never throws. */
+async function releaseSignInBrowser(browserSessionId: string): Promise<void> {
+  const kept = signInBrowsers.get(browserSessionId);
+  if (!kept) return;
+  signInBrowsers.delete(browserSessionId);
+  clearTimeout(kept.expiry);
+  await kept.browser.close();
+}
 
 export function createDefaultWebAccountRoutes(): Hono {
   const service = webClientService();
@@ -92,7 +115,7 @@ export function createDefaultWebAccountRoutes(): Hono {
           vendor,
           ...(profileArchive ? { profileArchive } : {}),
         });
-        signInBrowsers.set(browser.browserSessionId, { browser, actor, projectId, webAccountId });
+        keepSignInBrowser({ browser, actor, projectId, webAccountId });
         return { browserSessionId: browser.browserSessionId, chatSessionId: browser.chatSessionId };
       },
       async driver(args) {
@@ -100,6 +123,9 @@ export function createDefaultWebAccountRoutes(): Hono {
       },
       async captureProfile(args) {
         return signInBrowserOf(args).exportProfile();
+      },
+      async release(args) {
+        if (heldSignInBrowser(args)) await releaseSignInBrowser(args.browserSessionId);
       },
     },
   });
@@ -121,13 +147,15 @@ export function createDefaultWebAccountRoutes(): Hono {
   }
 }
 
-/** The person's own sign-in browser for this account, if this replica holds it. */
-function signInBrowserOf(args: {
+type SignInBrowserArgs = {
   browserSessionId: string;
   actor: WebActor;
   projectId: string;
   webAccountId: string;
-}): WebClientHostedBrowser {
+};
+
+/** The person's own sign-in browser for this account, if this replica holds it. */
+function heldSignInBrowser(args: SignInBrowserArgs): WebClientHostedBrowser | undefined {
   const kept = signInBrowsers.get(args.browserSessionId);
   if (
     !kept ||
@@ -135,9 +163,15 @@ function signInBrowserOf(args: {
     kept.projectId !== args.projectId ||
     kept.webAccountId !== args.webAccountId
   ) {
-    throw new SignInBrowserNotFoundError();
+    return undefined;
   }
   return kept.browser;
+}
+
+function signInBrowserOf(args: SignInBrowserArgs): WebClientHostedBrowser {
+  const browser = heldSignInBrowser(args);
+  if (!browser) throw new SignInBrowserNotFoundError();
+  return browser;
 }
 
 function sameActor(a: WebActor, b: WebActor): boolean {
