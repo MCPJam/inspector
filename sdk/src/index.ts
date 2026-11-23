@@ -128,6 +128,14 @@ export {
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
+  mapMcpContentBlocksForModel,
+  EMPTY_TOOL_RESULT_TEXT,
+  hasNoContentBlocks,
+  projectToolResultByRule,
+  structuredContentRuleOf,
+  withoutStructuredContentRule,
+  type McpModelOutputText,
+  type ToolResultRuleOptions,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -1978,6 +1986,7 @@ export type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
