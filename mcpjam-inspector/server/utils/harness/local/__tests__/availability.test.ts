@@ -352,9 +352,13 @@ describe("a fully authorized turn", () => {
       available: true,
     });
 
+    // A different size from the verified bytes. Linux stamps mtime and ctime
+    // from a clock that ticks every few milliseconds, so a same-size rewrite
+    // landing in the tick of the previous test's restore leaves every field
+    // the snapshot compares unchanged.
     await writeFile(
       join(runtimeRoot, "claude-code", "bridge.mjs"),
-      "console.log(3)",
+      "console.log(3333)",
     );
     const result = await query({ grantToken: token });
     expect(result.available).toBe(false);
