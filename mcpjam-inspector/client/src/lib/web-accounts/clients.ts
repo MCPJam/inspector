@@ -20,14 +20,22 @@ export function webClientVendorOfHost(host: {
 
 /**
  * The clients a person may pick. Claude web and ChatGPT web stay out while
- * their flag is off, even in a project that made them while it was on.
+ * their flag is off, even in a project that made them while it was on. One
+ * already picked (`keep`) stays listed, so it still shows by name and can be
+ * unpicked; it just can't be picked again.
  */
 export function pickableHosts<
-  T extends Parameters<typeof webClientVendorOfHost>[0],
->(hosts: readonly T[], webClientsEnabled: boolean): T[] {
-  return webClientsEnabled
-    ? [...hosts]
-    : hosts.filter((host) => !webClientVendorOfHost(host));
+  T extends Parameters<typeof webClientVendorOfHost>[0] & { hostId: string },
+>(
+  hosts: readonly T[],
+  webClientsEnabled: boolean,
+  keep: Iterable<string | null | undefined> = [],
+): T[] {
+  if (webClientsEnabled) return [...hosts];
+  const kept = new Set(keep);
+  return hosts.filter(
+    (host) => kept.has(host.hostId) || !webClientVendorOfHost(host),
+  );
 }
 
 /** The vendor's site as people know it, such as claude.ai. */
@@ -62,16 +70,16 @@ export function runAccountOf(accounts: readonly WebAccount[]) {
 }
 
 /** How the chip and the suite name an account: its address, else its name. */
+export function webAccountName(account: WebAccount): string {
+  return account.accountEmail || account.label;
+}
+
 /**
  * Whether anyone ever signed this account in. A new account also reads
  * `needs_sign_in`, but the site never signed it out, so it is told apart.
  */
 export function webAccountWasSignedIn(account: WebAccount): boolean {
   return account.hasProfile || account.lastVerifiedAt !== undefined;
-}
-
-export function webAccountName(account: WebAccount): string {
-  return account.accountEmail || account.label;
 }
 
 /**

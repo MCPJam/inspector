@@ -50,17 +50,20 @@ describe("web accounts helpers", () => {
     ]);
   });
 
+  it("keeps a web client already picked, in place, while the flag is off", () => {
+    const hosts = [
+      { hostId: "code", runtime: "claude-code" },
+      { hostId: "web", runtime: "chatgpt-web" },
+      { hostId: "web-2", runtime: "claude-web" },
+    ];
+    expect(
+      pickableHosts(hosts, false, ["web", null]).map((h) => h.hostId),
+    ).toEqual(["code", "web"]);
+  });
+
   it("names each vendor's site", () => {
     expect(webClientSite("claude")).toBe("claude.ai");
     expect(webClientSite("chatgpt")).toBe("chatgpt.com");
-  });
-
-  it("runs on the default account, else the first", () => {
-    const first = account({ webAccountId: "a" });
-    const fallback = account({ webAccountId: "b", isDefault: true });
-    expect(runAccountOf([first, fallback])).toBe(fallback);
-    expect(runAccountOf([first])).toBe(first);
-    expect(runAccountOf([])).toBeUndefined();
   });
 
   it("shows a web account in the shared account list", () => {
@@ -124,5 +127,13 @@ describe("web accounts helpers", () => {
     expect(getFunctionName(webAccountsApi.reconnectRequests)).toBe(
       "webClientReconnect:listWebReconnectRequests",
     );
+  });
+
+  it("runs on the default account, else the first", () => {
+    const first = account({ webAccountId: "a" });
+    const fallback = account({ webAccountId: "b", isDefault: true });
+    expect(runAccountOf([first, fallback])).toBe(fallback);
+    expect(runAccountOf([first])).toBe(first);
+    expect(runAccountOf([])).toBeUndefined();
   });
 });

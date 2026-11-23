@@ -116,6 +116,26 @@ describe("WebAccountsSettings", () => {
     });
   });
 
+  it("lets an admin stop local runs while only some accounts allow them", async () => {
+    const user = userEvent.setup();
+    mount(true, [{ ...qa, allowLocalRuns: true }, evals]);
+    const toggle = screen.getByRole("switch", { name: "Allow local runs" });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+      "Stop local runs for this client?",
+    );
+    await user.click(screen.getByRole("button", { name: "Stop local runs" }));
+    await waitFor(() =>
+      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledTimes(2),
+    );
+    for (const webAccountId of ["wa-qa", "wa-evals"])
+      expect(call("setWebAccountAllowLocalRuns")).toHaveBeenCalledWith({
+        webAccountId,
+        allowLocalRuns: false,
+      });
+  });
+
   it("sends an admin to the playground's pane to sign in", async () => {
     const user = userEvent.setup();
     mount(true, []);

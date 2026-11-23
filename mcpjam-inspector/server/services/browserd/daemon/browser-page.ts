@@ -253,6 +253,12 @@ export interface DriverContext {
   isConnected(): boolean;
   close(): Promise<void>;
   /**
+   * Clears every cookie and site store the browser keeps for each origin, so
+   * a profile archived next carries none of them. Absent where the browser
+   * can't, and a caller that must leave a site out then refuses to export.
+   */
+  clearOriginData?(origins: readonly string[]): Promise<void>;
+  /**
    * The egress proxy's credentials, when every request goes through it. A
    * CDP session that intercepts requests must answer the proxy's challenge
    * with these (`navigation-stop.ts`).

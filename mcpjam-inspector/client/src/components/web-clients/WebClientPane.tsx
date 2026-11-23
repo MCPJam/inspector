@@ -3,12 +3,12 @@ import { useMutation } from "convex/react";
 import { KeyRound, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
-import { describeConvexFailure } from "@/lib/convex-error";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
 import { webAccountsApi } from "@/lib/web-accounts/api";
 import {
   saveWebAccountProfile,
   startWebAccountSignIn,
+  webAccountFailureMessage,
 } from "@/lib/web-accounts/routes";
 import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
@@ -30,8 +30,8 @@ import { WebSignInBrowser } from "./WebSignInBrowser";
 
 /**
  * The web client a signed-in person is previewing in the playground, while
- * the flag is on, and its pane opened by itself: once per chat and client,
- * so a person's close holds until either changes. Opening starts no browser.
+ * the flag is on, and its pane opened by itself the first time a chat shows
+ * that client, so a person's close holds. Opening starts no browser.
  */
 export function useWebClientPaneOpening({
   hostConfig,
@@ -49,10 +49,15 @@ export function useWebClientPaneOpening({
     enabled && signedIn && hostConfig
       ? webClientVendorOfHost(hostConfig)
       : undefined;
-  const openBrowser = useBrowserWorkspaceStore((state) => state.openBrowser);
+  const openBrowserOnce = useBrowserWorkspaceStore(
+    (state) => state.openBrowserOnce,
+  );
+  // This runs on every mount, so the store remembers which chat and client
+  // already opened: a reload or a chat switch must not undo a close.
   useEffect(() => {
-    if (vendor && conversationId) openBrowser(conversationId);
-  }, [vendor, conversationId, hostId, openBrowser]);
+    if (vendor && conversationId)
+      openBrowserOnce(conversationId, hostId ?? vendor);
+  }, [vendor, conversationId, hostId, openBrowserOnce]);
   return vendor;
 }
 
@@ -126,9 +131,12 @@ export function useWebClientPane({
         chatSessionId: started.chatSessionId ?? started.browserSessionId,
       });
     } catch (failure) {
-      const fallback = `Couldn't open a browser to sign in to ${site}. Try again.`;
-      const refusal = describeConvexFailure(failure, fallback);
-      toast.error(refusal.refusal ? refusal.message : fallback);
+      toast.error(
+        webAccountFailureMessage(
+          failure,
+          `Couldn't open a browser to sign in to ${site}. Try again.`,
+        ),
+      );
     } finally {
       setStarting(false);
     }
@@ -191,6 +199,7 @@ export function useWebClientPane({
           vendor={vendor}
           hostId={hostId}
           account={account}
+          loaded={loaded}
           local={local}
         />
       </div>

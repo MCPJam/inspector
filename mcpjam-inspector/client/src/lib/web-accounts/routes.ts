@@ -1,4 +1,5 @@
-import { webPost } from "@/lib/apis/web/base";
+import { WebApiError, webPost } from "@/lib/apis/web/base";
+import { describeConvexFailure } from "@/lib/convex-error";
 
 /*
  * The Inspector server's web account routes: the hosted browser an admin
@@ -67,4 +68,27 @@ export function handBackWebReconnect(
     projectId,
     browserSessionId,
   });
+}
+
+/**
+ * What to tell a person when a sign-in step fails: the refusal's own words,
+ * from these routes (a 4xx they word for people) or from the backend, else
+ * `fallback`. Any other failure says nothing a person can act on beyond
+ * trying again.
+ */
+export function webAccountFailureMessage(
+  failure: unknown,
+  fallback: string,
+): string {
+  if (
+    failure instanceof WebApiError &&
+    failure.status >= 400 &&
+    failure.status < 500 &&
+    failure.status !== 429 &&
+    // Set only when the route answered with its own error body.
+    failure.code !== null
+  )
+    return failure.message;
+  const described = describeConvexFailure(failure, fallback);
+  return described.refusal ? described.message : fallback;
 }

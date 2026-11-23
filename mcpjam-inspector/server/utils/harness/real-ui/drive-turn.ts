@@ -153,25 +153,50 @@ export async function driveRealUiTurn(
     enter("reply");
     let approvalsAnswered = 0;
     let finishedSignals: string[] = [];
-    await driver.waitFor(
-      async () => {
-        const blocked = await module.blocker(driver);
-        if (blocked) throw new RealUiError({ ...blocked, step: "reply" });
-        if (await module.answerApproval(driver)) {
-          approvalsAnswered += 1;
-          return false;
-        }
-        const state = await module.replySignals(driver);
-        finishedSignals = state.signals;
-        return state.finished;
-      },
-      {
-        timeoutMs: input.replyTimeoutMs ?? REPLY_TIMEOUT_MS,
-        intervalMs: REPLY_POLL_MS,
-        signal,
-        what: "the reply to finish",
-      },
-    );
+    let personHasBrowser = false;
+    try {
+      await driver.waitFor(
+        async () => {
+          try {
+            const blocked = await module.blocker(driver);
+            if (blocked) throw new RealUiError({ ...blocked, step: "reply" });
+            if (await module.answerApproval(driver)) {
+              approvalsAnswered += 1;
+              personHasBrowser = false;
+              return false;
+            }
+            const state = await module.replySignals(driver);
+            finishedSignals = state.signals;
+            personHasBrowser = false;
+            return state.finished;
+          } catch (error) {
+            // A person took the browser in its pane, so nothing could be
+            // read: the reply is neither finished nor failed. Wait for them
+            // to hand it back, within the reply's own deadline.
+            if (error instanceof PageDriverError && error.code === "person_has_browser") {
+              personHasBrowser = true;
+              return false;
+            }
+            throw error;
+          }
+        },
+        {
+          timeoutMs: input.replyTimeoutMs ?? REPLY_TIMEOUT_MS,
+          intervalMs: REPLY_POLL_MS,
+          signal,
+          what: "the reply to finish",
+        },
+      );
+    } catch (error) {
+      if (personHasBrowser && error instanceof PageDriverError && error.code === "timeout") {
+        throw new RealUiError({
+          kind: "reply_timeout",
+          step: "reply",
+          message: "A person still had the browser when the reply's time ran out. Select Hand back, then run it again.",
+        });
+      }
+      throw error;
+    }
     conversationUrl ??= await driver.url();
 
     enter("read_conversation");

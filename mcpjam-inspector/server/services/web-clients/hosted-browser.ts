@@ -55,23 +55,29 @@ export function webClientBrowserPolicy(
   return { mode: "allowlist", originAllowlist: [...new Set([...WEB_CLIENT_SITES[vendor], ...mcpjamSignIn])] };
 }
 
-/**
- * Whether the session's daemon reads one element's text, or `undefined` when
- * it didn't say. An older daemon answers that read with the whole page's
- * text, which a page module would take for the element's.
- */
-async function daemonReadsElements(
+/** Whether the session's daemon announces `feature`, or `undefined` when it didn't say. */
+async function daemonAnnounces(
   client: Pick<SessionClient, "status">,
+  feature: string,
 ): Promise<boolean | undefined> {
   try {
     const status = await client.status();
-    return status.kind === "ok" ? (status.features ?? []).includes("element-text") : undefined;
+    return status.kind === "ok" ? (status.features ?? []).includes(feature) : undefined;
   } catch (error) {
     logger.warn("[web-clients] hosted browser status unreadable", {
       error: error instanceof Error ? error.message : String(error),
     });
     return undefined;
   }
+}
+
+/**
+ * Whether the session's daemon reads one element's text, or `undefined` when
+ * it didn't say. An older daemon answers that read with the whole page's
+ * text, which a page module would take for the element's.
+ */
+function daemonReadsElements(client: Pick<SessionClient, "status">): Promise<boolean | undefined> {
+  return daemonAnnounces(client, "element-text");
 }
 
 /** One command to the session's daemon, answered in the public contract. */
@@ -168,6 +174,32 @@ export function sessionBrowserTransport(args: {
   };
 }
 
+/**
+ * A web account's browser profile, archived with the vendor's sites only.
+ *
+ * The policy lets the vendor send a person to MCPJam's sign-in page to allow
+ * a connector, which leaves an MCPJam session in the browser. A saved profile
+ * boots every member's runs, so every other site the policy admits is cleared
+ * from the archive, and a daemon that can't clear them saves nothing.
+ */
+export async function exportWebAccountProfile(args: {
+  client: Pick<SessionClient, "exportProfile" | "status">;
+  policy: BrowserAgentSessionPolicy;
+  vendor: WebClientVendor;
+}): Promise<Uint8Array> {
+  const { client } = args;
+  if (!client.exportProfile) {
+    throw new Error("This hosted browser can't export its profile. Start a new sign-in, then save again.");
+  }
+  const excludeOrigins = (args.policy.originAllowlist ?? []).filter(
+    (origin) => !urlOnSites(origin, WEB_CLIENT_SITES[args.vendor]),
+  );
+  if (excludeOrigins.length > 0 && !(await daemonAnnounces(client, "profile-export-exclusions"))) {
+    throw new Error("This hosted browser can't save the account yet. Start a new sign-in, then save again.");
+  }
+  return client.exportProfile({ excludeOrigins });
+}
+
 export type WebClientHostedBrowser = {
   /** The durable session the Playground's hosted browser pane attaches to. */
   browserSessionId: string;
@@ -260,11 +292,7 @@ export async function openWebClientHostedBrowser(args: {
     browserSessionId: browser.browserSessionId,
     chatSessionId,
     driver: createHostedPageDriver(transport, { sites: WEB_CLIENT_SITES[args.vendor] }),
-    async exportProfile() {
-      if (!handle.client.exportProfile) {
-        throw new Error("This hosted browser can't export its profile. Start a new sign-in, then save again.");
-      }
-      return handle.client.exportProfile();
-    },
+    exportProfile: () =>
+      exportWebAccountProfile({ client: handle.client, policy, vendor: args.vendor }),
   };
 }

@@ -37,7 +37,14 @@ var BROWSERD_WEBMCP_FEATURES = [
    * it the server must not send a scoped text read: an old daemon ignores
    * `rootSelector` there and answers with the whole page's text.
    */
-  "element-text"
+  "element-text",
+  /**
+   * `POST /v1/profile/export` takes `excludeOrigins` and clears each one's
+   * cookies and site storage before the archive is read. Without it the server
+   * must not save a profile that has to leave a site's session behind: an old
+   * daemon ignores the body and archives everything.
+   */
+  "profile-export-exclusions"
 ];
 var BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 var BROWSERD_OBSERVATION_VIEWPORT = {
@@ -2240,7 +2247,7 @@ var BrowserdRequestHandler = class {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
       }
-      return this.handleProfileExport();
+      return this.handleProfileExport(req);
     }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
@@ -2473,9 +2480,13 @@ var BrowserdRequestHandler = class {
     });
     return { status: 200, body: { viewport, bootId: this.bootId } };
   }
-  async handleProfileExport() {
+  async handleProfileExport(req) {
     if (!this.profileExport) {
       return { status: 501, body: { error: "profile_export_unavailable" } };
+    }
+    const excludeOrigins = parseExcludeOrigins(req.body);
+    if (!excludeOrigins) {
+      return { status: 400, body: { error: "invalid_exclude_origins", bootId: this.bootId } };
     }
     if (!this.queue.isIdle?.()) {
       return { status: 409, body: { error: "profile_busy" } };
@@ -2489,7 +2500,7 @@ var BrowserdRequestHandler = class {
       return { status: 423, body: { error: "lease_held" } };
     }
     try {
-      const archive = await this.profileExport();
+      const archive = await this.profileExport({ excludeOrigins });
       return {
         status: 200,
         body: archive,
@@ -3268,6 +3279,33 @@ function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
+}
+function parseExcludeOrigins(body) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body || "{}");
+  } catch {
+    return void 0;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return void 0;
+  const raw = parsed.excludeOrigins;
+  if (raw === void 0) return [];
+  if (!Array.isArray(raw) || raw.length > 16) return void 0;
+  const origins = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") return void 0;
+    let url;
+    try {
+      url = new URL(entry);
+    } catch {
+      return void 0;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:" || url.origin !== entry) {
+      return void 0;
+    }
+    origins.push(entry);
+  }
+  return origins;
 }
 
 // shared/browser-viewport-policy.ts
@@ -11609,6 +11647,13 @@ async function launchBrowserdContext(options) {
     throw error;
   }
 }
+function cookieDomainsFor(host2) {
+  const name = host2.toLowerCase();
+  const labels = name.split(".");
+  const domains = labels.length < 2 || /^[\d.]+$/.test(name) || name.includes(":") ? [name] : labels.slice(0, -1).map((_, start) => labels.slice(start).join("."));
+  const escaped = domains.map((domain) => domain.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^\\.?(?:${escaped.join("|")})$`, "i");
+}
 var CONTEXT_CLOSE_GRACE_MS = 1e4;
 function closeGrace(ms = CONTEXT_CLOSE_GRACE_MS) {
   return new Promise((resolve2) => {
@@ -11659,6 +11704,18 @@ function adaptContext(context, options = {}) {
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
+    },
+    async clearOriginData(origins) {
+      if (origins.length === 0) return;
+      if (!context.newCDPSession || !context.clearCookies) {
+        throw new Error("This browser can't clear a site's data.");
+      }
+      const page = context.pages()[0] ?? await context.newPage();
+      const cdp = await context.newCDPSession(page);
+      for (const origin of origins) {
+        await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
+        await context.clearCookies({ domain: cookieDomainsFor(new URL(origin).hostname) });
+      }
     },
     async close() {
       try {
@@ -12584,7 +12641,13 @@ async function main() {
     ...video ? { video } : {},
     ...recorder ? { recorder } : {},
     ...config.contextMode === "persistent" ? {
-      profileExport: async () => {
+      profileExport: async ({ excludeOrigins }) => {
+        if (excludeOrigins.length > 0) {
+          if (!context.clearOriginData) {
+            throw new Error("profile_exclusions_unavailable");
+          }
+          await context.clearOriginData(excludeOrigins);
+        }
         await context.close();
         await driver.close();
         return exportBrowserProfileArchive(config.userDataDir);

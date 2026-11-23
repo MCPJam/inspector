@@ -2,11 +2,18 @@
  * chatgpt.com.
  *
  * Built from the HARN-129 spike's walkthrough: custom MCP servers are added
- * from Plugins ("Add custom MCP server"), MCPJam's sign-in
- * page asks for consent with an organization choice, write tools ask the
- * person to confirm by default, and a cold sign-in in a fresh hosted browser
- * stopped at OpenAI's security check. The hosted composer and plugin controls
- * were observed in the review seat.
+ * from Plugins ("Add custom MCP server"), MCPJam's sign-in page asks for
+ * consent with an organization choice, write tools ask the person to confirm
+ * by default, and a cold sign-in in a fresh hosted browser stopped at
+ * OpenAI's security check.
+ *
+ * Observed on the live site, in a signed-in hosted browser: the composer and
+ * plugin controls this module uses, and a turn that reached ChatGPT's
+ * connector setup, which hasn't completed there yet. No live turn has called
+ * a tool through a connector, so the approval prompt, the reply signals and
+ * the saved chat below are unverified against the live site until a "live
+ * vendor" run records them; a missing control ends the run as
+ * `page_changed`, never as a server failure.
  *
  * ChatGPT sends no tool use id with its MCP calls, so its calls are matched
  * to the wire by time only.
@@ -24,27 +31,23 @@ import {
   pageChanged,
   type ConversationToolCall,
   type RealUiPageModule,
-  type RealUiStep,
   type SavedConversation,
   type StepContext,
 } from "./page-module.js";
 import { list, readVendorJson, record, text } from "./vendor-json.js";
 
 import {
-  CHATGPT_CHALLENGE as CHALLENGE, CHATGPT_COMPOSER as COMPOSER, CURRENT_COMPOSER,
+  CHATGPT_CHALLENGE as CHALLENGE, CHATGPT_COMPOSER as COMPOSER,
   ensureChatGptPlugin, exactRole, readChatGptAccount, waitForControl as waitVisible,
 } from "./chatgpt-controls.js";
 
 const ORIGIN = "https://chatgpt.com";
 
-const SEND = '[data-testid="send-button"]';
 const STOP = 'button[aria-label="Stop generating"], [data-testid="stop-button"]';
-const PLUS = '[data-testid="composer-plus-btn"]';
 const USER_MESSAGE = '[data-message-author-role="user"]';
 const ASSISTANT = '[data-message-author-role="assistant"]';
 const CHAT_PATH = /^\/c\/([0-9a-f-]{36})$/;
 
-const PLUGINS_PANEL = "role=dialog";
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) (?:the|your) .*(?:limit|cap)|usage cap/i;
 
@@ -78,12 +81,6 @@ async function readShownConversation(
     replyText: (await driver.readText(`${ASSISTANT} >> nth=-1`)) ?? "",
     toolCalls: [],
   };
-}
-
-async function openPlusMenuItem(driver: PageDriver, ctx: StepContext, item: string, step: RealUiStep) {
-  await driver.click(PLUS);
-  await waitVisible(driver, role("menuitem", item), ctx, `the ${item} menu item`, step);
-  await driver.click(role("menuitem", item));
 }
 
 export const chatgptWebPageModule: RealUiPageModule = {
@@ -125,47 +122,12 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
-    // Plugins, then +, then "Add custom MCP server": the walkthrough's path.
-    // A server already added under this name is reused, never added twice.
+    // Plugins, then Add, then "Add custom MCP server", as the live site
+    // showed it. A server already added under this name is reused once its
+    // address checks out, never added twice.
     await driver.navigate(`${ORIGIN}/`);
     await waitVisible(driver, COMPOSER, ctx, "the chat composer", "connector");
-    if ((await driver.readText(CURRENT_COMPOSER)) !== undefined) return ensureChatGptPlugin(driver, connector, ctx);
-    await openPlusMenuItem(driver, ctx, "Plugins", "connector");
-    const existing = `${PLUGINS_PANEL} >> text="${cssString(connector.name)}"`;
-    const add = `${PLUGINS_PANEL} >> role=button[name=/^(\\+|Add)$/]`;
-    await driver.waitFor(
-      async () =>
-        (await driver.readText(existing)) !== undefined ||
-        (await driver.readText(add)) !== undefined,
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "the plugins list" },
-    );
-    if ((await driver.readText(existing)) !== undefined) {
-      const shown = (await driver.readText(`${PLUGINS_PANEL} >> text="${cssString(connector.url)}"`)) !== undefined;
-      await driver.press("Escape");
-      if (shown) return;
-      throw new RealUiError({
-        kind: "connector_failed",
-        step: "connector",
-        message: `ChatGPT has a server named ${connector.name} with a different address. Remove it in ChatGPT, then run again.`,
-      });
-    }
-    await driver.click(add);
-    await waitVisible(driver, role("menuitem", "Add custom MCP server"), ctx, "the add server item", "connector");
-    await driver.click(role("menuitem", "Add custom MCP server"));
-    const dialog = "role=dialog";
-    await waitVisible(driver, dialog, ctx, "the add server form", "connector");
-    await driver.type(`${dialog} >> role=textbox[name=/name/i]`, connector.name);
-    await driver.type(`${dialog} >> role=textbox[name=/url/i]`, connector.url);
-    await driver.click(`${dialog} >> role=button[name=/^(Create|Add|Connect)$/]`);
-    await driver.waitFor(
-      async () => {
-        // MCPJam's own sign-in page asks for consent: a person's step.
-        const blocked = await commonBlocker(driver, { challengeSelectors: [CHALLENGE], step: "connector" });
-        if (blocked) throw new RealUiError(blocked);
-        return (await driver.readText(dialog)) === undefined;
-      },
-      { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: "ChatGPT to add the server" },
-    );
+    await ensureChatGptPlugin(driver, connector, ctx);
   },
 
   async openNewChat(driver, ctx) {
@@ -177,26 +139,15 @@ export const chatgptWebPageModule: RealUiPageModule = {
   },
 
   async enableConnector(driver, name, ctx) {
-    if ((await driver.readText(CURRENT_COMPOSER)) !== undefined) {
-      await driver.click(exactRole("button", "Add files and more"));
-      const plugin = exactRole("button", `${name} ${name}`);
-      await waitVisible(driver, plugin, ctx, "the installed plugin in the composer", "enable_connector");
-      await driver.click(plugin);
-      return;
-    }
-    const toggle = role("menuitemcheckbox", name);
-    await openPlusMenuItem(driver, ctx, "More", "enable_connector");
-    await waitVisible(driver, toggle, ctx, "the server in the tools menu", "enable_connector");
-    if ((await driver.readText(`${toggle}[checked=true]`)) === undefined) {
-      await driver.click(toggle);
-    }
-    await driver.press("Escape");
+    await driver.click(exactRole("button", "Add files and more"));
+    const plugin = exactRole("button", `${name} ${name}`);
+    await waitVisible(driver, plugin, ctx, "the installed plugin in the composer", "enable_connector");
+    await driver.click(plugin);
   },
 
   async send(driver, prompt, ctx) {
     await driver.type(COMPOSER, prompt);
-    const current = (await driver.readText(CURRENT_COMPOSER)) !== undefined;
-    await driver.click(current ? exactRole("button", "Send") : SEND);
+    await driver.click(exactRole("button", "Send"));
     let conversationUrl: string | undefined;
     await driver.waitFor(
       async () => {
