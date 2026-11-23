@@ -317,6 +317,22 @@ export async function runWebClientTurn(
     for (const connectorId of opened) {
       if (windows.active(connectorId)?.turnId === turnId) windows.close(turnId);
     }
-    await browser?.close();
+    await closeBrowser(browser);
+  }
+
+  /**
+   * The turn's result is the evidence, so a browser that won't close is
+   * logged and never thrown in its place.
+   */
+  async function closeBrowser(open: typeof browser) {
+    try {
+      await open?.close();
+    } catch (error) {
+      redactConnectors(error, serverOfConnector.keys(), env.publicBaseUrl);
+      logger.warn("[web-clients] the turn's browser did not close", {
+        runtimeId: input.runtimeId,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }

@@ -19,6 +19,7 @@ import { createMemorySendJournal } from "../../../utils/harness/real-ui/drive-tu
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
 import { runHarnessTurn } from "../../../utils/harness/run-harness-turn";
+import { logger } from "../../../utils/logger";
 import type { MCPJamHandlerOptions } from "../../../utils/mcpjam-stream-handler";
 import {
   createInMemoryToolCallLedger,
@@ -169,6 +170,46 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     });
     expect(vendor.sends).toEqual([]);
     expect(windows.active("conn-orders")).toBeUndefined();
+  });
+
+  it("keeps the turn's result when its browser won't close, and logs the close", async () => {
+    vendor.challenge = true;
+    const warn = vi.spyOn(logger, "warn");
+    const env = environment();
+    try {
+      const result = await runWebClientTurn({
+        runtimeId: "claude-web",
+        projectId: "project-1",
+        serverIds: ["orders"],
+        prompt: "say hello",
+        runId: "run-1",
+        approval: ALLOW,
+        environment: {
+          ...env,
+          async openBrowser(args) {
+            const opened = await env.openBrowser(args);
+            return {
+              driver: opened.driver,
+              async close() {
+                await opened.close();
+                throw new Error("The browser was already gone.");
+              },
+            };
+          },
+        },
+        turnWindows: windows,
+        ledger,
+        stepTimeoutMs: 10_000,
+        replyTimeoutMs: 20_000,
+      });
+      expect(result).toMatchObject({ ok: false, failure: { kind: "needs_sign_in", reason: "human_check" } });
+      expect(warn).toHaveBeenCalledWith(
+        "[web-clients] the turn's browser did not close",
+        expect.objectContaining({ message: "The browser was already gone." }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
