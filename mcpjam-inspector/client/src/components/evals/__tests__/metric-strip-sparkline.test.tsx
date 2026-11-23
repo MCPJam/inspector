@@ -174,6 +174,51 @@ describe("MetricStrip sparkline hover", () => {
     const tooltip = within(sparkline).getByText("Run 2").closest(".top-full");
     expect(tooltip).toBeTruthy();
   });
+
+  it("marks the hovered bar by opacity, without a guide line or dots", () => {
+    render(<MetricStrip bars data={sampleData} />);
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    const pairOpacity = () =>
+      [...latency.querySelectorAll("svg > g")].map((pair) =>
+        pair.getAttribute("opacity"),
+      );
+    // Pairs rest dimmed like single bars, so hover reads as emphasis.
+    expect(pairOpacity()).toEqual(["0.6", "0.6"]);
+    for (const metric of ["latency", "pass-rate", "tokens", "tool-calls"]) {
+      const chart = screen.getByTestId(`metric-sparkline-${metric}`);
+      fireEvent.mouseMove(chart, { clientX: 0 });
+      expect(chart.querySelector("circle")).toBeNull();
+      expect(chart.querySelector("line[stroke-dasharray]")).toBeNull();
+    }
+    expect(pairOpacity()).toEqual(["1", "0.6"]);
+  });
+
+  it("keeps the hover dot and guide line on line sparklines", () => {
+    // Point 1 of 60 sits at x≈4.9; measuring against the unpadded width
+    // picked point 2 there.
+    const series = Array.from({ length: 60 }, () => sampleData.series[1]);
+    render(<MetricStrip data={{ ...sampleData, series }} />);
+    const tokens = screen.getByTestId("metric-sparkline-tokens");
+    fireEvent.mouseMove(tokens, { clientX: 5 });
+    expect(within(tokens).getByText("Run 2")).toBeInTheDocument();
+    expect(tokens.querySelector("circle")).toBeTruthy();
+    expect(tokens.querySelector("line[stroke-dasharray]")).toBeTruthy();
+  });
+
+  it("selects the bar under the pointer across the padded plot area", () => {
+    const series = Array.from({ length: 20 }, () => sampleData.series[1]);
+    render(<MetricStrip bars data={{ ...sampleData, series }} />);
+    const latency = screen.getByTestId("metric-sparkline-latency");
+    const pairs = latency.querySelectorAll("svg > g");
+    // x=7 is on the first P95 bar, past the unpadded slot boundary at x=6.
+    fireEvent.mouseMove(latency, { clientX: 7 });
+    expect(within(latency).getByText("Run 1")).toBeInTheDocument();
+    expect(pairs[0]).toHaveAttribute("opacity", "1");
+    // x=113 is on the last P50 bar, before the unpadded boundary at x=114.
+    fireEvent.mouseMove(latency, { clientX: 113 });
+    expect(within(latency).getByText("Run 20")).toBeInTheDocument();
+    expect(pairs[19]).toHaveAttribute("opacity", "1");
+  });
 });
 
 describe("MetricStrip bars", () => {
@@ -273,4 +318,34 @@ it("can omit the suite summary cost block and use four columns", () => {
   expect(screen.getByTestId("metric-strip").className).toContain(
     "sm:grid-cols-[1.4fr_1fr_1fr_1fr]",
   );
+});
+
+describe("MetricStrip without the pass section", () => {
+  it("drops the pass cell and keeps the other sections", () => {
+    render(<MetricStrip data={sampleData} context="history" hidePassRate />);
+    expect(screen.queryByTestId("metric-strip-pass-rate")).toBeNull();
+    expect(screen.getByTestId("metric-strip-latency")).not.toHaveClass(
+      "border-l",
+    );
+    expect(screen.getByText("Tokens")).toBeTruthy();
+    expect(screen.getByText("Tool calls")).toBeTruthy();
+  });
+
+  it("puts an ⓘ beside each hinted label, and none without hints", () => {
+    const { rerender } = render(
+      <MetricStrip
+        data={sampleData}
+        context="history"
+        hints={{ latency: "Wall-clock.", tokens: "Per iteration." }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "About Latency" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "About Tokens" })).toBeTruthy();
+    expect(
+      screen.queryByRole("button", { name: "About Tool calls" }),
+    ).toBeNull();
+    rerender(<MetricStrip data={sampleData} context="history" />);
+    expect(screen.queryByRole("button", { name: /^About / })).toBeNull();
+    expect(screen.getByTestId("metric-strip-pass-rate")).toBeTruthy();
+  });
 });

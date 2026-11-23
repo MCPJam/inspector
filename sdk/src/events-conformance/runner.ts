@@ -22,13 +22,18 @@ import { generateWebhookSecret } from "../mcp-client-manager/events-ext.js";
 import type { MCPClientManager } from "../mcp-client-manager/MCPClientManager.js";
 import { EVENT_DELIVERY_MODES } from "../mcp-client-manager/events-ext-schemas.js";
 import {
+  BETA_PROFILE_ID,
+  hasEventsProfileCapability,
   getEventsProfile,
   isChatgptProfileId,
   type EventsProfileId,
 } from "../events/profiles.js";
 import type { EventsConformanceReceiver } from "./receiver.js";
+import { captureConformanceRun } from "../telemetry.js";
+import { readServerEventTypes } from "../server-list-reads.js";
 import {
   EVENTS_CHECK_IDS,
+  EVENTS_WEBHOOK_CHECK_IDS,
   type EventsCheckId,
   type EventsCheckResult,
   type EventsCheckStrength,
@@ -51,6 +56,8 @@ export interface EventsConformanceConfig {
   checkIds?: EventsCheckId[];
   /** `events-push-heartbeat` wait window. Default 65 s. */
   pushHeartbeatWaitMs?: number;
+  /** @internal set by a host that counts the run itself. See `captureConformanceRun`. */
+  __suppressTelemetry?: boolean;
 }
 
 const TITLES: Record<EventsCheckId, string> = {
@@ -69,6 +76,7 @@ const TITLES: Record<EventsCheckId, string> = {
   "events-private-callback-rejected": "Private callback destinations are rejected by default",
   "events-delivery-signature": "Deliveries are signed per Standard Webhooks",
   "events-webhook-id-equals-event-id": "webhook-id equals eventId for events",
+  "events-webhook-message-id": "webhook-id is a separate, header-safe delivery identifier",
   "events-subscription-id-header": "X-MCP-Subscription-Id matches the subscription id",
   "events-delivery-content-type": "Deliveries are application/json",
   "events-delivery-body-size": "Delivery bodies are at most 256 KiB",
@@ -112,8 +120,17 @@ function errorCode(error: unknown): number | undefined {
 export async function runEventsConformance(
   config: EventsConformanceConfig
 ): Promise<EventsConformanceResult> {
+  if (!config.__suppressTelemetry)
+    void captureConformanceRun("sdk", { suite: "events", mode: "single" });
   const started = Date.now();
   const selected = new Set(config.checkIds ?? DEFAULT_CHECKS);
+  const beta = config.profile === BETA_PROFILE_ID;
+  const deliveryIdCheck = beta ? "events-webhook-message-id" : "events-webhook-id-equals-event-id";
+  const otherDeliveryCheck = beta ? "events-webhook-id-equals-event-id" : "events-webhook-message-id";
+  if (config.checkIds?.includes(otherDeliveryCheck)) {
+    throw new Error(`Check ${otherDeliveryCheck} does not apply to ${config.profile}. Use ${deliveryIdCheck}.`);
+  }
+  selected.delete(otherDeliveryCheck);
   const results = new Map<EventsCheckId, EventsCheckResult>();
   const { manager, serverId, profile, receiver } = config;
   const overrides: EventsConformanceResult["overrides"] =
@@ -156,14 +173,14 @@ export async function runEventsConformance(
   // ---- capability + discovery -------------------------------------------------
   const support = await manager.ensureEventsSupport(serverId);
   const protocolVersion = manager.getNegotiatedProtocolVersion(serverId);
+  const declared = hasEventsProfileCapability(support, profile);
+  const placement = getEventsProfile(profile).capabilityPlacement.value;
   record(
     "events-capability-declared",
-    support.declared ? "passed" : "violation",
-    support.declared
-      ? `capabilities.events declared (${support.source})`
-      : support.handshakeObserved
-        ? "the handshake carried no top-level capabilities.events"
-        : "the handshake was not observed"
+    declared ? "passed" : "violation",
+    declared ? `${placement} declared (${support.source})`
+      : support.handshakeObserved ? `the handshake carried no ${placement}` : "the handshake was not observed",
+    { title: `Server declares ${placement}` },
   );
 
   if (isChatgptProfileId(profile)) {
@@ -211,21 +228,15 @@ export async function runEventsConformance(
     );
   }
 
-  if (!support.declared) {
+  if (!declared) {
     skipAll([...selected], "the server does not declare events", "not-applicable");
     return finish();
   }
 
-  const descriptors: EventDescriptorWire[] = [];
   const listStarted = Date.now();
-  try {
-    let cursor: string | undefined;
-    for (let page = 0; page < 20; page += 1) {
-      const result = await manager.listServerEvents(serverId, cursor !== undefined ? { cursor } : undefined);
-      descriptors.push(...result.events);
-      if (result.nextCursor === undefined || result.nextCursor === cursor) break;
-      cursor = result.nextCursor;
-    }
+  const listing = await readServerEventTypes(manager, serverId);
+  const descriptors = listing.events;
+  if (listing.status === "listed") {
     const unknownModes = descriptors.flatMap((d) =>
       d.delivery.filter((mode) => !(EVENT_DELIVERY_MODES as readonly string[]).includes(mode))
     );
@@ -236,10 +247,13 @@ export async function runEventsConformance(
         (unknownModes.length ? `; unrecognized delivery modes: ${unknownModes.join(", ")}` : ""),
       { startedAt: listStarted }
     );
-  } catch (error) {
-    record("events-list-shape", "violation", error instanceof Error ? error.message : String(error), {
-      startedAt: listStarted,
-    });
+  } else {
+    record(
+      "events-list-shape",
+      "violation",
+      listing.error instanceof Error ? listing.error.message : String(listing.error),
+      { startedAt: listStarted }
+    );
   }
 
   if (isChatgptProfileId(profile)) {
@@ -292,24 +306,7 @@ export async function runEventsConformance(
   }
 
   // ---- webhook ---------------------------------------------------------------
-  const webhookChecks: EventsCheckId[] = [
-    "events-subscribe-rejects-http-callback",
-    "events-subscribe-rejects-invalid-secret",
-    "events-subscribe-result-shape",
-    "events-subscribe-idempotent",
-    "events-granted-lifetime",
-    "events-no-expiry-only-when-requested",
-    "events-receiver-consent",
-    "events-consent-failure-blocks-delivery",
-    "events-no-redirect-follow",
-    "events-private-callback-rejected",
-    "events-delivery-signature",
-    "events-webhook-id-equals-event-id",
-    "events-subscription-id-header",
-    "events-delivery-content-type",
-    "events-delivery-body-size",
-    "events-unsubscribe-twice",
-  ];
+  const webhookChecks: EventsCheckId[] = [...EVENTS_WEBHOOK_CHECK_IDS];
   const webhookType = usable("webhook");
   if (!webhookType) {
     const note = missingNote("webhook");
@@ -483,7 +480,7 @@ export async function runEventsConformance(
     // Deliveries.
     const deliveryChecks: EventsCheckId[] = [
       "events-delivery-signature",
-      "events-webhook-id-equals-event-id",
+      deliveryIdCheck,
       "events-subscription-id-header",
       "events-delivery-content-type",
       "events-delivery-body-size",
@@ -511,8 +508,9 @@ export async function runEventsConformance(
           delivery.status === 200 ? "signature verified over the raw body" : `receiver answered ${delivery.status}`
         );
         record(
-          "events-webhook-id-equals-event-id",
-          delivery.webhookId === delivery.eventId ? "passed" : "violation",
+          deliveryIdCheck,
+          (beta ? /^[A-Za-z0-9_-]+$/.test(delivery.webhookId ?? "") && delivery.webhookId !== delivery.eventId
+            : delivery.webhookId === delivery.eventId) ? "passed" : "violation",
           `webhook-id ${delivery.webhookId ?? "(missing)"}, eventId ${delivery.eventId ?? "(missing)"}`
         );
         record(
@@ -572,8 +570,8 @@ export async function runEventsConformance(
           "events-consent-failure-blocks-delivery",
           classified?.kind === "CallbackEndpointError" ? "passed" : "violation",
           classified?.kind === "CallbackEndpointError"
-            ? `refused with -32015 (${String((classified.data as { reason?: unknown } | undefined)?.reason)})`
-            : `refused, but with ${errorCode(error) ?? "no code"} instead of -32015`
+            ? `refused with ${classified.code} (${String((classified.data as { reason?: unknown } | undefined)?.reason)})`
+            : `refused, but with ${errorCode(error) ?? "no code"} instead of CallbackEndpointError`
         );
       }
     }

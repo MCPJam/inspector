@@ -42,6 +42,15 @@ export type {
   RpcLogger,
   RpcLogEvent,
 } from "./types.js";
+export type {
+  FeatureObserver,
+  FeatureObservationEvent,
+} from "./feature-observer.js";
+export {
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
+} from "./feature-observer.js";
 export type { DeclaredElicitationCapability } from "./elicitation.js";
 export { DEFAULT_ELICITATION_TIMEOUT_EXTENSION_MS } from "./constants.js";
 
@@ -447,6 +456,7 @@ export {
   NotYetSupportedInStateless,
   StatelessRequiresHttpTransport,
   PaginatedToolHeaderDiscoveryUnsupported,
+  ModernProtocolVersionRefused,
   ProtocolVersionPinUnsupported,
 } from "./managed-mcp-client.js";
 export { OfficialSdkClientAdapter } from "./official-sdk-client-adapter.js";

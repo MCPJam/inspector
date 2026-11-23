@@ -108,7 +108,29 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * server must refuse placeholders: an old daemon would type them literally.
    */
   "secret-placeholders",
+  /**
+   * A `secrets` entry may carry `origins`, and is then typed only on a page at
+   * one of them. Without it the server must not send such an entry: an old
+   * daemon ignores `origins` and would type the value on any page.
+   */
+  "secret-origins",
+  /**
+   * A command's `stopAt` stops a top-level navigation to that page before it
+   * is sent, and returns its URL as `stoppedAt`. Without it the server must
+   * not rely on one: an old daemon ignores `stopAt` and lets the page load.
+   */
+  "navigation-stop",
+  /** A callback stop can remain armed between commands on the same tab. */
+  "navigation-stop-persistent",
 ] as const;
+
+/**
+ * Announced by a daemon booted with `MCPJAM_BROWSERD_NETWORK=public`: its
+ * browser reaches public internet addresses only (`daemon/public-network.ts`).
+ * Per boot, not per build, so it is not in the list above, and a caller that
+ * needs it refuses a daemon that does not announce it.
+ */
+export const BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
@@ -594,6 +616,14 @@ export interface BrowserCommand {
   sessionId?: string;
   /** What else this command belongs to, when the caller knows. Echoed, never read. */
   correlation?: BrowserCommandCorrelation;
+  /**
+   * During a `navigate` or `act`, stop a top-level navigation to this page (an
+   * http(s) URL, matched whatever its query) before it is sent. The page never
+   * loads, and the URL it asked for comes back as `stoppedAt`.
+   */
+  stopAt?: string;
+  /** Keep stopAt armed until it fires or the tab closes. */
+  stopAtPersistent?: boolean;
 }
 
 /** @see BrowserCommand.actor */
@@ -611,6 +641,16 @@ export interface BrowserCommandCorrelation {
   evalRunId?: string;
   iterationId?: string;
   swarmId?: string;
+}
+
+/**
+ * The value for one `{{secret:NAME}}` placeholder, sent beside a command.
+ * `origins` (exact web origins) are the only pages it may be typed on.
+ */
+export interface BrowserCommandSecret {
+  name: string;
+  value: string;
+  origins?: readonly string[];
 }
 
 /**
@@ -699,6 +739,12 @@ export interface BrowserCommandResult {
    * two rows without the ledger copying page text into every one of them.
    */
   cursors?: { console: number; errors: number };
+  /**
+   * The full URL of the navigation `stopAt` stopped. Beside `stateToken` and
+   * never in `output`, so no ledger, trace or mirror records it: it can carry
+   * a one-time authorization code.
+   */
+  stoppedAt?: string;
 }
 
 /**
@@ -825,6 +871,11 @@ export const BROWSERD_ERROR_CODES = [
   "secret_unresolved",
   /** A substituted secret is shorter than the scrubber's minimum; nothing was typed. */
   "secret_too_short",
+  /**
+   * A secret limited to some origins was typed on a page outside them, or a
+   * reviewer credential arrived with no origins; nothing was typed.
+   */
+  "secret_origin_refused",
   /**
    * Something is on top of the target at its click point, so the input would
    * land on that element instead. The detail names the covering element.

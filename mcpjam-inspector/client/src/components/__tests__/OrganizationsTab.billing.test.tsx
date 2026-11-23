@@ -12,7 +12,9 @@ import {
 import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { OrganizationsTab } from "../OrganizationsTab";
+import { getCurrentPlanRenewalLine } from "../organization/OrganizationCurrentPlanPanel";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import type { OrganizationBillingStatus } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { offeredPlans } from "@/lib/pricing-catalog";
 import {
@@ -147,14 +149,15 @@ function createPlanCatalog() {
 }
 
 function billingStatusFixture(
-  overrides: Record<string, unknown> = {},
-): Record<string, unknown> {
+  overrides: Partial<OrganizationBillingStatus> = {},
+): OrganizationBillingStatus {
   return {
     organizationId: "org-1",
     organizationName: "Org One",
     plan: "free",
     effectivePlan: "free",
-    source: "free",
+    source:
+      overrides.plan && overrides.plan !== "free" ? "subscription" : "free",
     billingInterval: null,
     billingConfigured: true,
     subscriptionStatus: null,
@@ -405,10 +408,7 @@ describe("OrganizationsTab billing", () => {
     removeMemberMock.mockResolvedValue(undefined);
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
-      if (flag === "billing-entitlements-ui") return true;
-      return true;
-    });
+    mockUseFeatureFlagEnabled.mockImplementation(() => true);
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -633,6 +633,119 @@ describe("OrganizationsTab billing", () => {
     expect(navigateToSupportMock).toHaveBeenCalledTimes(1);
     fireEvent.click(proContact);
     expect(navigateToSupportMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["v2", createV2PlanCatalog, ["Free", "Pro", "Enterprise"]],
+    // The v1 catalog names no bundle on its entries and has no Pro column.
+    ["v1", createPlanCatalog, ["Free", "Enterprise"]],
+  ] as const)(
+    "shows a plan set by MCPJam staff as current and sends every other plan to support (%s catalog)",
+    (_world, buildCatalog, otherColumns) => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            plan: "free",
+            effectivePlan: "team",
+            source: "subscription",
+            catalogPlanId: "team",
+            priceModel: "flat",
+            // A cadence left over from an old subscription must not turn the
+            // other toggle into an offer.
+            billingInterval: "monthly",
+            hasCustomer: false,
+            staffPlan: { expiresAt: Date.UTC(2027, 0, 1) },
+          }),
+          planCatalog: buildCatalog(),
+        }),
+      );
+
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+      const panel = within(screen.getByTestId("current-plan-panel"));
+      expect(panel.getByText("Team")).toBeInTheDocument();
+      expect(panel.getByText("Through Dec 31, 2026")).toBeInTheDocument();
+      expect(panel.queryByText(/flat monthly rate|per seat\/month/)).toBeNull();
+      expect(panel.queryByText(/existing subscription terms/)).toBeNull();
+      expect(panel.queryByText("Limited functionality")).toBeNull();
+      expect(screen.queryByTestId("free-plan-team-upsell")).toBeNull();
+
+      const card = within(screen.getByTestId("compare-plans-card"));
+      const toggle = within(
+        card.getByRole("group", { name: "Billing interval" }),
+      );
+      const expectOnlyTeamIsCurrent = () => {
+        expect(
+          within(getPlanColumn("Team")).getByRole("button", {
+            name: "Current plan",
+          }),
+        ).toBeDisabled();
+        for (const column of otherColumns) {
+          expect(
+            within(getPlanColumn(column)).getByRole("button", {
+              name: "Contact us",
+            }),
+          ).toBeEnabled();
+        }
+        for (const label of ["Upgrade", "Downgrade", "Change plan"]) {
+          expect(card.queryByRole("button", { name: label })).toBeNull();
+        }
+      };
+
+      // The toggle opens on the stored cadence.
+      expect(toggle.getByRole("radio", { name: "Monthly" })).toBeChecked();
+      expectOnlyTeamIsCurrent();
+
+      fireEvent.click(toggle.getByRole("radio", { name: /^Annual/ }));
+      expect(toggle.getByRole("radio", { name: /^Annual/ })).toBeChecked();
+      expectOnlyTeamIsCurrent();
+    },
+  );
+
+  it("withdraws an open plan confirmation when a staff plan arrives", async () => {
+    const startPlanChange = vi.fn();
+    const freeOrg = {
+      catalogPlanId: "free",
+      priceModel: "free" as const,
+    };
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(freeOrg),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    const { rerender } = render(
+      <OrganizationsTab organizationId="org-1" section="plans" />,
+    );
+    fireEvent.click(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" }),
+    );
+    await screen.findByRole("dialog", { name: "Confirm your plan" });
+
+    // A CSM sets Team from Backstage while the owner is still deciding.
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          ...freeOrg,
+          effectivePlan: "team",
+          source: "subscription",
+          catalogPlanId: "team",
+          priceModel: "flat",
+          staffPlan: { expiresAt: null },
+        }),
+        planCatalog: createV2PlanCatalog(),
+        startPlanChange,
+      }),
+    );
+    rerender(<OrganizationsTab organizationId="org-1" section="plans" />);
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Confirm your plan" }),
+      ).toBeNull(),
+    );
+    expect(startPlanChange).not.toHaveBeenCalled();
   });
 
   it("still offers self-serve upgrades to a free org whose price model is free", () => {
@@ -1019,26 +1132,6 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
-  it("does not report a plan impression while plan billing is disabled", async () => {
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "billing-entitlements-ui" ? false : true,
-    );
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({ plan: "free" }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="plans" />);
-    await waitFor(() =>
-      expect(
-        trackMock.mock.calls.filter(
-          ([event]) => event === "billing_plans_viewed",
-        ),
-      ).toHaveLength(0),
-    );
-  });
-
   it("reports a fresh impression when the organization changes", async () => {
     mockUseOrganizationQueries.mockReturnValue({
       sortedOrganizations: [
@@ -1090,7 +1183,7 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
-  it.each(["v1", "v2"])(
+  it.each(["v1", "v2"] as const)(
     "labels only legacy Team while V2 offers are enabled (subscription %s)",
     (pricingVersion) => {
       const legacy = createPlanCatalog();
@@ -1756,12 +1849,314 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a Free card deadline-free when stale cancellation state remains", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          hasCustomer: true,
+          stripeCancelAtPeriodEnd: true,
+          stripeCancelAt: Date.parse("2026-09-26T12:00:00.000Z"),
+          stripeCurrentPeriodEnd: Date.parse("2026-09-26T12:00:00.000Z"),
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    const panel = within(screen.getByTestId("current-plan-panel"));
+    expect(panel.getByText("Free")).toBeInTheDocument();
+    expect(panel.getByText("Limited functionality")).toBeInTheDocument();
+    expect(panel.queryByTestId("current-plan-non-renewing-badge")).toBeNull();
+    expect(panel.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+    expect(panel.queryByText(/Service ends|Will not renew|Sep 26/)).toBeNull();
+  });
+
+  describe("subscription notice applicability", () => {
+    const deadline = Date.parse("2026-12-26T12:00:00.000Z");
+    const staleFields = {
+      hasCustomer: true,
+      subscriptionStatus: "past_due",
+      billingInterval: "annual",
+      stripeCurrentPeriodEnd: deadline,
+      stripeCancelAt: deadline,
+      stripeScheduledPlan: "team",
+      stripeScheduledBillingInterval: "monthly",
+      stripeScheduledEffectiveAt: deadline,
+      canCancelScheduledBillingChange: true,
+      paymentState: "past_due",
+      paymentGraceEndsAt: deadline,
+    } as const;
+
+    it.each([
+      { name: "Free", plan: "free", effectivePlan: "free", source: "free" },
+      {
+        name: "Free with paid limits",
+        plan: "free",
+        effectivePlan: "team",
+        source: "subscription",
+      },
+      {
+        name: "starter trial",
+        plan: "free",
+        effectivePlan: "team",
+        source: "trial",
+      },
+      {
+        name: "expired trial",
+        plan: "free",
+        effectivePlan: "free",
+        source: "free",
+        trialStatus: "expired",
+      },
+      {
+        name: "simulation",
+        plan: "team",
+        effectivePlan: "pro",
+        source: "simulation",
+      },
+      {
+        name: "trial with historical paid plan",
+        plan: "team",
+        effectivePlan: "team",
+        source: "trial",
+      },
+    ] as const)("hides stale subscription notices for $name", (state) => {
+      for (const stripeCancelAtPeriodEnd of [true, false]) {
+        const billingStatus = billingStatusFixture({
+          ...staleFields,
+          ...state,
+          stripeCancelAtPeriodEnd,
+        });
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({ billingStatus }),
+        );
+        const view = render(
+          <OrganizationsTab organizationId="org-1" section="billing" />,
+        );
+        const panel = within(screen.getByTestId("current-plan-panel"));
+        expect(
+          panel.queryByTestId("current-plan-non-renewing-badge"),
+        ).toBeNull();
+        expect(panel.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+        expect(panel.queryByTestId("current-plan-scheduled-change")).toBeNull();
+        expect(panel.queryByTestId("current-plan-past-due-banner")).toBeNull();
+        expect(
+          panel.queryByTestId("current-plan-subscription-notice"),
+        ).toBeNull();
+        expect(
+          panel.queryByText(
+            /Service ends|Will not renew|Payment failed|Renews|Changes|Dec 26/,
+          ),
+        ).toBeNull();
+        expect(
+          panel.queryByRole("button", {
+            name: /Manage billing|Change to|Keep .* plan|Update payment method/,
+          }),
+        ).toBeNull();
+        expect(
+          getCurrentPlanRenewalLine(
+            billingStatus,
+            "period",
+            "cancel",
+            "schedule",
+          ),
+        ).toBe("No active subscription");
+        if (state.source === "trial") {
+          expect(panel.getByTestId("current-plan-renewal")).toHaveTextContent(
+            "Trial ends",
+          );
+        }
+        view.unmount();
+      }
+    });
+
+    it.each([null, Date.parse("2026-09-26T12:00:00.000Z"), deadline])(
+      "hides Free cancellation with missing, past or future date %s",
+      (date) => {
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({
+            billingStatus: billingStatusFixture({
+              ...staleFields,
+              stripeCancelAtPeriodEnd: true,
+              stripeCancelAt: date,
+              stripeCurrentPeriodEnd: date,
+            }),
+          }),
+        );
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+        const panel = within(screen.getByTestId("current-plan-panel"));
+        expect(panel.getByText("Free")).toBeInTheDocument();
+        expect(panel.getByText("Limited functionality")).toBeInTheDocument();
+        expect(panel.queryByTestId("current-plan-renewal")).toBeNull();
+        expect(
+          panel.queryByText(/Service ends|Will not renew|access ends/),
+        ).toBeNull();
+      },
+    );
+
+    it.each(["team", "free"] as const)(
+      "keeps paid notices when effective limits are %s, including non-owners",
+      (effectivePlan) => {
+        for (const isOwner of [true, false]) {
+          for (const notice of ["cancel", "schedule", "grace"] as const) {
+            const billingStatus = billingStatusFixture({
+              ...staleFields,
+              plan: "team",
+              effectivePlan,
+              source: effectivePlan === "free" ? "free" : "subscription",
+              isOwner,
+              canManageBilling: isOwner,
+              stripeCancelAtPeriodEnd: notice === "cancel",
+              stripeScheduledPlan: notice === "schedule" ? "team" : null,
+              paymentState: notice === "grace" ? "past_due" : "ok",
+            });
+            mockUseOrganizationBilling.mockReturnValue(
+              createBillingHookState({ billingStatus }),
+            );
+            const view = render(
+              <OrganizationsTab organizationId="org-1" section="billing" />,
+            );
+            const panel = within(screen.getByTestId("current-plan-panel"));
+            expect(
+              panel.getByTestId(
+                notice === "cancel"
+                  ? "current-plan-scheduled-cancel"
+                  : notice === "schedule"
+                    ? "current-plan-scheduled-change"
+                    : "current-plan-past-due-banner",
+              ),
+            ).toHaveTextContent("Dec 26, 2026");
+            expect(panel.getByTestId("current-plan-renewal")).toHaveTextContent(
+              notice === "cancel"
+                ? "Cancels"
+                : notice === "schedule"
+                  ? "Changes"
+                  : "Payment failed",
+            );
+            expect(
+              panel.queryByRole("button", { name: "Manage billing" }) != null,
+            ).toBe(isOwner);
+            if (notice === "grace") {
+              expect(
+                panel.queryByRole("button", {
+                  name: "Update payment method",
+                }) != null,
+              ).toBe(isOwner);
+            }
+            view.unmount();
+          }
+        }
+      },
+    );
+
+    it("shows the billing loading state before mounting the current-plan panel (smoke)", () => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            ...staleFields,
+            stripeCancelAtPeriodEnd: true,
+          }),
+          isLoadingBilling: true,
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="billing" />);
+      expect(
+        screen.getByText("Loading billing details..."),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("current-plan-panel")).toBeNull();
+    });
+
+    it.each(["error", "catalog loading"])(
+      "does not leak deadlines while %s",
+      (state) => {
+        mockUseOrganizationBilling.mockReturnValue(
+          createBillingHookState({
+            billingStatus: billingStatusFixture({
+              ...staleFields,
+              stripeCancelAtPeriodEnd: true,
+            }),
+            isLoadingPlanCatalog: state === "catalog loading",
+            error: state === "error" ? "Billing unavailable" : null,
+          }),
+        );
+        render(<OrganizationsTab organizationId="org-1" section="billing" />);
+        expect(
+          screen.queryByText(/Service ends|Will not renew|access ends|Dec 26/),
+        ).toBeNull();
+        if (state === "error")
+          expect(screen.getByText("Billing unavailable")).toBeInTheDocument();
+      },
+    );
+
+    it("does not mark a simulation downgrade as a scheduled subscription cancellation", () => {
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: billingStatusFixture({
+            ...staleFields,
+            plan: "team",
+            source: "simulation",
+            stripeCancelAtPeriodEnd: true,
+          }),
+        }),
+      );
+      render(<OrganizationsTab organizationId="org-1" section="plans" />);
+      expect(
+        within(getPlanColumn("Free")).queryByRole("button", {
+          name: /Downgrade scheduled/,
+        }),
+      ).toBeNull();
+    });
+
+    it("updates notices across paid to Free and back without remounting", () => {
+      const paid = billingStatusFixture({
+        ...staleFields,
+        plan: "team",
+        effectivePlan: "team",
+        stripeCancelAtPeriodEnd: true,
+      });
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({ billingStatus: paid }),
+      );
+      const view = render(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(
+        screen.getByTestId("current-plan-scheduled-cancel"),
+      ).toBeInTheDocument();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({
+          billingStatus: {
+            ...paid,
+            plan: "free",
+            effectivePlan: "free",
+            source: "free",
+          },
+        }),
+      );
+      view.rerender(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(screen.queryByTestId("current-plan-scheduled-cancel")).toBeNull();
+      expect(screen.queryByTestId("current-plan-past-due-banner")).toBeNull();
+      mockUseOrganizationBilling.mockReturnValue(
+        createBillingHookState({ billingStatus: paid }),
+      );
+      view.rerender(
+        <OrganizationsTab organizationId="org-1" section="billing" />,
+      );
+      expect(
+        screen.getByTestId("current-plan-scheduled-cancel"),
+      ).toBeInTheDocument();
+    });
+  });
+
   it("shows scheduled cancellation state instead of renewal copy for non-renewing subscriptions", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
           plan: "team",
           effectivePlan: "team",
+          source: "subscription",
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,
@@ -2046,39 +2441,6 @@ describe("OrganizationsTab billing", () => {
     expect(
       panel.getByText("Simulation active · billing changes are not applied"),
     ).toBeInTheDocument();
-  });
-
-  it("hides the overview billing card when the billing UI flag is off", () => {
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripeCurrentPeriodEnd: 1_705_000_000_000,
-          stripePriceId: "price_123",
-        }),
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" />);
-
-    expect(
-      screen.queryByRole("button", { name: "Plans & billing" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByText("Billing account")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "View plans" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Manage billing" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Upgrade plan" }),
-    ).not.toBeInTheDocument();
   });
 
   it("shows the billing subview summary and plan cards", () => {
@@ -2379,7 +2741,7 @@ describe("OrganizationsTab billing", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
+  it("shows Team as a purchasable upgrade", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -3508,31 +3870,6 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
-  it("skips the audit-log loading placeholder when the billing UI flag is off", () => {
-    mockUseFeatureFlagEnabled.mockReturnValue(false);
-    mockUseOrganizationBilling.mockReturnValue(
-      createBillingHookState({
-        billingStatus: billingStatusFixture({
-          plan: "team",
-          effectivePlan: "team",
-          billingInterval: "monthly",
-          subscriptionStatus: "active",
-          hasCustomer: true,
-          stripePriceId: "price_123",
-        }),
-        isLoadingEntitlements: true,
-        isLoadingOrganizationPremiumness: true,
-      }),
-    );
-
-    render(<OrganizationsTab organizationId="org-1" section="audit-log" />);
-
-    expect(
-      screen.queryByText("Loading audit log access..."),
-    ).not.toBeInTheDocument();
-    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
-  });
-
   it("calls onOrganizationDeleted and skips the fallback redirect when provided", async () => {
     window.history.replaceState({}, "", "/organizations/org-1");
     const onOrganizationDeleted = vi.fn();
@@ -3855,43 +4192,6 @@ describe("OrganizationsTab billing", () => {
 
         await screen.findByText("Plan options");
         expect(scrollIntoView).not.toHaveBeenCalled();
-      } finally {
-        restore();
-      }
-    });
-
-    it("waits for the billing flag to resolve before scrolling", async () => {
-      const { scrollIntoView, restore } = withScrollSpy();
-      try {
-        // PostHog answers `undefined` until the flag loads, so the section the
-        // link points at is not mounted on the first render. Scrolling then
-        // would target nothing and the deep link would silently do nothing.
-        mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-          flag === "billing-entitlements-ui" ? undefined : true,
-        );
-        window.history.replaceState(
-          null,
-          "",
-          "/organizations/org-1/plans?plans=open",
-        );
-
-        const view = render(
-          <OrganizationsTab organizationId="org-1" section="plans" />,
-        );
-
-        expect(screen.queryByText("Plan options")).not.toBeInTheDocument();
-        expect(scrollIntoView).not.toHaveBeenCalled();
-        // Consumed on mount, not when the scroll finally fires: the section is
-        // still absent here. Reading it later would mean a reload between the
-        // two renders replays the jump.
-        expect(window.location.search).toBe("");
-
-        mockUseFeatureFlagEnabled.mockImplementation(() => true);
-        view.rerender(
-          <OrganizationsTab organizationId="org-1" section="plans" />,
-        );
-
-        await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       } finally {
         restore();
       }

@@ -96,6 +96,7 @@ import { toast } from "@/lib/toast";
 import { MCP_TASKS_CHECK_IDS, TASKS_CHECK_CATALOG } from "@mcpjam/sdk/browser";
 import { OAUTH_CATALOG } from "../conformance-catalogs";
 import { ConformanceTab } from "../ConformanceTab";
+import { useConformanceRunRequest } from "../conformance-run-request";
 import {
   ConformanceServerPicker,
   ProtocolVersionSelect,
@@ -238,6 +239,8 @@ async function continueSetup() {
   const next = screen.getByRole("button", { name: "Continue" });
   await waitFor(() => expect(next).toBeEnabled());
   fireEvent.click(next);
+  // Counts that hang on the server's tools wait for the list to land.
+  await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
 }
 
 /** Starts a run and waits until no suite is still running. */
@@ -488,7 +491,7 @@ describe("ConformanceTab", () => {
     fireEvent.click(advice);
     const row = screen.getByText("Deprecated Feature Use").closest("li")!;
     expect(row).toHaveTextContent(
-      "Suggested Protocol Deprecated Feature Use",
+      "Suggested (Deprecated) Protocol Deprecated Feature Use",
     );
   });
 
@@ -2018,15 +2021,16 @@ describe("ConformanceTab", () => {
 
     // The saved row has not come back yet: Settings shows the run's picks.
     // Its protocol checks that need a tool show unchecked, so the suite's box
-    // does too.
+    // shows a dash: every check picked, not every one able to run.
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
     expect(screen.getByRole("checkbox", { name: "Run Tasks" })).toHaveAttribute(
       "data-state",
       "unchecked",
     );
     expect(
       screen.getByRole("checkbox", { name: "Run Protocol" }),
-    ).toHaveAttribute("data-state", "unchecked");
+    ).toHaveAttribute("data-state", "indeterminate");
     expect(
       screen.getByRole("button", { name: /^Protocol.*checks selected$/ }),
     ).not.toHaveTextContent(/(^|\D)0\/\d+ checks selected/);
@@ -2090,6 +2094,7 @@ describe("ConformanceTab", () => {
       new Error("[Request ID: abc] Server Error"),
     );
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
     fireEvent.click(screen.getByRole("checkbox", { name: "Run Tasks" }));
 
     // A fixed message, not the raw backend error; the box goes back.
@@ -2100,12 +2105,18 @@ describe("ConformanceTab", () => {
     );
     // Once the save settles, the boxes show what is saved again. The Tasks
     // checks that need a tool stay unchecked, so the count shows the others.
+    // The restored picks list the server's tools again first, so the count
+    // is held back ("Counting checks") for a moment before it lands.
     const tasksHeader = () =>
-      screen.getByRole("button", { name: /^Tasks.*checks selected$/ });
-    await waitFor(() =>
-      expect(tasksHeader()).not.toHaveTextContent(
-        /(^|\D)0\/\d+ checks selected/,
-      ),
+      screen.getByRole("button", {
+        name: /^Tasks.*(checks selected|Counting checks)$/,
+      });
+    await waitFor(
+      () =>
+        expect(tasksHeader()).toHaveTextContent(
+          /(^|\D)[1-9]\d*\/\d+ checks selected/,
+        ),
+      { timeout: 5000 },
     );
 
     // Run again does not use the change that was never saved.
@@ -2555,7 +2566,7 @@ describe("ConformanceTab", () => {
       await toStep2();
 
       // Three protocol checks still need a tool: the count leaves them out,
-      // so the suite's box is unchecked.
+      // so the suite's box shows a dash.
       const header = screen.getByRole("button", {
         name: /^Protocol.*checks selected$/,
       });
@@ -2564,7 +2575,7 @@ describe("ConformanceTab", () => {
         .map(Number);
       expect(picked).toBe(total! - 3);
       const suiteBox = screen.getByRole("checkbox", { name: "Run Protocol" });
-      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+      expect(suiteBox).toHaveAttribute("data-state", "indeterminate");
 
       fireEvent.click(header);
       const logsCheck = screen.getByRole("checkbox", {
@@ -2573,13 +2584,23 @@ describe("ConformanceTab", () => {
       expect(logsCheck).toHaveAttribute("data-state", "unchecked");
       expect(logsCheck).toBeDisabled();
 
-      // Every check that can run is picked, so the suite's box leaves the
-      // suite out, then picks it again.
+      // The box toggles: the dash leaves the suite out, and selecting all
+      // again shakes the needs-input tag as it comes back.
+      const badge = inputBadge("3 optional checks need input");
+      expect(within(header).getByText(badge)).not.toHaveClass(
+        "animate-needs-input-shake",
+      );
       fireEvent.click(suiteBox);
       expect(header).toHaveTextContent(`0/${total} checks selected`);
+      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+      expect(within(header).queryByText(/needs? input/)).toBeNull();
       fireEvent.click(suiteBox);
       expect(header).toHaveTextContent(
         `${total! - 3}/${total} checks selected`,
+      );
+      expect(suiteBox).toHaveAttribute("data-state", "indeterminate");
+      expect(within(header).getByText(badge)).toHaveClass(
+        "animate-needs-input-shake",
       );
 
       // The tool field stays under the locked check, so it can still be set.
@@ -2596,7 +2617,7 @@ describe("ConformanceTab", () => {
       expect(header).toHaveTextContent(
         `${total! - 2}/${total} checks selected`,
       );
-      expect(suiteBox).toHaveAttribute("data-state", "unchecked");
+      expect(suiteBox).toHaveAttribute("data-state", "indeterminate");
 
       // The run still sends the checks without a tool, so the result reports
       // them as not run for want of input, like Run again does.
@@ -2690,12 +2711,18 @@ describe("ConformanceTab", () => {
         expect(within(header).getByText("optional").tagName).toBe("EM");
 
         const suite = screen.getByRole("checkbox", { name: "Run Tasks" });
+        // Every check is picked and the rest wait on input: the box shows a
+        // dash, a click leaves the suite out, and the next picks every check
+        // again with the tag shaking.
+        expect(suite).toHaveAttribute("data-state", "indeterminate");
         fireEvent.click(suite);
+        expect(suite).toHaveAttribute("data-state", "unchecked");
         expect(within(header).queryByText(/needs? input/)).toBeNull();
         fireEvent.click(suite);
+        expect(suite).toHaveAttribute("data-state", "indeterminate");
         expect(
           within(header).getByText(inputBadge("11 optional checks need input")),
-        ).toBeInTheDocument();
+        ).toHaveClass("animate-needs-input-shake");
 
         fireEvent.click(header);
         const tool = await screen.findByRole("combobox", {
@@ -3100,7 +3127,7 @@ describe("ConformanceTab", () => {
       });
     });
 
-    it("turns the advice off with the suite's box, and offers none with no check picked", async () => {
+    it("drops and brings back the advice with the suite's box", async () => {
       const user = userEvent.setup();
       await openProtocolChecks();
       // The advice calls the logs tool, so it can run once that is set.
@@ -3111,20 +3138,25 @@ describe("ConformanceTab", () => {
         screen.getByRole("option", { name: toolOption("echo", "read-only") }),
       );
       const suite = screen.getByRole("checkbox", { name: "Run Protocol" });
-      fireEvent.click(suite);
-      expect(suite).toHaveAttribute("data-state", "unchecked");
       const advice = screen.getByRole("checkbox", {
         name: "Run Log Level Filtering",
       });
-      expect(advice).toHaveAttribute("data-state", "unchecked");
-      expect(advice).toBeDisabled();
+      expect(advice).toHaveAttribute("data-state", "checked");
 
+      // Two protocol checks still need a tool, so the box shows a dash. A
+      // click leaves the suite out, advice included; the next picks it all
+      // back and shakes the needs-input tag.
+      expect(suite).toHaveAttribute("data-state", "indeterminate");
       fireEvent.click(suite);
-      // Two protocol checks still need a tool, so the suite's box stays
-      // unchecked while the advice comes back.
       expect(suite).toHaveAttribute("data-state", "unchecked");
+      expect(advice).toHaveAttribute("data-state", "unchecked");
+      fireEvent.click(suite);
+      expect(suite).toHaveAttribute("data-state", "indeterminate");
       expect(advice).toHaveAttribute("data-state", "checked");
       expect(advice).toBeEnabled();
+      expect(
+        screen.getByText(inputBadge("2 optional checks need input")),
+      ).toHaveClass("animate-needs-input-shake");
     });
   });
 
@@ -3143,6 +3175,7 @@ describe("ConformanceTab", () => {
     );
     await runToCompletion();
     fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await waitFor(() => expect(screen.queryByText("Counting checks")).toBeNull());
     onSaveServerDefaults.mockClear();
 
     for (const suite of ["Protocol", "Apps", "Tasks", "OAuth"]) {
@@ -3405,6 +3438,37 @@ describe("ConformanceTab", () => {
       <ConformanceTab server={alpha} servers={[alpha, notion]} {...props} />,
     );
     await waitFor(() => expect(screen.getByRole("button", { name: "Continue" })).toBeEnabled());
+  });
+
+  it("lets History start a run with no server picked, as the header does", async () => {
+    // History's empty states read the page's run request; without a picked
+    // server the page must still provide it, or they lose their Run.
+    function HistoryRun() {
+      const request = useConformanceRunRequest();
+      return request ? (
+        <button type="button" onClick={request.run}>
+          History run
+        </button>
+      ) : null;
+    }
+    const alpha = createHttpServer({ name: "alpha" });
+    window.history.replaceState(null, "", "/conformance?view=history");
+    render(
+      <ConformanceTab
+        server={null}
+        servers={[alpha]}
+        onSelectServer={vi.fn()}
+        history={<HistoryRun />}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "History run" }));
+
+    // The same setup steps the header's Run opens.
+    expect(
+      await screen.findByRole("button", { name: "Continue" }),
+    ).toBeInTheDocument();
+    window.history.replaceState(null, "", "/");
   });
 
   it("connects the page's server when it arrives after step 1 opened", async () => {
@@ -3750,45 +3814,6 @@ describe("ConformanceTab", () => {
         within(suiteHeader(suite)).getByText(SUITE_COPY[suite].title),
       ).toBeInTheDocument();
     }
-  });
-
-  it("hides the readiness sections unless mcpjam-directory-readiness is on", () => {
-    // Directory submissions are a later phase than protocol conformance, so
-    // the sections stay out of the page until the flag says otherwise.
-    render(<ConformanceTab server={createHttpServer()} />);
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("Claude Directory Readiness")).toBeNull();
-    expect(screen.queryByText("OpenAI Directory Readiness")).toBeNull();
-    expect(screen.queryByText("Muse Directory Readiness")).toBeNull();
-  });
-
-  it("shows the readiness sections when mcpjam-directory-readiness is on", () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    render(<ConformanceTab server={createHttpServer()} />);
-
-    // Before any run, too: readiness has its own run control and recovers an
-    // in-flight run on mount, so hiding it until the suites run would strand
-    // both behind the full run, OAuth browser flow included.
-    expect(
-      screen.getByText("Run your first conformance check"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Claude Directory Readiness")).toBeDefined();
-    expect(screen.getByText("OpenAI Directory Readiness")).toBeDefined();
-  });
-
-  it("keeps the readiness sections mounted when the first run starts", async () => {
-    enabledFlags.add("mcpjam-directory-readiness");
-    setupSuccessfulRunMocks();
-    render(<ConformanceTab server={createHttpServer()} />);
-    const before = screen.getByText("OpenAI Directory Readiness");
-
-    await runToCompletion();
-
-    // A remount would reset choices made before the run, such as the OpenAI
-    // submission mode; the same node means the same component instance.
-    expect(screen.getByText("OpenAI Directory Readiness")).toBe(before);
   });
 
   it("falls back to Overview when ?view=history has no History tab", () => {

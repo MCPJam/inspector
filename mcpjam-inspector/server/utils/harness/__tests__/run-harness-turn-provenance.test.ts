@@ -70,7 +70,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
 }));
@@ -98,13 +97,15 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
     proxyBaseUrl: "https://broker.example",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -226,6 +227,30 @@ describe("runHarnessTurn history provenance (MJ-009)", () => {
         expect.objectContaining({ toolCallId: "paused-call", providerOptions: { mcpjam: { serverId: "deepwiki" } } }),
       ]) }),
     ]));
+  });
+
+  it("keeps the saved tool name when a result-only resume reports a renamed tool", async () => {
+    const onToolResult = vi.fn();
+    harnessState.streamParts = [
+      { type: "tool-result", toolCallId: "paused-call", toolName: "mcp__docs__a_b", output: "done" },
+      { type: "finish", finishReason: "stop" },
+    ];
+    await runHarnessTurn({
+      ...baseOptions(),
+      // Since the call was saved, the server added a literal `a_b`.
+      mcpClientManager: { getServerConfig: vi.fn(), getAllToolAnnotations: vi.fn(() => ({ "a.b": {}, a_b: {} })) },
+      onToolResult,
+      messages: [
+        { role: "user", content: "Run a.b" },
+        { role: "assistant", content: [{
+          type: "tool-call", toolCallId: "paused-call", toolName: "a.b", input: {},
+          providerOptions: { mcpjam: { serverId: "docs" } },
+        }] },
+      ],
+    } as never, "none");
+    expect(onToolResult).toHaveBeenCalledWith(
+      expect.objectContaining({ serverId: "docs", toolName: "a.b" }),
+    );
   });
 
   it.each([

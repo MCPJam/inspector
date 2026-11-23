@@ -66,7 +66,6 @@ describe("the one move to the side panel", () => {
     ["a failed tool call", { toolState: "output-error" }],
     ["no side panel (compare, mobile preview)", { panelAvailable: false }],
     ["an inline-only App", { modes: ["inline"] as const }],
-    ["an App that declared [] or pip", { modes: ["inline"] as const }],
     ["an App already full screen", { fullscreen: true }],
     ["a person who sent it back inline", { preferInline: () => true }],
     ["OpenAI's rules", { behavior: OPENAI }],

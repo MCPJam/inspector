@@ -3,6 +3,7 @@ import type { HttpExchangeLogEvent } from "@mcpjam/sdk";
 import { redactRpcMessageForLog } from "@mcpjam/sdk/events";
 import { logger } from "../utils/logger";
 import { nextRpcLogEventId } from "./rpc-log-event-id";
+import { scrubDeliveredSecretsDeep } from "../../shared/delivered-secret-registry";
 import {
   probeSerializedSize,
   truncateRpcPayload,
@@ -179,9 +180,12 @@ class RpcLogBus {
     // reach the replay buffer or a Logs subscriber from ANY path. It returns
     // the frame itself when nothing needs redacting, so the common case costs
     // one shallow check.
-    const event: RpcLogEvent = isRpcMessageLogEvent(input)
-      ? redactFrame(input)
-      : input;
+    // Credentials the backend delivered to this process are replaced by
+    // exact value too: a server that echoes one would otherwise show it in
+    // the Logs panel.
+    const event: RpcLogEvent = scrubDeliveredSecretsDeep(
+      isRpcMessageLogEvent(input) ? redactFrame(input) : input,
+    );
     const probed = probeSerializedSize(
       isRpcMessageLogEvent(event) ? event.message : event.exchange,
       MAX_MESSAGE_BYTES,

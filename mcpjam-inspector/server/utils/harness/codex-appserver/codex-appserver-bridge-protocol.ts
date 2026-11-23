@@ -24,6 +24,8 @@ export const startMessageSchema = harnessV1BridgeStartBaseSchema
   .extend({
   prompt: harnessPromptContentSchema,
   nativeMcpServers: nativeMcpServersSchema.optional(),
+  /** Forwarded servers: the bridge stamps the forwarder's correlation id. */
+  correlateNativeMcp: z.boolean().optional(),
   /** Current workdir resolved by the hosted pilot's sandbox session. */
   warmWorkDir: z.string().min(1).optional(),
   /** Extra instructions, sent as `developerInstructions` so Codex keeps its own

@@ -1,4 +1,4 @@
-import { withAutoApprovedNativeRequests } from "../../auto-approve-harness.js";
+import { APPROVE_NATIVE_REQUEST, withAnsweredNativeRequests } from "../../auto-approve-harness.js";
 import { withLocalRuntimeBootstrap } from "../pack-bootstrap.js";
 import { diskResumeState } from "../resume-state.js";
 /**
@@ -43,6 +43,7 @@ import {
   type LocalPlatform,
 } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
+import { descendants, isLoopbackListener, treeListeners } from "./process-checks.js";
 import { installedAdapterVersion } from "./adapter-version.js";
 import { probeProcessGroup, probeProcess } from "../process-identity.js";
 
@@ -293,10 +294,6 @@ async function startChild(script: string, env: Record<string, string>) {
  * parent/child tree. Still deliberately NOT the code under test.
  */
 const WIN = process.platform === "win32";
-const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
-    windowsHide: true,
-  });
 
 async function running(pid: number): Promise<boolean> {
   if (WIN) {
@@ -322,25 +319,6 @@ async function stillRunning(pids: readonly number[]): Promise<number[]> {
   const states = await Promise.all(pids.map(running));
   return pids.filter((_, i) => states[i]);
 }
-async function descendants(pid: number): Promise<number[]> {
-  const out: number[] = [];
-  const walk = async (p: number) => {
-    let kids = "";
-    try {
-      kids = WIN
-        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
-        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
-    } catch {
-      return;
-    }
-    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
-      out.push(k);
-      await walk(k);
-    }
-  };
-  await walk(pid);
-  return out;
-}
 async function psLine(pid: number, withEnv = false) {
   try {
     const args = withEnv ? ["-E", "-o", "command=", "-p", String(pid)] : ["-o", "command=", "-p", String(pid)];
@@ -349,29 +327,6 @@ async function psLine(pid: number, withEnv = false) {
     return "";
   }
 }
-async function listeners(pid: number) {
-  if (WIN) {
-    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
-    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
-    // loopback verdict's regex reads both.
-    try {
-      return (await execFileP("netstat", ["-ano"])).stdout
-        .split(/\r?\n/)
-        .map((l) => l.trim().split(/\s+/))
-        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
-        .map((f) => `${f[1]} (LISTEN)`);
-    } catch {
-      return [];
-    }
-  }
-  try {
-    return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
-      .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
-  } catch {
-    return [];
-  }
-}
-
 type TurnResult = { text: string; parts: Record<string, number>; firstPartMs: number; firstTextMs: number; finishMs: number; approvals: number; errors: string[]; tools: string[] };
 async function runTurn(label: string, agent: any, sessionRef: { s: any }, prompt: string): Promise<TurnResult> {
   const start = performance.now();
@@ -556,7 +511,7 @@ async function main() {
   });
   const bootstrapped = await withLocalRuntimeBootstrap(harness, plan.runtime);
   const agent: any = new HarnessAgent({
-    harness: (MODE === "attended-off" ? withAutoApprovedNativeRequests(bootstrapped) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
+    harness: (MODE === "attended-off" ? withAnsweredNativeRequests(bootstrapped, APPROVE_NATIVE_REQUEST) : bootstrapped) as any, sandbox: provider, permissionMode: "allow-reads", instructions: "You are running a conformance check.",
     // The model rides on the agent: the adapter no longer reads one at
     // construction. Both branches above are the haiku family.
     model: "haiku",
@@ -633,7 +588,7 @@ async function main() {
   // Job Object launcher and the socket belongs to the node process under it;
   // on POSIX the union is a superset of the old check and stricter for it —
   // any listener anywhere in the tree that is off loopback fails the run.
-  const bridgeListeners = (await Promise.all([bridgePid, ...kids].map(listeners))).flat();
+  const bridgeListeners = await treeListeners([bridgePid, ...kids]);
   note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
   const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
   note(`child HOME values: ${JSON.stringify(homeLeak)}`);
@@ -731,9 +686,10 @@ async function main() {
   const failures: string[] = [];
   if (upstreamKeyInEnv) failures.push("the upstream model key reached a child process's environment");
   if (upstreamKeyInState) failures.push("the upstream model key was written to session state on disk");
-  const offLoopback = bridgeListeners.filter((l) => !/^(127\.|\[?::1\]?:)/.test(l));
+  if (bridgeListeners === null) failures.push("a supervised process's listeners could not be read, so the loopback check proved nothing");
+  const offLoopback = (bridgeListeners ?? []).filter((l) => !isLoopbackListener(l));
   if (offLoopback.length > 0) failures.push(`the bridge listened off loopback: ${JSON.stringify(offLoopback)}`);
-  if (bridgeListeners.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
+  if (bridgeListeners?.length === 0) failures.push("no bridge listener was observed, so the loopback check proved nothing");
   if (survivors.length > 0) failures.push(`stop() left ${survivors.length} process(es) running: ${survivors}`);
   if (recordsAfterStop !== 0) failures.push(`${recordsAfterStop} process registry record(s) survived stop()`);
   if (after.length > 0) failures.push(`the session left ${after.length} new entr(ies) in the workspace: ${JSON.stringify(after)}`);

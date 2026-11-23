@@ -16,12 +16,17 @@ const flagState = vi.hoisted(() => ({
   environments: true,
 }));
 const toastError = vi.hoisted(() => vi.fn());
+const mockListSkills = vi.hoisted(() => vi.fn());
 
 // The harness × model picker locks read each host's config; these tests mock
 // convex/react without that query, so the reads answer "not known yet".
 vi.mock("@/hooks/use-host-harness-targets", () => ({
   useHostHarnessTargets: () => ({}),
   useHostHarnessLoader: () => async () => null,
+}));
+vi.mock("@/lib/apis/mcp-skills-api", () => ({
+  listSkills: (...args: unknown[]) => mockListSkills(...args),
+  listSkillVersions: async () => [],
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: toastError, success: vi.fn() },
@@ -405,5 +410,77 @@ describe("EnvironmentComposer locked slots", () => {
 
     expect(screen.getByTestId("strip-clients-picker")).not.toBeDisabled();
     expect(screen.getByTestId("strip-servers-picker")).not.toBeDisabled();
+  });
+});
+
+describe("EnvironmentComposer skills slot on a saved environment's scope", () => {
+  const skill = (skillId: string) => ({
+    skillId,
+    name: skillId,
+    description: `${skillId} description`,
+    path: "Library",
+    sharing: "project" as const,
+    origin: "cloud" as const,
+    pinnability: { ok: true as const },
+    currentVersionNumber: 2,
+  });
+  // What a saved environment on the scope seeds: the stack holds the scope and
+  // no list, since the backend refuses both at once.
+  const scoped = (): EnvironmentComposerState => {
+    const seeded = emptyComposerState();
+    return {
+      ...seeded,
+      stack: { ...seeded.stack, skillScope: "all-shared-library" },
+    };
+  };
+  const openSkills = async () => {
+    fireEvent.click(screen.getByTestId("strip-skills-picker"));
+    return screen.findByLabelText("All shared Library skills");
+  };
+
+  beforeEach(() => {
+    flagState.skills = true;
+    mockListSkills.mockResolvedValue([skill("triage"), skill("reply")]);
+  });
+
+  it("shows the scope in place of No skills", async () => {
+    render(<Harness slots={["skills"]} initialValue={scoped()} />);
+    expect(screen.getByTestId("strip-skills-picker")).toHaveTextContent(
+      "All shared Library skills",
+    );
+    expect(await openSkills()).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("turns the scope off, which leaves no skills", async () => {
+    render(<Harness slots={["skills"]} initialValue={scoped()} />);
+    fireEvent.click(await openSkills());
+    expect(screen.getByTestId("strip-skills-picker")).toHaveTextContent(
+      "No skills",
+    );
+  });
+
+  it("keeps the other skills as a list when one is unchecked", async () => {
+    render(<Harness slots={["skills"]} initialValue={scoped()} />);
+    await openSkills();
+    fireEvent.click(await screen.findByLabelText("triage"));
+    expect(screen.getByTestId("strip-skills-picker")).toHaveTextContent(
+      "1 skill",
+    );
+  });
+
+  it("lists the scope when the Library has no shared skill, so it can still be turned off", async () => {
+    mockListSkills.mockResolvedValue([]);
+    render(<Harness slots={["skills"]} initialValue={scoped()} />);
+    fireEvent.click(await openSkills());
+    expect(screen.getByTestId("strip-skills-picker")).toHaveTextContent(
+      "No skills",
+    );
+  });
+
+  it("offers no scope where the environment has none", async () => {
+    render(<Harness slots={["skills"]} />);
+    fireEvent.click(screen.getByTestId("strip-skills-picker"));
+    await screen.findByLabelText("triage");
+    expect(screen.queryByLabelText("All shared Library skills")).toBeNull();
   });
 });

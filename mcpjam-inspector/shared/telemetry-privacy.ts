@@ -271,11 +271,26 @@ export function stripPostHogConfigHeaders(snapshotData: unknown): unknown {
  * that never hold user text. Everything else — `title`, `alt`, `href`, `src`,
  * `placeholder`, `aria-label`, `id`, `value`, most `data-*` — is masked.
  * `class` and `style` stay so the replay is a styled layout rather than
- * unstyled boxes.
+ * unstyled boxes. rrweb's generated attributes that hold no user text stay
+ * too: `_cssText`, the text of a stylesheet it inlined (the app's own CSS,
+ * without which the player draws unstyled HTML), and the size, position and
+ * scroll placeholders it records on blocked elements. `rr_dataURL`, `rr_src`
+ * and `rr_media*` are masked.
  */
 export const MASKED_REPLAY_KEPT_ATTRIBUTES: ReadonlySet<string> = new Set([
   "class",
   "style",
+  "_csstext",
+  "rr_width",
+  "rr_height",
+  "rr_left",
+  "rr_top",
+  "rr_position",
+  "rr_transform",
+  "rr_display",
+  "rr_scrollleft",
+  "rr_scrolltop",
+  "rr_open_mode",
   "role",
   "type",
   "dir",
@@ -401,6 +416,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "byok",
   "callback",
   "capabilities",
+  "cases",
   "chat",
   "ci-evals",
   "client-config",
@@ -419,6 +435,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "eval-server",
   "evals",
   "evaluate",
+  "evaluators",
   "events",
   "github",
   "github-checks",
@@ -426,6 +443,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "host-compare",
   "hosts",
   "integrations",
+  "iterations",
   "learning",
   "login",
   "members",
@@ -441,6 +459,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "profile",
   "project-settings",
   "prompts",
+  "readiness",
   "redeem",
   "registry",
   "resources",
@@ -449,6 +468,7 @@ export const APP_ROUTE_WORDS: ReadonlySet<string> = new Set([
   "scenarios",
   "score",
   "secrets",
+  "security",
   "servers",
   "sessions",
   "settings",
@@ -617,6 +637,7 @@ const KNOWN_QUERY_KEYS = new Set([
   "run",
   "case",
   "suite",
+  "target",
   "persona",
   "iteration",
   "checks",

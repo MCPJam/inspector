@@ -151,6 +151,7 @@ import {
   noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
+import type { ModelSelectorHarnessScope } from "@/components/chat-v2/chat-input/model-selector";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -188,6 +189,7 @@ import {
 } from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
+import type { HarnessBoxPreparationRequest } from "@/hooks/use-harness-box-preparation";
 import {
   classifyScenarioAccessResponse,
   patchBodyAccessVersion,
@@ -395,6 +397,8 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
     "Started a new session — couldn't resume the previous one, so earlier context isn't available.",
   "runtime-changed":
     "Started a new session because this client's runtime changed, so earlier context isn't available.",
+  "sandbox-restored":
+    "This conversation's computer was replaced. The agent still has the conversation, but files from earlier turns are gone.",
   "legacy-cold-resume": null,
 };
 
@@ -735,6 +739,8 @@ export interface SetSelectedModelOptions {
 
 export interface UseChatSessionReturn {
   harnessStartupPhase: HarnessStartupPhase | null;
+  /** A new hosted Claude Code or Codex chat whose computer can be set up early. */
+  harnessBoxPreparation: HarnessBoxPreparationRequest | null;
   /**
    * Elicitation requests whose tool call is blocked on this user right now.
    * Turn-scoped: they arrive as transient stream parts and are dropped when the
@@ -770,6 +776,12 @@ export interface UseChatSessionReturn {
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     pluginMessage?: PluginMessageIntent;
     isCurrent?: () => boolean;
+    /**
+     * Prompt and skill turns for this send. Written into the thread only
+     * after the dispatch-time admission check, so a refused send does not
+     * leave them behind for the next try to append again.
+     */
+    prependMessages?: UIMessage[];
 
     pluginMentions?: PluginMentionSelection[];
     /** Items an App's editable draft left in the composer, sent as-is. */
@@ -853,6 +865,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The client `availableModels` is locked for, for the model picker. */
+  modelHarnessScope: ModelSelectorHarnessScope;
   /** The authorized catalog before this session's harness filter. */
   catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
@@ -3306,6 +3320,19 @@ export function useChatSession(
       ),
     [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
   );
+  // The same target, for the picker: `availableModels` is already locked for
+  // it, and passing it on keeps the picker honest if a caller mixes in rows.
+  const modelHarnessScope = useMemo<ModelSelectorHarnessScope>(
+    () => ({
+      targets: [
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ],
+      purpose: "chat",
+    }),
+    [harnessId, harnessRuntimeVersion],
+  );
 
   // Compatibility ids can name several providers; keep their hint in state so
   // a same-id provider change still resolves the intended row.
@@ -5508,6 +5535,7 @@ export function useChatSession(
       metadata?: Record<string, unknown>;
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
+      prependMessages?: UIMessage[];
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
@@ -5520,6 +5548,7 @@ export function useChatSession(
         widgetModelContext,
         pluginMessage,
         isCurrent,
+        prependMessages,
         pluginMentions,
         extraParts,
       } = options;
@@ -5675,6 +5704,12 @@ export function useChatSession(
             resolvedHostedServersRef.current = null;
             return false;
           }
+          // History for this request, written only once the send is admitted.
+          // The session, target, and preparation checks above already ran.
+          // Appending grows the thread, so this does not fork the session.
+          if (prependMessages?.length) {
+            setMessages((prev) => [...prev, ...prependMessages]);
+          }
           savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
             metadata,
@@ -5777,6 +5812,7 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      setMessages,
       savedClientSendGuard,
       sendPreparationGuard,
       hostedEnsureServerIds,
@@ -6434,6 +6470,24 @@ export function useChatSession(
     setRespectToolVisibility(executionRespectToolVisibility ?? true);
   }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
+  // Only auth and scope rerun this effect. The id, not the user object, since
+  // AuthKit hands back a new object for the same member on refresh; and the
+  // reset helpers through a ref, since opening a conversation swaps the chat
+  // and with it their identities. Each rerun briefly clears the bootstrap and
+  // unmounts what it gates, Sessions included.
+  const workOsUserId = workOsUser?.id;
+  const bootstrapResetRef = useRef({
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  });
+  bootstrapResetRef.current = {
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  };
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
@@ -6506,7 +6560,7 @@ export function useChatSession(
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const resolvedMemberId =
           resolvedAuthHeaders && authIsMemberRef.current
-            ? workOsUser?.id
+            ? workOsUserId
             : undefined;
         // Token rotation updates transport headers, but must not discard the
         // same member's transcript or detach its pending authorization call.
@@ -6536,12 +6590,13 @@ export function useChatSession(
         ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
-          clearPendingSessionHydration();
+          const reset = bootstrapResetRef.current;
+          reset.clearPendingSessionHydration();
           setChatSessionId(generateId());
-          setMessages([]);
+          reset.setMessages([]);
           setPersistedSnapshotToolCallIds([]);
-          syncResumedVersion(null);
-          syncRestoredToolRenderOverrides({});
+          reset.syncResumedVersion(null);
+          reset.syncRestoredToolRenderOverrides({});
           onResetRef.current?.("auth-bootstrap");
         }
 
@@ -6579,11 +6634,7 @@ export function useChatSession(
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
-    workOsUser,
-    clearPendingSessionHydration,
-    setMessages,
-    syncResumedVersion,
-    syncRestoredToolRenderOverrides,
+    workOsUserId,
   ]);
 
   // Fetch tools metadata
@@ -6931,7 +6982,37 @@ export function useChatSession(
       harnessStartupRequestRef.current = null;
   }, [chatSessionId]);
 
+  // What the Send would run against (`buildHostedBody`), for a hosted chat on
+  // a client or an environment. A plugin chat's hidden environment is left out.
+  const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
+    HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
+    isHarness(harnessId) &&
+    messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
+    (hostedExecutionTarget || hostedHostId)
+      ? {
+          chatSessionId,
+          body: {
+            projectId: hostedProjectId,
+            chatSessionId,
+            selectedServerIds: hostedSelectedServerIds,
+            model: selectedModel,
+            ...(requestChoice.kind === "picked"
+              ? { modelSelection: requestChoice.selection }
+              : {}),
+            ...(hostedExecutionTarget
+              ? {
+                  executionTarget: hostedExecutionTarget,
+                  ...(hostedEnvironmentId && hostedEnvironmentOverrides
+                    ? { environmentOverrides: hostedEnvironmentOverrides }
+                    : {}),
+                }
+              : { hostId: hostedHostId }),
+          },
+        }
+      : null;
+
   return {
+    harnessBoxPreparation,
     harnessStartupPhase: status === "submitted" || status === "streaming" ? harnessStartupPhase : null,
     // Chat state
     messages,
@@ -6954,6 +7035,7 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     // The authorized catalog before this session's harness filter, so another
     // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
     catalogModels: composedModels,

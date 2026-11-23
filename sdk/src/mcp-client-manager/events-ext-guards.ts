@@ -267,6 +267,11 @@ const EVENTS_ERROR_KIND_BY_CODE = new Map<number, EventsErrorKind>(
   ])
 );
 
+for (const [code, kind] of [
+  [-32023, "NotFound"], [-32024, "Forbidden"], [-32025, "ResourceExhausted"],
+  [-32026, "Unsupported"], [-32027, "CallbackEndpointError"],
+] as const) EVENTS_ERROR_KIND_BY_CODE.set(code, kind);
+
 export type ClassifiedEventsError = {
   kind: EventsErrorKind;
   code: number;

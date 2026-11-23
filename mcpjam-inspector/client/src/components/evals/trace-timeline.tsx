@@ -53,11 +53,25 @@ import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 import { useSpanAccountName } from "./run-accounts-context";
+import {
+  useTraceDetailDirection,
+  type TraceDetailPlacement,
+} from "./use-trace-detail-direction";
 import { ToolCallAccountTag } from "@/components/chat-v2/thread/tool-call-account";
 import {
   RecordedTraceToolbar,
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
+import { selectRowCost, type RowCost } from "./trace-cost/cost-view";
+import type { IterationCostContext } from "./trace-cost/iteration-model-calls";
+import { useTraceCostEnabled } from "@/hooks/useTraceCostEnabled";
+import {
+  TraceCostChips,
+  TraceCostHoverBlock,
+  TraceCostInline,
+  TraceCostSummary,
+  useTraceCostSpans,
+} from "./trace-cost/trace-cost-display";
 
 const ALL_AXIS_TICK_PERCENTS = [0, 25, 50, 75, 100] as const;
 
@@ -1515,18 +1529,21 @@ function turnRuntimeLabel(runtime: TraceTurnRuntime): string {
 
 function TimelineDetailPane({
   row,
+  recordedSpans,
   projectedMessages,
   transcriptMessages,
   onRevealInTranscript,
   turnRuntimeByPromptIndex,
 }: {
   row: TimelineRow | undefined;
+  recordedSpans?: EvalTraceSpan[] | null;
   projectedMessages?: boolean;
   transcriptMessages: TranscriptMessage[];
   onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
 }) {
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
   if (!row) {
     return (
       <div
@@ -1652,6 +1669,7 @@ function TimelineDetailPane({
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
   const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
+  const rowCost = costEnabled ? selectRowCost(row, recordedSpans) : undefined;
 
   return (
     <div
@@ -1739,7 +1757,9 @@ function TimelineDetailPane({
                     : ""}
                 </>
               ) : null}
+              <TraceCostInline cost={rowCost} />
             </div>
+            <TraceCostChips cost={rowCost} />
 
             {row.kind === "span"
               ? (() => {
@@ -1897,6 +1917,10 @@ export interface TraceTimelineProps {
   turnRuntimeByPromptIndex?: Map<number, TraceTurnRuntime>;
   /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
   fillContent?: boolean;
+  /** "auto" puts the span detail beside the waterfall when there is room. */
+  detailPlacement?: TraceDetailPlacement;
+  /** An eval iteration's stored cost total and harness calls, for the summary. */
+  iterationCost?: IterationCostContext;
 }
 
 export function TraceTimeline({
@@ -1919,7 +1943,11 @@ export function TraceTimeline({
   viewportMaxMs: viewportMaxMsProp,
   turnRuntimeByPromptIndex,
   fillContent = false,
+  detailPlacement = "below",
+  iterationCost,
 }: TraceTimelineProps) {
+  const { containerRef, direction } = useTraceDetailDirection(detailPlacement);
+  const beside = direction === "horizontal";
   const projected = useMemo(
     () => projectedMessages
       ? projectChatTraceRanges(sourceSpans ?? [], transcriptMessages)
@@ -1927,8 +1955,22 @@ export function TraceTimeline({
     [projectedMessages, sourceSpans, transcriptMessages],
   );
   const recordedSpans = projected?.spans ?? sourceSpans;
+  // Cost reads these: a harness llm span carries its matched call's cost.
+  const traceCost = useTraceCostSpans(recordedSpans, iterationCost);
+  const costSpans = traceCost.spans;
   const shouldReduceMotion = useReducedMotion();
   const spanAccount = useSpanAccountName();
+  const costEnabled = useTraceCostEnabled();
+  // Spans with cost evidence, their own or a matched harness call's.
+  const costedSpanIds = useMemo(
+    () =>
+      new Set(
+        costEnabled
+          ? (costSpans ?? []).filter((span) => span.cost).map((span) => span.id)
+          : [],
+      ),
+    [costEnabled, costSpans],
+  );
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -2045,7 +2087,8 @@ export function TraceTimeline({
     const ro = new ResizeObserver(readWidth);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+    // A direction change remounts the panel group and its axis header.
+  }, [direction]);
 
   const axisTicks = useMemo(
     () => selectAxisTickPercents(axisColumnWidthPx),
@@ -2120,9 +2163,12 @@ export function TraceTimeline({
         };
       }
 
-      // Skip overhead LLM spans (framework routing/dispatch, no actual generation)
+      // Skip overhead LLM spans (framework routing/dispatch, no actual
+      // generation). A call with cost evidence is billed, so it stays
+      // selectable while the totals count it.
       const isOverheadLlm =
         node.span.category === "llm" &&
+        !costedSpanIds.has(node.span.id) &&
         typeof node.span.totalTokens !== "number" &&
         typeof node.span.inputTokens !== "number" &&
         typeof node.span.outputTokens !== "number" &&
@@ -2252,6 +2298,7 @@ export function TraceTimeline({
     mode,
     transcriptMessages,
     projectedMessages,
+    costedSpanIds,
   ]);
 
   const fullyExpandedStepIds = useMemo(
@@ -2356,8 +2403,9 @@ export function TraceTimeline({
       rowEndTimestamp:
         traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null,
       glyphCategory,
+      cost: costEnabled ? selectRowCost(hoveredRow, costSpans) : undefined,
     };
-  }, [hoveredRow, recordedSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount]);
+  }, [hoveredRow, recordedSpans, costSpans, traceStartAnchorMs, transcriptMessages, projectedMessages, spanAccount, costEnabled]);
 
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
@@ -2405,17 +2453,34 @@ export function TraceTimeline({
     ],
   );
 
+  // Shown in every timing mode: an iteration with no recorded spans still has
+  // its stored total, and a harness's calls are listed as unmatched.
+  const costSummary = (
+    <>
+      {traceCost.loader}
+      <TraceCostSummary
+        spans={costSpans}
+        iteration={iterationCost}
+        unmatched={traceCost.unmatched}
+      />
+    </>
+  );
+
   if (mode === "none") {
     return (
-      <div className="text-xs text-muted-foreground">
-        No timing data recorded for this iteration.
-      </div>
+      <>
+        {costSummary}
+        <div className="text-xs text-muted-foreground">
+          No timing data recorded for this iteration.
+        </div>
+      </>
     );
   }
 
   if (mode === "estimated") {
     return (
       <div className="space-y-3">
+        {costSummary}
         <div className="flex items-center gap-2">
           <Badge className="border-warning/50 bg-warning/50 text-foreground">
             Estimated total only
@@ -2524,15 +2589,18 @@ export function TraceTimeline({
           </div>
         </div>
       ) : null}
+      {costSummary}
 
       <div
+        ref={containerRef}
         className={cn(
           "@container/trace-timeline min-w-0",
           fillContent && "flex min-h-0 flex-1 flex-col",
         )}
       >
         <ResizablePanelGroup
-          direction="vertical"
+          key={direction}
+          direction={direction}
           className={cn(
             "rounded-lg border border-border/50 bg-background",
             fillContent
@@ -2542,7 +2610,7 @@ export function TraceTimeline({
           style={fillContent ? undefined : { height: "auto" }}
         >
           <ResizablePanel
-            defaultSize={65}
+            defaultSize={beside ? 62 : 65}
             minSize={0}
             className="min-h-0 min-w-0 overflow-hidden"
           >
@@ -2928,8 +2996,8 @@ export function TraceTimeline({
           </ResizablePanel>
           <ResizableHandle withHandle />
           <ResizablePanel
-            defaultSize={35}
-            minSize={20}
+            defaultSize={beside ? 38 : 35}
+            minSize={beside ? 25 : 20}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div
@@ -2939,6 +3007,7 @@ export function TraceTimeline({
               <TimelineDetailPane
                 projectedMessages={projectedMessages}
                 row={selectedRow}
+                recordedSpans={costSpans}
                 transcriptMessages={transcriptMessages}
                 onRevealInTranscript={onRevealInTranscript}
                 turnRuntimeByPromptIndex={turnRuntimeByPromptIndex}
@@ -2971,6 +3040,7 @@ type HoveredRowInfo = {
   rowStartTimestamp: number | null;
   rowEndTimestamp: number | null;
   glyphCategory: EvalTraceSpanCategory | "prompt" | "interaction";
+  cost?: RowCost;
 };
 
 function HoveredRowInspector({
@@ -3104,6 +3174,7 @@ function HoveredRowInspector({
               </div>
             </div>
           </div>
+          <TraceCostHoverBlock cost={info.cost} />
         </div>
       </motion.div>
     </div>,

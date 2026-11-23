@@ -66,9 +66,13 @@ export type DescribeCloudCredentialDependencies = {
   authFilePath?: string;
 };
 
+// A key's type tag ("sk_", "pk_") is a short lowercase word. Anything else
+// before the first "_" is secret: in a JWT or base64url bearer token the first
+// "_" can sit anywhere, and everything before it would print.
+const KEY_TYPE_PREFIX = /^[a-z]{1,8}_/;
+
 export function redactCloudApiKey(key: string): string {
-  const separator = key.indexOf("_");
-  const prefix = separator > 0 ? key.slice(0, separator + 1) : "";
+  const prefix = KEY_TYPE_PREFIX.exec(key)?.[0] ?? "";
   const secret = key.slice(prefix.length);
   if (secret.length < 8) {
     return `${prefix}…`;

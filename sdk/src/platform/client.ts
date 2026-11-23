@@ -1,5 +1,6 @@
 import { MCPJAM_CLOUD_API_URL } from "../deployment/address.js";
 import { widgetSessionPath } from "./widget-session-types.js";
+import { DirectoryReviewerAttemptClient } from "./directory-reviewer-attempt-client.js";
 import type {
   PlatformWidgetSessionTarget,
   PlatformWidgetSessionCreateBody,
@@ -72,6 +73,8 @@ import type {
   PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
+  PlatformEvalRunFindingsBuildRequested,
+  PlatformEvalRunInsightsCanceled,
   PlatformEvalRunInsightsRequested,
   PlatformAdhocEnvironmentBody,
   PlatformAdhocEnvironmentEnsured,
@@ -713,7 +716,7 @@ function isBrowserPage(): boolean {
   return scope.window !== undefined && scope.document !== undefined;
 }
 
-export class PlatformApiClient {
+export class PlatformApiClient extends DirectoryReviewerAttemptClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
   private readonly fetchFn: typeof fetch;
@@ -740,6 +743,7 @@ export class PlatformApiClient {
   private readonly constructorOptions: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    super();
     this.constructorOptions = options;
     this.evalVocabulary = options.evalVocabulary ?? 1;
     this.apiVocabulary = options.apiVocabulary ?? 1;
@@ -2795,9 +2799,9 @@ export class PlatformApiClient {
   }
 
   /**
-   * Request (or with `force`, regenerate) the eval run's insights —
-   * serverQuality behind the common envelope. SPENDS the org's model budget;
-   * poll `getEvalRun().insights` rather than re-requesting.
+   * Start (or with `force`, rerun) the run's findings analysis, the one the
+   * app's run page runs. Included with MCPJam; counts against the daily
+   * insight quota. Poll `getEvalRun().insights` rather than re-requesting.
    */
   requestEvalRunInsights(
     params: { projectId: string; runId: string; force?: boolean },
@@ -2808,6 +2812,36 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options
+    );
+  }
+
+  /** Cancel a running analysis; a 409 when none is running. */
+  cancelEvalRunInsights(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      {},
+      options
+    );
+  }
+
+  /** Build (or with `force`, rebuild) the findings an analysis explains. */
+  buildEvalRunFindings(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunFindingsBuildRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/findings/build`,
       { body: params.force ? { force: true } : {} },
       options
     );
@@ -3307,6 +3341,25 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Run again a run that stopped on the server and was re-queued, which a
+   * read reports as `resumable`. Only the person who started it can: the
+   * server is authorized again with their credentials. Poll the run after.
+   */
+  resumeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformReadinessRunReceipt> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/resume`,
       {},
       options
     );
@@ -6553,7 +6606,7 @@ export class PlatformApiClient {
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
 
-  private async request<T>(
+  protected async request<T>(
     // PUT is here for idempotent creates — `publishScenario` is the first:
     // publishing an environment that is already published returns the existing
     // scenario rather than minting a second, which is PUT's semantics and not
@@ -6574,6 +6627,8 @@ export class PlatformApiClient {
        * this is the header that says which client that was.
        */
       declareLaunch?: boolean;
+      /** Told a successful answer's status, for a route where it is the answer. */
+      onStatus?: (status: number) => void;
     },
     options?: RequestOptions
   ): Promise<T> {
@@ -6741,6 +6796,7 @@ export class PlatformApiClient {
       );
     }
 
+    init.onStatus?.(response.status);
     // Empty success bodies (204 / no content) resolve to undefined.
     return parsed as T;
   }

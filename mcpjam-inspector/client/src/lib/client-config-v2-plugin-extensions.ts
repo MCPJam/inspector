@@ -82,6 +82,14 @@ export function displayBehaviorForHost(
   return behavior;
 }
 
+/** Where this client opens a global entry App that can't go fullscreen. */
+export function entrypointWithoutFullscreenForHost(
+  hostConfig: PluginExtensionsHostConfig | null | undefined,
+) {
+  return resolvePluginExtensionBehavior(hostConfig ?? undefined)
+    .entrypointWithoutFullscreen;
+}
+
 /** App behavior follows the MCP client profile, independently of its agent loop. */
 export function pluginExtensionProfileForHost(
   hostConfig: PluginExtensionsHostConfig | null | undefined,

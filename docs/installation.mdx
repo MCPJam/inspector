@@ -1,10 +1,89 @@
 ---
 title: "Installation"
-description: "Here's a list of all ways to start MCPJam"
+description: "Run MCPJam in your browser, as a desktop app, from your terminal, in Docker, or from your coding agent."
 icon: "terminal"
 ---
 
-MCPJam Inspector runs four ways: a hosted web app, a desktop app for Mac and Windows, your terminal, or a Docker image. The web app is HTTPS-only and has no install. Terminal and Desktop support HTTP/S and local STDIO servers. Docker supports HTTP/S servers and STDIO servers that run inside the container.
+import AgentConnect from '/snippets/agent-connect.mdx';
+
+MCPJam works two ways: inside your coding agent, which runs MCPJam's tools for you, or as an Inspector you open yourself in the browser, a desktop app, your terminal or Docker.
+
+## For agents
+
+### Connect MCPJam to your agent
+
+<AgentConnect />
+
+### Add MCPJam to your coding agent
+
+Your agent can test MCP servers with MCPJam without opening the Inspector. Pick by what the agent should do:
+
+- **Run MCPJam commands**
+  - Install the MCPJam skill. It teaches an agent with a shell every `mcpjam` command and when to use it.
+  - See [CLI overview](/cli/overview#recommended-use-with-agent-skills).
+- **Test a server from inside the agent**
+  - Add `mcpjam mcp`, a local STDIO MCP server. It connects to your server under test, calls its tools and keeps the session open to watch notifications. No account needed.
+  - See [MCPJam as an MCP server](/cli/mcp-server).
+- **Work with your MCPJam account**
+  - Add the remote MCPJam MCP server for your projects, saved servers and evals. Sign in with OAuth.
+  - See [MCPJam MCP server](/hosted/mcp-server).
+
+<Tabs>
+  <Tab title="Claude Code">
+    ```bash Skill
+    npx skills add mcpjam/inspector --skill mcp-inspector
+    ```
+
+    ```bash Local MCP server
+    claude mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp
+    ```
+
+    ```bash Account MCP server
+    claude mcp add --transport http mcpjam https://mcp.mcpjam.com/mcp
+    ```
+
+    After adding the account server, run `/mcp`, choose **mcpjam**, and sign in.
+  </Tab>
+  <Tab title="Codex">
+    ```bash Skill
+    npx skills add mcpjam/inspector --skill mcp-inspector
+    ```
+
+    ```bash Local MCP server
+    codex mcp add mcpjam-local -- npx -y @mcpjam/cli@latest mcp
+    ```
+
+    ```bash Account MCP server
+    codex mcp add mcpjam --url https://mcp.mcpjam.com/mcp
+    ```
+
+    Codex starts OAuth sign-in for the account server in your browser; if it does not, run `codex mcp login mcpjam`.
+  </Tab>
+  <Tab title="Cursor">
+    ```bash Skill
+    npx skills add mcpjam/inspector --skill mcp-inspector
+    ```
+
+    Add the local server to `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json`:
+
+    ```json .cursor/mcp.json
+    {
+      "mcpServers": {
+        "mcpjam": {
+          "command": "npx",
+          "args": ["-y", "@mcpjam/cli@latest", "mcp"]
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+To give the agent MCPJam's documentation as well, add `https://docs.mcpjam.com/mcp`. See [MCP Docs Server](/inspector/docs-server).
+
+## For humans
+
+The web app is HTTPS-only and has no install. Terminal and Desktop support HTTP/S and local STDIO servers. Docker supports HTTP/S servers and STDIO servers that run inside the container.
 
 <CardGroup cols={2}>
   <Card title="Web App" icon="globe" href="https://app.mcpjam.com">
@@ -19,6 +98,9 @@ MCPJam Inspector runs four ways: a hosted web app, a desktop app for Mac and Win
   <Card title="Docker" icon="container" href="#docker">
     Pull from Docker Hub. HTTP/S, and STDIO inside the container.
   </Card>
+  <Card title="CLI" icon="square-terminal" href="/cli/overview">
+    `npm i -g @mcpjam/cli`. Probes, conformance and evals from your shell or CI.
+  </Card>
 </CardGroup>
 
 ### Which one do I need?
@@ -27,19 +109,19 @@ MCPJam Inspector runs four ways: a hosted web app, a desktop app for Mac and Win
 | --- | :---: | :---: | :---: | :---: |
 | Install required | None | Mac/Windows download | Node.js | Docker |
 | HTTPS MCP servers | ✓ | ✓ | ✓ | ✓ |
-| HTTP MCP servers | — | ✓ | ✓ | ✓ |
-| Local STDIO servers | — | ✓ | ✓ | Inside the container |
-| Skills | — | ✓ | ✓ | ✓ |
-| Shareable server URLs | ✓ | — | — | — |
-| Always on latest version | ✓ | Re-download to update | Per-run (`@latest`) | Re-pull to update |
+| HTTP MCP servers | No | ✓ | ✓ | ✓ |
+| Local STDIO servers | No | ✓ | ✓ | Inside the container |
+| Skills | No | ✓ | ✓ | ✓ |
+| Shareable server URLs | ✓ | No | No | No |
+| Always on latest version | ✓ | Updates itself | Per-run (`@latest`) | Re-pull to update |
 
-If your server is local (running on `localhost`), the web app cannot reach it — pick **Desktop** or **Terminal**, or **Docker** with `host.docker.internal`. If you want teammates to one-click into the same server, pick **Web App**.
+If your server is local (running on `localhost`), the web app cannot reach it; pick **Desktop** or **Terminal**, or **Docker** with `host.docker.internal`. If you want teammates to one-click into the same server, pick **Web App**.
 
-## Web app
+### Web app
 
-Go to [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. The web app accepts HTTPS MCP server URLs only — for HTTP or local STDIO servers, use the desktop or terminal options below. See [Hosted App](/hosted/overview) for more.
+Go to [app.mcpjam.com](https://app.mcpjam.com) in your browser. No install required. The web app accepts HTTPS MCP server URLs only; for HTTP or local STDIO servers, use the desktop or terminal options below. See [Hosted App](/hosted/overview) for more.
 
-## Desktop app
+### Desktop app
 
 Download the installer for your OS and run it:
 
@@ -48,7 +130,7 @@ Download the installer for your OS and run it:
 
 The desktop app supports HTTP/S and local STDIO servers, and does not require Node.js.
 
-## Terminal
+### Terminal
 
 Run the command in your terminal:
 
@@ -73,18 +155,18 @@ bunx @mcpjam/inspector@latest
 After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
 
 <Info>
-  **Widget rendering (Chromium):** On first startup, Inspector automatically downloads and installs the Playwright Chromium browser needed to render widgets. This happens in the background — you'll see download progress in the terminal. No manual `playwright install` step is required. Docker images already include Chromium and are unaffected.
+  **Widget rendering (Chromium):** On first startup, Inspector automatically downloads and installs the Playwright Chromium browser needed to render widgets. This happens in the background; you'll see download progress in the terminal. No manual `playwright install` step is required. Docker images already include Chromium and are unaffected.
 
   If the download fails, the browser pane shows the reason and retries automatically (after 30 seconds, then 2 minutes, then 10 minutes). You can also click **Retry now** at any time to restart the download immediately. After three automatic retries, only **Retry now** will trigger another attempt.
 </Info>
 
-### From your editor (VS Code, Cursor, Windsurf)
+#### From your editor (VS Code, Cursor, Windsurf)
 
-There is no dedicated editor extension — and you don't need one. Open your editor's integrated terminal, run the same `npx @mcpjam/inspector@latest` command, and click the printed `localhost` link. The inspector runs alongside your dev server in any editor that has a terminal pane.
+There is no dedicated editor extension, and you don't need one. Open your editor's integrated terminal, run the same `npx @mcpjam/inspector@latest` command, and click the printed `localhost` link. The inspector runs alongside your dev server in any editor that has a terminal pane.
 
 If you want the inspector to auto-launch from your project's `dev` script (so it boots whenever you start your server), see [Launch from Code](/inspector/launch-from-code).
 
-## Docker
+### Docker
 
 Pull the image from Docker Hub and run it bound to localhost for security:
 
@@ -95,7 +177,7 @@ docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
 
 Open the private link printed in the container logs to sign in. The plain address shows instructions to open or paste that link. If you already have that tab open, pasting the link into the address bar signs you in without a reload. Keep `-p 127.0.0.1:6274:6274` for local-only access. To connect to MCP servers running on the host, use `http://host.docker.internal:PORT` instead of `127.0.0.1`. On Linux, also pass `--add-host=host.docker.internal:host-gateway` to `docker run`; `mcpjam-inspector/compose.yaml` already sets it.
 
-### Accessing over the network
+#### Accessing over the network
 
 A native (`npx`) install binds to localhost. You can reach a remote installation through SSH forwarding (`ssh -L 6274:127.0.0.1:6274 user@host`), then open its terminal link at your forwarded address. Keep the `#token=…` part of the link. Forwarding needs only SSH access to the host and keeps the inspector port off the network, so prefer it when you only need to reach the install from your own machine.
 
@@ -117,7 +199,7 @@ A restart generates a new link. To keep one across restarts, set `MCPJAM_SESSION
 Keep access links private: they grant control of the local Inspector and its connected tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and `MCPJAM_LOCAL_BROWSER_ENABLED=false` if you do not need the local shell and browser tools.
 </Warning>
 
-### Docker with Arguments
+#### Docker with Arguments
 
 You can pass command-line arguments to the Docker container:
 
@@ -155,7 +237,7 @@ Example:
 
 </Warning>
 
-## Start with STDIO server
+### Start with STDIO server
 
 This will open the MCPJam inspector and connect to a STDIO using the commands you provided.
 
@@ -190,7 +272,7 @@ This will open the MCPJam inspector and connect to a STDIO using the commands yo
   `/Users/yourname/project/server.py`) to avoid path resolution issues.
 </Info>
 
-## Start with custom port
+### Start with custom port
 
 This will start the MCPJam inspector with a custom port number. The default port is `6274`.
 
@@ -200,7 +282,7 @@ npx @mcpjam/inspector@latest --port 4000
 
 The port must be a valid integer between 1 and 65535. Passing an invalid value (e.g. a string or out-of-range number) exits immediately with an error.
 
-## Start with Ollama
+### Start with Ollama
 
 This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed.
 
@@ -208,7 +290,7 @@ This will open the MCPJam inspector and start an Ollama model with the `ollama s
 npx @mcpjam/inspector@latest --ollama llama3.2
 ```
 
-## Start with Configuration File
+### Start with Configuration File
 
 You can use a configuration file to connect to multiple MCP servers at once:
 
@@ -261,9 +343,9 @@ The config parser accepts three equivalent wrapper shapes, so you can paste a co
 | `mcp_servers` wrapper (OpenAI plugin style) | `{ "mcp_servers": { "my-server": { ... } } }` |
 | Direct server map (OpenAI `.mcp.json` style) | `{ "my-server": { ... } }` |
 
-Declaring both `mcp_servers` and `mcpServers` in the same file is an error. A bare single-server object (top-level `command` or `url` string) is not accepted — wrap it in one of the shapes above.
+Declaring both `mcp_servers` and `mcpServers` in the same file is an error. A bare single-server object (top-level `command` or `url` string) is not accepted; wrap it in one of the shapes above.
 
-### Mixing STDIO and HTTP/SHTTP servers
+#### Mixing STDIO and HTTP/SHTTP servers
 
 You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same config. Each entry's transport is inferred from its fields: `command` + `args` means STDIO, `url` means HTTP/SHTTP.
 
@@ -287,11 +369,11 @@ You can mix STDIO and HTTP (Streamable HTTP / SHTTP) server entries in the same 
 }
 ```
 
-The terminal and desktop installs accept both shapes in the same file. The hosted web app accepts HTTP/SHTTP entries only — STDIO entries are ignored because the hosted runtime cannot spawn local processes.
+The terminal and desktop installs accept both shapes in the same file. The hosted web app accepts HTTP/SHTTP entries only; STDIO entries are ignored because the hosted runtime cannot spawn local processes.
 
-For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#3-playground-byok-bring-your-own-key).
+For per-server `Authorization` headers, see [API keys → Playground BYOK](/reference/api-keys#playground-byok-not-an-mcpjam-key).
 
-## Start with Verbose Logging
+### Start with Verbose Logging
 
 Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.
 
@@ -309,3 +391,32 @@ npx @mcpjam/inspector@latest -v
   Verbose mode logs all HTTP requests made by the inspector, which can help
   diagnose connectivity problems or inspect server communication.
 </Info>
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Does MCPJam need a database?" icon="database">
+    No. MCPJam Inspector runs as a hosted web app, a desktop app, or via `npx`; none of them require you to install or configure a database. Accounts, sharing, and OAuth token storage on [app.mcpjam.com](https://app.mcpjam.com) are handled by the hosted backend; the Terminal and Desktop apps store config locally on disk.
+  </Accordion>
+  <Accordion title="How do I check which version of Inspector I'm running?" icon="tag">
+    All three installs (Web, Desktop, Terminal) show the running version in the **Settings** tab under **About**.
+
+    To see the latest published version on npm, run this. It's useful for confirming an `@latest` pull actually moved you forward:
+
+    ```bash
+    npm view @mcpjam/inspector version
+    ```
+
+    The Desktop and Web apps update on their own. For the Terminal install, the `@latest` tag in `npx @mcpjam/inspector@latest` pulls the most recent release every run.
+  </Accordion>
+  <Accordion title="Can MCPJam auto-install MCP servers into my repo?" icon="package">
+    Not directly. MCPJam doesn't reach into your repo. The closest workflow is **Skills**: install the MCPJam CLI skill into a project so an agent working in that repo knows how to use MCP tools and call MCPJam against your servers. See [Skills](/inspector/skills).
+  </Accordion>
+  <Accordion title="Where are my files saved?" icon="folder">
+    It depends what you mean. The word covers three different things:
+
+    - **OAuth credentials** from `mcpjam oauth login`: printed to stdout, and saved to a file only when you pass `--credentials-out <path>`. See [CLI OAuth login](/cli/oauth-login).
+    - **Eval results**: uploaded to your MCPJam project when `MCPJAM_API_KEY` is set to an MCPJam API key (`sk_…`). See [Saving Results](/sdk/concepts/saving-results).
+    - **Inspector settings**: the hosted app keeps servers in your project; Terminal and Desktop store config locally on disk. Client edits are saved when you click **Save client**.
+  </Accordion>
+</AccordionGroup>

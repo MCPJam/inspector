@@ -4,7 +4,12 @@ import type {
   HarnessV1PromptControl,
   HarnessV1StreamPart,
 } from "@ai-sdk/harness";
-import { withAutoApprovedNativeRequests } from "../auto-approve-harness.js";
+import {
+  APPROVE_NATIVE_REQUEST,
+  DENY_UNANSWERED,
+  withAnsweredNativeRequests,
+  withDeniedGatedHostTools,
+} from "../auto-approve-harness.js";
 
 const request = {
   type: "tool-approval-request",
@@ -52,9 +57,10 @@ describe("native automatic approval", () => {
       const f = fixture();
       const emit = vi.fn();
       const onApproval = vi.fn();
-      const session = await withAutoApprovedNativeRequests(
+      const session = await withAnsweredNativeRequests(
         f.harness,
-        onApproval,
+        APPROVE_NATIVE_REQUEST,
+        { onAnswer: onApproval },
       ).doStart({} as never);
       const control = await session[method]({ emit } as never);
       f.send(request);
@@ -78,9 +84,10 @@ describe("native automatic approval", () => {
   it("queues requests emitted before control is returned", async () => {
     const f = fixture(true);
     const emit = vi.fn();
-    const session = await withAutoApprovedNativeRequests(f.harness).doStart(
-      {} as never,
-    );
+    const session = await withAnsweredNativeRequests(
+      f.harness,
+      APPROVE_NATIVE_REQUEST,
+    ).doStart({} as never);
     const control = await session.doPromptTurn({ emit } as never);
     f.finish();
     await control.done;
@@ -89,19 +96,20 @@ describe("native automatic approval", () => {
   });
   it("propagates approval submission errors through done", async () => {
     const f = fixture(true, new Error("bridge unavailable"));
-    const session = await withAutoApprovedNativeRequests(f.harness).doStart(
-      {} as never,
-    );
+    const session = await withAnsweredNativeRequests(
+      f.harness,
+      APPROVE_NATIVE_REQUEST,
+    ).doStart({} as never);
     const control = await session.doPromptTurn({ emit: vi.fn() } as never);
     await expect(control.done).rejects.toThrow("bridge unavailable");
   });
   it("leaves an already pending decision to the user's continuation", async () => {
     const f = fixture(true);
     const emit = vi.fn();
-    const session = await withAutoApprovedNativeRequests(
+    const session = await withAnsweredNativeRequests(
       f.harness,
-      undefined,
-      new Set(["approval"]),
+      APPROVE_NATIVE_REQUEST,
+      { pendingApprovalIds: new Set(["approval"]) },
     ).doStart({} as never);
     const control = await session.doContinueTurn({ emit } as never);
     f.finish();
@@ -113,7 +121,7 @@ describe("native automatic approval", () => {
 
 it("auto-answers only registered forwarded MCP names, leaving built-ins and unknown IDs alone", async () => {
   const f = fixture(); const emit = vi.fn();
-  const session = await withAutoApprovedNativeRequests(f.harness, undefined, new Set(), name => !!name?.startsWith("mcp__server__")).doStart({} as never);
+  const session = await withAnsweredNativeRequests(f.harness, APPROVE_NATIVE_REQUEST, { covers: name => !!name?.startsWith("mcp__server__") }).doStart({} as never);
   const control = await session.doPromptTurn({ emit } as never);
   f.send({ type: "tool-call", toolCallId: "call", toolName: "mcp__server__read", input: {} });
   f.send(request);
@@ -128,10 +136,10 @@ it("auto-answers only registered forwarded MCP names, leaving built-ins and unkn
 it("reads a call's JSON-text input for runtimes that name the server only there", async () => {
   const f = fixture(); const emit = vi.fn();
   const seen: unknown[] = [];
-  const session = await withAutoApprovedNativeRequests(f.harness, undefined, new Set(), (_name, input) => {
+  const session = await withAnsweredNativeRequests(f.harness, APPROVE_NATIVE_REQUEST, { covers: (_name, input) => {
     seen.push(input);
     return (input as { providerIdentifier?: string } | undefined)?.providerIdentifier === "server";
-  }).doStart({} as never);
+  } }).doStart({} as never);
   const control = await session.doPromptTurn({ emit } as never);
   // The ACP adapter streams every MCP call under an opaque name, input as JSON text.
   f.send({ type: "tool-call", toolCallId: "call", toolName: "acp_tool_1", input: JSON.stringify({ providerIdentifier: "server", toolName: "read", args: {} }) });
@@ -142,4 +150,44 @@ it("reads a call's JSON-text input for runtimes that name the server only there"
   expect(seen).toEqual([{ providerIdentifier: "server", toolName: "read", args: {} }, { command: "ls" }]);
   expect(f.submitToolApproval).toHaveBeenCalledExactlyOnceWith({ approvalId: "approval", approved: true });
   expect(emit.mock.calls.flat().filter(part => part.type === "tool-approval-request").map(part => part.approvalId)).toEqual(["shell-approval"]);
+});
+
+describe("a turn nobody can answer", () => {
+  it("denies every native request with the engine's synthetic-session result", async () => {
+    const f = fixture();
+    const emit = vi.fn();
+    const onAnswer = vi.fn();
+    const session = await withAnsweredNativeRequests(f.harness, DENY_UNANSWERED, {
+      onAnswer,
+    }).doStart({} as never);
+    const control = await session.doPromptTurn({ emit } as never);
+    f.send({ type: "tool-call", toolCallId: "call", toolName: "Bash", input: "{}" } as HarnessV1StreamPart);
+    f.send(request);
+    f.finish();
+    await control.done;
+    expect(f.submitToolApproval).toHaveBeenCalledExactlyOnceWith({
+      approvalId: "approval",
+      approved: false,
+      reason: "approval-denied (synthetic session)",
+    });
+    // Nothing reaches the turn to pause on.
+    expect(emit.mock.calls.flat().map((part) => part.type)).toEqual(["tool-call"]);
+    expect(onAnswer).toHaveBeenCalledExactlyOnceWith("approval");
+  });
+
+  it("refuses a host tool that asks where it runs, and leaves the rest alone", async () => {
+    const asks = { needsApproval: true, execute: vi.fn(async () => "wrote") };
+    const decides = { needsApproval: () => true, execute: vi.fn(async () => "wrote") };
+    const reads = { needsApproval: false, execute: vi.fn(async () => "read") };
+    const tools = withDeniedGatedHostTools({ asks, decides, reads });
+    for (const name of ["asks", "decides"] as const) {
+      expect(tools[name].needsApproval).toBe(false);
+      await expect(tools[name].execute()).resolves.toEqual({
+        error: "approval-denied (synthetic session)",
+      });
+    }
+    expect(asks.execute).not.toHaveBeenCalled();
+    expect(decides.execute).not.toHaveBeenCalled();
+    expect(tools.reads).toBe(reads);
+  });
 });

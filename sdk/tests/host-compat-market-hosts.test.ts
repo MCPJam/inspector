@@ -74,11 +74,12 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      downloadFile: false,
+      // Advertised in ChatGPT's `hostCapabilities`.
+      downloadFile: true,
     });
   });
 
-  it("keeps Claude app capabilities faithful to the raw probe", () => {
+  it("keeps Claude app capabilities faithful to the raw probe, with frameDomains from Claude's docs", () => {
     expect(profileFor("claude")?.capabilities).toMatchObject({
       availableDisplayModes: ["inline", "fullscreen"],
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
@@ -89,7 +90,7 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
+      cspFrameDomains: true,
       cspBaseUriDomains: false,
       requestTeardown: false,
       toolCancelled: true,
@@ -140,9 +141,9 @@ describe("buildMarketHostProfiles", () => {
   it("keeps legacy initialize versions separate from modern catalog support", () => {
     // The catalog list spans both eras. The nested initialize list contains
     // only legacy revisions; modern support is discovered separately. Cursor
-    // CLI is the exception: forwarding passes the real CLI's handshake
-    // through, so its template advertises nothing and the catalog's version
-    // is what the probe observed.
+    // CLI and Copilot CLI are the exception: each negotiates as its CLI does,
+    // with no version list of its own, so the catalog's version is what the
+    // probe observed.
     for (const profile of buildMarketHostProfiles()) {
       const seeded = seedHostTemplate(profile.id as HostTemplateId);
       const initialize = seeded.mcpProfile?.initialize as
@@ -152,8 +153,8 @@ describe("buildMarketHostProfiles", () => {
         profile.supportedProtocolVersions?.filter(
           (version) => version < "2026-07-28"
         ) ?? [];
-      if (profile.id === "cursor-cli") {
-        expect(initialize, profile.id).toBeUndefined();
+      if (profile.id === "cursor-cli" || profile.id === "copilot-cli") {
+        expect(initialize?.supportedProtocolVersions, profile.id).toBeUndefined();
         expect(legacyCatalogVersions, profile.id).toEqual(["2025-11-25"]);
         continue;
       }

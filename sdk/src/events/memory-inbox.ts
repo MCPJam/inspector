@@ -74,6 +74,7 @@ export interface MemoryInboxOptions {
   inboxId?: string;
   /** Origin callback URLs are minted under. */
   publicOrigin: string;
+  independentWebhookIds?: boolean;
   clock?: { now(): number };
   pendingTtlMs?: number;
   overlapMs?: number;
@@ -124,6 +125,7 @@ export class MemoryEventInbox implements InboxPort {
     this.clock = options.clock ?? { now: () => Date.now() };
     this.options = {
       publicOrigin: options.publicOrigin.replace(/\/$/, ""),
+      independentWebhookIds: options.independentWebhookIds ?? false,
       pendingTtlMs: options.pendingTtlMs ?? 15 * 60 * 1000,
       overlapMs: options.overlapMs ?? 10 * 60 * 1000,
       maxUndispatched: options.maxUndispatched ?? 1000,
@@ -451,7 +453,7 @@ export class MemoryEventInbox implements InboxPort {
         deliveryKey: computeDeliveryKey({ ...tenant, eventId: event.eventId }),
         dispatch,
         ...(idConflict ? { idConflict: true } : {}),
-        ...(verified.webhookId !== event.eventId ? { webhookIdMismatch: true } : {}),
+        ...(!this.options.independentWebhookIds && verified.webhookId !== event.eventId ? { webhookIdMismatch: true } : {}),
       };
     } else if (classified.kind === "gap" || classified.kind === "terminated") {
       row = {

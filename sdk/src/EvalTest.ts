@@ -94,7 +94,7 @@ import type { EvaluatorResult } from "./contract/evaluator-types.js";
 import { definitionHash, resolveScoreDefinition } from "./contract/derive.js";
 import type { Scorer } from "./scorers/types.js";
 import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
-import { captureSdkRun } from "./telemetry.js";
+import { captureSdkRun, startSdkRunTelemetry } from "./telemetry.js";
 import {
   captureEvalReporting,
   notRequestedReceipt,
@@ -911,6 +911,9 @@ export class EvalTest {
           recordFailure();
         }
       };
+      const runTelemetry = options.__suppressTelemetry
+        ? undefined
+        : startSdkRunTelemetry("eval_test", { iterations: options.iterations });
       this.running = true;
       try {
         // Internal alias kept short so the iteration loop reads cleanly; the
@@ -1333,8 +1336,19 @@ export class EvalTest {
         }
 
         if (billingState.error !== undefined) throw billingState.error;
+        void runTelemetry?.finish(
+          controller.signal.aborted
+            ? "aborted"
+            : runResult.failures > 0
+              ? "failed"
+              : "passed"
+        );
         return runResult;
       } finally {
+        // Reached first by a run that threw or was cancelled.
+        void runTelemetry?.finish(
+          controller.signal.aborted ? "aborted" : "errored"
+        );
         this.running = false;
         if (deadline) clearTimeout(deadline);
         externalSignal?.removeEventListener("abort", cancel);

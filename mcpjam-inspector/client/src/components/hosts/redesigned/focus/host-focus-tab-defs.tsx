@@ -7,12 +7,11 @@ import {
   useBrowserEnabled,
 } from "@/hooks/useComputersEnabled";
 import { visibleBuiltInToolCatalog } from "@/lib/host-config-computer";
+import { effectiveHarnessId } from "@/shared/harness-descriptors";
+import type { FocusTabDef } from "@/components/canvas-kit/FocusTabBar";
 import type { HostFocusTabId } from "../types";
 
-export interface HostFocusTabDef {
-  id: HostFocusTabId;
-  label: string;
-}
+export type HostFocusTabDef = FocusTabDef<HostFocusTabId>;
 
 export const HOST_FOCUS_TAB_DEFS: ReadonlyArray<HostFocusTabDef> = [
   { id: "behavior", label: "Agent" },
@@ -39,8 +38,8 @@ export const HOST_FOCUS_TAB_DEFS: ReadonlyArray<HostFocusTabDef> = [
  *   - **Computer** is gated behind the machine flag, OR shown when a computer
  *     is already attached so an existing attachment stays detachable even with
  *     the flag off (mirrors `shouldShowComputerToggle`). Never shown for a
- *     HARNESS client (Claude Code / Codex / Cursor): it runs on a throwaway
- *     box and has no computer settings, attached or not.
+ *     client on a native harness (its `agentLoop` or `harness`): it runs on a
+ *     throwaway box and has no computer settings, attached or not.
  */
 export function visibleHostFocusTabs(opts: {
   hasBuiltInTools: boolean;
@@ -103,7 +102,7 @@ export function useVisibleHostFocusTabs(
   const browserConfigured =
     (!HOSTED_MODE && draft.localBrowserEnabled === true) || draft.builtInToolIds.includes("browser") || Boolean(draft.browserProfileId);
   const computerAttached = draft.computer !== undefined;
-  const hasHarness = draft.harness !== undefined;
+  const hasHarness = effectiveHarnessId(draft) !== null;
   return useMemo(
     () =>
       visibleHostFocusTabs({

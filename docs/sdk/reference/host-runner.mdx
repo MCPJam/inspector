@@ -37,7 +37,7 @@ new HostRunner(options: HostRunnerOptions)
 | `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
 | `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
 | `mcpClientManager`| `MCPClientManager`               | No       | `undefined` | Same connected manager used for `connectToServer` / `getToolsForAiSdk`. **Required** to populate [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on each [`PromptResult`](/sdk/reference/prompt-result) (see note below). |
-| `injectOpenAiCompat` | `boolean`                     | No       | `false`     | When `true`, injects the OpenAI Apps SDK `window.openai` shim into captured widget HTML snapshots. Enable this when testing widgets written against the OpenAI Apps SDK (ChatGPT / Copilot hosts). Leave it off for SEP-1865-native widgets (Claude, Cursor, Codex) — those hosts don't expose `window.openai` and snapshots should match what the live host produces. |
+| `injectOpenAiCompat` | `boolean`                     | No       | `false`     | When `true`, injects the OpenAI Apps SDK `window.openai` shim into captured widget HTML snapshots. Enable this when testing widgets written against the OpenAI Apps SDK (ChatGPT / Copilot hosts). Leave it off for SEP-1865-native widgets (Claude, Cursor, Codex); those hosts don't expose `window.openai` and snapshots should match what the live host produces. |
 
 ### Example
 
@@ -53,7 +53,7 @@ const agent = new HostRunner({
 ```
 
 <Info>
-  **MCP Apps, traces, and `mcpClientManager`:** MCP App widgets are backed by HTML served from an MCP **resource** (`ui.resourceUri`), not by the tool’s JSON result alone. After each tool call, `HostRunner` uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch that HTML and attach **`widgetSnapshots`** to the [`PromptResult`](/sdk/reference/prompt-result). When you upload results to MCPJam, those snapshots are stored so the Evals trace viewer can **replay the widget offline**. If you omit `mcpClientManager`, prompts still run and tools still execute — but **`widgetSnapshots` stay empty** and uploaded traces will only contain messages and spans (no embedded app replay). Passing `manager` is also what enables **replay credential** capture for authenticated HTTP servers when reporting to MCPJam.
+  **MCP Apps, traces, and `mcpClientManager`:** MCP App widgets are backed by HTML served from an MCP **resource** (`ui.resourceUri`), not by the tool’s JSON result alone. After each tool call, `HostRunner` uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch that HTML and attach **`widgetSnapshots`** to the [`PromptResult`](/sdk/reference/prompt-result). When you upload results to MCPJam, those snapshots are stored so the Evals trace viewer can **replay the widget offline**. If you omit `mcpClientManager`, prompts still run and tools still execute, but **`widgetSnapshots` stay empty** and uploaded traces will only contain messages and spans (no embedded app replay). Passing `manager` is also what enables **replay credential** capture for authenticated HTTP servers when reporting to MCPJam.
 </Info>
 
 ---
@@ -275,7 +275,7 @@ apiKey: process.env.ANTHROPIC_API_KEY;
 
 ### systemPrompt
 
-Optional system prompt to guide the LLM's behavior. An empty string (`""`) is treated the same as omitting the field — both fall back to `"You are a helpful assistant."`. This matters for saved MCPJam clients, which store a missing prompt as `""`.
+Optional system prompt to guide the LLM's behavior. An empty string (`""`) is treated the same as omitting the field; both fall back to `"You are a helpful assistant."`. This matters for saved MCPJam clients, which store a missing prompt as `""`.
 
 ```typescript
 systemPrompt: "You are a task management assistant. Be concise.";
@@ -294,8 +294,8 @@ temperature: 0.9; // More creative
 
 Reasoning effort for the model. The runner maps it through the same table the
 hosted runner uses (`reasoningEffortProviderOptions`) into the provider's own
-`providerOptions` — OpenAI `reasoningEffort`, Anthropic `effort` (with adaptive
-thinking on models that need it), Google `thinkingConfig.thinkingLevel` — and
+`providerOptions` (OpenAI `reasoningEffort`, Anthropic `effort` with adaptive
+thinking on models that need it, Google `thinkingConfig.thinkingLevel`) and
 also works for `mcpjam/…` models, which speak Anthropic's and OpenAI's own wire
 formats.
 
@@ -316,8 +316,8 @@ agent.getReasoningEffort(); // "high"
 - **Replaces the temperature.** While an effort is set the runner does not send a
   temperature, and the recorded context reports what was sent.
 - **Saved clients.** `runWithClient` applies the effort on the saved client's
-  hosted model selection (`settings.reasoningEffort`) — and its saved
-  `settings.temperature` — instead of discarding them with the selection. A host
+  hosted model selection (`settings.reasoningEffort`), and its saved
+  `settings.temperature`, instead of discarding them with the selection. A host
   snapshot carries no model selection, so pass `reasoningEffort` yourself when you
   build a runner from a `Host`.
 - Which levels a model accepts: `supportedReasoningEfforts` on the
@@ -342,7 +342,7 @@ maxSteps: 5; // Stop after 5 tool calls
 
 Controls whether the OpenAI Apps SDK `window.openai` shim is injected into captured widget HTML snapshots. Defaults to `false`.
 
-Set this to `true` when your widget is written against the OpenAI Apps SDK (i.e. it targets ChatGPT or Copilot). Leave it `false` for SEP-1865-native widgets targeting Claude, Cursor, Codex, or other hosts that don't expose `window.openai` — snapshots should match what the live host would have produced.
+Set this to `true` when your widget is written against the OpenAI Apps SDK (i.e. it targets ChatGPT or Copilot). Leave it `false` for SEP-1865-native widgets targeting Claude, Cursor, Codex, or other hosts that don't expose `window.openai`; snapshots should match what the live host would have produced.
 
 ```typescript
 // Testing an OpenAI Apps SDK widget (ChatGPT / Copilot host)
@@ -354,7 +354,7 @@ const agent = new HostRunner({
   injectOpenAiCompat: true,
 });
 
-// Testing a SEP-1865 widget (Claude / Cursor / Codex host) — default
+// Testing a SEP-1865 widget (Claude / Cursor / Codex host); default
 const agent = new HostRunner({
   tools,
   model: "anthropic/claude-sonnet-4-20250514",

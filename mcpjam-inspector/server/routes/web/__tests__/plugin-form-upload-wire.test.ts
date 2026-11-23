@@ -174,7 +174,7 @@ function bind(
     },
     expiresAt: state.expiresAt,
   };
-  const bound = pluginFormSources.bind(source);
+  const bound = pluginFormSources.bind(source, "subject");
   token = bound.token;
   closeSource = bound.release;
 }

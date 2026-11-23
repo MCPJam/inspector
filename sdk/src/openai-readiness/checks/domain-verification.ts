@@ -13,6 +13,11 @@
  * token the check is `not-evaluated` naming the input, never a pass on the
  * strength of "something answered".
  *
+ * The same token decides what a 404 means. The portal issues it during a
+ * submission, so a server that has not been through the challenge has nothing
+ * to serve yet: without a token the 404 is not evaluated, with the next step;
+ * with one it is a failure.
+ *
  * Pure data. No transport — the fetch happens in discovery.
  */
 
@@ -66,6 +71,8 @@ export interface OpenAIDomainVerificationInput {
   evidence?: OpenAIDomainVerificationEvidence;
   /** The token the submitter says the portal issued. Never verified as issued. */
   declaredToken?: string;
+  /** Preserve the legacy SDK input name while naming the form field in rehearsals. */
+  declaredTokenInput?: string;
 }
 
 export function runOpenAIDomainVerificationChecks(
@@ -86,6 +93,16 @@ export function runOpenAIDomainVerificationChecks(
     );
   }
 
+  const success =
+    evidence.status !== undefined && evidence.status >= 200 && evidence.status < 300;
+  // A single-page app can serve its HTML shell at every unknown path.
+  const unusableBody =
+    success && evidence.body !== undefined &&
+    (!evidence.body.trim() || /^\s*</.test(evidence.body));
+  const responseDetail = unusableBody
+    ? "returned an empty body or markup instead of a plain-text challenge"
+    : `answered ${evidence.status}`;
+
   if (evidence.fetchError !== undefined) {
     findings.push(
       notEvaluated(
@@ -95,23 +112,40 @@ export function runOpenAIDomainVerificationChecks(
         { url: evidence.url },
       ),
     );
-  } else if (
-    evidence.status !== undefined &&
-    evidence.status >= 200 &&
-    evidence.status < 300
-  ) {
+  } else if (success && evidence.body === undefined) {
+    findings.push(
+      notEvaluated(CHALLENGE_SERVED, stamp, "the response body was unavailable", {
+        url: evidence.url,
+        status: evidence.status,
+      }),
+    );
+  } else if (success && !unusableBody) {
     findings.push(
       satisfied(CHALLENGE_SERVED, stamp, {
         url: evidence.url,
         status: evidence.status,
       }),
     );
+  } else if ((evidence.status === 404 || unusableBody) && !declaredToken) {
+    findings.push({
+      ...notEvaluated(
+        CHALLENGE_SERVED,
+        stamp,
+        `the challenge path ${responseDetail} and this run has no verification token to compare`,
+        missingInput(input.declaredTokenInput ?? OPENAI_READINESS_INPUTS.submissionProfile, {
+          field: "domainVerificationToken",
+          url: evidence.url,
+          status: evidence.status,
+        })
+      ),
+      remediation: `When the portal shows your verification token, serve exactly that token as plain text at ${OPENAI_DOMAIN_VERIFICATION_PATH} on the server's origin, then add the token to this run.`,
+    });
   } else {
     findings.push(
       violated(
         CHALLENGE_SERVED,
         stamp,
-        `Serve the verification token at ${OPENAI_DOMAIN_VERIFICATION_PATH} on the endpoint's own origin; it answered ${evidence.status}.`,
+        `Serve the verification token at ${OPENAI_DOMAIN_VERIFICATION_PATH} on the endpoint's own origin; it ${responseDetail}.`,
         { url: evidence.url, status: evidence.status },
       ),
     );
@@ -122,8 +156,8 @@ export function runOpenAIDomainVerificationChecks(
       notEvaluated(
         CHALLENGE_MATCHES,
         stamp,
-        "the submission profile declares no domain-verification token, so there is nothing to compare the served body against",
-        missingInput(OPENAI_READINESS_INPUTS.submissionProfile, {
+        "No expected domain verification token was supplied. Copy the token from the publisher dashboard to compare it with the served challenge.",
+        missingInput(input.declaredTokenInput ?? OPENAI_READINESS_INPUTS.submissionProfile, {
           field: "domainVerificationToken",
         }),
       ),
@@ -155,7 +189,7 @@ export function runOpenAIDomainVerificationChecks(
       : violated(
           CHALLENGE_MATCHES,
           stamp,
-          "The body served at the challenge path is not the token the profile declares. Re-copy the token from the portal, or redeploy.",
+          "The body served at the challenge path is not the expected verification token. Re-copy the token from the portal, or redeploy.",
           {
             url: evidence.url,
             matched: false,

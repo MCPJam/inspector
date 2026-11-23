@@ -35,7 +35,7 @@ describe("sidebar section grouping", () => {
       expect.arrayContaining(["Home", "Connect", "Playground"])
     );
     expect(titlesIn("Measure")).toEqual(
-      expect.arrayContaining(["User Testing", "Swarms", "Evaluate"])
+      expect.arrayContaining(["Evaluate", "Swarms", "User Testing"])
     );
     expect(titlesIn("Verify")).toEqual(
       expect.arrayContaining([
@@ -101,14 +101,6 @@ describe("sidebar section grouping", () => {
     // Nothing type-errors when it is left behind on a long-shipped item, or
     // when a second item quietly picks one up, so assert the whole set.
     //
-    // Swarms and User Testing joined WebMCP in REEV-6. They are not new
-    // features, but REEV-6 is the first release in which a signed-out visitor
-    // can SEE them: the `sandboxes-enabled` flag used to hide both items
-    // outright, so to most of the people who now get a nav row, the row is
-    // new. The pill replaced a LOG IN / UPGRADE marker that described who the
-    // reader was rather than what the tab is, which is the distinction this
-    // set is guarding.
-    //
     // Conformance joined in CQT-124, when its run pages took the same header
     // as Swarms and User Testing.
     const badged = navigationSections
@@ -116,7 +108,17 @@ describe("sidebar section grouping", () => {
       .filter((item) => item.badge === "New")
       .map((item) => item.title);
 
-    expect(badged).toEqual(["Swarms", "User Testing", "Conformance", "WebMCP"]);
+    expect(badged).toEqual(["Conformance", "WebMCP"]);
+  });
+
+  it("lists Evaluate before Swarms and User Testing in Measure", () => {
+    const measure = navigationSections
+      .find((section) => section.label === "Measure")!
+      .items.map((item) => item.title);
+    expect(measure.indexOf("Evaluate")).toBeLessThan(measure.indexOf("Swarms"));
+    expect(measure.indexOf("Swarms")).toBeLessThan(
+      measure.indexOf("User Testing")
+    );
   });
 
   it("never lists the same title twice across sections", () => {

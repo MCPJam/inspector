@@ -35,6 +35,10 @@ import { startTelemetryCanary } from "./utils/telemetry-canary.js";
 import { initServerSentry } from "./sentry.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy";
 import { cacheEventLogger } from "./utils/cache-events";
+import {
+  flushPendingHostedObservations,
+  recordLocalObservation,
+} from "./services/server-canvas/observation-recorders";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry";
 
 // Security imports
@@ -52,6 +56,7 @@ import {
   scrubTokenFromUrl,
 } from "./middleware/session-auth";
 import { originValidationMiddleware } from "./middleware/origin-validation";
+import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist";
 import {
   documentScriptNonce,
   securityHeadersMiddleware,
@@ -67,6 +72,7 @@ import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
 import { startLocalHarnessJanitor } from "./utils/harness/local/scratch-janitor.js";
 import { startLocalHarnessRuntimeMaintenance } from "./utils/harness/local/runtime-install.js";
+import { shutdownLocalTurnParks } from "./utils/harness/local/approval-park.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -175,6 +181,7 @@ import {
   applySandboxHostPartition,
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
+import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
@@ -435,6 +442,8 @@ const mcpClientManager = new MCPClientManager(
   {},
   {
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    // Observed server features, filed under each connection's own context.
+    featureObserver: (event) => recordLocalObservation(mcpClientManager, event),
     rpcLogger: ({ direction, message, serverId }) => {
       rpcLogBus.publish({
         serverId,
@@ -464,6 +473,10 @@ const mcpClientManager = new MCPClientManager(
     negotiationOutcomeLogger: negotiationTelemetryLogger("local-inspector"),
   },
 );
+// Local App documents answer their own `localhost` subdomains before any
+// other middleware or route sees the request.
+mountLocalSandboxViewHost(app);
+
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
   c.mcpClientManager = mcpClientManager;
@@ -480,6 +493,9 @@ app.use("*", securityHeadersMiddleware);
 // 1b. Indexing directive. Host-scoped, so it is its own middleware rather
 // than another line in the security headers — see indexing-headers.ts.
 app.use("*", indexingHeadersMiddleware);
+
+// 1c. Host allowlist (blocks DNS rebinding), local mode only.
+if (!HOSTED_MODE) app.use("*", localHostAllowlistMiddleware);
 
 // 2. Origin validation (blocks CSRF/DNS rebinding)
 app.use("*", originValidationMiddleware);
@@ -1128,10 +1144,15 @@ async function shutdown() {
     // the context is what makes Chromium release its profile's singleton lock,
     // so a skipped teardown here is a browser the NEXT run cannot launch.
     await shutdownLocalBrowserSessions();
+    // Local runtimes kept between turns stop with this Inspector rather than
+    // run detached until the next boot's janitor (bounded internally).
+    await shutdownLocalTurnParks();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.
-    await shutdownAnalytics();
+    // Hosted observed server features still inside their flush interval go
+    // out alongside, bounded the same way.
+    await Promise.all([shutdownAnalytics(), flushPendingHostedObservations()]);
     await appLogger.flush();
     clearTimeout(forceExitTimer);
     process.exit(0);

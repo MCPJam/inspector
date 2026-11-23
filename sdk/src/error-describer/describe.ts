@@ -245,6 +245,16 @@ function inspectorSentinelSlug(message: string): string | undefined {
   if (/which this client is pinned to/i.test(message)) {
     return "sdk/protocol_version_pin_unsupported";
   }
+  // `ModernProtocolVersionRefused`: an unpinned connect the server answered
+  // with its own `-32022`. Matched on the clause for the same reasons as the
+  // pin error above. The `-32022` itself sits on `cause`, which the numeric
+  // rule below does not read, so without this the server's refusal would be
+  // filed as MCPJam's own unknown error.
+  if (
+    /doesn't support an MCP protocol version this client speaks/i.test(message)
+  ) {
+    return "jsonrpc/unsupported_protocol_version";
+  }
   // `tlsTrustFailure`'s sentence, written only by a route that knows the
   // request went to the server under test. Never the TLS code itself: MCPJam's
   // own hops fail with the same codes.

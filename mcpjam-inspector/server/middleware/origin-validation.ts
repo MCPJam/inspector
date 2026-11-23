@@ -62,9 +62,15 @@ function getAllowedOrigins(): string[] {
     return origins;
   }
 
-  // Default: localhost origins on common dev ports
+  // Default: localhost origins on this server's port, plus the dev servers'
+  // (the Vite client and the Electron renderer) outside production builds. A
+  // production build serves its own UI, and anything else listening on those
+  // ports is just another local page.
   const clientPort = parseInt(process.env.CLIENT_PORT || "5173", 10);
-  const ports = [SERVER_PORT, clientPort, 8080];
+  const ports =
+    process.env.NODE_ENV === "production"
+      ? [SERVER_PORT]
+      : [SERVER_PORT, clientPort, 8080];
   const origins: string[] = [];
 
   // All three loopback spellings a browser can show in its address bar. The

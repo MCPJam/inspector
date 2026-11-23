@@ -4,6 +4,7 @@ import claudeLogo from "/claude_logo.png";
 import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
+import chatgptDesktopLogo from "/chatgpt_desktop_logo.png";
 import mistralLogo from "/mistral_logo.png";
 import gooseLogoDark from "/goose_logo_dark.png";
 import gooseLogoLight from "/goose_logo_light.png";
@@ -12,6 +13,8 @@ import codexLogo from "/codex-logo.svg";
 import openCodeLogoLight from "/opencode-logo-light.svg";
 import openCodeLogoDark from "/opencode-logo-dark.svg";
 import copilotLogo from "/copilot_logo.png";
+import githubCopilotLogoDark from "/github_copilot_logo_dark.png";
+import githubCopilotLogoLight from "/github_copilot_logo_light.png";
 import vscodeLogo from "/vscode_logo.svg";
 import bedrockLogo from "/bedrock_logo.svg";
 import n8nLogo from "/n8n_logo.svg";
@@ -21,6 +24,8 @@ import clineLogoLight from "/cline_logo_light.svg";
 import notionLogo from "/notion_logo.png";
 import slackLogo from "/slack_logo.png";
 import geminiLogo from "/google_logo.png";
+import grokbotLogo from "/grokbot_logo.png";
+import museLogo from "/muse_logo.png";
 
 export const DEFAULT_CATALOG_HOST_ID = "mcpjam";
 
@@ -31,7 +36,13 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   claude: claudeLogo,
   "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
+  // The desktop and web variants carry their app's mark, not the CLI's.
+  "claude-code-desktop": claudeDesktopLogo,
+  "claude-code-web": claudeLogo,
   chatgpt: openaiLogo,
+  "chatgpt-desktop": chatgptDesktopLogo,
+  "chatgpt-work": openaiLogo,
+  "chatgpt-work-desktop": chatgptDesktopLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
   slack: slackLogo,
@@ -40,8 +51,10 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   // because an id absent from this record falls back to the anonymous MCP mark.
   "cursor-cli": cursorLogo,
   codex: codexLogo,
+  "codex-cli": codexLogo,
   opencode: openCodeLogoLight,
-  "copilot-cli": copilotLogo,
+  // GitHub Copilot's mark; `copilot` below is Microsoft 365 Copilot.
+  "copilot-cli": githubCopilotLogoLight,
   copilot: copilotLogo,
   vscode: vscodeLogo,
   agentcore: bedrockLogo,
@@ -51,6 +64,8 @@ const LOGO_BY_HOST_ID: Record<string, string> = {
   perplexity: perplexityLogo,
   cline: clineLogoLight,
   notion: notionLogo,
+  grokbot: grokbotLogo,
+  muse: museLogo,
 };
 
 const LOGO_BY_HOST_ID_AND_THEME: Record<
@@ -68,6 +83,10 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
   cline: {
     light: clineLogoLight,
     dark: clineLogoDark,
+  },
+  "copilot-cli": {
+    light: githubCopilotLogoLight,
+    dark: githubCopilotLogoDark,
   },
 };
 
@@ -116,8 +135,14 @@ const TINT_BY_HOST_ID: Record<string, string> = {
   claude: "#D97757",
   "claude-desktop": "#D97757",
   "claude-code": "#D97757",
+  "claude-code-desktop": "#D97757",
+  "claude-code-web": "#D97757",
   chatgpt: NEUTRAL_HOST_TINT,
+  "chatgpt-desktop": NEUTRAL_HOST_TINT,
+  "chatgpt-work": NEUTRAL_HOST_TINT,
+  "chatgpt-work-desktop": NEUTRAL_HOST_TINT,
   codex: NEUTRAL_HOST_TINT,
+  "codex-cli": NEUTRAL_HOST_TINT,
   mistral: "#FA520F",
   goose: NEUTRAL_HOST_TINT,
   slack: "#611F69",
@@ -131,6 +156,8 @@ const TINT_BY_HOST_ID: Record<string, string> = {
   perplexity: "#20808D",
   cline: NEUTRAL_HOST_TINT,
   notion: NEUTRAL_HOST_TINT,
+  grokbot: NEUTRAL_HOST_TINT,
+  muse: NEUTRAL_HOST_TINT,
 };
 
 /**

@@ -21,6 +21,7 @@ import {
   runEventsConformanceForCli,
 } from "../lib/events-conformance.js";
 import { conformanceExitCode } from "../lib/conformance-exit-code.js";
+import { captureConformanceRunEvent } from "../lib/telemetry.js";
 import { setProcessExitCode, usageError } from "../lib/output.js";
 import {
   addHostOption,
@@ -76,6 +77,7 @@ function registerList(events: Command): void {
     const ctx = buildContext(options, command);
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       const support = assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -125,6 +127,7 @@ function registerPoll(events: Command): void {
     }
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -258,6 +261,7 @@ function registerSubscribe(events: Command): void {
 
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -309,6 +313,7 @@ function registerUnsubscribe(events: Command): void {
     }
     const outcome = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -359,8 +364,7 @@ function registerConformance(events: Command): void {
           )
           .option(
             "--profile <profile>",
-            'Profile to judge by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
-            "draft",
+            'Profile to judge by: "beta", "draft" or "chatgpt" (default: negotiated Events version)',
           )
           .option(
             "--protocol-version <version>",
@@ -427,6 +431,7 @@ function registerConformance(events: Command): void {
       );
     }
 
+    captureConformanceRunEvent("events", "single");
     const result = await withEventsConnection(options, ctx, (manager, serverId) =>
       runEventsConformanceForCli({
         manager,
@@ -480,7 +485,7 @@ export function registerEventsCommands(program: Command): void {
   const events = program
     .command("events")
     .description(
-      "List, poll, watch, subscribe to and conformance-check MCP Events (triggers, draft@28ec35e)",
+      "List, poll, watch, subscribe to and conformance-check MCP Events (poll, push and webhook)",
     );
   registerList(events);
   registerPoll(events);

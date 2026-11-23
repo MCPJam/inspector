@@ -1,6 +1,12 @@
+import { validBetaHttpEventTypes, withEventsBetaRouting } from "./events-beta-routing.js";
+import { readServerEventTypes } from "../server-list-reads.js";
 import { guardToolResponseStreams } from "./tool-response-stream.js";
 import { runOperationWithAuthRecovery } from "./auth-provider-recovery.js";
-import { isolateAuthChallenge, matchingRecordedChallenge, attachRecordedAuthChallenge } from "./auth-challenge-isolation.js";
+import {
+  isolateAuthChallenge,
+  matchingRecordedChallenge,
+  attachRecordedAuthChallenge,
+} from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
 import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
@@ -100,6 +106,14 @@ import type {
   AiSdkTool,
 } from "./types.js";
 import type { TraceContextProvider } from "./trace-context.js";
+import {
+  createFeatureFrameTap,
+  isFeatureObservationPaused,
+  pauseFeatureObservation,
+  suppressFeatureObservation,
+  type FeatureFrameTap,
+  type FeatureObserver,
+} from "./feature-observer.js";
 import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
@@ -117,6 +131,7 @@ import {
   isInsufficientScopeError,
   unwrapEraNegotiationCause,
   classifyNegotiationFailureClass,
+  readModernVersionRefusal,
   readUnsupportedVersionFailure,
 } from "./errors.js";
 import {
@@ -244,9 +259,13 @@ import {
 } from "./version-negotiation.js";
 import { DialectAwareJsonSchemaValidator } from "./dialect-aware-json-schema-validator.js";
 import { createStrictElicitationContentValidator } from "./elicitation-content-validator.js";
-import { isStatelessProtocolVersion } from "./mcp-protocol-version.js";
+import {
+  isKnownProtocolVersion,
+  isStatelessProtocolVersion,
+} from "./mcp-protocol-version.js";
 import {
   type ManagedMcpClient,
+  ModernProtocolVersionRefused,
   ProtocolVersionPinUnsupported,
 } from "./managed-mcp-client.js";
 import {
@@ -488,6 +507,7 @@ export class MCPClientManager {
   private readonly defaultTimeout: number;
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
+  private readonly featureObserver?: FeatureObserver;
   private readonly defaultHttpLogger?: HttpExchangeLogger;
   /** See `baseFetch` on `MCPClientManagerOptions`. */
   private readonly defaultBaseFetch?: typeof fetch;
@@ -534,6 +554,7 @@ export class MCPClientManager {
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
+    this.featureObserver = options.featureObserver;
     this.defaultHttpLogger = options.httpLogger;
     this.defaultBaseFetch = options.baseFetch;
     this.defaultProgressHandler = options.progressHandler;
@@ -697,10 +718,12 @@ export class MCPClientManager {
   ): Promise<EventsListResultWire> {
     return this.runRetryableReadOperation(serverId, options, (client) => {
       this.assertEventsDeclared(serverId, "events/list", options);
-      return listEventsExt(
+      const result = listEventsExt(
         { client, options: this.withTimeout(serverId, options) },
         params
       );
+      return this.getEventsSupport(serverId).beta && this.getInitializationInfo(serverId)?.transport === "streamable-http"
+        ? result.then(validBetaHttpEventTypes) : result;
     });
   }
 
@@ -818,7 +841,9 @@ export class MCPClientManager {
             name: params.name,
             arguments: params.arguments,
             cursor: params.cursor,
-            ...(params.maxAgeMs !== undefined ? { maxAgeMs: params.maxAgeMs } : {}),
+            ...(params.maxAgeMs !== undefined
+              ? { maxAgeMs: params.maxAgeMs }
+              : {}),
             _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
           },
         } as never,
@@ -892,6 +917,20 @@ export class MCPClientManager {
     serverId: string
   ): import("./managed-mcp-client.js").ManagedMcpClient | undefined {
     return this.liveClientStates.get(serverId)?.client;
+  }
+
+  /**
+   * {@link getManagedClient} once the server's connection attempt is done.
+   * A manager built with servers queues their connects, so a read right
+   * after construction can find the attempt still running. Rejects when the
+   * connection fails, as `listTools` would.
+   */
+  async ensureManagedClient(
+    serverId: string,
+    options?: { signal?: AbortSignal }
+  ): Promise<import("./managed-mcp-client.js").ManagedMcpClient | undefined> {
+    await this.ensureConnected(serverId, options?.signal);
+    return this.getManagedClient(serverId);
   }
 
   /**
@@ -981,21 +1020,45 @@ export class MCPClientManager {
       options?.signal
     );
 
+    let retryRejected: ((error: unknown) => never) | undefined;
     const state: LiveClientState = liveState ?? {};
     const retryPromise = Promise.resolve().then(() =>
-      retryWithPolicy({
-        policy: this.defaultRetryPolicy,
-        signal,
-        operation: () => this.connectToServerOnce(serverId, signal),
-        shouldRetryError: (error) => isRetryableTransientError(error),
-        onRetry: async () => {
-          await this.destroyLiveState(serverId, {
+      runOperationWithAuthRecovery({
+        usesAuthProvider: false,
+        attach: () => undefined,
+        hasChallenge: () => false,
+        reset: () =>
+          this.destroyLiveState(serverId, {
             preserveRetryPromise: true,
             abortRetryOperations: false,
-          });
-        },
+          }),
+        refresh: (error) =>
+          this.refreshAccessTokenAfterUnauthorized(
+            serverId,
+            error,
+            signal,
+            (handler) => {
+              retryRejected = handler;
+            }
+          ),
+        run: () =>
+          retryWithPolicy({
+            policy: this.defaultRetryPolicy,
+            signal,
+            operation: () => this.connectToServerOnce(serverId, signal),
+            shouldRetryError: (error) => isRetryableTransientError(error),
+            onRetry: async () => {
+              await this.destroyLiveState(serverId, {
+                preserveRetryPromise: true,
+                abortRetryOperations: false,
+              });
+            },
+          }),
       })
-    );
+    ).catch((error: unknown) => {
+      if (retryRejected && isUnauthorized401(error)) retryRejected(error);
+      throw error;
+    });
     state.retryPromise = retryPromise;
     this.liveClientStates.set(serverId, state);
 
@@ -1541,9 +1604,24 @@ export class MCPClientManager {
         request,
         baseCallParams
       );
+      // Signal + timeout only: the schema lookup must honor the caller's abort
+      // and deadline, but must NOT inherit the call's progress handler (a
+      // `tools/list` is not the operation the caller is tracking).
+      const schemaLookupOptions = {
+        ...(signal ? { signal } : {}),
+        ...(request.request?.timeout !== undefined
+          ? { timeout: request.request.timeout }
+          : {}),
+      };
 
       if (request.task !== undefined) {
         this.assertLegacyTasksWire(serverId);
+        await this.assertToolAcceptsTaskCalls(
+          serverId,
+          client,
+          toolName,
+          schemaLookupOptions
+        );
         const taskValue =
           request.task.ttl !== undefined ? { ttl: request.task.ttl } : {};
         // 2025-11-25 puts the task opt-in in request **params**, not in
@@ -1575,15 +1653,6 @@ export class MCPClientManager {
         };
       }
 
-      // Signal + timeout only: the schema lookup must honor the caller's abort
-      // and deadline, but must NOT inherit the call's progress handler (a
-      // `tools/list` is not the operation the caller is tracking).
-      const schemaLookupOptions = {
-        ...(signal ? { signal } : {}),
-        ...(request.request?.timeout !== undefined
-          ? { timeout: request.request.timeout }
-          : {}),
-      };
       // `mirrorToolParamHeaders: false` (host config `toolParamHeaderMirroring:
       // "omit"`) simulates a client that never sends `Mcp-Param-*`. Upstream
       // `callTool` mirrors internally with no disable knob, so the suppression
@@ -2761,6 +2830,55 @@ export class MCPClientManager {
         wire
       );
     }
+    // The legacy wire resolves from ANY of `tasks.list`/`cancel`/`requests`,
+    // but only `tasks.requests.tools.call` lets a client call a tool as a
+    // task (2025-11-25 tasks.mdx:113, a MUST NOT whatever the tool's own
+    // `taskSupport` says). Same typed error, so routes keep answering 400.
+    if (!this.supportsTasksForToolCalls(serverId)) {
+      throw new MCPTasksWireError(
+        `Server "${serverId}" did not declare tasks.requests.tools.call; refusing to send a task-augmented tools/call.`,
+        wire
+      );
+    }
+  }
+
+  /**
+   * 2025-11-25 tasks.mdx:115: a tool whose `execution.taskSupport` is missing
+   * or "forbidden" MUST NOT be called as a task. The tool's definition comes
+   * from the same `tools/list` lookup the unmirrored-definition path uses. A
+   * failed lookup throws to the caller: without the definition the call cannot
+   * be shown to be allowed, so nothing is sent. The lookup gets the server's
+   * configured timeout when the caller sets none, like the task call itself.
+   */
+  private async assertToolAcceptsTaskCalls(
+    serverId: string,
+    client: ManagedMcpClient,
+    toolName: string,
+    options: Pick<ClientRequestOptions, "signal" | "timeout">
+  ): Promise<void> {
+    const list = await client.listTools(
+      undefined,
+      this.withTimeout(serverId, options)
+    );
+    const tool = list.tools.find((candidate) => candidate.name === toolName);
+    const execution = (tool as { execution?: unknown } | undefined)?.execution;
+    const support =
+      execution !== null &&
+      typeof execution === "object" &&
+      typeof (execution as { taskSupport?: unknown }).taskSupport === "string"
+        ? (execution as { taskSupport: string }).taskSupport
+        : undefined;
+    if (support === "required" || support === "optional") return;
+    const why =
+      tool === undefined
+        ? "is not listed by the server, so its taskSupport is unknown"
+        : support === undefined
+          ? "has no taskSupport"
+          : `has taskSupport ${JSON.stringify(support)}`;
+    throw new MCPTasksWireError(
+      `Tool ${JSON.stringify(toolName)} on server "${serverId}" ${why}; refusing to send a task-augmented tools/call.`,
+      "legacy"
+    );
   }
 
   // ===========================================================================
@@ -2838,6 +2956,8 @@ export class MCPClientManager {
     };
     signal?.addEventListener("abort", abort, { once: true });
     const clientCapabilities = this.buildCapabilities(serverId, config);
+    // The handshake is MCPJam's own traffic, not observed use.
+    const resumeObservation = pauseFeatureObservation(this, serverId);
     try {
       signal?.throwIfAborted();
       // Resolve clientInfo from (in order): per-server `clientInfo` >
@@ -3103,16 +3223,51 @@ export class MCPClientManager {
             // Legacy-first's one fallback, as Cursor CLI takes it: the server
             // refused the 2025 handshake and named 2026-07-28, so discover it.
             const pin = legacyFirstFallback(startupConfig, error);
-            if (!pin) throw error;
-            upstreamClient.setVersionNegotiation({ mode: { pin } });
-            return this.connectViaHttp(
-              serverId,
-              managedClient,
-              { ...startupConfig, mcpProtocolVersion: pin },
-              timeout,
-              state,
-              signal
-            );
+            if (pin) {
+              upstreamClient.setVersionNegotiation({ mode: { pin } });
+              return this.connectViaHttp(
+                serverId,
+                managedClient,
+                { ...startupConfig, mcpProtocolVersion: pin },
+                timeout,
+                state,
+                signal
+              );
+            }
+            // A modern server refused the version the probe offered and named
+            // a 2025-era one it does speak: "the client retries with a
+            // supported version". The legacy handshake negotiates down to it.
+            // One retry only: a refusal on this second attempt is not caught
+            // here again.
+            //
+            // `isKnownProtocolVersion` first: the list comes from the server,
+            // and `isStatelessProtocolVersion` alone calls any string it does
+            // not know (an empty one included) a 2025-era version.
+            //
+            // This server has already answered as a modern one, so the retry
+            // is told not to open the SSE transport whatever its `initialize`
+            // fails with.
+            if (
+              error instanceof ModernProtocolVersionRefused &&
+              wantsAutoNegotiation &&
+              error.supportedVersions.some(
+                (version) =>
+                  isKnownProtocolVersion(version) &&
+                  !isStatelessProtocolVersion(version)
+              )
+            ) {
+              upstreamClient.setVersionNegotiation(undefined);
+              return this.connectViaHttp(
+                serverId,
+                managedClient,
+                startupConfig,
+                timeout,
+                state,
+                signal,
+                { knownModernServer: true }
+              );
+            }
+            throw error;
           });
         } finally {
           startupSignal = undefined;
@@ -3155,7 +3310,9 @@ export class MCPClientManager {
       // itself is also tolerant (no-op + warning) — this guard avoids
       // the warning noise on every connect.
       if (client.getServerCapabilities?.()?.logging) {
-        this.setLoggingLevel(serverId, "debug").catch(() => {});
+        suppressFeatureObservation(this, serverId, () =>
+          this.setLoggingLevel(serverId, "debug")
+        ).catch(() => {});
       }
 
       return client;
@@ -3173,9 +3330,21 @@ export class MCPClientManager {
       });
       throw error;
     } finally {
+      resumeObservation();
       signal?.removeEventListener("abort", abort);
       await closing;
     }
+  }
+
+  /** This connection's feature tap; none without a `featureObserver`. */
+  private featureTapFor(serverId: string): FeatureFrameTap | undefined {
+    const observer = this.featureObserver;
+    return (
+      observer &&
+      createFeatureFrameTap(serverId, observer, {
+        isPaused: () => isFeatureObservationPaused(this, serverId),
+      })
+    );
   }
 
   private async connectViaStdio(
@@ -3206,7 +3375,12 @@ export class MCPClientManager {
           config,
           wrapTransportForTaskResults(
             logger
-              ? wrapTransportForLogging(serverId, logger, underlying)
+              ? wrapTransportForLogging(
+                  serverId,
+                  logger,
+                  underlying,
+                  this.featureTapFor(serverId)
+                )
               : underlying
           )
         )
@@ -3237,7 +3411,14 @@ export class MCPClientManager {
     config: HttpServerConfig,
     timeout: number,
     state: LiveClientState,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    options?: {
+      /**
+       * The server already answered a modern request with its own JSON-RPC
+       * error, so it is a modern server and the SSE transport is not for it.
+       */
+      knownModernServer?: boolean;
+    }
   ): Promise<Transport | undefined> {
     // A new handshake is about to run (first connect, reconnect, protocol
     // switch): the previous declaration no longer describes this connection
@@ -3371,7 +3552,12 @@ export class MCPClientManager {
               config,
               wrapTransportForTaskResults(
                 logger
-                  ? wrapTransportForLogging(serverId, logger, guarded)
+                  ? wrapTransportForLogging(
+                      serverId,
+                      logger,
+                      guarded,
+                      this.featureTapFor(serverId)
+                    )
                   : guarded
               )
             )
@@ -3434,6 +3620,15 @@ export class MCPClientManager {
             error,
           ]);
           if (declaredPinFailure) throw declaredPinFailure;
+          // The server's own modern version refusal, for the same reason: a
+          // declared-transport server never reaches the check before the SSE
+          // transport below, so without this it would get neither the clear
+          // error nor the caller's retry on a 2025 version it listed.
+          const declaredModernRefusal = this.modernVersionRefusal(
+            serverId,
+            error
+          );
+          if (declaredModernRefusal) throw declaredModernRefusal;
           // Preserve `cause`: `formatError` reduces the failure to its
           // message, and the Node errno (`ECONNREFUSED`, `ENOTFOUND`, ...)
           // lives on the error object — usually one `.cause` hop down, since
@@ -3478,6 +3673,46 @@ export class MCPClientManager {
     ]);
     if (pinFailureBeforeSse) throw pinFailureBeforeSse;
 
+    // The server's own modern "version not supported" error ends the attempt
+    // here too, pinned or not.
+    //
+    // "A recognized modern JSON-RPC error ... identifies a modern server: the
+    // client retries with a supported version rather than falling back." The
+    // SSE transport below is that fallback: it is for a server that turned out
+    // to be a legacy one. Opening it against a server that has just shown it is
+    // modern sends a GET it has no use for (a modern-only server answers 405),
+    // and the 405 then hid the real reason in the combined error message.
+    const modernRefusal = this.modernVersionRefusal(serverId, streamableError);
+    if (modernRefusal) throw modernRefusal;
+
+    // The retry after such a refusal: the server is known to be modern, so a
+    // 2025 handshake that failed for any other reason stops here as well.
+    if (options?.knownModernServer) {
+      // Keep the auth classification, as the declared-transport exit does, so
+      // a 401/403 on the 2025 handshake still reaches the OAuth hooks.
+      const authCheck = isAuthError(streamableError);
+      if (authCheck.isAuth) {
+        throw new MCPAuthError(
+          `Authentication failed for MCP server "${serverId}": Streamable HTTP error: ${formatError(
+            streamableError
+          )}`,
+          authCheck.statusCode,
+          { cause: streamableError }
+        );
+      }
+      throw new Error(
+        connectionErrorMessage(
+          serverId,
+          url,
+          [streamableError],
+          `Failed to connect to MCP server "${serverId}" using Streamable HTTP. The server answered as a modern MCP server, so the older SSE transport was not tried. Streamable HTTP error: ${formatError(
+            streamableError
+          )}`
+        ),
+        { cause: streamableError }
+      );
+    }
+
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
       // `listenGuard: false` — see `buildTransportFetch`. On this transport a
@@ -3505,7 +3740,12 @@ export class MCPClientManager {
             config,
             wrapTransportForTaskResults(
               logger
-                ? wrapTransportForLogging(serverId, logger, sseTransport)
+                ? wrapTransportForLogging(
+                    serverId,
+                    logger,
+                    sseTransport,
+                    this.featureTapFor(serverId)
+                  )
                 : sseTransport
             )
           )
@@ -3585,6 +3825,24 @@ export class MCPClientManager {
         streamableError
       );
     }
+  }
+
+  /**
+   * The server's own modern "protocol version not supported" answer, as the
+   * error an unpinned connect ends with instead of trying the SSE transport.
+   * `undefined` for any other failure.
+   */
+  private modernVersionRefusal(
+    serverId: string,
+    error: unknown
+  ): ModernProtocolVersionRefused | undefined {
+    const refusal = readModernVersionRefusal(error);
+    return refusal
+      ? new ModernProtocolVersionRefused(serverId, {
+          cause: error,
+          supportedVersions: refusal.supported,
+        })
+      : undefined;
   }
 
   /**
@@ -3880,6 +4138,7 @@ export class MCPClientManager {
       return undefined;
     }
     if (
+      config.credentialSource === "mcpjam-backend" ||
       config.authProvider ||
       config.eventSourceInit ||
       config.reconnectionOptions ||
@@ -4403,7 +4662,8 @@ export class MCPClientManager {
     state?: LiveClientState
   ): DeclaredElicitationCapability {
     const capabilities = state?.initializedClientCapabilities as
-      Record<string, unknown> | undefined;
+      | Record<string, unknown>
+      | undefined;
     const elicitation = capabilities?.elicitation;
     return elicitation != null
       ? (elicitation as DeclaredElicitationCapability)
@@ -4482,7 +4742,12 @@ export class MCPClientManager {
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
     const logged = httpLogger
-      ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
+      ? wrapFetchForHttpLogging(
+          serverId,
+          httpLogger,
+          baseFetch,
+          config.credentialHeaderNames
+        )
       : baseFetch;
     // ABOVE the logger deliberately: a refused listen stream never reaches the
     // network, so logging it would invent a request that was not made. The
@@ -4491,7 +4756,11 @@ export class MCPClientManager {
       config.suppressListenChannel === true && options?.listenGuard !== false
         ? wrapFetchForNoListenChannel(logged)
         : logged;
-    return wrapFetchForTaskRouting(listenGuarded);
+    const routed = wrapFetchForTaskRouting(listenGuarded);
+    return options?.listenGuard === false ? routed : withEventsBetaRouting(
+      routed, () => this.eventsCapabilityCapture.betaCatalogVersion(serverId),
+      signal => readServerEventTypes(this, serverId, { signal }),
+    );
   }
 
   private cacheToolsMetadata(
@@ -5317,8 +5586,12 @@ export class MCPClientManager {
             startedAt,
             config.authChallengeOperation
           ),
-        hasChallenge: () => !!matchingRecordedChallenge(
-          this.liveClientStates.get(serverId)?.authChallengeRecorder, startedAt, config.authChallengeOperation),
+        hasChallenge: () =>
+          !!matchingRecordedChallenge(
+            this.liveClientStates.get(serverId)?.authChallengeRecorder,
+            startedAt,
+            config.authChallengeOperation
+          ),
         reset: () =>
           this.destroyLiveState(serverId, { abortRetryOperations: false }),
         refresh: (error) =>
@@ -5332,7 +5605,8 @@ export class MCPClientManager {
   private async refreshAccessTokenAfterUnauthorized(
     serverId: string,
     error: unknown,
-    signal: AbortSignal
+    signal: AbortSignal,
+    onReplacement?: (handler: ((error: unknown) => never) | undefined) => void
   ): Promise<boolean> {
     if (!isUnauthorized401(error)) {
       return false;
@@ -5356,6 +5630,7 @@ export class MCPClientManager {
     if (!refreshPromise) {
       refreshPromise = (async () => {
         const result = await onUnauthorized({ serverId, error });
+        onReplacement?.(result?.onRetryRejected);
         const accessToken = result?.accessToken?.trim();
         if (!accessToken) {
           throw new Error(
@@ -5385,6 +5660,7 @@ export class MCPClientManager {
     };
     await this.destroyLiveState(serverId, {
       abortRetryOperations: false,
+      preserveRetryPromise: !!onReplacement,
     });
     return true;
   }

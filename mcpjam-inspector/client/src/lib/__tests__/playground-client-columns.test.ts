@@ -108,6 +108,30 @@ describe("saved-client comparison resolution", () => {
     });
   });
 
+  it.each([
+    ["missing", []],
+    ["locked", [{ ...hosted, disabled: true }]],
+  ])(
+    "reads a %s saved model as loading while sign-in and the catalog settle",
+    (_label, models: ModelDefinition[]) => {
+      // Just after the sign-in redirect reloads the page, the model list can
+      // lack the saved model only because it has not loaded yet.
+      const result = resolvePlaygroundClientColumn({
+        paneId: host.hostId,
+        hostId: host.hostId,
+        slot: { host, isLoading: false },
+        hosts: [],
+        models,
+        modelsSettling: true,
+      });
+      expect(result).toMatchObject({
+        status: "loading",
+        reason: "Loading saved configuration…",
+      });
+      expect(resolve(host, models).status).toBe("unavailable");
+    },
+  );
+
   it("keys a column by its pane, so two panes on one client stay apart", () => {
     const panes = ["a", "a~2"].map((paneId) =>
       resolvePlaygroundClientColumn({

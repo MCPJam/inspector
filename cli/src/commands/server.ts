@@ -235,6 +235,8 @@ export function registerServerCommands(program: Command): void {
     const doctorTarget = summarizeServerDoctorTarget(target, config);
 
     const result = await runServerDoctor({
+      // The CLI counts the run itself, under its own opt-outs.
+      __suppressTelemetry: true,
       config,
       target: doctorTarget,
       timeout: globalOptions.timeout,

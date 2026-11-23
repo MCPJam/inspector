@@ -23,6 +23,7 @@ it("passes the freshly admitted server name to each modern form collector", asyn
   vi.spyOn(manager, "getServerConfig").mockReturnValue({ url: "https://fixture.test/mcp" });
   let name = "stale name";
   const service = createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
     c: new Context(new Request("http://localhost/test")),
     bearer: "fixture", projectId: "project", serverId: "opaque-server-id",
     serverName: () => name,

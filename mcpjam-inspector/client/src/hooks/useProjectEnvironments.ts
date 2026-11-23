@@ -70,6 +70,12 @@ export type ProjectEnvironmentServerSkillSelection = {
 };
 
 /**
+ * Every project-shared Library skill, resolved at Latest when a run starts,
+ * so a skill added to the Library later joins later runs.
+ */
+export type ProjectEnvironmentSkillScope = "all-shared-library";
+
+/**
  * THE client mirror of a Project environment row. Every client surface
  * (management route, suite picker, swarms) imports this one — do not add a
  * second per-surface copy.
@@ -137,9 +143,14 @@ export interface ProjectEnvironmentView {
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
+   * In place of `skillSelection`, never beside it (the backend refuses both).
+   * Absent on a backend that predates the scope.
+   */
+  skillScope?: ProjectEnvironmentSkillScope;
+  /**
    * MCP-server skills (SEP-2640) the environment selects, optionally held at
-   * exact captures. Mirrored for DISPLAY and REFUSAL only: no browser editor
-   * writes it, and nothing here may copy it into a new environment — a copy
+   * exact captures. The Evaluate Skills field writes a person's picks, but
+   * nothing here may copy one from this view into a new environment — a copy
    * built from this view would be a client-side reconstruction of a pin the
    * backend owns. Deriving an environment that carries one goes through the
    * backend's lossless derivation instead.
@@ -357,6 +368,9 @@ export function useEnsureAdhocEnvironments(): (args: {
     serverAttachmentId?: string | null;
     serverSelection?: ProjectEnvironmentServerSelection;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
+    serverSkillSelection?: ProjectEnvironmentServerSkillSelection;
+    /** Only where the backend advertises `allSharedLibrarySkillScope`. */
+    skillScope?: ProjectEnvironmentSkillScope;
     /**
      * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
      * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value

@@ -31,6 +31,7 @@ import type {
 export type { RefreshTokensRotatedHandler } from "./refresh-token-auth-provider.js";
 import type { TraceContextProvider } from "./trace-context.js";
 import type { HttpExchangeLogger } from "./http-exchange-log.js";
+import type { FeatureObserver } from "./feature-observer.js";
 import type { ToolSet } from "ai";
 
 import type {
@@ -131,7 +132,10 @@ export type CacheEventLogger = (event: CacheHitEvent) => void;
  *    (`HttpServerConfig.versionNegotiation`).
  */
 export type ConfiguredNegotiationMode =
-  "auto" | "modern-pin" | "legacy" | "legacy-first";
+  | "auto"
+  | "modern-pin"
+  | "legacy"
+  | "legacy-first";
 
 /**
  * One connection-attempt outcome, emitted by the manager for Phase 5
@@ -442,6 +446,14 @@ export type BaseServerConfig = {
    * byte-identical to the behavior before this field.
    */
   baseFetch?: typeof fetch;
+  /**
+   * Where this connection's credential came from, when not from the config's
+   * own author. `"mcpjam-backend"`: the MCPJam backend delivered it to this
+   * process (a person's sign-in, a project-shared or uploaded account). Such a
+   * credential stays in the process, so the connection is never written into a
+   * replay config.
+   */
+  credentialSource?: "mcpjam-backend";
 };
 
 /**
@@ -474,9 +486,12 @@ export type StdioServerConfig = BaseServerConfig & {
   clientSecret?: never;
   onTokensRotated?: never;
   onUnauthorized?: never;
+  credentialHeaderNames?: never;
 };
 
 export type UnauthorizedRefreshResult = {
+  /** Explain a rejected replacement without requesting another credential. */
+  onRetryRejected?: (error: unknown) => never;
   accessToken: string;
 };
 
@@ -498,6 +513,12 @@ export type HttpServerConfig = BaseServerConfig & {
   accessToken?: string;
   /** Additional request initialization options */
   requestInit?: StreamableHTTPClientTransportOptions["requestInit"];
+  /**
+   * Request headers that carry a credential, beyond the ones always treated
+   * as secret (`Authorization`, `Cookie`, `X-API-Key`, …). Names only; their
+   * values never reach the HTTP exchange log.
+   */
+  credentialHeaderNames?: readonly string[];
   /** SSE-specific event source options */
   eventSourceInit?: SSEClientTransportOptions["eventSourceInit"];
   /** OAuth auth provider */
@@ -731,6 +752,11 @@ export interface MCPClientManagerOptions {
   defaultLogJsonRpc?: boolean;
   /** Global JSON-RPC logger */
   rpcLogger?: RpcLogger;
+  /**
+   * Receives the catalog feature ids each JSON-RPC frame shows, never the
+   * frame itself. Unset, no frame is classified.
+   */
+  featureObserver?: FeatureObserver;
   /** Global HTTP-exchange (headers-only) logger. See `httpLogger` on the
    *  server config for why this is a separate channel from `rpcLogger`. */
   httpLogger?: HttpExchangeLogger;

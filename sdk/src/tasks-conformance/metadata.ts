@@ -155,13 +155,21 @@ export function pickProbeTool(
 
 export const NAMED_TOOLS_LIMIT = 10;
 
-export function describeListedTools(tools: MCPListedTool[]): string {
-  if (tools.length === 0) return "the server lists no tools at all";
+function toolNames(tools: MCPListedTool[]): string {
   const named = tools.slice(0, NAMED_TOOLS_LIMIT).map((tool) => tool.name);
   const rest = tools.length - named.length;
-  return `listed tools: ${named.join(", ")}${
-    rest > 0 ? `, +${rest} more` : ""
-  }`;
+  return `${named.join(", ")}${rest > 0 ? `, +${rest} more` : ""}`;
+}
+
+export function describeListedTools(tools: MCPListedTool[]): string {
+  if (tools.length === 0) return "the server lists no tools at all";
+  return `listed tools: ${toolNames(tools)}`;
+}
+
+/** 2025-11-25: only `required` and `optional` let a client call a tool as a task. */
+function acceptsTaskCalls(tool: MCPListedTool): boolean {
+  const support = toolTaskSupport(tool);
+  return support === "required" || support === "optional";
 }
 
 export interface ProbeToolResolution {
@@ -170,6 +178,11 @@ export interface ProbeToolResolution {
   reason?: string;
   /** True when the missing tool leaves applicable checks unexercised. */
   blocking?: boolean;
+  /**
+   * The setup line the app shows in place of the runner's default ("this
+   * server doesn't list the tool"), for a case where that default is wrong.
+   */
+  setupMessage?: string;
 }
 
 export function resolveProbeTool(
@@ -186,6 +199,36 @@ export function resolveProbeTool(
   }
 
   const tool = pickProbeTool(tools, requestedName);
+  // A tool whose `taskSupport` is missing or "forbidden" MUST NOT be called as
+  // a task (2025-11-25 tasks.mdx:115). Auto-selection already skips such
+  // tools, so only a NAMED one gets here, and picking another is the caller's
+  // setup to fix. Legacy only: the 2026-07-28 ToolSchema strips
+  // `taskSupport`, and on the extension wire the server decides.
+  if (tool && requestedName && wire === "legacy" && !acceptsTaskCalls(tool)) {
+    const able = tools.filter(acceptsTaskCalls);
+    const support = toolTaskSupport(tool);
+    const name = JSON.stringify(tool.name);
+    const has =
+      support === undefined
+        ? "has no taskSupport"
+        : `has taskSupport ${JSON.stringify(support)}`;
+    return {
+      reason: `the requested probe tool ${name} ${
+        support === undefined
+          ? "has no `execution.taskSupport`"
+          : `has \`execution.taskSupport\` ${JSON.stringify(support)}`
+      }, so it must not be called as a task (2025-11-25 tasks.mdx:115); ${
+        able.length > 0
+          ? `tools that can: ${toolNames(able)}; pass --tool-name (SDK: toolName) with one of them`
+          : "no listed tool has `execution.taskSupport` required or optional"
+      }`,
+      blocking: true,
+      setupMessage:
+        able.length > 0
+          ? `${name} ${has}, so it can't run as a task. Select a tool that can in setup (${toolNames(able)}), then run again.`
+          : `${name} ${has}, so it can't run as a task, and no tool on this server can. Add taskSupport to a tool, then run again.`,
+    };
+  }
   if (tool) return { tool };
 
   if (requestedName) {

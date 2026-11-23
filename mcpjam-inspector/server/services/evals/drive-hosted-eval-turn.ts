@@ -39,6 +39,7 @@ import type { MCPClientManager, Harness } from "@mcpjam/sdk";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ModelDefinition } from "@/shared/types";
 import type { EvalToolChoice } from "@/shared/tool-choice";
+import { appliedToolApproval, engineApprovalMode } from "@/shared/tool-approval";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import {
@@ -187,10 +188,10 @@ export interface DriveHostedEvalTurnParams {
   agentLoop?: Harness;
   /** The case's saved selection, read by the harness turn only. */
   modelSelection?: RunAssistantTurnOptions["modelSelection"];
-  /** Host approval intent (resolvedExecution.requireToolApproval). Forwarded to
-   *  runAssistantTurn ONLY for harness turns. Automated runs do not yet have
-   *  an interactive approval flow; a gated call can fail during streaming.
-   *  The emulated eval path is unchanged (it doesn't pass requireToolApproval; it relies on approvalMode "auto-deny"). */
+  /** Host approval intent (resolvedExecution.requireToolApproval). A harness
+   *  turn receives it as the eval policy applies it (off), so it runs as an
+   *  approval-off client and MCPJam denies only `always` tools; the run still
+   *  records how many calls would have asked (`approvals_would_require`). */
   requireToolApproval?: boolean;
   toolPolicyGate?: ToolPolicyGate | null;
   /** Project that owns the host's computer — required by runHarnessTurn to
@@ -261,21 +262,15 @@ export interface DriveHostedEvalTurnParams {
   /** Reports what the run FROZE about evidence, as the mint saw it. */
   onHarnessEvidenceDecision?: RunAssistantTurnOptions["onHarnessEvidenceDecision"];
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
+  onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
-   * The run's PINNED skills, delivered to the harness verbatim.
-   *
-   * Present (even empty) ⇒ the harness turn delivers exactly these and skips
-   * the live project-wide fetch, which is what keeps a frozen run frozen. An
-   * empty set is how `skillsOverride: "exclude"` reaches the harness — the A/B
-   * arm has to be deliberately skill-free, not accidentally so.
-   *
-   * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
-   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks
-   * pinned → environment → live, and only the top rank promises that nothing
-   * live is consulted; `runtimeSkillsOverride` is for a turn whose environment
-   * re-resolves each time, which is the opposite of what a pinned run wants.
+   * The iteration's skill plan, which a harness turn carries out
+   * (`iterationTurnSkills`). A run's frozen skills reach the box through it and
+   * nothing live is consulted, so a frozen run stays frozen. An empty frozen
+   * set is how `skillsOverride: "exclude"` reaches the harness: the A/B arm has
+   * to be deliberately skill-free, not accidentally so.
    */
-  pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
+  skillPlan?: RunAssistantTurnOptions["skillPlan"];
   /**
    * MCPJam's SERVER-EXECUTED built-ins for the harness path.
    *
@@ -502,6 +497,41 @@ export function failedLayerForEngineError(
   event: { phase?: "setup" | "stream" } | undefined,
 ): "model" | "setup" {
   return event?.phase === "setup" ? "setup" : "model";
+}
+
+/**
+ * Whether a failed turn's log line must capture. `logger.error` with no error
+ * object always captures, untagged, so it is skipped only when the engine's
+ * reporter already recorded this failure:
+ * - it sent it to Sentry (`reportedCaptured`);
+ * - it classified it (`reportedOrigin` set, not `ambiguous`) and declined it
+ *   as not ours (INSPECTOR-HONO-70), or found it already handled;
+ * - an empty step: the emitter decided ownership itself
+ *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+ *   `ambiguous` on purpose.
+ * - a model with no private provider (`policy_no_zdr_endpoint`): the user's
+ *   to fix. A harness turn carries that code only in `infra` and reports no
+ *   origin, so it is matched by code.
+ * Anything else — `ambiguous`, no verdict, no engine error — has no other
+ * Sentry record. The harness reports `reportedCaptured` only: it classifies
+ * from the message alone, so a decline there is not a verdict.
+ */
+export function failedTurnNeedsCapture(
+  event:
+    | Pick<
+        MCPJamEngineErrorEvent,
+        "code" | "infra" | "reportedCaptured" | "reportedOrigin"
+      >
+    | undefined,
+): boolean {
+  if (event?.reportedCaptured) return false;
+  if (event?.code === "provider_empty_response") return false;
+  if ((event?.code ?? event?.infra?.code) === "policy_no_zdr_endpoint") {
+    return false;
+  }
+  return (
+    event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
+  );
 }
 
 export async function driveHostedEvalTurn(
@@ -823,17 +853,21 @@ export async function driveHostedEvalTurn(
       origin: "eval",
       streamSink: "none",
       persistMode: "caller",
-      approvalMode: "auto-deny",
-      // Harness eval (host harness === "claude-code"): forward the host's real
-      // approval intent. Evals cannot approve a gated native call interactively,
-      // and non-approval hosts still run under allow-all.
+      approvalMode: engineApprovalMode("eval"),
+      // A harness eval reads the same policy as the emulated one: the host's
+      // switch does not apply, and `approvalMode` makes MCPJam deny the rest.
       ...(params.harness
         ? {
             agentLoop: params.agentLoop,
             harnessTurnContext: EVAL_WIDGET_MODEL_CONTEXT ? buildEvalWidgetContextSystemPrompt(browser.browserInteractionSteps) : undefined,
             ...(params.harnessExecutionTarget ? { harnessExecutionTarget: params.harnessExecutionTarget } : {}),
             ...(params.requireToolApproval !== undefined
-              ? { requireToolApproval: params.requireToolApproval }
+              ? {
+                  requireToolApproval: appliedToolApproval(
+                    "eval",
+                    params.requireToolApproval,
+                  ),
+                }
               : {}),
             // runHarnessTurn needs projectId to resolve the host's computer
             // (authHeader already rides authContext.token). Harness-gated so
@@ -871,13 +905,13 @@ export async function driveHostedEvalTurn(
             ...(params.onHarnessPolicyBlocks
               ? { onHarnessPolicyBlocks: params.onHarnessPolicyBlocks }
               : {}),
-            // Present-but-empty is meaningful (the "without skills" arm), so
-            // this checks for undefined rather than truthiness. Absent would
-            // fall through to the harness's LIVE project-wide fetch, which is
-            // what unfreezes a frozen run.
-            ...(params.pinnedHarnessSkills !== undefined
-              ? { pinnedHarnessSkills: params.pinnedHarnessSkills }
+            ...(params.onBoxSkillsWritten
+              ? { onBoxSkillsWritten: params.onBoxSkillsWritten }
               : {}),
+            // The plan states what the box gets, an empty frozen set included
+            // (the "without skills" arm), and what a turn with no source
+            // leaves alone.
+            ...(params.skillPlan ? { skillPlan: params.skillPlan } : {}),
             // The harness reads built-ins ONLY off this field. Omitting it
             // would hand the runtime a turn with no web_search and no way to
             // tell that anything was missing.
@@ -1105,19 +1139,10 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures. An empty step was
-    // already reported once by the engine, which decided whether it is ours
-    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines. A model with no
-    // private provider is the user's to fix, and the engine already reported
-    // it as such.
-    if (
-      engineCode === "provider_empty_response" ||
-      engineCode === "policy_no_zdr_endpoint"
-    ) {
-      logger.warn(logLine);
-    } else {
+    if (failedTurnNeedsCapture(lastEngineError)) {
       logger.error(logLine);
+    } else {
+      logger.warn(logLine);
     }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call
