@@ -221,13 +221,19 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     });
     // A page that tries to leave on its own is stopped at the browser.
     await page.goto(`${vendor.url}/sign-in`);
+    expect(page.url()).toBe(`${vendor.url}/new`);
+    const stopped = page.waitForEvent("requestfailed", (request) =>
+      request.url().startsWith(upstream.url),
+    );
     await page.evaluate((target) => {
       location.href = target;
     }, upstream.url);
-    await page.waitForTimeout(200);
-    // The navigation is aborted, so the tab never reaches the other site.
-    expect(page.url().startsWith(upstream.url)).toBe(false);
-    expect(new URL(page.url()).origin).not.toBe(new URL(upstream.url).origin);
+    expect((await stopped).failure()?.errorText).toBe(
+      "net::ERR_BLOCKED_BY_CLIENT",
+    );
+    // Chromium shows its own error page in place of the other site.
+    await expect.poll(() => page.url()).toMatch(/^chrome-error:/);
+    expect(upstream.requests).toEqual([]);
   });
 
   it.each([
