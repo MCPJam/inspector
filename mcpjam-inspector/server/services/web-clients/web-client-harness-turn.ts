@@ -27,7 +27,10 @@ import type { PersistedTurnTrace } from "../../utils/chat-ingestion.js";
 import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { buildHarnessMcpAtTurn } from "../../utils/harness/harness-mcp-receipt.js";
 import { resolveHarnessMcpPlan } from "../../utils/harness/harness-mcp-plan.js";
-import type { HarnessUnavailableKind } from "../../utils/harness/harness-availability.js";
+import {
+  harnessSystemPromptRefusalReason,
+  type HarnessUnavailableKind,
+} from "../../utils/harness/harness-availability.js";
 import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy-policy-enforcement.js";
 import { harnessToolApprovalRefusalReason } from "../../utils/harness/harness-tool-approval.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
@@ -121,12 +124,12 @@ function refuseUnsupportedSettings(runtimeId: WebClientRuntimeId, options: MCPJa
     hasSelectedMcpServers: (options.selectedServers?.length ?? 0) > 0,
   });
   if (approvalRefusal) throw new WebClientTurnRefusedError("tool-approval", approvalRefusal);
-  if (options.systemPrompt?.trim()) {
-    throw new WebClientTurnRefusedError(
-      "setting-unsupported",
-      `${adapter.displayName} uses ${HARNESS_DESCRIPTORS[runtimeId].runtimeName}'s own instructions, so it can't take a system prompt. Clear this client's system prompt or choose another client.`,
-    );
-  }
+  const promptRefusal = harnessSystemPromptRefusalReason({
+    adapter,
+    systemPrompt: options.systemPrompt,
+  });
+  if (promptRefusal)
+    throw new WebClientTurnRefusedError("setting-unsupported", promptRefusal);
   const latest = lastUserMessage(options.messages);
   if (latest && typeof latest.content !== "string" && latest.content.some((part) => part.type !== "text")) {
     throw new WebClientTurnRefusedError(

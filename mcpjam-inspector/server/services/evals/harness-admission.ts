@@ -342,6 +342,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     ...(hostSavedReasoningEffort(hostConfig) !== undefined
       ? { reasoningEffort: hostSavedReasoningEffort(hostConfig) }
       : {}),
+    systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
   });
   if (!availability.ok) {
     // With no host-pinned model, a model-eligibility refusal is about the
@@ -451,6 +452,7 @@ export function checkEvalHarnessAdmission(args: {
         xaaEnterprisePolicyOn,
         purpose: "eval",
         ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        systemPrompt: typeof hostConfig.systemPrompt === "string" ? hostConfig.systemPrompt : undefined,
       });
       verdict = availability.ok
         ? undefined

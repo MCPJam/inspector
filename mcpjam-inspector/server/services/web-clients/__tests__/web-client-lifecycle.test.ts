@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { checkHarnessRuntimeAvailable } from "../../../utils/harness/harness-availability";
 import {
+  checkEvalHarnessAdmission,
   checkEvalHarnessStaticAdmission,
   resolveEvalCaseModelDefinition,
 } from "../../evals/harness-admission";
@@ -22,6 +23,28 @@ describe.each(HOSTS)("$harness in the existing lifecycle", ({ harness, modelId, 
         hostConfig: { harness, modelId },
         serverIds: ["orders"],
       }),
+    ).toEqual({ ok: true, harness });
+  });
+
+  it("fails a run whose host has a system prompt at admission, once, with the reason", () => {
+    const hostConfig = { harness, modelId, systemPrompt: "Always reply in French." };
+    const refused = {
+      ok: false,
+      harness,
+      reason: expect.stringContaining("so it can't take a system prompt. Clear this client's system prompt"),
+    };
+    expect(checkEvalHarnessStaticAdmission({ hostConfig, serverIds: ["orders"] })).toEqual(refused);
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig,
+        serverIds: ["orders"],
+        cases: [{ title: "Lists orders", model: modelId, provider: modelId.split("/")[0] }],
+        projectId: "project-1",
+      }),
+    ).toEqual(refused);
+    // A blank prompt is no prompt.
+    expect(
+      checkEvalHarnessStaticAdmission({ hostConfig: { ...hostConfig, systemPrompt: " " }, serverIds: ["orders"] }),
     ).toEqual({ ok: true, harness });
   });
 
