@@ -104,6 +104,12 @@ export interface BrowserPanelProps {
   /** Boot a browser if none is running yet. Off by default: opening a panel
    *  should not start a machine's browser behind the user's back. */
   ensure?: boolean;
+  /**
+   * Hears a person's input to the desktop. A pane that already reports input
+   * (the hosted pane's `PausablePane`) passes its own throttled ping here, so
+   * the desktop gets one ping a minute rather than one from each. Without it
+   * the panel pings `/input-ping` itself.
+   */
   onInput?: () => void;
 }
 
@@ -204,13 +210,16 @@ export function BrowserPanel({
     [getToken],
   );
 
+  // A failed resize stays quiet: noVNC scales the picture to the pane, so the
+  // desktop is still usable at its old size, and the next pane resize asks
+  // again. The reporter swallows the throw; it only lets that retry happen.
   const resizeViewport = useCallback(async (size: ViewportSize) => {
     const response = await authorized("/viewport", {
       method: "POST",
       body: JSON.stringify({ ...size, policy: "followPane" }),
     });
     if (!response.ok) {
-      throw new Error("Could not fit the browser to the panel. Resize the panel to try again.");
+      throw new Error("viewport resize failed");
     }
   }, [authorized]);
 
@@ -287,7 +296,13 @@ export function BrowserPanel({
         disconnected();
         return;
       }
-      setHolding(current.yours === true && current.lease.state === "held");
+      // `unknown` means the server could not read the lease this time. One
+      // failed read must not end a control this panel just took: the stream
+      // would go view-only and the heartbeat would stop while the person
+      // still holds the lease. The next read settles it.
+      if (current.lease.state !== "unknown") {
+        setHolding(current.yours === true && current.lease.state === "held");
+      }
       setSession(current);
       if (sessionId) {
         markBrowserSessionActive(sessionId);

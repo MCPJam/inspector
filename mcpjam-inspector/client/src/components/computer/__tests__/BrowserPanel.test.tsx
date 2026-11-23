@@ -22,7 +22,16 @@ vi.mock("@/hooks/useProjectComputer", () => ({
   useMintConversationBrowserToken: () => mintConversation,
 }));
 
-vi.mock("../BrowserStream", () => ({ BrowserStream: () => null }));
+// Renders nothing, but keeps the props so a test can play the stream's part.
+const stream = vi.hoisted(() => ({
+  props: undefined as undefined | { onInput: () => void; viewOnly: boolean },
+}));
+vi.mock("../BrowserStream", () => ({
+  BrowserStream: (props: { onInput: () => void; viewOnly: boolean }) => {
+    stream.props = props;
+    return null;
+  },
+}));
 // The real save button, not a stub: it is a menu item, and stubbing it hid a
 // panel that crashed the page the moment a browser connected.
 vi.mock("@/lib/browser-profiles/availability", () => ({
@@ -131,6 +140,55 @@ describe("BrowserPanel token discipline", () => {
     expect(wakes).toBe(1);
     expect(actions).toEqual(yours ? ["heartbeat", "acquire"] : ["heartbeat"]);
     expect(screen.getByText(yours ? "You have control" : "Watching")).toBeTruthy();
+  });
+
+  it("keeps control when the lease can't be read right after taking it", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    let reads = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.endsWith("/lease")) {
+        return Response.json({ ok: true, lease: { state: "held", holder: "member" } });
+      }
+      reads++;
+      // After the acquire, the server could not read the lease this time.
+      return Response.json({ sessionId: "s1", bootId: "b1", yours: false,
+        lease: reads === 1 ? { state: "free" } : { state: "unknown" } });
+    }));
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+    expect(screen.getByText("Watching")).toBeTruthy();
+
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Take control" })); });
+    expect(reads).toBe(2);
+    expect(screen.getByText("You have control")).toBeTruthy();
+    expect(stream.props?.viewOnly).toBe(false);
+  });
+
+  it("pings /input-ping for the stream's input at most once a minute", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const pings = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/input-ping")).length;
+    render(<BrowserPanel projectId="p1" />);
+    await act(async () => {});
+
+    await act(async () => { stream.props!.onInput(); stream.props!.onInput(); });
+    expect(pings()).toBe(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    await act(async () => { stream.props!.onInput(); });
+    expect(pings()).toBe(2);
+  });
+
+  it("leaves input to the pane's own ping when the pane passes one", async () => {
+    mintProject.mockResolvedValue({ token: "tok", expiresAt: Date.now() + 600_000 });
+    const paneInput = vi.fn();
+    render(<BrowserPanel projectId="p1" onInput={paneInput} />);
+    await act(async () => {});
+
+    await act(async () => { stream.props!.onInput(); });
+    expect(paneInput).toHaveBeenCalledOnce();
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/input-ping"))).toBe(false);
   });
 
   it("stops polling and says so when the browser goes away", async () => {

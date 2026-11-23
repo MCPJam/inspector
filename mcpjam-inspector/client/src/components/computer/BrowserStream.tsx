@@ -55,6 +55,8 @@ const RECONNECT_DELAY_MS = 500;
 export interface StreamCloseOutcome {
   /** Reconnect (with a fresh token), rather than showing a dead pane. */
   retry: boolean;
+  /** The browser itself is gone, not just this stream: the panel decides. */
+  gone?: true;
   /** What to show if this is the end of the line. */
   detail: string;
 }
@@ -83,6 +85,7 @@ export function streamCloseOutcome(event: {
     case CLOSE_GONE:
       return {
         retry: false,
+        gone: true,
         detail: "The browser on this computer is no longer running.",
       };
     default:
@@ -173,11 +176,13 @@ export function BrowserStream({
       socket.binaryType = "arraybuffer";
       socket.addEventListener("close", (event) => {
         if (disposed) return;
-        if (event.code === CLOSE_GONE) {
+        const outcome = streamCloseOutcome(event);
+        if (outcome.gone) {
+          // Reconnecting this stream cannot help; the panel offers to
+          // reconnect the browser instead.
           onSessionGone();
           return;
         }
-        const outcome = streamCloseOutcome(event);
         if (outcome.retry && consecutiveRef.current < MAX_RECONNECTS) {
           consecutiveRef.current += 1;
           // Reconnecting mints a fresh token; nothing about the session
