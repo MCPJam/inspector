@@ -36,7 +36,7 @@ export async function readVendorJson(
     if (result.status < 200 || result.status >= 300) {
       throw new VendorStatusError(result.status);
     }
-    return JSON.parse(result.text);
+    return parsedJson(result.text);
   }
   if (Object.keys(headers).length > 0) {
     throw new PageDriverError(
@@ -78,4 +78,20 @@ export function list(value: unknown): unknown[] {
 
 export function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The site's answer as JSON. A sign-in or error page in its place fails as
+ * the driver's own typed failure, and its text stays out of the message,
+ * since the page can show the account's details.
+ */
+function parsedJson(body: string): unknown {
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new PageDriverError(
+      "failed",
+      "The site answered with a page instead of its own saved data.",
+    );
+  }
 }

@@ -15,10 +15,7 @@ import {
   type GatewayApi,
   type GatewayModel,
 } from "@/shared/gateway-connection";
-import {
-  HARNESS_DESCRIPTORS,
-  harnessRunsOnWebAccount,
-} from "@/shared/harness-descriptors";
+import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   harnessTakesOrgKeys,
   harnessWireApi,
@@ -27,6 +24,7 @@ import {
   harnessDisplayName,
   harnessModelSupportAtPinnedVersion,
 } from "@/shared/harness-model-support";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 export type WorksWithRow = {
   id: string;
@@ -54,7 +52,7 @@ const POLICY_BLOCKS =
  * account, never on a model connection, and they stay behind their own flag.
  */
 const HARNESS_IDS = Object.keys(HARNESS_DESCRIPTORS)
-  .filter((id) => !harnessRunsOnWebAccount(id))
+  .filter((id) => !isWebClientRuntimeId(id))
   .sort(
     (a, b) =>
       Number(harnessWireApi(a) === null) - Number(harnessWireApi(b) === null),

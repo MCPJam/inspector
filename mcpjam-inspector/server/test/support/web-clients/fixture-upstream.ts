@@ -19,6 +19,8 @@ export type UpstreamReceipt = {
 export type FixtureUpstream = {
   url: string;
   received: UpstreamReceipt[];
+  /** Every request's method and path, MCP or not: what reached this origin. */
+  requests: string[];
   close(): Promise<void>;
 };
 
@@ -34,7 +36,9 @@ const ECHO_TOOL = {
 
 export async function startFixtureUpstream(): Promise<FixtureUpstream> {
   const received: UpstreamReceipt[] = [];
+  const requests: string[] = [];
   const server = createServer(async (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
     if (request.method !== "POST") {
       response.writeHead(405).end();
       return;
@@ -91,6 +95,7 @@ export async function startFixtureUpstream(): Promise<FixtureUpstream> {
   return {
     url: `http://127.0.0.1:${port}/mcp`,
     received,
+    requests,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
