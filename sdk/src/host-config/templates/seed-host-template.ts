@@ -2936,7 +2936,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // `_meta.ui.visibility: ["app"]` tools to its model and calls them.
         // Filtering them here would hide tools the CLI exposes.
         respectToolVisibility: false,
-        // The Cursor CLI discovers tools itself when running as a harness.
+        // MCPJam's emulated loop uses its own search tools to mirror Cursor's
+        // MCP search. The native Cursor CLI performs its own discovery.
         progressiveToolDiscovery: true,
         // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
         // of MCPJam's emulated engine. It executes inside an attached personal
