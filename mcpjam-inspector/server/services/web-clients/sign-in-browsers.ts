@@ -23,10 +23,8 @@ type KeptBrowser = {
 const KEEP_MS = 2 * 60 * 60_000;
 const kept = new Map<string, KeptBrowser>();
 
-export function keepSignInBrowser(
-  entry: Omit<KeptBrowser, "openedAt">,
-  now: number = Date.now(),
-): void {
+export function keepSignInBrowser(entry: Omit<KeptBrowser, "openedAt">): void {
+  const now = Date.now();
   for (const [id, old] of kept) {
     if (now - old.openedAt > KEEP_MS) kept.delete(id);
   }
@@ -40,16 +38,8 @@ export function findSignInBrowser(args: {
   projectId: string;
   webAccountId: string;
 }): WebClientHostedBrowser | undefined {
-  const entry = kept.get(args.browserSessionId);
-  if (
-    !entry ||
-    !sameActor(entry.actor, args.actor) ||
-    entry.projectId !== args.projectId ||
-    entry.webAccountId !== args.webAccountId
-  ) {
-    return undefined;
-  }
-  return entry.browser;
+  const entry = heldFor(args);
+  return entry?.webAccountId === args.webAccountId ? entry.browser : undefined;
 }
 
 /** The account a person's sign-in browser was opened for, if this process holds it. */
@@ -58,15 +48,26 @@ export function signInBrowserAccount(args: {
   actor: WebActor;
   projectId: string;
 }): string | undefined {
+  return heldFor(args)?.webAccountId;
+}
+
+/** The person's browser in this project, unless it has outlived `KEEP_MS`. */
+function heldFor(args: {
+  browserSessionId: string;
+  actor: WebActor;
+  projectId: string;
+}): KeptBrowser | undefined {
   const entry = kept.get(args.browserSessionId);
-  if (
-    !entry ||
-    !sameActor(entry.actor, args.actor) ||
-    entry.projectId !== args.projectId
-  ) {
+  if (!entry) return undefined;
+  // A quiet replica opens no browser to sweep this one, so every read checks its age.
+  if (Date.now() - entry.openedAt > KEEP_MS) {
+    kept.delete(args.browserSessionId);
     return undefined;
   }
-  return entry.webAccountId;
+  return sameActor(entry.actor, args.actor) &&
+    entry.projectId === args.projectId
+    ? entry
+    : undefined;
 }
 
 /** For tests. */
