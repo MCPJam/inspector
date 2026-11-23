@@ -5216,6 +5216,9 @@ const runLocalIteration = async ({
           typeof test.successPredicates
         >)
       : undefined;
+  // The checks' results once the verdict has measured them. Out here so a
+  // failure after that (finalization included) reports them as measured.
+  let measuredPredicateResults: PredicateResult[] | undefined;
   // Failed interact / widget-DOM-assert steps. Out here so a failure after
   // they were recorded still reports them on the `platform:widgetCheck` row.
   let stepScriptedFailures: { toolName: string; reason: string }[] = [];
@@ -5804,6 +5807,7 @@ const runLocalIteration = async ({
         }),
       }),
     });
+    measuredPredicateResults = predicateResults;
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
       turnCheckResults,
@@ -6170,16 +6174,17 @@ const runLocalIteration = async ({
           ...stepScriptedFailures,
         ],
       },
-      // The case's checks, unmeasured: a finished iteration declares them, and
-      // one case can't report two evaluation configs in a run.
-      predicateResults: (effectivePredicates ?? []).map(
-        (predicate): PredicateResult => ({
+      // The case's checks: a finished iteration declares them, and one case
+      // can't report two evaluation configs in a run. As measured when the
+      // verdict ran before the failure; unmeasured only when it never did.
+      predicateResults:
+        measuredPredicateResults ??
+        (effectivePredicates ?? []).map((predicate): PredicateResult => ({
           predicate,
           passed: false,
           status: "error",
           reason: "the iteration failed before this check ran",
-        }),
-      ),
+        })),
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.

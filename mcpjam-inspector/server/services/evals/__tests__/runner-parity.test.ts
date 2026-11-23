@@ -978,6 +978,58 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     expect(recovered).toBe(finished);
   });
 
+  it("keeps a check that passed before finalization threw as passed on the recovery write", async () => {
+    finalizeFault.throwsLeft = 1;
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            ...LOCAL_MODEL,
+            expectedToolCalls: [],
+            promptTurns: PROMPT_ONLY,
+            successPredicates: [{ type: "finalAssistantMessageNonEmpty" }],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: { openai: "sk-test" },
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      gradingMode: "dual_write",
+    } as any);
+    expect(finalizeFault.calls).toHaveLength(2);
+    const [finished, recovered] = finalizeFault.calls.map(
+      (call) =>
+        (
+          call as {
+            metadata?: {
+              evaluationConfig?: { hash?: string };
+              scores?: Array<Record<string, unknown>>;
+            };
+          }
+        ).metadata,
+    );
+    const check = (metadata: typeof finished) =>
+      metadata?.scores?.find((row) =>
+        String(row.scorerId).startsWith("predicate:"),
+      );
+    expect(check(finished)).toMatchObject({ status: "scored", passed: true });
+    // Measured before finalization threw, so it is not an unmeasured error.
+    expect(check(recovered)).toMatchObject({ status: "scored", passed: true });
+    expect(recovered?.evaluationConfig?.hash).toBe(
+      finished?.evaluationConfig?.hash,
+    );
+  });
+
   it("§2: a failed widget DOM assert FAILS the iteration (flag-on)", async () => {
     // The browser mock's evaluateWidgetAssertion returns { ok: false }, so the
     // widgetCheck assert step fails. It lands in state.assertionResults (NOT
