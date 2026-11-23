@@ -1,5 +1,4 @@
 import { withAbortSignalFetch } from "../abort-signal.js";
-import { needsSetupDetails } from "../conformance-input.js";
 /**
  * The single raw-HTTP harness the conformance raw checks drive (Phase 7 §15.5).
  *
@@ -34,7 +33,6 @@ import {
   encodeMcpHeaderValue,
   scanXMcpHeaderDeclarations,
 } from "../mcp-client-manager/mcp-header-mirror.js";
-import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import type { RawHttpCheckContext } from "./types.js";
 import {
   createCapturingFetch,
@@ -427,115 +425,6 @@ export function legacyHeaders(options: {
       : {}),
     ...(options.sessionId ? { "mcp-session-id": options.sessionId } : {}),
   };
-}
-
-/**
- * The 2025-era `initialize` prelude a raw legacy probe needs before it can
- * address a stateful server. Returns the exchange verbatim plus the minted
- * session id (absent for a stateless legacy server — that is a legitimate
- * outcome, not an error).
- *
- * `negotiatedVersion` is the version the server answered with, when MCPJam
- * supports it. "The protocol version sent by the client SHOULD be the one
- * negotiated during initialization", so a caller sends it in
- * `MCP-Protocol-Version` on the requests that follow, the closing DELETE
- * included.
- *
- * `versionStop` is set whenever the answered version is not the one the run
- * uses. A server answers with another version only when it does not support
- * the one it was asked for ("If the server supports the requested protocol
- * version, it MUST respond with the same version"). A version MCPJam does not
- * support is one case: "If the client does not support the version in the
- * server's response, it SHOULD disconnect". A version MCPJam does support but
- * the run does not use is the other: a run is about one version, so it stops
- * instead of quietly grading another. Either way a caller that sees it sends
- * nothing more on that session but the closing DELETE.
- */
-export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
-  result: RawHttpResult;
-  sessionId?: string;
-  negotiatedVersion?: string;
-  versionStop?: LegacyVersionStop;
-}> {
-  const requestedVersion =
-    ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
-  const result = await rawRequest(ctx, {
-    headers: legacyHeaders({}),
-    body: {
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: requestedVersion,
-        capabilities: {},
-        clientInfo: { ...CONFORMANCE_CLIENT_INFO },
-      },
-    },
-  });
-
-  const answeredVersion = jsonRpcResult(result)?.protocolVersion;
-  if (typeof answeredVersion !== "string") {
-    return { result, sessionId: result.headers["mcp-session-id"] };
-  }
-  const supported = isKnownProtocolVersion(answeredVersion);
-  return {
-    result,
-    sessionId: result.headers["mcp-session-id"],
-    ...(supported ? { negotiatedVersion: answeredVersion } : {}),
-    ...(answeredVersion !== requestedVersion
-      ? {
-          versionStop: {
-            requestedVersion,
-            answeredVersion,
-            message: supported
-              ? differentVersionStop(requestedVersion, answeredVersion)
-              : unsupportedVersionStop(answeredVersion),
-          },
-        }
-      : {}),
-  };
-}
-
-/** Why a raw legacy check stopped right after `initialize`. */
-export interface LegacyVersionStop {
-  /** The version the run uses, sent in `initialize`. */
-  requestedVersion: string;
-  /** The version the server answered with. */
-  answeredVersion: string;
-  /** The reason, in plain words, for the check's "could not run". */
-  message: string;
-}
-
-/**
- * `details` for a check that stopped on a {@link LegacyVersionStop}.
- *
- * When the server answered with a version MCPJam speaks, the run simply asked
- * for one the server does not support, which the spec lets it do. That is the
- * caller's choice of version, not a fault in the server, so the check is
- * marked as a setup gap: it costs no points and the run stays incomplete, like
- * a missing login. A version MCPJam does not speak is not something the caller
- * can pick around, so that stop keeps the plain "could not run".
- */
-export function versionStopDetails(
-  stop: LegacyVersionStop
-): Record<string, unknown> {
-  return {
-    requestedProtocolVersion: stop.requestedVersion,
-    negotiatedProtocolVersion: stop.answeredVersion,
-    ...(isKnownProtocolVersion(stop.answeredVersion)
-      ? needsSetupDetails("protocolVersion", stop.message)
-      : {}),
-  };
-}
-
-/** The server answered with a version MCPJam speaks, but not the run's. */
-function differentVersionStop(requested: string, answered: string): string {
-  return `The server does not support protocol version ${requested}, which this run uses: it answered initialize with ${answered}. This check sent nothing more and could not run. Run it on ${answered} instead.`;
-}
-
-/** Why a raw legacy check stopped after `initialize`, in plain words. */
-export function unsupportedVersionStop(version: string): string {
-  return `The server answered initialize with protocol version "${version}", which MCPJam does not support. A client should disconnect in that case, so this check sent nothing more and could not run.`;
 }
 
 /**

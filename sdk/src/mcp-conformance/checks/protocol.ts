@@ -12,15 +12,17 @@ import {
   notApplicableResult,
 } from "./helpers.js";
 import {
+  legacyInitialize,
+  versionStopDetails,
+  type LegacyVersionStop,
+} from "../legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   legacyHeaders,
-  legacyInitialize,
   modernHeaders,
   modernRequestBody,
   rawRequest,
-  versionStopDetails,
-  type LegacyVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 import { hasWireField } from "../raw-capture.js";

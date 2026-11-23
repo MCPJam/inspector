@@ -842,6 +842,11 @@ describe("mcp conformance unit checks", () => {
         );
       }
 
+      // The handshake ends with this notification, before the three probes.
+      if (body.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+
       postCount += 1;
       if (postCount === 1) {
         throw new Error("request boom");

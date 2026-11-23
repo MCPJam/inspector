@@ -14,16 +14,19 @@ import {
   passedResult,
 } from "./helpers.js";
 import {
+  legacyInitialize,
+  versionStopDetails,
+  type LegacyInitializedNotification,
+  type LegacyVersionStop,
+} from "../legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   legacyHeaders,
-  legacyInitialize,
   modernHeaders,
   modernRequestBody,
   rawHeadersProbe,
   rawRequest,
-  versionStopDetails,
-  type LegacyVersionStop,
   type RawHttpResult,
 } from "../raw-http.js";
 
@@ -156,8 +159,10 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
   negotiatedVersion?: string;
   /** Set when the server did not answer with the version the run uses. */
   versionStop?: LegacyVersionStop;
+  /** The `notifications/initialized` POST the handshake ended with. */
+  initialized?: LegacyInitializedNotification;
 }> {
-  const { result, sessionId, negotiatedVersion, versionStop } =
+  const { result, sessionId, negotiatedVersion, versionStop, initialized } =
     await legacyInitialize(ctx);
   return {
     ok: isOk(result),
@@ -165,6 +170,7 @@ async function initializeSession(ctx: RawHttpCheckContext): Promise<{
     sessionId,
     negotiatedVersion,
     versionStop,
+    initialized,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -666,18 +672,23 @@ export async function runTransportChecks(
       }
     }
     if (selectedCheckIds.has("notification-post-accepted")) {
-      const startedAt = Date.now();
-      try {
-        const response = await rawRequest(ctx, {
-          headers: legacyHeaders({
-            protocolVersion:
-              ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
-            sessionId,
-          }),
-          // `notifications/initialized` is the one notification every client
-          // sends, so "cannot accept" has no legitimate reading here.
-          body: { jsonrpc: "2.0", method: "notifications/initialized" },
-        });
+      // The notification under test is the one the handshake already sent.
+      // `notifications/initialized` is the one notification every client
+      // sends, so "cannot accept" has no legitimate reading here, and a second
+      // copy would be a notification no conforming client sends.
+      const initialized = session.initialized;
+      const response = initialized?.response;
+      if (response === undefined) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+            initialized?.error !== undefined
+              ? `Notification POST could not be delivered: ${initialized.error}`
+              : "Initialize did not succeed, so no initialized notification was sent",
+          ),
+        );
+      } else {
+        const durationMs = initialized?.durationMs ?? 0;
         const hasBody = response.bodyText !== "";
         results.push(
           // A body that could not be read to completion leaves the "no body"
@@ -693,12 +704,12 @@ export async function runTransportChecks(
             : response.status === 202 && !hasBody
             ? passedResult(
                 TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                Date.now() - startedAt,
+                durationMs,
                 { status: response.status },
               )
             : failedResult(
                 TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                Date.now() - startedAt,
+                durationMs,
                 response.status === 202
                   ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
                   : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
@@ -708,14 +719,6 @@ export async function runTransportChecks(
                   bodyPreview: response.bodyText.slice(0, 200),
                 },
               ),
-        );
-      } catch (error) {
-        ctx.config.signal?.throwIfAborted();
-        results.push(
-          couldNotRunResult(
-            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-            `Notification POST could not be delivered: ${errorMessage(error)}`,
-          ),
         );
       }
     }

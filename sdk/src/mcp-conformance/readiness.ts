@@ -28,11 +28,13 @@ import {
   type RawHttpCheckContext,
 } from "./types.js";
 import {
+  legacyInitialize,
+} from "./legacy-handshake.js";
+import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
   jsonRpcResult,
   legacyHeaders,
-  legacyInitialize,
   logRecords,
   rawHeadersProbe,
   mirroredToolCall,
