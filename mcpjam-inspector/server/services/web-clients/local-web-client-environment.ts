@@ -54,8 +54,9 @@ const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
 /**
- * How long a turn waits for another turn's browser on the same profile, as
- * it waits for a busy connector: compared runs and panes take turns.
+ * How long a caller that brings no deadline of its own waits for another
+ * turn's browser on the same profile: compared runs and panes take turns. A
+ * turn brings one, shared with its wait for a busy connector.
  */
 const PROFILE_WAIT_MS = 10 * 60_000;
 const PROFILE_POLL_MS = 1_000;
@@ -123,8 +124,9 @@ export function createLocalWebClientEnvironment(deps: {
       return { connectorId };
     },
 
-    async openBrowser({ sites, signal }) {
-      const deadline = Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
+    async openBrowser({ sites, signal, waitUntil }) {
+      const deadline =
+        waitUntil ?? Date.now() + (deps.profileWaitMs ?? PROFILE_WAIT_MS);
       for (;;) {
         // A stopped run launches nothing, even once the profile frees.
         signal?.throwIfAborted();

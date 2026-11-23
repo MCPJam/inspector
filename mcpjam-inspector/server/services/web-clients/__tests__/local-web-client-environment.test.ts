@@ -13,7 +13,10 @@ import {
   createLocalWebClientEnvironmentFactory,
   localWebClientProfileDir,
 } from "../local-web-client-environment";
+import { runWebClientTurn } from "../run-web-client-turn";
 import { mountWebClientRuntime } from "../runtime-mount";
+import { createInMemoryToolCallLedger } from "../tool-call-ledger";
+import { createInMemoryTurnWindowStore } from "../turn-windows";
 import { setWebClientEnvironment, webClientEnvironmentFor } from "../web-client-environment";
 
 afterEach(() => {
@@ -126,6 +129,64 @@ describe("a local web client environment", () => {
     await expect(second).rejects.toBe(stop.signal.reason);
     expect(launch).toHaveBeenCalledTimes(1);
   });
+
+  it("gives a turn one deadline for a busy connector and then a busy profile", async () => {
+    const launch = vi.fn(async () => ({
+      page: { route: async () => {}, on: () => {} } as never,
+      close: async () => {},
+    }));
+    // On its own, the wait for this busy profile would last 10 seconds.
+    const env = environment({
+      launch,
+      profileDir: "/profiles/one-deadline",
+      profileWaitMs: 10_000,
+      profilePollMs: 10,
+    });
+    const sites = ["https://chatgpt.com"];
+    const held = await env.openBrowser({
+      webAccountId: "local:chatgpt",
+      sites,
+    });
+    // Another run holds the connector for the first 100ms of the turn's second.
+    const windows = createInMemoryTurnWindowStore();
+    windows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    setTimeout(() => windows.close("other-turn"), 100);
+    const startedAt = Date.now();
+    const result = await runWebClientTurn({
+      runtimeId: "chatgpt-web",
+      projectId: "p",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: { requireToolApproval: false, answer: "deny" },
+      environment: {
+        ...env,
+        ensureConnector: async () => ({ connectorId: "conn-orders" }),
+      },
+      turnWindows: windows,
+      ledger: createInMemoryToolCallLedger(),
+      connectorWaitMs: 1_000,
+      connectorPollMs: 10,
+    });
+    const waited = Date.now() - startedAt;
+    expect(result).toMatchObject({
+      ok: false,
+      failure: {
+        kind: "turn_running",
+        message: "Another turn is using this machine's ChatGPT web browser.",
+      },
+    });
+    expect(waited).toBeGreaterThanOrEqual(1_000);
+    expect(waited).toBeLessThan(5_000);
+    expect(windows.active("conn-orders")).toBeUndefined();
+    expect(launch).toHaveBeenCalledTimes(1);
+    await held.close();
+  }, 30_000);
 
   it("closes a browser it couldn't drive before freeing its profile", async () => {
     const sites = ["https://chatgpt.com"];

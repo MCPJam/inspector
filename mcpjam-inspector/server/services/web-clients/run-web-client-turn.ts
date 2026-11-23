@@ -98,7 +98,10 @@ export type WebClientTurnInput = {
   pageModule?: RealUiPageModule;
   stepTimeoutMs?: number;
   replyTimeoutMs?: number;
-  /** How long the turn waits for a connector another turn is using. */
+  /**
+   * How long the turn waits, in all, for a connector and then a local
+   * browser profile another turn is using.
+   */
   connectorWaitMs?: number;
   connectorPollMs?: number;
 };
@@ -281,16 +284,21 @@ export async function runWebClientTurn(
         url: new URL(webConnectorPath(connectorId), env.publicBaseUrl).href,
       });
     }
+    // One deadline for both waits, so a busy local profile never adds its own
+    // wait to a busy connector's.
+    const waitUntil = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
     await openWindows(
       webTurnApprover(
         input.approval,
         input.toolPolicy && { ...input.toolPolicy, serverOf: (id) => serverOfConnector.get(id) },
       ),
+      waitUntil,
     );
     browser = await env.openBrowser({
       webAccountId: account.webAccountId,
       sites: module.sites.length ? module.sites : WEB_CLIENT_SITES[vendor],
       ...(input.signal ? { signal: input.signal } : {}),
+      waitUntil,
     });
     const page = await driveRealUiTurn({
       module,
@@ -356,8 +364,10 @@ export async function runWebClientTurn(
    * Taking them in one order, and never holding one while waiting, means two
    * turns can't each wait on the other.
    */
-  async function openWindows(approve: ReturnType<typeof webTurnApprover>) {
-    const deadline = Date.now() + (input.connectorWaitMs ?? CONNECTOR_WAIT_MS);
+  async function openWindows(
+    approve: ReturnType<typeof webTurnApprover>,
+    deadline: number,
+  ) {
     const connectorIds = [...serverOfConnector.keys()].sort();
     for (;;) {
       try {

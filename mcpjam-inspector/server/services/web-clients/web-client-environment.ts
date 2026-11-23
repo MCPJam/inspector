@@ -59,11 +59,14 @@ export interface WebClientEnvironment {
   /**
    * A browser on the account's profile, kept to `sites`. Closed by the turn.
    * A wait for a profile another turn has open ends when `signal` stops the run.
+   * `waitUntil` is the turn's one deadline for all its waits, so the wait
+   * for a profile gets only what the wait for a connector left of it.
    */
   openBrowser(args: {
     webAccountId: string;
     sites: readonly string[];
     signal?: AbortSignal;
+    waitUntil?: number;
   }): Promise<{ driver: PageDriver; close(): Promise<void> }>;
   /** Records how the turn ended on the account, after the browser closed. */
   onOutcome?(outcome: WebTurnOutcome): Promise<void>;
