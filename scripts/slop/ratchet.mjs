@@ -21,7 +21,7 @@
  * SLOP_WAIVER=true reports the same result and exits 0. CI sets it from the
  * `slop-waiver` label, which a CODEOWNER applies with a reason in the PR.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { RULES, countFile, isMeasuredFile } from "./rules.mjs";
@@ -50,18 +50,34 @@ function readPathList(file) {
  * What the change is compared against, and what it is:
  *   default:      base = merge-base with origin/main, change = the working
  *                 tree plus untracked files (CI and the Stop hook).
- *   --staged:     base = HEAD, change = what is staged (git pre-commit).
+ *   --staged:     base = stagedBase(), change = what is staged (git
+ *                 pre-commit).
  *   --head REF:   base = merge-base of REF with origin/main, change = REF
  *                 (git pre-push).
  * --base REF overrides the base in every mode.
  */
+/**
+ * The base for --staged: HEAD, except while concluding a merge. The commit
+ * about to be made then merges HEAD and MERGE_HEAD, so this returns that
+ * merge's merge-base with origin/main, the base CI compares it with. Merging
+ * main thus checks the branch's own change, not every file main changed
+ * since the branch point.
+ */
+export function stagedBase() {
+  const merging =
+    spawnSync("git", ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status ===
+    0;
+  if (!merging) return "HEAD";
+  return git(["merge-base", "origin/main", "HEAD", "MERGE_HEAD"]).trim();
+}
+
 export function resolveScope(argv) {
   const staged = argv.includes("--staged");
   const head = staged ? INDEX : (argValue(argv, "--head") ?? WORKTREE);
   const base =
     argValue(argv, "--base") ??
     (staged
-      ? "HEAD"
+      ? stagedBase()
       : git([
           "merge-base",
           head === WORKTREE ? "HEAD" : head,
