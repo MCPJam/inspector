@@ -427,20 +427,40 @@ async function sessionTerminationAdvice(
     );
   }
 
-  const { result, sessionId } = await legacyInitialize(ctx);
+  const { result, sessionId, negotiatedVersion, versionStop } =
+    await legacyInitialize(ctx);
   if (result.status < 200 || result.status >= 300 || !sessionId) {
     // No session to terminate — nothing to advise on.
     return undefined;
   }
-  const deleteResult = await rawRequest(ctx, {
+  // The version header carries the version the server answered, even one
+  // MCPJam does not speak: a server may refuse the one the run asked for, and
+  // a 400 to that would be MCPJam's mistake, not a termination problem.
+  const deleteRequest = rawRequest(ctx, {
     method: "DELETE",
     headers: legacyHeaders({
       protocolVersion:
-        ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION,
+        negotiatedVersion ??
+        versionStop?.answeredVersion ??
+        ctx.config.protocolVersion ??
+        DEFAULT_LEGACY_PROTOCOL_VERSION,
       sessionId,
     }),
     timeoutMs: Math.min(ctx.config.checkTimeout, 3_000),
   });
+  if (versionStop !== undefined) {
+    // The server did not answer with the run's version, so the run grades
+    // nothing on this session. The DELETE still goes out, because ending the
+    // session is how a Streamable HTTP client disconnects, but its answer is
+    // not advice about this run's version.
+    try {
+      await deleteRequest;
+    } catch {
+      // Closing is all this DELETE is for here: a failure is no advice either.
+    }
+    return undefined;
+  }
+  const deleteResult = await deleteRequest;
   // The spec names exactly two answers: terminating the session, and 405 to
   // decline termination (MAY). It names no success code, so any 2xx counts as
   // terminated; every other answer is one the spec never offers.

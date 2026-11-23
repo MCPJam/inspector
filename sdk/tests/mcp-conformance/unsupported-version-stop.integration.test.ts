@@ -144,3 +144,30 @@ describe("a server that answers initialize with an unsupported version", () => {
     }
   });
 });
+
+describe("a server that answers initialize with another version it supports", () => {
+  it("receives nothing after initialize but the DELETE, and no check blames it", async () => {
+    const seen: string[] = [];
+    // The run is pinned to 2025-11-25 and the server only speaks 2025-06-18.
+    const checks = await run(
+      await serveLegacy({ answeredVersion: "2025-06-18", seen })
+    );
+
+    expect([...seen].sort()).toEqual([
+      "DELETE",
+      "POST initialize",
+      "POST initialize",
+    ]);
+    for (const id of NEEDS_SESSION) {
+      const check = checks.find((entry) => entry.id === id);
+      expect([id, check?.status, check?.skipReason]).toEqual([
+        id,
+        "skipped",
+        "could-not-run",
+      ]);
+      expect(check?.error?.message).toContain(
+        "The server does not support protocol version 2025-11-25, which this run uses: it answered initialize with 2025-06-18."
+      );
+    }
+  });
+});
