@@ -138,6 +138,20 @@ describe("ConnectStep", () => {
     expect(props.onConnect).toHaveBeenCalledTimes(1);
   });
 
+  it("counts a server again once its removal fails", async () => {
+    const { props, view } = setup();
+    props.onRemove.mockRejectedValueOnce(new Error("offline"));
+    typeUrl(URL_VALUE);
+    act(() => vi.advanceTimersByTime(CONNECT_TYPING_PAUSE_MS));
+    view.rerender(
+      <ConnectStep {...props} servers={{ Acme: server("connected") }} />,
+    );
+    view.unmount();
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith(["Acme"]);
+    await act(async () => {});
+    expect(props.onAttemptChange).toHaveBeenLastCalledWith([]);
+  });
+
   it("abandons an unconfirmed attempt when the step closes", () => {
     const { props, view } = setup();
     typeUrl(URL_VALUE);

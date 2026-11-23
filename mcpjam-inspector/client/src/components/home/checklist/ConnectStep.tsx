@@ -6,6 +6,7 @@ import { cn } from "@mcpjam/design-system/cn";
 import { ErrorCard } from "@/components/ui/error-card";
 import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
 import { deriveServerName } from "@/components/onboarding/FirstRunOnboardingOverlay";
+import { reportCaught } from "@/lib/error-reporting";
 import { EXCALIDRAW_SERVER_CONFIG } from "@/lib/excalidraw-quick-connect";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import type { ServerFormData } from "@/shared/types.js";
@@ -90,8 +91,17 @@ export function ConnectStep({
   const attemptRef = useRef<Attempt | null>(null);
   const removing = useRef(new Set<string>());
   const timer = useRef<number | undefined>(undefined);
-  const latest = useRef({ onRemove, onAttemptChange, onTrack });
-  latest.current = { onRemove, onAttemptChange, onTrack };
+  const latest = useRef({ onRemove, onAttemptChange, onTrack, remove });
+  latest.current = { onRemove, onAttemptChange, onTrack, remove };
+  // A failed removal leaves the server in place, so it can count again.
+  function remove(name: string) {
+    removing.current.add(name);
+    void latest.current.onRemove(name).catch((error: unknown) => {
+      removing.current.delete(name);
+      report();
+      reportCaught(error, { source: "home_checklist_connect_remove" });
+    });
+  }
   const report = () => {
     const current = attemptRef.current?.name;
     const pending = [...removing.current].filter((name) => name !== current);
@@ -118,10 +128,7 @@ export function ConnectStep({
     () => () => {
       window.clearTimeout(timer.current);
       const current = attemptRef.current;
-      if (current?.created) {
-        removing.current.add(current.name);
-        void latest.current.onRemove(current.name);
-      }
+      if (current?.created) latest.current.remove(current.name);
       attemptRef.current = null;
       report();
     },
@@ -144,9 +151,7 @@ export function ConnectStep({
   }, [status, attempt, errorSlug]);
 
   const discard = (current: Attempt | null) => {
-    if (!current?.created) return;
-    removing.current.add(current.name);
-    void onRemove(current.name);
+    if (current?.created) remove(current.name);
   };
 
   const connect = (target: Attempt) => {
