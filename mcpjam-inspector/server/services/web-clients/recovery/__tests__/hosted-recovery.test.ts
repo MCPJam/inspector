@@ -34,7 +34,7 @@ function recordingService() {
   const commands: Array<Record<string, unknown>> = [];
   const answer = async (command: Record<string, unknown>) => {
     commands.push(command);
-    return command.action === "findWebToolCalls" ? [] : [];
+    return [];
   };
   const service: WebClientService = { read: answer, apply: answer };
   return { service, commands };
