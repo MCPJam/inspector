@@ -2,8 +2,8 @@ import type { PageDriver } from "./page-driver.js";
 import { RealUiError, cssString, needsSignIn, pageChanged, waitVisibleUnlessBlocked, type StepContext, type RealUiStep } from "./page-module.js";
 
 export const CHATGPT_CHALLENGE = 'iframe[src*="arkoselabs"], iframe[src*="challenges.cloudflare.com"]';
-export const CURRENT_COMPOSER = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
-export const CHATGPT_COMPOSER = `${CURRENT_COMPOSER}, #prompt-textarea`;
+/** The composer the live site showed a signed-in account. */
+export const CHATGPT_COMPOSER = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
 
 export const exactRole = (kind: string, name: string) => `role=${kind}[name="${cssString(name)}"s]`;
 export const waitForControl = (driver: PageDriver, selector: string, ctx: StepContext, what: string, step: RealUiStep) =>
