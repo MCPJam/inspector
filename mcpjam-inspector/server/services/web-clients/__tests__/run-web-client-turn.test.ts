@@ -19,6 +19,7 @@ import { createMemorySendJournal } from "../../../utils/harness/real-ui/drive-tu
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
 import { runHarnessTurn } from "../../../utils/harness/run-harness-turn";
+import { historyProvenanceContextFor, verifyAssistantText } from "../../../utils/history-provenance";
 import { logger } from "../../../utils/logger";
 import type { MCPJamHandlerOptions } from "../../../utils/mcpjam-stream-handler";
 import {
@@ -290,6 +291,27 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       wireCorroborated: true,
     });
     expect(persisted).toHaveLength(1);
+  });
+
+  it("signs the reply it streams, so it stays in context when another client takes the chat", async () => {
+    vi.stubEnv("VITE_MCPJAM_HOSTED_MODE", "true");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token-with-enough-length");
+    try {
+      await useProcessStores();
+      const result = await runHarnessTurn(
+        options({ sourceType: "direct", evalIterationId: undefined, chatSessionId: "chat-1" }),
+        "ui",
+      );
+      const chunks = (await result.response!.text())
+        .split("\n")
+        .filter((line) => line.startsWith("data: {"))
+        .map((line) => JSON.parse(line.slice("data: ".length)) as { type: string; providerMetadata?: { mcpjam?: { textSig?: string } } });
+      const signature = chunks.find((chunk) => chunk.type === "text-end")?.providerMetadata?.mcpjam?.textSig;
+      const chat = historyProvenanceContextFor("project-1", "chat-1")!;
+      expect(verifyAssistantText(chat, "echo said: echo: say hello", signature)).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("opens a new chat for every iteration", async () => {

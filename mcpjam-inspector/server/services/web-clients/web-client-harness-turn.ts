@@ -15,6 +15,7 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   type ModelMessage,
+  type UIMessageChunk,
 } from "ai";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import { approvalAnswerOf } from "@/shared/tool-approval";
@@ -35,6 +36,10 @@ import type { HarnessPolicyBlockRecord } from "../../utils/harness/harness-proxy
 import { harnessToolApprovalRefusalReason } from "../../utils/harness/harness-tool-approval.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 import type { RealUiFailure } from "../../utils/harness/real-ui/page-module.js";
+import {
+  createUiChunkProvenanceSigner,
+  historyProvenanceContextFor,
+} from "../../utils/history-provenance.js";
 import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
@@ -245,6 +250,14 @@ export async function runWebClientHarnessTurn(
   };
 
   if (streamSink === "none") return run();
+  // The reply is signed as this server's own as it streams (MJ-009), as every
+  // engine's is, so it stays in model context when the conversation goes on
+  // with another client. A no-op where nothing can be signed.
+  const provenance = historyProvenanceContextFor(
+    options.projectId,
+    options.chatSessionId,
+  );
+  const signChunk = provenance && createUiChunkProvenanceSigner(provenance);
   let settled: ChatEngineLoopResult = { messageHistory: messages, aborted: false };
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
@@ -269,6 +282,16 @@ export async function runWebClientHarnessTurn(
       return settled.turnTrace;
     },
     aborted: false,
-    response: createUIMessageStreamResponse({ stream }),
+    response: createUIMessageStreamResponse({
+      stream: signChunk
+        ? stream.pipeThrough(
+            new TransformStream<UIMessageChunk, UIMessageChunk>({
+              transform(chunk, controller) {
+                for (const out of signChunk(chunk)) controller.enqueue(out);
+              },
+            }),
+          )
+        : stream,
+    }),
   };
 }
