@@ -75,6 +75,8 @@ type FixtureRun = {
   /** What the run did, in order, across restarts. */
   log: string[];
   result?: string;
+  /** The model's reply to the step, as the runtime read it. */
+  reply?: string;
   step?: PendingStep;
   restoredProfileVersion: number;
   browser: AccountBrowser;
@@ -102,6 +104,8 @@ function createWorld(signInMethod?: SignInMethod) {
     ledger: createInMemoryToolCallLedger(),
     /** One entry per tool the upstream server actually ran. */
     upstream: [] as string[],
+    /** The vendor's saved conversations: the model's reply, by run. */
+    conversation: new Map<string, string>(),
     notices,
     runs: new Map<string, FixtureRun>(),
     inFlight: [] as Promise<void>[],
@@ -192,6 +196,8 @@ function vendorTurn(
       upstreamStatus: 200,
       resultHash: hashPayload({ ok: true }),
     });
+    // The model has the tool's result and replies in its conversation.
+    world.conversation.set(run.runId, `Created the note ${run.runId}.`);
   }
   return behavior === "reply" ? undefined : { kind: "stream_dropped" };
 }
@@ -215,7 +221,9 @@ async function execute(
       });
       run.log.push(`reconcile: ${verdict.status}`);
       if (verdict.status === "reconciled") {
-        run.result = "completed from the ledger";
+        // The model already replied, so the reply is read, not asked for again.
+        run.reply = world.conversation.get(run.runId);
+        run.result = "completed from the vendor's conversation";
         return;
       }
       if (verdict.status === "ambiguous_execution") {
@@ -716,7 +724,7 @@ describe("web account recovery", () => {
 });
 
 describe("a tool call runs once across recovery", () => {
-  it("takes a lost result from the ledger instead of running the tool again", async () => {
+  it("reads a lost reply from the vendor's conversation instead of running the tool again", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);
     await startRun(world, coordinator, "run-1", ["reply_lost"]);
@@ -728,7 +736,10 @@ describe("a tool call runs once across recovery", () => {
       "reconnect_browser",
       "reconcile: reconciled",
     ]);
-    expect(runOf(world, "run-1").result).toBe("completed from the ledger");
+    expect(runOf(world, "run-1").result).toBe(
+      "completed from the vendor's conversation",
+    );
+    expect(runOf(world, "run-1").reply).toBe("Created the note run-1.");
     expect(world.upstream).toEqual(["run-1"]);
     // A restarted process reads the same record.
     const verdict = await startProcess(world).reconcileBeforeResend({
