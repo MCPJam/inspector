@@ -1,0 +1,159 @@
+---
+title: "Run tests in CI/CD"
+description: "Copy a GitHub Actions workflow for your MCP server, MCP app, or eval suite."
+icon: "circle-check"
+---
+
+<CardGroup cols={2}>
+  <Card title="Check server health" icon="heart-pulse" href="#check-server-health">
+    Connect to your deployed server and list what it exposes.
+  </Card>
+  <Card title="Check protocol conformance" icon="list-checks" href="#check-protocol-conformance">
+    Check your deployed server against the MCP spec.
+  </Card>
+  <Card title="Check MCP Apps wiring" icon="app-window" href="#check-mcp-apps-wiring">
+    Validate tool metadata and `ui://` resources.
+  </Card>
+  <Card title="Test pull request code" icon="git-pull-request" href="#test-pull-request-code">
+    Run the MCPJam SDK tests checked into your repository.
+  </Card>
+  <Card title="Run a hosted eval suite" icon="flask-conical" href="#run-a-hosted-eval-suite">
+    Grade model responses to prompts in a saved MCPJam suite.
+  </Card>
+</CardGroup>
+
+## Before you start
+
+- Enable GitHub Actions for your repository.
+
+For the server health, protocol, and MCP Apps checks, deploy an MCP server with an HTTPS endpoint that accepts unauthenticated requests.
+
+## Check server health
+
+Save this as `.github/workflows/mcpjam-health.yml`. Replace `https://mcp.example.com/mcp` with your server’s HTTPS endpoint.
+
+```yaml .github/workflows/mcpjam-health.yml
+name: MCPJam health check
+on: pull_request
+permissions: {}
+
+jobs:
+  mcp-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check the MCP server
+        env:
+          MCP_SERVER_URL: https://mcp.example.com/mcp
+        run: npx -y @mcpjam/cli@latest server doctor --url "$MCP_SERVER_URL" --format json
+```
+
+## Check protocol conformance
+
+Save this as `.github/workflows/mcpjam-protocol.yml`. Replace `https://mcp.example.com/mcp` with your server’s HTTPS endpoint.
+
+```yaml .github/workflows/mcpjam-protocol.yml
+name: MCPJam protocol conformance
+on: pull_request
+permissions: {}
+
+jobs:
+  mcp-protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check protocol conformance
+        env:
+          MCP_SERVER_URL: https://mcp.example.com/mcp
+        run: npx -y @mcpjam/cli@latest protocol conformance --url "$MCP_SERVER_URL" --format human
+```
+
+## Check MCP Apps wiring
+
+Save this as `.github/workflows/mcpjam-apps.yml`. Replace `https://mcp.example.com/mcp` with your MCP app server’s HTTPS endpoint.
+
+```yaml .github/workflows/mcpjam-apps.yml
+name: MCPJam Apps conformance
+on: pull_request
+permissions: {}
+
+jobs:
+  mcp-apps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check MCP Apps wiring
+        env:
+          MCP_SERVER_URL: https://mcp.example.com/mcp
+        run: npx -y @mcpjam/cli@latest apps conformance --url "$MCP_SERVER_URL" --format human
+```
+
+## Test pull request code
+
+1. Add a test that starts the server from your repository and [calls a tool with the MCPJam SDK](/sdk/quickstart#step-2-execute-tools-directly).
+2. Set `npm test` to run the tests once and exit.
+3. Commit your `package-lock.json`.
+4. Save this as `.github/workflows/mcpjam-tests.yml`.
+
+```yaml .github/workflows/mcpjam-tests.yml
+name: MCPJam SDK tests
+on: pull_request
+permissions:
+  contents: read
+
+jobs:
+  mcp-sdk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+```
+
+## Run a hosted eval suite
+
+1. Sign in to [MCPJam](https://app.mcpjam.com).
+2. [Create and run an eval suite](/evaluate/run-your-first-eval).
+3. Open [API Keys](https://app.mcpjam.com/settings/api-keys) in MCPJam and click **Create API key**. Name the key, select the organization that owns your suite, and create and copy the key.
+4. In your GitHub repository, open **Settings**, then **Secrets and variables** → **Actions**. Click **New repository secret** and save the key as `MCPJAM_API_KEY`.
+5. Save this as `.github/workflows/mcpjam-evals.yml`. Replace the project and suite names with yours.
+
+```yaml .github/workflows/mcpjam-evals.yml
+name: MCPJam hosted evals
+on: pull_request
+permissions:
+  contents: read
+
+jobs:
+  mcp-evals:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: MCPJam/inspector/actions/evals@evals-v1
+        with:
+          api-key: ${{ secrets.MCPJAM_API_KEY }}
+          project: "My project"
+          suite: "My eval suite"
+```
+
+## Run the workflow
+
+1. Commit the workflow and open a pull request from a branch in the repository.
+2. On the pull request, open **Checks** and select the job for the workflow you added.
+3. Open the job log to read the test results. For the health check, look for `"status": "ready"`. For hosted evals, open the workflow run’s **Summary** to review failed cases.
+
+## Good to know
+
+- For a server that requires credentials, follow the [CLI authentication examples](/cli/ci#authentication).
+- To test OAuth flows or save JUnit reports, use the [CLI CI/CD examples](/cli/ci).
+- To set an eval pass threshold, follow [Run evals in CI](/evaluate/run-evals-in-ci#choose-how-to-run).
