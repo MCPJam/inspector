@@ -47,7 +47,12 @@ import {
 } from "./environments/resolve.js";
 import { getServiceCredential } from "./service-credential.js";
 import { startJobBearer, type JobBearer } from "./scheduled-eval-job-bearer.js";
-import { bearerNow, followBearer, type RunBearer } from "../utils/run-bearer.js";
+import {
+  BEARER_REFUSED_PREFIX,
+  bearerNow,
+  followBearer,
+  type RunBearer,
+} from "../utils/run-bearer.js";
 import { serverDrain } from "./lifecycle/drain.js";
 
 const POLL_INTERVAL_MS = 15_000;
@@ -194,7 +199,7 @@ export function classifyFailure(error: unknown): string {
   if (/delegated token exchange failed \(40[13]\)/i.test(message)) {
     return "auth";
   }
-  if (message.startsWith("token_renewal_failed: ")) return message.slice(0, 160);
+  if (message.startsWith(BEARER_REFUSED_PREFIX)) return message.slice(0, 160);
   return `run_create_failed: ${message.slice(0, 160)}`;
 }
 

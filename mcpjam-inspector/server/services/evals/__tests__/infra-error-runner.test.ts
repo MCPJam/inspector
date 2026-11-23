@@ -106,8 +106,12 @@ async function runSuite(
   budgets = defaultEvalExecutionBudgets(),
   provider = "openai",
   convexAuthToken: RunBearer = "token",
-  /** Setup may throw: return the error, and list the rows as the run's details. */
-  setupMayFail = false,
+  /**
+   * The run's details list these rows, as the backend precreates them, and a
+   * run that throws returns the error instead of rethrowing it.
+   */
+  precreatedRows = false,
+  extraOptions: Record<string, unknown> = {},
 ) {
   const rows = Array.from({ length: runs }, (_, index) => ({
     _id: `iter-${index + 1}`,
@@ -132,7 +136,7 @@ async function runSuite(
   };
   const convexClient = {
     query: vi.fn(async (name: string) =>
-      setupMayFail && name === "testSuites:getTestSuiteRunDetails"
+      precreatedRows && name === "testSuites:getTestSuiteRunDetails"
         ? { iterations: rows }
         : { status: "running" },
     ),
@@ -179,8 +183,9 @@ async function runSuite(
     convexAuthToken,
     mcpClientManager: manager,
     executionBudgets: budgets,
+    ...extraOptions,
   } as any);
-  if (!setupMayFail) {
+  if (!precreatedRows) {
     await run;
     return { rows, recorder, setupError: undefined };
   }
@@ -611,6 +616,36 @@ describe("a scheduled run whose job token the backend stops renewing", () => {
     }
     expect(recorder.finalize).toHaveBeenCalledWith(
       expect.objectContaining({ status: "failed" }),
+    );
+  });
+
+  it("refused as a case starts: its pending rows end setup_failed, not pending", async () => {
+    const { bearer, refuse } = refusableBearer();
+    refuse();
+    // The local-harness venue reads the token before an iteration claims its
+    // row, so the refusal ends the case, not one iteration.
+    const { rows, recorder, setupError } = await runSuite(
+      2,
+      "gpt-5-mini",
+      undefined,
+      undefined,
+      bearer,
+      true,
+      {
+        harnessRuntimeVenue: "local",
+        orgModelConfigTarget: { projectId: "project-1" },
+      },
+    );
+    expect(setupError).toBeUndefined();
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        status: "setup_failed",
+        passed: false,
+        error: REFUSAL,
+      });
+    }
+    expect(recorder.finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "completed" }),
     );
   });
 });

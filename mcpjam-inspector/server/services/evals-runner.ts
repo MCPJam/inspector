@@ -311,6 +311,7 @@ import {
   bearerForCleanup,
   bearerNow,
   bearerTurnAuthorization,
+  isBearerRefusal,
   type RunBearer,
 } from "../utils/run-bearer.js";
 import type { RunAssistantTurnAuthContext } from "../utils/assistant-turn.js";
@@ -2031,8 +2032,9 @@ export function describeModelRefusalForIteration(
 }
 
 /**
- * Record a case's model refusal on its pre-created rows. The case never
- * reached a model, so each row finalizes `setup_failed` (the verdict is
+ * Record a case's refusal on its pre-created rows: a refused model selection,
+ * an unreadable client profile, or a job token the backend stopped renewing.
+ * Those rows never ran, so each finalizes `setup_failed` (the verdict is
  * withheld, never a server failure) with the refusal as its error. Only the
  * refused case's PENDING rows are touched; a row another worker already
  * claimed is left alone.
@@ -2042,7 +2044,7 @@ async function persistCaseRefusal(args: {
   convexClient: ConvexHttpClient;
   recorder: SuiteRunRecorder | null;
   test: EvalTestCase;
-  refusal: ModelResolutionRefusalError | InvalidClientProfileError;
+  refusal: Error;
   runStartedAt: number;
 }): Promise<void> {
   if (!args.test.testCaseId) return;
@@ -4645,6 +4647,11 @@ export const runEvalSuiteWithAiSdk = async ({
             code: result.reason.code,
             message: result.reason.message,
           });
+        } else if (isBearerRefusal(result.reason)) {
+          // The backend ending the job (owner gone, lease lost), not a fault.
+          logger.warn("[evals] Test case stopped by a refused job token:", {
+            message: result.reason.message,
+          });
         } else {
           logger.error("[evals] Test case failed:", result.reason);
         }
@@ -4652,14 +4659,17 @@ export const runEvalSuiteWithAiSdk = async ({
         summary.total += 1;
         summary.failed += 1;
         // A refused model selection or an unreadable client profile never
-        // started an iteration, so without this its pre-created rows would say
-        // nothing about why: the reason goes on each of that case's pending rows.
+        // started an iteration, and a refused job token stops the case's loop
+        // with its later rows unstarted. Without this, those pre-created rows
+        // stay `pending` and say nothing about why: the reason goes on each of
+        // that case's pending rows.
         const refusedTest = tests[resultIndex];
         if (
           runId !== null &&
           refusedTest &&
           (result.reason instanceof ModelResolutionRefusalError ||
-            result.reason instanceof InvalidClientProfileError)
+            result.reason instanceof InvalidClientProfileError ||
+            isBearerRefusal(result.reason))
         ) {
           try {
             await persistCaseRefusal({

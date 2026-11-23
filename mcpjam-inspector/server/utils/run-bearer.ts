@@ -21,6 +21,15 @@ export interface RenewingBearer {
 /** The Convex bearer an eval run calls the backend with. */
 export type RunBearer = string | RenewingBearer;
 
+/** How a renewing bearer's next use fails once the backend refused to renew it. */
+export const BEARER_REFUSED_PREFIX = "token_renewal_failed: ";
+
+export function isBearerRefusal(error: unknown): error is Error {
+  return (
+    error instanceof Error && error.message.startsWith(BEARER_REFUSED_PREFIX)
+  );
+}
+
 /** The token to send now. */
 export function bearerNow(bearer: RunBearer): string {
   return typeof bearer === "string" ? bearer : bearer.current();

@@ -1,5 +1,8 @@
 import { logger } from "../utils/logger.js";
-import type { RenewingBearer } from "../utils/run-bearer.js";
+import {
+  BEARER_REFUSED_PREFIX,
+  type RenewingBearer,
+} from "../utils/run-bearer.js";
 
 /** Answers that end renewal: the backend refused this lease or this owner. */
 const REFUSED_STATUSES = new Set([400, 403, 404, 409]);
@@ -116,7 +119,7 @@ export function startJobBearer(options: {
   schedule(halfLife());
   return {
     current() {
-      if (refused) throw new Error(`token_renewal_failed: ${refused}`);
+      if (refused) throw new Error(`${BEARER_REFUSED_PREFIX}${refused}`);
       return token;
     },
     last: () => token,
