@@ -8,6 +8,7 @@ import {
   claimsToolSelectionWithoutExpectations,
 } from "./score-rows.js";
 import { HOSTED_PLATFORM_GATE_SCORER_IDS } from "./platform-gate-rows.js";
+import { PINNED_TURN_PROMPT_PREFIX } from "./pinned-turn.js";
 import { evaluateToolCalls, resolveMatchOptions } from "@mcpjam/sdk/matchers";
 import {
   buildIterationTranscript,
@@ -298,6 +299,31 @@ function hostedToolScorersDeclared(
   return true;
 }
 
+/**
+ * Why the flattened calls can't stand in for the runner's per-turn grading of
+ * a case that claims something about its calls without expecting any.
+ * `evaluateMultiTurnResults` grades each turn on its own (the extras cap is
+ * per turn) and never grades a pinned turn's call; the evidence page carries
+ * the calls without turn boundaries. Every turn opens with one user message,
+ * a pinned one with the pinned prompt, so the frozen transcript shows when
+ * the two could disagree.
+ */
+function frozenTurnsUngradable(row: EvidenceRow): string | undefined {
+  const prompts = (row.evidence?.messages ?? []).filter(
+    (message) => message.role === "user",
+  );
+  if (prompts.length > 1)
+    return "Frozen tool calls have no turn boundaries; the runner grades this case per turn";
+  const pinned = prompts.some(
+    (message) =>
+      typeof message.content === "string" &&
+      message.content.startsWith(PINNED_TURN_PROMPT_PREFIX),
+  );
+  return pinned
+    ? "The runner does not grade a pinned turn's call, and frozen tool calls can't tell it apart"
+    : undefined;
+}
+
 /** One matcher-backed evaluator's difference, stored result against draft. */
 function toolCallDifference(
   row: EvidenceRow,
@@ -370,7 +396,9 @@ function toolCallDifference(
  * carries the frozen expectations and the actual calls flattened across turns,
  * with no turn boundaries, so the extras cap (`maxExtraToolCalls`) applies to
  * the whole run here where the runner applies it per turn. On a multi-turn
- * case with a cap the two can disagree about selection.
+ * case with a cap the two can disagree about selection. A case graded on
+ * selection alone is reported as not comparable there instead
+ * (`frozenTurnsUngradable`).
  */
 function hostedToolCallDifferences(
   row: EvidenceRow,
@@ -402,6 +430,19 @@ function hostedToolCallDifferences(
     );
   }
   const expected = row.expectedToolCalls ?? [];
+  // A negative or extras-capped case with no expected call is graded on
+  // selection alone, where turn boundaries and pinned calls decide it.
+  const turnsUngradable =
+    row.isNegativeTest === true || expected.length === 0
+      ? frozenTurnsUngradable(row)
+      : undefined;
+  if (turnsUngradable) {
+    return [
+      toolCallDifference(row, context, HOSTED_TOOL_MATCH_SCORER_ID, {
+        unavailable: turnsUngradable,
+      }),
+    ];
+  }
   const result = evaluateToolCalls(expected, row.actualToolCalls ?? [], {
     ...matchOptions,
     isNegativeTest: row.isNegativeTest,

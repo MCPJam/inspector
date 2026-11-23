@@ -1,6 +1,7 @@
 import { hostedPredicateScoreDefinition } from "../score-definitions";
 import { hostedPlatformGateDefinitions } from "../platform-gate-rows";
-import { it, expect, vi } from "vitest";
+import { buildHostedScoreContract } from "../score-rows";
+import { describe, it, expect, vi } from "vitest";
 import { backtestIteration, runAssertionBacktest } from "../assertion-backtest";
 import {
   predicateScoreDefinition,
@@ -597,4 +598,98 @@ it("settles the hosted tool scorers from half the evidence when it can", () => {
     ["toolCalls:arguments", false],
     ["toolCalls:match", false],
   ]);
+});
+
+describe("selection-only tool grading across turns", () => {
+  const call = { toolName: "show_map", arguments: {} };
+  // What the runner stored: it graded the case per turn and passed it.
+  const storedPass = (options: {
+    isNegativeTest?: boolean;
+    matchOptions: Record<string, unknown>;
+  }) => {
+    const contract = buildHostedScoreContract({
+      evaluation: {
+        passed: true,
+        expectedToolCalls: [],
+        missing: [],
+        unexpected: [],
+        argumentMismatches: [],
+      },
+      matchOptions: options.matchOptions,
+      ...(options.isNegativeTest ? { isNegativeTest: true } : {}),
+    });
+    return {
+      evaluationConfig: contract.evaluationConfig,
+      results: contract.scores,
+    };
+  };
+  const negativeOptions = {
+    toolCallOrder: "ignore",
+    maxExtraToolCalls: null,
+    argumentMatching: "partial",
+  } as const;
+  const match = (differences: ReturnType<typeof backtestIteration>) =>
+    differences.find((item) => item.evaluatorId === "toolCalls:match");
+
+  it("does not grade a negative case's pinned-turn call", () => {
+    const messages = [
+      { role: "user", content: 'Pinned tool call: show_map on "Weather"' },
+      { role: "assistant", content: "Pinned tool call show_map executed" },
+    ];
+    const differences = backtestIteration(
+      {
+        ...row,
+        expectedToolCalls: [],
+        isNegativeTest: true,
+        // The pinned call, which `evaluateMultiTurnResults` never grades.
+        actualToolCalls: [call],
+        evidence: { ...row.evidence, messages },
+        ...storedPass({ isNegativeTest: true, matchOptions: negativeOptions }),
+      },
+      {
+        assertions: { mode: "replace", list: [] },
+        matchOptions: negativeOptions,
+      },
+    );
+    expect(match(differences)).toMatchObject({ comparable: false });
+    expect(match(differences)).not.toHaveProperty("flipped");
+  });
+
+  it("does not apply a per-turn extras cap to every turn's calls at once", () => {
+    const capped = { ...negativeOptions, maxExtraToolCalls: 1 };
+    const messages = [
+      { role: "user", content: "Show the map" },
+      { role: "assistant", content: "Here it is" },
+      { role: "user", content: "Again" },
+      { role: "assistant", content: "Here it is again" },
+    ];
+    const multiTurn = {
+      ...row,
+      expectedToolCalls: [],
+      isNegativeTest: false,
+      // One call per turn: within the cap of one on each.
+      actualToolCalls: [call, call],
+      evidence: { ...row.evidence, messages },
+      ...storedPass({ matchOptions: capped }),
+    };
+    const draft = {
+      assertions: { mode: "replace" as const, list: [] },
+      matchOptions: capped,
+    };
+    expect(match(backtestIteration(multiTurn, draft))).toMatchObject({
+      comparable: false,
+    });
+    // One turn is graded as before: two calls exceed its cap of one.
+    expect(
+      match(
+        backtestIteration(
+          {
+            ...multiTurn,
+            evidence: { ...row.evidence, messages: messages.slice(0, 2) },
+          },
+          draft,
+        ),
+      ),
+    ).toMatchObject({ comparable: true, flipped: true });
+  });
 });
