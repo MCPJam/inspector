@@ -215,7 +215,9 @@ describe("a local web client environment", () => {
     expect(localWebClientProfileDir("claude")).toBe(join("/home/someone/web-profiles", "claude-profile"));
     // A commit from this checkout could carry the session, so a turn stops
     // before it opens a browser there.
-    const inside = join(REPOSITORY_ROOT, "mcpjam-inspector", ".web-profiles");
+    const root = REPOSITORY_ROOT;
+    if (root === undefined) throw new Error("The package didn't resolve its own manifest.");
+    const inside = join(root, "mcpjam-inspector", ".web-profiles");
     vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", inside);
     expect(() => localWebClientProfileDir("claude")).toThrow(
       "The Claude web browser profile is inside this Inspector's repository",
