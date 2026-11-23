@@ -1434,6 +1434,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Real ChatGPT advertises an `experimental.openai/visibility` flag on top
@@ -1663,6 +1664,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // Same client as ChatGPT on the web.
@@ -1790,6 +1792,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // The Codex connector's handshake: form elicitation, the OpenAI form
@@ -1929,6 +1932,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "openai/gpt-6-luna",
         temperature: 0.7,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       const theme = opts?.theme ?? DEFAULT_SEED_THEME;
       // The Codex connector's handshake, as on the chatgpt-work template.
@@ -2932,6 +2936,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         // `_meta.ui.visibility: ["app"]` tools to its model and calls them.
         // Filtering them here would hide tools the CLI exposes.
         respectToolVisibility: false,
+        // The Cursor CLI discovers tools itself when running as a harness.
+        progressiveToolDiscovery: true,
         // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
         // of MCPJam's emulated engine. It executes inside an attached personal
         // computer, so seed one too — the backend enforces `harness ⇒ computer`
@@ -2951,10 +2957,6 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // the SDK default's UI extension stays out. Kept in lockstep with the
       // backend template.
       base.clientCapabilities = { elicitation: { form: {} } };
-      // The real Cursor CLI owns native tool discovery from the MCP servers
-      // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
-      // off — `search_mcp_tools` must never look like a Cursor built-in.
-      base.progressiveToolDiscovery = false;
       // CLI client: no widget rendering, so `hostContext` stays empty and the
       // host-side app advertise is explicitly zeroed. `{}` is "advertise
       // nothing" (resolveEffectiveHostCapabilities treats it distinctly from
@@ -3683,6 +3685,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         modelId: "anthropic/claude-haiku-5.5",
         temperature: 1.0,
         requireToolApproval: false,
+        progressiveToolDiscovery: true,
       });
       // Its connector sends Cursor CLI's handshake: `Cursor` 1.0.0 with form
       // elicitation and the MCP UI extension. It renders widgets.
