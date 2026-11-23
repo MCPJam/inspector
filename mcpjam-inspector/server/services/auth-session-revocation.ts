@@ -24,6 +24,17 @@ export type SessionRevocationResult =
 
 export const SESSION_REVOCATION_TIMEOUT_MS = 3_000;
 
+/**
+ * Convex's custom-JWT verifier also answers 401 `InvalidAuthHeader` when it
+ * cannot get the issuer's signing keys: the JWKS fetch failed, the key server
+ * answered non-200, or its body or Content-Type was unusable. The code is the
+ * one a bad token gets, so only these messages (convex-backend
+ * `crates/authentication`, `fetch_jwks` and its caller) mark an outage the
+ * same token can outlast.
+ */
+const SIGNING_KEY_LOOKUP_FAILURE =
+  /Could not fetch JWKS|Invalid JWKS response body|when fetching JWKS/;
+
 export interface SessionRevocationDeps {
   convexUrl?: string;
   /** Calls the mutation as the bearer of `token`. Injectable for tests. */
@@ -98,7 +109,11 @@ export async function revokeAuthKitSession(
     // Convex answers 401 when it refuses the bearer itself (expired, malformed,
     // or from no configured issuer) before running the mutation, and it gives
     // the same token the same answer on every retry.
-    if (error instanceof ConvexHttpStatusError && error.convexStatus === 401) {
+    if (
+      error instanceof ConvexHttpStatusError &&
+      error.convexStatus === 401 &&
+      !SIGNING_KEY_LOOKUP_FAILURE.test(error.message)
+    ) {
       return { revoked: false, reason: "token_refused" };
     }
     return { revoked: false, reason: "failed" };

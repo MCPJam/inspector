@@ -167,6 +167,44 @@ describe("revokeSessionWithAcknowledgment", () => {
     );
   });
 
+  it("keeps retrying while Convex cannot fetch the issuer's signing keys", async () => {
+    const keyServerDown = new Response(
+      JSON.stringify({
+        code: "InvalidAuthHeader",
+        message:
+          "Could not fetch JWKS from URL 'https://api.workos.com/sso/jwks/client_1': HTTP 503 Service Unavailable. Check that the URL is correct and accessible.",
+      }),
+      { status: 401 },
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(keyServerDown)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "success", value: { revoked: true } }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+        retryDelaysMs: [10],
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "failed", status: "pending" });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+    expect(loggerMock.info).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ event: "auth.session.revoke_retry_succeeded" }),
+    );
+  });
+
   it("refuses the verified session in this process before the backend answers", async () => {
     let answer!: (value: unknown) => void;
     const revoke = vi.fn(() => new Promise((resolve) => (answer = resolve)));
