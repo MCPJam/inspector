@@ -264,20 +264,13 @@ export interface DriveHostedEvalTurnParams {
   onHarnessPolicyBlocks?: RunAssistantTurnOptions["onHarnessPolicyBlocks"];
   onBoxSkillsWritten?: RunAssistantTurnOptions["onBoxSkillsWritten"];
   /**
-   * The run's PINNED skills, delivered to the harness verbatim.
-   *
-   * Present (even empty) ⇒ the harness turn delivers exactly these, which is
-   * what keeps a frozen run frozen. An empty set is how
-   * `skillsOverride: "exclude"` reaches the harness — the A/B arm has to be
-   * deliberately skill-free, not accidentally so.
-   *
-   * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
-   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks pinned
-   * above environment, and only the top rank promises that nothing live is
-   * consulted; `runtimeSkillsOverride` is for a turn whose environment
-   * re-resolves each time, which is the opposite of what a pinned run wants.
+   * The iteration's skill plan, which a harness turn carries out
+   * (`iterationTurnSkills`). A run's frozen skills reach the box through it and
+   * nothing live is consulted, so a frozen run stays frozen. An empty frozen
+   * set is how `skillsOverride: "exclude"` reaches the harness: the A/B arm has
+   * to be deliberately skill-free, not accidentally so.
    */
-  pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
+  skillPlan?: RunAssistantTurnOptions["skillPlan"];
   /**
    * MCPJam's SERVER-EXECUTED built-ins for the harness path.
    *
@@ -504,6 +497,35 @@ export function failedLayerForEngineError(
   event: { phase?: "setup" | "stream" } | undefined,
 ): "model" | "setup" {
   return event?.phase === "setup" ? "setup" : "model";
+}
+
+/**
+ * Whether a failed turn's log line must capture. `logger.error` with no error
+ * object always captures, untagged, so it is skipped only when the engine's
+ * reporter already recorded this failure:
+ * - it sent it to Sentry (`reportedCaptured`);
+ * - it classified it (`reportedOrigin` set, not `ambiguous`) and declined it
+ *   as not ours (INSPECTOR-HONO-70), or found it already handled;
+ * - an empty step: the emitter decided ownership itself
+ *   (`isMcpjamOwnedEmptyStep`) and reports the provider-owned ones as
+ *   `ambiguous` on purpose.
+ * Anything else — `ambiguous`, no verdict, no engine error — has no other
+ * Sentry record. The harness reports `reportedCaptured` only: it classifies
+ * from the message alone, so a decline there is not a verdict.
+ */
+export function failedTurnNeedsCapture(
+  event:
+    | Pick<
+        MCPJamEngineErrorEvent,
+        "code" | "reportedCaptured" | "reportedOrigin"
+      >
+    | undefined,
+): boolean {
+  if (event?.reportedCaptured) return false;
+  if (event?.code === "provider_empty_response") return false;
+  return (
+    event?.reportedOrigin === undefined || event.reportedOrigin === "ambiguous"
+  );
 }
 
 export async function driveHostedEvalTurn(
@@ -880,13 +902,10 @@ export async function driveHostedEvalTurn(
             ...(params.onBoxSkillsWritten
               ? { onBoxSkillsWritten: params.onBoxSkillsWritten }
               : {}),
-            // Present-but-empty is meaningful (the "without skills" arm), so
-            // this checks for undefined rather than truthiness. Absent would
-            // leave the box with whatever skills it already holds, which is
-            // what unfreezes a frozen run.
-            ...(params.pinnedHarnessSkills !== undefined
-              ? { pinnedHarnessSkills: params.pinnedHarnessSkills }
-              : {}),
+            // The plan states what the box gets, an empty frozen set included
+            // (the "without skills" arm), and what a turn with no source
+            // leaves alone.
+            ...(params.skillPlan ? { skillPlan: params.skillPlan } : {}),
             // The harness reads built-ins ONLY off this field. Omitting it
             // would hand the runtime a turn with no web_search and no way to
             // tell that anything was missing.
@@ -1112,14 +1131,10 @@ export async function driveHostedEvalTurn(
           iterationErrorDetails: lastEngineError.rawText,
         }
       : { iterationError: fallbackError };
-    // `logger.error` with no error object always captures. An empty step was
-    // already reported once by the engine, which decided whether it is ours
-    // (`isMcpjamOwnedEmptyStep`); capturing it again here, untagged, would
-    // page on the provider-owned ones that verdict declines.
-    if (lastEngineError?.code === "provider_empty_response") {
-      logger.warn(logLine);
-    } else {
+    if (failedTurnNeedsCapture(lastEngineError)) {
       logger.error(logLine);
+    } else {
+      logger.warn(logLine);
     }
     sinks.onTurnFailure?.(failure);
     // WHICH LAYER, from the engine's own report rather than from this call

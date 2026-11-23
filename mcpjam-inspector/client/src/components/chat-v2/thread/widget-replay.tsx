@@ -36,6 +36,8 @@ export interface WidgetReplayProps {
   attributedModelApp?: PluginModelApp;
   widgetContext?: McpWidgetExecutionContext;
   resourceProof?: RetainedResourceProof;
+  /** The host could not bind this App to its account, so it must not load on another. */
+  resourceRefused?: boolean;
   chatSessionId?: string;
   /** Original call attribution, already resolved from provider metadata. */
   serverId?: string;
@@ -120,6 +122,7 @@ function LiveWidgetReplay({
   attributedModelApp,
   widgetContext,
   resourceProof,
+  resourceRefused,
   chatSessionId,
   serverId: attributedServerId,
   toolName,
@@ -225,6 +228,17 @@ function LiveWidgetReplay({
   ) {
     return downloadConfirmDialog;
   }
+
+  if (resourceRefused)
+    return (
+      <>
+        <div className="rounded-md border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+          This App could not confirm the account it was made with. Send your
+          message again to open it.
+        </div>
+        {downloadConfirmDialog}
+      </>
+    );
 
   if (
     (!serverId && !hasCachedHtmlForOffline) ||

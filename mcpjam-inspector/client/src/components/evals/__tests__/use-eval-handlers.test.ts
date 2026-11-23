@@ -241,6 +241,51 @@ describe("useEvalHandlers", () => {
     },
   );
 
+  it("remembers whether a delete was asked with unsaved edits", () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    const { result } = renderHook(() => useEvalHandlers(defaultProps));
+    act(() => result.current.handleDelete(suite, { hasUnsavedEdits: true }));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(true);
+    act(() => result.current.handleDelete(suite));
+    expect(result.current.suiteToDeleteHasUnsavedEdits).toBe(false);
+  });
+
+  it("stays on the suite and reports the error when its delete fails", async () => {
+    const suite: EvalSuite = {
+      _id: "suite-1",
+      createdBy: "u",
+      name: "Suite 1",
+      description: "",
+      configRevision: "r",
+      environment: { servers: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    mockMutations.deleteSuiteMutation.mockRejectedValueOnce(new Error("boom"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { result } = renderHook(() =>
+      useEvalHandlers({ ...defaultProps, selectedSuiteId: suite._id }),
+    );
+    act(() => result.current.handleDelete(suite));
+    let deleted = true;
+    await act(async () => {
+      deleted = await result.current.confirmDelete();
+    });
+    expect(deleted).toBe(false);
+    expect(mockNavigateApp).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   describe("handleRerun", () => {
     it.each([false, true])("opens the first accepted environment run without waiting for siblings (later failure: %s)", async (failSibling) => {
       const slow = createDeferred<Response>();

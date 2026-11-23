@@ -30,6 +30,7 @@ import serverSkills from "./server-skills";
 import conformance from "./conformance";
 import xaa from "./xaa";
 import command from "./command";
+import launcher from "./launcher";
 import subscribe from "./subscribe";
 import subscriptions from "./subscriptions";
 import widgetRender from "./widget-render";
@@ -86,6 +87,9 @@ mcp.route("/connect", connect);
 // Inspector command bus endpoints
 mcp.route("/command", command);
 mcp.route("/subscribe", subscribe);
+
+// Dev commands attaching their server to an open tab (launchInspector, Vite)
+mcp.route("/launcher", launcher);
 
 // Subscription bridge - observe the local manager's `subscriptions/listen`
 // stream lifecycle (2026-07-28 §13.2) and state desired interests

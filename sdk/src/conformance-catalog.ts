@@ -18,7 +18,10 @@
  */
 
 import type { MCPCheckId, MCPReadinessId } from "./mcp-conformance/types.js";
-import type { MCPAppsCheckId } from "./apps-conformance/types.js";
+import type {
+  MCPAppsCheckId,
+  MCPAppsReadinessId,
+} from "./apps-conformance/types.js";
 import type { MCPOAuthReadinessId } from "./oauth-conformance/types.js";
 import type {
   MCPTasksCheckId,
@@ -404,6 +407,15 @@ export const TASKS_READINESS_CATALOG = {
       "tasks/update and tasks/cancel reject an unknown task id with -32602 (Invalid params).",
   },
 } as const satisfies Record<MCPTasksReadinessId, ConformanceCheckInfo>;
+
+/** Apps suite advice. Keys follow `MCP_APPS_READINESS_IDS` order. */
+export const APPS_READINESS_CATALOG = {
+  "apps-readiness-deprecated-resource-uri": {
+    title: "Deprecated ui/resourceUri Field",
+    description:
+      'UI tools point at their resource with _meta.ui.resourceUri, not the deprecated flat _meta["ui/resourceUri"].',
+  },
+} as const satisfies Record<MCPAppsReadinessId, ConformanceCheckInfo>;
 
 /** OAuth suite advice. Keys follow `MCP_OAUTH_READINESS_IDS` order. */
 export const OAUTH_READINESS_CATALOG = {

@@ -10,7 +10,9 @@ vi.mock("../logger", () => ({
 
 import { generateSkillFileContent, parseSkillFile } from "../skill-parser";
 
-const UNPARSEABLE = "---\nname: my-skill\ndescription: [unclosed\n---\nBody\n";
+const INVALID_YAML = "---\nname: my-skill\ndescription: [unclosed\n---\nBody\n";
+// 101 references to one anchor: the YAML library refuses to expand them.
+const ALIAS_BOMB = `---\nname: &n my-skill\ndescription: x\nrefs: [${Array(101).fill("*n").join(", ")}]\n---\nBody\n`;
 
 describe("parseSkillFile", () => {
   beforeEach(() => {
@@ -31,8 +33,8 @@ describe("parseSkillFile", () => {
     });
   });
 
-  it("warns without a Sentry capture when the frontmatter cannot be parsed", () => {
-    const skill = parseSkillFile(UNPARSEABLE, "my-skill/SKILL.md");
+  it("warns without a Sentry capture when the frontmatter cannot be expanded", () => {
+    const skill = parseSkillFile(ALIAS_BOMB, "my-skill/SKILL.md");
 
     expect(skill).toBeNull();
     expect(mockLogger.error).not.toHaveBeenCalled();
@@ -41,14 +43,15 @@ describe("parseSkillFile", () => {
     );
   });
 
-  it("gives the same warning when the same file is scanned again", () => {
-    parseSkillFile(UNPARSEABLE, "my-skill/SKILL.md");
-    parseSkillFile(UNPARSEABLE, "my-skill/SKILL.md");
+  it("drops invalid YAML with the same warning on every scan", () => {
+    expect(parseSkillFile(INVALID_YAML, "my-skill/SKILL.md")).toBeNull();
+    expect(parseSkillFile(INVALID_YAML, "my-skill/SKILL.md")).toBeNull();
 
-    expect(mockLogger.warn.mock.calls).toEqual([
-      ["[skills] SKILL.md frontmatter could not be parsed"],
-      ["[skills] SKILL.md frontmatter could not be parsed"],
-    ]);
+    expect(mockLogger.error).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn.mock.calls[1]).toEqual(
+      mockLogger.warn.mock.calls[0],
+    );
   });
 });
 

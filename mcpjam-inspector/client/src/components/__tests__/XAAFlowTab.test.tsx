@@ -19,6 +19,13 @@ vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => captureMock(...args),
 }));
 
+const starPrompt = vi.hoisted(() => ({
+  recordGitHubStarPromptUse: vi.fn(),
+  requestGitHubStarPrompt: vi.fn(),
+  useGitHubStarPromptOnReturn: vi.fn(),
+}));
+vi.mock("@/lib/github-star-prompt", () => starPrompt);
+
 // Controllable signed-in state: null simulates a guest session.
 let authUser: { email: string } | null = { email: "tester@example.com" };
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -947,6 +954,33 @@ describe("XAAFlowTab", () => {
     );
     expect(started?.[1].target_id).toMatch(/^[0-9a-f]{8}$/);
     expect(started?.[1].target_id).not.toContain("staging");
+  });
+
+  it("records use on start and asks for a GitHub star only after a successful run", async () => {
+    const user = userEvent.setup();
+    starPrompt.recordGitHubStarPromptUse.mockClear();
+    starPrompt.requestGitHubStarPrompt.mockClear();
+    machineShouldComplete = false;
+    const { unmount } = render(
+      <XAAFlowTab serverConfigs={{}} selectedServerName="staging" />
+    );
+    expect(starPrompt.useGitHubStarPromptOnReturn).toHaveBeenCalledWith("xaa");
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(starPrompt.recordGitHubStarPromptUse).toHaveBeenCalledWith("xaa")
+    );
+    expect(starPrompt.requestGitHubStarPrompt).not.toHaveBeenCalled();
+    unmount();
+
+    machineShouldComplete = true;
+    render(<XAAFlowTab serverConfigs={{}} selectedServerName="staging" />);
+    await user.click(screen.getByRole("button", { name: /run all/i }));
+    await waitFor(() =>
+      expect(starPrompt.requestGitHubStarPrompt).toHaveBeenCalledWith({
+        trigger: "xaa",
+        reason: "completed",
+      })
+    );
   });
 
   it("fires xaa_flow_completed with target_source at both the success and failure sites", async () => {

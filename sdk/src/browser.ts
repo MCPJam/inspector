@@ -996,6 +996,7 @@ export {
 // strings on the check implementations by `tests/conformance-catalog.test.ts`.
 export {
   APPS_CHECK_CATALOG,
+  APPS_READINESS_CATALOG,
   PROTOCOL_CHECK_CATALOG,
   OAUTH_READINESS_CATALOG,
   READINESS_CATALOG,

@@ -1942,19 +1942,16 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(engine.kind === "harness" && conversationBox
         ? { harnessSandboxBinding: conversationBox.binding }
         : {}),
-      // The same plan's skills, for the harness that writes them into its
-      // sandbox, with the set that carries their supporting files and pinned
-      // plugin versions. Harness-only and presence-semantic: the emulated arm
-      // ignores these fields, so gating on the engine keeps every emulated
-      // turn byte-identical rather than relying on a downstream reader to
-      // stay uninterested.
-      ...(engine.kind === "harness" && turnSkills.box
+      // The turn's skill plan, which the harness carries out in its sandbox,
+      // with the capability set that carries its plugins' versions. Harness-only:
+      // the emulated arm ignores these fields, so gating on the engine keeps
+      // every emulated turn byte-identical.
+      ...(engine.kind === "harness"
         ? {
-            runtimeSkillsOverride: turnSkills.box.skills,
-            ...(turnSkills.box.set
-              ? { effectiveCapabilities: turnSkills.box.set }
+            skillPlan: turnSkills.skills,
+            ...(turnSkills.capabilities
+              ? { effectiveCapabilities: turnSkills.capabilities }
               : {}),
-            ...(turnSkills.live ? { liveTurn: true } : {}),
             onBoxSkillsWritten: (written: BoxSkillsResult) =>
               reportBoxSkillsDelivered("api", turnSkills.skills, written),
           }

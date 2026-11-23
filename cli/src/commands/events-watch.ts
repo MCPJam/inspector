@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { Command } from "commander";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
+  BETA_PROFILE_ID,
   computeBindingKey,
   createManagerPushPort,
   EventsCoordinator,
@@ -188,6 +189,7 @@ export function registerWatch(events: Command): void {
 
     const result = await withEventsConnection(options, ctx, async (manager, serverId) => {
       assertEventsDeclaredOrForced(manager, serverId, {
+        profile: ctx.profile,
         force: options.force,
         serverLabel: ctx.target,
         warn: ctx.warn,
@@ -247,7 +249,7 @@ export function registerWatch(events: Command): void {
           }
         }
 
-        const inbox = new MemoryEventInbox({ publicOrigin });
+        const inbox = new MemoryEventInbox({ publicOrigin, independentWebhookIds: ctx.profile.id === BETA_PROFILE_ID });
         receiver?.attach(inbox);
         const record: SubscriptionRecord = {
           id: `esub_cli_${randomBytes(8).toString("hex")}`,

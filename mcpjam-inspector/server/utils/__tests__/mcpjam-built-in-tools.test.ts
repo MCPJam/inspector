@@ -511,7 +511,7 @@ describe("live server operations", () => {
     });
   });
 
-  it("fails deterministically for stdio servers instead of a connect error", async () => {
+  it("diagnoses a stdio server deterministically instead of attempting a connect", async () => {
     const { client, calls } = makeClient({
       "GET /api/v1/projects": () => ({ json: PROJECTS_PAGE }),
       "GET /api/v1/projects/proj_1/servers": () => ({ json: SERVERS_PAGE }),
@@ -523,9 +523,10 @@ describe("live server operations", () => {
 
     const result = (await execTool(builtTool, {
       server: "Local stdio",
-    })) as { error: string };
+    })) as { report: { status: string; connection: { detail: string } } };
 
-    expect(result.error).toMatch(/stdio servers are not supported/);
+    expect(result.report.status).toBe("error");
+    expect(result.report.connection.detail).toMatch(/local command \(stdio\)/);
     expect(calls.some((call) => call.method === "POST")).toBe(false);
   });
 

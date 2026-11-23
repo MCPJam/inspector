@@ -62,6 +62,15 @@ export const ANALYTICS_EVENTS = {
   // `run_source` saying where the run came from. Hosted server runs go
   // through the SDK, so the app has no `_server` twin.
   conformance_run_triggered: { source: "client" },
+  conformance_tab_viewed: { source: "client" },
+  // A UI run this page saw finish; outcome is passed | failed | incomplete.
+  conformance_run_completed: { source: "client" },
+  // --- GitHub star ask (github-star-prompt.ts), once per browser ---
+  github_star_prompt_shown: { source: "client" },
+  github_star_prompt_clicked: { source: "client" },
+  github_star_prompt_dismissed: { source: "client" },
+  // The Star button itself; location is header | settings.
+  github_star_button_clicked: { source: "client" },
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
@@ -327,6 +336,11 @@ export const ANALYTICS_EVENTS = {
   eval_tests_generated_from_sidebar: { source: "client" },
   evals_cross_host_viewed: { source: "client" },
   evaluate_tab_viewed: { source: "client" },
+  evaluate_tour_completed: { source: "client" },
+  evaluate_tour_handoff_ended: { source: "client" },
+  evaluate_tour_opened: { source: "client" },
+  evaluate_tour_skipped: { source: "client" },
+  evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
@@ -424,6 +438,7 @@ export const ANALYTICS_EVENTS = {
    */
   oauth_callback_no_session_recovery: { source: "client" },
   oauth_debugger_error_boundary: { source: "client" },
+  oauth_flow_completed: { source: "client" },
   oauth_flow_tab_next_step_button_clicked: { source: "client" },
   oauth_flow_tab_viewed: { source: "client" },
   ollama_running: { source: "client" },
@@ -447,6 +462,10 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },
   playground_compare_lead_promoted: { source: "client" },
+  playground_repeat_tip_shown: { source: "client" },
+  playground_repeat_tip_clicked: { source: "client" },
+  playground_repeat_tip_dismissed: { source: "client" },
+  playground_test_case_saved: { source: "client" },
   playground_left_rail_tab_changed: { source: "client" },
   playground_right_rail_tab_changed: { source: "client" },
   playground_tab_viewed: { source: "client" },

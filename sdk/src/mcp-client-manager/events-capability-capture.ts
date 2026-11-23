@@ -15,9 +15,8 @@
  * responses, and `result.capabilities` is kept verbatim. Nothing is rewritten
  * and no request is sent — this only watches.
  *
- * Deliberately NOT inventing an `extensions["…"]` id: the draft has none. If
- * the draft moves the capability under `extensions`, add the alias here when
- * the draft (or a real implementation) establishes it.
+ * The beta declares io.modelcontextprotocol/events in server/discover.
+ * Earlier drafts and ChatGPT use the top-level events key.
  *
  * The same tap keeps the rest of the raw handshake result that parsing drops
  * or never exposes (`serverInfo` as sent, `_meta`, `supportedVersions`), so
@@ -40,6 +39,7 @@ export interface CapturedEventsCapability {
    */
   events: Record<string, unknown> | undefined;
   /** Whether `events.listChanged === true`. */
+  beta?: boolean;
   listChanged: boolean;
   /** The whole raw `capabilities` object, for display. */
   rawCapabilities: Record<string, unknown>;
@@ -59,6 +59,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export class EventsCapabilityCapture {
+  private readonly betaCatalogs = new Map<string, symbol>();
+
+  betaCatalogVersion(serverId: string): symbol | undefined {
+    return this.betaCatalogs.get(serverId);
+  }
+
   private readonly captured = new Map<string, CapturedEventsCapability>();
   private readonly pending = new Map<
     string,
@@ -75,6 +81,7 @@ export class EventsCapabilityCapture {
    */
   clear(serverId: string): void {
     this.captured.delete(serverId);
+    this.betaCatalogs.delete(serverId);
     for (const [key, entry] of this.pending) {
       if (entry.serverId === serverId) this.pending.delete(key);
     }
@@ -87,6 +94,10 @@ export class EventsCapabilityCapture {
 
   observe(event: RpcLogEvent): void {
     const message = event.message as Record<string, unknown> | undefined;
+    if (event.direction === "receive" && message?.method === "notifications/events/list_changed" &&
+        this.betaCatalogs.has(event.serverId)) {
+      this.betaCatalogs.set(event.serverId, Symbol());
+    }
     if (!isRecord(message) || message.id === undefined || message.id === null) {
       return;
     }
@@ -108,9 +119,13 @@ export class EventsCapabilityCapture {
     if (!isRecord(result)) return;
     const capabilities = result.capabilities;
     if (!isRecord(capabilities)) return;
-    const events = isRecord(capabilities.events)
-      ? (structuredClone(capabilities.events) as Record<string, unknown>)
-      : undefined;
+    const extension = isRecord(capabilities.extensions)
+      ? capabilities.extensions["io.modelcontextprotocol/events"] : undefined;
+    const beta = request.method === "server/discover" && isRecord(extension);
+    if (beta) this.betaCatalogs.set(request.serverId, Symbol());
+    else this.betaCatalogs.delete(request.serverId);
+    const declaration = beta ? extension : capabilities.events;
+    const events = isRecord(declaration) ? structuredClone(declaration) : undefined;
     // `server/discover` answers with `supportedVersions`; `initialize` with
     // `protocolVersion`. Keep whichever the handshake carried.
     const protocolVersion =
@@ -125,6 +140,7 @@ export class EventsCapabilityCapture {
     this.captured.set(request.serverId, {
       source: request.method,
       events,
+      ...(beta ? { beta: true } : {}),
       listChanged: events?.listChanged === true,
       rawCapabilities: structuredClone(capabilities),
       ...(protocolVersion !== undefined ? { protocolVersion } : {}),
@@ -146,6 +162,9 @@ export interface EventsSupport {
   handshakeObserved: boolean;
   /** The server declared `capabilities.events`. */
   declared: boolean;
+  beta?: boolean;
+  /** Also advertised the earlier top-level declaration alongside beta. */
+  legacy?: boolean;
   listChanged: boolean;
   capability?: Record<string, unknown>;
   source?: "initialize" | "server/discover";
@@ -159,6 +178,7 @@ export function resolveEventsSupport(
   }
   return {
     handshakeObserved: true,
+    ...(captured.beta ? { beta: true, legacy: isRecord(captured.rawCapabilities.events) } : {}),
     declared: captured.events !== undefined,
     listChanged: captured.listChanged,
     ...(captured.events !== undefined ? { capability: captured.events } : {}),
