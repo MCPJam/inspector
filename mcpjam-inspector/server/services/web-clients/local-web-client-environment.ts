@@ -51,6 +51,15 @@ const launchPersistent: LaunchLocalBrowser = async (profileDir, options) => {
 
 /** Profiles a turn in this process has open: one browser per profile at a time. */
 const openProfiles = new Set<string>();
+/**
+ * Chromium refusing a profile another process has open, such as another
+ * Inspector's turn or the tracer's sign-in window. Playwright's launch error
+ * quotes Chromium's log line for it (`profileInUseError` in its
+ * `chromium.ts`), and its call log carries Chromium's profile-in-use exit
+ * code when the browser exited first.
+ */
+const PROFILE_IN_USE =
+  /Failed to create a ProcessSingleton for your profile directory|Opening in existing browser session|exitCode=21\b/;
 /** Connectors this process registered, so later turns reuse the vendor's saved one. */
 const connectorsByUpstream = new Map<string, string>();
 
@@ -159,6 +168,17 @@ export function createLocalWebClientEnvironment(deps: {
           });
         });
         openProfiles.delete(deps.profileDir);
+        if (
+          !launched &&
+          error instanceof Error &&
+          PROFILE_IN_USE.test(error.message)
+        ) {
+          throw new RealUiError({
+            kind: "turn_running",
+            step: "connector",
+            message: `Another Inspector or a sign-in window has this machine's ${name} browser open.`,
+          });
+        }
         throw error;
       }
     },

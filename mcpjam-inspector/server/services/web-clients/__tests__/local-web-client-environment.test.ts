@@ -161,6 +161,38 @@ describe("a local web client environment", () => {
     expect(openedWhileClosing).toMatchObject({ failure: { kind: "turn_running" } });
   });
 
+  it("stops as turn_running when another process has the profile open", async () => {
+    const sites = ["https://chatgpt.com"];
+    // Playwright's words for it: its chromium.ts quotes Chromium's log line,
+    // and its process launcher logs Chromium's profile-in-use exit code.
+    const inUse = [
+      "browserType.launchPersistentContext: Failed to create a ProcessSingleton for your profile directory. This usually means that the profile is already in use by another instance of Chromium.",
+      "browserType.launchPersistentContext: Opening in existing browser session. This usually means that the profile is already in use by another instance of Chromium.",
+      "browserType.launchPersistentContext: Failed to launch the browser process.\nBrowser logs:\n\nCall log:\n  - [pid=4242] <process did exit: exitCode=21, signal=null>",
+    ];
+    const launch = vi.fn(async () => ({
+      page: { route: async () => {}, on: () => {} } as never,
+      close: async () => {},
+    }));
+    const env = environment({ launch });
+    for (const message of inUse) {
+      launch.mockRejectedValueOnce(new Error(message));
+      await expect(
+        env.openBrowser({ webAccountId: "local:chatgpt", sites }),
+      ).rejects.toMatchObject({
+        failure: {
+          kind: "turn_running",
+          message:
+            "Another Inspector or a sign-in window has this machine's ChatGPT web browser open.",
+        },
+      });
+    }
+    // This process holds nothing, so the next turn opens the profile.
+    await (
+      await env.openBrowser({ webAccountId: "local:chatgpt", sites })
+    ).close();
+  });
+
   it("keeps profiles outside any checkout, under the folder the person chose", () => {
     vi.stubEnv("MCPJAM_WEB_CLIENTS_PROFILE_DIR", "/home/someone/web-profiles");
     expect(localWebClientProfileDir("claude")).toBe(join("/home/someone/web-profiles", "claude-profile"));
