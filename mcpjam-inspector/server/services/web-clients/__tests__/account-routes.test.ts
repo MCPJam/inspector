@@ -98,11 +98,13 @@ describe("POST /accounts/:id/sign-in", () => {
     expect((await post(routes({ isEnabled: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(404);
   });
 
-  it("refuses a member, and never restores a saved session when the role is unknown", async () => {
-    expect((await post(routes({ mayManage: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
+  it("refuses a member, and anyone the backend can't say manages accounts, opening no browser", async () => {
+    const member = routes({ mayManage: async () => false });
+    expect((await post(member.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
     const unknown = routes({ mayManage: async () => undefined });
-    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(200);
-    expect(unknown.deps.browser.start).toHaveBeenCalledWith(expect.objectContaining({ restoreProfile: false }));
+    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(503);
+    expect(member.deps.browser.start).not.toHaveBeenCalled();
+    expect(unknown.deps.browser.start).not.toHaveBeenCalled();
   });
 });
 
@@ -156,5 +158,13 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
+  });
+
+  it("refuses a save for anyone the backend can't say manages accounts, reading no browser", async () => {
+    const driver = vi.fn(async () => claudePage("team@example.com"));
+    const unknown = routes({ mayManage: async () => undefined, browser: { ...routes().deps.browser, driver } });
+    expect((await post(unknown.app, "/accounts/acct-1/save-profile", body)).status).toBe(503);
+    expect(driver).not.toHaveBeenCalled();
+    expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
   });
 });

@@ -18,8 +18,9 @@
  *     `wrong_account` or `version_conflict`. A browser this replica doesn't
  *     hold for the person, project and account answers 409.
  *
- * Admins only, acting as the signed-in user: the backend checks the actor's
- * project role on every call these make.
+ * Admins only, acting as the signed-in user: each route asks the backend
+ * whether the actor manages the project's web accounts and goes on only on
+ * a yes, and the backend checks the role again on every call these make.
  */
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -97,8 +98,7 @@ export type WebAccountRouteDeps = {
   isEnabled(c: Context): Promise<boolean>;
   /**
    * Whether the actor manages the project's web accounts, or undefined when
-   * the backend can't say yet. Unknown never restores a saved session into an
-   * interactive browser; the backend checks manage again on every save.
+   * the backend can't say. Only a yes opens or saves a sign-in browser.
    */
   mayManage(args: { actor: WebActor; projectId: string; webAccountId: string }): Promise<boolean | undefined>;
   service: WebClientService;
@@ -119,8 +119,11 @@ const account = z.object({
 const signInBody = z.object({ projectId: z.string().min(1) });
 const saveBody = signInBody.extend({ browserSessionId: z.string().min(1).max(256) });
 
-const forbidden = (c: Context) =>
-  c.json({ error: "Only a project admin can sign in a web account. Ask an admin to sign it in." }, 403);
+/** Anything but a yes refuses, a backend that can't say who manages included. */
+const notManager = (c: Context, manages: false | undefined) =>
+  manages === false
+    ? c.json({ error: "Only a project admin can sign in a web account. Ask an admin to sign it in." }, 403)
+    : c.json({ error: "MCPJam couldn't confirm you manage this project's web accounts. Try again later." }, 503);
 
 /** The request's JSON, or undefined when it sent none or not JSON. */
 async function jsonBody(c: Context): Promise<unknown> {
@@ -160,7 +163,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const { projectId } = parsed.data;
     const webAccountId = c.req.param("webAccountId");
     const manages = await deps.mayManage({ actor: checked.actor, projectId, webAccountId });
-    if (manages === false) return forbidden(c);
+    if (manages !== true) return notManager(c, manages);
     const row = await accountOf(checked.actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
     const started = await deps.browser.start({
@@ -168,7 +171,7 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
       bearer: c.req.header("authorization") ?? "",
       projectId,
       webAccountId,
-      restoreProfile: row.hasProfile === true && manages === true,
+      restoreProfile: row.hasProfile === true,
       sites: WEB_CLIENT_SITES[row.vendor],
       startUrl: WEB_CLIENT_SIGN_IN_URLS[row.vendor],
     });
@@ -188,7 +191,8 @@ export function createWebAccountRoutes(deps: WebAccountRouteDeps): Hono {
     const { projectId, browserSessionId } = parsed.data;
     const actor = checked.actor;
     const webAccountId = c.req.param("webAccountId");
-    if ((await deps.mayManage({ actor, projectId, webAccountId })) === false) return forbidden(c);
+    const manages = await deps.mayManage({ actor, projectId, webAccountId });
+    if (manages !== true) return notManager(c, manages);
     const row = await accountOf(actor, projectId, webAccountId);
     if (!row) return c.json({ error: "This web account is not in the project. Refresh the list, then try again." }, 404);
     let driver: PageDriver;

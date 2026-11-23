@@ -13,7 +13,7 @@ import { WEB_CLIENT_VENDORS } from "@/shared/web-clients";
 import { verifiedFlagSubject } from "../../utils/flag-identity.js";
 import { getInternalBackendConfig } from "../internal-backend.js";
 import { createWebAccountRoutes, SignInBrowserNotFoundError } from "./account-routes.js";
-import { webClientService } from "./backend-connector-resolver.js";
+import { refusalCode, webClientService } from "./backend-connector-resolver.js";
 import { webClientsEnabledFor } from "./endpoint-auth.js";
 import { openWebClientHostedBrowser, type WebClientHostedBrowser } from "./hosted-browser.js";
 import { createProfileForRunClient, type WebActor } from "./hosted-web-client-environment.js";
@@ -53,21 +53,22 @@ export function createDefaultWebAccountRoutes(): Hono {
       return webClientsEnabledFor(identity?.kind === "id" ? identity.distinctId : undefined);
     },
     async mayManage({ actor, projectId, webAccountId }) {
-      // The backend has no manage check to ask yet (`mayManageWebAccounts`
-      // is the read it needs). Until it does, the answer is unknown: the
-      // route restores no saved session, and every save checks manage itself.
+      let answer: unknown;
       try {
-        const answer = (await service.read({
-          action: "mayManageWebAccounts",
-          projectId,
-          webAccountId,
-          ...actor,
-        })) as { allowed?: unknown } | null;
-        return typeof answer?.allowed === "boolean" ? answer.allowed : undefined;
+        answer = await service.read({ action: "mayManageWebAccounts", projectId, webAccountId, ...actor });
       } catch (error) {
-        if (refusedAsUnknown(error)) return undefined;
-        throw error;
+        if (refusalCode(error) !== "INVALID_WEB_CLIENT_REQUEST") throw error;
+        // A backend without this check refuses it with the code it also gives
+        // a field it can't read. The account list, read for the same person
+        // and project, tells them apart: when it names the account, the
+        // fields were fine and only the check is missing, so the answer is
+        // unknown, which the routes refuse. An account it doesn't name is a
+        // no, as the check answers for an account outside the project.
+        return (await listedAccount(actor, projectId, webAccountId)) ? undefined : false;
       }
+      const allowed = (answer as { allowed?: unknown } | null)?.allowed;
+      if (typeof allowed !== "boolean") throw new Error("The backend's manage check answered without a yes or no.");
+      return allowed;
     },
     service,
     saveProfile: (actor, args) => createConvexWebReconnectBackend(actor).saveWebAccountProfile(args),
@@ -103,12 +104,17 @@ export function createDefaultWebAccountRoutes(): Hono {
     },
   });
 
-  async function vendorOf(actor: WebActor, projectId: string, webAccountId: string) {
+  /** The account's row in the project's list, as the backend lists it for the person. */
+  async function listedAccount(actor: WebActor, projectId: string, webAccountId: string) {
     const rows = (await service!.read({ action: "listWebAccounts", projectId, ...actor })) as Array<{
       webAccountId?: unknown;
       vendor?: unknown;
     }>;
-    const vendor = rows.find((row) => row.webAccountId === webAccountId)?.vendor;
+    return rows.find((row) => row.webAccountId === webAccountId);
+  }
+
+  async function vendorOf(actor: WebActor, projectId: string, webAccountId: string) {
+    const vendor = (await listedAccount(actor, projectId, webAccountId))?.vendor;
     const known = WEB_CLIENT_VENDORS.find((candidate) => candidate === vendor);
     if (!known) throw new Error("This web account is not in the project.");
     return known;
@@ -139,10 +145,4 @@ function sameActor(a: WebActor, b: WebActor): boolean {
     return "actorExternalId" in b && a.actorExternalId === b.actorExternalId;
   }
   return "actorUserId" in b && a.actorUserId === b.actorUserId;
-}
-
-/** An older backend answers an action it does not know with this code. */
-function refusedAsUnknown(error: unknown): boolean {
-  const data = (error as { data?: { code?: unknown } } | null)?.data;
-  return data?.code === "INVALID_WEB_CLIENT_REQUEST";
 }

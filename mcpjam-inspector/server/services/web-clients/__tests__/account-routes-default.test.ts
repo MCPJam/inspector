@@ -2,11 +2,14 @@
  * The deployed account routes keep each sign-in browser for the person,
  * project and account that opened it. Another person's id, or the opener's
  * id sent for another account, finds no browser: nothing is read from it or
- * exported, and the route says to start the sign-in again. The backend, the
+ * exported, and the route says to start the sign-in again. Only a backend
+ * that says the person manages the project's web accounts opens one: a
+ * backend without that check is refused like a member. The backend, the
  * hosted browser and the person's session are fixtures; the routes and the
  * claude.ai page module are real. Evidence: fixture.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import {
   pollUntil,
   type PageDriver,
@@ -14,6 +17,9 @@ import {
 
 const fixture = vi.hoisted(() => ({
   page: undefined as unknown,
+  /** The backend's answer to the manage check. */
+  manage: (async () => ({ allowed: true })) as () => Promise<unknown>,
+  open: vi.fn(),
   exportProfile: vi.fn(async () => new Uint8Array([1, 2, 3])),
   saveWebAccountProfile: vi.fn(async () => ({
     ok: true as const,
@@ -21,10 +27,13 @@ const fixture = vi.hoisted(() => ({
   })),
 }));
 
-vi.mock("../backend-connector-resolver.js", () => ({
+vi.mock("../backend-connector-resolver.js", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("../backend-connector-resolver.js")
+  >()),
   webClientService: () => ({
     read: async (command: { action: string; projectId: string }) => {
-      if (command.action === "mayManageWebAccounts") return { allowed: true };
+      if (command.action === "mayManageWebAccounts") return fixture.manage();
       if (command.projectId !== "p1") return [];
       return [
         {
@@ -58,12 +67,15 @@ vi.mock("../recovery/convex-backend.js", () => ({
   }),
 }));
 vi.mock("../hosted-browser.js", () => ({
-  openWebClientHostedBrowser: async () => ({
-    browserSessionId: "browser-session-1",
-    chatSessionId: "chat-1",
-    driver: fixture.page,
-    exportProfile: fixture.exportProfile,
-  }),
+  openWebClientHostedBrowser: async () => {
+    fixture.open();
+    return {
+      browserSessionId: "browser-session-1",
+      chatSessionId: "chat-1",
+      driver: fixture.page,
+      exportProfile: fixture.exportProfile,
+    };
+  },
 }));
 
 import { createDefaultWebAccountRoutes } from "../account-routes-default";
@@ -117,6 +129,8 @@ const GONE = {
 
 beforeEach(() => {
   fixture.page = claudePage();
+  fixture.manage = async () => ({ allowed: true });
+  fixture.open.mockClear();
   fixture.exportProfile.mockClear();
   fixture.saveWebAccountProfile.mockClear();
 });
@@ -177,5 +191,71 @@ describe("a sign-in browser on the deployed account routes", () => {
     );
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual(GONE);
+  });
+});
+
+describe("who may open a sign-in browser on the deployed routes", () => {
+  const save = { projectId: "p1", browserSessionId: "browser-session-1" };
+
+  it("refuses everyone while the backend has no manage check, opening and exporting nothing", async () => {
+    const app = createDefaultWebAccountRoutes();
+    await post(app, "user_a", "/accounts/acct-1/sign-in", { projectId: "p1" });
+    fixture.open.mockClear();
+    // How a backend without the check answers a read it doesn't know.
+    fixture.manage = async () => {
+      throw new ConvexError({ code: "INVALID_WEB_CLIENT_REQUEST" });
+    };
+    const started = await post(app, "user_a", "/accounts/acct-1/sign-in", {
+      projectId: "p1",
+    });
+    expect(started.status).toBe(503);
+    const saved = await post(
+      app,
+      "user_a",
+      "/accounts/acct-1/save-profile",
+      save,
+    );
+    expect(saved.status).toBe(503);
+    expect(fixture.open).not.toHaveBeenCalled();
+    expect(fixture.exportProfile).not.toHaveBeenCalled();
+    expect(fixture.saveWebAccountProfile).not.toHaveBeenCalled();
+  });
+
+  it("refuses a member, and treats no other failure of the check as unknown", async () => {
+    fixture.manage = async () => ({ allowed: false });
+    const member = await post(
+      createDefaultWebAccountRoutes(),
+      "user_a",
+      "/accounts/acct-1/sign-in",
+      { projectId: "p1" },
+    );
+    expect(member.status).toBe(403);
+    // The same refusal for an account the project's list doesn't name is a no.
+    fixture.manage = async () => {
+      throw new ConvexError({ code: "INVALID_WEB_CLIENT_REQUEST" });
+    };
+    const elsewhere = await post(
+      createDefaultWebAccountRoutes(),
+      "user_a",
+      "/accounts/acct-9/sign-in",
+      { projectId: "p1" },
+    );
+    expect(elsewhere.status).toBe(403);
+    for (const failure of [
+      new Error("fetch failed"),
+      new ConvexError({ code: "UNKNOWN_ACTOR" }),
+    ]) {
+      fixture.manage = async () => {
+        throw failure;
+      };
+      const response = await post(
+        createDefaultWebAccountRoutes(),
+        "user_a",
+        "/accounts/acct-1/sign-in",
+        { projectId: "p1" },
+      );
+      expect(response.status).toBe(500);
+    }
+    expect(fixture.open).not.toHaveBeenCalled();
   });
 });
