@@ -50,7 +50,8 @@ function chromiumPage(route: () => Promise<void> = async () => {}) {
       on: () => {},
     }),
   };
-  return { context: () => context, on: () => {} } as never;
+  // A page Chromium has just opened, which the driver checks before it drives it.
+  return { context: () => context, on: () => {}, url: () => "about:blank" } as never;
 }
 
 function environment(over: Partial<Parameters<typeof createLocalWebClientEnvironment>[0]> = {}) {

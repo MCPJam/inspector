@@ -57,7 +57,22 @@ export function createFixtureWebPageModule(baseUrl: string): RealUiPageModule {
 
     async ensureConnector(driver, connector, ctx) {
       await driver.navigate(`${origin}/connectors`);
-      await visible(driver, '[data-testid="connector-add"]', ctx, "the connector list");
+      // A human check that shows up after sign-in takes the list's place:
+      // a person's to answer, not a page that changed.
+      await driver.waitFor(
+        async () => {
+          const add = await driver.readText('[data-testid="connector-add"]');
+          if (add !== undefined) return true;
+          const blocked = await this.blocker(driver);
+          if (blocked) throw new RealUiError({ ...blocked, step: "connector" });
+          return false;
+        },
+        {
+          timeoutMs: ctx.timeoutMs,
+          signal: ctx.signal,
+          what: "the connector list",
+        },
+      );
       const shown = await driver.readText(row(connector.name));
       if (shown !== undefined) {
         // The row's own URL, exactly: `/mcp` must not keep `/mcp-old`.

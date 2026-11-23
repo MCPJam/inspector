@@ -54,6 +54,22 @@ function upstreamAnswered(entry: LedgerEntry): boolean {
   );
 }
 
+/**
+ * The reads share no snapshot, so a call that settles between them comes
+ * back answered from one and still forwarded from the other. A call settles
+ * once, so the answered row is the newer one, whichever read it came from.
+ */
+function dedupeKeepingAnswered(entries: LedgerEntry[]): LedgerEntry[] {
+  const byId = new Map<string, LedgerEntry>();
+  for (const entry of entries) {
+    const seen = byId.get(entry.id);
+    if (!seen || (!upstreamAnswered(seen) && upstreamAnswered(entry))) {
+      byId.set(entry.id, entry);
+    }
+  }
+  return [...byId.values()];
+}
+
 export async function reconcileWithLedger(
   ledger: LedgerReader,
   input: ReconcileInput,
@@ -72,14 +88,7 @@ export async function reconcileWithLedger(
     // The step's own turn too, so clock skew between replicas can't hide a call.
     ...(step.turnId ? [ledger.forTurn(step.turnId)] : []),
   ]);
-  const calls = [
-    ...new Map(
-      found
-        .flat()
-        .filter(belongsToStep)
-        .map((entry) => [entry.id, entry]),
-    ).values(),
-  ];
+  const calls = dedupeKeepingAnswered(found.flat().filter(belongsToStep));
   if (calls.length === 0) return { status: "send" };
   const unanswered = calls.filter((entry) => !upstreamAnswered(entry));
   if (unanswered.length > 0) {

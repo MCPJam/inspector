@@ -51,7 +51,11 @@ export function classifyRunFailure(failure: RunFailure): "browser" | "account" {
 export type AccountBrowser = {
   /** Who the vendor's page shows as signed in, or undefined for no one. */
   verifyAccount(): Promise<WebIdentity | undefined>;
-  /** The browser's profile archive, to save. Never logged. */
+  /**
+   * The browser's profile archive, to save. Never logged. A profile is
+   * copied only once its browser has stopped, so nothing reads the page
+   * after a capture.
+   */
   captureProfile(): Promise<Uint8Array>;
 };
 
@@ -218,7 +222,8 @@ export function createWebRecoveryCoordinator(
     if (!observed) return { status: "not_signed_in" };
     const expected = identityOf(account);
     // Another seat's session saved here would run the project's account as someone else.
-    if (!expected || !sameWebIdentity(expected, observed)) {
+    // A new account has no seat to compare yet: handing it back records this one.
+    if (expected && !sameWebIdentity(expected, observed)) {
       return { status: "wrong_identity", expected, observed };
     }
     const saved = await backend.saveWebAccountProfile({
@@ -228,7 +233,8 @@ export function createWebRecoveryCoordinator(
       ...(savedFromRunId ? { savedFromRunId } : {}),
     });
     if (!saved.ok) {
-      // Only verified sign-ins save, so the newer profile is this seat's too.
+      // Only verified sign-ins save, so the newer profile is this seat's too,
+      // unless the account had no seat yet and another seat's first sign-in won.
       logger.info("[web-recovery] Kept a newer saved profile", {
         webAccountId: account.webAccountId,
       });
@@ -363,10 +369,15 @@ export function createWebRecoveryCoordinator(
           ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
         });
       } catch (error) {
-        // The seat matched above, so a conflict means the request was
-        // cancelled after it was read.
+        // A conflict is a request cancelled since it was read, or another
+        // seat recorded since the account was read: one with no seat takes
+        // the first one verified for it.
         if (error instanceof WebBackendRefusal && error.code === "CONFLICT") {
-          return { status: "cancelled" };
+          const latest = (
+            await backend.listWebReconnectRequests({ projectId })
+          ).find((one) => one.requestId === requestId);
+          if (latest?.status === "cancelled") return { status: "cancelled" };
+          return { status: "wrong_identity", observed: session.identity };
         }
         throw error;
       }
