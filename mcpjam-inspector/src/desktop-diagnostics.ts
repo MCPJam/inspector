@@ -15,6 +15,23 @@ const PROXY_SERVICE = "proxy_resolver.mojom.ProxyResolverFactory";
 const WINDOW_MS = 60_000;
 
 /** No SDK dependency: the same state machine is exercised by tests and Electron. */
+// Sentry normalizes event context three levels deep, which turns each
+// activity entry into "[Object]". This bounded, allowlisted context may go two
+// levels deeper. Sentry 10 reads that from this global symbol; the property is
+// not enumerable, so it never shows up in JSON or in a spread copy.
+const SENTRY_NORMALIZATION_DEPTH = Symbol.for(
+  "sentry.overrideNormalizationDepth",
+);
+
+/** Marks a diagnostics context so Sentry keeps its activity entries. */
+export function withSentryDepth<T extends object>(context: T): T {
+  Object.defineProperty(context, SENTRY_NORMALIZATION_DEPTH, {
+    value: 5,
+    configurable: true,
+  });
+  return context;
+}
+
 export function createDesktopDiagnostics(options: {
   publish: (snapshot: Record<string, unknown>) => void;
   report: (summary: Record<string, unknown>) => void;
@@ -54,9 +71,7 @@ export function createDesktopDiagnostics(options: {
   };
   function snapshot() {
     history = history.filter((x) => now() - x.at <= 120_000).slice(-50);
-    return {
-      // Only this bounded, allowlisted context needs deeper normalization.
-      __sentry_override_normalization_depth__: 5,
+    return withSentryDepth({
       run_id: runId,
       renderer_version: version ?? "unknown",
       auth: auth ?? "unknown",
@@ -66,7 +81,7 @@ export function createDesktopDiagnostics(options: {
       incident_id: pending?.incident_id ?? null,
       observation_event_id: pending?.observation_event_id ?? null,
       activity: [...history],
-    };
+    });
   }
   function publish() {
     safe(() => options.publish(snapshot()));
