@@ -325,6 +325,14 @@ export async function runWebClientTurn(
     try {
       if (opened.length > 0) await env.turnGate?.close(turnId);
       opened.length = 0;
+    } catch (error) {
+      // The turn's own result or error stands: failing a turn that already
+      // ran would lose its evidence and make a caller send the prompt again,
+      // and a window nobody closes lapses on the backend.
+      logger.warn("[web-clients] the turn's durable window did not close", {
+        runtimeId: input.runtimeId,
+        message: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       await open?.close();
     }
