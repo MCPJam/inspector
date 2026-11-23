@@ -205,6 +205,40 @@ describe("revokeSessionWithAcknowledgment", () => {
     );
   });
 
+  it("keeps retrying a 401 whose body was cut off", async () => {
+    const cutOff = new Response(
+      new ReadableStream({
+        pull(controller) {
+          controller.error(new TypeError("terminated"));
+        },
+      }),
+      { status: 401 },
+    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(cutOff)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ status: "success", value: { revoked: true } }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      revokeSessionWithAcknowledgment("token-1", {
+        convexUrl: CONVEX_URL,
+        verifiedSid: "session_1",
+        retryDelaysMs: [10],
+      }),
+    ).resolves.toEqual({ revoked: false, reason: "failed", status: "pending" });
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(pendingSessionRevocationRetryCount()).toBe(0);
+  });
+
   it("refuses the verified session in this process before the backend answers", async () => {
     let answer!: (value: unknown) => void;
     const revoke = vi.fn(() => new Promise((resolve) => (answer = resolve)));

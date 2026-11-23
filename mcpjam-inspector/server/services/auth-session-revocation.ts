@@ -108,10 +108,12 @@ export async function revokeAuthKitSession(
   } catch (error) {
     // Convex answers 401 when it refuses the bearer itself (expired, malformed,
     // or from no configured issuer) before running the mutation, and it gives
-    // the same token the same answer on every retry.
+    // the same token the same answer on every retry. A `cause` means the body
+    // never arrived (`convexReadFetch`), so nothing shows which 401 it was.
     if (
       error instanceof ConvexHttpStatusError &&
       error.convexStatus === 401 &&
+      error.cause === undefined &&
       !SIGNING_KEY_LOOKUP_FAILURE.test(error.message)
     ) {
       return { revoked: false, reason: "token_refused" };
