@@ -129,7 +129,33 @@ export const BROWSERD_WEBMCP_FEATURES = [
    * `rootSelector` there and answers with the whole page's text.
    */
   "element-text",
+  /**
+   * `POST /v1/profile/export` takes `excludeOrigins` and clears each one's
+   * cookies and site storage before the archive is read. Without it the server
+   * must not save a profile that has to leave a site's session behind: an old
+   * daemon ignores the body and archives everything.
+   */
+  "profile-export-exclusions",
 ] as const;
+
+/** What `POST /v1/profile/export` may be asked to leave out of the archive. */
+export type BrowserdProfileExportOptions = {
+  /**
+   * Origins whose cookies and site storage are cleared before the archive is
+   * read. Send only to a daemon announcing `profile-export-exclusions`.
+   */
+  excludeOrigins?: readonly string[];
+};
+
+/** The `POST /v1/profile/export` request for `options`: a bare one when nothing is left out. */
+export function profileExportRequest(options: BrowserdProfileExportOptions = {}): RequestInit {
+  if (!options.excludeOrigins?.length) return { method: "POST" };
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ excludeOrigins: options.excludeOrigins }),
+  };
+}
 
 /**
  * Announced by a daemon booted with `MCPJAM_BROWSERD_NETWORK=public`: its

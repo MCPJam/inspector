@@ -44,11 +44,6 @@ export function webAccountAsConnection(account: WebAccount): OAuthConnection {
   };
 }
 
-/** The account a run uses when nothing else is chosen: the default. */
-export function runAccountOf(accounts: readonly WebAccount[]) {
-  return accounts.find((account) => account.isDefault) ?? accounts[0];
-}
-
 /** How the chip and the suite name an account: its address, else its name. */
 export function webAccountName(account: WebAccount): string {
   return account.accountEmail || account.label;

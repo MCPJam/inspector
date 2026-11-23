@@ -17,7 +17,11 @@
  * replayed against a DIFFERENT boot is rejected (`unknown_boot`) rather than
  * re-run; the caller learns the current bootId from every response and stores it.
  */
-import { BROWSERD_PROTOCOL_VERSION, type BrowserCommand } from "./protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  profileExportRequest,
+  type BrowserCommand,
+} from "./protocol";
 import {
   decodePaneCommand,
   decodePaneState,
@@ -505,12 +509,8 @@ export class BrowserdClient {
   }
 
   /** Download a drained persistent profile snapshot from browserd. */
-  async exportProfile(): Promise<Uint8Array> {
-    const res = await this.request(
-      "/v1/profile/export",
-      { method: "POST" },
-      true,
-    );
+  async exportProfile(options?: Parameters<typeof profileExportRequest>[0]): Promise<Uint8Array> {
+    const res = await this.request("/v1/profile/export", profileExportRequest(options), true);
     if (!res.ok) {
       throw new BrowserdClientError(
         `browser profile export failed with status ${res.status}`,
