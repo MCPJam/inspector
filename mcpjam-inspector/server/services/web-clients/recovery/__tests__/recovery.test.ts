@@ -620,7 +620,7 @@ describe("web account recovery", () => {
     const accepted = await coordinator.handback({
       projectId: PROJECT,
       requestId: request?.requestId ?? "",
-      browser: browserSignedInAs(SEAT),
+      browserFor: () => browserSignedInAs(SEAT),
     });
     await settle(world);
     expect(accepted).toMatchObject({ status: "resumed" });
@@ -638,7 +638,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId: next?.requestId ?? "",
-        browser: browserSignedInAs(OTHER_SEAT),
+        browserFor: () => browserSignedInAs(OTHER_SEAT),
       }),
     ).toEqual({
       status: "wrong_identity",
@@ -682,7 +682,7 @@ describe("web account recovery", () => {
       await coordinator.handback({
         projectId: PROJECT,
         requestId: request?.requestId ?? "",
-        browser: browserSignedInAs(SEAT),
+        browserFor: () => browserSignedInAs(SEAT),
       }),
     ).toEqual({ status: "wrong_identity", observed: SEAT });
     expect((await requestsOf(world))[0]?.status).toBe("open");
