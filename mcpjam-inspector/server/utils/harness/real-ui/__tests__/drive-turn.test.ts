@@ -21,7 +21,7 @@ import {
   type SendJournal,
 } from "../drive-turn";
 import { createFixtureWebPageModule } from "../fixture-web";
-import { RealUiError } from "../page-module";
+import { RealUiError, type RealUiPageModule } from "../page-module";
 import { createPlaywrightDriver } from "../playwright-driver";
 
 let browser: Browser;
@@ -266,6 +266,60 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(failed.map((error) => error.failure)).toMatchObject([
       { kind: "send_ambiguous", step: "send" },
     ]);
+  });
+
+  /** The fixture module, counting how often the turn asks it to send. */
+  function countingSends() {
+    const fixture = createFixtureWebPageModule(vendor.url);
+    const module: RealUiPageModule & { sends: number } = {
+      ...fixture,
+      sends: 0,
+      async send(driver, prompt, ctx) {
+        module.sends += 1;
+        return fixture.send(driver, prompt, ctx);
+      },
+    };
+    return module;
+  }
+
+  it("records and sends nothing when the run is stopped as the send step starts", async () => {
+    const stop = new AbortController();
+    const module = countingSends();
+    const journal = createMemorySendJournal();
+    const failure = await turn(await signedInDriver(), journal, {
+      module,
+      signal: stop.signal,
+      onStep: (step) => {
+        if (step === "send") stop.abort();
+      },
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({ step: "send" });
+    expect(module.sends).toBe(0);
+    expect(await journal.read("turn-1")).toBeUndefined();
+    expect(vendor.sends).toEqual([]);
+  });
+
+  it("does not click send when the run is stopped while the send is recorded", async () => {
+    const stop = new AbortController();
+    const module = countingSends();
+    const memory = createMemorySendJournal();
+    const journal: SendJournal = {
+      ...memory,
+      async claim(turnKey, entry) {
+        const claimed = await memory.claim(turnKey, entry);
+        stop.abort();
+        return claimed;
+      },
+    };
+    const failure = await turn(await signedInDriver(), journal, {
+      module,
+      signal: stop.signal,
+    }).catch((error: unknown) => error);
+    expect((failure as RealUiError).failure).toMatchObject({ step: "send" });
+    expect(module.sends).toBe(0);
+    // Kept: an attempt after this one looks for the chat, never sends.
+    expect(await memory.read("turn-1")).toMatchObject({ state: "sending" });
+    expect(vendor.sends).toEqual([]);
   });
 
   it("returns needs_sign_in on a human check and never sends", async () => {

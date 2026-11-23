@@ -101,8 +101,8 @@ export async function driveRealUiTurn(
   const ctx = { signal, timeoutMs: input.stepTimeoutMs ?? STEP_TIMEOUT_MS };
   let step: RealUiStep = "sign_in_check";
   let pending: PendingStep | undefined;
-  // From the journal's sending record until the send is confirmed, the click
-  // may have happened: the prompt may already be in a chat.
+  // From just before the click until the journal confirms the send, the
+  // prompt may already be in a chat.
   let sendUnconfirmed = false;
   const enter = (next: RealUiStep) => {
     step = next;
@@ -162,6 +162,9 @@ export async function driveRealUiTurn(
       await module.enableConnector(driver, input.connector.name, ctx);
       enter("send");
       const sendingAt = new Date().toISOString();
+      // A run stopped by now, by its step callback too, records nothing and
+      // sends nothing.
+      signal?.throwIfAborted();
       // Two runs on this turn can both have read no entry above. Only the one
       // whose claim records the send goes on to click it.
       const claimed = await input.journal.claim(input.turnKey, {
@@ -176,8 +179,11 @@ export async function driveRealUiTurn(
             "Another attempt at this turn already sent the prompt or is sending it, so it was not sent again.",
         });
       }
-      sendUnconfirmed = true;
       input.beforeSend?.();
+      // A stop that came while the send was recorded still comes before the
+      // click. The record stays, so no later attempt sends it either.
+      signal?.throwIfAborted();
+      sendUnconfirmed = true;
       const sent = await module.send(driver, input.prompt, ctx);
       conversationUrl = sent.conversationUrl;
       await input.journal.write(input.turnKey, {
@@ -221,8 +227,9 @@ export async function driveRealUiTurn(
     return { account, conversation, approvalsAnswered, finishedSignals, resumed };
   } catch (error) {
     const typed = asRealUiError(error, step);
-    // Once the journal says sending, a page that reads as changed may already
-    // have sent the prompt, so the turn ends as ambiguous, not as a change.
+    // Once the click may have happened, a page that reads as changed may
+    // already have sent the prompt, so the turn ends as ambiguous, not as a
+    // change.
     const failure =
       sendUnconfirmed && typed.failure.kind === "page_changed"
         ? { ...typed.failure, kind: "send_ambiguous" as const }
