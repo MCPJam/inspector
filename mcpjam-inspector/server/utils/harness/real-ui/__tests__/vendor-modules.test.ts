@@ -262,14 +262,8 @@ describe("chatgpt.com", () => {
 
 describe("chatgpt.com's connector step", () => {
   const connector = { name: "MCPJam orders", url: "https://inspector.example/mcp/abc" };
-  const base = {
-    '[contenteditable="true"][aria-label="Ask ChatGPT"], #prompt-textarea': "",
-    'role=menuitem[name="Plugins"]': "Plugins",
-    'role=menuitem[name="Add custom MCP server"]': "Add custom MCP server",
-  };
-
   const composer = '[contenteditable="true"][aria-label="Ask ChatGPT"]';
-  const current = { [composer]: "", [composer + ", #prompt-textarea"]: "" };
+  const current = { [composer]: "" };
   const installed = 'role=link[name="MCPJam orders"s]';
   const pluginSettings = {
     ...current, [installed]: connector.name,
@@ -329,35 +323,52 @@ describe("chatgpt.com's connector step", () => {
     expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Add files and more"s]'], [item]]);
   });
 
-  it("reuses a server already added under the name and address", async () => {
-    const driver = cannedDriver({
-      url: "https://chatgpt.com/",
-      texts: {
-        ...base,
-        'role=dialog >> text="MCPJam orders"': "MCPJam orders",
-        'role=dialog >> text="https://inspector.example/mcp/abc"': connector.url,
-      },
-    });
+  it("adds one through Plugins, then Add custom MCP server, and waits for it to install", async () => {
+    const installed = 'role=link[name="MCPJam orders"s]';
+    const create = 'role=dialog >> role=button[name="Create as a plugin"s]';
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: {
+      ...current, 'role=button[name="Add"s]': "Add",
+      'role=menuitem[name="Add custom MCP server"s]': "Add custom MCP server",
+      'role=dialog >> role=textbox[name="Name"s]': "",
+    } });
+    let created = false;
+    const driver: PageDriver = {
+      ...fixture,
+      click: vi.fn(async (target: string) => {
+        if (target === create) created = true;
+      }),
+      readText: async (target) => (created && target === installed ? connector.name : fixture.readText(target)),
+    };
     await chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 1_000 });
-    expect(driver.click).not.toHaveBeenCalledWith('role=menuitem[name="Add custom MCP server"]');
-    expect(driver.type).not.toHaveBeenCalled();
+    expect(vi.mocked(driver.click).mock.calls.map(([selector]) => selector)).toEqual([
+      'role=button[name="Add"s]',
+      'role=menuitem[name="Add custom MCP server"s]',
+      create,
+    ]);
+    expect(vi.mocked(fixture.type).mock.calls).toEqual([
+      ['role=dialog >> role=textbox[name="Name"s]', connector.name],
+      ['role=dialog >> role=textbox[name="Server URL"s]', connector.url],
+    ]);
   });
 
-  it("adds one through Plugins, then +, then Add custom MCP server", async () => {
-    const driver = cannedDriver({
-      url: "https://chatgpt.com/",
-      texts: { ...base, "role=dialog >> role=button[name=/^(\\+|Add)$/]": "+" },
+  it("sends with the composer's Send button and waits for the chat to open", async () => {
+    const chat = "https://chatgpt.com/c/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const fixture = cannedDriver({ url: "https://chatgpt.com/", texts: current });
+    let sent = false;
+    const driver: PageDriver = {
+      ...fixture,
+      click: vi.fn(async () => {
+        sent = true;
+      }),
+      url: async () => (sent ? chat : "https://chatgpt.com/"),
+      readText: async (target) =>
+        sent && target === '[data-message-author-role="user"]' ? "say hello" : fixture.readText(target),
+    };
+    await expect(chatgptWebPageModule.send(driver, "say hello", { timeoutMs: 1_000 })).resolves.toEqual({
+      conversationUrl: chat,
     });
-    // The form never closes in a canned page, so the step ends waiting.
-    await expect(
-      chatgptWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 }),
-    ).rejects.toMatchObject({ code: "timeout" });
-    expect(vi.mocked(driver.click).mock.calls.map(([selector]) => selector)).toEqual([
-      '[data-testid="composer-plus-btn"]',
-      'role=menuitem[name="Plugins"]',
-      "role=dialog >> role=button[name=/^(\\+|Add)$/]",
-      'role=menuitem[name="Add custom MCP server"]',
-    ]);
+    expect(fixture.type).toHaveBeenCalledWith(composer, "say hello");
+    expect(vi.mocked(driver.click).mock.calls).toEqual([['role=button[name="Send"s]']]);
   });
 });
 
