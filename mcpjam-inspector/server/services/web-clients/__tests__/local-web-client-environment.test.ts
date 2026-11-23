@@ -31,6 +31,25 @@ const SERVERS = {
         : undefined,
 };
 
+/**
+ * A page in a Chromium context that takes the driver's routes and its
+ * session for pausing document requests; `route` stands in for the context's.
+ */
+function chromiumPage(route: () => Promise<void> = async () => {}) {
+  const context = {
+    browser: () => ({ browserType: () => ({ name: () => "chromium" }) }),
+    route,
+    on: () => {},
+    pages: () => [],
+    newCDPSession: async () => ({
+      send: async (method: string) =>
+        method === "Page.getFrameTree" ? { frameTree: { frame: { id: "main" } } } : {},
+      on: () => {},
+    }),
+  };
+  return { context: () => context, on: () => {} } as never;
+}
+
 function environment(over: Partial<Parameters<typeof createLocalWebClientEnvironment>[0]> = {}) {
   return createLocalWebClientEnvironment({
     vendor: "chatgpt",
@@ -125,7 +144,7 @@ describe("a local web client environment", () => {
 
   it("opens one browser per profile at a time and frees it on close or a failed launch", async () => {
     const close = vi.fn(async () => {});
-    const launch = vi.fn(async () => ({ page: { route: async () => {}, on: () => {} } as never, close }));
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close }));
     const env = environment({ launch });
     const sites = ["https://chatgpt.com"];
     const browser = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
@@ -150,13 +169,10 @@ describe("a local web client environment", () => {
       closing = true;
       openedWhileClosing = await env.openBrowser({ webAccountId: "local:chatgpt", sites }).catch((error: unknown) => error);
     });
-    const page = {
-      route: async () => {
-        throw new Error("The page could not be routed.");
-      },
-      on: () => {},
-    };
-    const env = environment({ launch: vi.fn(async () => ({ page: page as never, close })) });
+    const page = chromiumPage(async () => {
+      throw new Error("The page could not be routed.");
+    });
+    const env = environment({ launch: vi.fn(async () => ({ page, close })) });
     await expect(env.openBrowser({ webAccountId: "local:chatgpt", sites })).rejects.toThrow("The page could not be routed.");
     expect(close).toHaveBeenCalledTimes(1);
     expect(openedWhileClosing).toMatchObject({ failure: { kind: "turn_running" } });
@@ -172,7 +188,7 @@ describe("a local web client environment", () => {
       "browserType.launchPersistentContext: Failed to launch the browser process.\nBrowser logs:\n\nCall log:\n  - [pid=4242] <process did exit: exitCode=21, signal=null>",
     ];
     const launch = vi.fn(async () => ({
-      page: { route: async () => {}, on: () => {} } as never,
+      page: chromiumPage(),
       close: async () => {},
     }));
     const env = environment({ launch });
