@@ -47,6 +47,72 @@ function cannedDriver(options: {
   };
 }
 
+type ConnectorRow = { name: string; url: string; connected: boolean };
+
+/**
+ * claude.ai's connector settings as the module drives them: a View and a More
+ * options button per connector, named after it; the open connector's name,
+ * address and Disconnect in the pane; and the add dialog `dialog` shows, by
+ * the connectors there and how many times it was read.
+ */
+function claudeConnectors(
+  rows: ConnectorRow[],
+  dialog: (rows: ConnectorRow[], reads: number) => string | undefined,
+): PageDriver {
+  let open: ConnectorRow | undefined;
+  let removing: ConnectorRow | undefined;
+  let dialogReads = 0;
+  const form = { name: "", url: "" };
+  /** The connector whose `${action} <name>` button the selector names, exactly or by pattern. */
+  const rowFor = (selector: string, action: string) => {
+    const named = /^\.dframe-pane-primary >> role=button\[name=(?:"(.*)"|\/(.*)\/)\]$/.exec(selector);
+    if (!named) return undefined;
+    const label = (row: ConnectorRow) => `${action} ${row.name}`;
+    return rows.find((row) =>
+      named[1] !== undefined ? named[1] === label(row) : new RegExp(named[2]).test(label(row)),
+    );
+  };
+  return {
+    ...cannedDriver({ url: "https://claude.ai/new" }),
+    async readText(selector) {
+      switch (selector) {
+        case '.dframe-pane-primary [placeholder="Search"]':
+          return "";
+        case ".dframe-pane-primary":
+          return open && `${open.name} ${open.url}`;
+        case '.dframe-pane-primary >> role=button[name="Disconnect"]':
+          return open?.connected ? "Disconnect" : undefined;
+        case "role=dialog":
+          return dialog(rows, dialogReads++);
+        case "role=dialog >> text=Step 2 of 2":
+          return "Step 2 of 2";
+        case 'role=dialog >> role=button[name="Add"]':
+          return "Add";
+      }
+      const row = rowFor(selector, "View");
+      return row && `View ${row.name}`;
+    },
+    type: vi.fn(async (selector: string, value: string) => {
+      if (selector.endsWith('[placeholder="Name"]')) form.name = value;
+      if (selector.endsWith('[placeholder="MCP server URL"]')) form.url = value;
+    }),
+    click: vi.fn(async (selector: string) => {
+      open = rowFor(selector, "View") ?? open;
+      removing = rowFor(selector, "More options for") ?? removing;
+      if (selector === "role=dialog >> role=button[name=/^(Remove|Delete)$/]" && removing) {
+        rows.splice(rows.indexOf(removing), 1);
+      }
+      if (selector === 'role=dialog >> role=button[name="Add"]') {
+        open = { ...form, connected: true };
+        rows.push(open);
+      }
+    }),
+  };
+}
+
+const PLAN_WALL = "Upgrade to add more connectors";
+const ADD_FORM = "Add custom connector. Name. MCP server URL.";
+
 describe("page module pins", () => {
   it("pins each vendor module to the version its runtime declares", () => {
     expect(claudeWebPageModule.version).toBe(HARNESS_DESCRIPTORS["claude-web"].runtimeVersion);
@@ -139,6 +205,56 @@ describe("claude.ai", () => {
     expect(await claudeWebPageModule.replySignals(done)).toEqual({
       finished: true,
       signals: ["no stop button", "nothing streaming", "an assistant message", "the composer is back"],
+    });
+  });
+
+  describe("its connector", () => {
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    const ctx = { timeoutMs: 300 };
+
+    it("adds no connector under a name MCPJam doesn't reserve", async () => {
+      const driver = claudeConnectors([], () => ADD_FORM);
+      await expect(
+        claudeWebPageModule.ensureConnector(driver, { ...connector, name: "MCPJam" }, ctx),
+      ).rejects.toMatchObject({ failure: { kind: "connector_failed", step: "connector" } });
+      expect(driver.type).not.toHaveBeenCalled();
+    });
+
+    it("never removes a person's own MCPJam connector to make room on a full plan", async () => {
+      const rows = [{ name: "MCPJam", url: "https://mcp.mcpjam.com/mcp", connected: true }];
+      const driver = claudeConnectors(rows, () => PLAN_WALL);
+      await expect(claudeWebPageModule.ensureConnector(driver, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit", step: "connector" },
+      });
+      expect(rows.map((row) => row.name)).toEqual(["MCPJam"]);
+      expect(driver.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("keeps a connector under MCPJam's name whose address isn't this run's forwarding endpoint", async () => {
+      const rows = [
+        { name: "MCPJam billing 5e6f7a8b", url: "https://billing.example.com/mcp", connected: true },
+        { name: "MCPJam stale 9a8b7c6d", url: "https://old-tunnel.example/mcp/connector-0", connected: true },
+      ];
+      const full = claudeConnectors(rows, () => PLAN_WALL);
+      await expect(claudeWebPageModule.ensureConnector(full, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "plan_limit" },
+      });
+      // The same name as the run's, at another address, is not MCPJam's to replace.
+      const taken = [{ name: connector.name, url: "https://elsewhere.example/mcp", connected: false }];
+      const same = claudeConnectors(taken, () => ADD_FORM);
+      await expect(claudeWebPageModule.ensureConnector(same, connector, ctx)).rejects.toMatchObject({
+        failure: { kind: "connector_failed", step: "connector" },
+      });
+      expect([...rows, ...taken]).toHaveLength(3);
+      expect(full.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+      expect(same.click).not.toHaveBeenCalledWith(expect.stringContaining("More options"));
+    });
+
+    it("makes room by removing one MCPJam added on this run's endpoint, then adds the run's", async () => {
+      const rows = [{ name: "MCPJam stale 9a8b7c6d", url: "https://inspector.example/mcp/connector-0", connected: false }];
+      const driver = claudeConnectors(rows, (shown) => (shown.length > 0 ? PLAN_WALL : ADD_FORM));
+      await claudeWebPageModule.ensureConnector(driver, connector, ctx);
+      expect(rows).toEqual([{ ...connector, connected: true }]);
     });
   });
 });

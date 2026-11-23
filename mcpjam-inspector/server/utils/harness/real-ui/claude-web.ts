@@ -14,6 +14,7 @@
 import {
   WEB_CLIENT_PAGE_MODULE_VERSIONS,
   WEB_CLIENT_SITES,
+  WEB_CONNECTOR_PATH_PREFIX,
 } from "@/shared/web-clients";
 import type { PageDriver } from "./page-driver.js";
 import {
@@ -43,8 +44,15 @@ const CHAT_PATH = /^\/chat\/([0-9a-f-]{36})$/;
 const CONNECTORS = `${ORIGIN}/customize/connectors/yours`;
 const PLAN_LIMIT =
   /you(?:'|’)ve (?:reached|hit) your (?:usage )?limit|out of free messages|upgrade to (?:add|connect) more/i;
-/** MCPJam names its own connectors so it never removes one a person added. */
+/**
+ * MCPJam names its own connectors "MCPJam <label> <8 hex digits>", a name a
+ * person calling theirs after MCPJam ("MCPJam", "MCPJam server") doesn't
+ * reach, and adds none under any other. A name alone never makes a connector
+ * MCPJam's to remove: its address must be this run's forwarding endpoint too.
+ */
 export const MCPJAM_CONNECTOR_PREFIX = "MCPJam";
+const MCPJAM_NAME = `${MCPJAM_CONNECTOR_PREFIX} (?:.+ )?[0-9a-f]{8}`;
+const isMcpjamName = (name: string) => new RegExp(`^${MCPJAM_NAME}$`).test(name);
 
 /** Playwright's own role engine, not CSS: scope one with `>>`, never a space. */
 const role = (kind: string, name: string) =>
@@ -71,7 +79,26 @@ async function connectorRowVisible(driver: PageDriver, name: string) {
   return (await driver.readText(`${PANE} >> ${role("button", `View ${name}`)}`)) !== undefined;
 }
 
-async function removeConnector(driver: PageDriver, name: string, ctx: StepContext) {
+/** `url` is an MCPJam forwarding endpoint on `origin`: `/mcp/<connectorId>` there. */
+function isForwardingEndpoint(url: string, origin: string): boolean {
+  const prefix = `${origin}${WEB_CONNECTOR_PATH_PREFIX}/`;
+  return url.startsWith(prefix) && /^[^/?#]+$/.test(url.slice(prefix.length));
+}
+
+/**
+ * Removes the connector named `name`, and answers true, only when MCPJam
+ * provably added it: the name is MCPJam's, and its page shows an MCPJam
+ * forwarding endpoint on the run's own origin as its address.
+ */
+async function removeOwnConnector(driver: PageDriver, name: string, origin: string, ctx: StepContext): Promise<boolean> {
+  if (!isMcpjamName(name)) return false;
+  await driver.navigate(CONNECTORS);
+  await driver.type(`${PANE} [placeholder="Search"]`, name);
+  await driver.click(`${PANE} >> ${role("button", `View ${name}`)}`);
+  const pane = (await driver.readText(PANE)) ?? "";
+  if (!pane.split(/\s+/).some((word) => isForwardingEndpoint(word, origin))) return false;
+  await driver.navigate(CONNECTORS);
+  await driver.type(`${PANE} [placeholder="Search"]`, name);
   await driver.click(`${PANE} >> ${role("button", `More options for ${name}`)}`);
   await driver.click("role=menuitem[name=/^(Remove|Delete)/]");
   await driver.click("role=dialog >> role=button[name=/^(Remove|Delete)$/]");
@@ -80,6 +107,7 @@ async function removeConnector(driver: PageDriver, name: string, ctx: StepContex
     signal: ctx.signal,
     what: "the connector to be removed",
   });
+  return true;
 }
 
 async function addConnector(
@@ -150,6 +178,14 @@ export const claudeWebPageModule: RealUiPageModule = {
   },
 
   async ensureConnector(driver, connector, ctx) {
+    const origin = URL.canParse(connector.url) ? new URL(connector.url).origin : "";
+    if (!origin || !isMcpjamName(connector.name) || !isForwardingEndpoint(connector.url, origin)) {
+      throw new RealUiError({
+        kind: "connector_failed",
+        step: "connector",
+        message: "MCPJam adds only its own connectors to claude.ai, under its name and at its forwarding endpoint.",
+      });
+    }
     await driver.navigate(CONNECTORS);
     await waitVisible(driver, `${PANE} [placeholder="Search"]`, ctx, "the connector list", "connector");
     await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
@@ -160,21 +196,25 @@ export const claudeWebPageModule: RealUiPageModule = {
       if (connected && (await pointsAt(driver, connector.url))) return;
       // Never Reconnect: it only sends `initialize` again, so a connector
       // that broke stays broken. Remove it and add it fresh.
-      await driver.navigate(CONNECTORS);
-      await driver.type(`${PANE} [placeholder="Search"]`, connector.name);
-      await removeConnector(driver, connector.name, ctx);
+      if (!(await removeOwnConnector(driver, connector.name, origin, ctx))) {
+        throw new RealUiError({
+          kind: "connector_failed",
+          step: "connector",
+          message: `claude.ai has a connector named ${connector.name} that MCPJam can't confirm it added. Remove it in claude.ai, then run again.`,
+        });
+      }
     }
     try {
       await addConnector(driver, connector, ctx);
     } catch (error) {
       if (!(error instanceof RealUiError) || error.failure.kind !== "plan_limit") throw error;
-      // Free allows one custom connector. Only one MCPJam added may make room.
+      // Free allows one custom connector. Only one provably MCPJam's makes
+      // room; with anything else there, the turn stops at the plan's limit.
       await driver.navigate(CONNECTORS);
       await driver.type(`${PANE} [placeholder="Search"]`, MCPJAM_CONNECTOR_PREFIX);
-      const other = await driver.readText(`${PANE} >> role=button[name=/^View ${MCPJAM_CONNECTOR_PREFIX}/]`);
-      const otherName = other?.replace(/^View\s+/, "").trim();
-      if (!otherName || otherName === connector.name) throw error;
-      await removeConnector(driver, otherName, ctx);
+      const shown = await driver.readText(`${PANE} >> role=button[name=/^View ${MCPJAM_NAME}$/]`);
+      const other = shown?.replace(/^View\s+/, "").trim();
+      if (!other || other === connector.name || !(await removeOwnConnector(driver, other, origin, ctx))) throw error;
       await driver.navigate(CONNECTORS);
       await addConnector(driver, connector, ctx);
     }
