@@ -6,6 +6,9 @@
  * producer credential, then reads it back as a separate project member and
  * checks the counts, the refusals and the outcome ordering. Repeatable: each
  * run uses its own `service.name`, and drops are compared with a baseline.
+ * Drops are counted per project, not per service, so run it against a project
+ * nothing else sends to, such as a Jamroom environment's: another producer's
+ * refused spans would fail the exact drop check.
  *
  *   MCPJAM_PRODUCER_TOKEN=mjotlp_... MCPJAM_READER_TOKEN=<member bearer> \
  *     npm run production-traffic:smoke -w @mcpjam/inspector -- \
@@ -226,6 +229,8 @@ if (args.python) {
     );
     let stdout = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));
+    // A Python that can't start fails its check; the report still prints.
+    child.on("error", (error) => done({ status: null, error: error.message }));
     child.on("close", (status) =>
       done({ status, sent: stdout.trim().split("\n").pop() }),
     );
@@ -259,6 +264,7 @@ const totals = await read("counts", window());
 const dropDelta = (totals.body?.dropped?.missing_tool_name ?? 0) - dropsBefore;
 check("one refused span counted once across the resend", dropDelta === 1, {
   dropDelta,
+  hint: "Drops are counted per project. Run the smoke against a project nothing else sends to.",
 });
 
 const calls = await read("calls", { ...window(), serviceName, limit: "50" });

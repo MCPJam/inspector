@@ -5,6 +5,7 @@
  * test target is configured (see support/clickhouse-sandbox.ts).
  */
 import { randomBytes } from "node:crypto";
+import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrateProductionTrafficSchema } from "../clickhouse-schema.js";
 import {
@@ -20,13 +21,14 @@ import {
 import {
   clickHouseTestTarget,
   createClickHouseSandbox,
+  createMigratedClickHouseSandbox,
   type ClickHouseSandbox,
 } from "./support/clickhouse-sandbox.js";
 
 const PROJECT = "proj_orders_lab";
-const OTHER_PROJECT = "proj_other";
 const NOW_NS = BigInt(Date.now()) * 1_000_000n;
 const MS = 1_000_000n;
+const DAY_MS = 86_400_000;
 const WINDOW = { fromMs: Date.now() - 3_600_000, toMs: Date.now() + 60_000 };
 
 const hex = (bytes: number) => randomBytes(bytes).toString("hex");
@@ -87,7 +89,7 @@ describe.skipIf(!clickHouseTestTarget())(
     let store: ClickHouseTrafficStore;
 
     beforeAll(async () => {
-      sandbox = await createClickHouseSandbox();
+      sandbox = await createMigratedClickHouseSandbox();
       store = new ClickHouseTrafficStore(
         createTrafficClickHouseClient(sandbox.runtime),
       );
@@ -99,30 +101,43 @@ describe.skipIf(!clickHouseTestTarget())(
     });
 
     it("refuses to serve before the schema is migrated, and only the migration identity can migrate", async () => {
-      await expect(store.counts(PROJECT, WINDOW)).rejects.toBeInstanceOf(
-        TrafficStoreUnavailableError,
+      // An empty sandbox of its own: every other test starts migrated.
+      const empty = await createClickHouseSandbox();
+      const emptyStore = new ClickHouseTrafficStore(
+        createTrafficClickHouseClient(empty.runtime),
       );
-      const runtimeClient = createTrafficClickHouseClient(sandbox.runtime);
-      await expect(
-        migrateProductionTrafficSchema(runtimeClient),
-      ).rejects.toMatchObject({ code: "497" });
-      await runtimeClient.close();
+      try {
+        await expect(emptyStore.counts(PROJECT, WINDOW)).rejects.toBeInstanceOf(
+          TrafficStoreUnavailableError,
+        );
+        const runtimeClient = createTrafficClickHouseClient(empty.runtime);
+        await expect(
+          migrateProductionTrafficSchema(runtimeClient),
+        ).rejects.toMatchObject({ code: "497" });
+        await runtimeClient.close();
 
-      const migrationClient = createTrafficClickHouseClient(sandbox.migration);
-      await expect(
-        migrateProductionTrafficSchema(migrationClient),
-      ).resolves.toEqual({ applied: [1], version: 1 });
-      await expect(
-        migrateProductionTrafficSchema(migrationClient),
-      ).resolves.toEqual({ applied: [], version: 1 });
-      await migrationClient.close();
+        const migrationClient = createTrafficClickHouseClient(empty.migration);
+        await expect(
+          migrateProductionTrafficSchema(migrationClient),
+        ).resolves.toEqual({ applied: [1], version: 1 });
+        await expect(
+          migrateProductionTrafficSchema(migrationClient),
+        ).resolves.toEqual({ applied: [], version: 1 });
+        await migrationClient.close();
 
-      await expect(store.counts(PROJECT, WINDOW)).resolves.toMatchObject({
-        received: 0,
-      });
-    });
+        await expect(emptyStore.counts(PROJECT, WINDOW)).resolves.toMatchObject(
+          { received: 0 },
+        );
+      } finally {
+        await emptyStore.close();
+        await empty.dispose();
+      }
+    }, 60_000);
 
     it("counts a resent batch once, before and after merges, per project", async () => {
+      // Projects of its own: counts and drops are per project.
+      const project = `proj_resend_${hex(4)}`;
+      const otherProject = `proj_other_${hex(4)}`;
       const refund = call();
       const failed = call({ toolName: "get_order", errorType: "-32603" });
       const first = batch({
@@ -132,9 +147,9 @@ describe.skipIf(!clickHouseTestTarget())(
           { reason: "invalid_span", count: 2, batchDigest: "d1", day: today() },
         ],
       });
-      await store.record(PROJECT, first);
-      await store.record(PROJECT, first);
-      await store.record(OTHER_PROJECT, batch({ calls: [call()] }));
+      await store.record(project, first);
+      await store.record(project, first);
+      await store.record(otherProject, batch({ calls: [call()] }));
 
       const expected = {
         received: 2,
@@ -146,7 +161,7 @@ describe.skipIf(!clickHouseTestTarget())(
         }),
         dropped: { invalid_span: 2 },
       };
-      expect(await store.counts(PROJECT, WINDOW)).toMatchObject(expected);
+      expect(await store.counts(project, WINDOW)).toMatchObject(expected);
       for (const table of [
         "mcp_tool_calls",
         "mcp_call_outcomes",
@@ -154,8 +169,8 @@ describe.skipIf(!clickHouseTestTarget())(
       ]) {
         await sandbox.optimize(table);
       }
-      expect(await store.counts(PROJECT, WINDOW)).toMatchObject(expected);
-      expect(await store.counts(OTHER_PROJECT, WINDOW)).toMatchObject({
+      expect(await store.counts(project, WINDOW)).toMatchObject(expected);
+      expect(await store.counts(otherProject, WINDOW)).toMatchObject({
         received: 1,
         evaluated: 0,
         dropped: {},
@@ -314,9 +329,96 @@ describe.skipIf(!clickHouseTestTarget())(
       });
       expect(counts.received).toBe(0);
     });
+
+    it("counts drops on the days the window covers, and none the TTL has expired", async () => {
+      const project = `proj_drops_${hex(4)}`;
+      const midnight = Date.parse(
+        `${await serverToday(sandbox.admin)}T00:00:00Z`,
+      );
+      const drop = (daysAgo: number, count: number) => ({
+        reason: "invalid_span",
+        count,
+        batchDigest: `days-ago-${daysAgo}`,
+        day: new Date(midnight - daysAgo * DAY_MS).toISOString().slice(0, 10),
+      });
+      const table = `${sandbox.database}.mcp_ingest_drops`;
+      // Keeps the expired day on disk, so only the read can leave it out.
+      await sandbox.admin.command({ query: `SYSTEM STOP TTL MERGES ${table}` });
+      try {
+        await store.record(
+          project,
+          batch({ drops: [drop(0, 1), drop(1, 2), drop(29, 4), drop(30, 8)] }),
+        );
+        const dropped = async (toMs: number) =>
+          (
+            await store.counts(project, {
+              fromMs: midnight - 40 * DAY_MS,
+              toMs,
+            })
+          ).dropped.invalid_span;
+        expect(await dropped(midnight + 1)).toBe(1 + 2 + 4);
+        // The window's end is exclusive: one ending at midnight leaves today out.
+        expect(await dropped(midnight)).toBe(2 + 4);
+      } finally {
+        await sandbox.admin.command({
+          query: `SYSTEM START TTL MERGES ${table}`,
+        });
+      }
+    });
+
+    it("answers a batch only once it is stored, where the profile inserts asynchronously", async () => {
+      const project = `proj_async_${hex(4)}`;
+      // A profile that buffers inserts and answers before writing them.
+      const buffered = new ClickHouseTrafficStore(
+        createClient({
+          ...sandbox.runtime,
+          clickhouse_settings: {
+            async_insert: 1,
+            wait_for_async_insert: 0,
+            async_insert_use_adaptive_busy_timeout: 0,
+            async_insert_busy_timeout_max_ms: 1_000,
+          },
+        }),
+      );
+      try {
+        const refund = call();
+        await buffered.record(
+          project,
+          batch({
+            calls: [refund],
+            outcomes: [outcome(refund, "not_met", 0n)],
+            drops: [
+              {
+                reason: "invalid_span",
+                count: 1,
+                batchDigest: "buffered",
+                day: today(),
+              },
+            ],
+          }),
+        );
+        expect(await store.counts(project, WINDOW)).toMatchObject({
+          received: 1,
+          evaluated: 1,
+          dropped: { invalid_span: 1 },
+        });
+      } finally {
+        await buffered.close();
+      }
+    });
   },
 );
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/** The server's date, which the drops table's TTL counts days from. */
+async function serverToday(client: ClickHouseClient): Promise<string> {
+  const result = await client.query({
+    query: "SELECT toString(today()) AS day",
+    format: "JSONEachRow",
+  });
+  const [row] = await result.json<{ day: string }>();
+  return row.day;
 }

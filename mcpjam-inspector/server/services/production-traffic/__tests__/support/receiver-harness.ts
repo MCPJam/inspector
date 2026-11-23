@@ -7,13 +7,12 @@
 import { randomBytes } from "node:crypto";
 import type { ServerType } from "@hono/node-server";
 import { vi } from "vitest";
-import { migrateProductionTrafficSchema } from "../../clickhouse-schema.js";
 import {
   ClickHouseTrafficStore,
   createTrafficClickHouseClient,
 } from "../../clickhouse-store.js";
 import {
-  createClickHouseSandbox,
+  createMigratedClickHouseSandbox,
   type ClickHouseSandbox,
 } from "./clickhouse-sandbox.js";
 import { startFakeConvex, type FakeConvex } from "./fake-convex.js";
@@ -48,10 +47,7 @@ export async function startReceiverHarness(
   extraEnv: (convexUrl: string) => Record<string, string> = () => ({}),
 ): Promise<ReceiverHarness> {
   const serviceToken = `service-${randomBytes(12).toString("hex")}`;
-  const sandbox = await createClickHouseSandbox();
-  const migration = createTrafficClickHouseClient(sandbox.migration);
-  await migrateProductionTrafficSchema(migration);
-  await migration.close();
+  const sandbox = await createMigratedClickHouseSandbox();
 
   const convex = await startFakeConvex(serviceToken);
   const writer = producerToken();

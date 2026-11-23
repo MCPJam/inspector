@@ -12,6 +12,8 @@
 import { randomBytes } from "node:crypto";
 import { createClient, type ClickHouseClient } from "@clickhouse/client";
 import type { ClickHouseConnection } from "../../clickhouse-config.js";
+import { migrateProductionTrafficSchema } from "../../clickhouse-schema.js";
+import { createTrafficClickHouseClient } from "../../clickhouse-store.js";
 
 export type ClickHouseSandbox = {
   admin: ClickHouseClient;
@@ -43,6 +45,27 @@ export function clickHouseTestTarget() {
 
 const secret = () => randomBytes(24).toString("base64url");
 
+/** Runs `work`; if it fails, runs `undo` and rethrows, keeping both errors if `undo` fails too. */
+async function undoOnFailure(
+  work: () => Promise<unknown>,
+  undo: () => Promise<void>,
+  failure: string,
+): Promise<void> {
+  try {
+    await work();
+  } catch (error) {
+    try {
+      await undo();
+    } catch (undoError) {
+      throw new AggregateError(
+        [error, undoError],
+        `${failure}, and could not remove what it had created`,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function createClickHouseSandbox(): Promise<ClickHouseSandbox> {
   const target = clickHouseTestTarget();
   if (!target) throw new Error("No ClickHouse test target is configured");
@@ -53,17 +76,36 @@ export async function createClickHouseSandbox(): Promise<ClickHouseSandbox> {
   const runtimeUser = `pt_runtime_${suffix}`;
   const migrationPassword = secret();
   const runtimePassword = secret();
+  const remove = async () => {
+    try {
+      for (const query of [
+        `DROP DATABASE IF EXISTS ${database}`,
+        `DROP USER IF EXISTS ${migrationUser}`,
+        `DROP USER IF EXISTS ${runtimeUser}`,
+      ]) {
+        await admin.command({ query });
+      }
+    } finally {
+      await admin.close();
+    }
+  };
   // base64url passwords and hex suffixes contain no quote or backslash, so
   // they are safe to place in these statements directly.
-  for (const query of [
-    `CREATE DATABASE ${database}`,
-    `CREATE USER ${migrationUser} IDENTIFIED WITH sha256_password BY '${migrationPassword}' DEFAULT DATABASE ${database}`,
-    `GRANT CREATE TABLE, ALTER TABLE, DROP TABLE, SELECT, INSERT ON ${database}.* TO ${migrationUser}`,
-    `CREATE USER ${runtimeUser} IDENTIFIED WITH sha256_password BY '${runtimePassword}' DEFAULT DATABASE ${database}`,
-    `GRANT SELECT, INSERT ON ${database}.* TO ${runtimeUser}`,
-  ]) {
-    await admin.command({ query });
-  }
+  await undoOnFailure(
+    async () => {
+      for (const query of [
+        `CREATE DATABASE ${database}`,
+        `CREATE USER ${migrationUser} IDENTIFIED WITH sha256_password BY '${migrationPassword}' DEFAULT DATABASE ${database}`,
+        `GRANT CREATE TABLE, ALTER TABLE, DROP TABLE, SELECT, INSERT ON ${database}.* TO ${migrationUser}`,
+        `CREATE USER ${runtimeUser} IDENTIFIED WITH sha256_password BY '${runtimePassword}' DEFAULT DATABASE ${database}`,
+        `GRANT SELECT, INSERT ON ${database}.* TO ${runtimeUser}`,
+      ]) {
+        await admin.command({ query });
+      }
+    },
+    remove,
+    "Could not set up the ClickHouse sandbox",
+  );
   const connection = (username: string, password: string) => ({
     url: target.url,
     database,
@@ -80,15 +122,22 @@ export async function createClickHouseSandbox(): Promise<ClickHouseSandbox> {
         query: `OPTIMIZE TABLE ${database}.${table} FINAL`,
       });
     },
-    dispose: async () => {
-      for (const query of [
-        `DROP DATABASE IF EXISTS ${database}`,
-        `DROP USER IF EXISTS ${migrationUser}`,
-        `DROP USER IF EXISTS ${runtimeUser}`,
-      ]) {
-        await admin.command({ query });
-      }
-      await admin.close();
-    },
+    dispose: remove,
   };
+}
+
+/** A sandbox already at the current schema, as the runtime finds production. */
+export async function createMigratedClickHouseSandbox(): Promise<ClickHouseSandbox> {
+  const sandbox = await createClickHouseSandbox();
+  const migration = createTrafficClickHouseClient(sandbox.migration);
+  try {
+    await undoOnFailure(
+      () => migrateProductionTrafficSchema(migration),
+      sandbox.dispose,
+      "Could not migrate the ClickHouse sandbox",
+    );
+  } finally {
+    await migration.close();
+  }
+  return sandbox;
 }

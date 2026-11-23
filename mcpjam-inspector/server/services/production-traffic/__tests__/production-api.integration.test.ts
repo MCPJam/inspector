@@ -159,21 +159,37 @@ describe.skipIf(!clickHouseTestTarget())(
       );
       expect(rotated.status).toBe(201);
       const replacement = await rotated.json();
+      // Until the overlap ends, the replaced credential still works.
+      for (const token of [credential.token, replacement.token]) {
+        expect(
+          (await harness.post(batch("admin-flow"), { token })).status,
+        ).toBe(200);
+      }
+
+      // With no overlap, the credential being replaced stops at once.
+      const cutover = await api(
+        `credentials/${replacement.credentialId}/rotate`,
+        ADMIN,
+        { method: "POST", body: { overlapMinutes: 0 } },
+      );
+      expect(cutover.status).toBe(201);
+      const latest = await cutover.json();
+      const stale = await harness.post(batch("admin-flow"), {
+        token: replacement.token,
+      });
+      expect(stale.status).toBe(401);
+      expect((await stale.json()).message).toMatch(/has expired/);
       expect(
-        (await harness.post(batch("admin-flow"), { token: replacement.token }))
+        (await harness.post(batch("admin-flow"), { token: latest.token }))
           .status,
       ).toBe(200);
 
-      const revoked = await api(
-        `credentials/${replacement.credentialId}`,
-        ADMIN,
-        {
-          method: "DELETE",
-        },
-      );
+      const revoked = await api(`credentials/${latest.credentialId}`, ADMIN, {
+        method: "DELETE",
+      });
       expect(revoked.status).toBe(200);
       expect(
-        (await harness.post(batch("admin-flow"), { token: replacement.token }))
+        (await harness.post(batch("admin-flow"), { token: latest.token }))
           .status,
       ).toBe(401);
 
@@ -250,6 +266,37 @@ describe.skipIf(!clickHouseTestTarget())(
         report.checks.filter((check: { ok: boolean }) => !check.ok),
       ).toEqual([]);
       expect(result.status).toBe(0);
+    }, 120_000);
+
+    it("reports a Python the smoke command can't start as a failed check", async () => {
+      const result = await run(
+        process.execPath,
+        [
+          SMOKE,
+          "--url",
+          harness.base,
+          "--project",
+          PROJECT,
+          "--python",
+          resolve(__dirname, "no-such-python"),
+        ],
+        {
+          ...process.env,
+          MCPJAM_PRODUCER_TOKEN: harness.writer,
+          MCPJAM_READER_TOKEN: READER,
+        },
+      );
+      const report = JSON.parse(result.stdout);
+      expect(
+        report.checks.filter((check: { ok: boolean }) => !check.ok),
+      ).toEqual([
+        {
+          name: "python protobuf export succeeded",
+          ok: false,
+          detail: { status: null, error: expect.stringMatching(/ENOENT/) },
+        },
+      ]);
+      expect(result.status).toBe(1);
     }, 120_000);
   },
 );

@@ -23,7 +23,15 @@ type Credential = {
   projectId: string;
   organizationId: string;
   revoked: boolean;
+  createdAt: number;
+  /** Null never expires; rotation sets it to the end of the overlap. */
+  expiresAt: number | null;
+  replacedBy: string | null;
 };
+
+// The backend's default and unit for a rotation's overlap.
+const DEFAULT_OVERLAP_MINUTES = 60;
+const MINUTE_MS = 60_000;
 type Args = Record<string, unknown>;
 type Role = "member" | "admin";
 
@@ -53,7 +61,11 @@ export async function startFakeConvex(
   const members = new Map<string, Map<string, Role>>();
   let issued = 0;
 
-  const register = (token: string, projectId: string) => {
+  const register = (
+    token: string,
+    projectId: string,
+    expiresAt: number | null = null,
+  ) => {
     issued += 1;
     const credentialId = `pt1credential${String(issued).padStart(19, "0")}`;
     credentials.set(hashProducerToken(token), {
@@ -61,6 +73,9 @@ export async function startFakeConvex(
       projectId,
       organizationId,
       revoked: false,
+      createdAt: Date.now(),
+      expiresAt,
+      replacedBy: null,
     });
     return credentialId;
   };
@@ -71,10 +86,10 @@ export async function startFakeConvex(
       throw new Refusal("Insufficient project permissions: admin");
     }
   };
-  const mint = (projectId: string) => {
+  const mint = (projectId: string, expiresAt: number | null = null) => {
     const token = `mjotlp_${randomBytes(32).toString("base64url")}`;
     return {
-      credentialId: register(token, projectId),
+      credentialId: register(token, projectId, expiresAt),
       token,
       displayPrefix: token.slice(0, 13),
     };
@@ -86,6 +101,9 @@ export async function startFakeConvex(
       const credential = credentials.get(command.tokenHash);
       if (!credential) return { ok: false, reason: "unknown_credential" };
       if (credential.revoked) return { ok: false, reason: "revoked" };
+      if (credential.expiresAt !== null && credential.expiresAt <= Date.now()) {
+        return { ok: false, reason: "expired" };
+      }
       if (credential.projectId !== command.projectId) {
         return { ok: false, reason: "project_mismatch" };
       }
@@ -109,7 +127,9 @@ export async function startFakeConvex(
           .filter((row) => row.projectId === args.projectId)
           .map((row) => ({
             credentialId: row.credentialId,
+            expiresAt: row.expiresAt,
             revokedAt: row.revoked ? 1 : null,
+            replacedBy: row.replacedBy,
           })),
       };
     },
@@ -121,7 +141,23 @@ export async function startFakeConvex(
       const previous = byId(args.credentialId);
       if (!previous) throw new Refusal("Producer credential not found");
       requireAdmin(bearer, previous.projectId);
-      return mint(previous.projectId);
+      // As the backend does: the replacement keeps the original's lifetime,
+      // and the original works until the overlap ends, which with none is now.
+      const now = Date.now();
+      const replacement = mint(
+        previous.projectId,
+        previous.expiresAt === null
+          ? null
+          : now + (previous.expiresAt - previous.createdAt),
+      );
+      const overlapMinutes =
+        (args.overlapMinutes as number | undefined) ?? DEFAULT_OVERLAP_MINUTES;
+      previous.replacedBy = replacement.credentialId;
+      previous.expiresAt = Math.min(
+        previous.expiresAt ?? Number.POSITIVE_INFINITY,
+        now + overlapMinutes * MINUTE_MS,
+      );
+      return replacement;
     },
     "productionIngestCredentials:revoke": (args, bearer) => {
       const row = byId(args.credentialId);

@@ -252,6 +252,21 @@ export function relayListenStream(args: {
     result: { _meta: subscription, resultType: "complete" },
   };
 
+  const openFailed = (cause: string, error: unknown) => {
+    reportRouteFailure("Could not open the upstream subscription.", error, {
+      source: "harness.mcp.listen_relay",
+      hop: "user_server_hop",
+    });
+    end(cause, {
+      jsonrpc: "2.0",
+      id: args.id,
+      error: {
+        code: -32603,
+        message: "The server's subscription could not be opened.",
+      },
+    });
+  };
+
   const watchChanges = () => {
     for (const method of methods) {
       const handler: NotificationHandler = (notification) => {
@@ -319,14 +334,7 @@ export function relayListenStream(args: {
     } catch (error) {
       if (ended) return;
       if (!isLegacyConnection(error)) {
-        end("open-failed", {
-          jsonrpc: "2.0",
-          id: args.id,
-          error: {
-            code: -32603,
-            message: "The server's subscription could not be opened.",
-          },
-        });
+        openFailed("open-failed", error);
         return;
       }
     }
@@ -353,20 +361,7 @@ export function relayListenStream(args: {
   return new ReadableStream<Uint8Array>({
     start(streamController) {
       controller = streamController;
-      start().catch((error: unknown) => {
-        reportRouteFailure("Could not open the upstream subscription.", error, {
-          source: "harness.mcp.listen_relay",
-          hop: "user_server_hop",
-        });
-        end("relay-failed", {
-          jsonrpc: "2.0",
-          id: args.id,
-          error: {
-            code: -32603,
-            message: "The server's subscription could not be opened.",
-          },
-        });
-      });
+      start().catch((error: unknown) => openFailed("relay-failed", error));
     },
     cancel() {
       end("harness-closed");

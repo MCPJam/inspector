@@ -1,8 +1,9 @@
 /**
  * The ClickHouse implementation of `ProductionTrafficStore`.
  *
- * Writes are synchronous inserts, so a batch is acknowledged only after
- * ClickHouse has the rows. Duplicates are resolved by the table engines
+ * Each insert waits until ClickHouse has stored its rows, even where the
+ * server's profile turns on asynchronous inserts, so a batch is acknowledged
+ * only once it is stored. Duplicates are resolved by the table engines
  * (see `clickhouse-schema.ts`) and reads use FINAL. Flags, the random sample
  * and counts are computed here at read time from the stored rows, under
  * rules version 1, so a rule change never rewrites history.
@@ -11,6 +12,7 @@ import {
   ClickHouseLogLevel,
   createClient,
   type ClickHouseClient,
+  type ClickHouseSettings,
 } from "@clickhouse/client";
 import {
   readClickHouseConnection,
@@ -138,6 +140,10 @@ type CallRowOut = {
 const asBool = (value: unknown) => Boolean(Number(value));
 const toIso = (value: string) => `${value.replace(" ", "T")}Z`;
 
+// With asynchronous inserts on, ClickHouse can answer before the rows are
+// written. Waiting for that write keeps an accepted batch a stored one.
+const STORED_BEFORE_ANSWER: ClickHouseSettings = { wait_for_async_insert: 1 };
+
 export class ClickHouseTrafficStore implements ProductionTrafficStore {
   private schemaChecked = false;
 
@@ -185,6 +191,7 @@ export class ClickHouseTrafficStore implements ProductionTrafficStore {
         await this.client.insert({
           table: "mcp_tool_calls",
           format: "JSONEachRow",
+          clickhouse_settings: STORED_BEFORE_ANSWER,
           values: batch.calls.map((call) => ({
             project_id: projectId,
             trace_id: call.traceId,
@@ -213,6 +220,7 @@ export class ClickHouseTrafficStore implements ProductionTrafficStore {
         await this.client.insert({
           table: "mcp_call_outcomes",
           format: "JSONEachRow",
+          clickhouse_settings: STORED_BEFORE_ANSWER,
           values: batch.outcomes.map((outcome) => ({
             project_id: projectId,
             call_trace_id: outcome.callTraceId,
@@ -229,6 +237,7 @@ export class ClickHouseTrafficStore implements ProductionTrafficStore {
         await this.client.insert({
           table: "mcp_ingest_drops",
           format: "JSONEachRow",
+          clickhouse_settings: STORED_BEFORE_ANSWER,
           values: batch.drops.map((drop) => ({
             project_id: projectId,
             day: drop.day,
@@ -248,6 +257,8 @@ export class ClickHouseTrafficStore implements ProductionTrafficStore {
     await this.ready();
     const params = this.params(projectId, window);
     const [totals, drops] = await this.guard(async () => {
+      // The totals are read before the drops query is sent, so a count never
+      // waits on the pool while holding a connection it hasn't read yet.
       const totalsResult = await this.client.query({
         query: `WITH ${FLAGGED_CALLS}
           SELECT count() AS received, countIf(evaluated) AS evaluated,
@@ -260,18 +271,23 @@ export class ClickHouseTrafficStore implements ProductionTrafficStore {
         query_params: params,
         format: "JSONEachRow",
       });
+      const totalsRow = (await totalsResult.json<CountsRow>())[0] ?? {};
+      // Drops are kept per day. The window's end is exclusive, so a window
+      // ending at midnight leaves that day out. A day is left out once the
+      // table's TTL has expired it, whether or not a merge has removed it yet.
       const dropsResult = await this.client.query({
         query: `SELECT reason, sum(dropped) AS dropped
           FROM mcp_ingest_drops FINAL
           WHERE project_id = {projectId:String}
             AND day >= toDate(fromUnixTimestamp64Milli({fromMs:Int64}, 'UTC'))
-            AND day <= toDate(fromUnixTimestamp64Milli({toMs:Int64}, 'UTC'))
+            AND day <= toDate(fromUnixTimestamp64Milli({lastMs:Int64}, 'UTC'))
+            AND day > today() - INTERVAL ${SOURCE_RETENTION_DAYS} DAY
           GROUP BY reason`,
-        query_params: params,
+        query_params: { ...params, lastMs: window.toMs - 1 },
         format: "JSONEachRow",
       });
       return [
-        (await totalsResult.json<CountsRow>())[0] ?? {},
+        totalsRow,
         await dropsResult.json<{ reason: string; dropped: string | number }>(),
       ] as const;
     });

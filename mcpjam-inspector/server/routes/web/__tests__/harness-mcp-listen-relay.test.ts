@@ -3,6 +3,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { MCPClientManager } from "@mcpjam/sdk";
+
+const { reportRouteFailureMock } = vi.hoisted(() => ({
+  reportRouteFailureMock: vi.fn(),
+}));
+vi.mock("../../../utils/route-error-report.js", () => ({
+  reportRouteFailure: reportRouteFailureMock,
+}));
+
 import {
   MAX_LISTENS_PER_CALLER,
   cancelRelayedListen,
@@ -144,6 +152,7 @@ function relay(
 
 afterEach(() => {
   vi.useRealTimers();
+  reportRouteFailureMock.mockClear();
 });
 
 describe("relayableFilter", () => {
@@ -266,14 +275,21 @@ describe("relayListenStream", () => {
       params: { notifications: {} },
     });
     await read.cancel();
+    expect(reportRouteFailureMock).not.toHaveBeenCalled();
   });
 
-  it("answers a listen the upstream refused with an error", async () => {
+  it("answers a listen the upstream refused with an error, and reports it", async () => {
     const fake = fakeManager("fail");
     const { read, onEnd } = relay(fake);
     expect(await read.next()).toMatchObject({ id: 7, error: { code: -32603 } });
     expect(await read.next()).toBeUndefined();
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledTimes(1));
+    expect(reportRouteFailureMock).toHaveBeenCalledTimes(1);
+    expect(reportRouteFailureMock).toHaveBeenCalledWith(
+      "Could not open the upstream subscription.",
+      expect.objectContaining({ message: "upstream refused" }),
+      { source: "harness.mcp.listen_relay", hop: "user_server_hop" },
+    );
   });
 
   it("stops opening upstream when the harness leaves before the acknowledgment", async () => {
@@ -282,6 +298,7 @@ describe("relayListenStream", () => {
     await vi.waitFor(() => expect(fake.listen).toHaveBeenCalled());
     await read.cancel();
     await vi.waitFor(() => expect(onEnd).toHaveBeenCalledTimes(1));
+    expect(reportRouteFailureMock).not.toHaveBeenCalled();
   });
 });
 
