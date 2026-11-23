@@ -140,12 +140,10 @@ export interface WebRecoveryCoordinator {
 
 /** The backend's refusals a handback answers with an outcome. */
 const HANDBACK_REFUSALS: Partial<
-  Record<string, "not_found" | "not_signed_in" | "wrong_identity">
+  Record<string, "not_found" | "not_signed_in">
 > = {
   NOT_FOUND: "not_found",
   WEB_ACCOUNT_NEEDS_SIGN_IN: "not_signed_in",
-  // An open request it found is refused only for another seat's email.
-  CONFLICT: "wrong_identity",
 };
 
 type VerifiedSession =
@@ -326,12 +324,21 @@ export function createWebRecoveryCoordinator(
       }
       if (session.status !== "saved") return session;
       const { accountEmail, workspaceName } = session.identity;
-      // The backend marks the account ready and its waiting runs resumable.
-      await backend.handbackWebReconnect({
-        requestId,
-        verifiedAccountEmail: accountEmail,
-        ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
-      });
+      try {
+        // The backend marks the account ready and its waiting runs resumable.
+        await backend.handbackWebReconnect({
+          requestId,
+          verifiedAccountEmail: accountEmail,
+          ...(workspaceName ? { verifiedWorkspace: workspaceName } : {}),
+        });
+      } catch (error) {
+        // The seat matched above, so a conflict means the request was
+        // cancelled after it was read.
+        if (error instanceof WebBackendRefusal && error.code === "CONFLICT") {
+          return { status: "cancelled" };
+        }
+        throw error;
+      }
     }
     // A repeated handback, or one retried after a restart, finds the request
     // resolved and resumes only what still waits.

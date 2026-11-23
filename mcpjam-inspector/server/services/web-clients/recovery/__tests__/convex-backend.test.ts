@@ -237,7 +237,8 @@ describe("Convex reconnect backend", () => {
   });
 
   it.each([
-    ["CONFLICT", "handbackWebReconnect", "wrong_identity"],
+    // The seat matched, so a conflict is a request cancelled meanwhile.
+    ["CONFLICT", "handbackWebReconnect", "cancelled"],
     ["NOT_FOUND", "handbackWebReconnect", "not_found"],
     ["WEB_ACCOUNT_NEEDS_SIGN_IN", "profile-key", "not_signed_in"],
     ["NOT_FOUND", "listWebReconnectRequests", "not_found"],
