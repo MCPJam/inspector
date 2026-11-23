@@ -2218,14 +2218,17 @@ async function runJourneyFanOut(
       // is trusted only for a failure from the target's servers: the same
       // refused connection from a Convex lookup, or a 401 on a credential
       // MCPJam pays for in the model call, is ours.
-      const causeOrigin =
+      const described =
         err instanceof SwarmSetupError && err.fromTargetServer
-          ? originOf(describeError(err.cause))
+          ? describeError(err.cause)
           : undefined;
+      const causeOrigin = described ? originOf(described) : undefined;
       if (causeOrigin === "user_server" || causeOrigin === "user_config") {
+        // The slug keeps a wrong downgrade findable in Axiom once it is off
+        // Sentry.
         logger.warn(
           "[swarm.runner] target worker failed; finalizing its attempts",
-          failureContext,
+          { ...failureContext, slug: described?.slug },
         );
       } else {
         logger.error(

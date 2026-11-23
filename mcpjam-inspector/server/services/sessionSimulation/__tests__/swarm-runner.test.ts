@@ -73,6 +73,7 @@ import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import type { SyntheticHostSessionAdapter } from "../runner.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 import { logger } from "../../../utils/logger.js";
+import { buildLegacyLogRow } from "../../../../shared/strict-log.js";
 import {
   SdkErrorCode,
   SdkHttpError,
@@ -2495,6 +2496,7 @@ describe("target setup before claims", () => {
         'Failed to connect to MCP server "local" using HTTP transports.',
         { cause: refusedConnection() },
       ),
+      "transport/econnrefused",
     ],
     [
       "answered 404",
@@ -2503,23 +2505,32 @@ describe("target setup before claims", () => {
         "Error POSTing to endpoint: Not Found",
         { status: 404, statusText: "Not Found" },
       ),
+      "server/http_error",
     ],
-    ["answered 401", new UnauthorizedError()],
+    ["answered 401", new UnauthorizedError(), "auth/http_401"],
   ])(
     "warns instead of capturing when the target's server %s during setup",
-    async (_label, cause) => {
+    async (_label, cause, slug) => {
       const { errors, warnings } = await runFailedSetup(cause, true);
 
       expect(errors).toEqual([]);
+      // The slug is what keeps a wrong downgrade findable in Axiom.
       expect(warnings).toEqual([
         [
           TARGET_WORKER_FAILED,
           expect.objectContaining({
             runId: "run-1",
             setupReason: "transport_failed",
+            slug,
           }),
         ],
       ]);
+      expect(
+        buildLegacyLogRow(TARGET_WORKER_FAILED, {
+          ...(warnings[0]![1] as Record<string, unknown>),
+          level: "warn",
+        }),
+      ).toMatchObject({ level: "warn", slug });
     },
   );
 

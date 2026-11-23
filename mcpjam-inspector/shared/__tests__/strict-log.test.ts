@@ -24,6 +24,16 @@ describe("strict log boundary", () => {
     );
     expect(row).not.toHaveProperty("setupReason");
   });
+  it("retains a catalogued error slug and drops any other text", () => {
+    const failed =
+      "[swarm.runner] target worker failed; finalizing its attempts";
+    expect(
+      buildLegacyLogRow(failed, { slug: "transport/econnrefused" }).slug,
+    ).toBe("transport/econnrefused");
+    expect(
+      buildLegacyLogRow(failed, { slug: "PRIVATE_SENTINEL" }),
+    ).not.toHaveProperty("slug");
+  });
 
   it.each(["fetch_failed", "invalid_catalog"])(
     "retains a catalog refresh failure with bounded reason %s and warning level",
