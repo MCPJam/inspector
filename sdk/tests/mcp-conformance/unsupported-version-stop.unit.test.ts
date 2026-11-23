@@ -242,6 +242,42 @@ describe.each(LEGACY_VERSIONS)(
   }
 );
 
+describe("closing the session after an unsupported version", () => {
+  it("the transport DELETE carries the version the server answered", async () => {
+    const deleteHeaders: Headers[] = [];
+    await runTransportChecks(
+      context(
+        scriptedServer({ sent: [], answeredVersion: UNSUPPORTED, deleteHeaders })
+      ),
+      new Set<MCPCheckId>(NEEDS_SESSION)
+    );
+
+    // The session is on the server's version; the run's may be refused.
+    expect(deleteHeaders).toHaveLength(1);
+    expect(deleteHeaders[0].get("mcp-protocol-version")).toBe(UNSUPPORTED);
+  });
+
+  it("the advice DELETE carries it too, and gives no advice", async () => {
+    const deleteHeaders: Headers[] = [];
+    const outcomes = await collectRawAdvice(
+      context(
+        scriptedServer({
+          sent: [],
+          answeredVersion: UNSUPPORTED,
+          deleteHeaders,
+          deleteStatus: 400,
+        })
+      )
+    );
+
+    expect(
+      outcomes.find((item) => item.id === "readiness-session-termination")
+    ).toBeUndefined();
+    expect(deleteHeaders).toHaveLength(1);
+    expect(deleteHeaders[0].get("mcp-protocol-version")).toBe(UNSUPPORTED);
+  });
+});
+
 describe("the version the run asked for leaves the probes as they were", () => {
   it("Invalid Method Error sends its probe and passes", async () => {
     const sent: Sent = [];

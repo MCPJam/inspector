@@ -433,14 +433,15 @@ async function sessionTerminationAdvice(
     // No session to terminate — nothing to advise on.
     return undefined;
   }
-  // The version header carries the version the server agreed to: a server
-  // that answered an older one may refuse the one the run asked for, and a
-  // 400 to that would be MCPJam's mistake, not a termination problem.
+  // The version header carries the version the server answered, even one
+  // MCPJam does not speak: a server may refuse the one the run asked for, and
+  // a 400 to that would be MCPJam's mistake, not a termination problem.
   const deleteRequest = rawRequest(ctx, {
     method: "DELETE",
     headers: legacyHeaders({
       protocolVersion:
         negotiatedVersion ??
+        versionStop?.answeredVersion ??
         ctx.config.protocolVersion ??
         DEFAULT_LEGACY_PROTOCOL_VERSION,
       sessionId,

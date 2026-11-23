@@ -765,7 +765,13 @@ export async function runTransportChecks(
       }
     }
   } finally {
-    await terminateSession(ctx, sessionId, session?.negotiatedVersion);
+    // The version the server answered, even one MCPJam does not speak: the
+    // session is on it, and the run's version may be refused.
+    await terminateSession(
+      ctx,
+      sessionId,
+      session?.negotiatedVersion ?? session?.versionStop?.answeredVersion
+    );
   }
 
   return results;
