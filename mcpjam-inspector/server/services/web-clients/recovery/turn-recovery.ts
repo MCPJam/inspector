@@ -186,7 +186,8 @@ export async function runRecoverableWebTurn(
         message: result.failure.message,
       } as const;
       onPaused?.(paused);
-      const resumed = await waitForResume(runId, step, {
+      const waitingOn = { requestId: outcome.requestId, runId };
+      const resumed = await waitForResume(waitingOn, step, {
         ...(input.signal ? { signal: input.signal } : {}),
         timeoutMs: setup.maxPauseMs ?? MAX_PAUSE_MS,
         pollMs: setup.pollMs ?? POLL_MS,

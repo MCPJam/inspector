@@ -149,11 +149,12 @@ function startProcess(
     backend,
     ledger: world.ledger,
     ...(method ? { signInMethodFor: () => method } : {}),
-    resumeRun: async (runId, pendingStep) => {
+    resumeRun: async ({ runId, pendingStep }) => {
       const run = runOf(world, runId);
       run.log.push(`resume ${pendingStep.stepId}`);
       run.restoredProfileVersion = (await accountOf(world)).profileVersion;
       world.inFlight.push(execute(world, coordinator, run, pendingStep, true));
+      return true;
     },
   });
   return coordinator;
@@ -613,10 +614,10 @@ describe("web account recovery", () => {
       backend: world.backend,
       ledger: world.ledger,
       // Not async, so its throw comes before any promise.
-      resumeRun: (runId) => {
+      resumeRun: ({ runId }) => {
         if (runId === "run-1") throw new Error("resume refused");
         started.push(runId);
-        return Promise.resolve();
+        return Promise.resolve(true);
       },
     });
 

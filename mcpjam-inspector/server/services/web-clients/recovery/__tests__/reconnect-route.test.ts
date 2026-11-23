@@ -38,6 +38,8 @@ import { createFixtureWebPageModule } from "../../../../utils/harness/real-ui/fi
 import type { PageDriver } from "../../../../utils/harness/real-ui/page-driver.js";
 import type { WebClientService } from "../../backend-connector-resolver.js";
 import type { WebClientEnvironment } from "../../web-client-environment.js";
+import type { PendingStep } from "../backend.js";
+import { waitForResume } from "../paused-runs.js";
 import {
   createWebReconnectRoutes,
   type WebReconnectRouteDeps,
@@ -183,12 +185,33 @@ beforeEach(() => {
   reported.mockClear();
 });
 
+/** The claimed run's step in `OPEN`. */
+const CLAIMED_STEP: PendingStep = {
+  stepId: "reply",
+  startedAt: "2026-11-20T10:00:00.000Z",
+};
+
+/** A turn of `run-1` paused in this process on `request-1`. */
+function pausedTurn() {
+  return waitForResume(
+    { requestId: "request-1", runId: "run-1" },
+    CLAIMED_STEP,
+    {
+      timeoutMs: 5_000,
+      pollMs: 60_000,
+      requestStatus: async () => "open",
+    },
+  );
+}
+
 describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
   it("hands the account back as the signed-in person and resumes its runs", async () => {
+    const turn = pausedTurn();
     expect(await post(OPEN)).toEqual({
       status: 200,
       body: { status: "resumed", resumedRuns: 1 },
     });
+    expect(await turn).toEqual(CLAIMED_STEP);
     expect(commands.map((command) => command.action)).toEqual([
       "listWebReconnectRequests",
       "listWebAccounts",
@@ -268,6 +291,16 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
       "A web account could not be handed back",
       offline,
       expect.objectContaining({ hop: "mcpjam_internal" }),
+    );
+  });
+
+  it("doesn't count a claimed run no turn here waits for as resumed", async () => {
+    expect(await post(OPEN)).toEqual({
+      status: 200,
+      body: { status: "resumed", resumedRuns: 0 },
+    });
+    expect(commands.map((command) => command.action)).toContain(
+      "claimResumableWebRuns",
     );
   });
 });

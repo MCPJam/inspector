@@ -79,8 +79,11 @@ export const NO_SIGN_IN_METHOD: SignInMethod = {
 export type WebRecoveryDeps = {
   backend: WebReconnectBackend;
   ledger: LedgerReader;
-  /** Starts a paused run at its pending step; returns once it is under way. */
-  resumeRun(runId: string, pendingStep: PendingStep): Promise<void>;
+  /**
+   * Starts a claimed run at its pending step; returns once it is under way.
+   * False when no turn of the run waits here to carry it on.
+   */
+  resumeRun(run: ClaimedRun): Promise<boolean>;
   /** The sign-in method the connection authorized; `none` when omitted. */
   signInMethodFor?(account: {
     projectId: string;
@@ -111,7 +114,14 @@ export type NeedsSignInOutcome =
   /** A person is needed. Stop this execution; `resumeRun` carries it on. */
   | { status: "paused"; requestId: string };
 
-export type ResumedRun = ClaimedRun & { status: "resumed" | "failed" };
+/**
+ * `not_waiting`: no turn here took the run, so it isn't counted as resumed. A
+ * turn waiting on another replica resumes when it next reads its request; a
+ * turn that stopped waiting is sent again by a person.
+ */
+export type ResumedRun = ClaimedRun & {
+  status: "resumed" | "not_waiting" | "failed";
+};
 
 export type HandbackOutcome =
   | { status: "not_found" | "not_signed_in" | "cancelled" }
@@ -178,11 +188,13 @@ export function createWebRecoveryCoordinator(
     const started = await Promise.allSettled(
       // Async, so a resumeRun that throws before it returns a promise fails
       // only its own run: the backend has already claimed all of them.
-      claimed.map(async (run) => deps.resumeRun(run.runId, run.pendingStep)),
+      claimed.map(async (run) => deps.resumeRun(run)),
     );
     return claimed.map((run, index): ResumedRun => {
       const result = started[index];
-      if (result.status === "fulfilled") return { ...run, status: "resumed" };
+      if (result.status === "fulfilled") {
+        return { ...run, status: result.value ? "resumed" : "not_waiting" };
+      }
       // A claimed run is never handed out again, so a person must send it again.
       logger.error(
         "[web-recovery] A claimed run did not resume",

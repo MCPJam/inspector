@@ -128,6 +128,8 @@ export function createWebReconnectRoutes(
       });
       if (outcome.status !== "resumed")
         return c.json({ status: outcome.status });
+      // Only turns woken here count. One paused on another replica resumes
+      // when it next reads its request; a run no turn waits for is sent again.
       const resumedRuns = outcome.runs.filter(
         (run) => run.status === "resumed",
       ).length;
