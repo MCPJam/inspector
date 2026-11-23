@@ -32,6 +32,7 @@ import type {
   NormalizedError,
 } from "@mcpjam/sdk/browser";
 import {
+  describeAsSlug,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
   readXaaEnterprisePolicy,
@@ -5573,6 +5574,7 @@ export function useServerState({
         type: "CONNECT_FAILURE",
         name: serverName,
         error: SIGN_IN_TIMED_OUT_MESSAGE,
+        normalized: describeAsSlug("auth/sign_in_timed_out"),
       });
     },
   });

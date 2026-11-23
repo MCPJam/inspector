@@ -118,6 +118,9 @@ const ERROR_ORIGINS: Record<string, ErrorOrigin> = {
   // Nothing has failed on the wire: the user simply has not granted consent
   // yet. Config-side because only the user can complete it.
   "auth/consent_required": "user_config",
+  // The user left the sign-in page unfinished or turned the request down.
+  "auth/sign_in_timed_out": "user_config",
+  "auth/sign_in_cancelled": "user_config",
   "oauth/invalid_client": "user_config",
   "oauth/invalid_grant": "user_config",
   "oauth/redirect_mismatch": "user_config",
@@ -614,6 +617,26 @@ export const ERROR_CATALOG: Record<string, ErrorCatalogEntry> = {
     [
       "Reconnect ran without opening the sign-in prompt, so no OAuth token exists for this server yet.",
     ],
+    ["Click Reconnect and approve the request in the window that opens."],
+    "consent-required",
+    "warning",
+  ),
+  // Both are set by the inspector's own sign-in flow, which names the slug
+  // with `describeAsSlug`; no wire error maps to them.
+  "auth/sign_in_timed_out": entry(
+    "auth/sign_in_timed_out",
+    "Sign-in timed out",
+    "Sign-in was not finished in time, so MCPJam stopped waiting.",
+    ["The sign-in page was left open or closed before the request was approved."],
+    ["Click Reconnect to try again, then finish signing in."],
+    "consent-required",
+    "warning",
+  ),
+  "auth/sign_in_cancelled": entry(
+    "auth/sign_in_cancelled",
+    "Authorization cancelled",
+    "Authorization was cancelled before this server was approved.",
+    ["You left the sign-in page or denied the request."],
     ["Click Reconnect and approve the request in the window that opens."],
     "consent-required",
     "warning",

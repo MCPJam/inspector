@@ -948,4 +948,51 @@ describe("useAppState active organization recovery", () => {
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
     expect(localStorage.getItem("mcp-oauth-return-hash")).toBeNull();
   });
+
+  it("titles the card Authorization cancelled when Back returns from the sign-in page", async () => {
+    let capturedDispatch: ((action: any) => void) | undefined;
+    useServerStateMock.mockImplementation((args: any) => {
+      capturedDispatch = args.dispatch;
+      return serverStateValue;
+    });
+    localStorage.setItem("mcp-oauth-pending", "oauth-server");
+    localStorage.setItem("mcp-serverUrl-oauth-server", "https://oauth.example/mcp");
+    renderHook(() =>
+      useAppState({
+        currentUserId: null,
+        currentActorKey: "guest",
+        routeOrganizationId: undefined,
+        hasOrganizations: false,
+        isLoadingOrganizations: false,
+        validOrganizations: [],
+      }),
+    );
+    await waitFor(() => expect(capturedDispatch).toBeDefined());
+    act(() => {
+      capturedDispatch?.({
+        type: "CONNECT_REQUEST",
+        name: "oauth-server",
+        config: { type: "http", url: "https://oauth.example/mcp" },
+        select: true,
+      });
+    });
+
+    const pageShow = new Event("pageshow") as PageTransitionEvent;
+    Object.defineProperty(pageShow, "persisted", { value: true });
+    act(() => {
+      window.dispatchEvent(pageShow);
+    });
+
+    const server =
+      useProjectStateMock.mock.calls.at(-1)?.[0].appState.servers[
+        "oauth-server"
+      ];
+    expect(server).toMatchObject({
+      connectionStatus: "failed",
+      lastNormalizedError: {
+        slug: "auth/sign_in_cancelled",
+        title: "Authorization cancelled",
+      },
+    });
+  });
 });

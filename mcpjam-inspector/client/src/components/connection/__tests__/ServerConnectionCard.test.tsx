@@ -8,7 +8,9 @@ import {
   act,
 } from "@testing-library/react";
 import { toast } from "sonner";
+import { describeAsSlug } from "@mcpjam/sdk/browser";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { SIGN_IN_TIMED_OUT_MESSAGE } from "@/hooks/use-sign-in-timeout";
 
 // Mock the agent brief generator to avoid @mcpjam/sdk dependency
 vi.mock("@/lib/generate-agent-brief", () => ({
@@ -692,6 +694,18 @@ describe("ServerConnectionCard", () => {
 
       fireEvent.click(screen.getByTestId("error-card-details"));
       expect(screen.getByText("Connection refused")).toBeInTheDocument();
+    });
+
+    it("titles a timed-out sign-in without opening the details", () => {
+      const server = createServer({
+        connectionStatus: "failed",
+        lastError: SIGN_IN_TIMED_OUT_MESSAGE,
+        lastNormalizedError: describeAsSlug("auth/sign_in_timed_out"),
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.getByText("Sign-in timed out")).toBeInTheDocument();
+      expect(screen.queryByText("Connection error")).not.toBeInTheDocument();
     });
 
     it("renders long error messages via the ErrorCard", () => {
