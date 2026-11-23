@@ -86,8 +86,8 @@ function captionOf(
 export interface AccountListTerms {
   /** The row's note when the account can't be used until someone acts. */
   needsReauth: string;
-  /** The row menu's way to fix it. */
-  reauthenticate: string;
+  /** The row menu's way to fix it. Without one, the menu offers none. */
+  reauthenticate?: string;
   /** What removing an account deletes. */
   removeBody: string;
 }
@@ -211,7 +211,8 @@ export function ConnectionAccountsList({
   onReload?: () => void;
   isAdmin: boolean;
   sharingControl?: ReactNode;
-  onAuthenticate: (intent: ConnectionIntent) => void | Promise<void>;
+  /** Adds an account or signs one in again. Without it the list offers neither. */
+  onAuthenticate?: (intent: ConnectionIntent) => void | Promise<void>;
   onUpdate: (
     connection: OAuthConnection,
     operation: "label" | "default" | "delete",
@@ -394,16 +395,18 @@ export function ConnectionAccountsList({
                         Set as default
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem
-                      onSelect={() =>
-                        void onAuthenticate({
-                          kind: "replace",
-                          credentialId: connection.connectionId,
-                        })
-                      }
-                    >
-                      {terms.reauthenticate}
-                    </DropdownMenuItem>
+                    {terms.reauthenticate && onAuthenticate ? (
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          void onAuthenticate({
+                            kind: "replace",
+                            credentialId: connection.connectionId,
+                          })
+                        }
+                      >
+                        {terms.reauthenticate}
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem
                       className="text-destructive focus:text-destructive"
                       onSelect={() => setRemoving(connection)}
@@ -419,7 +422,7 @@ export function ConnectionAccountsList({
       </div>
 
       {/* Hidden until the list answers: adding depends on the server's mode. */}
-      {shared !== undefined && canManage && (
+      {shared !== undefined && canManage && onAuthenticate && (
         <button
           type="button"
           disabled={busy || atAccountLimit}
