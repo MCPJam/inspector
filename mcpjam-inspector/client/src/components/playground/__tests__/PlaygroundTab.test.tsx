@@ -21,7 +21,7 @@ import {
 
 vi.mock("@/hooks/useComputersEnabled", () => ({
   useBrowserWorkspaceEnabledState: () => webClientFixture.workspace,
-  useBrowserEnabledState: () => true,
+  useBrowserEnabledState: () => webClientFixture.browsers,
 }));
 const mockLoadingScreen = vi.hoisted(() => vi.fn());
 const mockPlaygroundCenter = vi.hoisted(() => vi.fn());
@@ -50,6 +50,7 @@ const webClientFixture = vi.hoisted(() => ({
   signedIn: false,
   flag: false,
   workspace: true,
+  browsers: true as boolean | undefined,
   host: null as null | { config: { harness: string } },
 }));
 vi.mock("convex/react", () => ({
@@ -367,13 +368,14 @@ describe("PlaygroundTab web clients", () => {
       restoredSession: null,
       restorationPending: false,
     });
-    useBrowserWorkspaceStore.setState({ conversations: {} });
+    useBrowserWorkspaceStore.setState({ conversations: {}, autoOpened: {} });
     mockLoadingState.current = { kind: "ready" };
   });
   afterEach(() => {
     webClientFixture.signedIn = false;
     webClientFixture.flag = false;
     webClientFixture.workspace = true;
+    webClientFixture.browsers = true;
     webClientFixture.host = null;
   });
 
@@ -407,13 +409,22 @@ describe("PlaygroundTab web clients", () => {
     expect(screen.queryByTestId("browser-panel")).toBeNull();
   });
 
-  it("keeps a closed pane closed for the rest of the chat", () => {
-    const { rerender } = render(<PlaygroundTab {...baseProps} />);
+  it("keeps a closed pane closed when the chat mounts again", () => {
+    // A reload, a chat switch or a return to the Playground mounts afresh.
+    const { unmount } = render(<PlaygroundTab {...baseProps} />);
     act(() => useBrowserWorkspaceStore.getState().closeBrowser("chat-web"));
-    rerender(<PlaygroundTab {...baseProps} />);
+    unmount();
+    render(<PlaygroundTab {...baseProps} />);
     expect(
       useBrowserWorkspaceStore.getState().conversations["chat-web"]?.open,
     ).toBe(false);
+    expect(screen.queryByTestId("browser-panel")).toBeNull();
+  });
+
+  it("shows no pane while hosted browsers are unavailable", () => {
+    webClientFixture.browsers = false;
+    render(<PlaygroundTab {...baseProps} />);
+    expect(screen.queryByTestId("browser-panel")).toBeNull();
   });
 });
 

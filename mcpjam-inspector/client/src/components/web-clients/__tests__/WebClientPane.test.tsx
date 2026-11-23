@@ -1,11 +1,16 @@
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { WebAccount } from "@/lib/web-accounts/api";
 import { createWebAccountView } from "@/test/factories";
 import { useWebClientPane } from "../WebClientPane";
 import { WebAccountChip } from "../WebAccountChip";
-import { SaveWebAccountBar } from "../SaveWebAccountBar";
 
 const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
@@ -24,7 +29,7 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => ({
 const ready = createWebAccountView({ webAccountId: "wa-1" });
 const signedOut: WebAccount = { ...ready, status: "needs_sign_in" };
 
-/** The panel's layout: the chip in its top bar, the banner, then the body. */
+/** The panel's layout: the chip in its top bar, then the body. */
 function Pane(props: Parameters<typeof useWebClientPane>[0]) {
   const parts = useWebClientPane(props);
   return (
@@ -33,7 +38,6 @@ function Pane(props: Parameters<typeof useWebClientPane>[0]) {
         {parts?.chip}
         <button type="button">Close browser panel</button>
       </div>
-      {parts?.banner}
       {parts?.blocker ?? <div data-testid="browser-body" />}
     </>
   );
@@ -44,23 +48,15 @@ function mount({
   isAdmin = false,
   loaded = true,
   local = false,
-  pendingSignIn,
 }: {
   accounts?: WebAccount[];
   isAdmin?: boolean;
   loaded?: boolean;
   local?: boolean;
-  pendingSignIn?: { accountEmail: string; onSave: () => Promise<void> };
 } = {}) {
   mocks.accounts.mockReturnValue({ accounts, isAdmin, loaded });
   return render(
-    <Pane
-      projectId="project-1"
-      hostId="host-1"
-      vendor="claude"
-      local={local}
-      pendingSignIn={pendingSignIn}
-    />,
+    <Pane projectId="project-1" hostId="host-1" vendor="claude" local={local} />,
   );
 }
 
@@ -129,34 +125,38 @@ describe("useWebClientPane", () => {
     );
   });
 
-  it("starts no browser until an admin starts signing in", async () => {
+  it("tells an admin the project has no account, with no sign-in it can't finish", () => {
     mount({ isAdmin: true });
     expect(screen.queryByTestId("browser-body")).toBeNull();
-    expect(screen.getByTestId("web-pane-sign-in")).toHaveTextContent(
-      "Sign in to claude.ai with your team's test account",
+    const pane = screen.getByTestId("web-pane-sign-in");
+    expect(pane).toHaveTextContent(
+      "This project has no Claude web account yet",
     );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Start signing in" }),
+    expect(pane).toHaveTextContent(
+      "Runs on Claude web can't start until the project has a signed-in claude.ai account.",
     );
-    expect(screen.getByTestId("browser-body")).toBeInTheDocument();
-    expect(
-      screen.getByText(/Sign in to claude.ai in the browser below/),
-    ).toBeInTheDocument();
+    // Signing in needs the runtime that opens the vendor's sign-in page.
+    expect(within(pane).queryByRole("button")).toBeNull();
+    expect(pane).not.toHaveTextContent(/below/);
   });
 
-  it("asks an admin to sign in again as the signed-out account", () => {
+  it("tells an admin which account needs sign-in", () => {
     mount({ isAdmin: true, accounts: [signedOut] });
     expect(screen.getByTestId("web-pane-sign-in")).toHaveTextContent(
-      "Sign in to claude.ai as qa@example.com",
+      "qa@example.com needs sign-in",
     );
     expect(
-      screen.getByRole("button", { name: "Sign in again" }),
-    ).toBeInTheDocument();
+      within(screen.getByTestId("web-pane-sign-in")).queryByRole("button"),
+    ).toBeNull();
   });
 
   it("waits for the account list before choosing a view", () => {
     mount({ loaded: false });
     expect(screen.getByRole("status")).toHaveTextContent("Loading accounts…");
+    // Not "No account yet": the project may well have one.
+    expect(screen.getByTestId("web-account-chip")).toHaveTextContent(
+      "Loading account…",
+    );
   });
 
   it("runs on this computer's browser with the person's own sign-in", () => {
@@ -165,18 +165,6 @@ describe("useWebClientPane", () => {
     expect(screen.getByTestId("web-account-chip")).toHaveTextContent(
       "Your own sign-inThis computer",
     );
-  });
-
-  it("offers to save an admin's sign-in and saves nothing on its own", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    mount({
-      isAdmin: true,
-      pendingSignIn: { accountEmail: "qa@example.com", onSave },
-    });
-    expect(screen.getByTestId("save-web-account-bar")).toHaveTextContent(
-      "Signed in as qa@example.com",
-    );
-    expect(onSave).not.toHaveBeenCalled();
   });
 });
 
@@ -201,53 +189,13 @@ describe("WebAccountChip", () => {
       "No account yet",
     );
   });
-});
 
-describe("SaveWebAccountBar", () => {
-  beforeEach(() => vi.clearAllMocks());
-  afterEach(cleanup);
-
-  it("saves for the project only when asked", async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-    render(
-      <SaveWebAccountBar
-        vendor="claude"
-        accountEmail="qa@example.com"
-        onSave={onSave}
-      />,
-    );
-    expect(screen.getByTestId("save-web-account-bar")).toHaveTextContent(
-      "Save it so members' runs on Claude web can use this claude.ai account.",
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save for the project" }),
-    );
-    expect(onSave).toHaveBeenCalledOnce();
-    await waitFor(() =>
-      expect(mocks.toast.success).toHaveBeenCalledWith(
-        "qa@example.com saved for the project.",
-      ),
-    );
-  });
-
-  it("says the save didn't happen and keeps the button", async () => {
-    render(
-      <SaveWebAccountBar
-        vendor="claude"
-        accountEmail="qa@example.com"
-        onSave={vi.fn().mockRejectedValue(new Error("network"))}
-      />,
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Save for the project" }),
-    );
-    await waitFor(() =>
-      expect(mocks.toast.error).toHaveBeenCalledWith(
-        "Couldn't save the account. Try again.",
-      ),
-    );
-    expect(
-      screen.getByRole("button", { name: "Save for the project" }),
-    ).toBeEnabled();
+  it("claims nothing about the account until the list loads", () => {
+    render(<WebAccountChip vendor="claude" hostId="host-1" loaded={false} />);
+    const chip = screen.getByRole("button", {
+      name: "Claude web account loading. Open Browser settings",
+    });
+    expect(chip).toHaveTextContent("Loading account…");
+    expect(chip).not.toHaveTextContent("No account yet");
   });
 });

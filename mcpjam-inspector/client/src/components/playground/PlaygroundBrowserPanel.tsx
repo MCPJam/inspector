@@ -172,7 +172,6 @@ export function PlaygroundBrowserPanel({
           <PanelRightClose className="size-3.5" aria-hidden />
         </button>
       </div>
-      {webClient?.banner}
       <div className="flex min-h-0 flex-1 flex-col">
         {webClient?.blocker ? (
           webClient.blocker
