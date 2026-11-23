@@ -32,7 +32,7 @@ import {
 } from "../turn-windows";
 import { runWebClientTurn, webTurnApprover, type WebTurnApproval } from "../run-web-client-turn";
 import { setWebClientEnvironment, type WebClientEnvironment } from "../web-client-environment";
-import { WebClientRunError } from "../web-client-harness-turn";
+import { WebClientRunError, webClientFailureEvidenceOf } from "../web-client-harness-turn";
 
 let browser: Browser;
 let vendor: FixtureVendor;
@@ -276,6 +276,9 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       failure: { kind: "needs_sign_in", reason: "human_check" },
       message: expect.stringContaining("Sign in again"),
     });
+    // An eval iteration reads this as the run's failure, out of the pass rate.
+    expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "needs_sign_in" });
+    expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
   });
 
   it("fails the run, not the server, when another run has the connector", async () => {
@@ -288,6 +291,7 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
         failure: { kind: "turn_running", step: "connector" },
         message: "Another run is already using this connector. Wait for it to finish, then send again.",
       });
+      expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "turn_running" });
       expect(vendor.sends).toEqual([]);
     } finally {
       webClientTurnWindows.close("other-turn");

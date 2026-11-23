@@ -24,6 +24,7 @@ import {
   type WebClientRuntimeId,
 } from "@/shared/web-clients";
 import type { PersistedTurnTrace } from "../../utils/chat-ingestion.js";
+import type { InfraFailureEvidence } from "../../utils/infra-failure-evidence.js";
 import { buildHarnessMcpAtTurn } from "../../utils/harness/harness-mcp-receipt.js";
 import { resolveHarnessMcpPlan } from "../../utils/harness/harness-mcp-plan.js";
 import type { HarnessUnavailableKind } from "../../utils/harness/harness-availability.js";
@@ -51,6 +52,14 @@ export class WebClientRunError extends Error {
     super(message);
     this.name = "WebClientRunError";
   }
+}
+
+/** The stop as structured evidence, for the eval infra classifier. */
+export function webClientFailureEvidenceOf(
+  error: unknown,
+): InfraFailureEvidence | undefined {
+  if (!(error instanceof WebClientRunError)) return undefined;
+  return { source: "web_client", code: error.failure.kind };
 }
 
 /** What a person reads when the run stopped, and what fixes it. */
