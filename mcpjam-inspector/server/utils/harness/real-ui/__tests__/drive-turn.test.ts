@@ -551,6 +551,20 @@ describe("driveRealUiTurn on the fixture vendor", { timeout: 90_000 }, () => {
     expect(await driver.url()).toBe(`${vendor.url}/new`);
   });
 
+  it("refuses a page that is already on another site when it is handed over", async () => {
+    const page = await newPage();
+    await page.goto(upstream.url);
+    const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
+    await expect(driver.readText("body")).rejects.toMatchObject({
+      code: "site_blocked",
+    });
+    await expect(
+      driver.evaluate(() => document.title, undefined),
+    ).rejects.toMatchObject({ code: "site_blocked" });
+    await driver.navigate(`${vendor.url}/new`);
+    expect(await driver.url()).toBe(`${vendor.url}/new`);
+  });
+
   it("reports a navigation that fails on its own site as that failure, not as leaving", async () => {
     const page = await newPage();
     const driver = await createPlaywrightDriver(page, { sites: [vendor.url] });
