@@ -39,7 +39,7 @@ import {
   createInMemoryWebReconnectBackend,
   type WebReconnectNotice,
 } from "../in-memory-backend.js";
-import { reconcileWithLedger } from "../reconcile.js";
+import { reconcileWithLedger, type LedgerReader } from "../reconcile.js";
 
 const PROJECT = "project-1";
 const ACCOUNT = "web-account-1";
@@ -600,6 +600,96 @@ describe("web account recovery", () => {
     expect(world.upstream).toEqual(["run-1"]);
   });
 
+  it("records the seat a new account is first handed back with, then holds it", async () => {
+    const world = createWorld();
+    // No one has signed this account in yet: it has no seat and no profile.
+    world.backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "needs_sign_in",
+        profileVersion: 0,
+      },
+    ]);
+    const coordinator = startProcess(world);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"], {
+      restoredProfileVersion: 0,
+    });
+    const [request] = await requestsOf(world);
+
+    const accepted = await coordinator.handback({
+      projectId: PROJECT,
+      requestId: request?.requestId ?? "",
+      browser: browserSignedInAs(SEAT),
+    });
+    await settle(world);
+    expect(accepted).toMatchObject({ status: "resumed" });
+    expect(runOf(world, "run-1").log).toEqual([...PAUSED, ...RESUMED_AND_SENT]);
+    expect(await accountOf(world)).toMatchObject({
+      status: "ready",
+      ...SEAT,
+      profileVersion: 1,
+    });
+
+    // The recorded seat holds from then on.
+    await startRun(world, coordinator, "run-2", ["sign_in_page"]);
+    const [next] = await requestsOf(world);
+    expect(
+      await coordinator.handback({
+        projectId: PROJECT,
+        requestId: next?.requestId ?? "",
+        browser: browserSignedInAs(OTHER_SEAT),
+      }),
+    ).toEqual({
+      status: "wrong_identity",
+      expected: SEAT,
+      observed: OTHER_SEAT,
+    });
+    expect(await accountOf(world)).toMatchObject({
+      ...SEAT,
+      profileVersion: 1,
+    });
+  });
+
+  it("refuses a new account's handback once another seat was recorded after the account was read", async () => {
+    const world = createWorld();
+    // An admin verified OTHER_SEAT for the new account after this process
+    // read it, so the process still reads the account with no seat.
+    world.backend = createInMemoryWebReconnectBackend([
+      {
+        webAccountId: ACCOUNT,
+        projectId: PROJECT,
+        status: "needs_sign_in",
+        ...OTHER_SEAT,
+        profileVersion: 0,
+      },
+    ]);
+    const readBefore: WebReconnectBackend = {
+      ...world.backend,
+      listWebAccounts: async (args) =>
+        (await world.backend.listWebAccounts(args)).map(
+          ({ accountEmail: _email, workspaceName: _workspace, ...account }) =>
+            account,
+        ),
+    };
+    const coordinator = startProcess(world, readBefore);
+    await startRun(world, coordinator, "run-1", ["sign_in_page"], {
+      restoredProfileVersion: 0,
+    });
+    const [request] = await requestsOf(world);
+
+    expect(
+      await coordinator.handback({
+        projectId: PROJECT,
+        requestId: request?.requestId ?? "",
+        browser: browserSignedInAs(SEAT),
+      }),
+    ).toEqual({ status: "wrong_identity", observed: SEAT });
+    expect((await requestsOf(world))[0]?.status).toBe("open");
+    expect(runOf(world, "run-1").log).toEqual(PAUSED);
+    expect(await accountOf(world)).toMatchObject(OTHER_SEAT);
+  });
+
   it("doesn't open a sign-in request when only the browser failed", async () => {
     const world = createWorld();
     const coordinator = startProcess(world);
@@ -651,6 +741,7 @@ describe("web account recovery", () => {
     await world.backend.handbackWebReconnect({
       requestId: request?.requestId ?? "",
       verifiedAccountEmail: SEAT.accountEmail,
+      verifiedWorkspace: SEAT.workspaceName,
     });
     const started: string[] = [];
     const sweeper = createWebRecoveryCoordinator({
@@ -895,6 +986,45 @@ describe("a tool call runs once across recovery", () => {
     });
     expect(verdict.status).toBe(expected);
   });
+
+  it.each(["turn", "connector"] as const)(
+    "keeps a call's answer when the %s read saw it before it settled",
+    async (stale) => {
+      const ledger = createInMemoryToolCallLedger();
+      const step = {
+        stepId: "step-1",
+        startedAt: new Date().toISOString(),
+        turnId: "turn-1",
+      };
+      const call = ledger.forwarded({
+        connectorId: CONNECTOR,
+        runId: "run-1",
+        turnId: step.turnId,
+        jsonrpcId: "1",
+        toolName: "create_note",
+        argsHash: hashPayload({ title: "run-1" }),
+      });
+      // One read runs before the call settles, the other after.
+      const before = ledger.forTurn(step.turnId);
+      ledger.settle(call.id, { state: "result", upstreamStatus: 200 });
+      const reader: LedgerReader = {
+        find: (match) => (stale === "connector" ? before : ledger.find(match)),
+        forTurn: (turnId) =>
+          stale === "turn" ? before : ledger.forTurn(turnId),
+      };
+
+      expect(
+        await reconcileWithLedger(reader, {
+          runId: "run-1",
+          connectorIds: [CONNECTOR],
+          step,
+        }),
+      ).toEqual({
+        status: "reconciled",
+        calls: [expect.objectContaining({ id: call.id, state: "result" })],
+      });
+    },
+  );
 });
 
 describe("sign-in method", () => {
@@ -1102,7 +1232,11 @@ describe("in-memory reconnect backend", () => {
       await backend.claimResumableWebRuns({ webAccountId: ACCOUNT }),
     ).toEqual([]);
     const handback = (verifiedAccountEmail: string, id = requestId) =>
-      backend.handbackWebReconnect({ requestId: id, verifiedAccountEmail });
+      backend.handbackWebReconnect({
+        requestId: id,
+        verifiedAccountEmail,
+        verifiedWorkspace: SEAT.workspaceName,
+      });
     await expect(handback(OTHER_SEAT.accountEmail)).rejects.toMatchObject({
       code: "CONFLICT",
     });
@@ -1172,5 +1306,40 @@ describe("in-memory reconnect backend", () => {
     expect(await handback(SEAT.accountEmail)).toEqual({
       resumableRunIds: ["run-1"],
     });
+  });
+
+  it("refuses the recorded email in another workspace, not the same seat written differently", async () => {
+    const world = createWorld();
+    const reported = await world.backend.reportWebSignInRequired({
+      webAccountId: ACCOUNT,
+      runId: "run-1",
+      pendingStep: { stepId: "step-1", startedAt: "2026-11-20T10:00:00.000Z" },
+      reason: "signed_out",
+    });
+    if (!("requestId" in reported)) throw new Error("No request opened.");
+    const handback = (
+      verifiedAccountEmail: string,
+      verifiedWorkspace?: string,
+    ) =>
+      world.backend.handbackWebReconnect({
+        requestId: reported.requestId,
+        verifiedAccountEmail,
+        ...(verifiedWorkspace ? { verifiedWorkspace } : {}),
+      });
+
+    for (const workspace of ["Another workspace", undefined]) {
+      await expect(
+        handback(SEAT.accountEmail, workspace),
+      ).rejects.toMatchObject({ code: "CONFLICT" });
+    }
+    expect(await accountOf(world)).toMatchObject({
+      status: "needs_sign_in",
+      workspaceName: SEAT.workspaceName,
+    });
+    expect((await requestsOf(world))[0]?.status).toBe("open");
+    expect(await handback(" SEAT@Example.com ", " test WORKSPACE ")).toEqual({
+      resumableRunIds: ["run-1"],
+    });
+    expect(await accountOf(world)).toMatchObject({ status: "ready" });
   });
 });
