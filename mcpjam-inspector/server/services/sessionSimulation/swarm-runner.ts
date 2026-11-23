@@ -330,7 +330,13 @@ function targetSessionIdentity(target: PinnedHostExecutionSpec): {
  * `serverIds`. Host-aware (unlike the scenario {@link SimulationManagerFactory})
  * so a single fan-out run can connect different servers per host.
  */
-export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
+export type JourneyManagerFactory = (
+  host: PinnedHostExecutionSpec,
+  hooks?: {
+    /** Called once the factory starts waiting on the host's MCP servers. */
+    onConnecting?: () => void;
+  },
+) => Promise<{
   manager: Awaited<ReturnType<SimulationManagerFactory>>["manager"];
   connectedServerIds: string[];
   connectedServerNames?: string[];
@@ -2208,9 +2214,12 @@ async function runJourneyFanOut(
       };
       // A setup stopped by the user's own server or its configuration (a
       // refused connection, an unknown host) is theirs to fix; it fails the
-      // target the same way but is not an MCPJam error to page on.
+      // target the same way but is not an MCPJam error to page on. The origin
+      // is trusted only for a failure from the target's servers: the same
+      // refused connection from a Convex lookup, or a 401 on a credential
+      // MCPJam pays for in the model call, is ours.
       const causeOrigin =
-        err instanceof SwarmSetupError && err.cause !== undefined
+        err instanceof SwarmSetupError && err.fromTargetServer
           ? originOf(describeError(err.cause))
           : undefined;
       if (causeOrigin === "user_server" || causeOrigin === "user_config") {
