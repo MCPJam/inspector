@@ -1108,6 +1108,7 @@ describe("hosted Browser run with more cases than its box budget", () => {
     holdMs: number;
     /** The first box's release is lost, so the backend keeps counting it. */
     leakFirstBox?: boolean;
+    runTimeoutMs?: number;
   }) {
     vi.useFakeTimers();
     vi.stubEnv("CONVEX_HTTP_URL", "https://example.convex.site");
@@ -1167,6 +1168,7 @@ describe("hosted Browser run with more cases than its box budget", () => {
         new Promise((resolve) => setTimeout(() => resolve({}), args.holdMs)),
     );
     const rows = new Map<string, Record<string, any>>();
+    const finalize = vi.fn(async () => {});
     const tests = Array.from({ length: args.cases }, (_, index) => ({
       title: `Case ${index + 1}`,
       query: "Open the page",
@@ -1192,7 +1194,7 @@ describe("hosted Browser run with more cases than its box budget", () => {
         finishIteration: vi.fn(async (update) =>
           Object.assign(rows.get(update.iterationId) ?? {}, update),
         ),
-        finalize: vi.fn(async () => {}),
+        finalize,
       },
       config: { tests, environment: { servers: ["srv-1"] } },
       suiteHostConfig: {
@@ -1225,7 +1227,10 @@ describe("hosted Browser run with more cases than its box budget", () => {
         getAllToolsMetadata: vi.fn(() => ({})),
         executeTool: vi.fn(),
       },
-      executionBudgets: defaultEvalExecutionBudgets(),
+      executionBudgets: {
+        ...defaultEvalExecutionBudgets(),
+        ...(args.runTimeoutMs ? { runTimeoutMs: args.runTimeoutMs } : {}),
+      },
     } as any);
     let settled = false;
     void pending.finally(() => {
@@ -1236,7 +1241,7 @@ describe("hosted Browser run with more cases than its box budget", () => {
     const setupFailed = [...rows.values()].filter(
       (row) => row.status === "setup_failed",
     );
-    return { rows, wire, setupFailed };
+    return { rows, wire, setupFailed, finalize };
   }
 
   it("queues cases at the run's box budget instead of failing them at setup", async () => {
@@ -1266,6 +1271,24 @@ describe("hosted Browser run with more cases than its box budget", () => {
     expect([...rows.values()].map((row) => row.status)).not.toContain(
       "timed_out",
     );
+  });
+
+  it("ends a run out of time with cases still queued, booting no box for them", async () => {
+    // The trade-off: three waves of 6-minute iterations against an 8-minute
+    // run clock. The third wave never leaves the queue; the run is finalized
+    // `timed_out` and the backend's timeout sweep closes those cases' rows.
+    const { rows, wire, setupFailed, finalize } = await runBrowserSuite({
+      cases: 12,
+      runsPerCase: 1,
+      holdMs: 6 * 60_000,
+      runTimeoutMs: 8 * 60_000,
+    });
+    expect(finalize).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "timed_out" }),
+    );
+    expect(wire.booted).toBe(8);
+    expect(rows.size).toBe(8);
+    expect(setupFailed).toEqual([]);
   });
 
   it("falls back to the capacity retry when a released box stays counted", async () => {

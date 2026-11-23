@@ -19,6 +19,8 @@ export function caseConcurrencyForRun(args: {
   environment: unknown;
   runId: unknown;
 }): number | undefined {
+  // The single-case surface has no per-run budget on the backend.
+  if (args.runId == null) return undefined;
   const host = args.suiteHostConfig ?? {};
   const pinnedEnvironmentId = (
     args.environment as { computerEnvironmentId?: string } | undefined

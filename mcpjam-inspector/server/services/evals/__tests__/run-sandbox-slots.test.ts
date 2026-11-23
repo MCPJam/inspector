@@ -59,6 +59,16 @@ describe("caseConcurrencyForRun (PLB-579)", () => {
     ).toBe(2);
   });
 
+  it("does not limit a single-case run, which has no per-run budget", () => {
+    expect(
+      caseConcurrencyForRun({
+        suiteHostConfig: { harness: "claude-code" },
+        environment: { servers: [] },
+        runId: null,
+      }),
+    ).toBeUndefined();
+  });
+
   it("counts a browser without a policy as no box, like the runner", () => {
     expect(
       caseConcurrencyForRun({
