@@ -92,6 +92,7 @@ export async function withEventsConnection<T>(
   return withEphemeralManager(
     config,
     async (manager, serverId) => {
+      if (!options.profile && manager.getEventsSupport(serverId).beta) ctx.profile = parseEventsProfile("beta");
       notePeerProtocol(manager, serverId, ctx);
       return fn(manager, serverId);
     },
@@ -135,8 +136,7 @@ export function addEventsTargetOptions(command: Command): Command {
         command
           .option(
             "--profile <profile>",
-            'Events profile the run is judged by: "draft" (draft@28ec35e) or "chatgpt" (chatgpt@2026-11-05)',
-            "draft",
+            'Events profile the run is judged by: "beta", "draft" or "chatgpt" (default: negotiated Events version)',
           )
           .option(
             "--protocol-version <version>",

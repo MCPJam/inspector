@@ -44,7 +44,7 @@ export function AuthUpperArea({
       <div className="ml-auto flex items-center gap-2 shrink-0">
         {user && <OnboardAgentButton />}
         <AgentSidePanelTrigger />
-        <GitHubStarButton />
+        <GitHubStarButton location="header" prompt />
         {!user && !isLoading && (
           <>
             <Button

@@ -95,6 +95,30 @@ describe("the happy path still behaves like fetch", () => {
     expect(received[0].headers.authorization).toBe("Bearer t");
   });
 
+  it("sends a User-Agent when the caller sets none, as fetch does", async () => {
+    const { origin, received } = await startServer((_req, res) => {
+      res.writeHead(202);
+      res.end();
+    });
+
+    await loopbackFetch()(`${origin}/mcp`);
+
+    expect(received[0].headers["user-agent"]).toBe("MCP-Inspector/1.0");
+  });
+
+  it("keeps the caller's User-Agent", async () => {
+    const { origin, received } = await startServer((_req, res) => {
+      res.writeHead(202);
+      res.end();
+    });
+
+    await loopbackFetch()(`${origin}/mcp`, {
+      headers: { "User-Agent": "custom/1.0" },
+    });
+
+    expect(received[0].headers["user-agent"]).toBe("custom/1.0");
+  });
+
   it("reports the URL the chain ENDED at, not the one it started from", async () => {
     const target = await startServer((_req, res) => {
       res.writeHead(200);
