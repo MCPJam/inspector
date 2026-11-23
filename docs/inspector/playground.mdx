@@ -8,8 +8,8 @@ tag: "NEW"
 Playground shows you what your users will see. Pick an AI client to emulate, such as ChatGPT or Claude, and a model. Send a prompt, and watch the model decide which of your tools to call. Widgets render the way that client would show them, and every step is there to inspect.
 
 <Frame>
-  <img className="block dark:hidden" src="/images/playground/playground-flow-light.svg" alt="1: you send the prompt What does note 7 say? to the MCPJam Playground, which acts as the ChatGPT client. 2: the Playground sends the prompt and your tools to the model. 3: the model asks to call get_note with 7. 4: the Playground sends tools/call to your MCP server. 5: the server returns the note and a widget. 6: the Playground shows you the answer with the widget rendered as ChatGPT would. Every step can be inspected in Chat, Trace, Raw, Logs and the widget tabs." width="840" />
-  <img className="hidden dark:block" src="/images/playground/playground-flow-dark.svg" alt="1: you send the prompt What does note 7 say? to the MCPJam Playground, which acts as the ChatGPT client. 2: the Playground sends the prompt and your tools to the model. 3: the model asks to call get_note with 7. 4: the Playground sends tools/call to your MCP server. 5: the server returns the note and a widget. 6: the Playground shows you the answer with the widget rendered as ChatGPT would. Every step can be inspected in Chat, Trace, Raw, Logs and the widget tabs." width="840" />
+  <img className="block dark:hidden" src="/images/playground/playground-light.jpg" alt="Playground emulating ChatGPT: the prompt Show me headphones from Amazon, and the Amazon widget the browse-store tool returned, rendered in the conversation." />
+  <img className="hidden dark:block" src="/images/playground/playground-dark.jpg" alt="Playground emulating ChatGPT: the prompt Show me headphones from Amazon, and the Amazon widget the browse-store tool returned, rendered in the conversation." />
 </Frame>
 
 ## Try it
@@ -17,17 +17,46 @@ Playground shows you what your users will see. Pick an AI client to emulate, suc
 <Steps>
   <Step title="Open Playground">
     Open **Playground** in the sidebar. If no server is connected yet, click **Connect a saved server** in the **Tools** rail.
+
+    <Frame>
+      <img className="block dark:hidden" src="/images/playground/try-step1-light.jpg" alt="The Playground item highlighted in the sidebar, with the Amazon server's tools listed in the Tools rail." />
+      <img className="hidden dark:block" src="/images/playground/try-step1-dark.jpg" alt="The Playground item highlighted in the sidebar, with the Amazon server's tools listed in the Tools rail." />
+    </Frame>
   </Step>
   <Step title="Pick a client and a model">
     Under the message box, the first chip picks the client to emulate and the next picks the model. Choosing a client also loads its servers, model and settings.
+
+    <Frame>
+      <img className="block dark:hidden" src="/images/playground/try-step2-light.jpg" alt="The client list open from the first chip under the message box, with the client and model chips highlighted." />
+      <img className="hidden dark:block" src="/images/playground/try-step2-dark.jpg" alt="The client list open from the first chip under the message box, with the client and model chips highlighted." />
+    </Frame>
   </Step>
   <Step title="Send a prompt">
     Type a prompt, or click **What can this server do?**. The model calls your tools, and any widget appears in the conversation.
+
+    <Frame>
+      <img className="block dark:hidden" src="/images/playground/try-step3-light.jpg" alt="The sent prompt and the widget returned by the browse-store tool, both highlighted in the conversation." />
+      <img className="hidden dark:block" src="/images/playground/try-step3-dark.jpg" alt="The sent prompt and the widget returned by the browse-store tool, both highlighted in the conversation." />
+    </Frame>
   </Step>
   <Step title="See what happened">
     Switch from **Chat** to **Trace** for a timeline of each step with its latency and tokens, or to **Raw** for the exact request sent to the model. **Logs** in the right rail shows every message between MCPJam and your server.
+
+    <Frame>
+      <img className="block dark:hidden" src="/images/playground/try-step4-light.jpg" alt="The Trace tab highlighted, showing a timeline of the user turn, two agent steps and the browse-store tool call with their latencies." />
+      <img className="hidden dark:block" src="/images/playground/try-step4-dark.jpg" alt="The Trace tab highlighted, showing a timeline of the user turn, two agent steps and the browse-store tool call with their latencies." />
+    </Frame>
   </Step>
 </Steps>
+
+## How it works
+
+Playground sits between you, the model and your server, and records every step in between.
+
+<Frame>
+  <img className="block dark:hidden" src="/images/playground/playground-flow-light.svg" alt="1: you send the prompt What does note 7 say? to the MCPJam Playground, which acts as the ChatGPT client. 2: the Playground sends the prompt and your tools to the model. 3: the model asks to call get_note with 7. 4: the Playground sends tools/call to your MCP server. 5: the server returns the note and a widget. 6: the Playground shows you the answer with the widget rendered as ChatGPT would. Every step can be inspected in Chat, Trace, Raw, Logs and the widget tabs." width="840" />
+  <img className="hidden dark:block" src="/images/playground/playground-flow-dark.svg" alt="1: you send the prompt What does note 7 say? to the MCPJam Playground, which acts as the ChatGPT client. 2: the Playground sends the prompt and your tools to the model. 3: the model asks to call get_note with 7. 4: the Playground sends tools/call to your MCP server. 5: the server returns the note and a widget. 6: the Playground shows you the answer with the widget rendered as ChatGPT would. Every step can be inspected in Chat, Trace, Raw, Logs and the widget tabs." width="840" />
+</Frame>
 
 ## Debug a widget
 
