@@ -25,6 +25,7 @@ export function subscriptionView(
     locality: "local" | "hosted";
     host?: EventsHostView;
     overrides?: LocalOverride[];
+    receiverKind?: EventsSubscriptionView["receiverKind"];
     callbackVerifiedAt?: number;
     lastWebhookAt?: number;
   },
@@ -46,6 +47,7 @@ export function subscriptionView(
     ...(record.refreshBefore !== undefined ? { refreshBefore: record.refreshBefore } : {}),
     ...(record.lastCursor !== undefined ? { lastCursor: record.lastCursor } : {}),
     ...(record.callbackUrl ? { callbackUrl: record.callbackUrl } : {}),
+    ...(extras.receiverKind ? { receiverKind: extras.receiverKind } : {}),
     ...(extras.callbackVerifiedAt !== undefined ? { callbackVerifiedAt: extras.callbackVerifiedAt } : {}),
     ...(extras.lastWebhookAt !== undefined ? { lastWebhookAt: extras.lastWebhookAt } : {}),
     ...(record.serverSubscriptionId

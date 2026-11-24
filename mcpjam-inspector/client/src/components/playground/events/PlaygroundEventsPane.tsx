@@ -17,7 +17,8 @@ import { EventTriggersTab } from "@/components/EventTriggersTab";
 import { EVENT_TRIGGERS_API } from "@/lib/apis/event-triggers-api";
 import { useCurrentSearchParam } from "@/lib/app-navigation";
 import { EventDataView } from "@/components/events/EventsFeedPanel";
-import { simulationDataFromSchema } from "@/components/events/event-utils";
+import { ReachabilityHeader } from "@/components/events/ReachabilityHeader";
+import { hasInsecureLocalReceiver, simulationDataFromSchema } from "@/components/events/event-utils";
 import { AddPlaygroundEvent } from "./AddPlaygroundEvent";
 import {
   usePlaygroundEvents,
@@ -85,6 +86,9 @@ export function PlaygroundEventsPane() {
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {binding.serverName} · {status}
+                  {binding.subscription && hasInsecureLocalReceiver(binding.subscription) ? (
+                    <span className="ml-2 text-warning">Plain HTTP</span>
+                  ) : null}
                 </p>
                 <div className="flex flex-wrap gap-1">
                   <Button
@@ -125,7 +129,9 @@ export function PlaygroundEventsPane() {
                     {binding.lastResult}
                   </p>
                 ) : null}
-                {binding.subscription?.lastError ? (
+                {!runtime.hosted && binding.subscription?.mode === "webhook" ? (
+                  <ReachabilityHeader subscription={binding.subscription} />
+                ) : binding.subscription?.lastError ? (
                   <p role="alert" className="text-xs text-destructive">
                     {binding.subscription.lastError.message}
                   </p>

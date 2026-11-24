@@ -254,3 +254,30 @@ export function replayUnsupported(
 ): boolean {
   return subscription.lastCursor === null;
 }
+
+const webhookFailures = new Map<string, string>([
+  ["https_required", "This server only accepts HTTPS callback URLs. Unsubscribe and choose Custom URL with an HTTPS proxy."],
+  ["auth_required", "This server requires an authenticated connection. Reconnect the server with credentials, then resume the subscription."],
+  ["connection_refused", "The server couldn't connect to the callback. Check that the receiver is running and reachable from the server."],
+  ["timeout", "The callback timed out. Check the network and your proxy's forwarding rule."],
+  ["tls_error", "The server doesn't trust the proxy's certificate. Use a certificate the server trusts."],
+  ["challenge_failed", "The server couldn't verify the callback. Check that the proxy preserves the request body, webhook headers, and response."],
+  ["http_4xx", "The receiver refused a delivery. Check the proxy's forwarding rule."],
+  ["http_5xx", "The receiver returned an error. Check that MCPJam and your proxy are running."],
+]);
+
+export function localWebhookFailure(subscription: EventsSubscriptionView): string | null {
+  const status = readDeliveryStatus(subscription.deliveryStatus);
+  const lastError = subscription.lastError;
+  if (lastError || status?.lastError) {
+    const kind = lastError?.kind.replace(/^callback_/, "") ?? status?.lastError ?? "";
+    const message = webhookFailures.get(kind)
+      ?? "The server couldn't deliver webhook events. Check the server connection and callback settings.";
+    if (status?.suspended) return `${message} The server suspended delivery.`;
+    if (lastError?.retryable) return `${message} MCPJam will retry automatically.`;
+    return message;
+  }
+  if (status?.suspended) return "The server suspended webhook delivery. Check the callback before resuming.";
+  if (status?.throttled) return "The server slowed webhook delivery. Check its delivery limits.";
+  return null;
+}

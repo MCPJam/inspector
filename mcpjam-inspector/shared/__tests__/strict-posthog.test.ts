@@ -31,6 +31,53 @@ const product = {
 };
 
 describe("strict PostHog reconstruction", () => {
+  it.each([CONSERVATIVE_TELEMETRY_POLICY, FULL_TELEMETRY_POLICY])(
+    "forwards only the allowed webhook receiver fields under $content policy",
+    (policy) => {
+      const event = {
+        ...product,
+        event: "local_webhook_receiver_failed",
+        properties: {
+          ...product.properties,
+          receiver_kind: "custom",
+          failure_category: "callback_tls_error",
+          callback_url: secret,
+          server_id: secret,
+        },
+      };
+      const result = applyEventPolicy(event, policy, null);
+      expect(result).toEqual({
+        event: "local_webhook_receiver_failed",
+        timestamp: expect.any(String),
+        uuid: expect.any(String),
+        properties: {
+          token: expect.stringMatching(/^phc_/),
+          app_version: expect.any(String),
+          distinct_id: "strict",
+          $process_person_profile: false,
+          $geoip_disable: true,
+          receiver_kind: "custom",
+          failure_category: "callback_tls_error",
+        },
+      });
+      expect(
+        applyEventPolicy({
+          ...event,
+          properties: { ...event.properties, failure_category: secret },
+        }, policy, null),
+      ).toBeNull();
+      expect(
+        applyEventPolicy({
+          ...event,
+          event: "local_webhook_receiver_selected",
+        }, policy, null),
+      ).toMatchObject({
+        event: "local_webhook_receiver_selected",
+        properties: { receiver_kind: "custom" },
+      });
+    },
+  );
+
   it.each(["hosted", "self_hosted"])("retains closed launch-health outcomes through the strict relay for %s", (deployment) => {
     const event = {
       ...product,
