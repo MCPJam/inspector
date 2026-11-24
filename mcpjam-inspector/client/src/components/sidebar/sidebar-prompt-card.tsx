@@ -73,7 +73,7 @@ export function SidebarPromptCard({
           disabled={disabled}
           onClick={onClick}
           data-testid={`sidebar-prompt-${kind}`}
-          className="h-auto gap-3 rounded-lg border border-border bg-card py-2 text-card-foreground hover:bg-accent hover:text-accent-foreground group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent"
+          className="h-auto gap-3 rounded-lg border border-border bg-card py-2 text-card-foreground hover:border-primary hover:bg-card hover:text-card-foreground group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent"
         >
           <span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{title}</span>
