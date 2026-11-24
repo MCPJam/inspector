@@ -300,10 +300,13 @@ describe(
     it("resumes a paused Playground turn from the ledger, and the server runs the tool once", async () => {
       interruption.passwordAfterCall = true;
       const result = await runHarnessTurn(
-        turnOptions("lost reply", {
-          chatSessionId: "chat-recovery-1",
-          sourceType: "playground",
-        }),
+        {
+          ...turnOptions("lost reply", {
+            chatSessionId: "chat-recovery-1",
+            sourceType: "playground",
+          }),
+          heartbeatIntervalMs: 20,
+        },
         "ui",
       );
       const reader = result.response!.body!.getReader();
@@ -335,6 +338,8 @@ describe(
         clientName: "Claude web",
       });
       expect(upstream.toolCalls()).toHaveLength(1);
+      await readUntil(/"type":"heartbeat"/);
+      expect(streamed).toContain('"type":"heartbeat"');
       const [request] = await backend.listWebReconnectRequests({
         projectId: PROJECT,
       });
