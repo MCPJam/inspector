@@ -30,12 +30,16 @@ async function waitForReply(page: Page, message: string) {
 
 async function chooseClient(page: Page, name: string) {
   await page.getByTestId("client-selector-trigger").click();
+  const option = page.getByRole("option").filter({ hasText: name }).first();
+  await expect(option).toBeVisible();
+  await option.hover();
   const only = page.getByRole("button", {
     name: `Use only ${name}`,
     exact: true,
   });
   if (await only.isVisible()) await only.click();
-  else await page.getByRole("option").filter({ hasText: name }).first().click();
+  else await option.click();
+  await expect(page.getByTestId("client-selector-trigger")).toHaveText(name);
 }
 
 async function openEvent(page: Page, serverName: string) {
