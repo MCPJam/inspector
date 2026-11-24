@@ -17,6 +17,7 @@
 
 import type { z } from "zod";
 import {
+  betaEventsResultSchema,
   eventOccurrenceSchema,
   eventsListResultSchema,
   eventsPollResultSchema,
@@ -97,7 +98,7 @@ export class MCPEventsWireError extends Error {
     handshakeObserved: boolean;
   }) {
     const reason = args.handshakeObserved
-      ? "the server did not declare capabilities.events"
+      ? "the server did not declare the MCP Events extension or a supported legacy Events capability"
       : "the server's handshake was not observed on this connection, so its events capability is unknown";
     super(`Cannot send ${args.method} to "${args.serverId}": ${reason}.`);
     this.name = "MCPEventsWireError";
@@ -133,6 +134,10 @@ function parseOrThrow<T>(
     });
   }
   return parsed.data;
+}
+
+export function assertBetaEventsResult(method: string, value: unknown): void {
+  parseOrThrow(betaEventsResultSchema, value, `${method} result`, method);
 }
 
 export function assertEventsListResult(value: unknown): EventsListResultWire {
@@ -260,17 +265,32 @@ export const EVENTS_ERROR_CODES = {
 
 export type EventsErrorKind = keyof typeof EVENTS_ERROR_CODES;
 
-const EVENTS_ERROR_KIND_BY_CODE = new Map<number, EventsErrorKind>(
-  Object.entries(EVENTS_ERROR_CODES).map(([kind, code]) => [
-    code,
-    kind as EventsErrorKind,
-  ])
-);
+export type EventsWireProfile = "beta" | "legacy";
 
-for (const [code, kind] of [
-  [-32023, "NotFound"], [-32024, "Forbidden"], [-32025, "ResourceExhausted"],
-  [-32026, "Unsupported"], [-32027, "CallbackEndpointError"],
-] as const) EVENTS_ERROR_KIND_BY_CODE.set(code, kind);
+const BETA_ERROR_KINDS = new Map<number, EventsErrorKind>([
+  [-32602, "InvalidParams"],
+  [-32023, "NotFound"],
+  [-32024, "Forbidden"],
+  [-32025, "ResourceExhausted"],
+  [-32026, "Unsupported"],
+  [-32027, "CallbackEndpointError"],
+]);
+
+const LEGACY_ERROR_KINDS = new Map<number, EventsErrorKind>([
+  [-32602, "InvalidParams"],
+  [-32011, "NotFound"],
+  [-32012, "Forbidden"],
+  [-32013, "ResourceExhausted"],
+  [-32014, "Unsupported"],
+  [-32015, "CallbackEndpointError"],
+]);
+
+const errorProfiles = new WeakMap<object, EventsWireProfile>();
+
+/** Keep the underlying SDK error intact for authentication and transport callers. */
+export function rememberEventsErrorProfile(error: unknown, profile: EventsWireProfile): void {
+  if (typeof error === "object" && error !== null) errorProfiles.set(error, profile);
+}
 
 export type ClassifiedEventsError = {
   kind: EventsErrorKind;
@@ -325,12 +345,19 @@ const TRANSIENT_CALLBACK_REASONS = new Set([
  */
 export function classifyEventsRpcError(
   method: string,
-  error: unknown
+  error: unknown,
+  profile?: EventsWireProfile,
 ): ClassifiedEventsError | undefined {
   if (!method.startsWith("events/")) return undefined;
   const rpc = readJsonRpcError(error);
   if (!rpc) return undefined;
-  const kind = EVENTS_ERROR_KIND_BY_CODE.get(rpc.code);
+  const recorded = typeof error === "object" && error !== null
+    ? errorProfiles.get(error)
+    : undefined;
+  const kinds = (profile ?? recorded ?? "legacy") === "beta"
+    ? BETA_ERROR_KINDS
+    : LEGACY_ERROR_KINDS;
+  const kind = kinds.get(rpc.code);
   if (!kind) return undefined;
   const reason =
     typeof (rpc.data as { reason?: unknown } | undefined)?.reason === "string"

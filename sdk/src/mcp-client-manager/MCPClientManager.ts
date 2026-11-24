@@ -19,8 +19,10 @@ import {
 import {
   listEventsExt,
   pollEventsExt,
+  sendEventsRequest,
   subscribeEventsExt,
   unsubscribeEventsExt,
+  type EventsCallContext,
   type EventsPollParams,
   type EventsSubscribeParams,
   type EventsUnsubscribeOutcome,
@@ -233,6 +235,7 @@ import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
   buildMcpParamHeaders,
+  EVENTS_BETA_ROUTED_METHODS,
   MCP_PARAM_HEADER_PREFIX,
   scanXMcpHeaderDeclarations,
   stripXMcpHeaderAnnotations,
@@ -419,9 +422,6 @@ type UpstreamToolDefinition = NonNullable<
  * so a server that never replies cannot leak the entry forever.
  */
 const SUPPRESSED_CANCELLATION_TIMEOUT_MS = 86_400_000;
-
-/** `events/stream`'s final frame is an empty result; validated loosely. */
-const EVENTS_STREAM_RESULT_SCHEMA = z.looseObject({});
 
 export class MCPClientManager {
   // State management
@@ -717,7 +717,10 @@ export class MCPClientManager {
    * the server's declaration alone decides.
    */
   getEventsSupport(serverId: string): EventsSupport {
-    return resolveEventsSupport(this.eventsCapabilityCapture.read(serverId));
+    return resolveEventsSupport(
+      this.eventsCapabilityCapture.read(serverId),
+      this.getServerConfig(serverId)?.eventsWireProfile,
+    );
   }
 
   /** {@link getEventsSupport} after ensuring the connection exists. */
@@ -754,6 +757,19 @@ export class MCPClientManager {
     }
   }
 
+  private eventsCallContext(
+    serverId: string,
+    client: ManagedMcpClient,
+    options?: ClientRequestOptions,
+  ): EventsCallContext {
+    return {
+      client,
+      options: this.withTimeout(serverId, options),
+      wireProfile: this.getServerConfig(serverId)?.eventsWireProfile ??
+        (this.getEventsSupport(serverId).beta ? "beta" : "legacy"),
+    };
+  }
+
   /** `events/list` — one page. */
   async listServerEvents(
     serverId: string,
@@ -762,12 +778,12 @@ export class MCPClientManager {
   ): Promise<EventsListResultWire> {
     return this.runRetryableReadOperation(serverId, options, (client) => {
       this.assertEventsDeclared(serverId, "events/list", options);
-      const result = listEventsExt(
-        { client, options: this.withTimeout(serverId, options) },
-        params
-      );
-      return this.getEventsSupport(serverId).beta && this.getInitializationInfo(serverId)?.transport === "streamable-http"
-        ? result.then(validBetaHttpEventTypes) : result;
+      const context = this.eventsCallContext(serverId, client, options);
+      const result = listEventsExt(context, params);
+      return context.wireProfile === "beta" &&
+        this.getInitializationInfo(serverId)?.transport === "streamable-http"
+        ? result.then(validBetaHttpEventTypes)
+        : result;
     });
   }
 
@@ -785,7 +801,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/poll", options);
     return pollEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -805,7 +821,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/subscribe", options);
     return subscribeEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -824,7 +840,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/unsubscribe", options);
     return unsubscribeEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -878,21 +894,19 @@ export class MCPClientManager {
       onRequestStreamEnd: options.onRequestStreamEnd,
     });
     try {
-      return await client.requestWithSchema(
+      return await sendEventsRequest(
+        this.eventsCallContext(serverId, client, {
+          signal: options.signal,
+          timeout: options.timeout,
+        }),
+        "events/stream",
         {
-          method: "events/stream",
-          params: {
-            name: params.name,
-            arguments: params.arguments,
-            cursor: params.cursor,
-            ...(params.maxAgeMs !== undefined
-              ? { maxAgeMs: params.maxAgeMs }
-              : {}),
-            _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
-          },
-        } as never,
-        EVENTS_STREAM_RESULT_SCHEMA,
-        { signal: options.signal, timeout: options.timeout }
+          name: params.name,
+          arguments: params.arguments,
+          cursor: params.cursor,
+          ...(params.maxAgeMs !== undefined ? { maxAgeMs: params.maxAgeMs } : {}),
+          _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
+        },
       );
     } finally {
       unregister();
@@ -4785,10 +4799,18 @@ export class MCPClientManager {
     // added above it, and the logger has to record the bytes that guard sent.
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
+    const betaCatalogVersion = () => config.eventsWireProfile === "legacy"
+      ? undefined
+      : this.eventsCapabilityCapture.betaCatalogVersion(serverId);
     const logged = httpLogger
       ? wrapFetchForHttpLogging(
           serverId,
-          httpLogger,
+          (event) => {
+            const body = event.bodyValues;
+            httpLogger(body?.method && EVENTS_BETA_ROUTED_METHODS.has(body.method) && betaCatalogVersion()
+              ? { ...event, bodyValues: { ...body, eventsBeta: true } }
+              : event);
+          },
           baseFetch,
           config.credentialHeaderNames
         )
@@ -4801,10 +4823,11 @@ export class MCPClientManager {
         ? wrapFetchForNoListenChannel(logged)
         : logged;
     const routed = wrapFetchForTaskRouting(listenGuarded);
-    return options?.listenGuard === false ? routed : withEventsBetaRouting(
-      routed, () => this.eventsCapabilityCapture.betaCatalogVersion(serverId),
-      signal => readServerEventTypes(this, serverId, { signal }),
-    );
+    return options?.listenGuard === false || config.eventsWireProfile === "legacy"
+      ? routed
+      : withEventsBetaRouting(routed, betaCatalogVersion, (signal) =>
+          readServerEventTypes(this, serverId, { signal }),
+        );
   }
 
   private cacheToolsMetadata(

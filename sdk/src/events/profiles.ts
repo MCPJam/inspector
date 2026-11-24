@@ -308,7 +308,7 @@ export const EVENTS_PROFILES: Record<EventsProfileId, EventsProfile> = {
 
 export function hasEventsProfileCapability(support: EventsSupport, profile: EventsProfileId): boolean {
   if (profile === BETA_PROFILE_ID) return support.beta === true;
-  return support.declared && (!support.beta || support.legacy === true);
+  return support.declared && support.beta !== true;
 }
 
 export function getEventsProfile(id: EventsProfileId): EventsProfile {

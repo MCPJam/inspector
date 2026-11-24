@@ -70,5 +70,8 @@ it.each([
   [-32026, "Unsupported"],
   [-32027, "CallbackEndpointError"],
 ])("classifies beta error %i as %s", (code, kind) => {
-  expect(classifyEventsRpcError("events/subscribe", { code })?.kind).toBe(kind);
+  expect(classifyEventsRpcError("events/subscribe", { code }, "beta")?.kind).toBe(kind);
+  expect(classifyEventsRpcError("events/subscribe", { code }, "legacy")).toBeUndefined();
+  expect(classifyEventsRpcError("events/subscribe", { code: code + 12 }, "beta")).toBeUndefined();
+  expect(classifyEventsRpcError("events/subscribe", { code: code + 12 }, "legacy")?.kind).toBe(kind);
 });

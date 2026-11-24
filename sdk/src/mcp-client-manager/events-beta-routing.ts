@@ -1,6 +1,8 @@
 import {
   encodeMcpHeaderValue,
   buildMcpParamHeaders,
+  EVENTS_BETA_ROUTED_METHODS,
+  MCP_PARAM_HEADER_PREFIX,
   scanXMcpHeaderDeclarations,
 } from "./mcp-header-mirror.js";
 import type {
@@ -8,13 +10,6 @@ import type {
   EventsListResultWire,
 } from "./events-ext-schemas.js";
 import type { ServerEventTypesRead } from "../server-list-reads.js";
-
-const namedMethods = new Set([
-  "events/poll",
-  "events/stream",
-  "events/subscribe",
-  "events/unsubscribe",
-]);
 
 export function validBetaHttpEventTypes(
   page: EventsListResultWire
@@ -46,13 +41,29 @@ export function withEventsBetaRouting(
     if (typeof init?.body !== "string") return send(input, init);
     const headers = new Headers(init.headers);
     const method = headers.get("mcp-method");
-    if (method === "events/list") cached = undefined;
-    if (!method || !namedMethods.has(method)) return send(input, init);
+    const listing = method === "events/list";
+    if (!listing && (!method || !EVENTS_BETA_ROUTED_METHODS.has(method))) {
+      return send(input, init);
+    }
+    headers.delete("Mcp-Name");
+    for (const name of [...headers.keys()]) {
+      if (name.startsWith(MCP_PARAM_HEADER_PREFIX)) headers.delete(name);
+    }
+    if (listing) {
+      cached = undefined;
+      return send(input, { ...init, headers });
+    }
 
     const {
       params,
     }: { params: { name: string; arguments?: Record<string, unknown> } } =
       JSON.parse(init.body);
+    const refreshCatalog = async () => {
+      const catalog = await list(init.signal ?? undefined);
+      if (catalog.status === "failed") throw catalog.error;
+      cached = { version, catalog };
+      return catalog;
+    };
     const route = async () => {
       const routed = new Headers(headers);
       routed.set("Mcp-Name", encodeMcpHeaderValue(params.name));
@@ -62,15 +73,13 @@ export function withEventsBetaRouting(
             ? knownDescriptors.get(params.name)
             : undefined;
         if (!descriptor) {
-          if (cached?.version !== version) {
-            const catalog = await list(init.signal ?? undefined);
-            if (catalog.status === "failed") throw catalog.error;
-            cached = { version, catalog };
-          }
-          descriptor = cached.catalog.events.find(
+          const catalog = cached?.version === version
+            ? cached.catalog
+            : await refreshCatalog();
+          descriptor = catalog.events.find(
             (event) => event.name === params.name
           );
-          if (!descriptor && cached.catalog.truncated)
+          if (!descriptor && catalog.truncated)
             throw new Error("Incomplete Events catalog for HTTP routing");
           if (descriptor) knownDescriptors.set(params.name, descriptor);
         }
@@ -109,8 +118,8 @@ export function withEventsBetaRouting(
         "code" in payload.error &&
         payload.error.code === -32020
       ) {
-        cached = undefined;
         knownDescriptors.delete(params.name);
+        await refreshCatalog();
         return route();
       }
     }

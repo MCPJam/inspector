@@ -6,7 +6,7 @@
 
 import { Command } from "commander";
 import type { MCPClientManager } from "@mcpjam/sdk";
-import type { EventsProfile } from "@mcpjam/sdk/events";
+import { BETA_PROFILE_ID, type EventsProfile } from "@mcpjam/sdk/events";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import {
   applyEventsProtocolVersion,
@@ -90,7 +90,9 @@ export async function withEventsConnection<T>(
     options,
   );
   return withEphemeralManager(
-    config,
+    options.profile
+      ? { ...config, eventsWireProfile: ctx.profile.id === BETA_PROFILE_ID ? "beta" : "legacy" }
+      : config,
     async (manager, serverId) => {
       if (!options.profile && manager.getEventsSupport(serverId).beta) ctx.profile = parseEventsProfile("beta");
       notePeerProtocol(manager, serverId, ctx);
