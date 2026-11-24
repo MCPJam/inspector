@@ -118,6 +118,14 @@ export function suiteCheck(climb: Pick<PlatformClimb, "measure" | "baseline" | "
       });
     }
   }
+  if (climb.groups.validation === 0) {
+    findings.push({
+      code: "no_validation_cases",
+      severity: "warns",
+      message:
+        "This climb has no validation cases, so the keep rule has nothing to check a gain on a steering case against. Start a new climb with some cases listed as validation, or with sizes that leave room for a validation group.",
+    });
+  }
   if (climb.groups.steeringToolsWithoutValidation.length > 0) {
     findings.push({
       code: "no_validation_for_tools",

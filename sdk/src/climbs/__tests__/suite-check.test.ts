@@ -30,6 +30,17 @@ describe("suiteCheck", () => {
     expect(JSON.stringify(suiteCheck(climb()))).not.toMatch(/validation case key/);
   });
 
+  it("warns when the climb has no validation cases, and says how to set some", () => {
+    const base = climb();
+    const check = suiteCheck(climb({ groups: { ...base.groups, validation: 0 } }));
+    const finding = check.findings.find((entry) => entry.code === "no_validation_cases");
+    expect(finding).toMatchObject({ severity: "warns" });
+    expect(finding?.message).toContain("no validation cases");
+    expect(finding?.message).toContain("listed as validation");
+    expect(check.canShowChange).toBe(true);
+    expect(suiteCheck(base).findings.some((entry) => entry.code === "no_validation_cases")).toBe(false);
+  });
+
   it("says how many iterations were lost, and which tools no validation case covers", () => {
     const check = suiteCheck(
       climb({ groups: { steering: 6, validation: 3, confirmation: 0, steeringCases: [], steeringToolsWithoutValidation: ["search", "fetch"] } }),
