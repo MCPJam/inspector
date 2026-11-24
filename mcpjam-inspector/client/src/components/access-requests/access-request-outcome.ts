@@ -18,10 +18,14 @@ export function outcomeOfDecision(
   const who = requesterLabel(request);
   const project = request.project.name;
   if (result.status === "declined") {
+    // Declining one request does not take away access from another approval.
     return {
       billing: false,
       title: "Request declined",
-      body: `${who} does not have access to ${project}.`,
+      body:
+        result.access === "granted"
+          ? `You declined this request. ${who} still has access to ${project}.`
+          : "You declined this request.",
     };
   }
   if (result.access === "pending" && result.seatPaymentIntentId) {
@@ -32,10 +36,12 @@ export function outcomeOfDecision(
     };
   }
   if (result.access === "pending") {
+    // The backend does not say what is still open (a seat payment started
+    // earlier, or an invitation), so name both and keep the billing link.
     return {
-      billing: false,
-      title: "Approved, waiting on the invitation",
-      body: `${who} gets access to ${project} once they accept the invitation to your organization.`,
+      billing: true,
+      title: "Approved, access not active yet",
+      body: `${who} gets access to ${project} once an open seat payment is finished in organization billing, or once they accept the invitation to your organization.`,
     };
   }
   return {

@@ -150,6 +150,40 @@ describe("AccessRequestPage", () => {
     expect(router.state.location.pathname).toBe("/organizations/org_1/billing");
   });
 
+  it("keeps billing in view when an approval is pending without a seat payment", async () => {
+    // A second approval of a paid-seat request returns no seat payment.
+    convex.decide.mockResolvedValue({
+      status: "approved",
+      access: "pending",
+      addedToOrg: true,
+      seatPaymentIntentId: null,
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(
+      await screen.findByText("Approved, access not active yet"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/once an open seat payment is finished/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open organization billing" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not say a declined requester lost access they still have", async () => {
+    // Declining an older request after a newer one was approved.
+    convex.decide.mockResolvedValue({ status: "declined", access: "granted" });
+    renderPage("?decision=decline");
+    fireEvent.click(screen.getByRole("button", { name: "Decline" }));
+    expect(
+      await screen.findByText(
+        "You declined this request. Ada Lovelace still has access to Payments.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/does not have access/)).toBeNull();
+  });
+
   it("says who has to approve when a paid seat needs an org owner", async () => {
     convex.decide.mockRejectedValue(
       new ConvexError({ code: "SEAT_PAYMENT_OWNER_REQUIRED", message: "x" }),

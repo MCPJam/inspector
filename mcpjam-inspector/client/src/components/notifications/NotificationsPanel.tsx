@@ -97,9 +97,11 @@ function getNotificationMessage(notification: Notification): string {
 function NotificationItem({
   notification,
   onMarkAsRead,
+  onNavigate,
 }: {
   notification: Notification;
   onMarkAsRead: (id: string) => void;
+  onNavigate?: () => void;
 }) {
   const navigate = useAppNavigate();
   const path = actionPath(notification);
@@ -107,7 +109,9 @@ function NotificationItem({
     if (!notification.isRead) {
       onMarkAsRead(notification._id);
     }
-    if (path) navigate(path, { unscoped: true });
+    if (!path) return;
+    navigate(path, { unscoped: true });
+    onNavigate?.();
   };
 
   return (
@@ -161,6 +165,8 @@ function NotificationItem({
 interface NotificationsPanelContentProps {
   side?: "top" | "right" | "bottom" | "left";
   align?: "start" | "center" | "end";
+  /** After a row opens a page, so the caller can close what covers it. */
+  onNavigate?: () => void;
 }
 
 /**
@@ -171,6 +177,7 @@ interface NotificationsPanelContentProps {
 export function NotificationsPanelContent({
   side = "right",
   align = "end",
+  onNavigate,
 }: NotificationsPanelContentProps) {
   const { isAuthenticated } = useConvexAuth();
   const { notifications, isLoading } = useNotifications({
@@ -253,6 +260,7 @@ export function NotificationsPanelContent({
                 key={notification._id}
                 notification={notification}
                 onMarkAsRead={handleMarkAsRead}
+                onNavigate={onNavigate}
               />
             ))}
           </div>
