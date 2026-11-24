@@ -63,6 +63,7 @@ The Suite file column is the assertion's name in a suite file: `type:` on an ass
 | Tool output matches regex | Between the minimum (default 1) and maximum number of tool results match every pattern. | After the run | `toolResultMatches` |
 | Tool result matches schema… | Every tool result validates against the JSON Schema you provide. | After the run | `toolResultMatchesSchema` |
 | Tool result under N bytes | Every tool result is strictly under N bytes, as the server returned it. | After the run | `toolResultSizeUnder` |
+| A question was asked and answered… | A server asked a question during the run and the run answered it. Some question fits every field you state: `server` and `tool` exactly, `message` as contained text, `action` (`accept`, `decline` or `cancel`) as the reply, and each `content` entry as an equal value. Fails when no question was asked. See [Answer a server's question](/evaluate/write-a-case#answer-a-servers-question). | After the run | `inputAnswered` |
 | Tool errors name an input | Every tool error message names one of the tool's inputs or a value the call sent. Advisory only. | After the run | `toolErrorNamesInput` |
 | Full pages include a next-page link | A page whose length equals its requested limit carries continuation metadata. Advisory only. | After the run | `fullPageHasContinuation` |
 

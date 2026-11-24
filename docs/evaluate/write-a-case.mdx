@@ -254,6 +254,48 @@ An assertion under a prompt sees only that turn: its tool calls, final message a
 
 Removing a prompt with assertions under it asks first: they would move to the previous step and grade that turn.
 
+## Answer a server's question
+
+Some tools stop and ask the person a question before they finish, such as "Delete note 7?". A run has no person to ask, so a case carries the replies. They live in the suite file, under `inputAnswers`, and apply only to that case.
+
+```yaml
+cases:
+  - id: c_delete_note_confirmed
+    title: deletes note 7 once the server asks
+    steps:
+      - id: s1
+        kind: prompt
+        prompt: Delete note 7.
+    assertions:
+      - type: inputAnswered
+        server: notes
+        tool: delete_note
+        action: accept
+    inputAnswers:
+      - server: notes
+        tool: delete_note
+        message: Delete note
+        action: accept
+        content:
+          confirm: true
+```
+
+Each reply can state these fields, and a field you leave out matches anything:
+
+| Field | Matches |
+| --- | --- |
+| `server` | The server's name, exactly as the suite names it. |
+| `tool` | The tool whose call asked, exactly. |
+| `message` | Text the question's message contains. Case-sensitive. |
+| `action` | Required. What the run sends back: `accept`, `decline` or `cancel`. |
+| `content` | The form's values, only with `accept`. A question that opens a link has none. |
+
+The first reply whose stated fields all fit the question answers it, so put specific replies above a general one. A reply with no `server`, `tool` or `message` answers every question the earlier ones did not. A question no reply fits is declined, and the trace says "declined, no reply was set for this question".
+
+A server is offered the chance to ask only when a reply names it with `server`. Without that field, MCPJam does not tell the server it can ask, and the server takes its no-question path. A case holds at most 20 replies. A `message` is at most 500 characters and a reply's `content` at most 4,000.
+
+Each question and its reply appear in the trace under the tool call that asked. To make a case fail when the question never comes, or when the reply was not the one you expected, add the [**A question was asked and answered…**](/evaluate/reference/assertions#response) assertion.
+
 ## Required and Advisory
 
 | Role | What a miss does |
