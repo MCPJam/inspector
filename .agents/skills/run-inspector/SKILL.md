@@ -36,8 +36,9 @@ node mcpjam-inspector/scripts/inspector-driver.mjs stop             # stops only
   message with a `reason`; never allowlist an error your change introduced.
 - A page that lands somewhere other than what was asked for fails with
   `wrong-route`: a surface must end on one of its own route patterns, a path
-  or URL on the same path. When a redirect is the intended behaviour, add an
-  allowlist rule of kind `wrong-route` that says why.
+  or URL on the same path, and on the same project when it names one. When
+  a redirect is the intended behaviour, add an allowlist rule of kind
+  `wrong-route` that says why.
 - To drive an instance you started yourself, pass `--base-url
   http://localhost:<client-port>` and `--token '<access link>'` (or set
   `MCPJAM_DRIVER_BASE_URL` and `MCPJAM_SESSION_TOKEN`).

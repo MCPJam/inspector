@@ -13,47 +13,47 @@
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface evals \\(/evals\\), landed on \\S+/p/<id>/evaluate$",
+      "match": "^asked for surface evals \\(/evals\\), landed on /p/<id>/evaluate$",
       "reason": "The legacy Evals screen redirects to Evaluate before mounting (LegacyEvalRedirect in components/routing/legacy-eval-redirect.tsx); the surface stays for old links."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface computer \\(/computer\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface computer \\(/computer\\), landed on /p/<id>/servers$",
       "reason": "ComputerRoute in App.tsx sends the user to Servers while the computers flag is off. Only an explicit false from PostHog redirects, and the driver's guest and dev accounts have it off."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface sessions \\(/sessions\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface sessions \\(/sessions\\), landed on /p/<id>/servers$",
       "reason": "The Sessions route in App.tsx sends the user to Servers while the unified sessions flag is off. Only an explicit false from PostHog redirects, and the driver's guest and dev accounts have it off."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface (events|triggers) \\(/(events|triggers)\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface (events|triggers) \\(/(events|triggers)\\), landed on /p/<id>/servers$",
       "reason": "EventsRoute and EventTriggersRoute in App.tsx send the user to Servers while the events flag (useEventsEnabled) is off. Only an explicit false from PostHog redirects, and the driver's guest and dev accounts have it off."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface project-environments \\(/environments\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface project-environments \\(/environments\\), landed on /p/<id>/servers$",
       "reason": "ProjectEnvironmentsRoute sends the user to Servers while the project environments flag is off. Only an explicit false from PostHog redirects, and the driver's guest and dev accounts have it off."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface registry \\(/registry\\), landed on \\S+/p/<id>/home$",
+      "match": "^asked for surface registry \\(/registry\\), landed on /p/<id>/home$",
       "reason": "App.tsx sends the Registry tab to the default hub while the registry-enabled flag is not on, which it is not for the driver's accounts."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface learning \\(/learning\\), landed on \\S+/p/<id>/home$",
+      "match": "^asked for surface learning \\(/learning\\), landed on /p/<id>/home$",
       "reason": "App.tsx sends the Learning tab to the default hub unless the mcpjam-learning flag is on and the user is signed in; a guest is not."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface webmcp \\(/webmcp\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface webmcp \\(/webmcp\\), landed on /p/<id>/servers$",
       "reason": "WebmcpInspectorRoute in App.tsx sends the user to Servers while the WebMCP inspector flag is off. Only an explicit false from PostHog redirects, and the driver's guest and dev accounts have it off."
     },
     {
       "kind": "wrong-route",
-      "match": "^asked for surface tracing \\(/tracing\\), landed on \\S+/p/<id>/servers$",
+      "match": "^asked for surface tracing \\(/tracing\\), landed on /p/<id>/servers$",
       "reason": "Tracing is hostedBlocked (shared/app-surfaces.ts) and the driver starts dev:hosted, so App.tsx sends a hosted-blocked tab to Servers with a toast."
     }
   ]
