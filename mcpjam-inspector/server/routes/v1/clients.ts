@@ -618,6 +618,7 @@ const clientSetSchema = z
       .optional(),
     respectToolVisibility: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z.boolean().nullable().optional(),
+    runUnloadedToolCalls: z.boolean().nullable().optional(),
     harness: z.enum(HARNESS_IDS).nullable().optional(),
     computer: z
       .strictObject({

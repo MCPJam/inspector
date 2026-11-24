@@ -1607,6 +1607,7 @@ export function PlaygroundMain({
     // DTO so flipping it in the host's Agent → Behavior tab takes
     // effect on the very next send without remounting the playground.
     progressiveToolDiscovery: previewedHost?.config?.progressiveToolDiscovery,
+    runUnloadedToolCalls: previewedHost?.config?.runUnloadedToolCalls,
     respectToolVisibility: previewedHost?.config?.respectToolVisibility,
     // The hook prefers this option over executionConfig. A study's policy is
     // on its execution config, so the visitor's saved host must not replace it.
@@ -7825,6 +7826,8 @@ export function PlaygroundMain({
                                 previewedHost?.config?.progressiveToolDiscovery,
                               respectToolVisibility:
                                 previewedHost?.config?.respectToolVisibility,
+                              runUnloadedToolCalls:
+                                previewedHost?.config?.runUnloadedToolCalls,
                               modelVisibleMcpToolResults:
                                 previewedHost?.config
                                   ?.modelVisibleMcpToolResults,

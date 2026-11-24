@@ -23401,6 +23401,10 @@
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."
           },
+          "runUnloadedToolCalls": {
+            "type": ["boolean", "null"],
+            "description": "Allow eligible MCP tools to run before loading when their arguments validate. Send null to use the default."
+          },
           "progressiveToolDiscovery": {
             "type": ["boolean", "null"],
             "description": "Send `null` to clear this field back to absent."

@@ -30,6 +30,7 @@ export function buildDirectChatTurnTrace(
   finishReason: DirectChatTurnHeadlessResult["finishReason"],
 ): PersistedTurnTrace {
   return {
+    ...handle.discoveryMetadata,
     turnId: handle.traceTurn.turnId,
     promptIndex: handle.traceTurn.promptIndex,
     startedAt: handle.traceTurn.turnStartedAt,

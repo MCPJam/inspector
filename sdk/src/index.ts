@@ -1340,6 +1340,10 @@ export type {
   ToolCatalogEntry,
   ToolDiscoveryState,
 } from "./progressive-discovery/discovery.js";
+export { discoveryRunMetadata } from "./sdk-version.js";
+export { planDiscoveryStep, validateDeferredToolInputs, redactUnavailableToolError, earlyToolInputError } from "./progressive-discovery/step.js";
+export type { DiscoveryStep } from "./progressive-discovery/step.js";
+export { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 export { createProgressiveMetaTools } from "./progressive-discovery/meta-tools.js";
 export type {
   LoadMcpToolsResult,
@@ -2354,5 +2358,3 @@ export type {
 // Server feature model for the server canvas (KES-886). Browser-safe.
 export * from "./server-features/index.js";
 export * from "./server-card/index.js";
-
-export { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";

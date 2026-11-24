@@ -663,6 +663,7 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -991,6 +992,7 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        runUnloadedToolCalls?: boolean;
         modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
         mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
@@ -2469,6 +2471,11 @@ export function useChatSession(
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
+  const runUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  const resumedRunUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  runUnloadedToolCallsRef.current =
+    options.runUnloadedToolCalls ??
+    options.executionConfig?.runUnloadedToolCalls;
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
   // Prefer the top-level option when set (used by paths that don't go
   // through ExecutionConfig — e.g. the playground per-host column), but
@@ -4325,6 +4332,7 @@ export function useChatSession(
             : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          runUnloadedToolCalls: runUnloadedToolCallsRef.current ?? resumedRunUnloadedToolCallsRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
             ? {
                 modelVisibleMcpToolResults:
@@ -5873,6 +5881,7 @@ export function useChatSession(
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedRunUnloadedToolCallsRef.current = undefined;
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
     rewindRef.current = null;
@@ -6009,6 +6018,7 @@ export function useChatSession(
       },
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedRunUnloadedToolCallsRef.current = undefined;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
       rewindRef.current = null;
@@ -6278,6 +6288,7 @@ export function useChatSession(
           reasoningEffort?: string;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          runUnloadedToolCalls?: boolean;
           modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
           mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
@@ -6427,6 +6438,7 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedRunUnloadedToolCallsRef.current = session.resumeConfig?.runUnloadedToolCalls;
         resumedModelVisibleMcpToolResultsRef.current =
           session.resumeConfig?.modelVisibleMcpToolResults;
         resumedMcpToolResultImageRenderingRef.current =

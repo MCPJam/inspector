@@ -136,9 +136,9 @@ export function rejectedToolCallIds(messages: readonly unknown[]): Set<string> {
   const ids = new Set<string>();
   if (!Array.isArray(messages)) return ids;
   for (const message of messages) {
-    if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) continue;
+    if (!isRecord(message) || (message.role !== "assistant" && message.role !== "tool") || !Array.isArray(message.content)) continue;
     for (const part of message.content) {
-      if (!isRecord(part) || part.type !== "tool-call" || typeof part.toolCallId !== "string") continue;
+      if (!isRecord(part) || (part.type !== "tool-call" && part.type !== "tool-result") || typeof part.toolCallId !== "string") continue;
       const metadata = part.providerOptions;
       if (isRecord(metadata) && isRecord(metadata.mcpjam) && metadata.mcpjam.rejectedToolCall === true) {
         ids.add(part.toolCallId);

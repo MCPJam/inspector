@@ -126,6 +126,8 @@ export interface ChatHistoryWidgetSnapshot {
 }
 
 export interface ChatHistoryTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   turnId: string;
   promptIndex: number;
   startedAt: number;

@@ -448,6 +448,7 @@ export async function handleManagedChatTurn(
             : {}),
           requireToolApproval,
           respectToolVisibility,
+          runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
           modelVisibleMcpToolResults,
           // Server-resolved, never from the body, and authoritative whenever a
           // host config resolved: an EMPTY record means "cancels normally" and

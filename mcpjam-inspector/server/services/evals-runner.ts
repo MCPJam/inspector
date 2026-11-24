@@ -5266,6 +5266,7 @@ const runLocalIteration = async ({
           resolvedExecution.requireToolApproval,
         ),
         respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
@@ -7047,6 +7048,7 @@ const runHostedIterationWithBrowser = async (
         resolvedExecution.requireToolApproval,
       ),
       respectToolVisibility: hostPolicy?.respectToolVisibility,
+        runUnloadedToolCalls: resolvedExecution.runUnloadedToolCalls,
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
@@ -7764,6 +7766,7 @@ const runHostedIterationWithBrowser = async (
     ...(skillsAtTurnForPersist ? { skillsAtTurn: skillsAtTurnForPersist } : {}),
     spans: capturedSpans,
     requestPayloads,
+    nativeHarness: Boolean(resolvedExecution.harness),
     harnessMcpByPromptIndex,
     prompts: promptTraceSummaries,
     // Where the friction signals read their tool results from. THREE TIERS,

@@ -124,6 +124,7 @@ export interface ResumeConfig {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
@@ -184,6 +185,7 @@ export interface DirectHostConfig {
    * `undefined` so pre-feature rows stay byte-identical.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds: string[];
@@ -211,6 +213,7 @@ export function buildDirectHostConfig(input: {
   requireToolApproval?: boolean;
   requireNativeToolDiscovery?: boolean;
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServerIds?: string[];
@@ -224,6 +227,7 @@ export function buildDirectHostConfig(input: {
     requireToolApproval,
     requireNativeToolDiscovery,
     respectToolVisibility,
+    runUnloadedToolCalls,
     modelVisibleMcpToolResults,
     mcpToolResultImageRendering,
     selectedServerIds,
@@ -243,6 +247,7 @@ export function buildDirectHostConfig(input: {
     // Pass through verbatim so undefined-vs-set semantics survive into
     // the backend canonicalizer (drops undefined; keeps explicit false).
     ...(respectToolVisibility !== undefined ? { respectToolVisibility } : {}),
+    ...(runUnloadedToolCalls !== undefined ? { runUnloadedToolCalls } : {}),
     ...(modelVisibleMcpToolResults !== undefined
       ? { modelVisibleMcpToolResults }
       : {}),
@@ -260,6 +265,8 @@ export function buildDirectHostConfig(input: {
  * Kept in one place so the producer callbacks and the wire body can't drift.
  */
 export interface PersistedTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   setupAtTurn?: SetupAtTurn;
   connectionsAtTurn?: Array<{
     serverId: string;
