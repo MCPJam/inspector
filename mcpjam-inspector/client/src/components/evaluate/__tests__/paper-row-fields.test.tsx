@@ -475,6 +475,7 @@ const primaryFields: Record<Predicate["type"], readonly string[]> = {
   noEndingQuestion: [],
   tokenBudgetUnder: ["Strictly under (tokens)"],
   turnCountUnder: ["Strictly under (user turns)"],
+  inputAnswered: [],
 };
 
 it.each(EVAL_ADD_CATALOG.filter((entry) => entry.choice.kind === "check"))(
