@@ -205,6 +205,7 @@ export function ServerCredentialRecovery({
     (server.lastError ? describeError(server.lastError) : null);
   if (
     error?.slug !== "auth/http_401" &&
+    error?.slug !== "auth/http_403" &&
     error?.slug !== "auth/consent_required" &&
     error?.slug !== "oauth/no_bearer_challenge"
   ) return null;

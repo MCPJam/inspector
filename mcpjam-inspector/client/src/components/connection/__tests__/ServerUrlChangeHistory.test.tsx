@@ -225,12 +225,12 @@ describe("ServerUrlChangeHistory", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("offers recovery for credentials cleared at the current address", () => {
+  it("offers recovery after a forbidden response at the new address", () => {
     useQueryMock.mockReturnValue([urlChange]);
     const server = createServer({
       config: { url: "https://new.example.com/mcp" },
       connectionStatus: "failed",
-      lastError: "HTTP 401 Unauthorized",
+      lastError: "HTTP 403 Forbidden",
     });
     const auth = { method: "bearer", bearer: null, headers: null } as const;
     const { rerender } = render(
