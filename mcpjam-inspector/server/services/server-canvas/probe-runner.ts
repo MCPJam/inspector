@@ -31,6 +31,7 @@ import {
   type ProbeSummary,
   type ServerProbeId,
 } from "@mcpjam/sdk";
+import { mockIdFromPlaceholderUrl } from "../../../shared/mock-address.js";
 import { logger } from "../../utils/logger.js";
 import type { RunDiscoveryPreflightDependencies } from "../server-connection-discovery.js";
 import type { ServerFeatureCapture } from "./capture.js";
@@ -83,6 +84,8 @@ export interface ProbeRun {
 
 const EXPIRED = Symbol("expired");
 const STDIO_DETAIL = "Applies to HTTP servers. This server runs over stdio.";
+const MOCK_DETAIL =
+  "Mock. MCPJam answers this server itself, so it has no address to probe and no sign-in of its own.";
 const NO_URL_DETAIL = "The server URL was not available to probe.";
 const OUT_OF_TIME = "The probe ran out of time.";
 const THREW = "The probe stopped with an error.";
@@ -234,6 +237,16 @@ export function runServerProbes(
         unranProbe("http-transport", "skipped", now(), NO_URL_DETAIL),
         unranProbe("authorization", "skipped", now(), NO_URL_DETAIL),
         unranProbe("server-card", "skipped", now(), NO_URL_DETAIL),
+      ];
+    }
+    // Display only, never dispatch: the backend keeps this address off every
+    // other row, and an anonymous probe of it would only report a sign-in
+    // that does not exist.
+    if (mockIdFromPlaceholderUrl(serverUrl)) {
+      return [
+        unranProbe("http-transport", "not-applicable", now(), MOCK_DETAIL),
+        unranProbe("authorization", "not-applicable", now(), MOCK_DETAIL),
+        unranProbe("server-card", "not-applicable", now(), MOCK_DETAIL),
       ];
     }
     const httpController = new AbortController();

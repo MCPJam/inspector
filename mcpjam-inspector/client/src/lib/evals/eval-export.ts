@@ -14,6 +14,7 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import { stepsToPromptTurns } from "@/shared/steps";
+import { mockIdFromPlaceholderUrl, mockRouteAddress } from "@/shared/mock-address";
 
 /**
  * Resolve a case's prompt turns for export, preferring the unified `steps`
@@ -80,6 +81,8 @@ type ExportServerConnection =
       url: string;
       envVarName: string;
       placeholder: boolean;
+      /** A mock server: its address is MCPJam's own route, and its bearer is an MCPJam API key. */
+      mock?: boolean;
     }
   | {
       serverId: string;
@@ -245,6 +248,11 @@ export function buildSdkEnvSnippet(
               connection.url,
             )}`,
       );
+      if (connection.mock) {
+        lines.push(
+          `# ${collapseToSingleLine(connection.serverId)} is a mock server: MCPJAM_API_KEY above is the bearer token its address takes.`,
+        );
+      }
     }
   }
 
@@ -306,7 +314,7 @@ export function buildSdkTestFile({
     '} from "@mcpjam/sdk";',
     "",
     "type ServerConnection =",
-    '  | { id: string; kind: "http"; url: string }',
+    '  | { id: string; kind: "http"; url: string; auth?: "mcpjam-api-key" }',
     '  | { id: string; kind: "stdio"; command: string; args: string[] };',
     "",
     // Annotated rather than `as const`: a const-asserted literal gives
@@ -361,7 +369,19 @@ export function buildSdkTestFile({
     "    manager = new MCPClientManager();",
     "    for (const server of SERVER_CONFIGS) {",
     '      if (server.kind === "http") {',
-    "        await manager.connectToServer(server.id, { url: server.url });",
+    ...(serverConnections.some((c) => c.kind === "http" && c.mock)
+      ? [
+          "        await manager.connectToServer(server.id, {",
+          "          url: server.url,",
+          // A mock's address takes your MCPJam API key as its bearer token.
+          '          ...(server.auth === "mcpjam-api-key"',
+          "            ? { requestInit: { headers: { Authorization: `Bearer ${process.env.MCPJAM_API_KEY!}` } } }",
+          "            : {}),",
+          "        });",
+        ]
+      : [
+          "        await manager.connectToServer(server.id, { url: server.url });",
+        ]),
     "        continue;",
     "      }",
     "      await manager.connectToServer(server.id, {",
@@ -417,6 +437,8 @@ export function buildAgentPromptExportFileName(suiteName: string): string {
 export function buildServerConnections(
   serverIds: string[],
   serverEntries: Record<string, ServerWithName | undefined>,
+  /** Where this Inspector is reached; the page's own origin when absent. */
+  inspectorOrigin?: string,
 ): ExportServerConnection[] {
   return serverIds.map((serverId) => {
     const serverEntry = serverEntries[serverId];
@@ -433,6 +455,25 @@ export function buildServerConnections(
     }
 
     const config = serverEntry.config as Record<string, unknown>;
+    const mockId =
+      typeof config.url === "string" || config.url instanceof URL
+        ? mockIdFromPlaceholderUrl(config.url)
+        : undefined;
+    if (mockId) {
+      // A saved mock's own address resolves nowhere. Outside MCPJam it is
+      // reached at this Inspector's route, with an MCPJam API key.
+      const origin =
+        inspectorOrigin ??
+        (typeof window !== "undefined" ? window.location.origin : undefined);
+      return {
+        serverId,
+        kind: "http",
+        url: mockRouteAddress(origin ?? "<replace-with-inspector-url>", mockId),
+        envVarName,
+        placeholder: !origin,
+        mock: true,
+      };
+    }
     if (typeof config.url === "string" || config.url instanceof URL) {
       return {
         serverId,
@@ -795,6 +836,7 @@ function renderServerConnectionEntries(
         `  url: process.env.${connection.envVarName} ?? ${jsonLiteral(
           connection.url,
         )},`,
+        ...(connection.mock ? ['  auth: "mcpjam-api-key",'] : []),
         "},",
       );
       continue;

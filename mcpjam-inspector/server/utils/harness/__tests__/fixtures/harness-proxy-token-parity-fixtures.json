@@ -25,7 +25,17 @@
     "The `halfPair*` vectors are FORGED \u2014 validly signed, but carrying one of",
     "the pair \u2014 because no minter produces that shape; they exist so both",
     "verifiers prove they drop a half-present scope rather than surfacing an",
-    "iteration claim nothing authorized."
+    "iteration claim nothing authorized.",
+    "",
+    "The `mockVersion` claim travels on a token minted for a MOCK server: the",
+    "version authorized (the pin, else the head at mint time). A verifier",
+    "surfaces it only when it is an integer of at least 1. The `forged mockVersion`",
+    "vectors are validly signed with a value no minter produces (0, a fraction, a",
+    "string); both verifiers must drop the claim and still accept the token, so a",
+    "malformed pin opens the head exactly as no pin does. Their `expect.mockVersion`",
+    "is null; a vector with no such key carries no claim. The pinned vector was",
+    "minted by the backend's own signer, so its bytes also fix the claim's place",
+    "in the payload (after `serverId`, before the eval pair)."
   ],
   "secret": "harness-proxy-token-parity-fixture-secret",
   "nowSeconds": 1760000000,
@@ -93,6 +103,70 @@
           "serverId": "jx9server111aaa222bbb333"
         },
         "evalScope": null
+      }
+    },
+    {
+      "name": "mock (pinned version 2)",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwibW9ja1ZlcnNpb24iOjIsImlhdCI6MTc2MDAwMDAwMCwiZXhwIjoxNzYwMDAzNjAwfQ.K7SIgkT6YQZAp9U11osr5x7KVplMGDWHVFfKmNWk2xI",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null,
+        "mockVersion": 2
+      }
+    },
+    {
+      "name": "forged mockVersion 0",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwibW9ja1ZlcnNpb24iOjAsImlhdCI6MTc2MDAwMDAwMCwiZXhwIjoxNzYwMDAzNjAwfQ.NOP6pBz7bzX-jZUdo009tH0mOKMQJ0Y1-3rhthZV6G4",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null,
+        "mockVersion": null
+      }
+    },
+    {
+      "name": "forged mockVersion 1.5",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwibW9ja1ZlcnNpb24iOjEuNSwiaWF0IjoxNzYwMDAwMDAwLCJleHAiOjE3NjAwMDM2MDB9.d-l5wzkEWvAaLlboUXVRXF8xRXQTU8X4Pbm3EXe3w8U",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null,
+        "mockVersion": null
+      }
+    },
+    {
+      "name": "forged mockVersion as a string",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwibW9ja1ZlcnNpb24iOiIyIiwiaWF0IjoxNzYwMDAwMDAwLCJleHAiOjE3NjAwMDM2MDB9.xkfT5NgnIrheupY7HE9jtxw6mzCvrvZ9vo9mqRhHJoU",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null,
+        "mockVersion": null
       }
     }
   ],

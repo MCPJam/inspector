@@ -43,6 +43,7 @@ import {
   type ReplayConfig,
 } from "./route-helpers.js";
 import { loadSuiteConnectionIdSets } from "./suite-account-choices.js";
+import { mockVersionsOf, type MockPin } from "../../utils/mock-servers.js";
 
 type ProjectServer = { _id: string; name: string; url?: string };
 
@@ -381,6 +382,8 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
     replayConfig: ReplayConfig;
     /** The source run's environment, which lists servers its config left out. */
     environment?: { servers?: unknown };
+    /** The mock versions the source run used. */
+    mockPins?: MockPin[];
   }): Promise<
     | {
         manager: MCPClientManager;
@@ -439,6 +442,7 @@ export function localReplayServers(c: Context, convexAuthToken: string) {
       {
         pluginComputerRuntime: false,
         ...(connectionIdSets ? { connectionIdSets } : {}),
+        mockVersions: mockVersionsOf(target.mockPins ?? []),
         serverNames: [...authorized.values()],
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       },

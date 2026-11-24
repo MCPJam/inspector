@@ -235,6 +235,28 @@ describe("runServerProbes", () => {
     expect(probes["events-list"]?.status).toBe("ok");
   });
 
+  it("says Mock where a mock would show sign-in advice, and probes no address", async () => {
+    const { manager } = recordingManager();
+    const { fetchFn, calls } = recordingFetch();
+    const summaries = await runServerProbes(
+      {
+        hosted: true,
+        manager,
+        managerKey: "Fixture",
+        serverUrl: "https://mock.mcpjam.invalid/jx7mock1",
+        capture: capture(),
+      },
+      { fetchFn },
+    ).summaries;
+    const probes = byId(summaries);
+    for (const id of ["http-transport", "authorization", "server-card"] as const) {
+      expect(probes[id]).toMatchObject({ status: "not-applicable" });
+      expect(probes[id]?.detail).toMatch(/^Mock\./);
+    }
+    expect(calls).toEqual([]);
+    expect(probes["events-list"]?.status).toBe("ok");
+  });
+
   it("keeps one probe's failure from affecting the others", async () => {
     const { manager } = recordingManager({
       listServerEvents: async () => {

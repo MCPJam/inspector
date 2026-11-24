@@ -17,6 +17,7 @@ import {
   withEphemeralConnection,
   handleRoute,
   authorizeServer,
+  callerContextFromHono,
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
@@ -56,6 +57,7 @@ import {
 import { projectHostedConnectFailureLogs } from "../../utils/hosted-connect-failure.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
+import { mockIdFromPlaceholderUrl } from "../../../shared/mock-address.js";
 
 const servers = new Hono();
 
@@ -127,7 +129,11 @@ export async function validateServerCore(
   // dial is answered as the caller's to fix (400) rather than as a failed
   // connection. A no-op outside hosted mode.
   const configuredUrl = manager.getServerConfig?.(body.serverId)?.url;
-  if (typeof configuredUrl === "string" || configuredUrl instanceof URL) {
+  // A mock's address resolves nowhere and is never dialed: it is served in process.
+  if (
+    (typeof configuredUrl === "string" || configuredUrl instanceof URL) &&
+    !mockIdFromPlaceholderUrl(configuredUrl)
+  ) {
     await assertHostedServerTarget(String(configuredUrl));
   }
   // The Connect button's own listing is not observed use.
@@ -399,14 +405,32 @@ export async function runHostedDoctor(
         resolveEffectiveAuthMethod(auth.serverConfig),
         body.oauthAccessToken
       ),
-    body.clientCapabilities
+    body.clientCapabilities,
+    undefined,
+    undefined,
+    undefined,
+    // A mock's id: the doctor tests it as the server it is, served in process.
+    auth.serverConfig.mock
+      ? {
+          caller: callerContextFromHono(c),
+          bearerToken,
+          projectId: body.projectId,
+          reauthorize: () =>
+            authorizeServer(c, bearerToken, body.projectId, body.serverId, {
+              accessScope: body.accessScope,
+              scenarioId: body.scenarioId,
+              accessVersion: body.accessVersion,
+            }),
+        }
+      : undefined,
   );
 
   // Judge the target once, before either leg runs — the same check the
   // conformance routes make, and a no-op outside hosted mode. This is the
   // caller-facing refusal: a stored URL that is already a private address gets
   // a 400 naming the host they typed, rather than a transport error.
-  await assertHostedServerTarget(config.url);
+  // (A mock has no address to judge: its placeholder resolves nowhere.)
+  if (!auth.serverConfig.mock) await assertHostedServerTarget(config.url);
 
   // THE DOCTOR'S TWO LEGS, ON ONE TRANSPORT.
   //
@@ -417,7 +441,7 @@ export async function runHostedDoctor(
   // into the socket, and re-run all of it on every redirect hop. One transport
   // rather than two so the probe and the connection cannot disagree about what
   // is dialable.
-  const doctorFetch = hostedMcpBaseFetch();
+  const doctorFetch = config.baseFetch ?? hostedMcpBaseFetch();
 
   const result = await runServerDoctor({
     // A hosted doctor run is not SDK usage, so the SDK sends nothing for it.

@@ -45,6 +45,13 @@ export interface HarnessMcpProxyClaims {
    */
   runId?: string;
   iterationId?: string;
+  /**
+   * The version of the mock this token was minted for, when `serverId` is a
+   * mock (the pin, else the head at mint time). Surfaced only when it is an
+   * integer of at least 1; anything else is dropped, so a token that carries
+   * nothing usable opens the head like one that carries nothing.
+   */
+  mockVersion?: number;
 }
 
 function getSecret(): string {
@@ -137,6 +144,10 @@ export function verifyHarnessProxyToken(
       ? { runId, iterationId }
       : {};
 
+  const pin = payload.mockVersion;
+  const mockVersion =
+    typeof pin === "number" && Number.isInteger(pin) && pin >= 1 ? { mockVersion: pin } : {};
+
   return {
     userId: payload.sub as string,
     externalId: payload.ext as string,
@@ -144,6 +155,7 @@ export function verifyHarnessProxyToken(
     projectId: payload.projectId as string,
     serverId: payload.serverId as string,
     ...evalScope,
+    ...mockVersion,
   };
 }
 

@@ -130,7 +130,8 @@ describe("a client outside MCPJam", () => {
     await client.connectToServer("mock", {
       url: "http://inspector.test/api/web/mock-mcp/mock1",
       requestInit: { headers: { Authorization: `Bearer ${token}` } },
-      baseFetch: (input, init) => app.fetch(new Request(input as string, init)),
+      baseFetch: ((input: string, init?: RequestInit) =>
+        app.fetch(new Request(input, init))) as typeof fetch,
     });
     const tools = await client.listTools("mock");
     expect(tools.tools.find((t) => t.name === "echo")?.description).toBe("MOCKED echo");

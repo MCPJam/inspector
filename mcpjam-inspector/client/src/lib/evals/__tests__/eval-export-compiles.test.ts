@@ -176,6 +176,31 @@ const NEGATIVE = exportFor({
   steps: [{ id: "s1", kind: "prompt", prompt: "just chat" }],
 });
 
+// A mock server's address takes an MCPJam API key as its bearer token.
+const MOCK_EXPORT = buildSdkTestFile({
+  suite: { name: "compile fixture", description: "compile fixture" },
+  cases: [
+    normalizeEvalCaseForExport({
+      _id: "c_mock",
+      title: "mock",
+      query: "hi",
+      runs: 1,
+      isNegativeTest: false,
+      steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+    } as never),
+  ],
+  serverConnections: buildServerConnections(
+    ["jx7mock1"],
+    {
+      jx7mock1: {
+        name: "mock",
+        config: { url: new URL("https://mock.mcpjam.invalid/jx7mock1") },
+      } as never,
+    },
+    "https://app.mcpjam.com",
+  ),
+});
+
 /**
  * Compile `files` against the SDK source and return readable diagnostics.
  *
@@ -250,6 +275,7 @@ function diagnosticsFor(...names: string[]): string[] {
     "negative.test.ts": NEGATIVE,
     "empty.test.ts": EMPTY_TURNS,
     "quickstart.test.ts": SDK_EVAL_QUICKSTART_RUN,
+    "mock.test.ts": MOCK_EXPORT,
   });
   return allDiagnostics.filter((d) => names.some((n) => d.startsWith(`${n}:`)));
 }
@@ -327,5 +353,10 @@ describe("exported SDK test files compile against the real SDK", () => {
       expect(emitted).not.toContain("TestAgent");
       expect(emitted).not.toContain("agent.prompt(");
     }
+  });
+
+  it("compiles a mock server's export, with its bearer taken from the environment", () => {
+    expect(MOCK_EXPORT).toContain("https://app.mcpjam.com/api/web/mock-mcp/jx7mock1");
+    expect(diagnosticsFor("mock.test.ts")).toEqual([]);
   });
 });

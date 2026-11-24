@@ -97,6 +97,25 @@ describe("/api/web/harness-mcp", () => {
       expect.objectContaining({ initializePins: profile }),
     );
   });
+  it("opens the mock version its token names, and the head for a token that names none", async () => {
+    const pinned = signTestProxyToken({
+      serverId: "srv-a",
+      projectId: "p1",
+      externalId: "user_ext_1",
+      orgId: "org_1",
+      mockVersion: 3,
+    });
+    expect((await post("srv-a", { "X-MCPJam-Proxy-Token": pinned })).status).toBe(200);
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toMatchObject({
+      mockVersions: { "srv-a": 3 },
+    });
+    expect(
+      (await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") })).status,
+    ).toBe(200);
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).not.toHaveProperty(
+      "mockVersions",
+    );
+  });
   it("401s without a token (token IS the auth here)", async () => {
     expect((await post("srv-a")).status).toBe(401);
   });

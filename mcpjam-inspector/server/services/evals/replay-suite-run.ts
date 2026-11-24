@@ -38,6 +38,7 @@ import {
   type BuiltPinnedSkillSource,
 } from "./pinned-skill-source.js";
 import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
+import { readMockPins, type MockPin } from "../../utils/mock-servers.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -59,6 +60,8 @@ export type ExecuteSuiteReplayFromRunParams = {
     suiteId: string;
     replayConfig: ReplayConfig;
     environment?: { servers?: unknown };
+    /** The mock versions the source run used; each is authorized again at its version. */
+    mockPins: MockPin[];
   }) => Promise<
     | {
         manager: MCPClientManager;
@@ -112,12 +115,19 @@ export async function prepareSuiteReplayFromRun(
     { runId: sourceRunId },
   );
 
-  if (!replayMetadata?.hasServerReplayConfig) {
+  // A mock is never stored: its connection holds a grant, so a replay
+  // authorizes it again, at the version the run used.
+  const mockPins = readMockPins(replayMetadata?.mockPins);
+  if (!replayMetadata?.hasServerReplayConfig && mockPins.length === 0) {
     throw new Error("This run does not have stored replay config");
   }
 
-  const replayConfig = await fetchReplayConfig(sourceRunId, convexAuthToken);
-  if (!replayConfig || replayConfig.servers.length === 0) {
+  const replayConfig =
+    (await fetchReplayConfig(sourceRunId, convexAuthToken)) ??
+    (mockPins.length
+      ? { runId: sourceRunId, suiteId: replayMetadata.suiteId, servers: [] }
+      : null);
+  if (!replayConfig || (replayConfig.servers.length === 0 && mockPins.length === 0)) {
     throw new Error("No replay configuration found for this run");
   }
 
@@ -146,7 +156,13 @@ export async function prepareSuiteReplayFromRun(
     suiteId: replayMetadata.suiteId,
     replayConfig,
     environment: replayMetadata.environment,
+    mockPins,
   });
+  if (mockPins.length > 0 && !opened) {
+    throw new Error(
+      "This run used a mock server, and MCPJam could not authorize it again for a replay. Run the suite again instead.",
+    );
+  }
   const replayServerIds =
     opened?.serverIds ?? replayConfig.servers.map((server) => server.serverId);
   const replayManager = opened?.manager ?? buildReplayManager(replayConfig);

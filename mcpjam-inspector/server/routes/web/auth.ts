@@ -159,6 +159,11 @@ import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidenti
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
 import {
+  dispatchMockInProcess,
+  type MockAuthorizeEntry,
+  type MockDial,
+} from "../../utils/mock-servers.js";
+import {
   deliveryContractHeaders,
   hostedCredentialDeliveryHeaders,
   requireServiceCredential,
@@ -572,6 +577,8 @@ export type ConvexAuthorizeResponse = {
     authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
     registrationMode?: "auto" | "preregistered" | "cimd" | "dcr";
     xaaClientAuth?: "none" | "private_key_jwt";
+    /** Present for a mock server's id: dial it in process, whatever its address says. */
+    mock?: MockAuthorizeEntry;
   };
   internalLogContext?: InternalLogContext;
 };
@@ -583,6 +590,8 @@ export type ClientSafeAuthorizeResponse = Omit<
 
 type AuthorizedServerConfigHolder = {
   serverConfig: ConvexAuthorizeResponse["serverConfig"];
+  /** For a mock's id, the grant. */
+  oauthAccessToken?: string | null;
 };
 
 export type ConvexBatchAuthorizeFailure = {
@@ -809,6 +818,8 @@ type AuthorizeServerOptions = {
   accessScope?: "project_member" | "chat_v2";
   scenarioId?: string;
   accessVersion?: number;
+  /** The version of each mock to open, by the mock's id; absent means the head. */
+  mockVersions?: Record<string, number>;
   /** Ends the request, for a caller that stops waiting for the answer. */
   signal?: AbortSignal;
 };
@@ -876,6 +887,7 @@ export async function authorizeServerAs(
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
+        ...(options?.mockVersions ? { mockVersions: options.mockVersions } : {}),
       }),
       ...(options?.signal ? { signal: options.signal } : {}),
     });
@@ -940,6 +952,7 @@ export async function authorizeBatch(
     accessScope?: "project_member" | "chat_v2";
     scenarioId?: string;
     accessVersion?: number;
+    mockVersions?: Record<string, number>;
   },
 ): Promise<ConvexBatchAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -974,6 +987,7 @@ export async function authorizeBatch(
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
+        ...(options?.mockVersions ? { mockVersions: options.mockVersions } : {}),
         // Skip Convex's hosted-mode HTTPS-only check on MCP server URLs
         // when this Inspector instance is running locally. Convex doesn't
         // open MCP server URLs itself (we do, from this Hono backend), so
@@ -1266,6 +1280,8 @@ export function toHttpConfig(
    * function — is the reachability gate.
    */
   pluginRuntime?: PluginStdioHttpTarget,
+  /** The dialer's own auth context, for a mock's id; see `utils/mock-servers.ts`. */
+  mockDial?: MockDial,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     if (pluginRuntime) {
@@ -1352,7 +1368,7 @@ export function toHttpConfig(
     headers["Authorization"] = `Bearer ${oauthAccessToken}`;
   }
 
-  return {
+  const config: HttpServerConfig = {
     url: authResponse.serverConfig.url,
     capabilities: clientCapabilities,
     clientCapabilities: clientCapabilities,
@@ -1413,6 +1429,15 @@ export function toHttpConfig(
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
   };
+  // Chosen from the marker on the authorize entry, never from the address.
+  return authResponse.serverConfig.mock
+    ? dispatchMockInProcess(
+        config,
+        authResponse,
+        { timeoutMs, clientCapabilities, initializePins },
+        mockDial,
+      )
+    : config;
 }
 
 export interface AuthorizedManagerResult {
@@ -1622,6 +1647,8 @@ export async function createAuthorizedManager(
     advertiseSkillsExtension?: boolean;
     scenarioId?: string;
     accessVersion?: number;
+    /** The version of each mock to open, by the mock's id; absent means the head. */
+    mockVersions?: Record<string, number>;
     rpcLogger?: RpcLogger;
     /**
      * Headers-only HTTP-exchange channel, a SEPARATE SDK channel from
@@ -1842,8 +1869,25 @@ export async function createAuthorizedManager(
       accessScope: options?.accessScope,
       scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
+      mockVersions: options?.mockVersions,
     },
   );
+  // A mock's dialer authorizes it again for a fresh grant, with the same pin.
+  const mockDialFor = (serverId: string): MockDial => ({
+    caller,
+    bearerToken,
+    projectId,
+    xaaIssuer: options?.xaaIssuer,
+    reauthorize: async () =>
+      (
+        await authorizeBatch(caller, bearerToken, projectId, [serverId], {
+          mockVersions: options?.mockVersions,
+          accessScope: options?.accessScope,
+          scenarioId: options?.scenarioId,
+          accessVersion: options?.accessVersion,
+        })
+      ).results[serverId],
+  });
   // An uploaded account's token is read again when a refresh can't renew it
   // (`uploaded-account-recovery.ts`).
   const uploadedRecoveries = uploadedAccountRecoveries((id, connectionId) => {
@@ -2800,6 +2844,7 @@ export async function createAuthorizedManager(
             connectOnUnauthorized,
             effectiveInitializePins,
             pluginRuntime,
+            auth.serverConfig.mock ? mockDialFor(serverId) : undefined,
           ),
         ] as const;
       } catch (error) {

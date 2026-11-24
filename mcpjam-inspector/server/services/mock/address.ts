@@ -3,10 +3,9 @@
  * Inspector's own public base URL plus the mock route. `get_mock_server`
  * returns it with an API-key hint.
  */
+import { mockRouteAddress } from "../../../shared/mock-address.js";
 import { HOSTED_MODE, LOCAL_SERVER_ADDR } from "../../config.js";
 import { configuredInspectorPublicUrl } from "../../utils/inspector-public-url.js";
-
-export const MOCK_ROUTE_PREFIX = "/api/web/mock-mcp";
 
 /**
  * The origin a client reaches this Inspector at: the configured public URL
@@ -24,6 +23,5 @@ export function mockServerAddress(
   mockId: string,
   baseUrl: string = mockServerBaseUrl(),
 ): string | null {
-  if (!baseUrl) return null;
-  return `${baseUrl.replace(/\/+$/, "")}${MOCK_ROUTE_PREFIX}/${encodeURIComponent(mockId)}`;
+  return baseUrl ? mockRouteAddress(baseUrl, mockId) : null;
 }

@@ -148,6 +148,15 @@ async function resolveHostedHttpConfig(
     );
   }
 
+  // A mock has no address a conformance suite can dial: it is served in process.
+  if (auth.serverConfig.mock) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      "Conformance runs cannot test a mock server yet. Run them on the real server."
+    );
+  }
+
   const oauthToken = options.withLogin
     ? (auth.oauthAccessToken ?? undefined)
     : undefined;

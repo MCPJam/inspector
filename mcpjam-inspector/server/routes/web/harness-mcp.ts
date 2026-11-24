@@ -402,6 +402,10 @@ async function handle(c: any) {
         sealed?.profile?.clientCapabilities,
         {
           ...(sealed?.profile ? { initializePins: sealed.profile } : {}),
+          // A mock's token names the version it was minted for.
+          ...(claims.mockVersion
+            ? { mockVersions: { [serverId]: claims.mockVersion } }
+            : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness

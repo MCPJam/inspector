@@ -382,4 +382,59 @@ describe("eval-export", () => {
     expect(exportedCases).toHaveLength(1);
     expect(exportedCases[0]?.title).toBe("Persisted");
   });
+
+  describe("a mock server", () => {
+    const mock = {
+      name: "Echo mock",
+      config: { url: new URL("https://mock.mcpjam.invalid/jx7mock1") },
+    } as unknown as ServerWithName;
+
+    it("is exported at MCPJam's route for it, never at its saved placeholder address", () => {
+      expect(
+        buildServerConnections(["jx7mock1"], { jx7mock1: mock }, "https://app.mcpjam.com/"),
+      ).toEqual([
+        {
+          serverId: "jx7mock1",
+          kind: "http",
+          url: "https://app.mcpjam.com/api/web/mock-mcp/jx7mock1",
+          envVarName: "MCP_SERVER_URL_JX7MOCK1",
+          placeholder: false,
+          mock: true,
+        },
+      ]);
+    });
+
+    it("names the origin as a placeholder when the page does not know it", () => {
+      const [connection] = buildServerConnections(["jx7mock1"], { jx7mock1: mock });
+      expect(connection).toMatchObject({ mock: true });
+      expect(JSON.stringify(connection)).not.toContain("mock.mcpjam.invalid");
+    });
+
+    it("sends your MCPJam API key as the bearer, and keeps other servers as they were", () => {
+      const file = buildSdkTestFile({
+        suite: { name: "mock suite" },
+        cases: [],
+        serverConnections: buildServerConnections(
+          ["jx7mock1", "weather"],
+          { jx7mock1: mock, weather: connectedHttpServer },
+          "https://app.mcpjam.com",
+        ),
+      });
+      expect(file).toContain('auth: "mcpjam-api-key"');
+      expect(file).toContain("Bearer ${process.env.MCPJAM_API_KEY!}");
+      expect(file).not.toContain("mock.mcpjam.invalid");
+      // The one without it is the entry with no `auth`.
+      expect(file.match(/auth: "mcpjam-api-key"/g)).toHaveLength(1);
+    });
+
+    it("leaves the connect call as it was when no server is a mock", () => {
+      const file = buildSdkTestFile({
+        suite: { name: "plain suite" },
+        cases: [],
+        serverConnections: buildServerConnections(["weather"], { weather: connectedHttpServer }),
+      });
+      expect(file).toContain("await manager.connectToServer(server.id, { url: server.url });");
+      expect(file).not.toContain("Authorization");
+    });
+  });
 });

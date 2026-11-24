@@ -72,6 +72,8 @@ export interface AuthorizedConformanceServer {
     url?: string;
     headers?: Record<string, string>;
     useOAuth?: boolean;
+    /** Present for a mock's id, which has no address a suite can dial. */
+    mock?: object;
   };
   oauthAccessToken?: string | null;
 }
@@ -209,6 +211,13 @@ export async function startHostedConformanceRun(
           : {}),
       };
     }
+  }
+  if (config.mock) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.FEATURE_NOT_SUPPORTED,
+      "Conformance runs cannot test a mock server yet. Run them on the real server.",
+    );
   }
   await assertConformanceTarget(config.url, "Server URL");
 

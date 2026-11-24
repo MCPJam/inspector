@@ -24,6 +24,8 @@ type Vector = {
     valid: boolean;
     claims: Record<string, string>;
     evalScope: { runId: string; iterationId: string } | null;
+    /** The mock version the token carries; null or absent when it carries none to surface. */
+    mockVersion?: number | null;
   };
 };
 
@@ -78,6 +80,9 @@ describe("shared parity vectors", () => {
         expect(claims?.runId).toBeUndefined();
         expect(claims?.iterationId).toBeUndefined();
       }
+
+      // Absent, not 0: the route opens the head for a token with no pin.
+      expect(claims?.mockVersion).toBe(vector.expect.mockVersion ?? undefined);
     });
 
     test(`rejects ${vector.name} minted for a different server`, () => {
