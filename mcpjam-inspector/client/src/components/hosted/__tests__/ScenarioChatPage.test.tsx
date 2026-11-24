@@ -67,6 +67,12 @@ const {
   mockIsEmbeddedPreview: vi.fn<() => boolean>(() => false),
 }));
 
+const dbSetup = vi.hoisted(() => ({ ready: true, failed: false, paused: false }));
+vi.mock("@/contexts/db-user-ready-context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/contexts/db-user-ready-context")>()),
+  useDbUserBootstrapStatus: () => ({ accountSetupComplete: dbSetup.ready, isUserReady: dbSetup.ready && !dbSetup.paused, setupFailed: dbSetup.failed }),
+}));
+
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
   // straight to the rendezvous table (the blocked replica isn't addressable).
@@ -583,6 +589,48 @@ describe("ScenarioChatPage", () => {
       "/user-testing/scenario/preview-token?surface=preview",
     );
     expect(readScenarioSession()).toBeNull();
+  });
+
+  it("waits for signed-in account setup before redeeming the tester link", async () => {
+    dbSetup.ready = false;
+    try {
+      const view = render(<ScenarioChatPage pathToken="account-token" />);
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      dbSetup.ready = true;
+      view.rerender(<ScenarioChatPage pathToken="account-token" />);
+      await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+    } finally {
+      dbSetup.ready = true;
+    }
+  });
+
+  it("offers a refresh when signed-in account setup exhausts its retries", async () => {
+    dbSetup.ready = false;
+    dbSetup.failed = true;
+    try {
+      render(<ScenarioChatPage pathToken="account-token" />);
+      expect(await screen.findByRole("button", { name: "Refresh" })).toBeVisible();
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+    } finally {
+      dbSetup.ready = true;
+      dbSetup.failed = false;
+    }
+  });
+
+  it("keeps the active tester session through a database readiness pause", async () => {
+    const view = render(<ScenarioChatPage pathToken="account-token" />);
+    await waitFor(() => expect(readScenarioSession()?.authenticatedUserId).toBe("user_123"));
+    const calls = mockAuthFetch.mock.calls.length;
+    try {
+      dbSetup.paused = true;
+      view.rerender(<ScenarioChatPage pathToken="account-token" />);
+      dbSetup.paused = false;
+      view.rerender(<ScenarioChatPage pathToken="account-token" />);
+      expect(mockAuthFetch).toHaveBeenCalledTimes(calls);
+      expect(readScenarioSession()?.authenticatedUserId).toBe("user_123");
+    } finally {
+      dbSetup.paused = false;
+    }
   });
 
   it("clears protected preview data on logout and re-redeems after account changes", async () => {
