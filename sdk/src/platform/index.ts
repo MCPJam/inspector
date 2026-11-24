@@ -44,6 +44,7 @@ export {
   EVAL_VOCABULARY_HEADER,
   PlatformApiClient,
   RUN_LAUNCH_HEADERS,
+  CLIENT_DECLARATION_HEADER,
   type PlatformApiClientOptions,
   type PlatformCiMetadataOption,
   type PlatformRunLauncherOption,

@@ -392,6 +392,13 @@ export const RUN_LAUNCH_HEADERS = {
 } as const;
 
 /**
+ * The same declared client as `x-mcpjam-launcher`, sent on EVERY request for
+ * usage analytics. A separate header because the launcher is stored on what a
+ * launch creates; this one is never stored or used to decide anything.
+ */
+export const CLIENT_DECLARATION_HEADER = "x-mcpjam-client";
+
+/**
  * The eval-vocabulary negotiation header, mirrored from the server's
  * `routes/v1/eval-vocabulary.ts`. Sent only when the client was constructed
  * with `evalVocabulary: 2`; absent means vocabulary 1, and a server that
@@ -736,6 +743,8 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
    * them.
    */
   private readonly launchHeaders?: Record<string, string>;
+  /** `x-mcpjam-client`, from the same launcher, for every request. */
+  private readonly clientHeaders?: Record<string, string>;
   /** The vocabulary every request declares; `1` sends no header. */
   private readonly evalVocabulary: 1 | 2;
   /** The noun-value vocabulary every request declares; `1` sends no header. */
@@ -766,6 +775,10 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
       ? `${options.userAgent} ${DEFAULT_PLATFORM_USER_AGENT}`
       : DEFAULT_PLATFORM_USER_AGENT;
     this.launchHeaders = buildLaunchHeaders(options);
+    const declaredClient = this.launchHeaders?.[RUN_LAUNCH_HEADERS.launcher];
+    if (declaredClient) {
+      this.clientHeaders = { [CLIENT_DECLARATION_HEADER]: declaredClient };
+    }
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -6678,6 +6691,7 @@ export class PlatformApiClient extends DirectoryReviewerAttemptClient {
     headers[HOST_CONFIG_FEATURES_HEADER] = HOST_CONFIG_FEATURES;
     // After `extraHeaders`, like every other header this client owns: an edge
     // authenticator's credential must not be able to relabel a run's origin.
+    if (this.clientHeaders) Object.assign(headers, this.clientHeaders);
     if (init.declareLaunch && this.launchHeaders) {
       Object.assign(headers, this.launchHeaders);
     }
