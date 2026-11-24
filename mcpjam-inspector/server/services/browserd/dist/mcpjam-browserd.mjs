@@ -11749,7 +11749,11 @@ function adaptContext(context, options = {}) {
       if (!context.newCDPSession || !context.clearCookies) {
         throw new Error("This browser can't clear a site's data.");
       }
-      await Promise.all(context.pages().map((open) => open.close()));
+      const closed = await Promise.race([
+        Promise.all(context.pages().map((open) => open.close())).then(() => true),
+        closeGrace().then(() => false)
+      ]);
+      if (!closed) throw new Error("profile_export_pages_did_not_close");
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       for (const origin of origins) {
@@ -11941,7 +11945,7 @@ function createPublicNetworkPolicy(resolve2 = lookup) {
 
 // server/services/browserd/daemon/prepare-browser-profile.ts
 import { readFile as readFile2, readdir as readdir2, rm } from "node:fs/promises";
-import { join as join4, relative as relative2 } from "node:path";
+import { isAbsolute, join as join4, relative as relative2, sep as sep2 } from "node:path";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -12295,17 +12299,30 @@ async function prepareBrowserProfile(config) {
   return true;
 }
 async function emptyProfileDir(config) {
+  const owner = await probeSingletonOwner(config.userDataDir);
+  if (owner.live) {
+    throw new Error(
+      `profile_in_use: another browser (pid ${owner.pid ?? "unknown"}${owner.host ? ` on ${owner.host}` : ""}) holds this profile; close it and try again`
+    );
+  }
+  const kept = config.recordDir ? relative2(config.userDataDir, config.recordDir) : "";
+  const keep = kept && !kept.startsWith("..") && !isAbsolute(kept) ? kept.split(sep2) : [];
+  await emptyExcept(config.userDataDir, keep);
+}
+async function emptyExcept(dir, keep) {
   let entries;
   try {
-    entries = await readdir2(config.userDataDir);
+    entries = await readdir2(dir);
   } catch (error) {
     if (error.code === "ENOENT") return;
     throw error;
   }
-  const kept = config.recordDir ? relative2(config.userDataDir, config.recordDir).split(/[\\/]/)[0] : void 0;
   for (const entry of entries) {
-    if (entry === kept) continue;
-    await rm(join4(config.userDataDir, entry), { recursive: true, force: true });
+    if (entry === keep[0]) {
+      if (keep.length > 1) await emptyExcept(join4(dir, entry), keep.slice(1));
+      continue;
+    }
+    await rm(join4(dir, entry), { recursive: true, force: true });
   }
 }
 

@@ -7,7 +7,7 @@
  * Evidence: a real Chromium profile, archived and restored the way a hosted
  * box does it. The sites are served by request routing, not the network.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,6 +127,31 @@ describe("clearing a site before a profile export", { timeout: 60_000 }, () => {
       expect(await storageAt(reopened, SIGN_IN)).toEqual({ local: null, databases: [] });
     } finally {
       await reopened.close();
+    }
+  });
+
+  it("fails the export when a page won't close in time, before clearing anything", async () => {
+    vi.useFakeTimers();
+    try {
+      const cleared: string[] = [];
+      const adapted = adaptContext({
+        newPage: async () => ({}) as never,
+        // A page that never finishes closing, as a renderer stuck in a dialog can.
+        pages: () => [{ close: () => new Promise<void>(() => {}) }] as never,
+        browser: () => null,
+        close: async () => {},
+        newCDPSession: async () => ({ send: async () => cleared.push("cdp") }) as never,
+        clearCookies: async () => {
+          cleared.push("cookies");
+        },
+      });
+      const clearing = adapted.clearOriginData!([SIGN_IN]);
+      const outcome = expect(clearing).rejects.toThrow("profile_export_pages_did_not_close");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await outcome;
+      expect(cleared).toEqual([]);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
