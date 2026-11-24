@@ -51,6 +51,10 @@ export type RealUiFailure =
         | "plan_limit"
         /** An expected control is missing: the site changed under the module. */
         | "page_changed"
+        /**
+         * The run's connector can't be used as it is: another address, another
+         * connector under its name, or an approval MCPJam can't tie to it.
+         */
         | "connector_failed"
         /** The prompt may have been sent; it is never sent a second time. */
         | "send_ambiguous"
@@ -144,8 +148,8 @@ export interface RealUiPageModule {
     ctx: StepContext,
     since: string,
   ): Promise<{ conversationUrl: string } | undefined>;
-  /** Answers the app's own tool approval prompt; true when it answered one. */
-  answerApproval(driver: PageDriver): Promise<boolean>;
+  /** Answers the app's own tool approval prompt for one of the run's connectors; true when it did. */
+  answerApproval(driver: PageDriver, connectorNames: readonly string[]): Promise<boolean>;
   /** Each positive sign the reply has finished; done only when all hold. */
   replySignals(
     driver: PageDriver,
@@ -214,6 +218,73 @@ export async function commonBlocker(
     };
   }
   return undefined;
+}
+
+/**
+ * Waits for `selector` to show. A sign-in, human check or code prompt in its
+ * way stops the wait at once as `needs_sign_in`: the account needs a person,
+ * and the page did not change.
+ */
+export async function waitVisibleUnlessBlocked(
+  driver: PageDriver,
+  selector: string,
+  ctx: StepContext,
+  wait: { what: string; step: RealUiStep; challengeSelectors: readonly string[] },
+): Promise<void> {
+  await driver.waitFor(
+    async () => {
+      if ((await driver.readText(selector)) !== undefined) return true;
+      const blocked = await commonBlocker(driver, { challengeSelectors: wait.challengeSelectors, step: wait.step });
+      if (blocked) throw new RealUiError(blocked);
+      return false;
+    },
+    { timeoutMs: ctx.timeoutMs, signal: ctx.signal, what: wait.what },
+  );
+}
+
+/**
+ * Stops a module written in Playwright's selectors on a driver whose reads
+ * take CSS only, before its first such read: each one there would refuse.
+ */
+export function requirePlaywrightSelectors(driver: PageDriver, step: RealUiStep, site: string): void {
+  if (driver.playwrightSelectors) return;
+  throw new RealUiError({
+    kind: "driver",
+    step,
+    message: `MCPJam can't use ${site} in the hosted browser yet. Run this client from the local app.`,
+  });
+}
+
+/**
+ * Answers the app's approval prompt for one of the run's own connectors: the
+ * first of `answers` in a dialog that names one. Always allow is granted to
+ * the run's connectors only (decision E3), so an approval prompt anywhere
+ * else on the page, for another connector or in a dialog naming none of the
+ * run's, stops the turn unanswered rather than grant it on the account.
+ */
+export async function answerRunApproval(
+  driver: PageDriver,
+  prompt: { site: string; connectorNames: readonly string[]; answers: readonly string[] },
+): Promise<boolean> {
+  const button = (answer: string) => `role=button[name="${cssString(answer)}"]`;
+  for (const name of prompt.connectorNames) {
+    const dialog = `:is(dialog, [role="dialog"], [role="alertdialog"]):has-text("${cssString(name)}")`;
+    for (const answer of prompt.answers) {
+      const scoped = `${dialog} >> ${button(answer)}`;
+      if ((await driver.readText(scoped)) === undefined) continue;
+      await driver.click(scoped);
+      return true;
+    }
+  }
+  for (const answer of prompt.answers) {
+    if ((await driver.readText(button(answer))) === undefined) continue;
+    throw new RealUiError({
+      kind: "connector_failed",
+      step: "reply",
+      message: `${prompt.site} asked to approve a tool MCPJam can't tie to this run's connector, so it was left unanswered. Turn off this account's other connectors in ${prompt.site}, then run again.`,
+    });
+  }
+  return false;
 }
 
 /** Escapes text for use inside a CSS attribute selector's quotes. */

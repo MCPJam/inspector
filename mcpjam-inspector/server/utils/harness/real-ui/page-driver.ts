@@ -42,6 +42,11 @@ export interface PageDriver {
   readonly kind: "playwright" | "hosted";
   /** Whether `evaluate` can run code in the page's own session. */
   readonly canEvaluate: boolean;
+  /**
+   * Whether `readText` takes Playwright's own selectors (`role=`, `text=`,
+   * `>>` chains) as well as CSS. A driver without them refuses those reads.
+   */
+  readonly playwrightSelectors: boolean;
   navigate(url: string): Promise<void>;
   url(): Promise<string>;
   /** Runs `fn` in the page. Throws `unsupported` where `canEvaluate` is false. */
@@ -53,6 +58,12 @@ export interface PageDriver {
   press(key: string, selector?: string): Promise<void>;
   /** The first match's text, or `undefined` when nothing matches. */
   readText(selector: string): Promise<string | undefined>;
+  /**
+   * The whole page's text as a person would copy it, `<pre>` blocks
+   * verbatim. Only a driver that runs no script needs one: `readText` there
+   * is the page's accessibility tree, which a JSON page doesn't survive.
+   */
+  pageText?(): Promise<string>;
 }
 
 /** Polls `condition` until it holds; the shared `waitFor` both drivers use. */
