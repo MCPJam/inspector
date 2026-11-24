@@ -574,6 +574,7 @@ async function main() {
   const test = new EvalTest({
     id: "c_addition",
     name: "addition",
+    expectedToolCalls: [{ toolName: "add" }],
     test: async (agent) => {
       const r = await agent.run("Add 2 and 3");
       return r.hasToolCall("add");

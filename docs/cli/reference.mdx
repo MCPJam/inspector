@@ -1231,7 +1231,7 @@ Start a hosted readiness run that grades a saved server against Anthropic's conn
 |------|----------|-------------|
 | `--server <idOrName>` | Yes | Saved server to grade |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--ai-observations` | No | Add optional model observations. Included with MCPJam; no credits are consumed. |
 | `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
 | `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
 | `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
@@ -1247,7 +1247,7 @@ Start a hosted readiness run that grades a saved server against OpenAI's app-dir
 | `--server <idOrName>` | Yes | Saved server to grade |
 | `--submission-mode <mode>` | Yes | Declared submission shape: `mcp-only` or `mcp-imported-skills`. The two package shapes need a local package: use `readiness check openai` for those. |
 | `--project <id-or-name>` | No | Project name or ID |
-| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--ai-observations` | No | Add optional model observations. Included with MCPJam; no credits are consumed. |
 | `--idempotency-key <key>` | No | Replay guard |
 | `--claim <feature>` | No | Declare a feature the server offers. Repeatable. See [Lazy authentication and feature claims](#lazy-authentication-and-feature-claims) |
 | `--lazy-auth-probe` | No | Opt in to the credential-free lazy-authentication probe |
