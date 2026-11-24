@@ -176,6 +176,16 @@ test("demo events reach the Playground agent through real delivery and test inje
   // message. This does not qualify any vendor harness's native Events support.
   if (!hosted) {
     await chooseClient(page, "Claude");
+    // Finish the client's conversation transition before attaching a binding.
+    // Switching clients pauses bindings that belong to the previous scope.
+    const composer = page
+      .getByTestId("chat-input-composer")
+      .getByRole("textbox");
+    await composer.fill(
+      "Reply with EVENT_ACK ready-client. Do not call tools.",
+    );
+    await composer.press("Enter");
+    await waitForReply(page, "ready-client");
     await openEvent(page, serverName);
     await page
       .getByRole("button", { name: "Add test event", exact: true })
