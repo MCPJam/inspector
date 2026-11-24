@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { suiteCheck } from "../suite-check.js";
+import type { PlatformClimb } from "../../platform/climb-types.js";
 import { climb } from "./fixtures.js";
 
 const codes = (check: ReturnType<typeof suiteCheck>) => check.findings.map((finding) => `${finding.severity}:${finding.code}${finding.environmentId ? `@${finding.environmentId}` : ""}`);
@@ -75,6 +76,49 @@ describe("suiteCheck", () => {
     expect(check.findings.find((finding) => finding.code === "smallest_change" && finding.environmentId === "env-a")).toMatchObject({
       severity: "warns",
       message: expect.stringContaining("add iterations or cases"),
+    });
+  });
+
+  describe("replays_one_decision", () => {
+    /** env-b's two baseline runs agree to the token; env-a keeps its flipped cases and noise. */
+    const identical = (over: Partial<PlatformClimb> = {}, patch: { tokensNoiseBps?: number; flippedSteeringCaseKeys?: string[]; flippedValidationCount?: number; tokens?: boolean } = {}) => {
+      const base = climb(over);
+      const environments = base.baseline!.environments.map((env) =>
+        env.environmentId !== "env-b"
+          ? env
+          : {
+              ...env,
+              recorded: { ...env.recorded, tokens: patch.tokens ?? true },
+              flippedSteeringCaseKeys: patch.flippedSteeringCaseKeys ?? [],
+              flippedValidationCount: patch.flippedValidationCount ?? 0,
+              steering: { ...env.steering!, tokensNoiseBps: patch.tokensNoiseBps ?? 0 },
+            },
+      );
+      return { ...base, baseline: { ...base.baseline!, environments } };
+    };
+    const replays = (check: ReturnType<typeof suiteCheck>) => check.findings.filter((finding) => finding.code === "replays_one_decision");
+
+    it("warns for a pass rate climb and names the environment", () => {
+      const found = replays(suiteCheck(identical()));
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ severity: "warns", environmentId: "env-b" });
+      expect(found[0]!.message).toContain("same result in every case, to the token");
+      expect(found[0]!.message).toContain("needs an environment that samples");
+    });
+
+    it("is information for another measure, and does not block a climb", () => {
+      const check = suiteCheck(identical({ measure: "tokens" }));
+      expect(replays(check)).toMatchObject([{ severity: "info", environmentId: "env-b" }]);
+      expect(replays(check)[0]!.message).not.toContain("needs an environment that samples");
+      expect(check.canShowChange).toBe(true);
+    });
+
+    it("does not fire when the token counts differ, a case flipped, or tokens were not recorded", () => {
+      expect(replays(suiteCheck(identical({}, { tokensNoiseBps: 40 })))).toEqual([]);
+      expect(replays(suiteCheck(identical({}, { flippedSteeringCaseKeys: ["search-empty"] })))).toEqual([]);
+      expect(replays(suiteCheck(identical({}, { flippedValidationCount: 1 })))).toEqual([]);
+      expect(replays(suiteCheck(identical({}, { tokens: false })))).toEqual([]);
+      expect(replays(suiteCheck(climb()))).toEqual([]);
     });
   });
 });

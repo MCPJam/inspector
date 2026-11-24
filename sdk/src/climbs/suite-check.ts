@@ -105,6 +105,17 @@ export function suiteCheck(climb: Pick<PlatformClimb, "measure" | "baseline" | "
         message: `${env.lostIterations} of ${env.lostIterations + env.countedIterations} iterations were lost to the model provider or the setup and are not counted against the server.`,
       });
     }
+    // Two runs that agree to the token are one decision played twice: the noise reads as none, though the environment may not sample at all.
+    if (env.recorded.tokens && env.noiseBps.tokens === 0 && env.flippedSteeringCaseKeys.length === 0 && env.flippedValidationCount === 0) {
+      findings.push({
+        code: "replays_one_decision",
+        severity: measure === "pass_rate" ? "warns" : "info",
+        environmentId: env.environmentId,
+        message:
+          "The two baseline runs gave the same result in every case, to the token, so this environment replays one decision (temperature 0 or the like). Its noise reads as none, and a change that steers the model can look like a sure win here." +
+          (measure === "pass_rate" ? " A pass rate climb needs an environment that samples: run it in one, or set a temperature above 0." : ""),
+      });
+    }
     const smallest = env.smallestChangeBps[measure];
     const recorded = measure === "pass_rate" || env.recorded[measure];
     if (smallest !== undefined && recorded) {

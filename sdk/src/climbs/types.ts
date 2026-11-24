@@ -53,6 +53,7 @@ export type SuiteCheckFinding = {
     | "no_validation_for_tools"
     | "no_validation_cases"
     | "iterations_lost"
+    | "replays_one_decision"
     | "smallest_change";
   /** `blocks`: a climb for this measure cannot learn anything. `warns`: it can, with care. */
   severity: "blocks" | "warns" | "info";

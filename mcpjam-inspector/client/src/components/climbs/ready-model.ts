@@ -48,5 +48,6 @@ export const FINDING_LABELS: Record<SuiteCheckFinding["code"], string> = {
   no_validation_for_tools: "Coverage",
   no_validation_cases: "Coverage",
   iterations_lost: "Plumbing",
+  replays_one_decision: "One decision",
   smallest_change: "Smallest change",
 };

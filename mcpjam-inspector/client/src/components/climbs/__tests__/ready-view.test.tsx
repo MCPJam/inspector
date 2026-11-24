@@ -107,6 +107,17 @@ describe("ReadyView", () => {
     expect(await screen.findByRole("dialog")).toHaveTextContent('suite "dogfood"');
   });
 
+  it("labels the finding for an environment that replays one decision", async () => {
+    show(
+      climbWith({
+        suiteCheck: { ready: true, measure: "pass_rate", canShowChange: true, environments: [], steeringToolsWithoutValidation: [], findings: [{ code: "replays_one_decision", severity: "warns", environmentId: "env_a", message: "The two baseline runs gave the same result in every case, to the token." }] },
+      }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Suite check/ }));
+    expect(screen.getByText("One decision")).toBeInTheDocument();
+    expect(screen.getByText(/same result in every case, to the token/)).toBeInTheDocument();
+  });
+
   it("says the suite cannot show a change when the check says so", () => {
     show(climbWith({ suiteCheck: { ready: true, measure: "tokens", canShowChange: false, environments: [], steeringToolsWithoutValidation: [], findings: [] } }));
     expect(screen.getByText(/cannot show a change yet/)).toBeInTheDocument();
