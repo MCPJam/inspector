@@ -97,8 +97,8 @@ export function StartupStatusTracker(): null {
   useStartupTracking(status, userReady);
 
   // The desktop Help menu reads this from the main process, which still works
-  // when this window is stuck. While startup is blocked, App (and its own
-  // heartbeat) never mounts, so this one keeps the window marked as alive.
+  // when this window is stuck. It is the only renderer heartbeat, and it runs
+  // while startup is blocked and App has not mounted.
   const { user, isLoading: workOsLoading } = useInspectorAuth();
   const signedIn = Boolean(user);
   useEffect(() => {
