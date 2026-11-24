@@ -198,7 +198,7 @@ export const HARNESS_DESCRIPTORS = {
     runtimeVersion: WEB_CLIENT_PAGE_MODULE_VERSIONS.claude, mcpClient: "harness",
     modelAccess: "external-account", orgKeys: false, protocol: null,
     unavailableOn: {
-      "user-testing": "Claude web runs only in the Playground, evals, swarms and the API. Choose a different client for this study.",
+      "user-testing": "Claude web runs on a project web account, so studies cannot use it. Choose a different client for this study.",
       guests: "Claude web runs on the project's own Claude account, so guests can't use it.",
       local: "Claude web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
     },
@@ -210,7 +210,7 @@ export const HARNESS_DESCRIPTORS = {
     runtimeVersion: WEB_CLIENT_PAGE_MODULE_VERSIONS.chatgpt, mcpClient: "harness",
     modelAccess: "external-account", orgKeys: false, protocol: null,
     unavailableOn: {
-      "user-testing": "ChatGPT web runs only in the Playground, evals, swarms and the API. Choose a different client for this study.",
+      "user-testing": "ChatGPT web runs on a project web account, so studies cannot use it. Choose a different client for this study.",
       guests: "ChatGPT web runs on the project's own ChatGPT account, so guests can't use it.",
       local: "ChatGPT web runs in a browser, not on your computer's runtime. Choose This machine in the browser settings instead.",
     },
