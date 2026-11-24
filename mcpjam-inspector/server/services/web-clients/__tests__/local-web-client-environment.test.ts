@@ -176,6 +176,25 @@ describe("a local web client environment", () => {
     expect(launch).toHaveBeenCalledTimes(2);
   });
 
+  it("doesn't take a profile that frees after the wait's deadline", async () => {
+    const launch = vi.fn(async () => ({ page: chromiumPage(), close: async () => {} }));
+    // The poll is longer than the whole budget.
+    const env = environment({
+      launch,
+      profileDir: "/profiles/late-free",
+      profileWaitMs: 50,
+      profilePollMs: 1_000,
+    });
+    const sites = ["https://chatgpt.com"];
+    const first = await env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const second = env.openBrowser({ webAccountId: "local:chatgpt", sites });
+    const freed = new Promise((resolve) => setTimeout(resolve, 80)).then(() => first.close());
+
+    await expect(second).rejects.toMatchObject({ failure: { kind: "turn_running" } });
+    await freed;
+    expect(launch).toHaveBeenCalledTimes(1);
+  });
+
   it("stops waiting for the profile when the run stops, and launches nothing once it frees", async () => {
     const launch = vi.fn(async () => ({
       page: chromiumPage(),
