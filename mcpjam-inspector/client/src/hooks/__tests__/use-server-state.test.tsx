@@ -1293,6 +1293,33 @@ describe("useServerState effective server projection", () => {
     );
   });
 
+  it("uses hosted credential flags after a destination change clears credentials", () => {
+    const appState = createAppState();
+    const savedServer = appState.projects.default.servers["demo-server"];
+    savedServer.config = { url: "https://new.example.com/mcp" };
+    savedServer.hasHeaders = false;
+    savedServer.hasBearerToken = false;
+    savedServer.hasClientSecret = false;
+    const runtime = appState.servers["demo-server"];
+    runtime.hasHeaders = true;
+    runtime.hasBearerToken = true;
+    runtime.hasClientSecret = true;
+    runtime.connectionStatus = "failed";
+
+    const { result } = renderUseServerState(vi.fn(), appState, {
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveProjects: appState.projects,
+    });
+
+    expect(result.current.effectiveServers["demo-server"]).toMatchObject({
+      connectionStatus: "failed",
+      hasHeaders: false,
+      hasBearerToken: false,
+      hasClientSecret: false,
+    });
+  });
+
   it("does not surface runtime-only servers for Convex-backed projects", () => {
     const appState = createAppState();
     const persistedServer: ServerWithName = {
@@ -6868,4 +6895,3 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
-
