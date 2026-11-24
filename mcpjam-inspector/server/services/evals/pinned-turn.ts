@@ -128,11 +128,14 @@ export interface PinnedTurnAccounting {
   evidence: PinnedCallEvidence;
 }
 
+/** Opens a pinned turn's synthesized user line, which marks the turn in a trace. */
+export const PINNED_TURN_PROMPT_PREFIX = "Pinned tool call: ";
+
 export function buildPinnedTurnAccounting(
   pinned: PinnedToolCall,
   result: PinnedTurnResult
 ): PinnedTurnAccounting {
-  const prompt = `Pinned tool call: ${pinned.toolName} on "${pinned.serverName}"`;
+  const prompt = `${PINNED_TURN_PROMPT_PREFIX}${pinned.toolName} on "${pinned.serverName}"`;
   return {
     prompt,
     userMessage: { role: "user", content: prompt },

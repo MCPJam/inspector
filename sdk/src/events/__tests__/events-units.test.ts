@@ -243,13 +243,20 @@ describe("profiles (C1)", () => {
     ).toBeUndefined();
   });
 
-  it("refreshes with a lead of max(60 s, 10%)", () => {
+  it("refreshes with a lead of max(60 s, 10%), capped at half the grant", () => {
     expect(
       computeRefreshAt({ now: 0, refreshBefore: 60 * 60 * 1000, healthCheckIntervalMs: 1 })
     ).toBe(54 * 60 * 1000);
     expect(
       computeRefreshAt({ now: 0, refreshBefore: 2 * 60 * 1000, healthCheckIntervalMs: 1 })
     ).toBe(60 * 1000);
+    expect(
+      computeRefreshAt({
+        now: 0,
+        refreshBefore: 60 * 1000,
+        healthCheckIntervalMs: 1,
+      })
+    ).toBe(30 * 1000);
     expect(computeRefreshAt({ now: 10, refreshBefore: 5, healthCheckIntervalMs: 1 })).toBe(
       10
     );

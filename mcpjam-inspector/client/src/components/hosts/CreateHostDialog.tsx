@@ -38,6 +38,7 @@ import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
 import { useCopilotCliEnabled } from "@/hooks/useCopilotCliEnabled";
 import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { useOpenCodeHostEnabled } from "@/hooks/useOpenCodeHostEnabled";
+import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { cloneHostTemplateInput } from "@/lib/client-config-v2";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -115,6 +116,7 @@ export function CreateHostDialog({
   const copilotCliEnabled = useCopilotCliEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
   const openCodeEnabled = useOpenCodeHostEnabled();
+  const webClientsEnabled = useWebClientsEnabled();
   const visibleCatalogHosts = useMemo(
     () =>
       catalogState.status === "live"
@@ -124,9 +126,10 @@ export function CreateHostDialog({
             copilotCli: copilotCliEnabled === true,
             cursorCli: cursorCliEnabled,
             openCode: openCodeEnabled,
+            webClients: webClientsEnabled,
           }).sort((a, b) => a.label.localeCompare(b.label))
         : [],
-    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, openCodeEnabled]
+    [catalogState, claudeCodeEnabled, codexEnabled, cursorCliEnabled, copilotCliEnabled, openCodeEnabled, webClientsEnabled]
   );
   const defaultHostId =
     visibleCatalogHosts.find((host) => host.id === DEFAULT_CATALOG_HOST_ID)

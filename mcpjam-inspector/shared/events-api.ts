@@ -12,6 +12,8 @@
  * viewer token outside `EventsViewerTokenResponse` (contract C8).
  */
 
+import type { ReceiverChoice } from "@mcpjam/sdk/browser";
+
 export type EventsProfileIdView =
   | "beta@c77b843"
   | "draft@28ec35e"
@@ -22,9 +24,14 @@ export type EventsDeliveryModeView = "poll" | "push" | "webhook";
 export interface EventsSupportView {
   handshakeObserved: boolean;
   declared: boolean;
+  beta?: boolean;
   listChanged: boolean;
   capability?: Record<string, unknown>;
   source?: "initialize" | "server/discover";
+}
+
+export interface EventsCatalogFrame {
+  type: "ready" | "changed";
 }
 
 export interface EventDescriptorView {
@@ -43,6 +50,8 @@ export interface EventsListResponse {
   /** Raw `capabilities` from the handshake, for display. */
   rawCapabilities?: Record<string, unknown>;
   protocolVersion?: string;
+  /** Local Inspector receiver prefix, for reverse proxy setup. */
+  localCallbackBase?: string;
 }
 
 export interface EventOccurrenceView {
@@ -123,6 +132,9 @@ export interface EventsSubscriptionView {
   refreshBefore?: number | null;
   lastCursor?: string | null;
   callbackUrl?: string;
+  receiverKind?: ReceiverChoice["kind"];
+  callbackVerifiedAt?: number;
+  lastWebhookAt?: number;
   serverSubscriptionId?: string;
   conflictingServerSubscriptionId?: string;
   deliveryStatus?: unknown;
@@ -148,17 +160,15 @@ export interface EventsCreateSubscriptionRequest {
   profile?: EventsProfileIdView;
   maxAgeMs?: number;
   ttlMs?: number | null;
-  /**
-   * Development overrides the user explicitly acknowledged. A LOCAL webhook
-   * subscription needs `["insecure-local-receiver"]`: the local development
-   * receiver is plain http on the inspector's own port, never a conformance
-   * pass, so the UI only sends webhook mode locally with this set.
-   */
+  /** Omitted for local webhooks to use the receiver on this machine. */
+  receiver?: ReceiverChoice;
+  /** A plain HTTP callback requires explicit consent and is non-conformant. */
   overrides?: Array<"insecure-local-receiver">;
 }
 
 /** One journal entry, as the feed carries it. */
 export interface EventsFeedEntryView {
+  afterRemoval?: boolean;
   seq: number;
   kind: "event" | "gap" | "terminated" | "inbox_gap" | "quarantined" | string;
   origin: "webhook" | "poll" | "push" | "simulation" | "replay";

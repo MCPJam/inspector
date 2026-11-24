@@ -19,6 +19,7 @@
 import { makeFunctionReference } from "convex/server";
 import { authFetch, addTokenToUrl } from "@/lib/session-token";
 import { runByMode } from "@/lib/apis/mode-client";
+import { parseSSEStream } from "@/lib/sse";
 import { webPost, WebApiError } from "@/lib/apis/web/base";
 import {
   buildServerRequest,
@@ -26,6 +27,7 @@ import {
 } from "@/lib/apis/web/context";
 import type {
   EventDescriptorView,
+  EventsCatalogFrame,
   EventsCreateSubscriptionRequest,
   EventsDeliveryModeView,
   EventsFeedEntryView,
@@ -51,6 +53,43 @@ export class EventsApiError extends Error {
   ) {
     super(message);
     this.name = "EventsApiError";
+  }
+}
+
+/** Read catalog invalidations from an acknowledged Events Beta listen. */
+export async function watchEventsCatalog(
+  serverName: string,
+  signal: AbortSignal,
+  onChange: () => void,
+): Promise<void> {
+  const open = (path: string, body: object) => authFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+  while (!signal.aborted) {
+    let ready = false;
+    try {
+      const response = await runByMode({
+        hosted: () => open("/api/web/events/catalog-changes", buildServerRequest(serverName)),
+        local: () => open("/api/mcp/events/catalog-changes", { serverId: serverName }),
+      });
+      if (!response.ok || !response.body) return;
+      for await (const frame of parseSSEStream<EventsCatalogFrame>(response.body.getReader())) {
+        if (frame === "[DONE]" || signal.aborted) return;
+        if (frame.type === "ready" && !ready) {
+          ready = true;
+          // The catalog may have changed while the stream was opening.
+          onChange();
+        }
+        if (frame.type === "changed" && ready) onChange();
+      }
+    } catch {
+      // The existing catalog remains usable if the observation stream fails.
+    }
+    if (!ready || signal.aborted) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 1500));
   }
 }
 
@@ -493,7 +532,8 @@ export interface HostedEventSubscriptionRow {
 
 export interface HostedEventDescriptor {
   hash: string;
-  payloadSchema?: Record<string, unknown>;
+  /** JSON text avoids Convex's reserved `$` keys; old rows contain objects. */
+  payloadSchema?: string | Record<string, unknown>;
   delivery: string[];
 }
 
@@ -646,7 +686,7 @@ export async function buildHostedEventDescriptor(
     return {
       hash,
       ...(descriptor.payloadSchema
-        ? { payloadSchema: descriptor.payloadSchema }
+        ? { payloadSchema: canonicalJson(descriptor.payloadSchema) }
         : {}),
       delivery: [...descriptor.delivery],
     };

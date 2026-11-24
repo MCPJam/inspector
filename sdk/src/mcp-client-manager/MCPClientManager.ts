@@ -8,7 +8,6 @@ import {
   attachRecordedAuthChallenge,
 } from "./auth-challenge-isolation.js";
 import { connectionErrorMessage } from "./connection-error-message.js";
-import { z } from "zod";
 import { ToolDeclarationCapture } from "./tool-declaration-capture.js";
 import {
   EventsCapabilityCapture,
@@ -17,10 +16,13 @@ import {
   type EventsSupport,
 } from "./events-capability-capture.js";
 import {
+  EventsListChangedNotificationMethod,
   listEventsExt,
   pollEventsExt,
+  sendEventsRequest,
   subscribeEventsExt,
   unsubscribeEventsExt,
+  type EventsCallContext,
   type EventsPollParams,
   type EventsSubscribeParams,
   type EventsUnsubscribeOutcome,
@@ -31,6 +33,7 @@ import {
   EventsStreamTap,
   wrapTransportForEventStreams,
 } from "./events-stream-tap.js";
+import { watchEventsCatalog } from "./events-catalog-listen.js";
 import type {
   EventsListResultWire,
   EventsPollResultWire,
@@ -233,6 +236,7 @@ import { extensionTaskToObservation } from "./task-lifecycle-adapters.js";
 import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 import {
   buildMcpParamHeaders,
+  EVENTS_BETA_ROUTED_METHODS,
   MCP_PARAM_HEADER_PREFIX,
   scanXMcpHeaderDeclarations,
   stripXMcpHeaderAnnotations,
@@ -419,9 +423,6 @@ type UpstreamToolDefinition = NonNullable<
  * so a server that never replies cannot leak the entry forever.
  */
 const SUPPRESSED_CANCELLATION_TIMEOUT_MS = 86_400_000;
-
-/** `events/stream`'s final frame is an empty result; validated loosely. */
-const EVENTS_STREAM_RESULT_SCHEMA = z.looseObject({});
 
 export class MCPClientManager {
   // State management
@@ -717,13 +718,39 @@ export class MCPClientManager {
    * the server's declaration alone decides.
    */
   getEventsSupport(serverId: string): EventsSupport {
-    return resolveEventsSupport(this.eventsCapabilityCapture.read(serverId));
+    return resolveEventsSupport(
+      this.eventsCapabilityCapture.read(serverId),
+      this.getServerConfig(serverId)?.eventsWireProfile,
+    );
   }
 
   /** {@link getEventsSupport} after ensuring the connection exists. */
   async ensureEventsSupport(serverId: string): Promise<EventsSupport> {
     await this.ensureConnected(serverId);
     return this.getEventsSupport(serverId);
+  }
+
+  /** Observe acknowledged Beta catalog changes until the caller or connection closes. */
+  async watchEventsCatalog(
+    serverId: string,
+    options: { signal: AbortSignal; onChange: () => void; onReady?: () => void },
+  ): Promise<void> {
+    await this.ensureConnected(serverId, options.signal);
+    const support = this.getEventsSupport(serverId);
+    const client = this.getClientOrThrow(serverId);
+    if (!support.beta || !support.listChanged || client.getProtocolEra?.() !== "modern") return;
+
+    await watchEventsCatalog(client, this.eventStreamTapFor(serverId).catalog, {
+      ...options,
+      subscribe: (handler) => {
+        this.addNotificationHandler(serverId, EventsListChangedNotificationMethod, handler);
+        return () => this.removeNotificationHandler(serverId, EventsListChangedNotificationMethod, handler);
+      },
+      onChange: () => {
+        this.eventsCapabilityCapture.invalidateBetaCatalog(serverId);
+        options.onChange();
+      },
+    });
   }
 
   /** The raw capture behind {@link getEventsSupport}, for display. */
@@ -754,6 +781,19 @@ export class MCPClientManager {
     }
   }
 
+  private eventsCallContext(
+    serverId: string,
+    client: ManagedMcpClient,
+    options?: ClientRequestOptions,
+  ): EventsCallContext {
+    return {
+      client,
+      options: this.withTimeout(serverId, options),
+      wireProfile: this.getServerConfig(serverId)?.eventsWireProfile ??
+        (this.getEventsSupport(serverId).beta ? "beta" : "legacy"),
+    };
+  }
+
   /** `events/list` — one page. */
   async listServerEvents(
     serverId: string,
@@ -762,12 +802,12 @@ export class MCPClientManager {
   ): Promise<EventsListResultWire> {
     return this.runRetryableReadOperation(serverId, options, (client) => {
       this.assertEventsDeclared(serverId, "events/list", options);
-      const result = listEventsExt(
-        { client, options: this.withTimeout(serverId, options) },
-        params
-      );
-      return this.getEventsSupport(serverId).beta && this.getInitializationInfo(serverId)?.transport === "streamable-http"
-        ? result.then(validBetaHttpEventTypes) : result;
+      const context = this.eventsCallContext(serverId, client, options);
+      const result = listEventsExt(context, params);
+      return context.wireProfile === "beta" &&
+        this.getInitializationInfo(serverId)?.transport === "streamable-http"
+        ? result.then(validBetaHttpEventTypes)
+        : result;
     });
   }
 
@@ -785,7 +825,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/poll", options);
     return pollEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -805,7 +845,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/subscribe", options);
     return subscribeEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -824,7 +864,7 @@ export class MCPClientManager {
     const client = this.getClientOrThrow(serverId);
     this.assertEventsDeclared(serverId, "events/unsubscribe", options);
     return unsubscribeEventsExt(
-      { client, options: this.withTimeout(serverId, options) },
+      this.eventsCallContext(serverId, client, options),
       params
     );
   }
@@ -878,21 +918,19 @@ export class MCPClientManager {
       onRequestStreamEnd: options.onRequestStreamEnd,
     });
     try {
-      return await client.requestWithSchema(
+      return await sendEventsRequest(
+        this.eventsCallContext(serverId, client, {
+          signal: options.signal,
+          timeout: options.timeout,
+        }),
+        "events/stream",
         {
-          method: "events/stream",
-          params: {
-            name: params.name,
-            arguments: params.arguments,
-            cursor: params.cursor,
-            ...(params.maxAgeMs !== undefined
-              ? { maxAgeMs: params.maxAgeMs }
-              : {}),
-            _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
-          },
-        } as never,
-        EVENTS_STREAM_RESULT_SCHEMA,
-        { signal: options.signal, timeout: options.timeout }
+          name: params.name,
+          arguments: params.arguments,
+          cursor: params.cursor,
+          ...(params.maxAgeMs !== undefined ? { maxAgeMs: params.maxAgeMs } : {}),
+          _meta: { [EVENTS_STREAM_KEY_META]: streamKey },
+        },
       );
     } finally {
       unregister();
@@ -4071,6 +4109,7 @@ export class MCPClientManager {
       preserveRetryPromise?: boolean;
     }
   ): void {
+    this.closeEventsStreamTap(serverId);
     const state = this.liveClientStates.get(serverId);
     state?.stdioStderrCleanup?.();
 
@@ -4111,6 +4150,7 @@ export class MCPClientManager {
     serverId: string,
     state: LiveClientState
   ): void {
+    this.closeEventsStreamTap(serverId);
     state.stdioStderrCleanup?.();
 
     const nextState: LiveClientState = {};
@@ -4139,6 +4179,11 @@ export class MCPClientManager {
     this.toolDeclarationCapture.clear(serverId);
     this.eventsCapabilityCapture.clear(serverId);
     this.aggregatedToolsListWarmed.delete(serverId);
+  }
+
+  private closeEventsStreamTap(serverId: string): void {
+    this.eventStreamTaps.get(serverId)?.catalog.close();
+    this.eventStreamTaps.delete(serverId);
   }
 
   private async destroyLiveState(
@@ -4785,10 +4830,18 @@ export class MCPClientManager {
     // added above it, and the logger has to record the bytes that guard sent.
     // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
     const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
+    const betaCatalogVersion = () => config.eventsWireProfile === "legacy"
+      ? undefined
+      : this.eventsCapabilityCapture.betaCatalogVersion(serverId);
     const logged = httpLogger
       ? wrapFetchForHttpLogging(
           serverId,
-          httpLogger,
+          (event) => {
+            const body = event.bodyValues;
+            httpLogger(body?.method && EVENTS_BETA_ROUTED_METHODS.has(body.method) && betaCatalogVersion()
+              ? { ...event, bodyValues: { ...body, eventsBeta: true } }
+              : event);
+          },
           baseFetch,
           config.credentialHeaderNames
         )
@@ -4801,10 +4854,11 @@ export class MCPClientManager {
         ? wrapFetchForNoListenChannel(logged)
         : logged;
     const routed = wrapFetchForTaskRouting(listenGuarded);
-    return options?.listenGuard === false ? routed : withEventsBetaRouting(
-      routed, () => this.eventsCapabilityCapture.betaCatalogVersion(serverId),
-      signal => readServerEventTypes(this, serverId, { signal }),
-    );
+    return options?.listenGuard === false || config.eventsWireProfile === "legacy"
+      ? routed
+      : withEventsBetaRouting(routed, betaCatalogVersion, (signal) =>
+          readServerEventTypes(this, serverId, { signal }),
+        );
   }
 
   private cacheToolsMetadata(

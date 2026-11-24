@@ -5,6 +5,7 @@ describe("appLoadStallCode", () => {
   const base = {
     guestRefused: false,
     sessionRefreshFailed: false,
+    signedIn: false,
     authenticated: false,
     identityKnown: false,
   };
@@ -16,6 +17,12 @@ describe("appLoadStallCode", () => {
     expect(appLoadStallCode({ ...base, sessionRefreshFailed: true })).toBe(
       "app_load/guest_session_failed",
     );
+  });
+
+  it("names a signed-in refresh failure as the user's, not a guest's", () => {
+    expect(
+      appLoadStallCode({ ...base, sessionRefreshFailed: true, signedIn: true }),
+    ).toBe("app_load/session_refresh_failed");
   });
 
   it("tells waiting for an identity from waiting for the user record", () => {
@@ -31,15 +38,17 @@ describe("appLoadStallCode", () => {
   it("only returns listed codes", () => {
     for (const guestRefused of [false, true])
       for (const sessionRefreshFailed of [false, true])
-        for (const authenticated of [false, true])
-          for (const identityKnown of [false, true])
-            expect(APP_LOAD_STALL_CODES).toContain(
-              appLoadStallCode({
-                guestRefused,
-                sessionRefreshFailed,
-                authenticated,
-                identityKnown,
-              }),
-            );
+        for (const signedIn of [false, true])
+          for (const authenticated of [false, true])
+            for (const identityKnown of [false, true])
+              expect(APP_LOAD_STALL_CODES).toContain(
+                appLoadStallCode({
+                  guestRefused,
+                  sessionRefreshFailed,
+                  signedIn,
+                  authenticated,
+                  identityKnown,
+                }),
+              );
   });
 });

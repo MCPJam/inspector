@@ -186,6 +186,11 @@ import {
   assertSandboxIsolation,
 } from "./middleware/sandbox-host-partition";
 import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host";
+import {
+  createLocalConnectorRoutes,
+  mountInspectorWebConnectors,
+} from "./services/web-clients/inspector-endpoint.js";
+import { mountWebClientRuntime } from "./services/web-clients/runtime-mount.js";
 import { assertHostedFirstPartyMcpUrls } from "./utils/hosted-mcp-base-fetch.js";
 import { loadPrivateEgressAllowlist } from "./utils/hosted-egress-guard.js";
 import webRoutes from "./routes/web/index";
@@ -248,6 +253,7 @@ import {
 import "./types/hono"; // Type extensions
 import { initXAAIdpKeyPair, setXaaIdpLogger } from "@mcpjam/sdk";
 import { buildHealthMeta } from "./utils/health-payload.js";
+import { createWebReconnectRoutes } from "./services/web-clients/recovery/reconnect-route.js";
 
 // Utility function to extract MCP server config from environment variables
 function getMCPConfigFromEnv() {
@@ -483,6 +489,10 @@ const mcpClientManager = new MCPClientManager(
 // Local App documents answer their own `localhost` subdomains before any
 // other middleware or route sees the request.
 mountLocalSandboxViewHost(app);
+// Claude web and ChatGPT web reach the project's server here. claude.ai
+// stops after `initialize` when the app's own headers ride along, so this
+// answers before the global middleware too.
+mountInspectorWebConnectors(app);
 
 // Middleware to inject client manager into context
 app.use("*", async (c, next) => {
@@ -574,15 +584,20 @@ app.use("/api/*", sentryRequestIdentityMiddleware);
 app.use("/api/*", requestLogContextMiddleware);
 
 // API Routes
+mountWebClientRuntime(app);
 if (!HOSTED_MODE) {
   app.route("/api/apps", appsRoutes);
   app.route("/api/mcp", mcpRoutes);
+  app.route("/api/web-clients/local-connectors", createLocalConnectorRoutes());
 } else {
   // Only the hosted-open paths (health + public model catalog) are mounted;
   // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.
   // Mirror of server/app.ts — both entries share mountHostedOpenRoutes.
   mountHostedOpenRoutes(app);
 }
+// A person hands a web account back after signing it in, and its paused
+// runs resume. Hosted only in effect: it needs the backend's service credential.
+app.route("/api/web-clients/reconnect", createWebReconnectRoutes());
 // Construct after loadInspectorEnv() so hosted confidential CIMD observes
 // Inspector dotenv configuration and malformed configured keys fail startup.
 app.route("/api/web/xaa", createXaaWebRouter());
