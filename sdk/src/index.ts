@@ -128,6 +128,14 @@ export {
   type McpModelOutputWithLinkedResourcesOptions,
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
+  mapMcpContentBlocksForModel,
+  EMPTY_TOOL_RESULT_TEXT,
+  hasNoContentBlocks,
+  projectToolResultByRule,
+  structuredContentRuleOf,
+  withoutStructuredContentRule,
+  type McpModelOutputText,
+  type ToolResultRuleOptions,
 } from "./mcp-client-manager/index.js";
 export {
   applyRuntimeClientCapabilities,
@@ -150,6 +158,7 @@ export {
   isInvalidEventsPayloadError,
   classifyEventsRpcError,
   EVENTS_ERROR_CODES,
+  type EventsWireProfile,
 } from "./mcp-client-manager/events-ext-guards.js";
 export type {
   EventsSupport,
@@ -1978,6 +1987,7 @@ export type {
   McpToolResultImageRenderingPolicy,
   McpToolResultImageRenderPlacement,
   ModelVisibleMcpToolResults,
+  ModelVisibleStructuredContent,
   ServerId,
   CspDomainSet,
   OpenAiAppsCapabilities,
@@ -2311,6 +2321,11 @@ export type {
 } from "./mcp-client-manager/multi-connection-tools.js";
 
 export { aiRequestHeaders } from "./ai-request-headers.js";
+export {
+  getDefaultUserAgent,
+  mcpjamUserAgent,
+  setDefaultUserAgent,
+} from "./user-agent.js";
 
 export { EvalRunStartError } from "./eval-run-start.js";
 export type { EvalIdentityOptions } from "./eval-run-start.js";

@@ -8,7 +8,7 @@ const PROMOTION_BLOCKED_COPY: Record<string, string> = {
   SWARM_ATTEMPT_NOT_SUCCEEDED:
     "This session's run did not finish, so its conversation may be incomplete. Only sessions from runs that finished can become test cases.",
   SWARM_ATTEMPT_UNATTRIBUTED:
-    "This session is not linked to a swarm run, so there is no run outcome to check. It cannot be promoted to a test case.",
+    "Couldn't save this session as a test case. Open a session linked to a swarm run instead.",
 };
 
 /**

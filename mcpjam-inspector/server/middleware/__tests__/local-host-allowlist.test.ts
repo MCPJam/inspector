@@ -49,6 +49,16 @@ describe("localHostAllowlistMiddleware", () => {
     }
   });
 
+  it("admits only webhook POSTs from a proxy host", async () => {
+    const app = createApp();
+    const hook = "/api/mcp/events/hooks/my-server/i/abcdef/s/abcdef";
+    const headers = { Host: "host.docker.internal:6274" };
+    expect((await app.request(hook, { method: "POST", headers })).status).toBe(200);
+    expect((await app.request(hook, { headers })).status).toBe(403);
+    expect((await app.request(`${hook}/other`, { method: "POST", headers })).status).toBe(403);
+    expect((await app.request("/api/mcp/events/subscriptions", { method: "POST", headers })).status).toBe(403);
+  });
+
   it("honors the hosts and origins the instance is configured for", async () => {
     vi.stubEnv("MCPJAM_ALLOWED_HOSTS", "192.168.1.50,*.corp.example");
     vi.stubEnv("MCPJAM_PUBLIC_ORIGIN", "https://inspector.example.org");

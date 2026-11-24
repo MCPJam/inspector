@@ -193,6 +193,9 @@ export const ANALYTICS_EVENTS = {
   app_builder_tab_viewed: { source: "client" },
   app_builder_tool_executed: { source: "client" },
   app_launched: { source: "client" },
+  // Sent before any actor is known; see the strict catalog entries.
+  app_startup_started: { source: "client" },
+  app_startup_blocked: { source: "client" },
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
@@ -342,6 +345,8 @@ export const ANALYTICS_EVENTS = {
   evaluate_tour_skipped: { source: "client" },
   evaluate_tour_step_viewed: { source: "client" },
   events_tab_viewed: { source: "client" },
+  local_webhook_receiver_selected: { source: "client" },
+  local_webhook_receiver_failed: { source: "client" },
   export_server_clicked: { source: "client" },
   generate_tests_button_clicked: { source: "client" },
   // The Swarms / User Testing gate (REEV-6). `guest_feature_preview_shown`
@@ -458,6 +463,12 @@ export const ANALYTICS_EVENTS = {
   first_run_onboarding_connection_started: { source: "client" },
   first_run_onboarding_connection_succeeded: { source: "client" },
   first_run_onboarding_connection_failed: { source: "client" },
+  // Home setup checklist (BA-10): `step`, `action`, `variant`, optional
+  // `error_slug`, `already_done`, `rest`, and `agent` on onboard_agent copied.
+  // Connect actions include `demo_started` for the Excalidraw demo server.
+  home_checklist_step: { source: "client" },
+  // `outcome` completed | skipped, `done_count`, `already_done`.
+  home_checklist_finished: { source: "client" },
   first_run_onboarding_connection_cancelled: { source: "client" },
   first_run_onboarding_setup_later_clicked: { source: "client" },
   first_run_onboarding_playground_opened: { source: "client" },

@@ -168,3 +168,31 @@ describe("proxy diagnostics", () => {
     expect(event.tags).not.toHaveProperty("desktop_run_id");
   });
 });
+
+describe("startup stage", () => {
+  it("keeps the renderer's latest startup stage and forgets it on reload", () => {
+    const d = setup();
+    d.record({ kind: "startup", phase: "state", stage: "app_load/auth_pending" });
+    d.record({
+      kind: "startup",
+      phase: "state",
+      stage: "app_load/session_refresh_failed",
+    });
+    expect(d.snapshot().startup_stage).toBe("app_load/session_refresh_failed");
+    d.rendererGone();
+    expect(d.snapshot().startup_stage).toBe("unknown");
+  });
+
+  it("accepts only known stages over IPC", () => {
+    expect(
+      parseDesktopActivity({ kind: "startup", phase: "state", stage: "ready" }),
+    ).toEqual({ kind: "startup", phase: "state", stage: "ready" });
+    expect(
+      parseDesktopActivity({
+        kind: "startup",
+        phase: "state",
+        stage: "https://secret.example",
+      }),
+    ).toBeNull();
+  });
+});

@@ -37,6 +37,7 @@ import { z } from "zod";
 import { buildWebhookHeaders } from "../../src/events/standard-webhooks.js";
 import { decodeWebhookSecret } from "../../src/mcp-client-manager/events-ext.js";
 import { canonicalJson } from "../../src/contract/canonical.js";
+import { createCatalogFixture } from "./events-catalog-fixture.js";
 
 export * from "./events-fixture-contract.js";
 import {
@@ -97,6 +98,7 @@ export async function startEventsFixture(
   const errors = options.beta ? BETA_ERRORS : FIXTURE_ERRORS;
   const now = options.now ?? (() => Date.now());
   const misbehavior: EventsFixtureMisbehavior = { ...options.misbehavior };
+  const catalog = createCatalogFixture(() => !misbehavior.omitCatalogAcknowledgement);
   const deliveryFetch = options.deliveryFetch ?? fetch;
   const received: EventsFixtureHandle["received"] = [];
   const deliveries: DeliveryRecord[] = [];
@@ -182,7 +184,7 @@ export async function startEventsFixture(
     kind: DeliveryRecord["kind"],
     webhookId: string,
     body: string
-  ): Promise<{ record: DeliveryRecord; response?: Response }> => {
+  ): Promise<{ record: DeliveryRecord; response?: Response; networkReason?: "tls_error" | "timeout" }> => {
     const timestampSeconds = Math.floor(now() / 1000) - (misbehavior.staleTimestamp ? 3600 : 0);
     const secrets = misbehavior.badSignature
       ? [`whsec_${randomBytes(32).toString("base64")}`]
@@ -195,6 +197,7 @@ export async function startEventsFixture(
       subscriptionId: subscription.id,
     });
     let response: Response | undefined;
+    let networkReason: "tls_error" | "timeout" | undefined;
     let status: DeliveryRecord["status"];
     try {
       response = await deliveryFetch(subscription.url, {
@@ -206,8 +209,15 @@ export async function startEventsFixture(
         signal: AbortSignal.timeout(5_000),
       });
       status = response.status;
-    } catch {
+    } catch (error) {
       status = "network_error";
+      const cause = error instanceof Error ? error.cause : undefined;
+      const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+      if (typeof code === "string" && /CERT|TLS|SELF_SIGNED|VERIFY_LEAF/.test(code)) {
+        networkReason = "tls_error";
+      } else if (error instanceof Error && error.name === "TimeoutError") {
+        networkReason = "timeout";
+      }
     }
     const record: DeliveryRecord = {
       subscriptionId: subscription.id,
@@ -218,12 +228,12 @@ export async function startEventsFixture(
       body,
     };
     deliveries.push(record);
-    return { record, response };
+    return { record, response, networkReason };
   };
 
   const verify = async (subscription: FixtureSubscription): Promise<void> => {
     const challenge = randomBytes(16).toString("hex");
-    const { record, response } = await post(
+    const { record, response, networkReason } = await post(
       subscription,
       "verification",
       `msg_verification_${randomBytes(6).toString("hex")}`,
@@ -231,7 +241,7 @@ export async function startEventsFixture(
     );
     if (record.status === "network_error") {
       throw new JsonRpcFailure(errors.CallbackEndpointError, "CallbackEndpointError", {
-        reason: "connection_refused",
+        reason: networkReason ?? "connection_refused",
       });
     }
     let echoed: unknown;
@@ -328,6 +338,9 @@ export async function startEventsFixture(
     server.setRequestHandler("events/list", { params: looseParams }, (params) =>
       guard(() => {
         record("events/list", params);
+        if (catalog.replacement) {
+          return { resultType: "complete", events: [{ name: catalog.replacement, delivery: ["poll"] }] };
+        }
         return { resultType: "complete", events: options.beta ? betaEventTypes() : FIXTURE_EVENT_TYPES };
       })()
     );
@@ -613,7 +626,16 @@ export async function startEventsFixture(
   };
 
   const handler = createMcpHandler((ctx) => buildServer(ctx as never));
-  const nodeHandler = toNodeHandler(handler as never) as (
+  const nodeHandler = toNodeHandler({
+    fetch(request, requestOptions) {
+      if (options.beta && request.headers.get("mcp-method") === "subscriptions/listen") {
+        return catalog.listen(request, (params) => received.push({
+          method: "subscriptions/listen", params, principal: principalOf(request),
+        }));
+      }
+      return handler.fetch(request, requestOptions);
+    },
+  }) as (
     req: http.IncomingMessage,
     res: http.ServerResponse
   ) => void;
@@ -631,6 +653,8 @@ export async function startEventsFixture(
   return {
     url: `http://127.0.0.1:${address.port}/mcp`,
     received,
+    replaceCatalog: catalog.change,
+    openCatalogStreams: catalog.openStreams,
     subscriptions: () => [...subscriptions.values()].map((entry) => ({ ...entry })),
     deliveries,
     misbehave: (patch) => Object.assign(misbehavior, patch),

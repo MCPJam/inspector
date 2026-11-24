@@ -53,6 +53,7 @@ export const PLATFORM_FEATURE_KEYS = [
   "unified-share-evals",
   "github-checks",
   "scheduled-evals",
+  "web-clients",
 ] as const;
 
 export type PlatformFeatureKey = (typeof PLATFORM_FEATURE_KEYS)[number];
@@ -84,6 +85,7 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "unified-share-evals": "Eval run sharing",
   "github-checks": "GitHub checks",
   "scheduled-evals": "Scheduled evals",
+  "web-clients": "Claude web and ChatGPT web",
 };
 
 /**

@@ -17,6 +17,8 @@ import { forwardingAdmission } from "./forwarding/enhanced-admission.js";
 import { startHarnessForwardingGrant } from "./forwarding/forwarding-grant.js";
 import { APPROVAL_UNAVAILABLE, answerOnlyDecidedCalls, decidedCalls, pausedCallsForDecisions, type DecidedCall } from "./forwarding/approval-bindings.js";
 import { resolveHarnessMcpPlan, type HarnessMcpPlan } from "./harness-mcp-plan.js";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
+import { runWebClientHarnessTurn } from "../../services/web-clients/web-client-harness-turn.js";
 import { buildHarnessMcpAtTurn } from "./harness-mcp-receipt.js";
 import { assertHarnessMcpDiscoveryGate } from "./harness-mcp-discovery-gate.js";
 import {
@@ -330,6 +332,7 @@ import {
   type HarnessPolicyBlockEvent,
 } from "./harness-policy-block-channel.js";
 import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
+import { withoutStructuredContentRule } from "@mcpjam/sdk";
 import {
   harnessScopeStepUpServerMatches,
   matchHarnessScopeStepUpToolCall,
@@ -838,6 +841,10 @@ export async function runHarnessTurn(
   options: MCPJamHandlerOptions,
   streamSink: "ui" | "none",
 ): Promise<ChatEngineLoopResult> {
+  // A website has no box, no broker and no proxy: its turn drives the page.
+  if (isWebClientRuntimeId(options.harness)) {
+    return runWebClientHarnessTurn(options, streamSink);
+  }
   const hostToolCancellation = createHostToolCancellation();
   const {
     messages,
@@ -862,7 +869,7 @@ export async function runHarnessTurn(
     onLiveTextDelta,
     requireToolApproval,
     approvalMode,
-    modelVisibleMcpToolResults,
+    modelVisibleMcpToolResults: hostModelVisibleMcpToolResults,
     respectToolVisibility,
     tasks,
     chatSessionId,
@@ -894,6 +901,11 @@ export async function runHarnessTurn(
     createHarnessScopeStepUpContinuation,
     turnTiming,
   } = options;
+  // Harness runs keep today's projection even when the client row records its
+  // rule (KES-1007): admission, fingerprints and relayed results stay as they were.
+  const modelVisibleMcpToolResults = withoutStructuredContentRule(
+    hostModelVisibleMcpToolResults,
+  );
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
@@ -3890,7 +3902,8 @@ export async function runHarnessTurn(
             // Approval continuation can repeat a call already in saved history.
             // Keep its original input and card; only the result is new.
             const savedCall = toolCallLookupFor(() => messageHistory)(toolCallId);
-            if (savedCall) {
+            // An unverified saved call keeps no identity here, as at its result.
+            if (savedCall && !savedCall.unverified) {
               toolMeta.set(toolCallId, { ...toolMeta.get(toolCallId), ...savedCall });
               drainOpenToolCalls.add(toolCallId);
               continue;
@@ -3954,9 +3967,12 @@ export async function runHarnessTurn(
             drainOpenToolCalls.delete(toolCallId);
             const errorEvent =
               type === "tool-error" || type === "tool-output-error";
-            const historicalCall = toolCallLookupFor(() => messageHistory)(
+            const savedCall = toolCallLookupFor(() => messageHistory)(
               toolCallId,
             );
+            // The stream signer vouches for nothing on an unverified call, so
+            // its server and tool name must not attribute this result either.
+            const historicalCall = savedCall?.unverified ? undefined : savedCall;
             if (errorEvent) {
               // Ignore duplicate terminal events and errors for calls never issued.
               if (

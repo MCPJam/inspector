@@ -55,6 +55,7 @@ export const FIXTURE_EVENT_TYPES = [
 ] as const;
 
 export interface EventsFixtureMisbehavior {
+  omitCatalogAcknowledgement?: boolean;
   /** Activate delivery without the verification handshake. */
   skipConsent?: boolean;
   /** Sign deliveries with a secret the receiver never saw. */
@@ -143,6 +144,8 @@ export interface EventsFixtureHandle {
   url: string;
   /** Every JSON-RPC request the fixture received (params included). */
   received: Array<{ method: string; params?: unknown; principal: string }>;
+  replaceCatalog: (name: string, matchingSubscription?: boolean) => void;
+  openCatalogStreams: () => number;
   subscriptions: () => FixtureSubscription[];
   deliveries: DeliveryRecord[];
   misbehave: (patch: EventsFixtureMisbehavior) => void;
