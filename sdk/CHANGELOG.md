@@ -1,5 +1,65 @@
 # `@mcpjam/sdk` changelog
 
+## 10.14.0
+
+### Minor Changes
+
+- [#7761](https://github.com/MCPJam/inspector/pull/7761) [`f67b5cf`](https://github.com/MCPJam/inspector/commit/f67b5cf20e0e2e16c67d2deebdcbd8eac7d24c9c) Thanks [@moisonmaxime](https://github.com/moisonmaxime)! - Local eval results now count tool errors the same way MCPJam does. A failed tool call and an iteration error each write a score row (`platform:toolExecution`, `platform:iterationError`), and `test.accuracy()`, `result.aggregate.accuracy` and the uploaded `passed` all come from the same rows. An iteration whose tool call errored, even if the model retried and got the right answer, now fails locally too, unless the run sets `failOnToolError: false`, which makes both rows advisory.
+  
+  - Each case's evaluation config gains these two definitions, so comparing your first run on this version with an older run shows "evaluation config changed" once.
+  - `promptsToEvalResult` and `PromptResult.toEvalResult` now upload score rows built from your `passed` value plus the two platform checks. Use the same `failOnToolError` for every call within one case: the backend rejects a case whose iterations report different evaluation configs.
+  - Suite-file runs always apply the tool-error check.
+  - A cancelled iteration never counts as a success in `successes`, `accuracy()` or the suite aggregate, even when its rows pass.
+  - `runToEvalResults`, `suiteRunToEvalResults` and the reporter's run-based methods still apply `failOnToolError` to an iteration without platform rows, such as one produced by an older SDK. A current iteration's rows already carry the role its run set. When that check fails an older iteration whose score rows pass, the run's results upload without score rows, so no result reports a failure next to rows that derive a pass.
+  - Deprecated: `finalizePassedForEval` (use `scoresPassed`).
+
+- [#8137](https://github.com/MCPJam/inspector/pull/8137) [`1c4cd08`](https://github.com/MCPJam/inspector/commit/1c4cd08791c80ccab81e82be4e0f39336892fa44) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Use a custom callback URL for local MCP Events webhooks and request a ten-minute lifetime by default in Inspector and the CLI watch command.
+
+- [#8102](https://github.com/MCPJam/inspector/pull/8102) [`754c1eb`](https://github.com/MCPJam/inspector/commit/754c1eb9d9d35a2fa46c50e6e9fb2b9302c8df01) Thanks [@chelojimenez](https://github.com/chelojimenez)! - A host config can now record which part of a tool result its client shows the model: `modelVisibleMcpToolResults.structuredContent` is `"fallback"` (the text, or structuredContent when content is empty, as Claude Desktop does), `"preferred"` (structuredContent when present, as Claude Code and Codex CLI do) or `"both"`. When it is set, the model gets that part as plain text, never the result's `_meta`, and the raw result stays available to widgets and traces. Hosts without it, and every harness run, keep the projection they had.
+  
+  `EvalSuite.runWithClient` and other API callers now tell the server they understand the key, so clients that carry it reach this SDK intact; older SDKs are sent the config without it. Local `mcpjam test --host <id>` takes the catalog row's value too.
+
+- [#8003](https://github.com/MCPJam/inspector/pull/8003) [`959c8a4`](https://github.com/MCPJam/inspector/commit/959c8a4d2d5bc75290b0f78a84e16b171d7ce8a2) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Add Claude web and ChatGPT web as harness runtimes behind the `web-clients-enabled` flag. `HARNESS_IDS` accepts `claude-web` and `chatgpt-web`, the platform features add `web-clients`, and the inspector registers both runtimes, whose MCP calls reach a project's servers through the forwarding endpoint.
+
+### Patch Changes
+
+- [#8124](https://github.com/MCPJam/inspector/pull/8124) [`0e7864b`](https://github.com/MCPJam/inspector/commit/0e7864bae7f9b05009c841bb29b29948994e9f56) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Refresh the Events catalog when a Beta server acknowledges catalog change notifications and sends a change on the active subscription.
+
+- [#8089](https://github.com/MCPJam/inspector/pull/8089) [`0ec2456`](https://github.com/MCPJam/inspector/commit/0ec2456f1ebd5dff92a212f5faaead6224196551) Thanks [@prathmeshpatel](https://github.com/prathmeshpatel)! - Support MCP Events beta discovery, HTTP routing, error codes, and signed webhook delivery checks.
+
+- [#8125](https://github.com/MCPJam/inspector/pull/8125) [`0f21475`](https://github.com/MCPJam/inspector/commit/0f214757b6824ea6b578fb4d5c6b265d35f02ad3) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Report the Events Beta contract in CLI conformance and Inspector capability details, with the draft and dated ChatGPT profiles available for legacy results.
+
+- [#8123](https://github.com/MCPJam/inspector/pull/8123) [`e861290`](https://github.com/MCPJam/inspector/commit/e8612906c0711b0b5574265697b853e676901a1b) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Validate MCP Events Beta result envelopes and apply the negotiated wire contract to error handling and HTTP routing. Explicit CLI profiles select the corresponding wire behavior.
+
+- [#8118](https://github.com/MCPJam/inspector/pull/8118) [`130ba3b`](https://github.com/MCPJam/inspector/commit/130ba3b6633559d020c88be4de186b60db46a786) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The Events tab says why the server ended a subscription (event type removed, schema changed, access revoked), shows when webhook delivery is suspended or throttled, says when a server can't replay, labels ending a subscription Unsubscribe, Stop polling or Close stream, and reads the event types again when the server sends `notifications/events/list_changed`. Hosted subscriptions now use MCPJam (built-in) and local ones use the active client, so the "Receive as" picker is gone. The SDK's browser entry exports `classifyEventsRpcError`.
+
+- [#8107](https://github.com/MCPJam/inspector/pull/8107) [`2e34873`](https://github.com/MCPJam/inspector/commit/2e348730b4332c89437de124ac64e2e15ce59c5f) Thanks [@chelojimenez](https://github.com/chelojimenez)! - Allow Events unsubscribe to reuse known routing headers when the event catalog is unavailable, while refreshing and retrying once if the server rejects outdated headers.
+
+- [#8116](https://github.com/MCPJam/inspector/pull/8116) [`8b5cf33`](https://github.com/MCPJam/inspector/commit/8b5cf33b1c36a946b3e65ecbf1e0d2fa95543436) Thanks [@nachocossio](https://github.com/nachocossio)! - Refresh short Events webhook grants at their midpoint. A grant of 60 s or less was refreshed about once a second, because the 60 s refresh lead covered the whole grant; the lead is now capped at half the remaining grant. Grants longer than 2 min keep the `max(60 s, 10%)` lead.
+
+- [#8111](https://github.com/MCPJam/inspector/pull/8111) [`56978ba`](https://github.com/MCPJam/inspector/commit/56978bad16d8f78a738f893d9d0a865bdfd6fb28) Thanks [@nachocossio](https://github.com/nachocossio)! - Keep Events webhook refreshes before `refreshBefore`: a failed refresh is retried before the grant expires instead of after the backoff, and a grant shorter than 2 s is refreshed before it expires.
+
+- [#8045](https://github.com/MCPJam/inspector/pull/8045) [`246569f`](https://github.com/MCPJam/inspector/commit/246569f7306f5ba92285b6a28127537d651d9f23) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - Hosted MCP connections send a User-Agent again (`MCPJam/<version> (+https://mcpjam.com) MCP-Inspector/1.0`), so servers behind firewalls that block requests without one can connect.
+
+- [#8048](https://github.com/MCPJam/inspector/pull/8048) [`d999931`](https://github.com/MCPJam/inspector/commit/d999931013b256ccfbe900fb9931bf62feb281ef) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - MCPJam now sends `MCPJam/<version> (+https://mcpjam.com) MCP-Inspector/1.0` as its User-Agent to MCP servers and OAuth servers, the same in the desktop app, `npx @mcpjam/inspector` and the hosted app. Local connections used to send `node`. A User-Agent set in a server's Headers still wins. The SDK adds `mcpjamUserAgent`, `getDefaultUserAgent` and `setDefaultUserAgent`.
+
+- [#8103](https://github.com/MCPJam/inspector/pull/8103) [`d307cf0`](https://github.com/MCPJam/inspector/commit/d307cf054a3573b4dc0966b1aa81a8ef6a31e1bd) Thanks [@chelojimenez](https://github.com/chelojimenez)! - The bundled host catalog now records which part of a tool result each measured client shows its model: Claude Desktop is `"fallback"`, Claude Code and Codex CLI are `"preferred"`. Local `mcpjam test --host claude-desktop` now sends the model the text Claude Desktop sends, without structuredContent or `_meta`.
+
+- [#8091](https://github.com/MCPJam/inspector/pull/8091) [`e0491d8`](https://github.com/MCPJam/inspector/commit/e0491d8772cf6d9e8d07116c1243ad0667d62327) Thanks [@ignaciojimenezr](https://github.com/ignaciojimenezr)! - When a modern (2026-07-28) server refuses a tool call with `-32020` (HeaderMismatch), the client now lists the tools again, rebuilds the `Mcp-Param-*` headers from the fresh `x-mcp-header` marks, and sends the call once more, as the spec says a client SHOULD. This covers the multi-round-trip (MRTR) path, which every inspector tool call takes, and the hosted resume step. Before, these calls failed with the `-32020`. The client does not send again when header mirroring is turned off (`mirrorToolParamHeaders: false`), when the caller set its own `Mcp-Param-*` header, or when the fresh list gives the same headers. `MCPClientManager.mrtrToolParamHeadersAfterMismatch` gives surfaces that send a step themselves the same decision.
+
+- [#8074](https://github.com/MCPJam/inspector/pull/8074) [`6f02fab`](https://github.com/MCPJam/inspector/commit/6f02fabd70c148b997140d293d4ec4e129203d61) Thanks [@ZeHuari](https://github.com/ZeHuari)! - An unpinned HTTP connection no longer falls back to the older HTTP+SSE transport after the server answers with the modern "protocol version not supported" error (`-32022`). That error identifies a modern server. When the server lists a 2025 version, the client retries once with the 2025 handshake and connects. Otherwise it fails with a message that names what the server offers, in place of the old combined "Streamable HTTP error … SSE error … (405)". A server that never sent that error still gets the SSE fallback. `ModernProtocolVersionRefused` is exported for callers that want to catch it.
+  
+  In hosted mode that failure now reads "The MCP server doesn't support an MCP protocol version this client speaks", with the versions the server offers, and it is classified as an unsupported protocol version, not as an unknown internal error.
+
+- [#8082](https://github.com/MCPJam/inspector/pull/8082) [`4d36415`](https://github.com/MCPJam/inspector/commit/4d364153e3243292a28967ba57af98d746e54481) Thanks [@ZeHuari](https://github.com/ZeHuari)! - A protocol run pinned to a version the server does not speak now stops instead of failing the server for it.
+  
+  - When the MCP connection is refused because the server does not support the pinned version, every selected check shows "could not run" with one message naming the version to run instead. The raw checks and the advice probes do not run.
+  - When the server answers `initialize` with a version MCPJam speaks but the run does not use (for example a run pinned to 2025-11-25 against a server that only speaks 2025-06-18), the five checks that open their own 2025-era session stop after `initialize`: Invalid Method Error, Multiple POST Streams, Functional SSE Streams, Notification POST Accepted and GET Opens SSE Or Returns 405. They used to go on sending the run's version, and the server's 400 failed them.
+  - These "could not run" rows count like a missing login: they cost no points, and the run stays incomplete.
+  - The DELETE that closes the session, and the one behind the Explicit Session Termination advice, now carry the version the server answered with. That advice is no longer given when the server answered with another version, so a 400 to the pinned version is not blamed on the server.
+- Updated dependencies [[`f67b5cf`](https://github.com/MCPJam/inspector/commit/f67b5cf20e0e2e16c67d2deebdcbd8eac7d24c9c), [`2f2f828`](https://github.com/MCPJam/inspector/commit/2f2f8288b76a843d0b9120667cbb946bbc99a162)]:
+  - @mcpjam/evaluators@0.7.0
+
 ## 10.13.0
 
 ### Minor Changes
