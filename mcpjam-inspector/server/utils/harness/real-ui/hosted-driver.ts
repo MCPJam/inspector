@@ -82,6 +82,7 @@ export function createHostedPageDriver(
     canEvaluate: false,
     // Reads and acts find their element with Playwright's engine in the browser.
     playwrightSelectors: true,
+    pressesOnElement: false,
     async navigate(url) {
       assertOnSites(url, options.sites);
       const result = await run({ op: "navigate", url, observeAfter: "none" });

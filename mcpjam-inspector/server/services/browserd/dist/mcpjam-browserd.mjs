@@ -9451,7 +9451,13 @@ var ChromiumDriver = class {
    * string with a counted marker is honest about exactly that.
    */
   async observeText(tabId, entry, permit, rootSelector) {
-    const read = () => rootSelector === void 0 ? entry.page.pageText() : this.readElementText(entry, rootSelector);
+    const read = async () => {
+      const text2 = rootSelector === void 0 ? await entry.page.pageText() : await this.readElementText(entry, rootSelector);
+      if (typeof text2 === "string" || permit()) return text2;
+      return this.leaseBlockedResult(
+        "a person took control of this browser while this was running; the result was discarded and nothing was observed"
+      );
+    };
     const STABLE_ATTEMPTS = 2;
     let before = await this.snapshot(entry.page);
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
@@ -10966,11 +10972,11 @@ async function bundledChromiumMajorVersion() {
   try {
     const { createRequire } = await import("node:module");
     const { readFileSync: readFileSync2 } = await import("node:fs");
-    const { dirname, join: join4 } = await import("node:path");
+    const { dirname, join: join5 } = await import("node:path");
     const require_ = createRequire(import.meta.url);
     const root = dirname(require_.resolve("playwright-core/package.json"));
     resolved = chromiumMajorFromManifest(
-      readFileSync2(join4(root, "browsers.json"), "utf8")
+      readFileSync2(join5(root, "browsers.json"), "utf8")
     );
   } catch {
   }
@@ -11127,9 +11133,42 @@ async function elementNodeId(locator, cdp, selector) {
       (element, [name, value]) => element.setAttribute(name, value),
       [MARK, token]
     );
-    return await resolveBackendNodeId(cdp, `[${MARK}="${token}"]`);
+    const marked = `[${MARK}="${token}"]`;
+    return await resolveBackendNodeId(cdp, marked) ?? await markedInShadowRoot(cdp, marked);
   } finally {
     await unmark(handle);
+  }
+}
+var FIND_THROUGH_SHADOW_ROOTS = `(selector) => {
+  const walk = (root) => {
+    const hit = root.querySelector(selector);
+    if (hit) return hit;
+    for (const host of root.querySelectorAll("*")) {
+      const inner = host.shadowRoot ? walk(host.shadowRoot) : null;
+      if (inner) return inner;
+    }
+    return null;
+  };
+  return walk(document);
+}`;
+async function markedInShadowRoot(cdp, selector) {
+  try {
+    const found = await cdp.send("Runtime.evaluate", {
+      expression: `(${FIND_THROUGH_SHADOW_ROOTS})(${JSON.stringify(selector)})`
+    });
+    const objectId = found?.result?.objectId;
+    if (!objectId) return null;
+    try {
+      const described = await cdp.send("DOM.describeNode", { objectId });
+      return described?.node?.backendNodeId ?? null;
+    } finally {
+      try {
+        await cdp.send("Runtime.releaseObject", { objectId });
+      } catch {
+      }
+    }
+  } catch {
+    return null;
   }
 }
 async function unmark(handle) {
@@ -11526,9 +11565,9 @@ async function launchBrowserdContext(options) {
   }
   if (policy && options.contextMode !== "ephemeral" && options.userDataDir) {
     const { rm: rm2 } = await import("node:fs/promises");
-    const { join: join4 } = await import("node:path");
+    const { join: join5 } = await import("node:path");
     for (const cache of ["Service Worker", "Cache", "Code Cache"]) {
-      await rm2(join4(options.userDataDir, "Default", cache), {
+      await rm2(join5(options.userDataDir, "Default", cache), {
         recursive: true,
         force: true
       });
@@ -11710,7 +11749,8 @@ function adaptContext(context, options = {}) {
       if (!context.newCDPSession || !context.clearCookies) {
         throw new Error("This browser can't clear a site's data.");
       }
-      const page = context.pages()[0] ?? await context.newPage();
+      await Promise.all(context.pages().map((open) => open.close()));
+      const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       for (const origin of origins) {
         await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "all" });
@@ -11900,7 +11940,8 @@ function createPublicNetworkPolicy(resolve2 = lookup) {
 }
 
 // server/services/browserd/daemon/prepare-browser-profile.ts
-import { readFile as readFile2, rm } from "node:fs/promises";
+import { readFile as readFile2, readdir as readdir2, rm } from "node:fs/promises";
+import { join as join4, relative as relative2 } from "node:path";
 
 // server/services/browserd/profile-archive.ts
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -12233,6 +12274,7 @@ async function importBrowserProfileArchive(profileDir, archive, options = {}) {
 
 // server/services/browserd/daemon/prepare-browser-profile.ts
 async function prepareBrowserProfile(config) {
+  if (config.freshProfile) await emptyProfileDir(config);
   if (!config.profileArchivePath) return false;
   try {
     try {
@@ -12251,6 +12293,20 @@ async function prepareBrowserProfile(config) {
     );
   }
   return true;
+}
+async function emptyProfileDir(config) {
+  let entries;
+  try {
+    entries = await readdir2(config.userDataDir);
+  } catch (error) {
+    if (error.code === "ENOENT") return;
+    throw error;
+  }
+  const kept = config.recordDir ? relative2(config.userDataDir, config.recordDir).split(/[\\/]/)[0] : void 0;
+  for (const entry of entries) {
+    if (entry === kept) continue;
+    await rm(join4(config.userDataDir, entry), { recursive: true, force: true });
+  }
 }
 
 // server/services/browserd/daemon/main.ts
@@ -12431,6 +12487,7 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
     recordingEnabled: env.MCPJAM_BROWSERD_RECORD !== "0",
     ...tokenFile ? { tokenFile } : {},
     ...env.MCPJAM_BROWSERD_PROFILE_ARCHIVE?.trim() ? { profileArchivePath: env.MCPJAM_BROWSERD_PROFILE_ARCHIVE.trim() } : {},
+    freshProfile: env.MCPJAM_BROWSERD_FRESH_PROFILE === "1",
     // Only a daemon that had to mint its own token was started by the box.
     startedBy: supplied.length === 0 && tokenFile ? "prelaunch" : "inspector"
   };
