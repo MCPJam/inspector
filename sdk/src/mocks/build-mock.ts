@@ -1,14 +1,13 @@
 import { createMcpHandler, Server } from "@modelcontextprotocol/server";
 import type {
-  CallToolResult,
   McpHttpHandler,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
-import { checkToolArgs } from "../conformance-tool-args.js";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
 import { pageOf } from "./paging.js";
-import { answerFromSaved } from "./saved-answers.js";
+import type { MockModelAnswerer } from "./model-answers.js";
+import { answerItself } from "./self-answer.js";
 import {
   editedToolMissingError,
   methodUnavailableError,
@@ -62,11 +61,8 @@ function unreachableServer(error: Error): Server {
 export interface BuildMockOptions {
   /** Told about each call the mock answers itself and each call no saved case matched. */
   observer?: MockObserver;
-}
-
-/** A refusal a model reads, as a real server's input check gives it. */
-function toolErrorResult(text: string): CallToolResult {
-  return { isError: true, content: [{ type: "text", text }] };
+  /** Answers the calls of tools with `answer.from: "model"`; without one, such a call says so. */
+  modelAnswerer?: MockModelAnswerer;
 }
 
 async function buildServer(
@@ -122,51 +118,24 @@ async function buildServer(
       request.params.arguments
     );
     if (!plan) throw toolNotFoundError(request.params.name);
-    const entry = definition.tools?.[request.params.name];
-    if (entry?.answer?.from === "saved") {
+    const answer = definition.tools?.[request.params.name]?.answer;
+    if (answer?.from === "saved" || answer?.from === "model") {
       const realTools = await real.listTools({ signal: ctx.mcpReq.signal });
-      const listed = resolveMockTools(definition, realTools).tools.find(
-        (tool) => tool.name === request.params.name
-      );
-      const input = request.params.arguments ?? {};
-      const verdict = checkToolArgs(listed?.inputSchema, input);
-      const tool = request.params.name;
-      if (verdict.verdict === "invalid") {
-        options.observer?.({
-          type: "answered",
-          tool,
-          source: "saved",
-          outcome: "invalid_input",
-        });
-        return toolErrorResult(
-          `Input validation error: invalid arguments for tool ${tool}: ${verdict.message}. Fix the arguments and call it again.`
-        );
-      }
-      const outcome = answerFromSaved(entry.answer, input);
-      if (outcome.kind === "answered") {
-        options.observer?.({
-          type: "answered",
-          tool,
-          source: "saved",
-          caseIndex: outcome.caseIndex,
-          outcome: "case",
-        });
-        return outcome.result;
-      }
-      options.observer?.({ type: "unmatched", tool, arguments: input });
-      // A tool the real server also has falls through to it; an added tool has
-      // nothing to fall to, so it says which input found no answer.
-      if (!realTools.some((candidate) => candidate.name === plan.realName)) {
-        options.observer?.({
-          type: "answered",
-          tool,
-          source: "saved",
-          outcome: "no_match",
-        });
-        return toolErrorResult(
-          `No saved answer for ${tool} matches ${JSON.stringify(input)}. Add a case whose "when" fits this input.`
-        );
-      }
+      const itself = await answerItself({
+        tool: resolveMockTools(definition, realTools).tools.find(
+          (tool) => tool.name === request.params.name
+        ),
+        name: request.params.name,
+        answer,
+        input: request.params.arguments ?? {},
+        realHasTool: realTools.some((tool) => tool.name === plan.realName),
+        serverName: name,
+        serverInstructions: definition.instructions ?? info.instructions,
+        observer: options.observer,
+        modelAnswerer: options.modelAnswerer,
+        signal: ctx.mcpReq.signal,
+      });
+      if (itself) return itself;
     }
     const relay = relayDuringCall(
       real,

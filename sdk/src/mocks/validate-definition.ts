@@ -13,7 +13,6 @@ export type MockIssueCode =
   | "invalid_value"
   | "unknown_field"
   | "not_available_yet"
-  | "answer_not_supported"
   | "param_conflict"
   | "uncallable_input";
 
@@ -24,8 +23,7 @@ export interface MockIssue {
 }
 
 export type MockValidationResult =
-  | { ok: true; definition: MockDefinition }
-  | { ok: false; issues: MockIssue[] };
+  { ok: true; definition: MockDefinition } | { ok: false; issues: MockIssue[] };
 
 const TOP_FIELDS = [
   "serverInfo",
@@ -50,6 +48,8 @@ const TOOL_FIELDS = [
 const PARAM_FIELDS = ["hidden", "fixed", "description"];
 const ANSWER_FIELDS = ["from", "tool", "arguments"];
 const SAVED_ANSWER_FIELDS = ["from", "cases"];
+const MODEL_ANSWER_FIELDS = ["from", "instructions"];
+const MAX_ANSWER_INSTRUCTIONS = 4000;
 const SAVED_CASE_FIELDS = ["when", "result", "error"];
 const SAVED_ERROR_FIELDS = ["code", "message", "data"];
 const INFO_FIELDS = ["name", "title", "version"];
@@ -215,18 +215,27 @@ class Check {
     const from = value.from;
     if (from === "saved") return this.savedAnswer(value, path);
     if (from === "model") {
-      this.add(
-        "answer_not_supported",
-        at(path, "from"),
-        `Answers from "${from}" are not available yet. Use "saved", "real", or leave answer.from out.`
-      );
+      this.fields(value, MODEL_ANSWER_FIELDS, path);
+      if ("instructions" in value) {
+        this.string(value.instructions, at(path, "instructions"), true);
+        if (
+          typeof value.instructions === "string" &&
+          value.instructions.length > MAX_ANSWER_INSTRUCTIONS
+        ) {
+          this.add(
+            "invalid_value",
+            at(path, "instructions"),
+            `${at(path, "instructions")} may be ${MAX_ANSWER_INSTRUCTIONS} characters at most. Keep what the model needs to answer like this server.`
+          );
+        }
+      }
       return;
     }
     if (from !== undefined && from !== "real") {
       this.add(
         "invalid_value",
         at(path, "from"),
-        `answer.from must be "real" or "saved", not ${JSON.stringify(from)}. Use one of them, or leave it out.`
+        `answer.from must be "real", "saved" or "model", not ${JSON.stringify(from)}. Use one of them, or leave it out.`
       );
       return;
     }

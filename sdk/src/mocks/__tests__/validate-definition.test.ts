@@ -75,14 +75,26 @@ describe("validateMockDefinition shape", () => {
     }
   });
 
-  it("accepts answer.from real, saved or omitted and refuses model and anything else", () => {
+  it("accepts answer.from real, saved, model or omitted and refuses anything else", () => {
     const answer = (value: unknown) => ({ tools: { t: { answer: value } } });
     expect(codes(answer({ from: "real" }))).toEqual([]);
     expect(codes(answer({ tool: "other" }))).toEqual([]);
     expect(codes(answer({ from: "saved", cases: [] }))).toEqual([
       "invalid_type",
     ]);
-    expect(codes(answer({ from: "model" }))).toEqual(["answer_not_supported"]);
+    expect(codes(answer({ from: "model" }))).toEqual([]);
+    expect(
+      codes(answer({ from: "model", instructions: "Return invoices." }))
+    ).toEqual([]);
+    expect(codes(answer({ from: "model", instructions: "" }))).toEqual([
+      "invalid_type",
+    ]);
+    expect(
+      codes(answer({ from: "model", instructions: "x".repeat(4001) }))
+    ).toEqual(["invalid_value"]);
+    expect(codes(answer({ from: "model", model: "gpt" }))).toEqual([
+      "unknown_field",
+    ]);
     expect(codes(answer({ from: "base" }))).toEqual(["invalid_value"]);
     expect(codes(answer({ from: "real", cases: [] }))).toEqual([
       "unknown_field",

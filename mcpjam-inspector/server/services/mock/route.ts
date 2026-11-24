@@ -12,12 +12,20 @@
  * caller's own connection to the real server, so nothing of one caller's
  * credentials reaches another.
  */
-import { buildMock, type MockObservedEvent, type MockRealServer } from "@mcpjam/sdk/mocks";
+import {
+  buildMock,
+  type MockModelAnswerer,
+  type MockObservedEvent,
+  type MockRealServer,
+} from "@mcpjam/sdk/mocks";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { leaseRealServer, type MockLease, type OpenReal } from "./connection.js";
 import { MockRefusal, mockRefusalResponse } from "./refusal.js";
+import { convexAnswersBackend } from "./answers-backend.js";
+import { createModelAnswerer } from "./model-answer.js";
+import { hostedModelCaller } from "./model-call.js";
 import { recordUnmatchedCalls } from "./unmatched.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
 
@@ -29,6 +37,8 @@ export const MOCK_LISTING_HASH_HEADER = "x-mcpjam-mock-real-listing-hash";
  * in the result a model reads says so. Only a response that is complete when
  * its headers go out can carry it; a streamed one is marked on the RPC log.
  */
+/** Optional request header naming the run a call belongs to, for the per-run cap on model answers. */
+export const MOCK_RUN_HEADER = "x-mcpjam-mock-run";
 export const MOCK_ANSWERED_HEADER = "x-mcpjam-mock-answered";
 export const DEFAULT_MOCK_PROFILE: MockDialProfile = { timeoutMs: 30_000 };
 
@@ -41,6 +51,8 @@ export interface MockRouteDeps {
   open?: OpenReal;
   resolve?: typeof resolveMock;
   recordUnmatched?: typeof recordUnmatchedCalls;
+  /** The model answerer for a mock whose tools answer with a model (default: the hosted one). */
+  modelAnswerer?: (mock: { mockId: string; version: number; projectId: string; runKey?: string }) => MockModelAnswerer;
 }
 
 /**
@@ -110,6 +122,18 @@ function finish(response: Response, added: Record<string, string>, release?: () 
   );
 }
 
+/** The hosted model, the backend's stored answers and caps, for this caller. */
+function defaultModelAnswerer(caller: ManagerCallerContext, bearerToken: string) {
+  return (mock: { mockId: string; version: number; projectId: string; runKey?: string }): MockModelAnswerer =>
+    createModelAnswerer({
+      mockId: mock.mockId,
+      version: mock.version,
+      runKey: mock.runKey,
+      backend: convexAnswersBackend(caller, bearerToken),
+      callModel: hostedModelCaller({ bearerToken, projectId: mock.projectId }),
+    });
+}
+
 export async function serveMock(
   request: Request,
   mockId: string,
@@ -160,8 +184,15 @@ export async function serveMock(
   }
   const observed: MockObservedEvent[] = [];
   try {
+    const usesModel = Object.values(resolved.definition.tools ?? {}).some((t) => t.answer?.from === "model");
+    const runKey = request.headers.get(MOCK_RUN_HEADER)?.slice(0, 128) || undefined;
+    const mock = { mockId, version: resolved.version, projectId: resolved.projectId, runKey };
+    const modelAnswerer = !usesModel
+      ? undefined
+      : (deps.modelAnswerer ?? defaultModelAnswerer(door.caller, bearerToken))(mock);
     const response = await buildMock(resolved.definition, real, {
       observer: (event) => observed.push(event),
+      modelAnswerer,
     }).fetch(request, {
       // Names the caller by a digest; carries no credential.
       authInfo: {

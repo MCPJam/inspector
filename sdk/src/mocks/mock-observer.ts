@@ -15,7 +15,13 @@ export type MockObservedEvent =
       source: MockAnswerSource;
       /** Which saved case answered; absent for an answer the mock made up from the call alone. */
       caseIndex?: number;
-      outcome: "case" | "invalid_input" | "no_match" | "stored" | "generated";
+      outcome:
+        | "case"
+        | "invalid_input"
+        | "no_match"
+        | "stored"
+        | "generated"
+        | "refused";
     }
   /** A tool with saved answers got input none of them matched. */
   | { type: "unmatched"; tool: string; arguments: Record<string, unknown> };

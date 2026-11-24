@@ -92,4 +92,35 @@ describe("diffMockDefinitions", () => {
     expect(changes).toHaveLength(1);
     expect(changes[0]).toMatchObject({ name: "gone", kind: "removed" });
   });
+
+  it("words a switch to saved answers or a model, and an edit of the cases", () => {
+    const saved = (text: string) => ({
+      answer: {
+        from: "saved" as const,
+        cases: [{ result: { content: [{ type: "text", text }] } }],
+      },
+    });
+    const [added] = diffMockDefinitions(
+      { tools: { t: {} } },
+      { tools: { t: saved("a") } }
+    );
+    expect(added?.details.map((d) => d.summary)).toEqual([
+      'Changed the saved answers of "t"',
+      'Made "t" answer from saved answers',
+    ]);
+    const [edited] = diffMockDefinitions(
+      { tools: { t: saved("a") } },
+      { tools: { t: saved("b") } }
+    );
+    expect(edited?.summary).toBe('Changed the saved answers of "t"');
+    const [toModel] = diffMockDefinitions(
+      { tools: { t: saved("a") } },
+      { tools: { t: { answer: { from: "model", instructions: "Two rows." } } } }
+    );
+    expect(toModel?.details.map((d) => d.summary)).toEqual([
+      'Removed the saved answers of "t"',
+      'Made "t" answer from a model',
+      'Changed the instructions the model answers "t" by',
+    ]);
+  });
 });

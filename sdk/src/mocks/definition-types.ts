@@ -10,12 +10,7 @@
  */
 
 export type JsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | JsonValue[]
-  | { [key: string]: JsonValue };
+  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -64,12 +59,24 @@ export interface MockSavedAnswer {
   cases: MockSavedCase[];
 }
 
-export type MockAnswer = MockRealAnswer | MockSavedAnswer;
+/**
+ * A model answers as the server would, from the tool's description and these
+ * instructions. The answer is stored on first use, keyed by the mock version,
+ * the tool and the input, and replayed after, so the same call gets the same
+ * answer.
+ */
+export interface MockModelAnswer {
+  from: "model";
+  /** How this tool should answer: what the data looks like, what it refuses. */
+  instructions?: string;
+}
+
+export type MockAnswer = MockRealAnswer | MockSavedAnswer | MockModelAnswer;
 
 /** Whether the mock answers this tool's calls itself, without calling a real tool. */
 export function answersItself(entry: MockTool | undefined): boolean {
   const from = entry?.answer?.from;
-  return from === "saved";
+  return from === "saved" || from === "model";
 }
 
 /** The entry's answer when it calls a real tool; `undefined` when it answers itself. */
@@ -77,7 +84,9 @@ export function realAnswerOf(
   entry: MockTool | undefined
 ): MockRealAnswer | undefined {
   const answer = entry?.answer;
-  return answer && answer.from !== "saved" ? answer : undefined;
+  return answer && (answer.from === undefined || answer.from === "real")
+    ? answer
+    : undefined;
 }
 
 /** The most saved cases one tool may carry. */

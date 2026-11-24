@@ -78,6 +78,25 @@ function describe(
     return gone
       ? `Stopped fixing arguments on ${q}`
       : `Fixed arguments on ${q}`;
+  if (path === "answer.from") {
+    const by =
+      after === "model"
+        ? "a model"
+        : after === "saved"
+          ? "saved answers"
+          : "the real tool";
+    return gone
+      ? `Went back to calling the real tool for ${q}`
+      : `Made ${q} answer from ${by}`;
+  }
+  if (path === "answer.cases")
+    return gone
+      ? `Removed the saved answers of ${q}`
+      : `Changed the saved answers of ${q}`;
+  if (path === "answer.instructions")
+    return gone
+      ? `Removed the instructions the model answers ${q} by`
+      : `Changed the instructions the model answers ${q} by`;
   const words = path.replace(/([A-Z])/g, " $1").toLowerCase();
   return gone
     ? `Went back to the real ${words} of ${q}`

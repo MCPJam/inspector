@@ -25,3 +25,10 @@ export {
   fillInputs,
   jsonEqual,
 } from "./saved-answers.js";
+export {
+  MockAnswerError,
+  modelAnswerPrompt,
+  parseModelAnswer,
+  type MockModelAnswerRequest,
+  type MockModelAnswerer,
+} from "./model-answers.js";
