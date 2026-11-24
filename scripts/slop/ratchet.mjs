@@ -47,16 +47,6 @@ function readPathList(file) {
 }
 
 /**
- * What the change is compared against, and what it is:
- *   default:      base = merge-base with origin/main, change = the working
- *                 tree plus untracked files (CI and the Stop hook).
- *   --staged:     base = stagedBase(), change = what is staged (git
- *                 pre-commit).
- *   --head REF:   base = merge-base of REF with origin/main, change = REF
- *                 (git pre-push).
- * --base REF overrides the base in every mode.
- */
-/**
  * The base for --staged: HEAD, except while concluding a merge. The commit
  * about to be made then merges HEAD and MERGE_HEAD, so this returns that
  * merge's merge-base with origin/main, the base CI compares it with. Merging
@@ -71,6 +61,16 @@ export function stagedBase() {
   return git(["merge-base", "origin/main", "HEAD", "MERGE_HEAD"]).trim();
 }
 
+/**
+ * What the change is compared against, and what it is:
+ *   default:      base = merge-base with origin/main, change = the working
+ *                 tree plus untracked files (CI and the Stop hook).
+ *   --staged:     base = stagedBase(), change = what is staged (git
+ *                 pre-commit).
+ *   --head REF:   base = merge-base of REF with origin/main, change = REF
+ *                 (git pre-push).
+ * --base REF overrides the base in every mode.
+ */
 export function resolveScope(argv) {
   const staged = argv.includes("--staged");
   const head = staged ? INDEX : (argValue(argv, "--head") ?? WORKTREE);
