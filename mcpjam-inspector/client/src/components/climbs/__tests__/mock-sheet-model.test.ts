@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   addCase,
   applyDrafts,
+  canAnswerFromServer,
   checkDefinition,
   describeCase,
   initialDraft,
@@ -52,6 +53,18 @@ describe("applyDrafts", () => {
     const definition = { tools: { get_run: { description: "Mine." } } };
     const draft = { ...initialDraft(definition, "get_run", real.get_run), description: "Gets a run." };
     expect(applyDrafts(definition, { get_run: draft }, real)).toEqual({ ok: true, value: {} });
+  });
+  it("refuses to send a tool only the mock lists to your server, which has nothing to call", () => {
+    const definition = { tools: { extra: { description: "Added.", answer: { from: "model" as const } } } };
+    const draft = { ...initialDraft(definition, "extra", undefined), answering: "server" as const };
+    const result = applyDrafts(definition, { extra: draft }, real);
+    expect(result).toEqual({ ok: false, error: expect.stringContaining('no tool named "extra"') });
+  });
+  it("lets a real tool, or a rename of one, answer from your server, and not a tool only the mock lists", () => {
+    const definition = { tools: { say: { answer: { tool: "get_run" } }, extra: { answer: { from: "model" as const } } } };
+    expect(canAnswerFromServer(definition, "get_run", real.get_run)).toBe(true);
+    expect(canAnswerFromServer(definition, "say", undefined)).toBe(true);
+    expect(canAnswerFromServer(definition, "extra", undefined)).toBe(false);
   });
   it("keeps a real-tool answer when the tool answers from the server", () => {
     const definition = { tools: { get_run: { answer: { tool: "fetch_run" } } } };

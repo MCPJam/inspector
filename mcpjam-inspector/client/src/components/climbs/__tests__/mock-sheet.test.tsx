@@ -118,6 +118,15 @@ describe("MockSheet editing", () => {
     expect(screen.getByText(/"runId"/)).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Your server" })).toBeChecked();
   });
+  it("does not offer your server for a tool only the mock lists", async () => {
+    readMockSheet.mockResolvedValue(
+      withTools({ definition: { tools: { extra: { description: "Added.", answer: { from: "model" } } } } }),
+    );
+    show();
+    await openTool("extra");
+    expect(screen.getByRole("radio", { name: "A model" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: "Your server" })).not.toBeInTheDocument();
+  });
   it("shows what the real server says on request", async () => {
     readMockSheet.mockResolvedValue(withTools());
     show();

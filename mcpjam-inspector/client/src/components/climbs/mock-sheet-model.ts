@@ -83,6 +83,15 @@ export function initialDraft(definition: MockDefinition, name: string, real: Rea
   };
 }
 
+/**
+ * Whether the tool can answer from your server: the real server lists it, or
+ * the entry renames one of its tools. A tool only the mock lists has no real
+ * tool to call, and a mock that sends it there refuses to list its tools.
+ */
+export function canAnswerFromServer(definition: MockDefinition, name: string, real: RealTool | undefined): boolean {
+  return real !== undefined || realAnswerOf(definition.tools?.[name]) !== undefined;
+}
+
 /** The input schema to show and whether the definition replaced it. */
 export function schemaOf(
   definition: MockDefinition,
@@ -172,6 +181,9 @@ function editedTool(name: string, entry: MockTool | undefined, draft: ToolDraft,
     else next.description = draft.description;
   }
   if (draft.answering === "server") {
+    if (!real && !realAnswerOf(entry)) {
+      return { ok: false, error: `Your server has no tool named "${name}", so the mock has to answer it. Choose Saved answers or A model.` };
+    }
     if (answersItself(entry)) delete next.answer;
     else if (realAnswerOf(entry)) next.answer = entry?.answer;
   } else if (draft.answering === "model") {

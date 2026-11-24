@@ -90,12 +90,15 @@ export function MockToolEditor({
   draft,
   real,
   schema,
+  canAnswerFromServer,
   onChange,
 }: {
   name: string;
   draft: ToolDraft;
   real: RealTool | undefined;
   schema: { schema: unknown; edited: boolean };
+  /** False for a tool only the mock lists: it has no real tool to call. */
+  canAnswerFromServer: boolean;
   onChange: (draft: ToolDraft) => void;
 }) {
   const id = useId();
@@ -148,7 +151,7 @@ export function MockToolEditor({
           className="w-fit"
           aria-label="How it answers"
         >
-          {ANSWERING.map((option) => (
+          {ANSWERING.filter((option) => option.value !== "server" || canAnswerFromServer).map((option) => (
             <ToggleGroupItem key={option.value} value={option.value} className="px-3">
               {option.label}
             </ToggleGroupItem>

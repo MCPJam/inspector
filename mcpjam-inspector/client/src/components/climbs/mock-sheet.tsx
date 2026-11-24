@@ -23,6 +23,7 @@ import { CopyButton } from "./copy-button";
 import { MockBadge } from "./mock-badge";
 import {
   applyDrafts,
+  canAnswerFromServer,
   checkDefinition,
   initialDraft,
   isStaleSave,
@@ -116,6 +117,7 @@ function ToolsEditor({
                   draft={drafts[name] ?? initialDraft(definition, name, real[name])}
                   real={real[name]}
                   schema={schemaOf(definition, name, real[name])}
+                  canAnswerFromServer={canAnswerFromServer(definition, name, real[name])}
                   onChange={(draft) => setMade({ version: mock.headVersion, drafts: { ...drafts, [name]: draft } })}
                 />
               </AccordionContent>
