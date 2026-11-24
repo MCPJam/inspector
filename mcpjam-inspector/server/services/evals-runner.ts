@@ -1241,6 +1241,24 @@ class EvalSetupPhaseError extends WebRouteError {
   }
 }
 
+/** Longest refusal text a launch error carries; the run group's failure line is capped near 500. */
+const SERVER_REFUSAL_MAX_CHARS = 300;
+
+/**
+ * What the server itself said when it answered a request with a JSON-RPC error
+ * (a mock names the tool it edits that the real server lost). The MCP client
+ * words such an answer "MCP error <code>: <text>", which a transport failure
+ * never is, so only that shape is passed on and the rest keeps the generic
+ * wording.
+ */
+function serverRefusalText(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const refused = /^MCP error -?\d+:\s*(.+)$/s.exec(error.message.trim());
+  const text = refused?.[1]?.trim();
+  if (!text) return undefined;
+  return text.length > SERVER_REFUSAL_MAX_CHARS ? `${text.slice(0, SERVER_REFUSAL_MAX_CHARS - 1)}…` : text;
+}
+
 function throwSetupPhaseError(args: {
   serverId: string;
   phase: SetupPhase;
@@ -1280,12 +1298,15 @@ function throwSetupPhaseError(args: {
   const cause =
     args.detail?.line ??
     (args.error instanceof Error ? args.error.message : String(args.error));
+  const refusal = args.detail ? undefined : serverRefusalText(args.error);
   const listError = new EvalSetupPhaseError({
     status: 502,
     code: ErrorCode.SERVER_UNREACHABLE,
     message: args.detail
       ? `Could not start eval because "${serverLabel}" failed to list tools: ${args.detail.line}`
-      : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+      : refusal
+        ? `Could not start eval because "${serverLabel}" failed to list tools: ${refusal}`
+        : `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
     serverId: args.serverId,
     phase: args.phase,
     details: {

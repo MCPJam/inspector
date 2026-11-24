@@ -43,6 +43,12 @@ export type LaunchUnitArgs = {
   realListingHash: string;
 };
 
+/** A refusal's words are the cause the caller needs; a runaway one must not fill the unit's failure line. */
+const FAILURE_MESSAGE_MAX_CHARS = 400;
+
+const capped = (text: string) =>
+  text.length > FAILURE_MESSAGE_MAX_CHARS ? `${text.slice(0, FAILURE_MESSAGE_MAX_CHARS - 1)}…` : text;
+
 type Failure = { role: string; environmentId?: string; code: string; message: string };
 
 async function launchGroup(args: LaunchUnitArgs, group: RegisteredGroup) {
@@ -124,7 +130,7 @@ export async function launchUnit(args: LaunchUnitArgs): Promise<PlatformClimbLau
 
   if (failures.length > 0) {
     const cancelled = await cancelRuns(args, startedRunIds);
-    const first = failures[0]!;
+    const first = { ...failures[0]!, message: capped(failures[0]!.message) };
     const where = first.environmentId ? ` in environment ${first.environmentId}` : "";
     await failUnit(args, `Launch failed for the ${first.role} run group${where}: ${first.message}`);
     throw new WebRouteError(

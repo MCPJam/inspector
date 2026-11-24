@@ -82,6 +82,24 @@ describe("launchUnit", () => {
     expect(fake.called("climbSettle:recordClimbRunLaunch")).toEqual([]);
   });
 
+  it("carries the cause a target failed with into the unit's failure, capped", async () => {
+    const cause = 'Could not start eval because "Echo" failed to list tools: The mock edits "search", which the real server no longer lists.';
+    const { args, fake } = setup({}, async (group) => {
+      const receipt = startedReceipt(group);
+      if (group.role !== "baseline_a") return receipt;
+      const message = group.environmentIds.length > 0 ? cause + " x".repeat(400) : cause;
+      return {
+        ...receipt,
+        outcome: "failed" as const,
+        targets: [{ status: "failed" as const, target: { environmentId: "env_a" }, error: { code: "SERVER_UNREACHABLE", message } }],
+      };
+    });
+    const error: any = await launchUnit(args).catch((e) => e);
+    expect(error.message).toContain('The mock edits "search", which the real server no longer lists.');
+    expect(error.message.length).toBeLessThan(900);
+    expect(fake.called("climbSettle:failClimbUnit")[0]).toMatchObject({ reason: expect.stringContaining('The mock edits "search"') });
+  });
+
   it("treats an environment that did not start as a partial launch of its group", async () => {
     const { args, cancelEvalRun } = setup({}, async (group) => {
       const receipt = startedReceipt(group);
