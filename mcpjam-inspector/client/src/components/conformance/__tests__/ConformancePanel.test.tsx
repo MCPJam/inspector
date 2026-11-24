@@ -1810,9 +1810,18 @@ describe("ConformanceTab", () => {
   });
 
   it.each([
-    { tasks: [] },
-    { tasks: ["tasks-update-ack-shape" as const] },
-  ])("keeps the Overview open when no visible saved checks apply ($tasks)", async ({ tasks }) => {
+    {
+      version: "2025-03-26",
+      protocol: ["tools-x-mcp-header-declarations-valid"],
+      tasks: [],
+    },
+    {
+      version: "2025-03-26",
+      protocol: ["tools-x-mcp-header-declarations-valid"],
+      tasks: ["tasks-update-ack-shape"],
+    },
+    { version: "2026-07-28", protocol: ["ping"], tasks: [] },
+  ] as const)("keeps Overview open when saved checks do not apply ($version, $tasks)", async ({ version, protocol, tasks }) => {
     const user = userEvent.setup();
     const error = vi.spyOn(toast, "error");
     enabledFlags.delete("conformance-tasks-update-check");
@@ -1826,9 +1835,9 @@ describe("ConformanceTab", () => {
         onViewRun={vi.fn()}
         onLoadServerDefaults={async () => ({
           selection: {
-            protocol: ["tools-x-mcp-header-declarations-valid"],
+            protocol: [...protocol],
             apps: [],
-            tasks,
+            tasks: [...tasks],
             oauth: false,
           },
           inputs: {},
@@ -1839,7 +1848,7 @@ describe("ConformanceTab", () => {
       name: "Protocol version for alpha",
     });
     await user.click(picker);
-    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    await user.click(screen.getByRole("option", { name: version }));
     await user.click(screen.getByRole("button", { name: "Run alpha" }));
 
     await waitFor(() =>

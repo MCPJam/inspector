@@ -344,7 +344,8 @@ export function hasNewProtocolInputs(
   selection: ConformanceSelection,
   probes: ConformanceProbes,
 ): boolean {
-  const { protocol, protocolAdvice } = selection;
+  const { protocol, protocolAdvice } = runnableSelection(selection, next) ?? {};
+  // Advice runs only when at least one Protocol check will run.
   if (protocol?.length === 0) return false;
   const inputs = protocolProbesFor(probes, protocol);
   return PROBE_KEYS.some(
