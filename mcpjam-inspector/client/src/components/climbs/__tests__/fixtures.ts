@@ -78,3 +78,39 @@ export function makeRoundDetail(overrides: Partial<ClimbRoundDetail> = {}): Clim
     ...overrides,
   };
 }
+
+import type { ClimbForOption } from "@mcpjam/sdk/climbs";
+
+export function makeOption(overrides: Partial<ClimbForOption> = {}): ClimbForOption {
+  return {
+    id: "tool_descriptions",
+    label: "Tool descriptions",
+    measure: "pass_rate",
+    available: true,
+    number: { value: 7, unit: "failed_iterations", text: "7 of 13 failed iterations picked the wrong tool" },
+    failedRuns: [],
+    ...overrides,
+  };
+}
+
+export const failedRun = (n: number) => ({
+  caseKey: `case_${n}`,
+  caseTitle: `Counts projects ${n}`,
+  environmentId: "env_a",
+  runId: `run_${n}`,
+  iterationId: `iter_${n}`,
+  reason: "Called show_servers, expected list_projects",
+  link: "https://app.test/x",
+});
+
+export const baselineEnv = (id: string, a: number, b: number) => ({
+  environmentId: id,
+  recorded: { tokens: true, cost: true, tool_calls: true },
+  noRoomToImprove: false,
+  flippedSteeringCaseKeys: [],
+  flippedValidationCount: 0,
+  lostIterations: 0,
+  countedIterations: 18,
+  steering: { counted: 18, passed: b, lost: 0, passRateBps: [a, b] as [number, number], passRateNoiseBps: 560 },
+  validation: { counted: 12, passed: 10, lost: 0, passRateBps: [8300, 8300] as [number, number], passRateNoiseBps: 0 },
+});

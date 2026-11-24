@@ -70,6 +70,8 @@ export const COVERED: Readonly<Record<string, string>> = {};
  * module → a one-line reason.
  */
 export const NOT_EXPOSED: Readonly<Record<string, string>> = {
+  "climbs:getClimbRunGroups":
+    "Run ids of each unit, for the round view's transcript panes; agents read failed runs and results through get_climb and get_climb_round",
   "chatSessionPromote:findSimilarPlaygroundPrompt":
     "Drives the Playground's repeat-prompt tip; agents save a prompt as a test case directly instead of being nudged",
   "serverFeatureEvidence:getForServer":

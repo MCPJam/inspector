@@ -20,6 +20,7 @@ import {
   type PlatformClimbLaunch,
   type PlatformClimbListItem,
   type PlatformClimbStopped,
+  type PlatformClimbMeasure,
   type PlatformClimbVerdict,
   type PlatformMockChange,
 } from "@mcpjam/sdk/platform";
@@ -229,6 +230,14 @@ export function decideRound(
   signal?: AbortSignal,
 ): Promise<unknown> {
   return call(() => client().setClimbRoundDecision(params, { signal }), signal);
+}
+
+/** Sets what the climb is for. The backend refuses it once round 1 has settled. */
+export function updateClimbMeasure(
+  params: { projectId: string; climbId: string; measure: PlatformClimbMeasure },
+  signal?: AbortSignal,
+): Promise<Climb> {
+  return call(() => client().updateClimb(params, { signal }), signal);
 }
 
 const changeCache = new Map<string, Promise<PlatformMockChange[]>>();

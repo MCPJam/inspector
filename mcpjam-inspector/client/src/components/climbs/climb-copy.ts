@@ -31,6 +31,7 @@ export const COPY = {
   modelLabel: "Model",
   modelHint: "MCPJam picks each change with this model.",
   transcriptLink: "MCPJam's transcript",
+  readByLabel: "Read by",
   better: "Better",
   worse: "Worse",
   noChange: "No change",
