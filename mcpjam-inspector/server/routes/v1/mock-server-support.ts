@@ -4,7 +4,6 @@
  * real server holds for the fields a definition edits, and how a backend
  * refusal becomes a public error.
  */
-import type { Context } from "hono";
 import type { Tool } from "@modelcontextprotocol/server";
 import {
   findUncallableInputs,
@@ -15,7 +14,6 @@ import {
 } from "@mcpjam/sdk/mocks";
 import type { PlatformMockRealServer } from "@mcpjam/sdk/platform";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
-import { requestOrigin } from "../../utils/conformance-share-meta-tags.js";
 import { convexErrorData, translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 
@@ -27,21 +25,6 @@ export type RealServerRead = {
   serverInfo?: { name: string; version: string; title?: string };
   instructions?: string;
 };
-
-/**
- * Where a client reaches a mock: the host the caller used for this request,
- * since the same Inspector serves both. The one place that spells the path,
- * until the route workstream names its own builder.
- */
-export function mockAddress(c: Context, mockId: string): string {
-  const origin =
-    requestOrigin({
-      host: c.req.header("Host"),
-      forwardedHost: c.req.header("X-Forwarded-Host"),
-      forwardedProto: c.req.header("X-Forwarded-Proto"),
-    }) ?? new URL(c.req.url).origin;
-  return `${origin}/api/web/mock-mcp/${encodeURIComponent(mockId)}`;
-}
 
 const isRecord = (value: unknown): value is Obj => typeof value === "object" && value !== null && !Array.isArray(value);
 

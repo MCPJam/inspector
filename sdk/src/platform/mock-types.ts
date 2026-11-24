@@ -17,8 +17,11 @@ export type PlatformMockSaved = {
   name: string;
   projectId: string;
   baseServerId: string | null;
-  /** Where an MCP client reaches the mock, with an MCPJam API key. */
-  address: string;
+  /**
+   * Where an MCP client reaches the mock, with an MCPJam API key. Null on a
+   * hosted deployment that configures no public URL.
+   */
+  address: string | null;
   version: number;
   contentHash: string;
   created: boolean;

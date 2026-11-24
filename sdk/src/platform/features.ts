@@ -335,10 +335,11 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   list_server_revisions: null,
   get_server_revision: null,
   diff_server_revisions: null,
-  // Creating and saving a mock is behind `climbs`; reading one stays open.
+  // Every mock operation is behind `climbs` (scenario V12). Serving a mock
+  // that already exists is not an operation and stays open (decision 21).
   create_mock_server: "climbs",
   update_mock_server: "climbs",
-  get_mock_server: null,
+  get_mock_server: "climbs",
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,

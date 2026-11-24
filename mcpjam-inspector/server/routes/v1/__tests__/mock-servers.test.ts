@@ -20,6 +20,12 @@ const mocks = vi.hoisted(() => ({
   connect: vi.fn(),
 }));
 
+// The address comes from the Inspector's configured public URL, never from the
+// request; pin it so these tests do not depend on the environment.
+vi.mock("../../../services/mock/address.js", () => ({
+  mockServerAddress: (mockId: string) =>
+    `https://inspector.test/api/web/mock-mcp/${mockId}`,
+}));
 vi.mock("../../../services/guest-token.js", () => ({
   validateGuestTokenDetailedAsync: mocks.guest,
 }));

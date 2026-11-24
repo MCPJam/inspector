@@ -16,6 +16,7 @@ import { projectServerSchema, runEphemeralConnection } from "../web/auth.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { mockServerAddress } from "../../services/mock/address.js";
 import { readJsonObjectBody, runV1ServerOp } from "./adapter.js";
 import { createConvexClient } from "./convex-client.js";
 import { requireProjectIdArg } from "./convex-id-param.js";
@@ -24,7 +25,6 @@ import {
   applyMergePatch,
   assertCallable,
   describeRealEdits,
-  mockAddress,
   translateMockReadError,
   translateMockWriteError,
   validatedDefinition,
@@ -120,7 +120,7 @@ function saved(
   changes: MockChange[],
   state: Pick<PlatformMockSaved, "created" | "dryRun">,
 ): PlatformMockSaved {
-  return { ...fields, ...state, address: mockAddress(c, fields.id), changes };
+  return { ...fields, ...state, address: mockServerAddress(fields.id), changes };
 }
 
 // POST /v1/projects/:projectId/mock-servers: create a mock, version 1.
@@ -253,7 +253,7 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
     name: row.name,
     projectId,
     baseServerId: row.baseServerId,
-    address: mockAddress(c, row.mockId),
+    address: mockServerAddress(row.mockId),
     version: row.version,
     headVersion: row.headVersion,
     contentHash: row.contentHash,

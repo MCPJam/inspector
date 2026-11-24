@@ -74,7 +74,6 @@ const sdkPluginHostEntry = path.resolve(
   "../sdk/src/internal/plugin-host.ts",
 );
 // Mock servers (Node-only): the definition, its validator and `buildMock`.
-const sdkMocksEntry = path.resolve(rootDir, "../sdk/src/mocks/index.ts");
 
 export default defineConfig({
   define: {
@@ -127,7 +126,6 @@ export default defineConfig({
           "@mcpjam/sdk/events",
           "@mcpjam/sdk/mocks",
           "@mcpjam/sdk/internal/plugin-host",
-          "@mcpjam/sdk/mocks",
         ],
       },
     },
@@ -180,7 +178,6 @@ export default defineConfig({
         find: "@mcpjam/sdk/internal/plugin-host",
         replacement: sdkPluginHostEntry,
       },
-      { find: "@mcpjam/sdk/mocks", replacement: sdkMocksEntry },
       { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
     ],

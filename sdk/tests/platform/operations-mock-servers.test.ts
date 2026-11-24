@@ -178,7 +178,7 @@ describe("mock server inputs", () => {
     expect(parse({ name: "m", definition: [] })).toBe(false);
   });
 
-  it("declares writes with no spend, behind climbs, and a read that stays open", () => {
+  it("declares writes with no spend, and every mock operation behind climbs", () => {
     for (const op of [createMockServerOperation, updateMockServerOperation]) {
       expect(op.readOnly).toBe(false);
       expect(op.risk).toBe("none");
@@ -186,7 +186,11 @@ describe("mock server inputs", () => {
       expect(isOperationAvailable(op.name, {})).toBe(false);
       expect(isOperationAvailable(op.name, { climbs: true })).toBe(true);
     }
+    // Scenario V12: with the flag off every new operation is unavailable;
+    // serving an existing mock is not an operation and stays open.
     expect(getMockServerOperation.readOnly).toBe(true);
-    expect(isOperationAvailable("get_mock_server", {})).toBe(true);
+    expect(OPERATION_FEATURES.get_mock_server).toBe("climbs");
+    expect(isOperationAvailable("get_mock_server", {})).toBe(false);
+    expect(isOperationAvailable("get_mock_server", { climbs: true })).toBe(true);
   });
 });
