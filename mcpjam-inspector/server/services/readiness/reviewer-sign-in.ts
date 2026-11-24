@@ -29,8 +29,12 @@
 import { createSecretScrubber } from "../../../shared/secret-scrubber.js";
 import { redactForLog } from "../../routes/v1/redact-log-message.js";
 import { logger } from "../../utils/logger.js";
+import { BROWSERD_PUBLIC_NETWORK_FEATURE } from "../browserd/protocol.js";
 import { abortable } from "../sessionSimulation/target-discovery.js";
-import type { SignInAgent, SignInAgentOutcome } from "./reviewer-sign-in-agent.js";
+import type {
+  SignInAgent,
+  SignInAgentOutcome,
+} from "./reviewer-sign-in-agent.js";
 import { ReadinessLeaseLostError } from "./runner.js";
 
 export type ReviewerStageName =
@@ -200,7 +204,10 @@ const stageOf = (
 const record = (drive: Drive, stage: ReviewerStage) =>
   abortable(
     drive.deps.record({
-      stage: { ...stage, ...(stage.detail ? { detail: drive.scrub(stage.detail) } : {}) },
+      stage: {
+        ...stage,
+        ...(stage.detail ? { detail: drive.scrub(stage.detail) } : {}),
+      },
     }),
     drive.signal,
   );
@@ -276,9 +283,10 @@ function agentEnding(
       ...evidence,
     });
   }
-  const stopped = outcome.kind === "stopped"
-    ? `The sign-in reached a step MCPJam's browser agent cannot finish: ${reason}`
-    : `MCPJam's browser agent stopped before MCPJam's callback: ${reason}`;
+  const stopped =
+    outcome.kind === "stopped"
+      ? `The sign-in reached a step MCPJam's browser agent cannot finish: ${reason}`
+      : `MCPJam's browser agent stopped before MCPJam's callback: ${reason}`;
   return ending(
     { stage: outcome.stage, status: "blocked", detail: stopped, ...evidence },
     PERSON_ACTION[outcome.stage] ?? PERSON_SIGN_IN,
@@ -308,6 +316,16 @@ async function rehearse(
     );
   }
   const { agent } = reserved;
+  // The submitter's pages decide where the browser goes, so it must not reach
+  // the box's loopback, cloud metadata or a private network.
+  if (!agent.features.includes(BROWSERD_PUBLIC_NETWORK_FEATURE)) {
+    return ending({
+      stage: "connect-link",
+      status: "blocked",
+      detail:
+        "This hosted browser cannot keep the sign-in to public internet addresses, so MCPJam did not open the sign-in page. Start a new attempt after MCPJam updates its hosted browser.",
+    });
+  }
   if (!agent.features.includes("secret-origins")) {
     return blocked(
       "This hosted browser cannot limit the reviewer's credentials to the sign-in page, so MCPJam did not type them. Start a new attempt after MCPJam updates its hosted browser.",

@@ -122,7 +122,48 @@ export const BROWSERD_WEBMCP_FEATURES = [
   "navigation-stop",
   /** A callback stop can remain armed between commands on the same tab. */
   "navigation-stop-persistent",
+  /**
+   * `observe {mode:"text"}` takes a `rootSelector` and reads that element's
+   * text, and a `rootSelector` may use Playwright's selector syntax. Without
+   * it the server must not send a scoped text read: an old daemon ignores
+   * `rootSelector` there and answers with the whole page's text.
+   */
+  "element-text",
+  /**
+   * `POST /v1/profile/export` takes `excludeOrigins` and clears each one's
+   * cookies and site storage before the archive is read. Without it the server
+   * must not save a profile that has to leave a site's session behind: an old
+   * daemon ignores the body and archives everything.
+   */
+  "profile-export-exclusions",
 ] as const;
+
+/** What `POST /v1/profile/export` may be asked to leave out of the archive. */
+export type BrowserdProfileExportOptions = {
+  /**
+   * Origins whose cookies and site storage are cleared before the archive is
+   * read. Send only to a daemon announcing `profile-export-exclusions`.
+   */
+  excludeOrigins?: readonly string[];
+};
+
+/** The `POST /v1/profile/export` request for `options`: a bare one when nothing is left out. */
+export function profileExportRequest(options: BrowserdProfileExportOptions = {}): RequestInit {
+  if (!options.excludeOrigins?.length) return { method: "POST" };
+  return {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ excludeOrigins: options.excludeOrigins }),
+  };
+}
+
+/**
+ * Announced by a daemon booted with `MCPJAM_BROWSERD_NETWORK=public`: its
+ * browser reaches public internet addresses only (`daemon/public-network.ts`).
+ * Per boot, not per build, so it is not in the list above, and a caller that
+ * needs it refuses a daemon that does not announce it.
+ */
+export const BROWSERD_PUBLIC_NETWORK_FEATURE = "network-public-only";
 
 /**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
@@ -469,8 +510,9 @@ export type BrowserAction =
       /** `network` only: read this one exchange in full, not the tail. */
       requestId?: string;
       /**
-       * `a11y` only: scope the tree to the element this CSS selector matches,
-       * instead of the whole page.
+       * `a11y` and `text`: scope to the element this selector matches, instead
+       * of the whole page. CSS, or Playwright's syntax as act targets take it
+       * (`role=`, `text=`, `>>` chains, `nth=`); `text` reads its `innerText`.
        */
       rootSelector?: string;
       /**

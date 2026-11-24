@@ -63,6 +63,7 @@ export type AppRouteEntry =
 
 export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "redeem", kind: "special", scope: "public", standalone: true, note: "Conference card confirmation outside onboarding and project chrome." },
+  { path: "web-accounts/:webAccountId/reconnect", kind: "special", scope: "global", note: "Where an admin signs a web account in again; its project rides in the query, as the backend's email links it." },
   {
     path: "settings/appearance",
     kind: "screen",
@@ -125,6 +126,12 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   },
   {
     path: "organizations/:orgId/data-management",
+    kind: "screen",
+    surfaceId: "organizations",
+    scope: "global",
+  },
+  {
+    path: "organizations/:orgId/security",
     kind: "screen",
     surfaceId: "organizations",
     scope: "global",

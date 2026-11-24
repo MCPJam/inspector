@@ -71,6 +71,17 @@ const CURSOR_HOME =
 
 const COPILOT_BUILTIN_SKILL_NAMES = new Set<string>(COPILOT_BUILTIN_SKILLS);
 
+/** A website has no box and no skill folder: it takes no skills by any name. */
+const WEB_CLIENT_SKILLS: HarnessSkillsDescriptor = {
+  writeFolder: "",
+  trailingNewline: false,
+  readFolders: [],
+  acceptsName: () => false,
+  frontmatter: { descriptionMaxLength: DESCRIPTION_MAX_LENGTH, strictYaml: true },
+  headlessLoading: "native",
+  serverSkills: "box-files",
+};
+
 export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
   // Reads `~/.claude/skills` and `.claude/skills` up to the repository root,
   // stopping below the home. Acts on `allowed-tools`, which is never written.
@@ -123,7 +134,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: false,
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A private home inside the installed recipe: Cursor reads only its folders
   // (and its working directory, with no walk-up), once, when its `agent acp`
@@ -150,7 +161,7 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       surface: "cli",
     },
     headlessLoading: "native",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
   // A per-session home, and the SDK's empty mode keeps skills off until the
   // bridge sets `enableSkills` and passes this folder as a skill directory,
@@ -170,18 +181,30 @@ export const HARNESS_SKILLS: Record<Harness, HarnessSkillsDescriptor> = {
       strictYaml: true,
     },
     headlessLoading: "bridge-opt-in",
-    serverSkills: "box-files",
+    serverSkills: "harness-tools",
   },
+  "claude-web": WEB_CLIENT_SKILLS,
+  "chatgpt-web": WEB_CLIENT_SKILLS,
 };
 
-/** Whether a runtime takes MCP-server skills through MCPJam's skill tools:
- *  it must take skills at all, and its descriptor must say so. */
+/**
+ * Whether a runtime takes MCP-server skills through MCPJam's skill tools: it
+ * must take skills at all, its descriptor must say so, and MCPJam's command
+ * gate must be able to hold both its own commands and MCPJam's host tools.
+ * The turn plan, the box writer and the skill tools all read this one answer,
+ * so a server skill is never kept off the box without being served instead.
+ */
 export function takesServerSkillsAsTools(adapter: {
   supportsSkills: boolean;
   skills: HarnessSkillsDescriptor;
+  supportsNativeToolApproval: boolean;
+  supportsHostExecutedToolApproval: boolean;
 }): boolean {
   return (
-    adapter.supportsSkills && adapter.skills.serverSkills === "harness-tools"
+    adapter.supportsSkills &&
+    adapter.skills.serverSkills === "harness-tools" &&
+    adapter.supportsNativeToolApproval &&
+    adapter.supportsHostExecutedToolApproval
   );
 }
 

@@ -1,0 +1,353 @@
+---
+title: "Write a case"
+description: "Write what the user asks and the outcome they should get, then add checks for what must never happen."
+icon: "file-pen-line"
+---
+
+A case is one user prompt and the outcome the user should get from it. The **Expected outcome** is the test: a judge reads the finished run and decides whether the user got what they asked for. Assertions are for hard constraints, such as a tool that must never run. Each run of a case is one iteration.
+
+<Note>
+  To draft cases from your server's tools or a test plan instead of writing each one, see [Generate cases](/evaluate/generate-cases).
+</Note>
+
+## Start from the outcome, not the tool
+
+"What does note 7 say?" can be answered along several paths, and many of them are fine. You find out which ones agents take by running the prompt, not by guessing:
+
+- **Write the prompt and the expected outcome**
+  - For example: "The reply tells the user what note 7 says, using the note's actual text."
+  - Leave the route as **Any route**.
+- **Run it across clients and models, several iterations each**
+  - Agents may call `read_note` directly, search or list notes first, or answer from earlier context.
+  - Clients expose and name tools differently, and models choose differently, so one pair tells you little.
+- **Read the traces**
+  - See which paths reached the outcome and where the others broke: a missed tool, wrong arguments, or a response the model could not use.
+  - See [Read results](/evaluate/read-results).
+- **Pin only what must never happen**
+  - Add an assertion where a path is actually wrong: a destructive call, an expensive detour, a stale source.
+  - A route like "must call `read_note`" written up front fails a correct `search_notes` → `read_note` run and says nothing about whether the user got the note.
+
+## Add a case
+
+Each tab adds the same two cases to a notes server: one where the user asks for a note, and a negative one that should be answered without a tool.
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite">
+        In the Evaluate tab, open **Suites** and pick a suite.
+      </Step>
+      <Step title="Start a blank case">
+        On the **Test Cases** card, click **Add case**, then **Add manually**. In an empty suite ("No cases yet"), click **Describe**, which opens the same form beside a chat; you can fill it in yourself.
+      </Step>
+      <Step title="Write the prompt and the outcome">
+        Type what the user asks in the first **User prompt**, such as "What does note 7 say?". In **Expected outcome**, write what the user should get: "The reply tells the user what note 7 says, using the note's actual text."
+      </Step>
+      <Step title="Save and run">
+        Click **Save**, then **Run**.
+      </Step>
+    </Steps>
+
+    For the negative case, type "What parameters does read_note take?", write the outcome "Lists read_note's parameters from its description", and add "No tools should be called" from **Add assertion or action**.
+
+    The judge is Advisory by default, so a missed outcome shows on the result without failing the iteration. To make the outcome decide pass or fail, set the judge's role to Required in [Configure grading](/evaluate/configure-grading).
+
+    A new case is a draft until you save it: leaving without saving adds nothing to the suite, and **Run** stays disabled. **Save** and **Run** are also disabled while a JSON field, such as tool arguments or a result schema, holds invalid JSON. The field is highlighted until you fix it.
+
+    {/* Screenshot: case editor with one User prompt, the Expected outcome box filled in, and the Add assertion or action button */}
+  </Tab>
+  <Tab title="CLI">
+    In a suite file, a case is a list of `prompt` and `assert` steps plus an `expectedOutput`. `defaults.judge` with `role: required` makes the judge's verdict on that outcome fail an iteration:
+
+    ```yaml .mcpjam/evals/example.yaml
+    defaults:
+      judge:
+        enabled: true
+        role: required
+    cases:
+      - id: c_reads_a_note
+        title: tells the user what note 7 says
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: What does note 7 say?
+        expectedOutput: The reply tells the user what note 7 says, using the note's actual text.
+      - id: c_params_question_no_tool
+        title: answers a parameters question without a tool
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: What parameters does read_note take?
+          - id: a1
+            kind: assert
+            assertion:
+              type: onlyToolsCalled
+              toolNames: []
+        expectedOutput: Lists read_note's parameters from its description.
+    ```
+
+    Judges run hosted, so run the file in your MCPJam project. Its servers must be saved there. The rest of the file (`schemaVersion`, `suite`, `target`, the other `defaults`) is in [Local evals](/cli/local-evals#1-write-a-suite).
+
+    ```bash
+    mcpjam cloud eval run --file .mcpjam/evals/example.yaml --wait
+    ```
+
+    <Note>
+      `mcpjam test` runs on your machine without a judge, so it refuses a file with a Required judge. Locally it can check assertions only. See [what runs locally](/cli/local-evals#what-runs-locally).
+    </Note>
+
+    To add one case to a suite in your project instead, pass the same fields as JSON to `mcpjam cloud eval cases create`, then run it:
+
+    ```json case.json
+    {
+      "title": "tells the user what note 7 says",
+      "steps": [
+        { "id": "s1", "kind": "prompt", "prompt": "What does note 7 say?" }
+      ],
+      "expectedOutput": "The reply tells the user what note 7 says, using the note's actual text."
+    }
+    ```
+
+    ```bash
+    mcpjam cloud eval cases create --suite "Notes server" --file case.json
+    mcpjam cloud eval cases run --suite "Notes server" --case "tells the user what note 7 says"
+    ```
+  </Tab>
+  <Tab title="SDK">
+    `execute` runs the prompt and returns no verdict. A `judge()` with `role: "required"` grades the run against its rubric and fails the iteration when the outcome is missed. `predicates` add hard constraints on top.
+
+    ```ts evals/notes-cases.test.ts
+    import { afterAll, beforeAll, expect, test } from "vitest";
+    import { EvalTest, HostRunner, MCPClientManager, judge } from "@mcpjam/sdk";
+
+    const manager = new MCPClientManager({
+      notes: { command: "node", args: ["./notes-server.js"] },
+    });
+    let agent: HostRunner;
+
+    beforeAll(async () => {
+      await manager.connectToServer("notes");
+      agent = new HostRunner({
+        tools: await manager.getTools(),
+        model: "anthropic/claude-haiku-4.5",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        mcpClientManager: manager,
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      await manager.disconnectServer("notes");
+    });
+
+    const outcome = (id: string, criterion: string) =>
+      judge({
+        id,
+        model: "anthropic/claude-sonnet-5",
+        apiKey: process.env.ANTHROPIC_API_KEY!,
+        rubric: [criterion],
+        role: "required",
+      });
+
+    test("tells the user what note 7 says", async () => {
+      const readsNote = new EvalTest({
+        id: "c_reads_a_note",
+        name: "tells the user what note 7 says",
+        execute: async (a) => {
+          await a.run("What does note 7 say?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("answers-with-the-note", "The reply tells the user what note 7 says, using the note's actual text.")],
+        },
+      });
+      await readsNote.run(agent, { iterations: 3 });
+      expect(readsNote.accuracy()).toBe(1);
+    }, 300_000);
+
+    test("answers a parameters question without a tool", async () => {
+      const noTool = new EvalTest({
+        id: "c_params_question_no_tool",
+        name: "answers a parameters question without a tool",
+        predicates: [{ type: "onlyToolsCalled", toolNames: [] }],
+        execute: async (a) => {
+          await a.run("What parameters does read_note take?");
+        },
+        evaluators: {
+          mode: "extend",
+          list: [outcome("lists-the-parameters", "Lists read_note's parameters from its description.")],
+        },
+      });
+      await noTool.run(agent, { iterations: 3 });
+      expect(noTool.accuracy()).toBe(1);
+    }, 300_000);
+    ```
+
+    ```bash
+    npx vitest run evals/notes-cases.test.ts
+    ```
+
+    See [EvalTest](/sdk/reference/eval-test) for `evaluators` and every option.
+  </Tab>
+</Tabs>
+
+## Expected outcome
+
+**Expected outcome** holds one goal sentence for the whole case. Write what the user should end up with, not how the agent gets there. The goal completion judge grades the finished run against the first of these that exists:
+
+1. The goal sentence you write here. Suite criteria also apply.
+2. The case's route: the tools it expects, or that no tool should be called.
+3. The suite's grading criteria.
+4. The user's request itself. With nothing else to grade against, the judge caps the score at 0.85.
+
+Turn on **Skip the judge for this case** to exclude this case from the judge. The switch appears when the suite's judge is not off. See [Configure grading](/evaluate/configure-grading) for the judge's model, threshold and role.
+
+## Actions and assertions
+
+**Add assertion or action** lists two kinds of entry. Actions add a step to the run:
+
+| Action | What it adds |
+| --- | --- |
+| **User prompt** | Another user message. A second prompt makes the case multi-turn. |
+| **Interact** | A step that acts on a rendered MCP App view. |
+| **Call tool** | A tool call on a named server with arguments you set, made without the model. |
+
+Assertions grade the run. The kind decides where each applies: **After this action** grades the turn it sits in, and **After the run** grades the finished transcript once, listed under "After run checks". Some kinds are marked "Advisory only". See [Assertions](/evaluate/reference/assertions) for every kind, its fields and where it applies.
+
+## Which tool should handle it?
+
+Set a route only after reading traces shows that a path is wrong. Without one, the case is graded on its outcome and assertions. Set it from **Add assertion or action**:
+
+| Answer | How to set it | Passes when |
+| --- | --- | --- |
+| Any route | Add no "Tool was called with…"; write an **Expected outcome** or another assertion. | Every assertion passes. The route is not graded. |
+| No tool should be called | Add "No tools should be called". | No tool is called. The case is negative. |
+| A named tool: reach it | Add "Tool was called with…" under the prompt; pick the tool and arguments. | That tool is called with matching arguments. Other calls, in any order, are allowed. |
+| A named tool: exact route | Also add "Tools must be called in this exact order". | The calls happen in the listed order, with no extra calls. |
+
+Prefer reaching a tool over an exact route: an exact route fails every correct run that takes an extra step. A case with no assertion and no expected outcome would check nothing, so **Save** stays disabled with "Choose which tool should handle it, or that no tool should be called." On a read-only case, such as one managed in code, **Matching options** shows whether the route uses **Reach the tool** or **Exact route**.
+
+### Argument values
+
+Under the default partial argument matching, `"string"`, `"number"`, `"boolean"`, `"object"`, `"array"`, `"null"` or `"any"` matches any value of that type, so you can check a call's shape without pinning a literal:
+
+```json
+{ "query": "string", "limit": "number" }
+```
+
+## Negative cases
+
+A negative case has the route **No tool should be called** and passes only if the model calls no tool. Pick prompts a careless model would turn into a tool call:
+
+| Prompt | Why no tool should fire |
+| --- | --- |
+| "What parameters does `search` take?" | Answerable from the tool's description. |
+| "Thanks, that's all I needed." | A thank-you with nothing to do. |
+| "Delete it." (with nothing selected earlier) | Ambiguous; the model should ask which item. |
+
+A case that names no tool is "Any route", not negative. If a negative case also carries an assertion that requires a tool call, from the case or the suite, the editor flags it: "This check conflicts with another check that requires a tool call."
+
+## Multi-turn cases
+
+Add a second **User prompt** from **Add assertion or action** at the end of the first turn. The run plays both prompts as one conversation.
+
+An assertion under a prompt sees only that turn: its tool calls, final message and tool errors. A "Tool was called with…" under the second prompt passes only if the call happens in the second turn, and "No tool errors" there reads "No tool errors so far". To cover the whole conversation, put the assertion after the run.
+
+Removing a prompt with assertions under it asks first: they would move to the previous step and grade that turn.
+
+## Required and Advisory
+
+| Role | What a miss does |
+| --- | --- |
+| Required | The iteration fails. |
+| Advisory | The miss shows on the result; the iteration does not fail. |
+
+Each assertion's row shows its role. Assertions are Required by default; when your workspace supports editing roles, open the row to change it.
+
+A failed Required assertion under a prompt also stops the run: later steps do not run and show as Skipped. An Advisory miss never stops the run.
+
+## Inspect a past iteration
+
+<Steps>
+  <Step title="Open History">
+    In the case editor, click **History** and pick a past iteration.
+  </Step>
+  <Step title="Read it">
+    The form shows the case as it was for that iteration, read-only, under the banner "Viewing run · Iteration #N". **Changed** means the case was edited since. Its route row names the answer in effect, such as "Reach read_note", "Exact route: read_note → update_note", **No tool should be called**, or "Any route — graded by the evaluators below".
+  </Step>
+  <Step title="Return to editing">
+    Click **Edit case** to go back to the current draft.
+  </Step>
+</Steps>
+
+{/* Screenshot: case editor inspecting a past iteration, with the "Viewing run · Iteration #N" banner, the Changed marker and the Edit case button */}
+
+## Multi-turn example
+
+This case checks a two-prompt conversation: the user gets note 7, then says thanks, and nothing is deleted. The outcome covers the whole conversation; the one assertion is a guard on what must never happen.
+
+<Tabs>
+  <Tab title="Inspector">
+    1. **User prompt** "What does note 7 say?".
+    2. A second **User prompt** "Thanks, that's all.", with "Tool was never called" for `delete_note` under it.
+    3. **Expected outcome**: "The user learns what note 7 says. The thank-you gets a short reply and no further action."
+  </Tab>
+  <Tab title="CLI">
+    ```yaml
+    cases:
+      - id: c_read_then_thanks
+        title: reads a note, then does nothing on thanks
+        steps:
+          - id: s1
+            kind: prompt
+            prompt: What does note 7 say?
+          - id: s2
+            kind: prompt
+            prompt: Thanks, that's all.
+          - id: a1
+            kind: assert
+            assertion:
+              type: toolNeverCalled
+              toolName: delete_note
+        expectedOutput: The user learns what note 7 says. The thank-you gets a short reply and no further action.
+    ```
+
+    Run it with `mcpjam cloud eval run --file`, with `defaults.judge` as in [Add a case](#add-a-case).
+  </Tab>
+  <Tab title="SDK">
+    Each turn is a `run` call that passes the earlier result as `context`. This reuses `agent` and `outcome` from the test file in [Add a case](#add-a-case):
+
+    ```ts
+    import { EvalTest } from "@mcpjam/sdk";
+
+    const readThenThanks = new EvalTest({
+      id: "c_read_then_thanks",
+      name: "reads a note, then does nothing on thanks",
+      predicates: [{ type: "toolNeverCalled", toolName: "delete_note" }],
+      execute: async (a) => {
+        const r1 = await a.run("What does note 7 say?");
+        await a.run("Thanks, that's all.", { context: r1 });
+      },
+      evaluators: {
+        mode: "extend",
+        list: [outcome("reads-then-stops", "The user learns what note 7 says. The thank-you gets a short reply and no further action.")],
+      },
+    });
+
+    await readThenThanks.run(agent, { iterations: 3 });
+    ```
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Generate cases" icon="sparkles" href="/evaluate/generate-cases">
+    Draft cases from your server's tools or a test plan, then review them.
+  </Card>
+  <Card title="Assertions" icon="list-checks" href="/evaluate/reference/assertions">
+    Every assertion kind, its fields, and where it applies.
+  </Card>
+  <Card title="Run a suite" icon="play" href="/evaluate/run-a-suite">
+    Run every case across clients and models.
+  </Card>
+</CardGroup>

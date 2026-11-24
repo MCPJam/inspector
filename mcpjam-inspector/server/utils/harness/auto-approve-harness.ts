@@ -4,6 +4,7 @@ import type {
   HarnessV1PromptControl,
   HarnessV1PromptTurnOptions,
 } from "@ai-sdk/harness";
+import { SYNTHETIC_SESSION_APPROVAL_DENIAL } from "@/shared/tool-approval";
 import { coerceToolInput } from "./tool-input.js";
 
 /** The call a native request is about, as the runtime's `tool-call` named it. */
@@ -140,23 +141,62 @@ export function withNativeRequestDecisions<T extends HarnessV1>(
   });
 }
 
-/** Pre-approve native requests only. Framework host-tool gates remain intact. */
-export function withAutoApprovedNativeRequests<T extends HarnessV1>(
+export const APPROVE_NATIVE_REQUEST: Answer = { kind: "approve" };
+
+/** MCPJam's answer when nobody can answer: the engine's own denial, so the
+ *  model reads the same refusal whichever engine ran the turn. */
+export const DENY_UNANSWERED: Answer = {
+  kind: "deny",
+  reason: SYNTHETIC_SESSION_APPROVAL_DENIAL,
+};
+
+/**
+ * Answer native requests with one answer: approve (the person pre-approved,
+ * or a later gate decides) or deny (nobody can answer). `covers` picks the
+ * calls it answers; the rest reach the caller unchanged. Framework host-tool
+ * gates are not native requests and remain intact.
+ */
+export function withAnsweredNativeRequests<T extends HarnessV1>(
   harness: T,
-  onApproval?: (approvalId: string) => void,
-  pendingApprovalIds: ReadonlySet<string> = new Set(),
-  /** Sees the call's input too: some runtimes name the server only there. */
-  shouldApprove?: (toolName: string | undefined, input: unknown) => boolean,
+  answer: Answer,
+  settings: {
+    onAnswer?: (approvalId: string) => void;
+    pendingApprovalIds?: ReadonlySet<string>;
+    /** Sees the call's input too: some runtimes name the server only there. */
+    covers?: (toolName: string | undefined, input: unknown) => boolean;
+  } = {},
 ): T {
+  const { covers } = settings;
   return withNativeRequestDecisions(
     harness,
     (call) =>
-      !shouldApprove || shouldApprove(call?.name, call?.input)
-        ? { kind: "approve" }
-        : { kind: "ask" },
+      !covers || covers(call?.name, call?.input) ? answer : { kind: "ask" },
     {
-      pendingApprovalIds,
-      onAnswer: (approvalId) => onApproval?.(approvalId),
+      pendingApprovalIds: settings.pendingApprovalIds,
+      onAnswer: (approvalId) => settings.onAnswer?.(approvalId),
     },
   );
+}
+
+/**
+ * The host-tool half of a turn nobody can answer: each tool whose own
+ * declaration asks is refused where it runs, with {@link DENY_UNANSWERED}'s
+ * reason in place of its result, and asks nothing. A function-form
+ * declaration counts as asking, as it does for `HarnessAgent`'s map.
+ */
+export function withDeniedGatedHostTools<T extends Record<string, unknown>>(
+  tools: T,
+): T {
+  const out: Record<string, unknown> = { ...tools };
+  for (const [name, tool] of Object.entries(tools)) {
+    const declared = (tool as { needsApproval?: unknown } | undefined)
+      ?.needsApproval;
+    if (declared !== true && typeof declared !== "function") continue;
+    out[name] = {
+      ...(tool as object),
+      needsApproval: false,
+      execute: async () => ({ error: SYNTHETIC_SESSION_APPROVAL_DENIAL }),
+    };
+  }
+  return out as T;
 }

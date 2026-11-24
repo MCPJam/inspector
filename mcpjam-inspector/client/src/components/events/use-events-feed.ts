@@ -17,6 +17,7 @@ import {
   parseGap,
 } from "@/lib/apis/mcp-events-api";
 import { errorMessage } from "./event-utils";
+import { observeLocalWebhookSubscription } from "./local-webhook-telemetry";
 
 /** Entries kept in memory for the feed view (newest win). */
 export const MAX_FEED_ENTRIES = 500;
@@ -188,6 +189,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
       switch (frame.type) {
         case "snapshot":
           if (Array.isArray(frame.subscriptions)) {
+            frame.subscriptions.forEach(observeLocalWebhookSubscription);
             callbacksRef.current.onSubscriptionsSnapshot?.(frame.subscriptions);
           }
           return;
@@ -198,6 +200,7 @@ export function useEventsFeed(options: UseEventsFeedOptions): EventsFeed {
         }
         case "subscription":
           if (isRecord(frame.subscription)) {
+            observeLocalWebhookSubscription(frame.subscription);
             callbacksRef.current.onSubscription?.(frame.subscription);
           }
           return;

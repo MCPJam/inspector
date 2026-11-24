@@ -361,6 +361,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // symptom is a Browser section that silently never appears rather than an
   // error anyone can see.
   "/api/v1/built-in-tools/",
+  // Signing a project's Claude web or ChatGPT web account in, saving it and
+  // handing it back. The routes verify this bearer themselves; without it
+  // every sign-in answers 401 and no browser opens. The local Inspector's
+  // `/api/web-clients/local-connectors` is not listed: it takes the session
+  // token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
@@ -375,6 +382,13 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // Approving a stdio server's command re-reads its row the same way, with
   // the caller's bearer. Without this entry Allow answers 401.
   "/api/mcp/servers/approve-command",
+  // Apps bridge observations for the server canvas: the route authorizes the
+  // server and checks the rollout with the caller's bearer.
+  "/api/mcp/server-features/observations",
+  // Server canvas Refresh: the route checks the rollout, authorizes the
+  // server and writes the new capture and probe results with the caller's
+  // bearer, so without this entry it answers 401.
+  "/api/mcp/servers/canvas/refresh",
   // Local chat re-calls Convex for host/scenario runtime config and
   // persistence, so resolve its bearer at request time as well.
   "/api/mcp/chat-v2",
@@ -467,10 +481,12 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // The /conformance page starting, polling, cancelling, resuming and reading
   // a directory-readiness run.
   /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report|resume))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/revisions(\/\d+\/diff)?$/,
   /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
   // The /readiness page's reviewer sign-in: a submission's attempts, one
-  // attempt, and resuming or cancelling it.
-  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel))?)?$/,
+  // attempt, resuming or cancelling it, and the handoff link a person
+  // finishes the sign-in with.
+  /^\/api\/v1\/projects\/[^/]+\/directory-submissions\/[^/]+\/reviewer-attempts(\/[^/]+(\/(resume|cancel|handoff))?)?$/,
   // The /readiness page: the flows it copies, and a project's directory
   // submissions with their runs, results, handoff summary, findings (one
   // check's under its id), export, events and snapshots.

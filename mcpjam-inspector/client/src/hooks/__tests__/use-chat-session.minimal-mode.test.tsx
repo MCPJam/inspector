@@ -531,7 +531,7 @@ describe("useChatSession minimal mode parity", () => {
     });
   });
 
-  it("uses saved MCP image policies when continuing a resumed session", async () => {
+  it("uses saved MCP image and discovery policies when continuing a resumed session", async () => {
     const selectedServers = ["server-1"];
     const currentHostPolicy = {
       directContent: { image: true },
@@ -558,6 +558,7 @@ describe("useChatSession minimal mode parity", () => {
         messagesBlobUrl: null,
         resumeConfig: {
           respectToolVisibility: false,
+          runUnloadedToolCalls: false,
           modelVisibleMcpToolResults: resumedPolicy,
           mcpToolResultImageRendering: { placement: "none" },
         },
@@ -577,6 +578,7 @@ describe("useChatSession minimal mode parity", () => {
       expect(getTransportRequests()).toContainEqual(
         expect.objectContaining({
           respectToolVisibility: false,
+          runUnloadedToolCalls: false,
           modelVisibleMcpToolResults: resumedPolicy,
           mcpToolResultImageRendering: { placement: "none" },
         })

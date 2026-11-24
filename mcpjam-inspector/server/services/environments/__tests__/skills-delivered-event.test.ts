@@ -234,7 +234,7 @@ describe("a harness eval turn", () => {
       execution: { harness: "claude-code" },
       harnessTurnsReport: true,
     });
-    return { run, skills };
+    return { skills };
   }
   const base = {
     ...NONE,
@@ -244,13 +244,9 @@ describe("a harness eval turn", () => {
   };
 
   it("reports what its box writer wrote instead of the plan", async () => {
-    const { run, skills } = await harnessIteration();
+    const { skills } = await harnessIteration();
     expect(capture).not.toHaveBeenCalled();
-    const written = await writeTurnToBox(
-      "claude-code",
-      { pinnedHarnessSkills: run.pinnedHarnessSkills },
-      fakeSkillBox(),
-    );
+    const written = await writeTurnToBox("claude-code", skills, fakeSkillBox());
     reportBoxSkillsDelivered("eval", skills, written);
     expect(sent()).toEqual([
       {
@@ -289,13 +285,9 @@ describe("a harness eval turn", () => {
   });
 
   it("counts a server skill as delivered only when the turn's tools served it", async () => {
-    const { run, skills } = await harnessIteration();
+    const { skills } = await harnessIteration();
     expect(skills.serverSkillsVia).toBe("harness-tools");
-    const written = await writeTurnToBox(
-      "claude-code",
-      { pinnedHarnessSkills: run.pinnedHarnessSkills },
-      fakeSkillBox(),
-    );
+    const written = await writeTurnToBox("claude-code", skills, fakeSkillBox());
     // Its name on the box would not count: nothing from a server is there.
     expect(written.delivered.map(({ name }) => name)).not.toContain("search");
     // A turn whose tools served nothing, as on a local eval.

@@ -120,6 +120,9 @@ function hostJsonToStrippedInput(json: HostJson): HostConfigInputV2 {
   if (json.respectToolVisibility !== undefined) {
     input.respectToolVisibility = json.respectToolVisibility;
   }
+  if (json.runUnloadedToolCalls !== undefined) {
+    input.runUnloadedToolCalls = json.runUnloadedToolCalls;
+  }
   if (json.modelVisibleMcpToolResults !== undefined) {
     input.modelVisibleMcpToolResults = json.modelVisibleMcpToolResults;
   }

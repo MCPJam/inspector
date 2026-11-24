@@ -366,6 +366,15 @@ describe("the OpenAI engine", () => {
     });
   }
 
+  it("does not claim account identity from an organization-only comparison", () => {
+    const result = openai({ ...VERIFIED, identity: {
+      outcome: "verified", expected: { organization: "Sample Org" }, observed: { organization: "Sample Org" },
+    } });
+    expect(finding(result, "both.reviewer.identity")).toMatchObject({
+      status: "satisfied", title: "The reviewer organization matches; account identity was not checked",
+    });
+  });
+
   it("grades the same reviewer path and holds it to the reviewer account", () => {
     expect(finding(openai(VERIFIED), "both.reviewer.identity").status).toBe(
       "satisfied"

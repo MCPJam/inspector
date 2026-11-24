@@ -2,6 +2,7 @@ const admission = vi.hoisted(() => ({ execution: vi.fn(() => ({ ok: true })), ha
 vi.mock("../harness-admission.js", async (original) => ({ ...await original<typeof import("../harness-admission.js")>(), checkEvalExecutionAdmission: admission.execution, checkEvalHarnessAdmission: admission.harness, casesAssertingWidgetRender: () => [], failRunBeforeExecution: admission.failed }));
 vi.mock("../../../utils/harness/harness-proxy-policy-enforcement.js", () => ({ harnessToolPolicyLaunchRefusal: admission.policy }));
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { ConvexError } from "convex/values";
 
 // Replays use the frozen client and environment; old backends fail closed
 // when they cannot identify the environment whose secrets would be delivered.
@@ -171,6 +172,35 @@ it.each(["execution", "harness", "policy"] as const)("refuses replay when %s adm
   expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
 });
 
+describe("a web client's replay", () => {
+  function replay(record: () => Promise<unknown>) {
+    admission.harness.mockReturnValueOnce({ ok: true, harness: "claude-web" } as never);
+    admission.failed.mockClear();
+    const mutation = vi.fn(async (_name: string, _args: unknown) => record());
+    const client = { ...(convexClient() as unknown as Record<string, unknown>), mutation };
+    const prepared = prepareSuiteReplayFromRun({ convexClient: client as never, convexAuthToken: "token", sourceRunId: "source-run-1" });
+    return { mutation, prepared };
+  }
+
+  it("freezes its web accounts before any turn", async () => {
+    const { mutation, prepared } = replay(async () => []);
+    await (await prepared).execute();
+    expect(mutation).toHaveBeenCalledWith("webClientSuites:recordWebAccountsAtRun", { runId: "replay-run-1", vendor: "claude" });
+    expect(runEvalSuiteWithAiSdkMock).toHaveBeenCalledOnce();
+  });
+
+  it("stops before any turn when the backend won't freeze them", async () => {
+    const { prepared } = replay(async () => {
+      throw new ConvexError({ code: "VALIDATION", message: "Web clients are off for this project." });
+    });
+    await expect(prepared).rejects.toMatchObject({ status: 400, message: "Web clients are off for this project." });
+    expect(admission.failed).toHaveBeenCalledWith(expect.anything(), expect.anything(), "replay-run-1", {
+      reason: "Web clients are off for this project.",
+    });
+    expect(runEvalSuiteWithAiSdkMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("prepareSuiteReplayFromRun — a replay that brings its own keys", () => {
   it("still reads the organization's AI-key policy and hands the runner its config", async () => {
     const strict = {
@@ -253,7 +283,9 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
       options.pinnedSkillSource.pins.map((pin: RunPinnedSkill) => pin.name),
     ).toEqual(["deploy"]);
     expect(
-      options.pinnedHarnessSkills.map((skill: { name: string }) => skill.name),
+      options.pinnedSkillSource.harnessSkills.map(
+        (skill: { name: string }) => skill.name,
+      ),
     ).toEqual(["deploy"]);
   });
 
@@ -267,7 +299,7 @@ describe("prepareSuiteReplayFromRun — the source run's skills", () => {
 
     const options = runEvalSuiteWithAiSdkMock.mock.calls[0]![0] as any;
     expect(options.pinnedSkillSource.pins).toEqual([]);
-    expect(options.pinnedHarnessSkills).toEqual([]);
+    expect(options.pinnedSkillSource.harnessSkills).toEqual([]);
   });
 
   it("stops before any model call when a frozen skill's file can't be read", async () => {

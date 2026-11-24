@@ -16,6 +16,8 @@ import {
 import { launchWorkspaceCandidate } from "./launch-workspace.mjs";
 import { resolveShutdownSettings } from "./shutdown-settings.mjs";
 import { computeInstanceEnv } from "./runtime-profile.mjs";
+import { createStartOutput, hasJsonFlag } from "./start-output.mjs";
+import { startHolderWatchdog } from "./holder-watchdog.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -52,9 +54,13 @@ const colors = {
   bgCyan: "\x1b[46m",
 };
 
+// Human progress goes to stdout; warnings and errors go to stderr. `--json`
+// drops the progress and adds machine-readable events (see start-output.mjs).
+const output = createStartOutput();
+
 // Utility functions for beautiful output
 function log(message, color = colors.reset) {
-  console.log(`${color}${message}${colors.reset}`);
+  output.out(`${color}${message}${colors.reset}`);
 }
 
 function printBanner() {
@@ -76,11 +82,11 @@ function logInfo(message) {
 }
 
 function logWarning(message) {
-  log(`⚠️  ${message}`, colors.yellow);
+  output.warn(`${colors.yellow}⚠️  ${message}${colors.reset}`);
 }
 
 function logError(message) {
-  log(`❌ ${message}`, colors.red);
+  output.error(message, `${colors.red}❌ ${message}${colors.reset}`);
 }
 
 function logStep(step, message) {
@@ -279,6 +285,29 @@ function normalizeBrowserBaseUrl(value) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Waits until the server on the port confirms THIS launch's session token, so
+ * another listener that won the port is never reported as this launch. Without
+ * a token (hosted mode) there is nothing to confirm and the TCP probe stands.
+ */
+async function confirmLaunchOwnership(host, port, token, signal, timeoutMs = 10000) {
+  if (!token) return true;
+  const deadline = Date.now() + timeoutMs;
+  while (!signal?.aborted && Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://${host}:${port}/api/session-token`, {
+        headers: { "X-MCP-Session-Auth": `Bearer ${token}` },
+        signal: AbortSignal.timeout(2000),
+      });
+      if (response.ok) return true;
+    } catch (error) {
+      if (process.env.DEBUG) logWarning(`Readiness check: ${error.message}`);
+    }
+    await new Promise((done) => setTimeout(done, 100));
+  }
+  return false;
 }
 
 async function resolveBrowserBaseUrl(apiBaseUrl) {
@@ -642,12 +671,20 @@ async function main() {
     return runHarnessSubcommand(rawArgs);
   }
 
-  // Show MCP banner at startup
-  console.clear();
-  printBanner();
-
   // Parse command line arguments
   const args = process.argv.slice(2);
+
+  // --json: stdout carries only the ready event, so no banner and no browser.
+  if (hasJsonFlag(args)) {
+    output.useJson();
+    output.addSecret(process.env.MCPJAM_SESSION_TOKEN);
+    process.on("exit", (code) => output.failOnExit(code));
+  } else {
+    // Show MCP banner at startup
+    console.clear();
+    printBanner();
+  }
+
   const envVars = {};
   let parsingFlags = true;
   let ollamaModel = null;
@@ -663,7 +700,8 @@ async function main() {
   let initialTab = null;
   let bearerToken = null;
   let useOAuth = false;
-  let openBrowser = process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1";
+  let openBrowser =
+    !output.json && process.env.MCPJAM_INSPECTOR_SUPPRESS_AUTO_OPEN !== "1";
   const customHeaders = [];
   let verboseLogs = false;
 
@@ -762,6 +800,11 @@ async function main() {
       continue;
     }
 
+    // Read before parsing by hasJsonFlag; skipped here.
+    if (parsingFlags && arg === "--json") {
+      continue;
+    }
+
     // New: --verbose flag to enable HTTP request logs in production
     if (parsingFlags && (arg === "--verbose" || arg === "-v")) {
       verboseLogs = true;
@@ -781,9 +824,9 @@ async function main() {
         const value = headerValue.substring(equalsIndex + 1);
         customHeaders.push({ key, value });
       } else {
-        logWarning(
-          `Invalid header format: ${headerValue}. Use "Key=Value" format.`,
-        );
+        // The value is not echoed: a curl-style "Authorization: Bearer ..."
+        // has no "=", and the credential would land in the terminal or logs.
+        logWarning('Invalid header format for -H. Use "Key=Value" format.');
       }
       continue;
     }
@@ -796,6 +839,7 @@ async function main() {
         const key = envVar.substring(0, equalsIndex);
         const value = envVar.substring(equalsIndex + 1);
         envVars[key] = value;
+        if (key === "MCPJAM_SESSION_TOKEN") output.addSecret(value);
       } else {
         envVars[envVar] = "";
       }
@@ -1079,6 +1123,19 @@ async function main() {
     process.on(signal, requestShutdown);
   }
 
+  // Started by a dev command: stay up while any dev command still holds it.
+  const holdersDir = process.env.MCPJAM_INSPECTOR_HOLDERS_DIR;
+  if (holdersDir) {
+    const stopHolderWatchdog = startHolderWatchdog({
+      dir: holdersDir,
+      onIdle: () => {
+        logInfo("No dev command is using MCPJam anymore. Stopping.");
+        requestShutdown();
+      },
+    });
+    abort.signal.addEventListener("abort", stopHolderWatchdog, { once: true });
+  }
+
   if (!orphanCheckDisabled && initialParentPid > 1) {
     parentWatcher = setInterval(() => {
       if (process.ppid !== initialParentPid) {
@@ -1130,6 +1187,7 @@ async function main() {
     // have no way back to where the user actually was.
     const launchWorkspace = launchWorkspaceCandidate({ projectRoot });
     const launchToken = createLaunchToken();
+    output.addSecret(launchToken);
     const serverProcess = spawn("node", [distServerPath], {
       env: {
         ...process.env,
@@ -1143,7 +1201,8 @@ async function main() {
         ...(verboseLogs && { VERBOSE_LOGS: "true" }),
       },
       cwd: projectRoot,
-      stdio: "inherit",
+      // With --json the server's own logs move to stderr, off the event stream.
+      stdio: output.json ? ["inherit", process.stderr, "inherit"] : "inherit",
     });
 
     let serverProcessClosed = false;
@@ -1156,23 +1215,22 @@ async function main() {
       }
     }
 
-    const serverExit = new Promise((resolve, reject) => {
+    // Resolves on every exit (never rejects), so an exit during startup is
+    // raced against readiness below instead of surfacing as an unhandled
+    // rejection while nothing is awaiting it yet.
+    const serverExit = new Promise((resolve) => {
       serverProcess.on("close", (code, signal) => {
         serverProcessClosed = true;
         clearForceKillTimer();
-        if (code === 0 || cancelled) {
-          resolve({ code, signal });
-        } else {
-          reject(
-            new Error(
-              signal
-                ? `Server process exited from signal ${signal}`
-                : `Server process exited with code ${code}`,
-            ),
-          );
-        }
+        resolve({ code, signal, failed: !(code === 0 || cancelled) });
       });
     });
+    const serverExitError = ({ code, signal }) =>
+      new Error(
+        signal
+          ? `Server process exited from signal ${signal}`
+          : `Server process exited with code ${code}`,
+      );
 
     function killServerProcess() {
       if (serverProcessClosed) return;
@@ -1213,20 +1271,39 @@ async function main() {
       const apiBaseUrl = process.env.BASE_URL || `http://${host}:${PORT}`;
 
       // Wait until the server is actually accepting connections
-      const ready = await waitForServerReady(
-        parseInt(PORT, 10),
-        host,
-        30000,
-        abort.signal,
-      );
+      const ready = await Promise.race([
+        waitForServerReady(parseInt(PORT, 10), host, 30000, abort.signal).then(
+          (listening) =>
+            listening &&
+            confirmLaunchOwnership(host, parseInt(PORT, 10), launchToken, abort.signal),
+        ),
+        serverExit.then((exit) => {
+          // Any exit before the server is listening is a failed start, even a
+          // clean one; only a shutdown this process asked for is not.
+          if (!cancelled) throw serverExitError(exit);
+          return false;
+        }),
+      ]);
 
-      if (!ready && !cancelled) {
+      if (!ready && !cancelled && output.json) {
+        throw new Error(
+          `Server did not become ready within 30s at ${apiBaseUrl}`,
+        );
+      } else if (!ready && !cancelled) {
         logWarning(
           `Server did not become ready within 30s. Please visit ${apiBaseUrl} manually.`,
         );
       } else if (!cancelled) {
+        report: {
         const base = await resolveBrowserBaseUrl(apiBaseUrl);
+        // A shutdown during the lookup is not a launch to report. A server
+        // that exited during it is a failed start, whatever its exit code.
+        if (serverProcessClosed && !cancelled) {
+          throw serverExitError(await serverExit);
+        }
+        if (cancelled) break report;
         const url = createAccessLink(base, launchToken, initialTab);
+        output.ready({ url, port: Number(PORT) });
         const docker = process.env.DOCKER_CONTAINER === "true";
         let opened = false;
         if (openBrowser && !docker) {
@@ -1263,11 +1340,13 @@ async function main() {
               "Using another port or computer? Keep the #token=… part and change the address.",
             );
         }
+        }
       }
     }
 
     // Wait for the server process to exit
     const result = await serverExit;
+    if (result.failed) throw serverExitError(result);
     if (cancelled) {
       if (result.signal === "SIGKILL") {
         logWarning("Server process was force-killed after shutdown timeout");
@@ -1305,7 +1384,12 @@ main()
     process.exit(0);
   })
   .catch((e) => {
+    output.fail(e.message);
     logError("Fatal error occurred");
     logError(e.stack || e.message);
-    process.exit(1);
+    // An empty write completes after the writes queued before it, so a pipe
+    // that was full still receives the error record. The timer is the way out
+    // if the reader never drains.
+    setTimeout(() => process.exit(1), 2000);
+    process.stderr.write("", () => process.exit(1));
   });

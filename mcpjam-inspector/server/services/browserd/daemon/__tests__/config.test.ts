@@ -40,6 +40,8 @@ describe("readBrowserdConfig", () => {
       headless: false,
       windowSize: undefined,
       contextMode: "persistent",
+      // Open unless the boot asks for the public-only network.
+      networkPolicy: "open",
       // Video needs the browser to fill the display, and that is opt-in: a box
       // booted without it refuses video rather than streaming a picture whose
       // coordinates do not match the page.
@@ -55,6 +57,8 @@ describe("readBrowserdConfig", () => {
       recordingEnabled: true,
       // An inspector replica handed us a token; nothing was minted here.
       startedBy: "inspector",
+      // The profile an earlier boot left is kept unless the boot asks.
+      freshProfile: false,
     });
   });
 
@@ -64,10 +68,28 @@ describe("readBrowserdConfig", () => {
     );
     expect(c.recordDir).toBe("/data/profile/recordings");
     expect(
-      readBrowserdConfig(
-        withToken({ MCPJAM_BROWSERD_RECORD_DIR: "/evidence" }),
-      ).recordDir,
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD_DIR: "/evidence" }))
+        .recordDir,
     ).toBe("/evidence");
+  });
+
+  it("keeps the browser to public addresses only when the boot says exactly so", () => {
+    const policy = (value?: string) =>
+      readBrowserdConfig(
+        withToken(
+          value === undefined ? {} : { MCPJAM_BROWSERD_NETWORK: value },
+        ),
+      ).networkPolicy;
+    expect(policy("public")).toBe("public");
+    // A caller that needs it checks the announcement, so a typo fails there.
+    expect(policy("Public")).toBe("open");
+    expect(policy()).toBe("open");
+    expect(
+      announcedFeatures(
+        { kiosk: false, recordingEnabled: false, networkPolicy: "public" },
+        {},
+      ),
+    ).toEqual(["network-public-only"]);
   });
 
   it("only the exact string turns recording off", () => {
@@ -99,9 +121,8 @@ describe("readBrowserdConfig", () => {
     // have silently abolished it.
     for (const raw of ["", "lots", "-5", "0", "0.5", String(1024 ** 4)]) {
       expect(
-        readBrowserdConfig(
-          withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: raw }),
-        ).recordMaxBytes,
+        readBrowserdConfig(withToken({ MCPJAM_BROWSERD_RECORD_MAX_BYTES: raw }))
+          .recordMaxBytes,
         `raw=${raw}`,
       ).toBe(DEFAULT_BROWSERD_RECORD_MAX_BYTES);
     }
@@ -373,7 +394,11 @@ describe("parseBrowserdFeatures", () => {
   it("turns on an opt-in feature only when it is named", () => {
     expect(
       parseBrowserdFeatures({ MCPJAM_BROWSERD_FEATURES: " keystrokeTyping " }),
-    ).toEqual({ a11yFrames: true, scrollableMarkers: true, keystrokeTyping: true });
+    ).toEqual({
+      a11yFrames: true,
+      scrollableMarkers: true,
+      keystrokeTyping: true,
+    });
   });
 
   it("ignores names it does not know rather than refusing to boot", () => {

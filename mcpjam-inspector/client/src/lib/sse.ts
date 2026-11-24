@@ -1,9 +1,9 @@
 import { SSEvent } from "@/shared/sse";
 
 // Parses a ReadableStream of text/event-stream and yields parsed SSE events.
-export async function* parseSSEStream(
+export async function* parseSSEStream<T = SSEvent>(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-): AsyncGenerator<SSEvent | "[DONE]"> {
+): AsyncGenerator<T | "[DONE]"> {
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -25,7 +25,7 @@ export async function* parseSSEStream(
           return;
         }
         try {
-          const evt = JSON.parse(data) as SSEvent;
+          const evt = JSON.parse(data) as T;
           yield evt;
         } catch {
           // ignore parse errors for malformed lines

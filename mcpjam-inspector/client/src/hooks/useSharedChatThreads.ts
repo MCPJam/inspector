@@ -344,6 +344,8 @@ export function useSharedChatWidgetSnapshots({
 }
 
 export interface SharedChatTurnTrace {
+  runUnloadedToolCalls?: boolean;
+  engineVersion?: string;
   turnId: string;
   promptIndex: number;
   startedAt: number;

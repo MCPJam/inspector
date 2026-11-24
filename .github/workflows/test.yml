@@ -246,6 +246,35 @@ jobs:
             npm run test:ci:rest
           fi
 
+  # Node 26 bundles undici 8, whose fetch negotiates HTTP/2, and the CLI's
+  # `engines` admits Node 26. Every other job here runs Node 24, so this is the
+  # one that exercises the HTTP/2 path (CQT-216, nodejs/undici#6143), and the
+  # SDK suite is quick enough to run whole. Pinned: bumping it is the moment to
+  # check whether the undici fix has shipped.
+  node26:
+    needs: scope
+    if: >-
+      !cancelled() && (needs.scope.result != 'success' || needs.scope.outputs.rest == 'full')
+    runs-on: ${{ vars.TEST_RUNNER || 'blacksmith-4vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    name: SDK tests on Node 26
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26.13.1"
+          cache: npm
+      - name: Install workspace dependencies
+        run: npm ci --ignore-scripts --legacy-peer-deps
+      # Some SDK suites import the built package (`sdk/dist`); the main job
+      # gets it from `test:checks`, this one has to build it.
+      - name: Build the SDK
+        run: npm run build -w @mcpjam/evaluators && npm run build -w @mcpjam/sdk
+      - name: Run the SDK suite on Node 26
+        run: npm run test -w @mcpjam/sdk
+
   packaging:
     needs: scope
     if: >-

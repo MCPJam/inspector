@@ -25,6 +25,7 @@ import {
   readComparisonAuthRecovery,
   registerComparisonColumn,
   prepareComparisonAuthRecovery,
+  type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
 import { getCachedChatHistoryDetail } from "@/components/chat-v2/history/chat-history-prefetch";
 import {
@@ -61,10 +62,15 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
+import { useLatestTurnCost } from "@/components/chat-v2/compare-cost";
+import { useCompareCardStatus } from "@/components/chat-v2/compare-card-status";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { getChatComposerInteractivity } from "@/hooks/use-chat-stop-controls";
+import {
+  getChatComposerInteractivity,
+  useCompareStopRequest,
+} from "@/hooks/use-chat-stop-controls";
 import type { ExecutionConfig } from "@/lib/chat-execution-config";
 import type { HostedRuntimeContext } from "@/lib/hosted-runtime-context";
 import type { OrgVisibleConfig } from "@/components/chat-v2/shared/model-helpers";
@@ -180,6 +186,18 @@ interface MultiModelPlaygroundCardProps {
   } | null;
   browserWorkspace?: { id: string; order: number; clientCount: number };
   /**
+   * A comparison being restored; read once when the column mounts. Null means
+   * none; left out, the column reads the sign-in copy in sessionStorage.
+   */
+  comparisonRecovery?: ComparisonAuthRecovery | null;
+  /** Told once the column has taken its entry from `comparisonRecovery`. */
+  onRecoveryColumnRead?: (columnKey: string) => void;
+  /**
+   * This column's position in its multi-model session; only ever grows.
+   * Absent when the feature is off, and then the column saves no group.
+   */
+  multiModelPosition?: number;
+  /**
    * Polymorphic column identity (Phase 3 of the multi-host plan). In model
    * mode it's the card's `comparisonKey` (the bare model id for a default
    * selection, so Sonnet·Low and Sonnet·High are two columns); in host mode
@@ -281,6 +299,12 @@ interface MultiModelPlaygroundCardProps {
   compareEnterMessages?: UIMessage[];
   addColumnSeed?: { version: number; messages: UIMessage[] } | null;
   onTranscriptSync?: (compareId: string, messages: UIMessage[]) => void;
+  /** Called with this card's own session once a turn stops streaming. */
+  onTurnSettled?: (
+    compareId: string,
+    chatSessionId: string,
+    messages: UIMessage[],
+  ) => void;
   /**
    * Optional per-column host snapshot. Consolidates what Phase 3 had as
    * five separate optional props with `*Set` discriminator booleans
@@ -336,6 +360,9 @@ export function MultiModelPlaygroundCard({
   readinessNotice,
   extensionBinding = null,
   browserWorkspace,
+  comparisonRecovery,
+  onRecoveryColumnRead,
+  multiModelPosition,
   compareId,
   compareLabel,
   compareKind,
@@ -381,6 +408,7 @@ export function MultiModelPlaygroundCard({
   compareEnterMessages = [],
   addColumnSeed = null,
   onTranscriptSync,
+  onTurnSettled,
   hostSnapshot,
   hostCapsResolver,
   modelPicked = false,
@@ -434,6 +462,9 @@ export function MultiModelPlaygroundCard({
   const [injectedToolRenderOverrides, setInjectedToolRenderOverrides] =
     useState<Record<string, ToolRenderOverride>>({});
   const lastExecutionRequestIdRef = useRef<number | null>(null);
+  // The broadcast this card's latest prompt answers. A follow-up sent to this
+  // card alone, or a reset thread, answers none, so it never ranks on cost.
+  const [broadcastId, setBroadcastId] = useState<number>();
   // Read when a restore fails, after the props it closed over may have moved.
   // Set at commit, so a render React discards never counts as received.
   const broadcastRequestRef = useRef(broadcastRequest);
@@ -512,12 +543,19 @@ export function MultiModelPlaygroundCard({
       : pluginComputerAttached,
   });
   const [recoveryColumn] = useState(() =>
-    readComparisonAuthRecovery(
-      hostedContext?.projectId ?? "local",
+    (comparisonRecovery !== undefined
+      ? comparisonRecovery
+      : readComparisonAuthRecovery(hostedContext?.projectId ?? "local")
     )?.columns.find(
       (column) => column.compareId === compareId && column.kind === compareKind,
     ),
   );
+  const readRecoveryColumnKey = recoveryColumn
+    ? `${compareKind}:${compareId}`
+    : null;
+  useEffect(() => {
+    if (readRecoveryColumnKey) onRecoveryColumnRead?.(readRecoveryColumnKey);
+  }, [onRecoveryColumnRead, readRecoveryColumnKey]);
   const [recoveryStatus, setRecoveryStatus] = useState<
     "loading" | "ready" | "failed"
   >(recoveryColumn ? "loading" : "ready");
@@ -540,6 +578,21 @@ export function MultiModelPlaygroundCard({
           )
         : { ok: true as const },
     [browserWorkspace?.id, browserWorkspace?.clientCount, compareId],
+  );
+  // The comparison id is the multi-model session's group: a restored
+  // comparison keeps the id it was saved under, so its columns stay together.
+  const browserWorkspaceId = browserWorkspace?.id;
+  const multiModelColumn = useMemo(
+    () =>
+      browserWorkspaceId !== undefined && multiModelPosition !== undefined
+        ? {
+            groupId: browserWorkspaceId,
+            position: multiModelPosition,
+            columnKind: compareKind,
+            compareId,
+          }
+        : undefined,
+    [browserWorkspaceId, multiModelPosition, compareKind, compareId],
   );
   const {
     messages,
@@ -564,6 +617,7 @@ export function MultiModelPlaygroundCard({
     harnessStartupPhase,
     loadChatSession,
     selectedModel,
+    consumeTurnAborted,
   } = useChatSession({
     pickedModelSelection: selection,
     inheritedEnvironmentModel,
@@ -575,6 +629,7 @@ export function MultiModelPlaygroundCard({
     pluginContextReferences: currentLaneContext,
     // A comparison column never shares the member's one personal computer.
     comparePane: true,
+    multiModelColumn,
     prepareAuthRecovery,
     authRecoveryPaused: recoveryStatus !== "ready",
     selectedServers,
@@ -598,12 +653,14 @@ export function MultiModelPlaygroundCard({
     fixedReasoningEffort: reasoningEffort ?? null,
     // Undefined preserves the orchestrator's automatic policy.
     progressiveToolDiscovery: hostCapsResolver?.progressiveToolDiscovery,
+    runUnloadedToolCalls: hostCapsResolver?.runUnloadedToolCalls,
     respectToolVisibility: hostCapsResolver?.respectToolVisibility,
     modelVisibleMcpToolResults: resolvedModelVisibleMcpToolResults,
     onReset: () => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
       setInjectedToolRenderOverrides({});
+      setBroadcastId(undefined);
     },
   });
 
@@ -849,6 +906,19 @@ export function MultiModelPlaygroundCard({
   }, [messages, compareId, compareKind, compareEnterMessages, onTranscriptSync]);
 
   useEffect(() => {
+    if (isStreaming || messages.length === 0) return;
+    onTurnSettled?.(compareId, chatSessionId, messages);
+  }, [isStreaming, messages, compareId, chatSessionId, onTurnSettled]);
+
+  // An empty transcript tells the parent this lane's session is gone.
+  const onTurnSettledRef = useRef(onTurnSettled);
+  onTurnSettledRef.current = onTurnSettled;
+  useEffect(
+    () => () => onTurnSettledRef.current?.(compareId, chatSessionId, []),
+    [compareId, chatSessionId],
+  );
+
+  useEffect(() => {
     // A restored column loads its own history instead of any seed.
     if (recoveryColumn) return;
     if (compareKind === "host") {
@@ -933,6 +1003,14 @@ export function MultiModelPlaygroundCard({
   const latestTurnDurationMs = latestTurn?.durationMs ?? null;
   const latestTurnTokens = latestTurn?.usage?.totalTokens ?? 0;
   const latestTurnToolCount = latestTurn?.actualToolCalls?.length ?? 0;
+  const latestTurnCost = useLatestTurnCost(effectiveLiveTraceEnvelope);
+  const cardStatus = useCompareCardStatus({
+    failed: Boolean(error),
+    isStreaming,
+    isBusy: isExecuting,
+    isThreadEmpty,
+    consumeTurnAborted,
+  });
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
       // `MultiModelCardSummary.modelId` is the legacy field name; in
@@ -943,21 +1021,17 @@ export function MultiModelPlaygroundCard({
       durationMs: latestTurnDurationMs,
       tokens: latestTurnTokens,
       toolCount: latestTurnToolCount,
-      status: error
-        ? "error"
-        : isStreaming || isExecuting
-          ? "running"
-          : isThreadEmpty
-            ? "idle"
-            : "ready",
+      broadcastId,
+      ...(latestTurnCost ? { cost: latestTurnCost } : {}),
+      status: cardStatus,
       hasMessages: !isThreadEmpty,
     }),
     [
+      broadcastId,
+      cardStatus,
       compareId,
-      error,
-      isExecuting,
-      isStreaming,
       isThreadEmpty,
+      latestTurnCost,
       latestTurnDurationMs,
       latestTurnTokens,
       latestTurnToolCount,
@@ -1042,6 +1116,7 @@ export function MultiModelPlaygroundCard({
     if (!claimBroadcastDelivery?.(broadcastRequest)) return;
     // A column whose restore failed runs the next turn as a fresh column.
     if (recoveryStatus === "failed") setRecoveryStatus("ready");
+    setBroadcastId(broadcastRequest.id);
 
     if (broadcastRequest.prependMessages.length > 0) {
       setMessages((previous) => [
@@ -1194,17 +1269,12 @@ export function MultiModelPlaygroundCard({
     }
   }, [hasTraceSnapshot]);
 
-  useEffect(() => {
-    if (stopRequestId <= 0) {
-      return;
-    }
-
-    stop();
-  }, [stop, stopRequestId]);
+  useCompareStopRequest(stopRequestId, stop);
 
   const handleSendFollowUp = useCallback(
     (text: string) => {
       if (!canInvoke()) return;
+      setBroadcastId(undefined);
       sendMessage({
         text,
         metadata: outgoingSenderMetadata,

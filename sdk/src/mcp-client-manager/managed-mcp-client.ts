@@ -413,3 +413,34 @@ export class ProtocolVersionPinUnsupported extends Error {
     this.supportedVersions = supported;
   }
 }
+
+/**
+ * An unpinned HTTP connect was answered with the modern "protocol version not
+ * supported" error (JSON-RPC `-32022`).
+ *
+ * That error identifies a modern server, so the connect does not go on to the
+ * older HTTP+SSE transport: that fallback is for a server that turned out to
+ * be a legacy one. When `supportedVersions` holds a 2025-era version the
+ * caller retries once with the legacy handshake; otherwise this is the answer
+ * the user gets. `cause` is the server's refusal.
+ */
+export class ModernProtocolVersionRefused extends Error {
+  readonly serverId: string;
+  /** What the server said it supports, when it said so. */
+  readonly supportedVersions: readonly string[];
+  constructor(
+    serverId: string,
+    options?: { cause?: unknown; supportedVersions?: readonly string[] }
+  ) {
+    const supported = options?.supportedVersions ?? [];
+    super(
+      `MCP server "${serverId}" doesn't support an MCP protocol version this client speaks.${
+        supported.length > 0 ? ` It offers ${supported.join(", ")}.` : ""
+      }`,
+      options
+    );
+    this.name = "ModernProtocolVersionRefused";
+    this.serverId = serverId;
+    this.supportedVersions = supported;
+  }
+}

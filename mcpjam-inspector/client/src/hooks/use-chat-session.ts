@@ -2,6 +2,7 @@ import { useCursorModels } from "./use-cursor-models";
 import { isRuntimeAccountModel } from "@/shared/model-provider";
 import { reportCaught } from "@/lib/error-reporting";
 import { useHarnessApprovalStop } from "./use-harness-approval-stop";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 import { isHarness } from "@mcpjam/sdk/host-config/internal";
 import { createTurnAuthorizationRenewal } from "@/lib/turn-authorization-renewal";
 import { createPersistReceiptRecovery } from "@/lib/persist-receipt-recovery";
@@ -151,6 +152,7 @@ import {
   noRunnableHarnessModel,
   type HarnessModelTarget,
 } from "@/lib/harness-model-locks";
+import type { ModelSelectorHarnessScope } from "@/components/chat-v2/chat-input/model-selector";
 import {
   getDefaultModel,
   isMCPJamProvidedModelMenuItem,
@@ -239,7 +241,11 @@ import {
   useTrafficLogStore,
 } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import type { ChatRewind, WidgetModelContextEntry } from "@/shared/chat-v2";
+import type {
+  ChatMultiModelColumn,
+  ChatRewind,
+  WidgetModelContextEntry,
+} from "@/shared/chat-v2";
 import {
   isScopeStepUpDataPart,
   isScopeStepUpFinishedDataPart,
@@ -425,10 +431,10 @@ const SANDBOX_NOTICE_MESSAGES: Record<SandboxNoticeReason, string> = {
 // local to avoid coupling the hook to the registry's `__internal` export.
 const APP_TOOL_ALIAS_REGEX = /^app_[a-z0-9]{8}$/i;
 
-function resolveSystemPrompt(value: string | null | undefined): string {
+function resolveSystemPrompt(value: string | null | undefined, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0
     ? value
-    : DEFAULT_SYSTEM_PROMPT;
+    : fallback;
 }
 
 function getOrgProviderKeyForModel(model: ModelDefinition): string | null {
@@ -657,6 +663,7 @@ export interface UseChatSessionOptions {
    * affect the next send without remounting.
    */
   respectToolVisibility?: boolean;
+  runUnloadedToolCalls?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   /** Host-level UI rendering policy for MCP tool-returned images. */
@@ -677,6 +684,8 @@ export interface UseChatSessionOptions {
    * its own. Read through a ref so it reaches the body builder at POST time.
    */
   comparePane?: boolean;
+  /** Saves this chat as a column of a multi-model session. */
+  multiModelColumn?: ChatMultiModelColumn;
   /**
    * Definitions for those built-in tools, as the model is shown them — used by
    * the RAW view of a reopened session and nowhere else.
@@ -775,6 +784,12 @@ export interface UseChatSessionReturn {
     /** Ephemeral SEP-1865 widget context for the next model turn. */
     pluginMessage?: PluginMessageIntent;
     isCurrent?: () => boolean;
+    /**
+     * Prompt and skill turns for this send. Written into the thread only
+     * after the dispatch-time admission check, so a refused send does not
+     * leave them behind for the next try to append again.
+     */
+    prependMessages?: UIMessage[];
 
     pluginMentions?: PluginMentionSelection[];
     /** Items an App's editable draft left in the composer, sent as-is. */
@@ -858,6 +873,8 @@ export interface UseChatSessionReturn {
   multiModelEnabled: boolean;
   setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
+  /** The client `availableModels` is locked for, for the model picker. */
+  modelHarnessScope: ModelSelectorHarnessScope;
   /** The authorized catalog before this session's harness filter. */
   catalogModels: ModelDefinition[];
   isMcpJamModel: boolean;
@@ -975,6 +992,7 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         respectToolVisibility?: boolean;
+        runUnloadedToolCalls?: boolean;
         modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
         mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
         selectedServers?: string[];
@@ -2200,9 +2218,9 @@ export function useChatSession(
   appToolsRegistryRef.current = appToolsRegistry;
   const appState = useMaybeSharedAppState();
   const initialModelId = executionConfig?.modelId;
-  const initialSystemPrompt = resolveSystemPrompt(
-    executionConfig?.systemPrompt,
-  );
+  const defaultSystemPrompt = isWebClientRuntimeId(harnessModelTarget?.harnessId)
+    ? ""
+    : DEFAULT_SYSTEM_PROMPT;
   const initialTemperature = executionConfig?.temperature ?? 0.7;
   const initialRequireToolApproval =
     executionConfig?.requireToolApproval ?? false;
@@ -2248,10 +2266,8 @@ export function useChatSession(
   const authIsMemberRef = useRef(false);
   const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
     useState(false);
-  const [systemPrompt, setSystemPromptState] = useState(initialSystemPrompt);
-  const setSystemPrompt = useCallback((prompt: string) => {
-    setSystemPromptState(resolveSystemPrompt(prompt));
-  }, []);
+  const [configuredSystemPrompt, setSystemPrompt] = useState(executionConfig?.systemPrompt ?? "");
+  const systemPrompt = resolveSystemPrompt(configuredSystemPrompt, defaultSystemPrompt);
   const [temperatureOverride, setTemperatureOverride] = useState<number | undefined>(undefined);
   /**
    * The scenario whose transcript this surface may resume across a refresh, or
@@ -2455,6 +2471,11 @@ export function useChatSession(
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
+  const runUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  const resumedRunUnloadedToolCallsRef = useRef<boolean | undefined>(undefined);
+  runUnloadedToolCallsRef.current =
+    options.runUnloadedToolCalls ??
+    options.executionConfig?.runUnloadedToolCalls;
   const progressiveToolDiscoveryRef = useRef<boolean | undefined>(undefined);
   // Prefer the top-level option when set (used by paths that don't go
   // through ExecutionConfig — e.g. the playground per-host column), but
@@ -2502,6 +2523,8 @@ export function useChatSession(
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const comparePaneRef = useRef(false);
   comparePaneRef.current = options.comparePane === true;
+  const multiModelColumnRef = useRef(options.multiModelColumn);
+  multiModelColumnRef.current = options.multiModelColumn;
   // Read through a ref for the same reason the ids above are: the transport's
   // body builder is created once and must see the CURRENT value at POST time,
   // not the one captured when the transport was memoized.
@@ -3310,6 +3333,19 @@ export function useChatSession(
         { requireOrgKeys },
       ),
     [composedModels, baseModels, harnessId, harnessRuntimeVersion, requireOrgKeys],
+  );
+  // The same target, for the picker: `availableModels` is already locked for
+  // it, and passing it on keeps the picker honest if a caller mixes in rows.
+  const modelHarnessScope = useMemo<ModelSelectorHarnessScope>(
+    () => ({
+      targets: [
+        harnessId
+          ? { harnessId, runtimeVersion: harnessRuntimeVersion }
+          : null,
+      ],
+      purpose: "chat",
+    }),
+    [harnessId, harnessRuntimeVersion],
   );
 
   // Compatibility ids can name several providers; keep their hint in state so
@@ -4296,6 +4332,7 @@ export function useChatSession(
             : {}),
           requireToolApproval: requireToolApprovalRef.current,
           respectToolVisibility: respectToolVisibilityRef.current,
+          runUnloadedToolCalls: runUnloadedToolCallsRef.current ?? resumedRunUnloadedToolCallsRef.current,
           ...(modelVisibleMcpToolResultsRef.current !== undefined
             ? {
                 modelVisibleMcpToolResults:
@@ -4331,6 +4368,9 @@ export function useChatSession(
             : {}),
           ...(rewind ? { rewind } : {}),
           ...(comparePaneRef.current ? { comparePane: true } : {}),
+          ...(multiModelColumnRef.current
+            ? { multiModel: multiModelColumnRef.current }
+            : {}),
           // Preserve []: it explicitly disables the client's built-in tools.
           ...(builtInToolIdsRef.current !== undefined
             ? { builtInToolIds: builtInToolIdsRef.current }
@@ -5500,6 +5540,14 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // The SDK status reaches React after admission. Hold a synchronous lease so
+  // manual and event sends cannot both enter that gap in the same conversation.
+  const activeSendSessions = useRef(new Set<string>());
+  const canStartTurn = useCallback(() =>
+    !activeSendSessions.current.has(chatSessionIdRef.current) &&
+    statusRef.current !== "submitted" && statusRef.current !== "streaming",
+  []);
+
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
     (options: {
@@ -5513,6 +5561,7 @@ export function useChatSession(
       metadata?: Record<string, unknown>;
       pluginMessage?: PluginMessageIntent;
       isCurrent?: () => boolean;
+      prependMessages?: UIMessage[];
       pluginMentions?: PluginMentionSelection[];
       extraParts?: UIMessage["parts"];
       widgetModelContext?: WidgetModelContextEntry[];
@@ -5525,6 +5574,7 @@ export function useChatSession(
         widgetModelContext,
         pluginMessage,
         isCurrent,
+        prependMessages,
         pluginMentions,
         extraParts,
       } = options;
@@ -5540,7 +5590,7 @@ export function useChatSession(
       // (Only genuinely NEW user turns flow through this wrapper; in-turn
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
-      if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (!canStartTurn() || (isCurrent && !isCurrent())) return Promise.resolve(false);
       if (hiddenEnvironmentActive && hostedHiddenEnvironment?.blockingError) {
         toast.error(hostedHiddenEnvironment.blockingError);
         return Promise.resolve(false);
@@ -5674,11 +5724,18 @@ export function useChatSession(
           );
           return false;
         }
+        let admitted = false;
         try {
-          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
+          if (!canStartTurn() || !sendIsCurrent() || (isCurrent && !isCurrent())) {
             pendingWidgetModelContextRef.current = undefined;
             resolvedHostedServersRef.current = null;
             return false;
+          }
+          // History for this request, written only once the send is admitted.
+          // The session, target, and preparation checks above already ran.
+          // Appending grows the thread, so this does not fork the session.
+          if (prependMessages?.length) {
+            setMessages((prev) => [...prev, ...prependMessages]);
           }
           savedClientSendGuard.assertCurrent();
           const timestampedMetadata = withMessageTimestampMetadata(
@@ -5730,6 +5787,8 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          activeSendSessions.current.add(sessionAtSend);
+          admitted = true;
           let sent: Promise<void>;
           if (pluginMessage) {
             sent = baseSendMessage(
@@ -5757,6 +5816,8 @@ export function useChatSession(
           } else {
             sent = baseSendMessage({ text, ...extra }, requestOptions);
           }
+          const release = () => { activeSendSessions.current.delete(sessionAtSend); };
+          void Promise.resolve(sent).then(release, release);
           if (cancelClaim) {
             // The settle effect then clears the marker once the server's
             // finished part or the call's result arrived, and otherwise
@@ -5771,6 +5832,7 @@ export function useChatSession(
             void Promise.resolve(sent).then(settle, settle);
           }
         } catch (error) {
+          if (admitted) activeSendSessions.current.delete(sessionAtSend);
           pendingWidgetModelContextRef.current = undefined;
           resolvedHostedServersRef.current = null;
           throw error;
@@ -5782,6 +5844,8 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      canStartTurn,
+      setMessages,
       savedClientSendGuard,
       sendPreparationGuard,
       hostedEnsureServerIds,
@@ -5817,6 +5881,7 @@ export function useChatSession(
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
     clearPendingSessionHydration();
+    resumedRunUnloadedToolCallsRef.current = undefined;
     resumedModelVisibleMcpToolResultsRef.current = undefined;
     resumedMcpToolResultImageRenderingRef.current = undefined;
     rewindRef.current = null;
@@ -5953,6 +6018,7 @@ export function useChatSession(
       },
     ) => {
       skipNextForkDetectionRef.current = true;
+      resumedRunUnloadedToolCallsRef.current = undefined;
       resumedModelVisibleMcpToolResultsRef.current = undefined;
       resumedMcpToolResultImageRenderingRef.current = undefined;
       rewindRef.current = null;
@@ -6222,6 +6288,7 @@ export function useChatSession(
           reasoningEffort?: string;
           requireToolApproval?: boolean;
           respectToolVisibility?: boolean;
+          runUnloadedToolCalls?: boolean;
           modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
           mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
           selectedServers?: string[];
@@ -6371,6 +6438,7 @@ export function useChatSession(
         if (session.resumeConfig?.respectToolVisibility !== undefined) {
           setRespectToolVisibility(session.resumeConfig.respectToolVisibility);
         }
+        resumedRunUnloadedToolCallsRef.current = session.resumeConfig?.runUnloadedToolCalls;
         resumedModelVisibleMcpToolResultsRef.current =
           session.resumeConfig?.modelVisibleMcpToolResults;
         resumedMcpToolResultImageRenderingRef.current =
@@ -6419,7 +6487,7 @@ export function useChatSession(
   const executionRespectToolVisibility = executionConfig?.respectToolVisibility;
   useEffect(() => {
     if (!isExecutionConfigControlled) return;
-    setSystemPrompt(executionSystemPrompt ?? DEFAULT_SYSTEM_PROMPT);
+    setSystemPrompt(executionSystemPrompt ?? "");
   }, [isExecutionConfigControlled, executionSystemPrompt, setSystemPrompt]);
 
   useEffect(() => {
@@ -6439,6 +6507,24 @@ export function useChatSession(
     setRespectToolVisibility(executionRespectToolVisibility ?? true);
   }, [isExecutionConfigControlled, executionRespectToolVisibility]);
 
+  // Only auth and scope rerun this effect. The id, not the user object, since
+  // AuthKit hands back a new object for the same member on refresh; and the
+  // reset helpers through a ref, since opening a conversation swaps the chat
+  // and with it their identities. Each rerun briefly clears the bootstrap and
+  // unmounts what it gates, Sessions included.
+  const workOsUserId = workOsUser?.id;
+  const bootstrapResetRef = useRef({
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  });
+  bootstrapResetRef.current = {
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  };
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
@@ -6511,7 +6597,7 @@ export function useChatSession(
         const hasResolvedBefore = hasResolvedAuthHeadersRef.current;
         const resolvedMemberId =
           resolvedAuthHeaders && authIsMemberRef.current
-            ? workOsUser?.id
+            ? workOsUserId
             : undefined;
         // Token rotation updates transport headers, but must not discard the
         // same member's transcript or detach its pending authorization call.
@@ -6541,12 +6627,13 @@ export function useChatSession(
         ) {
           invalidateChatHistoryPrefetch();
           skipNextForkDetectionRef.current = true;
-          clearPendingSessionHydration();
+          const reset = bootstrapResetRef.current;
+          reset.clearPendingSessionHydration();
           setChatSessionId(generateId());
-          setMessages([]);
+          reset.setMessages([]);
           setPersistedSnapshotToolCallIds([]);
-          syncResumedVersion(null);
-          syncRestoredToolRenderOverrides({});
+          reset.syncResumedVersion(null);
+          reset.syncRestoredToolRenderOverrides({});
           onResetRef.current?.("auth-bootstrap");
         }
 
@@ -6584,11 +6671,7 @@ export function useChatSession(
     hostedProjectId,
     isAuthenticated,
     isHostedGuest,
-    workOsUser,
-    clearPendingSessionHydration,
-    setMessages,
-    syncResumedVersion,
-    syncRestoredToolRenderOverrides,
+    workOsUserId,
   ]);
 
   // Fetch tools metadata
@@ -6940,7 +7023,7 @@ export function useChatSession(
   // a client or an environment. A plugin chat's hidden environment is left out.
   const harnessBoxPreparation: HarnessBoxPreparationRequest | null =
     HOSTED_MODE && isAuthenticated && hostedProjectId && !hostedScenarioId &&
-    (harnessId === "claude-code" || harnessId === "codex") &&
+    isHarness(harnessId) &&
     messages.length === 0 && !options.comparePane && !hiddenEnvironmentActive &&
     (hostedExecutionTarget || hostedHostId)
       ? {
@@ -6989,6 +7072,7 @@ export function useChatSession(
     multiModelEnabled,
     setMultiModelEnabled,
     availableModels,
+    modelHarnessScope,
     // The authorized catalog before this session's harness filter, so another
     // client's Compare column can apply its own (`resolvePlaygroundClientColumn`).
     catalogModels: composedModels,

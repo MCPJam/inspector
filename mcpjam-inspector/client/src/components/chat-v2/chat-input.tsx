@@ -68,6 +68,7 @@ import {
 import {
   ModelSelector,
   type ModelSelectorEffortProps,
+  type ModelSelectorHarnessScope,
 } from "@/components/chat-v2/chat-input/model-selector";
 import { EffortControl } from "@/components/effort/effort-control";
 import { reasoningEffortDefaultForRow } from "@/lib/reasoning-effort-options";
@@ -327,6 +328,8 @@ interface ChatInputProps {
   className?: string;
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
+  /** The client(s) the model runs on; see `ModelSelectorHarnessScope`. */
+  harnessScope: ModelSelectorHarnessScope;
   onModelChange: (
     model: ModelDefinition,
     options?: { userInitiated?: boolean },
@@ -511,6 +514,7 @@ export function ChatInput({
   className,
   currentModel,
   availableModels,
+  harnessScope,
   onModelChange,
   onModelSelectorOpenChange,
   multiModelEnabled = false,
@@ -2266,6 +2270,7 @@ export function ChatInput({
                   respondToProviderTabIntent
                   onManageOrgProviders={onManageOrgProviders}
                   onAddProvider={null}
+                  harnessScope={harnessScope}
                   requireOrgKeys={requireOrgKeys}
                   {...modelEfforts}
                   // Servers attached means the turn can call tools.
