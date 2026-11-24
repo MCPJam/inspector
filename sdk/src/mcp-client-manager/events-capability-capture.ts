@@ -24,6 +24,7 @@
  */
 
 import type { RpcLogEvent } from "./types.js";
+import type { EventsWireProfile } from "./events-ext-guards.js";
 
 const HANDSHAKE_METHODS = new Set(["initialize", "server/discover"]);
 
@@ -171,17 +172,25 @@ export interface EventsSupport {
 }
 
 export function resolveEventsSupport(
-  captured: CapturedEventsCapability | undefined
+  captured: CapturedEventsCapability | undefined,
+  profile?: EventsWireProfile,
 ): EventsSupport {
   if (!captured) {
     return { handshakeObserved: false, declared: false, listChanged: false };
   }
+  const beta = captured.beta === true && profile !== "legacy";
+  const legacyCapability = captured.rawCapabilities.events;
+  const capability = beta
+    ? captured.events
+    : profile !== "beta" && isRecord(legacyCapability)
+      ? legacyCapability
+      : undefined;
   return {
     handshakeObserved: true,
-    ...(captured.beta ? { beta: true, legacy: isRecord(captured.rawCapabilities.events) } : {}),
-    declared: captured.events !== undefined,
-    listChanged: captured.listChanged,
-    ...(captured.events !== undefined ? { capability: captured.events } : {}),
+    ...(beta ? { beta: true, legacy: isRecord(legacyCapability) } : {}),
+    declared: capability !== undefined,
+    listChanged: capability?.listChanged === true,
+    ...(capability !== undefined ? { capability } : {}),
     source: captured.source,
   };
 }

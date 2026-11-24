@@ -158,6 +158,7 @@ export {
   isInvalidEventsPayloadError,
   classifyEventsRpcError,
   EVENTS_ERROR_CODES,
+  type EventsWireProfile,
 } from "./mcp-client-manager/events-ext-guards.js";
 export type {
   EventsSupport,

@@ -186,7 +186,8 @@ export function describeTermination(
   error: EventsFeedEntryView["error"] | undefined,
 ): TerminationReason {
   const classified = error
-    ? classifyEventsRpcError("events/stream", error)
+    ? classifyEventsRpcError("events/stream", error, "beta") ??
+      classifyEventsRpcError("events/stream", error, "legacy")
     : undefined;
   const raw = classified?.data;
   const data: JsonObject = isRecord(raw) ? raw : {};
