@@ -62,6 +62,13 @@ const UNPROTECTED_PREFIXES = [
   // non-/api bypass: analytics must flow before any session exists. It must
   // never be moved under /api/ or it would silently gain session auth.
   "/assets/", // Static assets (JS, CSS, images) - no sensitive data
+  // Web account sign-in, save and handback, for Claude web and ChatGPT web.
+  // Like /api/web/*, these hosted routes verify the caller's AuthKit bearer
+  // themselves, and a hosted browser never holds a session token. The local
+  // Inspector's own `/api/web-clients/local-connectors` is not listed: it
+  // stays behind the session token.
+  "/api/web-clients/accounts/",
+  "/api/web-clients/reconnect/",
   "/api/apps/mcp-apps/", // MCP Apps widgets - loaded in sandboxed iframes, can't send headers
   // Widget file DOWNLOAD only. The download URL is fetched directly from
   // inside the sandboxed iframe (img/script/fetch) and can't carry auth

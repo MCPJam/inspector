@@ -595,6 +595,38 @@ describe("infra evidence reaches the turn outcome untouched", () => {
     expect(untyped.kind).toBe("failed");
     expect(untyped).not.toHaveProperty("errorInfra");
   });
+
+  it("keeps the calls a web client run sent before its page stopped", async () => {
+    const { WebClientRunError } = await import("../../web-clients/web-client-harness-turn");
+    const sent = {
+      id: "web-tool-0",
+      name: "echo",
+      category: "tool" as const,
+      startMs: 0,
+      endMs: 1,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      toolCallId: "ledger-1",
+      toolName: "echo",
+      wireCorroborated: true,
+    };
+    runAssistantTurnMock.mockImplementationOnce(async () => {
+      throw new WebClientRunError(
+        { kind: "driver", step: "read_conversation", message: "The chat could not be read." },
+        "Claude web stopped before the reply finished.",
+        undefined,
+        { turnId: "turn-1", promptIndex: 0, startedAt: 0, endedAt: 1, spans: [sent], finishReason: "error", modelId: "m" },
+      );
+    });
+    const params = baseParams();
+    // The page stopped, so the run failed: it stays out of the server's pass rate.
+    expect(await driveHostedEvalTurn(params)).toMatchObject({
+      kind: "failed",
+      errorInfra: { source: "web_client", code: "driver" },
+    });
+    expect(params.acc.capturedSpans).toEqual([sent]);
+  });
 });
 
 it("does not read App state from a view dismissed before the next turn", async () => {

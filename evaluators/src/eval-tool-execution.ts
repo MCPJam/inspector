@@ -261,6 +261,11 @@ export type FinalizeEvalPassedParams = {
 
 /**
  * Combine structural pass/fail with tool execution outcomes for eval reporting.
+ *
+ * @deprecated A second verdict beside the score rows. Tool errors and
+ * iteration errors are now `platform:toolExecution` / `platform:iterationError`
+ * rows; derive pass/fail with `scoresPassed(rows, definitions)`. Removed in the
+ * next major version.
  */
 export function finalizePassedForEval(
   params: FinalizeEvalPassedParams,

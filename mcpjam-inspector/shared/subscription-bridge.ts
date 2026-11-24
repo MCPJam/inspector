@@ -35,6 +35,7 @@ export type SubscriptionInterestKindView =
   | "tools-list-changed"
   | "prompts-list-changed"
   | "resources-list-changed"
+  | "events-list-changed"
   | "resource-updated"
   /** `notifications/tasks` (SEP-2663 extension; modern era only). */
   | "tasks";
@@ -43,6 +44,7 @@ export interface SubscriptionFilterView {
   toolsListChanged?: boolean;
   promptsListChanged?: boolean;
   resourcesListChanged?: boolean;
+  eventsListChanged?: boolean;
   resourceSubscriptions?: string[];
   /** Task ids watched for `notifications/tasks` (extension wire only). */
   taskIds?: string[];

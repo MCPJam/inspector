@@ -1071,7 +1071,7 @@ describe("EvaluateTab", () => {
   });
 
   it("does not bounce a just-created suite the cached overview hasn't caught up to", () => {
-    // "Promote to test case" into a NEW suite runs as an action; its result
+    // "Save as test case" into a NEW suite runs as an action; its result
     // can arrive before the overview subscription's update, so the page
     // mounts on an overview that does not list the suite yet — while the
     // suite's own query is still in flight.
