@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { SidebarUpgradePrompt } from "../sidebar-upgrade-prompt";
@@ -110,9 +111,15 @@ function renderPrompt(props: { isGuest: boolean; organizationId?: string }) {
         isGuest={props.isGuest}
         organizationId={props.organizationId ?? null}
       />
-      <SidebarProConfirmDialog />
+      <SidebarProConfirmDialog
+        organizationId={props.organizationId ?? "org-1"}
+      />
     </SidebarProvider>,
   );
+}
+
+function onPage(pathname: string) {
+  vi.stubGlobal("location", { ...window.location, pathname });
 }
 
 describe("SidebarUpgradePrompt", () => {
@@ -220,7 +227,9 @@ describe("SidebarUpgradePrompt", () => {
     });
 
     const card = screen.getByTestId("sidebar-prompt-pro_upgrade");
-    expect(card).toHaveTextContent("No daily credit limit, add more credits anytime");
+    expect(card).toHaveTextContent(
+      "No daily credit limit, add more credits anytime",
+    );
     fireEvent.click(card);
 
     expect(mocks.track).toHaveBeenCalledWith(
@@ -233,10 +242,11 @@ describe("SidebarUpgradePrompt", () => {
       }),
     );
     expect(mocks.navigate).toHaveBeenCalledWith("/organizations/org-1/plans");
+    onPage("/organizations/org-1/plans");
     // The Plans page hides the sidebar; the dialog must outlive the card.
     rerender(
       <SidebarProvider>
-        <SidebarProConfirmDialog />
+        <SidebarProConfirmDialog organizationId="org-1" />
       </SidebarProvider>,
     );
     expect(screen.getByTestId("plan-confirm-dialog")).toHaveAttribute(
@@ -260,14 +270,31 @@ describe("SidebarUpgradePrompt", () => {
     expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
   });
 
-  it("closes the Pro confirm dialog when Back leaves the Plans page", () => {
+  it("keeps the offer through a StrictMode re-mount on the Plans page", () => {
     renderPrompt({ isGuest: false, organizationId: "org-1" });
+    fireEvent.click(screen.getByTestId("sidebar-prompt-pro_upgrade"));
+    onPage("/organizations/org-1/plans");
+    const { unmount } = render(
+      <StrictMode>
+        <SidebarProConfirmDialog organizationId="org-1" />
+      </StrictMode>,
+    );
+    expect(screen.getAllByTestId("plan-confirm-dialog")).toHaveLength(2);
+    unmount();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("drops the Pro offer once the user leaves the Plans page", () => {
+    const { unmount } = renderPrompt({
+      isGuest: false,
+      organizationId: "org-1",
+    });
     fireEvent.click(screen.getByTestId("sidebar-prompt-pro_upgrade"));
     expect(screen.getByTestId("plan-confirm-dialog")).toBeInTheDocument();
 
-    act(() => {
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    });
+    onPage("/servers");
+    unmount();
+    renderPrompt({ isGuest: false, organizationId: "org-1" });
     expect(screen.queryByTestId("plan-confirm-dialog")).toBeNull();
   });
 

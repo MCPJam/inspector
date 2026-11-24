@@ -14,7 +14,7 @@ import {
 const LOCATION = "sidebar_prompt";
 
 // The Plans page hides the sidebar, so the confirm dialog's open state lives
-// outside the card and the dialog renders from app scope.
+// outside the card and the Plans page renders the dialog once it has painted.
 let confirmOrganizationId: string | null = null;
 const listeners = new Set<() => void>();
 
@@ -94,30 +94,34 @@ export function SidebarProUpgradePrompt({
   );
 }
 
-export function SidebarProConfirmDialog() {
-  const organizationId = useSyncExternalStore(
+export function SidebarProConfirmDialog({
+  organizationId,
+}: {
+  organizationId: string;
+}) {
+  const requested = useSyncExternalStore(
     subscribe,
     () => confirmOrganizationId,
     () => null,
   );
-  if (!organizationId) return null;
+  // Leaving the Plans page leaves the offer behind. StrictMode's re-mount
+  // stays on Plans, so it keeps the offer.
+  useEffect(
+    () => () => {
+      const plansPath = buildOrganizationPath(organizationId, "plans");
+      if (window.location.pathname !== plansPath) {
+        setConfirmOrganizationId(null);
+      }
+    },
+    [organizationId],
+  );
+  if (requested !== organizationId) return null;
   return <ProConfirmDialog organizationId={organizationId} />;
 }
 
 function ProConfirmDialog({ organizationId }: { organizationId: string }) {
   const { upgrade, planCatalog, entry, context } =
     useProCheckout(organizationId);
-  // Back from the Plans page leaves the offer behind with it.
-  useEffect(() => {
-    const plansPath = buildOrganizationPath(organizationId, "plans");
-    const closeOffPlans = () => {
-      if (window.location.pathname !== plansPath) {
-        setConfirmOrganizationId(null);
-      }
-    };
-    window.addEventListener("popstate", closeOffPlans);
-    return () => window.removeEventListener("popstate", closeOffPlans);
-  }, [organizationId]);
   if (!entry || !planCatalog) return null;
 
   return (

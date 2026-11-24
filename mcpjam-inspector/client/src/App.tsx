@@ -30,7 +30,6 @@ import { fetchServerSecrets } from "@/lib/apis/server-secrets-api";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
 import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { AccountCreatedToast } from "./components/sidebar/sidebar-guest-signup-prompt";
-import { SidebarProConfirmDialog } from "./components/sidebar/sidebar-pro-upgrade-prompt";
 import { TrialDecisionDialog } from "./components/billing/TrialDecisionDialog";
 import { AnnouncementQueueProvider } from "./components/announcement-slot";
 import { StdioCommandApprovalDialog } from "./components/connection/StdioCommandApprovalDialog";
@@ -6893,7 +6892,6 @@ export default function App() {
             <MCPJamLimitDialog />
             <PlanLimitDialog />
             <AccountCreatedToast />
-            <SidebarProConfirmDialog />
             <StdioCommandApprovalDialog />
             <LauncherProjectChoiceDialog />
             <UnavailableOrganizationDialog
