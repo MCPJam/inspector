@@ -197,11 +197,12 @@ Convex `eventTriggers` rows (`projectId, environmentId, subscriptionId, name, in
 | Point | Check |
 |---|---|
 | Register receiver (allocate slot) | inspector: project `member` for the subscription's project; admin token to the inbox |
-| Issue viewer token | inspector: project `member` now; token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Issue viewer token | inspector: `eventSubscriptions:authorizeFeed` (read with the caller's bearer, so the backend's `requireEventsProjectMember` decides: org `member` or higher, never a guest or a benchmark or scoped GitHub bearer); token `{inboxId, projectId, userId, epoch, exp ≤ 10 min, scope: "feed:read"}` HMAC-signed with `EVENTS_INBOX_VIEWER_KEY` |
+| Read slot state | inspector: `eventSubscriptions:authorizeFeed`, and the subscription is in the project |
 | Refresh | keeper: Convex re-checks the owner is still a project member and the binding's server is still in the project before leasing; the keeper connects with the subscription's pinned OAuth connection (`connectionIds`), and a refusal parks it `paused_auth` |
 | Author a trigger (create, edit, enable) | Convex: the caller is the subscription's **owner**. A run acts with the owner's credentials, so no one else (a project admin included) decides what it does |
 | Stop a trigger (disable, remove) | Convex: the owner or a project admin; stopping runs nothing, and a run already in flight stops at its next checkpoint or tool call |
-| Simulate an event | inspector: project `member`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
+| Simulate an event | inspector: `eventSubscriptions:authorizeFeed`, the subscription is in the project, and `eventSubscriptions:authorizeSimulation` (read with the caller's bearer) confirms the caller owns it; a simulated event runs the triggers with the owner's credentials |
 | Dispatch a run | enqueue mutation: subscription not removed, trigger enabled, owner still a member |
 | Start a run | claim mutation: trigger enabled, subscription neither removed, paused nor terminated, owner still authorized (a refusal parks the subscription `paused_auth`), then the rate limit and spend cap |
 | Keep a run acting | `runs/checkpoint` and `runs/begin-call`: the claim's authority checks and the spend cap run again, before the step or tool call. A refusal ends the run `failed` with the reason and takes back its lease, so the executor gets `409 lease_lost` and stops |
