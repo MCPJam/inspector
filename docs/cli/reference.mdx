@@ -2606,6 +2606,202 @@ Cases the model could not finish are not created. They come back under `skipped`
 
 ---
 
+## `cloud mocks` commands
+
+Create, update and read [mock servers](/evaluate/mock-servers): a saved server with a definition laid over it. All `mocks` commands accept the shared platform flags `--api-key`, `--api-url` and `--api-header`, described under [`cloud eval` commands](#cloud-eval-commands), and `--project <id-or-name>` (default: the most recently updated project).
+
+The definition and the patch are JSON objects, given inline or in a file. `-` reads stdin.
+
+### `cloud mocks create`
+
+Create a mock of a saved server, or of nothing. Prints its address, version 1 and what the definition changes.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes | The mock's name, unique among the project's servers |
+| `--server <id-or-name>` | No | The saved server to sit in front of. Omit for a mock from nothing |
+| `--definition <json>` | One of the two | The definition, as JSON |
+| `--definition-file <path>` | One of the two | The definition, read from a file (`-` for stdin) |
+
+```bash
+mcpjam cloud mocks create --name "docs (mock)" --server docs --definition-file definition.json
+```
+
+### `cloud mocks update`
+
+Save a new version from a whole definition or a JSON merge patch. The save is refused with `MOCK_VERSION_STALE` when another version landed since the one you read.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--mock <id-or-name>` | Yes | Mock server ID or name |
+| `--expected-version <n>` | Yes | The head version you read (see `mocks get`) |
+| `--definition <json>`, `--definition-file <path>` | One of the four | The whole next definition |
+| `--patch <json>`, `--patch-file <path>` | One of the four | A JSON merge patch over the head |
+| `--dry-run` | No | Print the change list and the version it would write, and save nothing |
+
+```bash
+mcpjam cloud mocks update --mock "docs (mock)" --expected-version 1 \
+  --patch '{"tools":{"search":{"description":"Search the docs."}}}' --dry-run
+```
+
+### `cloud mocks get`
+
+Read a mock: its address, its definition, the real server's current values for what the definition edits, the calls no saved answer matched, and a ranked list of what the mock can change.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--mock <id-or-name>` | Yes | Mock server ID or name |
+| `--version <n>` | No | The version to read (default: the head) |
+| `--since <n>` | No | Also list what changed from this version |
+
+---
+
+## `cloud climbs` commands
+
+Run a [climb](/evaluate/climbs): improve a saved server from an eval suite, one round at a time, on mock servers. All `climbs` commands accept the shared platform flags `--api-key`, `--api-url` and `--api-header`, described under [`cloud eval` commands](#cloud-eval-commands), and `--project <id-or-name>`.
+
+Commands that launch runs take `--wait`, which holds the command until the unit settles, and `--wait-seconds <n>` (default 1800). Without `--wait` they return once the runs have launched. Commands that spend credits say so in their description.
+
+### `cloud climbs start`
+
+Start a climb and launch its baseline. **This launches paid runs.**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | The eval suite to climb. It needs environments attached |
+| `--server <id-or-name>` | Yes | The saved server to improve. Every selected environment must include it |
+| `--round-limit <n>` | Yes | The most rounds the climb may start (1 to 100) |
+| `--credit-limit <n>` | Yes | The most credits the climb may commit, checked on estimates |
+| `--environments <list>` | No | The suite's environments to climb in, comma-separated (default: all, up to 10) |
+| `--picker <who>` | No | Who picks each change: `agent` (default), `person` or `mcpjam` |
+| `--picker-model <id>` | With `mcpjam` | The model MCPJam picks with. Refused with any other picker |
+| `--measure <measure>` | No | What to climb for: `pass_rate` (default), `tokens`, `cost` or `tool_calls` |
+| `--min-improvement-percent <n>` | No | The smallest move of tokens, cost or tool calls that counts (default 1) |
+| `--target-percent <n>` | No | Stop when tokens, cost or tool calls are this percent lower than the baseline |
+| `--steering-count <n>`, `--validation-count <n>`, `--confirmation-count <n>` | No | Cases in each group. Give these or the key lists, not both |
+| `--steering <keys>`, `--validation <keys>`, `--confirmation <keys>` | No | Case keys for each group, comma-separated. A case not listed joins steering |
+| `--seed <value>` | No | Seeds the random split of the cases |
+| `--wait`, `--wait-seconds <n>` | No | Wait for the baseline to settle, then print the climb |
+
+### `cloud climbs update`
+
+Change what a climb is for, its smallest improvement or its target, until round 1 settles, or set cases aside for confirmation.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--measure <measure>` | No | What to climb for |
+| `--min-improvement-percent <n>` | No | The smallest move that counts |
+| `--target-percent <n>` | No | The target, in percent fewer than the baseline |
+| `--clear-target` | No | Remove the target |
+| `--move-to-confirmation <keys>` | No | Case keys to set aside as confirmation cases, comma-separated. Only cases no round has run |
+
+### `cloud climbs get`
+
+Read a climb: its state, limits, the baseline's noise, every round and who submitted it, and the best server so far. Once the baseline settles it also returns the suite check, what to climb for and what can change.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+
+### `cloud climbs list`
+
+List a project's climbs, newest first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | No | Only this suite's climbs |
+| `--limit <n>` | No | How many to list (1 to 100) |
+
+### `cloud climbs rounds submit`
+
+Submit a saved server, usually a mock, as the next round. It runs the steering and validation cases in every environment. **This launches paid runs.**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--server <id-or-name>` | Yes | The saved server to measure |
+| `--server-version <v>` | No | The mock version to run (default: its head now) |
+| `--idempotency-key <key>` | No | Retry handle: a repeat with the same key returns the same round and charges nothing |
+| `--wait`, `--wait-seconds <n>` | No | Wait for the round to settle, then print it |
+
+### `cloud climbs rounds get`
+
+Read a round: its verdict and why, who submitted it, and each environment's numbers against the noise.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--round <n>` | Yes | The round's number |
+| `--wait`, `--wait-seconds <n>` | No | Wait for the round to settle |
+
+### `cloud climbs rounds decide`
+
+Overrule a settled round. The reason is recorded with your name.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--round <n>` | Yes | The round's number |
+| `--decision <kept\|reverted>` | Yes | What the round should stand as |
+| `--reason <text>` | Yes | Why you are overruling the rule (500 characters at most) |
+
+### `cloud climbs stop`
+
+Stop a climb for good. Prints where it ended, the rounds that stand as kept, a summary and the prompt for the agent that edits your server's code.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+
+### `cloud climbs confirm`
+
+Run the one-time confirmation of a stopped climb on the cases no round ran, and print the difference with its 95% interval. **This launches paid runs.**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--dry-run` | No | Print what the confirmation would cost and start nothing |
+| `--wait`, `--wait-seconds <n>` | No | Wait for the confirmation to settle (default: return once it has launched) |
+
+### `cloud climbs verify`
+
+Check the kept changes on your real server after they are in its code. It reads the server's listing first and starts no run if a kept change is missing or different. **This launches paid runs.**
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--commit <sha>` | No | The commit the server runs, recorded on the runs and the climb |
+| `--branch <name>` | No | The branch of that commit |
+| `--repository-url <url>` | No | The repository's URL |
+| `--dirty` | No | The checkout had uncommitted changes |
+| `--server <id-or-name>` | No | A saved server that runs the new code, in place of the climbed one. A mock is refused |
+| `--server-version <v>` | No | The version the server reports |
+| `--dry-run` | No | Print the listing check and the estimate and start nothing |
+| `--run-anyway` | No | Run the pair although a kept change is missing or different |
+| `--wait`, `--wait-seconds <n>` | No | Wait for the verification to settle |
+
+### `cloud climbs continue`
+
+Resume a climb MCPJam picks for after it paused, or run its baseline again after a failed baseline (`get` shows `baselineFailure`). The second case launches paid runs, and a resumed climb's steps spend credits within its limits.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+
+### `cloud climbs draft`
+
+Draft a rewritten description for one tool from the climb's failed steering cases. It saves nothing and starts no run. Prints the draft and a merge patch that `mocks update --patch` takes.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--climb <id>` | Yes | The climb's ID |
+| `--tool <name>` | Yes | The tool whose description to rewrite |
+| `--cases <keys>` | No | Steering case keys of that tool to draft from, comma-separated (default: the cases the latest round failed) |
+| `--title` | No | Also propose a title for the tool |
+
+---
+
 ## `mcp` command
 
 ### `mcp`

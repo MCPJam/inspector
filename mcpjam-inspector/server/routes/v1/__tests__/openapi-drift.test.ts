@@ -69,6 +69,12 @@ const BODYLESS_WRITES = new Set([
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/test",
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause",
   "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
+  // Stopping and continuing a climb are addressed entirely by the path climbId.
+  // A stop has no options, and a continue only clears a pause or relaunches a
+  // failed baseline: a body could only be a place to change the climb's limits,
+  // which neither may do.
+  "post /projects/{projectId}/climbs/{climbId}/stop",
+  "post /projects/{projectId}/climbs/{climbId}/continue",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
@@ -117,30 +123,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the gated capability. Same posture as the harness capability probe above.
   // Document it when the browser exposure gate opens.
   "get /built-in-tools/{builtInToolId}/definitions",
-  // Mock servers. Creating and saving one is decided per organization (the
-  // `climbs-enabled` flag), and `docs/README.md` is explicit that such a
-  // feature is not documented until the flag comes off ("a feature that is
-  // enforced per organization must not be documented until the flag comes
-  // off", and its routes are "kept out of reference/openapi.json and listed in
-  // the Inspector's KNOWN_UNDOCUMENTED baseline"). The read goes with them:
-  // it describes the gated definition. The SDK client carries the surface in
-  // the meantime. Document all three when the flag comes off.
-  "post /projects/{projectId}/mock-servers",
-  "post /projects/{projectId}/mock-servers/{mockId}/versions",
-  "get /projects/{projectId}/mock-servers/{mockId}",
-  // Climbs share the flag with mock servers and are documented with them.
-  "post /projects/{projectId}/climbs",
-  "get /projects/{projectId}/climbs",
-  "get /projects/{projectId}/climbs/{climbId}",
-  "patch /projects/{projectId}/climbs/{climbId}",
-  "post /projects/{projectId}/climbs/{climbId}/rounds",
-  "get /projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}",
-  "post /projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}/decision",
-  "post /projects/{projectId}/climbs/{climbId}/stop",
-  "post /projects/{projectId}/climbs/{climbId}/confirmation",
-  "post /projects/{projectId}/climbs/{climbId}/draft",
-  "post /projects/{projectId}/climbs/{climbId}/continue",
-  "post /projects/{projectId}/climbs/{climbId}/verifications",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",

@@ -100,6 +100,14 @@
     {
       "name": "Feedback",
       "description": "Feedback about MCPJam itself (bugs, missing capabilities, confusing behavior), sent to the MCPJam team and kept for 180 days. The `send_feedback` MCP tool calls the same endpoint."
+    },
+    {
+      "name": "Mock servers",
+      "description": "A mock is an MCP server MCPJam hosts in front of a saved server, or built from nothing. Its definition states only what it changes, such as a tool's description, a hidden parameter or a saved answer, and the real server answers for the rest. Every save is a new version, and a version never changes. Reach a mock at its `address` with an MCPJam API key."
+    },
+    {
+      "name": "Climbs",
+      "description": "A climb improves a saved server from an eval suite, one round at a time, on mock servers. Each round measures one mock version against the best so far in every environment of the suite, and a stated rule keeps or reverts it. Starting a climb, submitting a round, the confirmation and the verification launch paid runs."
     }
   ],
   "paths": {
@@ -12631,6 +12639,1006 @@
         }
       }
     },
+    "/projects/{projectId}/mock-servers": {
+      "post": {
+        "operationId": "createMockServer",
+        "tags": ["Mock servers"],
+        "summary": "Create a mock server",
+        "description": "Create a mock of a saved server, or of nothing, as version 1. The definition states only what the mock changes; the real server answers for everything else, with the caller's own credentials, and is not changed. The definition is checked first. A change that leaves a real tool impossible to call, such as hiding a required parameter without fixing its value, is refused with `MOCK_DEFINITION_INVALID` and the parameter named. Returns the mock's `address`: an MCP URL any client reaches with an MCPJam API key as the bearer token.\n\nThe name must differ from every other server in the project (`409`). Guest callers are denied.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MockServerCreateRequest"
+              },
+              "example": {
+                "name": "notes (mock)",
+                "serverId": "srv_abc123",
+                "definition": {
+                  "tools": {
+                    "search_notes": {
+                      "description": "Search notes by words in the title or body."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The mock was created as version 1.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockServerSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The real server could not be read to check the definition."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/mock-servers/{mockId}": {
+      "get": {
+        "operationId": "getMockServer",
+        "tags": ["Mock servers"],
+        "summary": "Get a mock server",
+        "description": "Read one version of a mock (the head by default): its address, its definition, and the real server's current values for what the definition edits, so a change can be written without reading the real server separately. `realServer.status` says whether the real server could be read; a mock stays readable when it cannot. `unmatchedCalls` lists the most recent calls no saved answer matched, newest first. `whatCanChange` ranks everything the mock can change on that server, with each current value and which clients read it. With `since`, `changes` lists what differs from that version.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/mockId"
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "required": false,
+            "description": "The version to read. Defaults to the head.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Also list what changed from this version to the one read.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The mock.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockServer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/mock-servers/{mockId}/versions": {
+      "post": {
+        "operationId": "saveMockServerVersion",
+        "tags": ["Mock servers"],
+        "summary": "Save a mock server version",
+        "description": "Save the next version of a mock from a whole `definition` or an RFC 7396 JSON merge patch (`null` removes a key, objects merge). Give exactly one. Name the head version you read in `expectedVersion`: if another version landed since, the save is refused with `409` and `details.code` `MOCK_VERSION_STALE`, and `details.headVersion` names the current head. Read the mock again and apply the change to that version.\n\nA definition equal to the head writes nothing and answers `200` with `created: false`, so a retried save is safe. With `dryRun`, the change is checked and its change list returned with the version it would write; nothing is saved. A save that loosens a tool's safety annotations needs manage access to the project.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/mockId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MockServerVersionRequest"
+              },
+              "example": {
+                "expectedVersion": 1,
+                "patch": {
+                  "tools": {
+                    "search_notes": {
+                      "description": "Search notes by title or body."
+                    }
+                  }
+                },
+                "dryRun": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The change equalled the head, or it was a dry run. `created` says whether a version would be or was written.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockServerSaved"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "A new version was saved.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MockServerSaved"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The real server could not be read to check the definition."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs": {
+      "post": {
+        "operationId": "startClimb",
+        "tags": ["Climbs"],
+        "summary": "Start a climb",
+        "description": "Start a climb: improve a saved server from an eval suite, one round at a time. The suite's cases are split into steering cases (a climb learns from them), validation cases (every round runs them and a change that breaks them is reverted; results are totals, never transcripts) and confirmation cases (no round runs them; the confirmation runs them once at the end). The baseline runs twice, through a mock with no changes, in every selected environment. This call launches it and answers `201` at once with the estimate; read the climb until its `state` is `ready`.\n\n`roundLimit` and `creditLimit` are required and bound everything that follows. **This launches paid runs.** The suite needs at least one environment attached, and every selected environment must include the server.\n\nGive `groupSizes` or `groupLists`, not both. `pickerModel` goes with `picker: mcpjam`, and only then.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbStartRequest"
+              },
+              "example": {
+                "suiteId": "suite_abc",
+                "serverId": "srv_abc123",
+                "roundLimit": 10,
+                "creditLimit": 4000,
+                "measure": "pass_rate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The climb, and the baseline it launched.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "A server in the climb could not be reached."
+          }
+        }
+      },
+      "get": {
+        "operationId": "listClimbs",
+        "tags": ["Climbs"],
+        "summary": "List climbs",
+        "description": "List a project's climbs, newest first: the suite, the server, the state and the rounds used.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "suiteId",
+            "in": "query",
+            "required": false,
+            "description": "Only the climbs of this suite.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "How many climbs to return (1 to 100).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's climbs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}": {
+      "get": {
+        "operationId": "getClimb",
+        "tags": ["Climbs"],
+        "summary": "Get a climb",
+        "description": "Read a climb: its state, limits and credits left, the cases in each group (steering cases by key, validation as counts), the baseline's noise per environment, every round with who submitted it, and the best server so far. Once the baseline has settled it also returns `suiteCheck` (whether the suite can show a change), `climbFor` (the things to climb for, each with its measure, a count from steering cases and up to three failed runs) and `whatCanChange` (everything a mock can change on the server, ranked). Validation results are totals and never carry a case. Poll this after starting until `state` is `ready`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The climb.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Climb"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateClimb",
+        "tags": ["Climbs"],
+        "summary": "Update a climb",
+        "description": "Change what a climb is for (`measure`), the smallest improvement that counts or its target, until round 1 settles, or set cases aside as confirmation cases while no round has run them. Refused with `409` while a round runs, on a stopped climb, and for a measure no environment recorded (the refusal says which). A case added to the suite later joins steering unless you move it here.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbUpdateRequest"
+              },
+              "example": {
+                "measure": "tokens",
+                "targetBps": 500
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The climb as it now stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Climb"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/rounds": {
+      "post": {
+        "operationId": "submitClimbRound",
+        "tags": ["Climbs"],
+        "summary": "Submit a climb round",
+        "description": "Submit a saved server as the next round: a mock you made with `POST /mock-servers`, or the best so far submitted unchanged. It runs the steering and validation cases in every environment of the climb, with this server replacing the climbed one. The best so far is measured again in the same round when its numbers are more than an hour old or the suite changed; the answer says so. Answers `202` at once with the estimate and the runs; read the round for its result.\n\nRefused with `409`, naming what is needed and what is left, past the round limit or the credit limit, while a round runs, when the real server's listing cannot be compared, and on a climb for pass rate whose steering cases all pass. One round runs at a time. A change that no client in the climb's environments reads is refused with `400` and the reason.\n\nA repeat with the same idempotency key (the `Idempotency-Key` header, or `idempotencyKey` in the body) returns the same round and charges nothing. **This launches paid runs.**",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbRoundSubmitRequest"
+              },
+              "example": {
+                "serverId": "srv_mock123",
+                "serverVersion": "2",
+                "idempotencyKey": "round-2"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The round was registered and launched.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbRoundSubmitted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "A server in the climb could not be reached."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}": {
+      "get": {
+        "operationId": "getClimbRound",
+        "tags": ["Climbs"],
+        "summary": "Get a climb round",
+        "description": "Read one round: its verdict (`kept`, `reverted` or `not_decided`) and why, who submitted it, and for each environment the pass rate and the climb's measure against the best so far, with the noise they are judged against. Validation is totals per environment and never names a case; a reverted round names a steering case that failed and says only that validation regressed. With `wait`, the call holds until the round settles or the bound passes; if `settled` is false, call again.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          },
+          {
+            "$ref": "#/components/parameters/roundNumber"
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "required": false,
+            "description": "Hold the call until the round settles, for at most this many seconds (0 to 50). Omit to read it now.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The round.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbRound"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/rounds/{roundNumber}/decision": {
+      "post": {
+        "operationId": "decideClimbRound",
+        "tags": ["Climbs"],
+        "summary": "Overrule a climb round",
+        "description": "Overrule a settled round, a not-decided one included, with a reason. The round then stands as you decided, and the record keeps who overruled it and why. The best so far becomes the latest round that stands as kept, else the baseline. Refused with `409` while a round or the confirmation runs, and once the confirmation has run.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          },
+          {
+            "$ref": "#/components/parameters/roundNumber"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbDecisionRequest"
+              },
+              "example": {
+                "decision": "kept",
+                "reason": "The regression was one case that the model provider failed."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The round as it now stands, and the best so far.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/stop": {
+      "post": {
+        "operationId": "stopClimb",
+        "tags": ["Climbs"],
+        "summary": "Stop a climb",
+        "description": "Stop a climb for good: no more rounds, and a round or baseline in flight is failed and its runs cancelled. Returns where it ended, the best server so far, the rounds that stand as kept in order, a `summary` that labels the steering and validation results and says what the climb established and what it did not, and `prompt`: the kept changes, those that also helped on validation first, each with its old and new value, for the coding agent that works on the server's code. Calling it again changes nothing. A stopped climb can still be confirmed once and verified.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the climb ended.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbStopped"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/confirmation": {
+      "post": {
+        "operationId": "confirmClimb",
+        "tags": ["Climbs"],
+        "summary": "Confirm a climb",
+        "description": "Run the one-time confirmation of a stopped climb: two run groups back to back on the confirmation cases no round ran, the mock with no changes and the best server, in every environment. The result is the difference in the climb's measure per environment with a 95% interval found by resampling cases, and says when the interval includes zero, which means the gain is within noise and should not be shipped on. It runs once: a second call is refused with `409`, and so is one on a climb that kept nothing or set no cases aside. It sits outside the round and credit limits. With `dryRun` the estimate comes back alone, with `200`, and nothing starts. Otherwise answers `202`. **This launches paid runs.**",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbConfirmRequest"
+              },
+              "example": {
+                "dryRun": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The estimate of a dry run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbConfirmed"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The confirmation was launched.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbConfirmed"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "A server in the climb could not be reached."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/verifications": {
+      "post": {
+        "operationId": "verifyClimb",
+        "tags": ["Climbs"],
+        "summary": "Verify a climb on the real server",
+        "description": "After the kept changes are applied to the server's code and the server runs them, check that the gain the mock showed holds on the real server. First it reads the server's listing and names each kept change as applied, missing or different. If any is missing or different it stops there, answers `200` and starts no run, unless `runAnyway` is true. Then it runs the same cases in the same environments twice, back to back, both through a mock: the server as it is now, and the server with a mock in front that puts the old values back. The climb's rule settles the pair. The result says, per environment, whether the gain holds, with the gain the mock showed beside it, the baseline then and now, and the commit. A kept change that cannot be put back means only the server runs, and its numbers are set beside the climb's recorded ones with their age.\n\nRun it on a stopped climb. A climb allows three verifications, one at a time, outside the round and credit limits. MCPJam records the commit you give it and cannot check which code the server runs. **This launches paid runs.**",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          },
+          {
+            "$ref": "#/components/parameters/launcherHeader"
+          },
+          {
+            "$ref": "#/components/parameters/ciHeader"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbVerifyRequest"
+              },
+              "example": {
+                "commit": {
+                  "sha": "4f2c9ab",
+                  "branch": "main"
+                },
+                "dryRun": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The listing check, or a dry run's estimate. No run started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbVerified"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The verification was launched.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbVerified"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "A server in the climb could not be reached."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/draft": {
+      "post": {
+        "operationId": "draftClimbChange",
+        "tags": ["Climbs"],
+        "summary": "Draft a change for a climb",
+        "description": "Draft a rewritten description (and, on request, a title) for one tool of a climb, written by a model from the tool's current listing, its sibling tool names and what the failed steering cases expected and did. Returns the draft and `patchJson`, a merge patch of the mock definition that the mock version route takes as `patch`. It saves nothing, starts no run, and never reads validation or confirmation cases. It uses none of the climb's credits, and MCPJam's daily drafting budget applies. One draft runs at a time per climb. A draft the model could not produce is `502`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClimbDraftRequest"
+              },
+              "example": {
+                "toolName": "search_notes",
+                "includeTitle": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The draft.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbDraft"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The model's draft did not come back usable. Try again."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/climbs/{climbId}/continue": {
+      "post": {
+        "operationId": "continueClimb",
+        "tags": ["Climbs"],
+        "summary": "Continue a paused climb",
+        "description": "Resume a climb that MCPJam picks for after it paused: a step that failed three times, a turn that twice submitted no round, an Inspector that stopped, or the person who started the climb having no sign-in to act as. Read the climb: `paused` says why and what to fix first. This clears the pause and makes the next step due now, or when the round in flight settles. A pause is never a failure and never changes `state`. Refused with `409` when the climb is not paused or has stopped. The steps spend credits within the climb's own limits.\n\nAlso runs the baseline again when it failed: the climb shows `baselineFailure`, and this launches a new attempt and answers `baselineStarted: true`. **That case launches paid runs.**",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/climbId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The pause was cleared, or the baseline was launched again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClimbContinued"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/feedback": {
       "post": {
         "operationId": "sendFeedback",
@@ -12948,6 +13956,34 @@
         "schema": {
           "type": "string"
         }
+      },
+      "mockId": {
+        "name": "mockId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the mock server inside the project.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "climbId": {
+        "name": "climbId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the climb inside the project.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "roundNumber": {
+        "name": "roundNumber",
+        "in": "path",
+        "required": true,
+        "description": "The round's number, as the climb lists it, starting at 1.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "requestBodies": {
@@ -12984,6 +14020,1966 @@
       }
     },
     "schemas": {
+      "MockDefinition": {
+        "type": "object",
+        "description": "What a mock changes. Every part is optional, and the real server answers for everything the definition leaves out. At most 524,288 bytes of JSON, 32 levels deep and 20,000 values.",
+        "properties": {
+          "serverInfo": {
+            "type": "object",
+            "description": "The server's name, title and version as a client sees them.",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "instructions": {
+            "type": "string",
+            "description": "The server's instructions text."
+          },
+          "capabilities": {
+            "type": "object",
+            "description": "Replaces a capability of the real server with an object, or removes it with `null`. The keys are `tools`, `prompts`, `resources`, `logging`, `completions`, `tasks`, `experimental` and `extensions`. `tools` cannot be removed.",
+            "additionalProperties": true
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "Build the mock's own lists in pages of this many entries (1 to 1,000). Left out, each list is one page.",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "tools": {
+            "type": "object",
+            "description": "Keyed by the tool name a client sees. An entry states only the fields it changes.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MockTool"
+            }
+          },
+          "prompts": {
+            "type": "object",
+            "description": "Keyed by prompt name. An entry edits or hides the real prompt, or with `messages` is the mock's own.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "`hidden`, `title`, `description`, `arguments`, `icons`, `_meta` or `messages`.",
+              "additionalProperties": true
+            }
+          },
+          "resources": {
+            "type": "object",
+            "description": "Keyed by resource URI. A `skill://` entry is a skill file and a `ui://` entry an MCP App. With `text` or `blob` (base64) the mock serves the content itself.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "`hidden`, `name`, `title`, `description`, `mimeType`, `size`, `annotations`, `icons`, `_meta`, `text` or `blob`.",
+              "additionalProperties": true
+            }
+          },
+          "resourceTemplates": {
+            "type": "object",
+            "description": "Keyed by the RFC 6570 URI template a client sees.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "`hidden`, `name`, `title`, `description`, `mimeType`, `annotations`, `icons`, `_meta`, `text` or `blob`.",
+              "additionalProperties": true
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockTool": {
+        "type": "object",
+        "description": "One tool of the real server, edited, hidden, renamed or added.",
+        "properties": {
+          "hidden": {
+            "type": "boolean",
+            "description": "Remove the tool under this name. Only `answer` may accompany it."
+          },
+          "title": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": {
+            "type": "object",
+            "description": "Replaces the real input schema whole, with `type: object`. Prefer `params` to change one parameter.",
+            "additionalProperties": true
+          },
+          "outputSchema": {
+            "type": "object",
+            "description": "Replaces the real output schema.",
+            "additionalProperties": true
+          },
+          "annotations": {
+            "type": "object",
+            "description": "Merged key by key over the real tool's annotations.",
+            "additionalProperties": true
+          },
+          "icons": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An icon.",
+              "additionalProperties": true
+            }
+          },
+          "_meta": {
+            "type": "object",
+            "description": "Merged key by key over the real tool's `_meta`.",
+            "additionalProperties": true
+          },
+          "params": {
+            "type": "object",
+            "description": "Keyed by parameter name.",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "hidden": {
+                  "type": "boolean",
+                  "description": "Remove the parameter from the listed schema; nothing is sent for it."
+                },
+                "fixed": {
+                  "description": "Remove the parameter from the listed schema and send this value with every call."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Replace the parameter's description."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "answer": {
+            "$ref": "#/components/schemas/MockAnswer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockAnswer": {
+        "description": "How the mock answers calls to the tool. Omitted, or `from: real`, calls the real tool.",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": ["real"]
+              },
+              "tool": {
+                "type": "string",
+                "description": "The real tool to call: a rename."
+              },
+              "arguments": {
+                "type": "object",
+                "description": "Laid over the client's arguments.",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["from", "cases"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": ["saved"]
+              },
+              "cases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MockSavedCase"
+                },
+                "minItems": 1,
+                "maxItems": 200,
+                "description": "Tried in order; the first whose `when` fits answers. At most 200."
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "required": ["from"],
+            "properties": {
+              "from": {
+                "type": "string",
+                "enum": ["model"]
+              },
+              "instructions": {
+                "type": "string",
+                "description": "How this tool should answer: what the data looks like, what it refuses. At most 4,000 characters.",
+                "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      },
+      "MockSavedCase": {
+        "type": "object",
+        "properties": {
+          "when": {
+            "type": "object",
+            "description": "A subset of the call's input: every key must equal the call's value. Left out, the case fits any input.",
+            "additionalProperties": true
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MockStep"
+            },
+            "maxItems": 20,
+            "description": "What the mock sends and asks before it answers, in order. At most 20."
+          },
+          "task": {
+            "type": "boolean",
+            "enum": [true],
+            "description": "Run as a task when the caller can take one; otherwise the call answers in place."
+          },
+          "result": {
+            "type": "object",
+            "description": "A whole tool result with a `content` list. `{{input.x}}` and `{{steps.<id>.x}}` in its strings are filled in.",
+            "additionalProperties": true
+          },
+          "error": {
+            "type": "object",
+            "description": "A protocol error to answer with. Give exactly one of `result` and `error`.",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "integer"
+              },
+              "message": {
+                "type": "string"
+              },
+              "data": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockStep": {
+        "type": "object",
+        "description": "One thing a saved case does before it answers: send progress, log a message, ask the person a form or link question, or ask the client's model.",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["progress", "log", "ask", "askUrl", "sample"]
+          },
+          "delayMs": {
+            "type": "integer",
+            "description": "Wait this long before the step (0 to 5,000). A case may wait 20,000 ms in all.",
+            "minimum": 0,
+            "maximum": 5000
+          },
+          "id": {
+            "type": "string",
+            "description": "Required for `ask`, `askUrl` and `sample`. Starts with a letter; letters, digits, `_` and `-`, 64 at most. The result reads the reply as `{{steps.<id>.action}}`, `.content.<field>` or `.text`."
+          },
+          "progress": {
+            "type": "number",
+            "description": "For `progress`."
+          },
+          "total": {
+            "type": "number"
+          },
+          "message": {
+            "type": "string",
+            "description": "The progress message, or the question for `ask` and `askUrl`."
+          },
+          "level": {
+            "type": "string",
+            "description": "For `log`.",
+            "enum": [
+              "debug",
+              "info",
+              "notice",
+              "warning",
+              "error",
+              "critical",
+              "alert",
+              "emergency"
+            ]
+          },
+          "data": {
+            "description": "For `log`."
+          },
+          "logger": {
+            "type": "string"
+          },
+          "requestedSchema": {
+            "type": "object",
+            "description": "For `ask`: an object schema with `properties`.",
+            "additionalProperties": true
+          },
+          "url": {
+            "type": "string",
+            "description": "For `askUrl`: starts with `http://` or `https://`."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "For `sample`."
+          },
+          "systemPrompt": {
+            "type": "string"
+          },
+          "maxTokens": {
+            "type": "integer",
+            "description": "For `sample`, up to 4,096.",
+            "maximum": 4096
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockChange": {
+        "type": "object",
+        "description": "One edit a definition makes, as a reader thinks of it.",
+        "required": ["target", "kind", "summary", "details"],
+        "properties": {
+          "target": {
+            "type": "string",
+            "enum": ["server", "tool", "prompt", "resource", "resourceTemplate", "skill", "app"]
+          },
+          "name": {
+            "type": "string",
+            "description": "The name, URI or URI template a client sees; absent for the server."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["added", "removed", "changed"]
+          },
+          "summary": {
+            "type": "string",
+            "description": "One sentence a person can read."
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "kind", "summary"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Dotted path inside the entry, such as `description` or `params.limit.fixed`."
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": ["added", "removed", "changed"]
+                },
+                "before": {},
+                "after": {},
+                "summary": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "MockServerCreateRequest": {
+        "type": "object",
+        "required": ["name", "definition"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The mock's name, unique among the project's servers."
+          },
+          "serverId": {
+            "type": "string",
+            "description": "The saved server to sit in front of. Omit for a mock from nothing."
+          },
+          "definition": {
+            "$ref": "#/components/schemas/MockDefinition"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockServerVersionRequest": {
+        "type": "object",
+        "description": "Give exactly one of `definition` and `patch`.",
+        "required": ["expectedVersion"],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/MockDefinition"
+          },
+          "patch": {
+            "type": "object",
+            "description": "An RFC 7396 JSON merge patch over the head: `null` removes a key, objects merge.",
+            "additionalProperties": true
+          },
+          "expectedVersion": {
+            "type": "integer",
+            "description": "The head version you read.",
+            "minimum": 1
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Return the change list without saving."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MockServerSaved": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "projectId",
+          "baseServerId",
+          "address",
+          "version",
+          "contentHash",
+          "created",
+          "dryRun",
+          "changes"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "baseServerId": {
+            "type": ["string", "null"],
+            "description": "The saved server the mock sits in front of; null for a mock from nothing."
+          },
+          "address": {
+            "type": ["string", "null"],
+            "description": "Where an MCP client reaches the mock, with an MCPJam API key as the bearer token. Null on a deployment that configures no public URL."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The version saved, or the one a dry run would save."
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the definition equalled the head and nothing was written."
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MockChange"
+            },
+            "description": "What this version changes against the one before it."
+          }
+        }
+      },
+      "MockServer": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "projectId",
+          "baseServerId",
+          "address",
+          "version",
+          "headVersion",
+          "contentHash",
+          "definition",
+          "createdAt",
+          "realServer",
+          "unmatchedCalls"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "baseServerId": {
+            "type": ["string", "null"]
+          },
+          "address": {
+            "type": ["string", "null"],
+            "description": "Where an MCP client reaches the mock, with an MCPJam API key as the bearer token."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The version read."
+          },
+          "headVersion": {
+            "type": "integer",
+            "description": "The latest version."
+          },
+          "contentHash": {
+            "type": "string"
+          },
+          "definition": {
+            "$ref": "#/components/schemas/MockDefinition"
+          },
+          "createdAt": {
+            "type": ["integer", "null"],
+            "description": "Epoch milliseconds."
+          },
+          "sinceVersion": {
+            "type": "integer",
+            "description": "With `since`: the version changes are listed from."
+          },
+          "changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MockChange"
+            },
+            "description": "With `since`: what changed from that version to the one read."
+          },
+          "realServer": {
+            "type": "object",
+            "description": "The real server's current values for what the definition edits.",
+            "required": ["status", "tools"],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["read", "unreachable", "none"],
+                "description": "`unreachable` says why in `message`; `none` is a mock from nothing."
+              },
+              "message": {
+                "type": "string"
+              },
+              "serverInfo": {
+                "type": "object",
+                "description": "The real server's name and version.",
+                "additionalProperties": true
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["tool", "realTool", "found", "current"],
+                  "properties": {
+                    "tool": {
+                      "type": "string"
+                    },
+                    "realTool": {
+                      "type": "string"
+                    },
+                    "found": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "type": "object",
+                      "description": "The real value of each field the entry edits; `params.<name>` is a parameter's schema.",
+                      "additionalProperties": true
+                    }
+                  }
+                }
+              },
+              "prompts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "The real prompt's current values.",
+                  "additionalProperties": true
+                }
+              },
+              "resources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "The real resource's current values.",
+                  "additionalProperties": true
+                }
+              },
+              "resourceTemplates": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "description": "The real template's current values.",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "unmatchedCalls": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["tool", "arguments", "version", "count", "lastSeenAt"],
+              "properties": {
+                "tool": {
+                  "type": "string"
+                },
+                "arguments": {
+                  "type": "object",
+                  "description": "The input that found no answer; empty when it was too large to keep.",
+                  "additionalProperties": true
+                },
+                "version": {
+                  "type": "integer",
+                  "description": "The version serving when it was last seen."
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "lastSeenAt": {
+                  "type": "integer",
+                  "description": "Epoch milliseconds."
+                }
+              }
+            },
+            "description": "The most recent calls no saved answer matched, newest first: the input to write a case for."
+          },
+          "whatCanChange": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A place the mock can change on this server, with its current value, which clients read it and the failed runs that point at it.",
+              "additionalProperties": true
+            },
+            "description": "Everything the mock can change, ranked. Present when the real server was read."
+          }
+        }
+      },
+      "ClimbStartRequest": {
+        "type": "object",
+        "required": ["suiteId", "serverId", "roundLimit", "creditLimit"],
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "description": "The eval suite to climb. It needs environments attached."
+          },
+          "serverId": {
+            "type": "string",
+            "description": "The saved server to improve. Every selected environment must include it."
+          },
+          "roundLimit": {
+            "type": "integer",
+            "description": "The most rounds the climb may start. Required: a climb has no default.",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "creditLimit": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The most credits the climb may commit, checked on estimates. Required: a climb has no default."
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "The suite's environments to climb in. Omit for every environment the suite has, up to 10."
+          },
+          "picker": {
+            "type": "string",
+            "enum": ["person", "agent", "mcpjam"],
+            "description": "Who picks each change. `agent`: your own agent submits rounds. `person`: you do. `mcpjam`: MCPJam picks with `pickerModel`, one step at a time, and pauses when a step cannot finish."
+          },
+          "pickerModel": {
+            "type": "string",
+            "description": "The model MCPJam picks with. Required with `picker: mcpjam`, refused with any other picker.",
+            "maxLength": 200
+          },
+          "measure": {
+            "type": "string",
+            "enum": ["pass_rate", "tokens", "cost", "tool_calls"],
+            "description": "What the climb tries to improve. Default `pass_rate`. Fixed once round 1 settles."
+          },
+          "minImprovementBps": {
+            "type": "integer",
+            "description": "The smallest move of tokens, cost or tool calls that counts, in basis points (100 is 1%). Default 100.",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "targetBps": {
+            "type": "integer",
+            "description": "For tokens, cost or tool calls: stop when the best so far uses this many basis points less than the baseline, in every environment that recorded the measure.",
+            "minimum": 1,
+            "maximum": 9999
+          },
+          "groupSizes": {
+            "type": "object",
+            "description": "How many cases go in each group. Give this or `groupLists`.",
+            "properties": {
+              "steering": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "validation": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "confirmation": {
+                "type": "integer",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "groupLists": {
+            "type": "object",
+            "description": "The case keys in each group. A case not listed joins steering.",
+            "properties": {
+              "steering": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "validation": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "confirmation": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "seed": {
+            "type": "string",
+            "description": "Seeds the random split of the cases, so the same split can be made again. An integer is accepted as its decimal string.",
+            "maxLength": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbUpdateRequest": {
+        "type": "object",
+        "description": "Give at least one field.",
+        "properties": {
+          "measure": {
+            "type": "string",
+            "enum": ["pass_rate", "tokens", "cost", "tool_calls"]
+          },
+          "minImprovementBps": {
+            "type": "integer",
+            "description": "In basis points.",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "targetBps": {
+            "type": ["integer", "null"],
+            "minimum": 1,
+            "maximum": 9999,
+            "description": "The target in basis points fewer than the baseline. `null` clears it."
+          },
+          "moveToConfirmation": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "Case keys to set aside as confirmation cases. Only a case no round has run."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbEstimate": {
+        "type": "object",
+        "description": "What a unit costs to start. The estimate is not an upper bound.",
+        "properties": {
+          "creditsPerGroup": {
+            "type": ["number", "null"],
+            "description": "One run group's estimate. Null when MCPJam could not price every run."
+          },
+          "groups": {
+            "type": "integer"
+          },
+          "lowerBound": {
+            "type": "boolean",
+            "description": "True when the estimate is a floor because not every run could be priced."
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "ClimbLaunch": {
+        "type": "object",
+        "required": ["unitKey", "estimate", "groups"],
+        "properties": {
+          "unitKey": {
+            "type": "string"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/ClimbEstimate"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "runGroupId", "serverId", "runs"],
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "runGroupId": {
+                  "type": "string"
+                },
+                "serverId": {
+                  "type": "string"
+                },
+                "serverVersion": {
+                  "type": "string"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["environmentId", "runId"],
+                    "properties": {
+                      "environmentId": {
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "description": "The run groups launched, each with one run per environment."
+          }
+        }
+      },
+      "Climb": {
+        "type": "object",
+        "description": "A climb. Rates and ratios are whole basis points: 100 is 1%.",
+        "required": [
+          "climbId",
+          "suiteId",
+          "projectId",
+          "serverId",
+          "serverName",
+          "environmentIds",
+          "picker",
+          "state",
+          "measure",
+          "limits",
+          "groups",
+          "rounds",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "picker": {
+            "type": "string",
+            "enum": ["person", "agent", "mcpjam"]
+          },
+          "pickerModel": {
+            "type": "string",
+            "description": "With `picker: mcpjam`: the model MCPJam picks with."
+          },
+          "stepRunner": {
+            "type": "string",
+            "enum": ["hosted", "local"],
+            "description": "With `picker: mcpjam`: whether MCPJam's steps run on MCPJam's servers or in the Inspector on the starter's machine."
+          },
+          "paused": {
+            "type": "object",
+            "description": "Present while the climb waits for a person. A paused climb is still `ready` or `running`; `continue_climb` resumes it.",
+            "required": ["at", "code", "reason"],
+            "properties": {
+              "at": {
+                "type": "integer",
+                "description": "Epoch milliseconds."
+              },
+              "code": {
+                "type": "string",
+                "enum": [
+                  "attempts_exhausted",
+                  "nothing_submitted",
+                  "inspector_stopped",
+                  "starter_unresolvable",
+                  "feature_unavailable"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "description": "What happened and what to do first."
+              }
+            }
+          },
+          "state": {
+            "type": "string",
+            "enum": ["baselining", "ready", "running", "stopped"]
+          },
+          "stopReason": {
+            "type": "string",
+            "enum": ["all_steering_pass", "target_reached", "round_limit", "stopped_by_caller"]
+          },
+          "measure": {
+            "type": "string",
+            "enum": ["pass_rate", "tokens", "cost", "tool_calls"]
+          },
+          "measureLocked": {
+            "type": "boolean",
+            "description": "True once round 1 has settled."
+          },
+          "minImprovementBps": {
+            "type": "integer"
+          },
+          "targetBps": {
+            "type": "integer"
+          },
+          "limits": {
+            "type": "object",
+            "required": [
+              "roundLimit",
+              "roundsStarted",
+              "roundsLeft",
+              "creditLimit",
+              "creditsCommitted",
+              "creditsLeft"
+            ],
+            "properties": {
+              "roundLimit": {
+                "type": "integer"
+              },
+              "roundsStarted": {
+                "type": "integer"
+              },
+              "roundsLeft": {
+                "type": "integer"
+              },
+              "creditLimit": {
+                "type": "number"
+              },
+              "creditsCommitted": {
+                "type": "number"
+              },
+              "creditsLeft": {
+                "type": "number"
+              }
+            }
+          },
+          "groups": {
+            "type": "object",
+            "description": "Steering cases are listed by key. Validation and confirmation cases are counts only.",
+            "required": ["steering", "validation", "confirmation", "steeringCases"],
+            "properties": {
+              "steering": {
+                "type": "integer"
+              },
+              "validation": {
+                "type": "integer"
+              },
+              "confirmation": {
+                "type": "integer"
+              },
+              "steeringCases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["key", "tool"],
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "tool": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "newCases": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["key", "tool"],
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "tool": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": "Suite cases the groups do not name yet. Each joins steering from the next round unless moved to confirmation."
+              },
+              "steeringToolsWithoutValidation": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "baselineFailure": {
+            "type": "object",
+            "description": "The last baseline attempt failed. The climb stays `baselining`; `continue_climb` runs it again.",
+            "properties": {
+              "unitKey": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Names the environment that lost iterations."
+              },
+              "failedAt": {
+                "type": "integer"
+              }
+            }
+          },
+          "baseline": {
+            "type": "object",
+            "description": "When the baseline settled and, per environment, the pass rate, counts and noise of its two runs for steering and validation cases.",
+            "additionalProperties": true
+          },
+          "best": {
+            "type": "object",
+            "description": "The best server so far.",
+            "properties": {
+              "serverId": {
+                "type": "string"
+              },
+              "serverVersion": {
+                "type": "string"
+              },
+              "roundNumber": {
+                "type": "integer"
+              }
+            }
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClimbRoundSummary"
+            }
+          },
+          "confirmationCasesUsedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Earlier climbs on the suite that used any of the same confirmation cases."
+          },
+          "confirmation": {
+            "type": "object",
+            "description": "The one-time confirmation: its status, start, estimate and failure reason.",
+            "additionalProperties": true
+          },
+          "verifications": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One verification: its mode (`paired` or `server_only`), status, verdict and the commit it was given.",
+              "additionalProperties": true
+            }
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "suiteCheck": {
+            "type": "object",
+            "description": "Whether the suite can show a change: the noise, the smallest change per measure, cases that flipped between the baseline runs, environments with no room to improve and tools no validation case covers.",
+            "additionalProperties": true
+          },
+          "climbFor": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A thing to climb for, with its measure, a count from steering cases and up to three failed runs.",
+              "additionalProperties": true
+            }
+          },
+          "whatCanChange": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A place a mock can change on the server, ranked, with its current value, which clients read it and what was tried.",
+              "additionalProperties": true
+            }
+          },
+          "confirmationResult": {
+            "type": "object",
+            "description": "Once the confirmation has settled: the difference per environment with its 95% interval.",
+            "additionalProperties": true
+          },
+          "verificationReports": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "Each verification as a reader wants it: whether the gain holds, both gains, the baseline then and now, and the commit.",
+              "additionalProperties": true
+            }
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What this read could not do, in words a caller can act on."
+          }
+        }
+      },
+      "ClimbStarted": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Climb"
+          },
+          {
+            "type": "object",
+            "required": ["launch"],
+            "properties": {
+              "launch": {
+                "$ref": "#/components/schemas/ClimbLaunch"
+              }
+            }
+          }
+        ],
+        "description": "The climb, and the baseline it launched."
+      },
+      "ClimbPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "climbId",
+                "suiteId",
+                "serverName",
+                "state",
+                "measure",
+                "roundsStarted",
+                "roundLimit",
+                "createdAt"
+              ],
+              "properties": {
+                "climbId": {
+                  "type": "string"
+                },
+                "suiteId": {
+                  "type": "string"
+                },
+                "serverName": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": ["baselining", "ready", "running", "stopped"]
+                },
+                "measure": {
+                  "type": "string",
+                  "enum": ["pass_rate", "tokens", "cost", "tool_calls"]
+                },
+                "roundsStarted": {
+                  "type": "integer"
+                },
+                "roundLimit": {
+                  "type": "integer"
+                },
+                "createdAt": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "ClimbRoundSummary": {
+        "type": "object",
+        "required": [
+          "number",
+          "status",
+          "serverId",
+          "submittedBy",
+          "submittedVia",
+          "openedAt",
+          "reasons"
+        ],
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running", "settled", "failed"]
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "serverVersion": {
+            "type": "string"
+          },
+          "submittedBy": {
+            "type": "string"
+          },
+          "submittedVia": {
+            "type": "string",
+            "enum": ["cli", "mcp", "api", "app", "mcpjam"]
+          },
+          "openedAt": {
+            "type": "integer"
+          },
+          "settledAt": {
+            "type": "integer"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": ["kept", "reverted", "not_decided"]
+          },
+          "standing": {
+            "type": "string",
+            "enum": ["kept", "reverted", "not_decided"],
+            "description": "What stands: the overrule if there is one, else the verdict."
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "overruled": {
+            "type": "object",
+            "description": "Present only when a person overruled the round.",
+            "required": ["to", "by", "reason", "at"],
+            "properties": {
+              "to": {
+                "type": "string",
+                "enum": ["kept", "reverted", "not_decided"]
+              },
+              "by": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "at": {
+                "type": "integer"
+              }
+            }
+          },
+          "pickedBy": {
+            "type": "string",
+            "enum": ["mcpjam"],
+            "description": "Set on a round MCPJam picked."
+          },
+          "pickerChatSessionId": {
+            "type": "string",
+            "description": "The chat session that holds MCPJam's transcript for the round."
+          }
+        }
+      },
+      "ClimbRound": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ClimbRoundSummary"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "climbId": {
+                "type": "string"
+              },
+              "suiteId": {
+                "type": "string"
+              },
+              "estimatedCredits": {
+                "type": "number"
+              },
+              "remeasuredBest": {
+                "type": "boolean",
+                "description": "The best so far was measured again in this round."
+              },
+              "remeasureReason": {
+                "type": "string"
+              },
+              "againstBest": {
+                "type": "object",
+                "description": "What the round was compared with.",
+                "additionalProperties": true
+              },
+              "validation": {
+                "type": "string",
+                "enum": ["better", "unchanged"],
+                "description": "Whether validation cases also improved or did not move."
+              },
+              "failedSteeringCaseKeys": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Steering cases that failed. Validation cases are never named."
+              },
+              "validationRegressed": {
+                "type": "boolean",
+                "description": "A reverted round says only this about validation cases."
+              },
+              "environments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["environmentId"],
+                  "properties": {
+                    "environmentId": {
+                      "type": "string"
+                    },
+                    "candidateLost": {
+                      "type": "integer"
+                    },
+                    "bestLost": {
+                      "type": "integer"
+                    },
+                    "measureRecorded": {
+                      "type": "boolean"
+                    },
+                    "steering": {
+                      "type": "object",
+                      "properties": {
+                        "passRate": {
+                          "type": "object",
+                          "description": "The candidate's and the best so far's pass rate in basis points, the difference, the noise and whether it moved `better`, `worse` or `none`.",
+                          "additionalProperties": true
+                        },
+                        "measure": {
+                          "type": "object",
+                          "description": "The ratio of the candidate's total to the best so far's in basis points, the noise, how many cases were compared and whether it moved.",
+                          "additionalProperties": true
+                        }
+                      }
+                    },
+                    "validation": {
+                      "type": "object",
+                      "properties": {
+                        "passRate": {
+                          "type": "object",
+                          "description": "The candidate's and the best so far's pass rate in basis points, the difference, the noise and whether it moved `better`, `worse` or `none`.",
+                          "additionalProperties": true
+                        },
+                        "measure": {
+                          "type": "object",
+                          "description": "The ratio of the candidate's total to the best so far's in basis points, the noise, how many cases were compared and whether it moved.",
+                          "additionalProperties": true
+                        }
+                      }
+                    }
+                  }
+                },
+                "description": "Per environment, with validation as totals."
+              },
+              "environmentsWithoutMeasure": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "failureReason": {
+                "type": "string"
+              },
+              "settled": {
+                "type": "boolean",
+                "description": "With `wait`: whether the round settled within the wait."
+              },
+              "waitedMs": {
+                "type": "integer"
+              }
+            }
+          }
+        ],
+        "description": "One round in full."
+      },
+      "ClimbRoundSubmitRequest": {
+        "type": "object",
+        "required": ["serverId"],
+        "properties": {
+          "serverId": {
+            "type": "string",
+            "description": "The saved server to measure as this round: a mock, or the best so far unchanged."
+          },
+          "serverVersion": {
+            "type": "string",
+            "description": "The mock version this round runs. Omit for the head now. A later edit to the mock does not change the round."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "Retry handle. A repeat with the same key returns the same round and charges nothing.",
+            "maxLength": 256
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbRoundSubmitted": {
+        "type": "object",
+        "required": [
+          "climbId",
+          "suiteId",
+          "roundNumber",
+          "unitKey",
+          "replayed",
+          "estimate",
+          "remeasureBest",
+          "remeasureReasons",
+          "groups"
+        ],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "roundNumber": {
+            "type": "integer"
+          },
+          "unitKey": {
+            "type": "string"
+          },
+          "replayed": {
+            "type": "boolean",
+            "description": "True when the same idempotency key had already registered this round: nothing was charged or launched again."
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/ClimbEstimate"
+          },
+          "remeasureBest": {
+            "type": "boolean",
+            "description": "The best so far is measured again in this round."
+          },
+          "remeasureReasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["role", "runGroupId", "serverId", "runs"],
+              "properties": {
+                "role": {
+                  "type": "string"
+                },
+                "runGroupId": {
+                  "type": "string"
+                },
+                "serverId": {
+                  "type": "string"
+                },
+                "serverVersion": {
+                  "type": "string"
+                },
+                "runs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["environmentId", "runId"],
+                    "properties": {
+                      "environmentId": {
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ClimbDecisionRequest": {
+        "type": "object",
+        "required": ["decision", "reason"],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": ["kept", "reverted"],
+            "description": "What the round should stand as."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why you are overruling the rule. It is recorded with your name.",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbDecision": {
+        "type": "object",
+        "required": ["climbId", "suiteId", "round"],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "round": {
+            "$ref": "#/components/schemas/ClimbRound"
+          },
+          "best": {
+            "type": "object",
+            "description": "The best server so far after the overrule.",
+            "properties": {
+              "serverId": {
+                "type": "string"
+              },
+              "serverVersion": {
+                "type": "string"
+              },
+              "roundNumber": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "ClimbStopped": {
+        "type": "object",
+        "required": ["climbId", "suiteId", "state", "stopReason", "kept", "prompt", "summary"],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": ["stopped"]
+          },
+          "stopReason": {
+            "type": "string",
+            "enum": ["all_steering_pass", "target_reached", "round_limit", "stopped_by_caller"]
+          },
+          "best": {
+            "type": "object",
+            "properties": {
+              "serverId": {
+                "type": "string"
+              },
+              "serverVersion": {
+                "type": "string"
+              },
+              "roundNumber": {
+                "type": "integer"
+              }
+            }
+          },
+          "kept": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["number", "serverId", "overruled"],
+              "properties": {
+                "number": {
+                  "type": "integer"
+                },
+                "serverId": {
+                  "type": "string"
+                },
+                "serverVersion": {
+                  "type": "string"
+                },
+                "validation": {
+                  "type": "string",
+                  "enum": ["better", "unchanged"]
+                },
+                "overruled": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "description": "The rounds that stand as kept, in order."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The kept changes in order, those that also helped on validation first, each with its old and new value, for the coding agent that works on the server's code."
+          },
+          "summary": {
+            "type": "object",
+            "description": "Steering and validation results labeled as the cases that helped pick the result, the confirmation, and what the climb established and did not.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ClimbConfirmRequest": {
+        "type": "object",
+        "properties": {
+          "dryRun": {
+            "type": "boolean",
+            "description": "Return what the confirmation would cost and start nothing."
+          },
+          "waitSeconds": {
+            "type": "integer",
+            "description": "Hold the call until the confirmation settles, for at most this many seconds (0 to 50).",
+            "minimum": 0,
+            "maximum": 50
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbConfirmed": {
+        "type": "object",
+        "required": [
+          "climbId",
+          "suiteId",
+          "dryRun",
+          "estimate",
+          "confirmationCaseCount",
+          "environmentIds",
+          "confirmationCasesUsedBy",
+          "settled"
+        ],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/ClimbEstimate"
+          },
+          "confirmationCaseCount": {
+            "type": "integer"
+          },
+          "environmentIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confirmationCasesUsedBy": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Earlier climbs on the suite that used any of the same cases."
+          },
+          "unitKey": {
+            "type": "string"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A run group, as in a round.",
+              "additionalProperties": true
+            }
+          },
+          "result": {
+            "type": "object",
+            "description": "Once settled: per environment the difference in the measure with a 95% interval, and whether the interval includes zero.",
+            "additionalProperties": true
+          },
+          "summary": {
+            "type": "object",
+            "description": "What the climb established and what it did not.",
+            "additionalProperties": true
+          },
+          "settled": {
+            "type": "boolean",
+            "description": "False when the call returned with the confirmation still running."
+          }
+        }
+      },
+      "ClimbVerifyRequest": {
+        "type": "object",
+        "properties": {
+          "commit": {
+            "type": "object",
+            "description": "Recorded on the runs and the climb. MCPJam cannot check which code a server runs.",
+            "properties": {
+              "sha": {
+                "type": "string",
+                "description": "The commit the server runs.",
+                "maxLength": 64
+              },
+              "branch": {
+                "type": "string",
+                "description": "The branch of that commit.",
+                "maxLength": 200
+              },
+              "repositoryUrl": {
+                "type": "string",
+                "description": "The repository's URL.",
+                "maxLength": 512
+              },
+              "dirty": {
+                "type": "boolean",
+                "description": "True when the checkout had uncommitted changes."
+              }
+            },
+            "additionalProperties": false
+          },
+          "targetServerId": {
+            "type": "string",
+            "description": "A saved server that runs the new code, in place of the climbed one. A mock is refused."
+          },
+          "serverVersion": {
+            "type": "string",
+            "description": "The version the server reports, as recorded.",
+            "maxLength": 200
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Return the listing check and the estimate, and start nothing."
+          },
+          "runAnyway": {
+            "type": "boolean",
+            "description": "Run the pair even though the listing check found a kept change missing or different."
+          },
+          "waitSeconds": {
+            "type": "integer",
+            "description": "Hold the call until the verification settles, for at most this many seconds (0 to 50).",
+            "minimum": 0,
+            "maximum": 50
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbVerified": {
+        "type": "object",
+        "required": [
+          "climbId",
+          "suiteId",
+          "dryRun",
+          "ran",
+          "listingCheck",
+          "estimate",
+          "mode",
+          "unrestorable",
+          "settled"
+        ],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "ran": {
+            "type": "boolean",
+            "description": "False for a dry run, and when the listing check stopped it."
+          },
+          "listingCheck": {
+            "type": "object",
+            "description": "Each kept change against the server's listing now: applied, missing or different.",
+            "additionalProperties": true
+          },
+          "blockedBecause": {
+            "type": "string",
+            "description": "Why no run started, when a kept change was missing or different and `runAnyway` was not given."
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/ClimbEstimate"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["paired", "server_only"],
+            "description": "`paired`: the server beside the mock that puts the old values back. `server_only`: a kept change cannot be put back."
+          },
+          "unrestorable": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "why"],
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "What could not be put back, and why."
+          },
+          "unitKey": {
+            "type": "string"
+          },
+          "verificationIndex": {
+            "type": "integer"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A run group, as in a round.",
+              "additionalProperties": true
+            }
+          },
+          "report": {
+            "type": "object",
+            "description": "Once settled: per environment whether the gain holds, the gain the mock showed, the baseline then and now, and the commit.",
+            "additionalProperties": true
+          },
+          "settled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ClimbContinued": {
+        "type": "object",
+        "required": ["climbId", "suiteId", "resumed"],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "resumed": {
+            "type": "boolean",
+            "description": "True when a pause was cleared."
+          },
+          "stepDue": {
+            "type": "boolean",
+            "description": "The next step is due now."
+          },
+          "baselineStarted": {
+            "type": "boolean",
+            "description": "True when a failed baseline was launched again."
+          },
+          "launch": {
+            "$ref": "#/components/schemas/ClimbLaunch"
+          }
+        }
+      },
+      "ClimbDraftRequest": {
+        "type": "object",
+        "required": ["toolName"],
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "description": "The tool whose description to rewrite. A steering case of the climb must call it.",
+            "maxLength": 200
+          },
+          "failedCaseKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "description": "Steering case keys of that tool to draft from, at most 10. Omit for the cases the latest round failed, else the baseline's."
+          },
+          "includeTitle": {
+            "type": "boolean",
+            "description": "Also propose a title for the tool."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClimbDraft": {
+        "type": "object",
+        "required": [
+          "climbId",
+          "suiteId",
+          "toolName",
+          "description",
+          "modelUsed",
+          "basedOn",
+          "failedCaseKeys",
+          "trialsRead",
+          "patchJson"
+        ],
+        "properties": {
+          "climbId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "The rewritten description."
+          },
+          "title": {
+            "type": "string",
+            "description": "Present when `includeTitle` was set."
+          },
+          "modelUsed": {
+            "type": "string"
+          },
+          "basedOn": {
+            "type": "string",
+            "enum": ["mock", "real_server"],
+            "description": "Which description it rewrote: the mock's own edit in the best version, or the real server's stored listing."
+          },
+          "failedCaseKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "trialsRead": {
+            "type": "integer",
+            "description": "How many failed iterations the model read."
+          },
+          "patchJson": {
+            "type": "string",
+            "description": "An RFC 7396 merge patch of the mock definition, as a JSON string, that the mock version route takes as `patch`."
+          }
+        }
+      },
       "Error": {
         "type": "object",
         "required": ["code", "message"],

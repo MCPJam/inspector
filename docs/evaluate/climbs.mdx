@@ -1,0 +1,242 @@
+---
+title: "Climb a server"
+description: "Improve a saved server from an eval suite, one measured change at a time, on mock servers, then apply what worked and check it on the real server."
+icon: "mountain"
+---
+
+A climb improves a saved MCP server from an eval suite you already have. It repeats **rounds**. Each round tries one change on a [mock server](/evaluate/mock-servers), runs your cases against it, and keeps the change only if a stated rule says it helped. Your server is never edited during the climb. At the end you get the kept changes as a prompt for whoever edits the server's code, and a check that the gain holds once the code is changed.
+
+Use a climb when an eval shows a server failing or costing more than it should, and the fix is likely in what the server tells the model: a tool's description, its parameters, its instructions. A climb does not write your server's code.
+
+## What a climb needs
+
+- An eval suite with at least one [client environment](/evaluate/how-evals-work#where-a-case-runs-the-client-environment) attached, up to 10. The server you climb must be in each environment you select.
+- Cases that are not all passing, unless you climb for tokens, cost or tool calls.
+- A round limit and a credit limit. Both are required and bound everything the climb spends.
+
+<Warning>
+  A climb launches paid runs: two baseline runs per environment, then every round. The estimate comes back with each launch, and the limits cap the total, but check them before you start.
+</Warning>
+
+## How a climb works
+
+<Steps>
+  <Step title="Start">
+    You pick the suite, the server, the environments and the two limits. The cases are split into three groups, and a **baseline** runs twice, through a mock with no changes, in every environment. The two runs show how much your suite varies on its own: the **noise** every later result is judged against.
+  </Step>
+  <Step title="Read the baseline">
+    When the baseline settles, the climb is **ready**. It shows a suite check, a list of things to climb for, and everything a mock can change on your server.
+  </Step>
+  <Step title="Run rounds">
+    Each round submits one mock version. It runs the steering and validation cases in every environment, beside the best server so far, and the rule below settles it as **kept**, **reverted** or **not decided**. A kept round becomes the best so far, and the next change builds on it.
+  </Step>
+  <Step title="Stop">
+    The climb stops at a limit, when its goal is reached, or when you stop it. It returns the kept changes as a prompt.
+  </Step>
+  <Step title="Confirm, apply and verify">
+    Run the one-time confirmation on cases no round used, apply the prompt to your server's code, then verify the gain on the real server.
+  </Step>
+</Steps>
+
+### Three groups of cases
+
+| Group | What it is for |
+| --- | --- |
+| **Steering** | The cases a climb learns from. You and your agent can read their transcripts, and a round's change is chosen from their failures. |
+| **Validation** | Run every round to catch a change that breaks something else. A round reports totals only, never a case or a transcript, so the result stays meaningful. |
+| **Confirmation** | Run once, at the end, on cases no round ran. |
+
+With 40 or more cases, half are steering, a quarter validation and a quarter confirmation. With fewer, 60% are steering and 40% validation, and no confirmation runs. Within each tool's cases the split is random and seeded, so the same split can be made again. Give your own groups or sizes at start. A case added to the suite later joins steering unless you set it aside as a confirmation case.
+
+### What to climb for
+
+A climb improves one **measure**: pass rate (the default), tokens, cost or tool calls. Set it at start, or change it with `update_climb` until round 1 settles. After that it is fixed. A measure no environment recorded cannot be chosen, and the refusal says which environment lacks it.
+
+- A climb for **pass rate** stops when every steering case passes in every environment. A round on a climb for pass rate is refused when every steering case already passes: climb for tokens, cost or tool calls instead.
+- A climb for **tokens, cost or tool calls** stops at its target, if you set one (for example 5 for 5% fewer than the baseline), and is never stopped for having nothing to fix. A move must be at least the smallest improvement, 1% unless you set another.
+
+### The suite check
+
+Before you spend a round, the suite check says whether the suite can show a change at all: the noise per environment, the smallest change it can show, cases that passed in one baseline run and failed in the other, environments with no room to improve, and tools no validation case covers. If it says the suite cannot show a change, add iterations or cases first.
+
+### The keep rule
+
+Every result is worked out per environment and per group, against the noise from the two baseline runs. A move counts only when it is bigger than the noise. For tokens, cost and tool calls it must also be at least the smallest improvement.
+
+- **Kept.** The measure moved the right way on steering cases in at least one environment, and in no environment did the measure or the pass rate move the wrong way, on steering or on validation cases. The round also records whether validation cases improved or did not move.
+- **Reverted.** The pass rate or the measure moved the wrong way anywhere, or the measure did not move the right way on steering cases.
+- **Not decided.** The two results cannot be compared: a run is missing, more than one in ten iterations were lost to the model provider, the real server changed since the best was measured, or no environment recorded the measure. Nothing was learned, so fix the cause and submit the change again.
+
+For tokens, cost and tool calls, a round compares totals over the cases both servers passed, counting passing iterations only. A cheap failure and a looping failure say nothing about what a right answer costs. If the best so far was measured more than an hour ago, or the suite changed, the round measures it again beside the candidate and says why.
+
+You can overrule a round. Set it to kept or reverted with a reason of up to 500 characters. The reason is recorded with your name, and the best so far becomes the latest round that stands as kept, or the baseline. You cannot overrule while a round or the confirmation runs, or after the confirmation has run.
+
+## Who picks each change
+
+| Who | What happens |
+| --- | --- |
+| **You** | Nothing runs until you say so. You choose a change in the Climb tab and run the round. |
+| **Your own agent** | Your coding agent runs the climb with MCPJam's tools or the CLI. This is the default when you start from the API, the CLI or MCP. |
+| **MCPJam** | MCPJam picks one change per round in the background with the model you choose, and you can close the page. It reads your real server and calls only the tools your server marks read-only. It reads the transcripts of steering cases only. |
+
+When MCPJam picks, the round says so and links to MCPJam's transcript. Where its steps run depends on where you run the Inspector. In the hosted app they run on MCPJam's servers. In the Inspector on your own machine they run there, so the Inspector must keep running. If a step fails three times, a turn twice ends without a change, the Inspector stops, or the climb's starter has no sign-in to act as, the climb **pauses** with the reason. A pause is never a failure and nothing is lost. **Continue** resumes from the last settled round, and **Pick the change yourself** hands the next round to you.
+
+## Run a climb
+
+<Tabs>
+  <Tab title="Inspector">
+    <Steps>
+      <Step title="Open the suite's Climb tab">
+        In the Evaluate tab, open a suite and choose **Climb**. Click **Start a climb**.
+      </Step>
+      <Step title="Set it up">
+        Pick the **Server**, the environments under **Where it runs**, **Who picks each change** (You, MCPJam or Your own agent) and, for MCPJam, the **Model**. Set **Stop after** a number of rounds or credits. The form starts at 10 rounds and 4,000 credits.
+      </Step>
+      <Step title="Run the baseline">
+        Click **Run the baseline**. With **Your own agent**, the form gives you **Prompt for your agent** to copy instead. The baseline runs every case twice in each environment, and you can leave the page.
+      </Step>
+      <Step title="Choose what to climb for">
+        When the baseline settles, pick an option under **Climb for**. Each says what it measures, shows a count from steering cases, and links the failed runs behind it.
+      </Step>
+      <Step title="Try a change">
+        Under **Try a change**, choose where to change something on your server and what to change it to. **Draft with a model** writes a new description for a tool from its failed steering cases and saves nothing. Run the round. The change is saved as a new version of the climb's mock, and the round opens.
+      </Step>
+      <Step title="Read the round">
+        The round shows the verdict, the reason, and for each environment the measure and the pass rate against the best so far and the noise. A round you disagree with can be overruled with a reason.
+      </Step>
+    </Steps>
+
+    **Stop this climb?** ends it. **Keep climbing** carries on.
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    mcpjam cloud climbs start --suite "Notes server" --server notes \
+      --round-limit 10 --credit-limit 4000 --wait
+    mcpjam cloud climbs get --climb <id>
+    ```
+
+    Once the climb is ready, make a change with [`mcpjam cloud mocks`](/cli/reference#cloud-mocks-commands), then submit it as a round and read the result:
+
+    ```bash
+    mcpjam cloud mocks create --name "notes (mock)" --server notes \
+      --definition-file definition.json
+    mcpjam cloud climbs rounds submit --climb <id> --server "notes (mock)" --wait
+    mcpjam cloud climbs rounds get --climb <id> --round 1
+    ```
+
+    For the next round, save a new version of the same mock with `mocks update` and submit it again. After the last round:
+
+    ```bash
+    mcpjam cloud climbs stop --climb <id>
+    mcpjam cloud climbs confirm --climb <id> --dry-run
+    mcpjam cloud climbs confirm --climb <id> --wait
+    ```
+
+    Apply the prompt `stop` printed to your server's code, then:
+
+    ```bash
+    mcpjam cloud climbs verify --climb <id> --commit 4f2c9ab --wait
+    ```
+
+    See [`cloud climbs` commands](/cli/reference#cloud-climbs-commands) for every flag.
+  </Tab>
+  <Tab title="MCP tools">
+    Connect your agent to [MCPJam's MCP server](/hosted/mcp-server). It runs the loop:
+
+    ```text
+    start_climb -> get_climb (until ready) -> create_mock_server / update_mock_server
+      -> submit_climb_round -> get_climb_round (waitSeconds) -> next round ...
+      -> stop_climb -> confirm_climb -> apply the prompt -> verify_climb
+    ```
+
+    | Tool | What it does |
+    | --- | --- |
+    | `start_climb` | Starts a climb and launches the baseline. Needs `suite`, `server`, `roundLimit` and `creditLimit`. Optional: `environments`, `picker` (`person`, `agent` or `mcpjam`), `pickerModel`, `measure`, `minImprovementPercent`, `targetPercent`, `groupSizes` or `groups`, `seed`. |
+    | `get_climb` | Reads the climb: state, limits and credits left, the groups, the baseline noise, every round, and once ready the `suiteCheck`, `climbFor` and `whatCanChange`. |
+    | `list_climbs` | Lists a project's climbs, newest first. |
+    | `update_climb` | Changes `measure`, `minImprovementPercent` or `targetPercent` until round 1 settles, or sets cases aside with `moveToConfirmation`. |
+    | `submit_climb_round` | Submits a saved server, usually a mock, as the next round. Takes an `idempotencyKey` so a retry costs nothing. |
+    | `get_climb_round` | Reads a round. `waitSeconds` (up to 50) holds the call until it settles. |
+    | `set_climb_round_decision` | Overrules a round to `kept` or `reverted` with a `reason`. |
+    | `draft_climb_change` | Drafts a new description for one tool from failed steering cases. Saves nothing. |
+    | `continue_climb` | Resumes a paused climb, or runs a failed baseline again. |
+    | `stop_climb` | Stops the climb and returns the kept changes and the prompt. |
+    | `confirm_climb` | Runs the one-time confirmation. `dryRun` returns the estimate alone. |
+    | `verify_climb` | Checks the gain on the real server. |
+
+    Mocks are made with `create_mock_server`, `update_mock_server` and `get_mock_server` ([Mock servers](/evaluate/mock-servers)).
+
+    MCPJam also ships a skill, `climb-an-mcp-server`, that teaches an agent this loop and what never to read:
+
+    ```bash
+    npx skills add mcpjam/inspector --skill climb-an-mcp-server
+    ```
+  </Tab>
+  <Tab title="API">
+    Every operation above is an endpoint under `/projects/{projectId}/climbs`. Start with [Start a climb](/api-reference/climbs/start-a-climb).
+  </Tab>
+</Tabs>
+
+## Limits
+
+- **Rounds.** `roundLimit` is 1 to 100. A round past it is refused, with what is needed and what is left.
+- **Credits.** `creditLimit` is checked against estimates before a round launches. A round past it is refused the same way. The estimate is not an upper bound, and it is a floor when MCPJam could not price every run.
+- **One round at a time.** A second round while one runs is refused.
+- **Outside the limits.** The confirmation and each verification are not counted against the round and credit limits. They return their own estimate first, and `dryRun` returns it without starting anything.
+- **Drafts.** `draft_climb_change` uses none of the climb's credits. MCPJam's daily drafting budget applies, and one draft runs at a time per climb.
+- **Paused climbs.** MCPJam's own steps spend credits within the same limits.
+
+## Stop, then confirm
+
+A stopped climb takes no more rounds. `stop_climb` returns where the climb ended, the best server, the rounds that stand as kept, and a **summary** that labels the steering and validation results as the cases that helped pick the result and says what the climb established and what it did not. It also returns **the prompt**: the kept changes, those that also helped on validation first, each with its old and new value, written for the coding agent that edits your server. In the app, the stopped climb shows it under **Prompt for your agent**, beside a summary headed **What this climb showed**.
+
+The **confirmation** runs once. It runs two groups back to back on the confirmation cases no round used, the mock with no changes and the best server, in every environment, and reports the difference in the climb's measure with a 95% interval found by resampling cases. When the interval includes zero, the gain is within noise and you should not ship on it. The confirmation:
+
+- is refused a second time, on a climb that kept nothing, and on a climb with no confirmation cases;
+- tells you when an earlier climb on the suite already used the same cases, because looking at them again is selection again;
+- cannot be asked for again once it has settled. If its runs fail to launch, ask again.
+
+## Apply the change and verify it
+
+The mock showed that a change helps. It did not change your server. Apply the kept changes in the server's code, run the new code, then verify. In the app, this is **Verify on your server** on the stopped climb, after **Run the confirmation?**.
+
+A verification does three things:
+
+1. It reads the server's listing and names each kept change as **applied**, **missing** or **different**. If any is missing or different, it stops and starts no run, unless you ask it to run anyway (`--run-anyway`, `runAnyway`).
+2. It runs the same cases in the same environments twice, back to back, both through a mock: your server as it is now, and your server with a mock in front that puts the old values back, which is the baseline measured now.
+3. It applies the keep rule to that pair and says, per environment, whether the gain holds on your server, with the gain the mock showed beside it, the baseline then and now, and the commit.
+
+If a kept change cannot be put back, for example a tool the new code removed, only your server runs, and its numbers are set beside the climb's recorded ones with their age.
+
+Pass the commit you ran (`--commit`, `--branch`, `--repository-url`, `--dirty`). MCPJam records what you give it. It cannot check which code a server runs. A climb allows three verifications, one at a time.
+
+## Errors
+
+A refused call names what to do next. These codes appear in `details.code`:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 409 | `CLIMB_ROUND_LIMIT_REACHED`, `CLIMB_CREDIT_LIMIT_REACHED` | The round would pass a limit. |
+| 409 | `CLIMB_ROUND_IN_FLIGHT`, `CLIMB_BUSY` | A round, a baseline or another call is running. |
+| 409 | `CLIMB_NOT_READY` | The baseline has not settled. Read the climb until its state is `ready`. |
+| 409 | `CLIMB_MEASURE_LOCKED`, `CLIMB_MEASURE_NOT_RECORDED` | The measure cannot change after round 1, or no environment recorded it. |
+| 409 | `CLIMB_NOTHING_TO_FIX_FOR_PASS_RATE` | Every steering case already passes. Climb for tokens, cost or tool calls. |
+| 409 | `CLIMB_STOPPED`, `CLIMB_NOT_STOPPED` | The call needs a running climb, or a stopped one. |
+| 409 | `CLIMB_CONFIRMED`, `CLIMB_CONFIRMATION_SPENT`, `CLIMB_NO_CONFIRMATION_CASES`, `CLIMB_NOTHING_TO_CONFIRM` | The confirmation ran already, or there is nothing to confirm. |
+| 409 | `CLIMB_VERIFICATION_LIMIT_REACHED`, `CLIMB_NOTHING_TO_VERIFY` | Three verifications are used, or no round was kept. |
+| 409 | `CLIMB_NOT_PAUSED` | `continue_climb` on a climb that is not paused. |
+| 404 | `CLIMB_NOT_FOUND`, `CLIMB_ROUND_NOT_FOUND`, `CLIMB_SERVER_NOT_FOUND` | The climb, round or server is not in this project. |
+| 502 | `CLIMB_DRAFT_MODEL_ERROR`, `CLIMB_DRAFT_UNUSABLE`, `CLIMB_DRAFT_TOO_LONG` | The draft did not come back usable. Try again. |
+
+A change that no client in the climb's environments reads is refused before any run, with the reason and which client would read it. If the real server's listing changed so it can no longer be compared, the round is refused or marked not decided. An environment chosen at start that no longer includes the server is refused by name. Mocks have their own [errors](/evaluate/mock-servers#errors), including the pause message.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Mock servers" icon="copy" href="/evaluate/mock-servers">
+    What a mock can change, and how to save versions of it.
+  </Card>
+  <Card title="Read results" icon="chart-bar" href="/evaluate/read-results">
+    Read the runs behind a round.
+  </Card>
+</CardGroup>

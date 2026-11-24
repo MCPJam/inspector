@@ -118,6 +118,11 @@
                 "pages": ["evaluate/configure-grading", "evaluate/run-evals-in-ci"]
               },
               {
+                "group": "Improve a server",
+                "icon": "mountain",
+                "pages": ["evaluate/climbs", "evaluate/mock-servers"]
+              },
+              {
                 "group": "Reference",
                 "icon": "book-open",
                 "pages": [

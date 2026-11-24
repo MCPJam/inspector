@@ -1,0 +1,259 @@
+---
+title: "Mock servers"
+description: "Try a change to a server's tools, prompts or answers without touching the server: a mock sits in front of a saved server and changes only what you state."
+icon: "copy"
+---
+
+A mock server is an MCP server that MCPJam hosts. It is either a copy of a saved server in your project or a server built from nothing, and its **definition** states only what it changes. Everything the definition leaves out comes from the real server, which the mock calls with your own credentials. The real server is never edited.
+
+That makes a mock the place to test a better tool description, a hidden parameter or a canned answer before you change code. Any client can use one, so you can measure the change with an eval, try it in the Playground, or point an agent at it. [Climb a server](/evaluate/climbs) builds on mocks: each round of a climb measures one mock version.
+
+<Note>
+  A mock exists in your project as a server named whatever you choose, with a **Mock** badge in the server list. Its name must differ from every other server in the project.
+</Note>
+
+## Make a mock
+
+You make a mock with MCPJam's tools, the CLI or the API. The definition is JSON.
+
+<Tabs>
+  <Tab title="CLI">
+    Save the definition to a file, then create the mock from the saved server `notes`:
+
+    ```json definition.json
+    {
+      "tools": {
+        "search_notes": {
+          "description": "Search notes by words in the title or body. Returns note ids; call read_note with an id to get the text."
+        }
+      }
+    }
+    ```
+
+    ```bash
+    mcpjam cloud mocks create --name "notes (mock)" --server notes \
+      --definition-file definition.json
+    ```
+
+    Omit `--server` to build a mock from nothing. `--definition` takes the JSON inline, and `-` reads it from stdin. The command prints the mock's address, version 1 and the list of what the definition changes.
+  </Tab>
+  <Tab title="MCP tools">
+    Ask your agent to call `create_mock_server` with `name`, optionally `server` (the saved server's name or ID) and `definition`. Omit `server` for a mock from nothing. The result holds the mock's `id`, its `address`, `version` and `changes`.
+  </Tab>
+  <Tab title="API">
+    `POST /projects/{projectId}/mock-servers` with `name`, `definition` and optionally `serverId`. See [Create a mock server](/api-reference/mock-servers/create-a-mock-server).
+  </Tab>
+</Tabs>
+
+MCPJam checks the definition before it saves anything. A change that leaves a real tool impossible to call is refused with the parameter named: for example, hiding a required parameter without fixing its value.
+
+## What a definition can change
+
+A definition is a JSON object. Every part is optional, and a tool entry states only the fields it changes.
+
+| Part | What you can state |
+| --- | --- |
+| `serverInfo` | The server's `name`, `title` and `version`. |
+| `instructions` | The server's instructions text. |
+| `capabilities` | Replace a capability (`tools`, `prompts`, `resources`, `logging`, `completions`, `tasks`, `experimental`, `extensions`) with an object, or remove it with `null`. `tools` cannot be removed. |
+| `pageSize` | Build the mock's own lists in pages of this many entries (1 to 1,000). Left out, each list is one page. |
+| `tools` | Per tool, keyed by the name a client sees: `title`, `description`, `inputSchema`, `outputSchema`, `annotations`, `icons`, `_meta`, `hidden`, `params` and `answer`. |
+| `prompts` | Per prompt: `title`, `description`, `arguments`, `hidden`, or `messages` to make the prompt the mock's own. |
+| `resources` | Per resource URI: `name`, `title`, `description`, `mimeType`, `hidden`, or `text` or `blob` (base64) to serve the content yourself. |
+| `resourceTemplates` | The same, per URI template. |
+
+A tool's `annotations` and `_meta` merge key by key over the real tool's. `inputSchema` and `outputSchema` replace the real ones whole, so prefer `params` to change one parameter.
+
+### Hide, rename and fix parameters
+
+```json
+{
+  "tools": {
+    "search_notes": {
+      "params": {
+        "limit": { "fixed": 10 },
+        "debug": { "hidden": true }
+      }
+    },
+    "delete_note": { "hidden": true }
+  }
+}
+```
+
+- `hidden: true` on a tool removes it from the listing. Nothing else may accompany it, except `answer`.
+- On a parameter, `hidden: true` removes it from the listed schema and sends nothing for it. `fixed` removes it too and sends your value with every call. `description` replaces the parameter's description. A hidden or fixed parameter cannot also carry a description.
+- A rename is two entries: the new name answers by calling the real tool, and the old name is hidden.
+
+```json
+{
+  "tools": {
+    "find": { "answer": { "tool": "search" } },
+    "search": { "hidden": true }
+  }
+}
+```
+
+`answer.arguments` lays values over the client's arguments before the real tool is called.
+
+### Answer from saved cases
+
+A tool with `answer.from: "saved"` answers from a list of cases and never calls the real tool when one matches.
+
+```json
+{
+  "tools": {
+    "read_note": {
+      "answer": {
+        "from": "saved",
+        "cases": [
+          {
+            "when": { "id": 7 },
+            "result": {
+              "content": [{ "type": "text", "text": "Launch plan: ship on Friday." }]
+            }
+          },
+          {
+            "error": { "code": -32602, "message": "Note {{input.id}} does not exist." }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+- **Matching.** The first case whose `when` fits the call answers it. `when` is a subset of the call's input: every key must equal the call's value, extra input is ignored, and a case with no `when` fits any input.
+- **Result or error.** A case has exactly one of `result` (a whole tool result, with a `content` list) or `error` (a protocol error with an integer `code` and a `message`).
+- **Filling values.** `{{input.x}}` in a string of the result, or in the error's message or data, takes the call's value for `x`. A name the call does not hold is left as written, so the mistake is visible in the answer.
+- **No case fits.** If the real server has the tool, the call goes to it. For a tool you added, the mock returns a tool error: "No saved answer for the tool matches the input. Add a case whose "when" fits this input." The calls no case matched are listed as `unmatchedCalls` when you read the mock, newest first, so you know which input to write a case for.
+- **Limit.** A tool may have 200 cases. Merge cases that differ only by input by using `{{input.x}}`.
+
+### Send progress, log lines and questions
+
+A saved case can do things before it answers. List them in `steps`, in order, at most 20 per case:
+
+| Step `kind` | What the mock does |
+| --- | --- |
+| `progress` | Sends a progress notification (`progress`, optional `total` and `message`). |
+| `log` | Sends a log message at a `level` from `debug` to `emergency`, with `data` and optionally a `logger` name. |
+| `ask` | Asks a question as a form (`message` and a `requestedSchema` with `properties`). |
+| `askUrl` | Asks a question that sends the person to a page (`message` and an `http` or `https` `url`). |
+| `sample` | Asks the client's model a question (`prompt`, optional `systemPrompt`, and `maxTokens` up to 4,096). |
+
+Every `ask`, `askUrl` and `sample` step needs an `id` that starts with a letter. The case's result can read the reply as `{{steps.<id>.action}}`, `{{steps.<id>.content.<field>}}` (a form's values) or `{{steps.<id>.text}}` (a model's text). Any step can wait first with `delayMs`, up to 5,000 ms, and a case may wait 20,000 ms in all. Set `"task": true` on a case to run it as a task when the caller can take one; otherwise the call answers in place.
+
+Who answers a question depends on where the mock runs. In the Playground you answer it. In an eval, the reply comes from the case ([Answer a server's question](/evaluate/write-a-case#answer-a-servers-question)), and a request to the model is answered by the model the run uses, which must be a model MCPJam hosts. A question with no reply on the case is declined, and the trace says so.
+
+### Answer with a model
+
+A tool with `answer.from: "model"` answers as the server would, written by a model from the tool's description and your instructions:
+
+```json
+{
+  "tools": {
+    "read_note": {
+      "answer": {
+        "from": "model",
+        "instructions": "Notes are short project updates. Refuse ids above 500."
+      }
+    }
+  }
+}
+```
+
+The first call with a given mock version, tool and input asks a model. MCPJam stores the answer and replays it for the same call, so a repeat gets the same answer and costs nothing. `instructions` may be 4,000 characters. MCPJam limits how many model answers a mock version and a run may draw. A call past a limit returns a tool error with the reason.
+
+### Prompts, resources, skills and apps
+
+`prompts`, `resources` and `resourceTemplates` edit what the real server lists, hide it, or add to it. An entry that gives `messages` (prompt) or `text` or `blob` (resource) is the mock's own, and `{{input.x}}` fills from the call's arguments, or from the variables of a template's URI.
+
+- A resource under `skill://<name>/SKILL.md` is a skill, along with the other `skill://<name>/...` resources beside it. The mock lists each skill's files with a digest and size of what it serves. A skill's `SKILL.md` is text.
+- A resource under `ui://` is an MCP App: HTML with the MIME type `text/html;profile=mcp-app`, which you leave out.
+
+### Limits on a definition
+
+A definition may be 524,288 bytes of JSON, 32 levels deep and 20,000 values. A `pattern` may be 1,000 characters, and a `$ref` must start with `#`. A refused definition names the path and the fix.
+
+## Save a new version
+
+Every save writes a new version, and a version never changes. A saved version is what a climb round or an eval run pins, so a later edit does not rewrite an earlier result.
+
+<Tabs>
+  <Tab title="CLI">
+    Read the mock, then save the next version with the head version you read as `--expected-version`:
+
+    ```bash
+    mcpjam cloud mocks get --mock "notes (mock)"
+    mcpjam cloud mocks update --mock "notes (mock)" --expected-version 1 \
+      --patch '{"tools":{"search_notes":{"description":"Search notes by title or body."}}}' \
+      --dry-run
+    ```
+
+    Drop `--dry-run` to save. `--definition` or `--definition-file` replaces the whole definition instead of patching it. Give exactly one of the definition and the patch.
+  </Tab>
+  <Tab title="MCP tools">
+    `get_mock_server`, then `update_mock_server` with `expectedVersion` and either `definition` or `patch`. `dryRun` returns the change list without saving.
+  </Tab>
+  <Tab title="API">
+    `POST /projects/{projectId}/mock-servers/{mockId}/versions`. See [Save a mock server version](/api-reference/mock-servers/save-a-mock-server-version).
+  </Tab>
+</Tabs>
+
+- **Merge patches.** A patch follows RFC 7396. An object merges into the head, a value replaces it, and `null` removes a key. A patch that leaves the definition as it was writes nothing.
+- **`expectedVersion`.** Name the head version you read. If another version landed since, the save is refused with `MOCK_VERSION_STALE` (HTTP 409) and the response names the current head. Read the mock again and apply your change to that version.
+- **Dry run.** The change is checked and the change list returned with the version it would write. Nothing is saved.
+- **Saving the same definition.** The response says `created: false` and returns the head. A retried save is safe.
+- **Loosening safety hints.** A save that loosens a tool's safety annotations needs manage access to the project.
+
+Reading a mock returns its address, the version you asked for (the head by default), its definition, `unmatchedCalls`, and `realServer`: the real server's current values for what the definition edits, so you can write a change without reading the real server separately. `--since <n>` also lists what changed from version `n`. `whatCanChange` ranks everything a mock can change on that server, with each current value and which clients read it, so the top entry can be applied as it stands.
+
+## Use a mock
+
+A mock is a server in your project, so it works wherever a saved server does:
+
+- **Playground.** Connect to the mock like any server and chat with it. You answer its questions.
+- **Evals.** Put the mock in a client environment's server group, or let a climb swap it in for the real server. Cases run against it, and the replies on a case answer its questions.
+- **Other clients.** Any MCP client reaches a mock at its **address**, an MCP URL, with an MCPJam API key as the bearer token. The address is empty on a self-hosted Inspector that has no public URL configured.
+
+A mock calls the real server with the credentials of whoever is calling, so it is as reachable as the real server is. A mock of a server only your machine can reach cannot be used from the cloud, just as the real server cannot. Sign-in to the real server is not mocked.
+
+MCPJam's own client sends the model a tool's name, description and input schema, and the tool's result. It does not send titles, output schemas or annotations, so a change to only those does not change what the model sees in an eval. A climb refuses a round whose only change is one no client in its environments reads.
+
+## Errors
+
+Every refusal from a mock's address is a JSON-RPC error with a `data.mockCode`, and none names anything about the real server.
+
+| HTTP | Code | `mockCode` | What it means and what to do |
+| --- | --- | --- | --- |
+| 401 | -32013 | `mock_unauthorized` | MCPJam did not accept the credential. Send your own MCPJam API key as the bearer token. |
+| 401 | -32013 | `mock_grant_expired` | The mock's grant has expired. Connect again to get a new one. |
+| 403 | -32014 | `mock_guest_refused` | Mock servers are not available to guest sessions. Sign in and send your own API key. |
+| 403 | -32014 | `mock_forbidden` | The credential cannot open this mock. Use a key for a project that holds it. |
+| 404 | -32015 | `mock_not_found` | The mock was not found. Check its ID and that it was not deleted. |
+| 429 | -32016 | `mock_rate_limited` | Too many requests to this mock. Wait a minute, then try again. |
+| 503 | -32017 | `mock_unavailable` | MCPJam could not check the mock just now. Try again in a moment. |
+| 503 | -32019 | `mock_serving_paused` | MCPJam has paused mock servers. Try again in a few minutes; your own servers are not affected. The response carries `Retry-After: 60`. |
+| 500 | -32018 | `mock_definition_unreadable` | The saved definition could not be read. Save the mock again. |
+
+Errors from the mock's behavior use the same shape:
+
+| Code | `mockCode` | What it means |
+| --- | --- | --- |
+| -32011 | `mock_edited_tool_missing`, `mock_edited_item_missing` | The definition edits a tool, prompt or resource that the real server no longer lists. The mock refuses to list rather than serve a partial copy. Update the mock to drop or retarget the edit. |
+| -32012 | `mock_real_unreachable` | The mock could not reach the real server. Check that it is up, then try again. |
+| -32601 | `mock_method_unavailable` | Neither the mock nor the real server offers that method. |
+| -32602 | `mock_tool_not_found`, `mock_prompt_not_found` | The mock does not list that tool or prompt. |
+| -32002 | `mock_resource_not_found` | The mock does not serve that resource. |
+
+Saving through the API or CLI can also fail with `MOCK_DEFINITION_INVALID` (HTTP 400, with every issue in `details.issues`, each naming a path), `MOCK_VERSION_STALE` and `MOCK_NOT_FOUND` (404), or `CONFLICT` when another server in the project already has the name.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Climb a server" icon="mountain" href="/evaluate/climbs">
+    Measure mock changes against an eval suite, one round at a time.
+  </Card>
+  <Card title="Answer a server's question" icon="message-square" href="/evaluate/write-a-case#answer-a-servers-question">
+    Give an eval case the reply a mock's question needs.
+  </Card>
+</CardGroup>
