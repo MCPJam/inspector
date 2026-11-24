@@ -46,17 +46,18 @@ import type { RawHttpCheckContext } from "./types.js";
  * `initialized` is the `notifications/initialized` POST that ends the
  * handshake. "After successful initialization, the client MUST send an
  * `initialized` notification", so it goes out here, once, before the caller
- * sends anything else. It is absent when the handshake did not succeed: the
- * server refused `initialize`, or answered with a version the run stops on.
- * Notification POST Accepted grades this exchange instead of sending its own.
+ * sends anything else. Notification POST Accepted grades this exchange instead
+ * of sending its own.
+ *
+ * `stop` is the one verdict on the whole handshake. It is absent when the
+ * session is ready for a probe, and then `initialized` holds the server's
+ * answer. When it is set, the caller sends nothing more on the session but the
+ * closing DELETE, and reports `stop.message` as its "could not run".
  */
-export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
-  result: RawHttpResult;
-  sessionId?: string;
-  negotiatedVersion?: string;
-  versionStop?: LegacyVersionStop;
-  initialized?: LegacyInitializedNotification;
-}> {
+export async function legacyInitialize(
+  ctx: RawHttpCheckContext,
+  options: LegacyInitializeOptions = {}
+): Promise<LegacyHandshake> {
   const requestedVersion =
     ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
   const result = await rawRequest(ctx, {
@@ -75,85 +76,147 @@ export async function legacyInitialize(ctx: RawHttpCheckContext): Promise<{
 
   const sessionId = result.headers["mcp-session-id"];
   const answeredVersion = jsonRpcResult(result)?.protocolVersion;
-  if (typeof answeredVersion !== "string") {
-    return {
-      result,
-      sessionId,
-      ...(await initializedAfter(ctx, result, sessionId, requestedVersion)),
-    };
-  }
-  const supported = isKnownProtocolVersion(answeredVersion);
-  if (answeredVersion !== requestedVersion) {
+  if (typeof answeredVersion === "string" && answeredVersion !== requestedVersion) {
     // The run stops here, so the handshake is not completed.
+    const supported = isKnownProtocolVersion(answeredVersion);
+    const versionStop: LegacyVersionStop = {
+      requestedVersion,
+      answeredVersion,
+      message: supported
+        ? differentVersionStop(requestedVersion, answeredVersion)
+        : unsupportedVersionStop(answeredVersion),
+    };
     return {
       result,
       sessionId,
       ...(supported ? { negotiatedVersion: answeredVersion } : {}),
-      versionStop: {
-        requestedVersion,
-        answeredVersion,
-        message: supported
-          ? differentVersionStop(requestedVersion, answeredVersion)
-          : unsupportedVersionStop(answeredVersion),
+      versionStop,
+      stop: {
+        kind: "version",
+        message: versionStop.message,
+        details: versionStopDetails(versionStop),
       },
     };
   }
-  return {
+  const answer = {
     result,
     sessionId,
-    negotiatedVersion: answeredVersion,
-    ...(await initializedAfter(ctx, result, sessionId, answeredVersion)),
+    ...(typeof answeredVersion === "string"
+      ? { negotiatedVersion: answeredVersion }
+      : {}),
   };
-}
 
-/** The `notifications/initialized` POST that closes a raw legacy handshake. */
-export interface LegacyInitializedNotification {
-  /** The server's answer, when the POST was delivered. */
-  response?: RawHttpResult;
-  /** Why the POST could not be delivered, when it was not. */
-  error?: string;
-  /** How long the POST took. */
-  durationMs: number;
-}
+  const refused = initializeRefusal(result);
+  if (refused !== undefined) return { ...answer, stop: refused };
 
-/**
- * Send `notifications/initialized` when `initialize` succeeded: an HTTP 2xx
- * that is not a JSON-RPC error. A refused `initialize` leaves no handshake to
- * complete, so nothing is sent.
- *
- * A POST that cannot be delivered is recorded, not thrown: the caller's own
- * probe decides what the run can still learn, and only Notification POST
- * Accepted is about this exchange.
- */
-async function initializedAfter(
-  ctx: RawHttpCheckContext,
-  initialize: RawHttpResult,
-  sessionId: string | undefined,
-  protocolVersion: string
-): Promise<{ initialized?: LegacyInitializedNotification }> {
-  if (
-    initialize.status < 200 ||
-    initialize.status >= 300 ||
-    jsonRpcError(initialize) !== undefined
-  ) {
-    return {};
-  }
   const startedAt = Date.now();
   try {
     const response = await rawRequest(ctx, {
-      headers: legacyHeaders({ protocolVersion, sessionId }),
+      headers: legacyHeaders({ protocolVersion: requestedVersion, sessionId }),
       body: { jsonrpc: "2.0", method: "notifications/initialized" },
+      // Every hand-built session sends this, and a run opens several. Only the
+      // copy Notification POST Accepted grades enters the run-wide record, so
+      // one server defect is not listed once per session.
+      record: options.recordInitialized === true,
     });
-    return { initialized: { response, durationMs: Date.now() - startedAt } };
+    return {
+      ...answer,
+      initialized: { response, durationMs: Date.now() - startedAt },
+    };
   } catch (error) {
     ctx.config.signal?.throwIfAborted();
+    const reason = error instanceof Error ? error.message : String(error);
     return {
-      initialized: {
-        error: error instanceof Error ? error.message : String(error),
-        durationMs: Date.now() - startedAt,
+      ...answer,
+      initialized: { error: reason, durationMs: Date.now() - startedAt },
+      stop: {
+        kind: "undelivered",
+        message: `The initialized notification that ends the handshake could not be delivered (${reason}). This check sent nothing more and could not run.`,
+        details: { initializedError: reason },
       },
     };
   }
+}
+
+export interface LegacyInitializeOptions {
+  /**
+   * Put the `notifications/initialized` exchange in the run-wide wire record.
+   * Off by default: see the call above.
+   */
+  recordInitialized?: boolean;
+}
+
+/** What every handshake has, whether or not it ended in a usable session. */
+interface LegacyHandshakeAnswer {
+  /** The `initialize` exchange, verbatim. */
+  result: RawHttpResult;
+  sessionId?: string;
+  negotiatedVersion?: string;
+  versionStop?: LegacyVersionStop;
+}
+
+/**
+ * A finished handshake. Either the session is ready and `initialized` is the
+ * server's answer to the notification, or `stop` says why it is not.
+ */
+export type LegacyHandshake = LegacyHandshakeAnswer &
+  (
+    | {
+        stop?: undefined;
+        initialized: { response: RawHttpResult; durationMs: number };
+      }
+    | {
+        stop: LegacyHandshakeStop;
+        /** Set when the notification was sent and could not be delivered. */
+        initialized?: { error: string; durationMs: number };
+      }
+  );
+
+/** Why a hand-built legacy session is not ready for a probe. */
+export interface LegacyHandshakeStop {
+  /**
+   * `refused`: the server answered `initialize` with an error.
+   * `version`: it answered with a version the run does not use.
+   * `undelivered`: the `initialized` notification did not reach it.
+   */
+  kind: "refused" | "version" | "undelivered";
+  /** The reason, in plain words, for a check's "could not run". */
+  message: string;
+  /** `details` for that verdict. */
+  details: Record<string, unknown>;
+}
+
+/**
+ * The stop for an `initialize` the server refused: a status outside 2xx, or a
+ * JSON-RPC error on any status. "After successful initialization" there is a
+ * notification to send and a session to use; after this there is neither.
+ *
+ * An answer that is 2xx with no error but no readable result is NOT a refusal:
+ * the server did not say no, and the checks that follow are how a broken
+ * stream or body gets graded.
+ */
+function initializeRefusal(
+  initialize: RawHttpResult
+): LegacyHandshakeStop | undefined {
+  const rpcError = jsonRpcError(initialize);
+  const httpOk = initialize.status >= 200 && initialize.status < 300;
+  if (httpOk && rpcError === undefined) return undefined;
+  const how =
+    rpcError !== undefined
+      ? `a JSON-RPC error (${rpcError.code}: ${rpcError.message})`
+      : `HTTP ${initialize.status}`;
+  return {
+    kind: "refused",
+    message: `The server answered initialize with ${how}, so the handshake did not complete. This check sent nothing more and could not run.`,
+    // `status` is the key the other raw probes use, and the one the runner
+    // reads to turn a 401 into "connect first" instead of this message.
+    details: {
+      status: initialize.status,
+      ...(rpcError !== undefined
+        ? { error: { code: rpcError.code, message: rpcError.message } }
+        : {}),
+    },
+  };
 }
 
 /** Why a raw legacy check stopped right after `initialize`. */

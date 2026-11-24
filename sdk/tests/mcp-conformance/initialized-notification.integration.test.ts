@@ -9,6 +9,7 @@
  */
 
 import { afterEach, describe, expect, it } from "vitest";
+import { AUTHORIZATION_REQUIRED_MESSAGE } from "../../src/conformance-authorization.js";
 import {
   MCPConformanceTest,
   type MCPCheckId,
@@ -34,6 +35,7 @@ async function run(
   served: ServedLifecycle;
   status: (id: MCPCheckId) => string | undefined;
   message: (id: MCPCheckId) => string | undefined;
+  details: (id: MCPCheckId) => Record<string, unknown> | undefined;
 }> {
   const served = await serveLifecycle(options);
   cleanups.push(served.close);
@@ -51,6 +53,7 @@ async function run(
     served,
     status: (id) => find(id)?.status,
     message: (id) => find(id)?.error?.message,
+    details: (id) => find(id)?.details as Record<string, unknown> | undefined,
   };
 }
 
@@ -133,5 +136,130 @@ describe("a server that does not take the notification", () => {
     // its own check, not turned into a reason to stop.
     expect(status("protocol-invalid-method-error")).toBe("passed");
     expect(status("get-stream-or-405")).toBe("passed");
+  });
+});
+
+describe("a server that answers initialize with a JSON-RPC error on HTTP 200", () => {
+  it("gets one verdict from every check, and no request on a session", async () => {
+    const ids: MCPCheckId[] = [
+      "protocol-invalid-method-error",
+      "server-sse-polling-session",
+      "session-id-visible-ascii",
+      "server-accepts-multiple-post-streams",
+      "notification-post-accepted",
+      "get-stream-or-405",
+    ];
+    const { served, status, message } = await run(
+      { initialize: "rpc-error" },
+      { checkIds: ids }
+    );
+
+    // The protocol check and the transport checks each asked once, and that
+    // was all: no notification, no probe, no listing, no GET.
+    expect(served.log).toEqual(["POST initialize", "POST initialize"]);
+    // One reading of the same answer. SSE Polling Session used to say
+    // "Server initialized successfully" next to a check saying it had not.
+    for (const id of ids) {
+      expect([id, status(id), message(id)]).toEqual([
+        id,
+        "skipped",
+        "The server answered initialize with a JSON-RPC error (-32603: Internal error), so the handshake did not complete. This check sent nothing more and could not run.",
+      ]);
+    }
+  });
+});
+
+describe("a server that asks for a login on initialize", () => {
+  it("is still told to connect, and is not sent the probe", async () => {
+    const { served, status, message, details } = await run(
+      { initialize: "http-401" },
+      { checkIds: ["protocol-invalid-method-error"] }
+    );
+
+    // The stop carries the 401 under `status`, the key the runner reads, so
+    // the check keeps the "connect first" wording and the reconnect marker.
+    expect(served.log).toEqual(["POST initialize"]);
+    expect(status("protocol-invalid-method-error")).toBe("skipped");
+    expect(message("protocol-invalid-method-error")).toBe(
+      AUTHORIZATION_REQUIRED_MESSAGE
+    );
+    expect(details("protocol-invalid-method-error")).toMatchObject({
+      status: 401,
+    });
+  });
+});
+
+describe("a strict server the notification never reaches", () => {
+  it("is not sent the probes it would refuse", async () => {
+    const { served, status, message } = await run(
+      { strict: true, initialized: "unreachable" },
+      {
+        checkIds: [
+          "protocol-invalid-method-error",
+          "server-accepts-multiple-post-streams",
+          "get-stream-or-405",
+        ],
+      }
+    );
+
+    // Sent anyway, the probe drew -32600 and Invalid Method Error failed the
+    // server: "Expected JSON-RPC error code -32601 ... got -32600".
+    for (const id of [
+      "protocol-invalid-method-error",
+      "server-accepts-multiple-post-streams",
+      "get-stream-or-405",
+    ] as MCPCheckId[]) {
+      expect([id, status(id)]).toEqual([id, "skipped"]);
+      expect(message(id)).toContain(
+        "The initialized notification that ends the handshake could not be delivered"
+      );
+    }
+    expect(served.log).not.toContain(
+      "POST nonexistent/method_that_does_not_exist"
+    );
+    expect(served.log).not.toContain("POST tools/list");
+    expect(served.log).not.toContain("GET");
+  });
+});
+
+describe("a server that answers the notification with a body that is not JSON-RPC", () => {
+  const origins = (details: Record<string, unknown> | undefined) =>
+    ((details?.violations ?? []) as Array<{ origin: string }>).map(
+      (violation) => violation.origin
+    );
+
+  it("is not failed by the wire check for a notification no selected check grades", async () => {
+    const { served, status } = await run(
+      { initialized: "ok-200-json" },
+      {
+        checkIds: ["protocol-invalid-method-error", "wire-schema-valid"],
+        readinessIds: ["readiness-session-termination"],
+      }
+    );
+
+    // Two sessions, two notifications. On main neither was sent, so the wire
+    // check had nothing to list here; it still has nothing.
+    expect(count(served.log, READY)).toBe(2);
+    expect(status("wire-schema-valid")).toBe("passed");
+  });
+
+  it("is listed once when Notification POST Accepted is in the run", async () => {
+    const { served, status, details } = await run(
+      { initialized: "ok-200-json" },
+      {
+        checkIds: [
+          "protocol-invalid-method-error",
+          "notification-post-accepted",
+          "wire-schema-valid",
+        ],
+        readinessIds: ["readiness-session-termination"],
+      }
+    );
+
+    expect(count(served.log, READY)).toBe(3);
+    expect(status("notification-post-accepted")).toBe("failed");
+    expect(status("wire-schema-valid")).toBe("failed");
+    // Three were sent; the report names the defect once.
+    expect(origins(details("wire-schema-valid"))).toEqual([READY]);
   });
 });

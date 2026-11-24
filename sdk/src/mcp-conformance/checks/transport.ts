@@ -13,12 +13,7 @@ import {
   notApplicableResult,
   passedResult,
 } from "./helpers.js";
-import {
-  legacyInitialize,
-  versionStopDetails,
-  type LegacyInitializedNotification,
-  type LegacyVersionStop,
-} from "../legacy-handshake.js";
+import { legacyInitialize, type LegacyHandshake } from "../legacy-handshake.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
   jsonRpcError,
@@ -148,29 +143,32 @@ function invalidSessionIdCharacters(sessionId: string): string[] {
   return [...invalid];
 }
 
-async function initializeSession(ctx: RawHttpCheckContext): Promise<{
-  ok: boolean;
-  status: number;
-  sessionId?: string;
-  body: unknown;
-  contentType: string;
-  isMcpLayerResponse: boolean;
-  /** The answered protocol version, when MCPJam supports it. */
-  negotiatedVersion?: string;
-  /** Set when the server did not answer with the version the run uses. */
-  versionStop?: LegacyVersionStop;
-  /** The `notifications/initialized` POST the handshake ended with. */
-  initialized?: LegacyInitializedNotification;
-}> {
-  const { result, sessionId, negotiatedVersion, versionStop, initialized } =
-    await legacyInitialize(ctx);
+/** The checks that send more requests on the session the handshake opened. */
+const SESSION_PROBE_CHECKS = [
+  "server-accepts-multiple-post-streams",
+  "server-sse-streams-functional",
+  "notification-post-accepted",
+  "get-stream-or-405",
+] as const;
+
+async function initializeSession(
+  ctx: RawHttpCheckContext,
+  recordInitialized: boolean,
+): Promise<
+  LegacyHandshake & {
+    ok: boolean;
+    status: number;
+    body: unknown;
+    contentType: string;
+    isMcpLayerResponse: boolean;
+  }
+> {
+  const handshake = await legacyInitialize(ctx, { recordInitialized });
+  const { result } = handshake;
   return {
+    ...handshake,
     ok: isOk(result),
     status: result.status,
-    sessionId,
-    negotiatedVersion,
-    versionStop,
-    initialized,
     body: result.json ?? (result.bodyText || undefined),
     contentType: result.headers["content-type"] ?? "",
     // Whether the server answered at the MCP layer at all. A non-2xx carrying
@@ -329,7 +327,10 @@ export async function runTransportChecks(
 
   try {
     try {
-      session = await initializeSession(ctx);
+      session = await initializeSession(
+        ctx,
+        selectedCheckIds.has("notification-post-accepted"),
+      );
     } catch (error) {
       ctx.config.signal?.throwIfAborted();
       if (selectedCheckIds.has("server-sse-polling-session")) {
@@ -373,6 +374,10 @@ export async function runTransportChecks(
 
     sessionId = session.sessionId;
     const hasStatefulSession = !!sessionId;
+    // A 2xx that carries a JSON-RPC error is a refusal too: no session was
+    // opened, so there is no session id or stream to say anything about.
+    const stop = session.stop;
+    const refused = session.ok && stop?.kind === "refused" ? stop : undefined;
 
     if (selectedCheckIds.has("server-sse-polling-session")) {
       results.push(
@@ -385,6 +390,12 @@ export async function runTransportChecks(
                 status: session.status,
                 body: session.body as Record<string, unknown> | string | undefined,
               },
+            )
+          : refused
+          ? couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+              refused.message,
+              refused.details,
             )
           : hasStatefulSession
           ? passedResult(
@@ -431,6 +442,14 @@ export async function runTransportChecks(
             { status: session.status },
           ),
         );
+      } else if (refused) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+            refused.message,
+            refused.details,
+          ),
+        );
       } else if (!sessionId) {
         // Assigning a session id at all is MAY, so a stateless legacy server
         // leaves nothing for the charset MUST to bind to.
@@ -460,12 +479,7 @@ export async function runTransportChecks(
     }
 
     if (!session.ok) {
-      for (const id of [
-        "server-accepts-multiple-post-streams",
-        "server-sse-streams-functional",
-        "notification-post-accepted",
-        "get-stream-or-405",
-      ] as const) {
+      for (const id of SESSION_PROBE_CHECKS) {
         if (selectedCheckIds.has(id)) {
           results.push(
             selectedCheckIds.has("server-sse-polling-session")
@@ -487,22 +501,17 @@ export async function runTransportChecks(
     }
 
     // The checks above read the `initialize` answer itself. The ones below
-    // send more requests on the session, which this run does not do once the
-    // server has answered with a version other than the one it uses.
-    const versionStop = session.versionStop;
-    if (versionStop !== undefined) {
-      for (const id of [
-        "server-accepts-multiple-post-streams",
-        "server-sse-streams-functional",
-        "notification-post-accepted",
-        "get-stream-or-405",
-      ] as const) {
+    // send more requests on the session, which this run does only after a
+    // handshake that ended: `initialize` accepted, on the run's version, and
+    // the `initialized` notification delivered.
+    if (stop !== undefined) {
+      for (const id of SESSION_PROBE_CHECKS) {
         if (selectedCheckIds.has(id)) {
           results.push(
             couldNotRunResult(
               TRANSPORT_CHECK_METADATA[id],
-              versionStop.message,
-              versionStopDetails(versionStop),
+              stop.message,
+              stop.details,
             ),
           );
         }
@@ -510,6 +519,7 @@ export async function runTransportChecks(
 
       return results;
     }
+    const { initialized } = session;
 
     const needsMultiStreamChecks =
       selectedCheckIds.has("server-accepts-multiple-post-streams") ||
@@ -676,51 +686,38 @@ export async function runTransportChecks(
       // `notifications/initialized` is the one notification every client
       // sends, so "cannot accept" has no legitimate reading here, and a second
       // copy would be a notification no conforming client sends.
-      const initialized = session.initialized;
-      const response = initialized?.response;
-      if (response === undefined) {
-        results.push(
-          couldNotRunResult(
-            TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-            initialized?.error !== undefined
-              ? `Notification POST could not be delivered: ${initialized.error}`
-              : "Initialize did not succeed, so no initialized notification was sent",
-          ),
-        );
-      } else {
-        const durationMs = initialized?.durationMs ?? 0;
-        const hasBody = response.bodyText !== "";
-        results.push(
-          // A body that could not be read to completion leaves the "no body"
-          // half of the requirement unestablished. Certifying a pass off a
-          // broken read would claim a fact the run never observed, and failing
-          // would blame the server for our own truncated read.
-          response.bodyError !== undefined
-            ? couldNotRunResult(
-                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                `Response body could not be read to completion (${response.bodyError}), so "202 Accepted with no body" could not be confirmed`,
-                { status: response.status },
-              )
-            : response.status === 202 && !hasBody
-            ? passedResult(
-                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                durationMs,
-                { status: response.status },
-              )
-            : failedResult(
-                TRANSPORT_CHECK_METADATA["notification-post-accepted"],
-                durationMs,
-                response.status === 202
-                  ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
-                  : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
-                {
-                  status: response.status,
-                  contentType: response.headers["content-type"] ?? "",
-                  bodyPreview: response.bodyText.slice(0, 200),
-                },
-              ),
-        );
-      }
+      const { response, durationMs } = initialized;
+      const hasBody = response.bodyText !== "";
+      results.push(
+        // A body that could not be read to completion leaves the "no body"
+        // half of the requirement unestablished. Certifying a pass off a
+        // broken read would claim a fact the run never observed, and failing
+        // would blame the server for our own truncated read.
+        response.bodyError !== undefined
+          ? couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+              `Response body could not be read to completion (${response.bodyError}), so "202 Accepted with no body" could not be confirmed`,
+              { status: response.status },
+            )
+          : response.status === 202 && !hasBody
+          ? passedResult(
+              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+              durationMs,
+              { status: response.status },
+            )
+          : failedResult(
+              TRANSPORT_CHECK_METADATA["notification-post-accepted"],
+              durationMs,
+              response.status === 202
+                ? "Server answered a notification-only POST with HTTP 202 but included a body; the requirement is 202 Accepted with no body"
+                : `Expected HTTP 202 Accepted with no body for a notification-only POST, got HTTP ${response.status}`,
+              {
+                status: response.status,
+                contentType: response.headers["content-type"] ?? "",
+                bodyPreview: response.bodyText.slice(0, 200),
+              },
+            ),
+      );
     }
 
     if (selectedCheckIds.has("get-stream-or-405")) {

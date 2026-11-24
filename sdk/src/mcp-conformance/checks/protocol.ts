@@ -13,8 +13,7 @@ import {
 } from "./helpers.js";
 import {
   legacyInitialize,
-  versionStopDetails,
-  type LegacyVersionStop,
+  type LegacyHandshakeStop,
 } from "../legacy-handshake.js";
 import {
   DEFAULT_LEGACY_PROTOCOL_VERSION,
@@ -64,7 +63,7 @@ const INVALID_METHOD = "nonexistent/method_that_does_not_exist";
  */
 async function sendInvalidMethodProbe(
   ctx: RawHttpCheckContext,
-): Promise<RawHttpResult | { versionStop: LegacyVersionStop }> {
+): Promise<RawHttpResult | { stop: LegacyHandshakeStop }> {
   if (ctx.config.era === "modern") {
     const version =
       ctx.config.protocolVersion ?? DEFAULT_LEGACY_PROTOCOL_VERSION;
@@ -81,12 +80,11 @@ async function sendInvalidMethodProbe(
     });
   }
 
-  const { sessionId, negotiatedVersion, versionStop } =
-    await legacyInitialize(ctx);
-  if (versionStop !== undefined) {
-    // The handshake did not end in the version this run uses, so the probe is
-    // not sent: there is no session on that version to send it on.
-    return { versionStop };
+  const { sessionId, negotiatedVersion, stop } = await legacyInitialize(ctx);
+  if (stop !== undefined) {
+    // The handshake did not end in a session on the version this run uses, so
+    // the probe is not sent: a refusal it drew would be MCPJam's doing.
+    return { stop };
   }
   return await rawRequest(ctx, {
     // Only the method name is the test. 2025-06-18 and later require the
@@ -139,12 +137,12 @@ export async function runProtocolChecks(
   const startedAt = Date.now();
   try {
     const response = await sendInvalidMethodProbe(ctx);
-    if ("versionStop" in response) {
+    if ("stop" in response) {
       results.push(
         couldNotRunResult(
           PROTOCOL_CHECK_METADATA["protocol-invalid-method-error"],
-          response.versionStop.message,
-          versionStopDetails(response.versionStop),
+          response.stop.message,
+          response.stop.details,
         ),
       );
       return results;

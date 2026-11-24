@@ -17,9 +17,14 @@ export interface LifecycleServerOptions {
   /** Answer `initialize` without a session id, like a stateless server. */
   stateless?: boolean;
   /** How `initialize` is answered. A normal result by default. */
-  initialize?: "ok" | "http-400" | "rpc-error";
+  initialize?: "ok" | "http-400" | "http-401" | "http-500-bare" | "rpc-error";
   /** How `notifications/initialized` is answered. 202 with no body by default. */
-  initialized?: "accepted" | "accepted-with-body" | "ok-200" | "unreachable";
+  initialized?:
+    | "accepted"
+    | "accepted-with-body"
+    | "ok-200"
+    | "ok-200-json"
+    | "unreachable";
   /** Answer `tools/list` (and `ping`) as an event stream instead of JSON. */
   sse?: boolean;
   /** Answer `ping` as JSON even when `sse` is on. */
@@ -99,6 +104,10 @@ export function createLifecycleServer(
       if (options.initialize === "http-400") {
         return error(400, -32600, "Invalid Request");
       }
+      // No JSON-RPC body: what a proxy in front of a dead server sends.
+      if (options.initialize === "http-500-bare") return { status: 500 };
+      // The authorization layer in front of the server, asking for a login.
+      if (options.initialize === "http-401") return { status: 401 };
       if (options.initialize === "rpc-error") {
         return error(200, -32603, "Internal error");
       }
@@ -125,6 +134,10 @@ export function createLifecycleServer(
         return { status: 202, body: { jsonrpc: "2.0", result: {} } };
       }
       if (options.initialized === "ok-200") return { status: 200 };
+      if (options.initialized === "ok-200-json") {
+        // Not a JSON-RPC message at all: a schema violation on the wire.
+        return { status: 200, body: { ok: true } };
+      }
       return { status: 202 };
     }
 
