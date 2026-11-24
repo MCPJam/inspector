@@ -303,7 +303,7 @@ export function HomeChecklist({
     },
     onboard_agent: {
       title: "Add MCPJam to your coding agent",
-      surface: "Claude Code",
+      surface: "Claude Code, Cursor, ChatGPT and more",
       summary: progress.agent
         ? "Added to your agent"
         : progress.skippedAgent
