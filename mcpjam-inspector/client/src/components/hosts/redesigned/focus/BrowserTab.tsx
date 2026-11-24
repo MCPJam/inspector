@@ -47,6 +47,7 @@ export function BrowserTab({
       {webClientVendor && projectId && hostId ? (
         <WebAccountsSettings
           projectId={projectId}
+          hostId={hostId}
           vendor={webClientVendor}
         />
       ) : null}

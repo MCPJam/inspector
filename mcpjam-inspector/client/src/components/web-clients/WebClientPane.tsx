@@ -1,18 +1,32 @@
-import { useEffect, type ReactNode } from "react";
-import { KeyRound } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { useMutation } from "convex/react";
+import { KeyRound, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@mcpjam/design-system/button";
 import { useWebAccounts } from "@/hooks/use-web-accounts";
+import { webAccountsApi } from "@/lib/web-accounts/api";
+import {
+  saveWebAccountProfile,
+  startWebAccountSignIn,
+  webAccountFailureMessage,
+} from "@/lib/web-accounts/routes";
 import { useWebClientsEnabled } from "@/hooks/useWebClientsEnabled";
 import { useBrowserWorkspaceStore } from "@/stores/browser-workspace-store";
 import {
+  newWebAccountLabel,
   runAccountOf,
   webAccountName,
+  webAccountWasSignedIn,
   webClientName,
   webClientSite,
   webClientVendorOfHost,
 } from "@/lib/web-accounts/clients";
 import type { WebClientVendor } from "@/shared/web-clients";
 import { PaneBlocked } from "./PaneBlocked";
+import { releaseBrowserForChat } from "@/lib/browser-shell/chat-handoff";
+import { SaveWebAccountBar } from "./SaveWebAccountBar";
 import { WebAccountChip } from "./WebAccountChip";
+import { WebSignInBrowser } from "./WebSignInBrowser";
 
 /**
  * The web client a signed-in person is previewing in the playground, while
@@ -50,6 +64,8 @@ export function useWebClientPaneOpening({
 export interface WebClientPaneParts {
   /** Which account the chat runs as, for the pane's top bar. */
   chip: ReactNode;
+  /** A line above the browser while an admin signs in or saves. */
+  banner: ReactNode;
   /** Shown instead of the browser while no run can use it. */
   blocker: ReactNode;
 }
@@ -59,7 +75,8 @@ export interface WebClientPaneParts {
  * vendor's own page is the client; `null` for any other client. The browser
  * body stays out until a run can use it: with a usable account, or on this
  * computer. Until then nothing attaches to a hosted browser, so picking the
- * client costs nothing; runs start the browser on the first send.
+ * client costs nothing; runs start the browser on the first send, and an
+ * admin who starts signing in gets a browser of the sign-in's own.
  */
 export function useWebClientPane({
   projectId,
@@ -74,14 +91,66 @@ export function useWebClientPane({
   local: boolean;
 }): WebClientPaneParts | null {
   const { accounts, loaded, isAdmin } = useWebAccounts(projectId, vendor);
-  if (!vendor || !hostId) return null;
+  const createAccount = useMutation(webAccountsApi.create);
+  // Per client, so switching clients doesn't carry a sign-in over.
+  const [signIn, setSignIn] = useState<{
+    hostId: string;
+    webAccountId: string;
+    browserSessionId: string;
+    chatSessionId: string;
+  } | null>(null);
+  const [starting, setStarting] = useState(false);
+  if (!vendor || !hostId || !projectId) return null;
   const account = runAccountOf(accounts);
   const signedOut = account?.status === "needs_sign_in";
+  // A new account needs sign-in too, but nobody was signed out of it.
+  const signedOutBySite = !!account && webAccountWasSignedIn(account);
+  const active = signIn?.hostId === hostId && !local ? signIn : null;
   const site = webClientSite(vendor);
   const client = webClientName(vendor);
 
+  // The sign-in route signs in a named account, so a project's first one is
+  // made, needing sign-in, before its browser starts.
+  const startSignIn = async () => {
+    setStarting(true);
+    try {
+      const webAccountId =
+        account?.webAccountId ??
+        (
+          await createAccount({
+            projectId,
+            vendor,
+            label: newWebAccountLabel(vendor, accounts),
+          })
+        ).webAccountId;
+      const started = await startWebAccountSignIn(projectId, webAccountId);
+      setSignIn({
+        hostId,
+        webAccountId,
+        browserSessionId: started.browserSessionId,
+        chatSessionId: started.chatSessionId ?? started.browserSessionId,
+      });
+    } catch (failure) {
+      toast.error(
+        webAccountFailureMessage(
+          failure,
+          `Couldn't open a browser to sign in to ${site}. Try again.`,
+        ),
+      );
+    } finally {
+      setStarting(false);
+    }
+  };
+
   let blocker: ReactNode = null;
-  if (local || (account && !signedOut)) blocker = null;
+  if (active)
+    blocker = (
+      <WebSignInBrowser
+        projectId={projectId}
+        chatSessionId={active.chatSessionId}
+      />
+    );
+  else if (local || (account && !signedOut)) blocker = null;
   else if (!loaded)
     blocker = (
       <p role="status" className="p-4 text-sm text-muted-foreground">
@@ -100,14 +169,23 @@ export function useWebClientPane({
         <KeyRound className="size-6 text-muted-foreground" aria-hidden />
         <p className="text-sm font-medium text-foreground">
           {account
-            ? `${webAccountName(account)} needs sign-in`
-            : `This project has no ${client} account yet`}
+            ? `Sign in to ${site} as ${webAccountName(account)}`
+            : `Sign in to ${site} with your team's test account`}
         </p>
         <p className="max-w-sm text-xs text-muted-foreground">
-          {account
-            ? `${site} signed this account out, so runs on ${client} can't start.`
-            : `Runs on ${client} can't start until the project has a signed-in ${site} account.`}
+          {signedOutBySite
+            ? `${site} signed this account out, so runs on ${client} can't start. Sign in again here, then save it for the project.`
+            : `Sign in here, then save the account for the project. Nothing is saved until you choose to.`}
         </p>
+        <Button
+          type="button"
+          size="sm"
+          disabled={starting}
+          onClick={() => void startSignIn()}
+        >
+          {starting ? <Loader2 className="animate-spin" aria-hidden /> : null}
+          {signedOutBySite ? "Sign in again" : "Start signing in"}
+        </Button>
       </div>
     );
 
@@ -126,6 +204,22 @@ export function useWebClientPane({
         />
       </div>
     ),
+    banner: active ? (
+      <SaveWebAccountBar
+        vendor={vendor}
+        expectedEmail={account?.accountEmail}
+        onSave={async () => {
+          await releaseBrowserForChat(projectId, active.chatSessionId);
+          const result = await saveWebAccountProfile(
+            projectId,
+            active.webAccountId,
+            active.browserSessionId,
+          );
+          if (result.ok) setSignIn(null);
+          return result;
+        }}
+      />
+    ) : null,
     blocker,
   };
 }
