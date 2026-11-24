@@ -405,7 +405,7 @@ export function ChatHistoryRow({
                 >
                   {session.directVisibility === "project"
                     ? "Unshare"
-                    : "Share to project"}
+                    : "Share to Shared Sessions"}
                 </DropdownMenuItem>
               </>
             )}

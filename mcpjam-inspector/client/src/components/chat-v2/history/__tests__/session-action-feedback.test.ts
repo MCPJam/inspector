@@ -28,7 +28,7 @@ describe("session action feedback", () => {
   it("says where a shared session went", () => {
     showSessionActionSuccess("share", { undoArchive: vi.fn() });
     expect(toastMock.success).toHaveBeenCalledWith(
-      "Shared with your project. It's now in Shared Sessions.",
+      "Shared with your team's project.",
     );
   });
 

@@ -40,7 +40,7 @@ export function showSessionActionSuccess(
 ): void {
   switch (action) {
     case "share":
-      toast.success("Shared with your project. It's now in Shared Sessions.");
+      toast.success("Shared with your team's project.");
       return;
     case "unshare":
       toast.success("Stopped sharing. It's back in your Sessions.");
