@@ -276,7 +276,7 @@ function ServerUrlChangeHistoryPanel({
 
   return (
     <div className="space-y-2 pt-2">
-      <h3 className="text-sm font-medium">Server address changes</h3>
+      <h3 className="text-sm font-medium">Server URL and command changes</h3>
       <ul className="space-y-1.5">
         {changes.map((event) => {
           // The clear event exists only because something was cleared; the url

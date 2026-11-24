@@ -127,13 +127,17 @@ describe("ServerUrlChangeHistory", () => {
       throw PROD_DARK_SHIP;
     });
     const { rerender } = render(<ServerUrlChangeHistory serverId="srv_1" />);
-    expect(screen.queryByText("Server address changes")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Server URL and command changes" })
+    ).not.toBeInTheDocument();
 
     useQueryMock.mockReset();
     useQueryMock.mockReturnValue([urlChange]);
     rerender(<ServerUrlChangeHistory serverId="srv_2" />);
 
-    expect(screen.getByText("Server address changes")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Server URL and command changes" })
+    ).toBeInTheDocument();
   });
 
   it("renders one row per edit when the backend answers", () => {
