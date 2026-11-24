@@ -58,6 +58,7 @@ import {
   type Predicate,
   type PredicateScope,
 } from "@mcpjam/sdk/predicates";
+import { hostedPlatformGateDefinitions } from "./platform-gate-rows.js";
 
 /**
  * Scorer identity lives in `shared/` so the client can mint the same ids it
@@ -371,6 +372,12 @@ export type HostedScoreDefinitionInputs = {
   agentActivityFired?: boolean;
   /** One per question the rubric-check pass asked (second pass only). */
   rubricChecks?: ReadonlyArray<HostedRubricCheckDefinitionInput>;
+  /**
+   * Declares the platform checks (tool errors, iteration error, widget
+   * checks). Opt-in, so the assertion backtest, which never ran them, does not
+   * report their definitions as differences.
+   */
+  platformGates?: { failOnToolError: boolean };
 };
 
 /**
@@ -406,6 +413,9 @@ export function buildHostedScoreDefinitions(
   }
   for (const question of inputs.rubricChecks ?? []) {
     definitions.push(hostedRubricCheckScoreDefinition(question));
+  }
+  if (inputs.platformGates) {
+    definitions.push(...hostedPlatformGateDefinitions(inputs.platformGates));
   }
   const byId = new Map<string, ResolvedScoreDefinition>();
   for (const definition of definitions) {

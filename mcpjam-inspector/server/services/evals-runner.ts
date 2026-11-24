@@ -5205,6 +5205,23 @@ const runLocalIteration = async ({
   // Maps account-routed calls back to the server's tools. Declared out here
   // because the catch below records a failed turn's calls too.
   let accountRouting: AccountRouting | undefined;
+  // A pinned-only case (render check) with no authored predicates defaults to
+  // "the widget rendered" — the model-free equivalent of the legacy probe
+  // verdict. Mirrors the former runIterationWithAiSdk post-loop. Out here so
+  // the failure path declares the same checks.
+  const effectivePredicates = test.successPredicates?.length
+    ? test.successPredicates
+    : isPinnedOnly({ caseType: test.caseType, promptTurns })
+      ? ([{ type: "widgetRendered" }] as NonNullable<
+          typeof test.successPredicates
+        >)
+      : undefined;
+  // The checks' results once the verdict has measured them. Out here so a
+  // failure after that (finalization included) reports them as measured.
+  let measuredPredicateResults: PredicateResult[] | undefined;
+  // Failed interact / widget-DOM-assert steps. Out here so a failure after
+  // they were recorded still reports them on the `platform:widgetCheck` row.
+  let stepScriptedFailures: { toolName: string; reason: string }[] = [];
 
   try {
     // See `runIterationWithAiSdk`: adopt the chat-side pipeline inside the try
@@ -5526,9 +5543,9 @@ const runLocalIteration = async ({
     // (the clean per-step contract the public /steps API projects).
     let stepResults: unknown[] = [];
     // §2: failed interact / widget-DOM-assert steps recorded in StepExecutionState
-    // (not in browser.scriptedCheckFailures) — folded into the verdict's
-    // scripted-check gate so they actually fail the iteration.
-    let stepScriptedFailures: { toolName: string; reason: string }[] = [];
+    // (not in browser.scriptedCheckFailures) are folded into the verdict's
+    // scripted-check gate, via `stepScriptedFailures` above, so they actually
+    // fail the iteration.
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
@@ -5709,16 +5726,6 @@ const runLocalIteration = async ({
             }>,
           }
         : undefined;
-    // A pinned-only case (render check) with no authored predicates defaults to
-    // "the widget rendered" — the model-free equivalent of the legacy probe
-    // verdict. Mirrors the former runIterationWithAiSdk post-loop.
-    const effectivePredicates = test.successPredicates?.length
-      ? test.successPredicates
-      : isPinnedOnly({ caseType: test.caseType, promptTurns })
-        ? ([{ type: "widgetRendered" }] as NonNullable<
-            typeof test.successPredicates
-          >)
-        : undefined;
     // Flush the last turn's groups so a trailing turn's unrun checks still fail
     // closed, before the shared verdict reads scripted-check failures. (Flush
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
@@ -5729,7 +5736,7 @@ const runLocalIteration = async ({
       selectedServers,
     );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
-    const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+    const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
       ...collectToolDeclarations(mcpClientManager, selectedServers),
       promptTurns,
       toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -5800,6 +5807,7 @@ const runLocalIteration = async ({
         }),
       }),
     });
+    measuredPredicateResults = predicateResults;
     const promptTraceSummaries = buildPromptTraceSummaries(
       evaluation,
       turnCheckResults,
@@ -5832,6 +5840,7 @@ const runLocalIteration = async ({
         );
     const finishParams = buildIterationFinishParams({
       iterationId,
+      platformGates,
       // The layer that failed, when this driver could tell — the local twin of
       // the hosted path's `stepError`. Without it a local-BYOK trial that died
       // on the model call finalizes uncategorised, which is the very failure
@@ -6151,6 +6160,31 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      // The same platform rows a finished iteration declares, so this case's
+      // evaluation config does not change between iterations of one run.
+      platformGates: {
+        failOnToolError: failsOnToolError(advancedConfig),
+        trace: { messages: failMessages, spans: acc.capturedSpans },
+        pinnedToolErrors: acc.pinnedToolErrors,
+        iterationError: errorMessage ?? acc.iterationError ?? "iteration failed",
+        // Whatever the widget checks had already found, so the row still says
+        // why when a later step (finalization included) is what threw.
+        scriptedCheckFailures: [
+          ...browser.scriptedCheckFailures,
+          ...stepScriptedFailures,
+        ],
+      },
+      // The case's checks: a finished iteration declares them, and one case
+      // can't report two evaluation configs in a run. As measured when the
+      // verdict ran before the failure; unmeasured only when it never did.
+      predicateResults:
+        measuredPredicateResults ??
+        (effectivePredicates ?? []).map((predicate): PredicateResult => ({
+          predicate,
+          passed: false,
+          status: "error",
+          reason: "the iteration failed before this check ran",
+        })),
       // Same as the success path: carry the layer when the driver could tell.
       // This branch is the one a model-call failure most often ends on, so
       // omitting it here would leave the fix half-applied.
@@ -7582,7 +7616,7 @@ const runHostedIterationWithBrowser = async (
     mcpClientManager,
     selectedServers,
   );
-  const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
+  const { evaluation, passed, predicateResults, platformGates } = buildEvalIterationVerdict({
     ...collectToolDeclarations(mcpClientManager, selectedServers),
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,
@@ -7657,6 +7691,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    platformGates,
     ...(runId !== null ? { runId: String(runId) } : {}),
     ...(gradingMode ? { gradingMode } : {}),
     scoreMatchOptions: scoreMatchOptionsFor(test),

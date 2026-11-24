@@ -25,6 +25,7 @@ import type {
 
 export const TOOL_EXECUTION_SCORER_ID = "platform:toolExecution";
 export const ITERATION_ERROR_SCORER_ID = "platform:iterationError";
+export const WIDGET_CHECK_SCORER_ID = "platform:widgetCheck";
 
 const PLATFORM_GATE_VERSION = "1";
 /** Names listed in a row's rationale; the rest are counted. */
@@ -73,6 +74,18 @@ export function iterationErrorScoreDefinition(options: {
     scorerId: ITERATION_ERROR_SCORER_ID,
     label: "iteration completed",
     gating: options.gating,
+  });
+}
+
+/**
+ * Scripted widget interactions and DOM assertions. Always gating: the
+ * assertion is the test, so no flag turns it off.
+ */
+export function widgetCheckScoreDefinition(): ScoreDefinition {
+  return platformGateDefinition({
+    scorerId: WIDGET_CHECK_SCORER_ID,
+    label: "widget checks passed",
+    gating: true,
   });
 }
 
@@ -150,5 +163,24 @@ export function iterationErrorScoreResult(
     kind: "scored",
     value: failed ? 0 : 1,
     rationale: failed ? error : "the iteration completed",
+  });
+}
+
+/** Fails when a widget check failed or its widget never rendered. */
+export function widgetCheckScoreResult(
+  definition: ResolvedScoreDefinition,
+  failures: ReadonlyArray<{ toolName: string; reason: string }>,
+): ScoreResult {
+  const named = failures
+    .slice(0, MAX_NAMED_FAILURES)
+    .map((failure) => `${failure.toolName}: ${failure.reason}`);
+  const more = failures.length - named.length;
+  return finalizeScoreResult(definition, {
+    kind: "scored",
+    value: failures.length === 0 ? 1 : 0,
+    rationale:
+      failures.length === 0
+        ? "every widget check passed"
+        : named.join("; ") + (more > 0 ? `; and ${more} more` : ""),
   });
 }
