@@ -1,5 +1,5 @@
 ---
-"@mcpjam/sdk": patch
+"@mcpjam/sdk": minor
 ---
 
 Default progressive tool discovery to On in all four ChatGPT presets and in Cursor CLI, Grokbot, and Notion.
