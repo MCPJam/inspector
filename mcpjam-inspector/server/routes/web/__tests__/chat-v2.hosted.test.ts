@@ -555,12 +555,16 @@ describe("web routes — chat-v2 hosted mode", () => {
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
-      })
+      }),
+      expect.anything(),
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
     // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
+    // The request context, so a failed save is logged as a typed event.
+    const persistContext = persistChatSessionToConvexMock.mock.calls[0][1];
+    expect(persistContext.req.raw).toBeInstanceOf(Request);
   });
 
   it("validates a pageTools snapshot and forwards it, so a hosted turn can offer a page's own tools", async () => {
@@ -1333,7 +1337,8 @@ describe("web routes — chat-v2 hosted mode", () => {
           // resolvedTemperature from prepareChatV2Mock default (0.7)
           temperature: 0.7,
         }),
-      })
+      }),
+      expect.anything(),
     );
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(
@@ -1379,7 +1384,8 @@ describe("web routes — chat-v2 hosted mode", () => {
         resumeConfig: expect.objectContaining({
           modelVisibleMcpToolResults: resolvedImagePolicyMatcher(false),
         }),
-      })
+      }),
+      expect.anything(),
     );
   });
 

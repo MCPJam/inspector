@@ -146,6 +146,7 @@
                 "group": "Use with other tools",
                 "icon": "plug",
                 "pages": [
+                  "inspector/use-mcpjam-in-chatgpt",
                   "hosted/mcp-server",
                   "inspector/docs-server",
                   "inspector/launch-from-code"
