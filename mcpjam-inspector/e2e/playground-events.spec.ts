@@ -214,7 +214,10 @@ test("demo events reach the Playground agent through real delivery and test inje
     await rules
       .getByRole("button", { name: "Create trigger", exact: true })
       .click();
-    await rules.getByRole("switch", { name: "Enabled", exact: true }).uncheck();
+    await rules.getByRole("switch", { name: "Enabled", exact: true }).click();
+    await expect(
+      rules.getByRole("switch", { name: "Disabled", exact: true }),
+    ).not.toBeChecked();
     await rules.getByRole("button", { name: "Edit", exact: true }).click();
     await rules
       .getByLabel("Instructions", { exact: true })
