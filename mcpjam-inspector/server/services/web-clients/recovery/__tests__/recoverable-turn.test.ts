@@ -336,6 +336,152 @@ describe("runRecoverableWebTurn", () => {
     });
   });
 
+  it("reports a call that got no answer when the last try pauses for sign-in", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const ledger = createInMemoryToolCallLedger();
+    const environment = environmentOn("account-a", [
+      crashed,
+      crashed,
+      () => {
+        // The tool reached the server, then the account signed out.
+        ledger.forwarded({
+          connectorId: "connector-1",
+          turnId: "turn-1",
+          runId: "playground",
+          jsonrpcId: "1",
+          toolName: "create_note",
+          argsHash: "args-hash",
+        });
+        return signedOut();
+      },
+    ]);
+
+    const result = await runRecoverableWebTurn(playgroundTurn(environment), {
+      backendFor: () => backend,
+      ledger,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      stop: {
+        kind: "ambiguous_execution",
+        calls: [{ toolName: "create_note" }],
+      },
+    });
+    // The account still needs a person, so its request stays open.
+    expect(
+      await backend.listWebReconnectRequests({ projectId: PROJECT }),
+    ).toEqual([expect.objectContaining({ status: "open" })]);
+  });
+
+  it("reports a call that got no answer when a pause ends without a handback", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const ledger = createInMemoryToolCallLedger();
+    const onPaused = vi.fn();
+    const environment = environmentOn("account-a", [
+      () => {
+        ledger.forwarded({
+          connectorId: "connector-1",
+          turnId: "turn-1",
+          runId: "playground",
+          jsonrpcId: "1",
+          toolName: "create_note",
+          argsHash: "args-hash",
+        });
+        return signedOut();
+      },
+    ]);
+
+    const result = await runRecoverableWebTurn(
+      playgroundTurn(environment),
+      { backendFor: () => backend, ledger, maxPauseMs: 50, pollMs: 60_000 },
+      onPaused,
+    );
+
+    expect(onPaused).toHaveBeenCalledOnce();
+    expect(triesOf(environment)).toBe(1);
+    expect(result).toMatchObject({
+      ok: false,
+      stop: {
+        kind: "ambiguous_execution",
+        calls: [{ toolName: "create_note" }],
+      },
+    });
+  });
+
+  it("wakes both paused Playground turns on one account when it's handed back", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const ledger = createInMemoryToolCallLedger();
+    // A wake is the only way out of a pause here: no poll comes in time.
+    const setup = {
+      backendFor: () => backend,
+      ledger,
+      pollMs: 60_000,
+      maxPauseMs: 4_000,
+    };
+    const paused: WebRunStop[] = [];
+    const first = environmentOn("account-a", [signedOut, replied()]);
+    const second = environmentOn("account-a", [signedOut, replied()]);
+
+    const firstTurn = runRecoverableWebTurn(
+      playgroundTurn(first),
+      setup,
+      (stop) => paused.push(stop),
+    );
+    await vi.waitFor(() => expect(paused).toHaveLength(1));
+    const secondTurn = runRecoverableWebTurn(
+      playgroundTurn(second),
+      setup,
+      (stop) => paused.push(stop),
+    );
+    await vi.waitFor(() => expect(paused).toHaveLength(2));
+    const [requestId, other] = paused.map((stop) =>
+      stop.kind === "paused_for_person" ? stop.requestId : "",
+    );
+    expect(other).toBe(requestId);
+
+    await createWebRecoveryCoordinator({
+      backend,
+      ledger,
+      resumeRun: resumeWebRun,
+    }).handback({
+      projectId: PROJECT,
+      requestId: requestId ?? "",
+      browserFor: () => ({
+        verifyAccount: async () => SEAT_A,
+        captureProfile: async () => new Uint8Array(),
+      }),
+    });
+
+    expect(await firstTurn).toMatchObject({ ok: true });
+    expect(await secondTurn).toMatchObject({ ok: true });
+    expect([triesOf(first), triesOf(second)]).toEqual([2, 2]);
+  });
+
+  it("starts a retried turn's trace at its first try", async () => {
+    const backend = createInMemoryWebReconnectBackend([
+      account("account-a", SEAT_A),
+    ]);
+    const environment = environmentOn("account-a", [
+      crashed,
+      () => ({ ...replied()(), startedAt: STARTED_AT + 5_000 }),
+    ]);
+
+    const result = await runRecoverableWebTurn(playgroundTurn(environment), {
+      backendFor: () => backend,
+      ledger: createInMemoryToolCallLedger(),
+    });
+
+    expect(result).toMatchObject({ ok: true, startedAt: STARTED_AT });
+    expect(triesOf(environment)).toBe(2);
+  });
+
   it("carries the turn on when the browser a sign-in used won't close", async () => {
     const backend = createInMemoryWebReconnectBackend([
       account("account-a", SEAT_A),

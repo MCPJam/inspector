@@ -326,6 +326,26 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     });
   });
 
+  it("asks a hosted handback that names no sign-in browser to finish from the sign-in page", async () => {
+    const hosted = createHostedWebRecovery({
+      read: async () => null,
+      apply: async () => null,
+    });
+    const answered = await post(OPEN, undefined, undefined, {
+      environmentFor: async (handback) =>
+        hosted.handbackEnvironment?.(handback),
+    });
+    expect(answered).toEqual({
+      status: 400,
+      body: {
+        error:
+          "The handback didn't say which browser you signed in with. Open this account's sign-in page, then finish.",
+      },
+    });
+    expect(reported).not.toHaveBeenCalled();
+    expect(commands).toEqual([]);
+  });
+
   it("says a sign-in browser opened for another account can't hand this one back, and reports no failure", async () => {
     keepSignInBrowser({
       browser: {
@@ -333,6 +353,7 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
         chatSessionId: "chat-2",
         driver: fakeDriver,
         exportProfile: async () => new TextEncoder().encode("other-profile"),
+        close: async () => {},
       },
       actor: { actorExternalId: "user_admin" },
       projectId: "project-1",
@@ -366,11 +387,14 @@ describe("POST /api/web-clients/reconnect/:requestId/handback", () => {
     ]);
   });
 
-  it("reports a backend failure and says the runs are still paused", async () => {
+  it("reports a backend failure and asks the person to check the runs first", async () => {
     const offline = new Error("socket hang up");
     const answered = await post({ ...OPEN, listWebReconnectRequests: offline });
     expect(answered.status).toBe(502);
-    expect(answered.body.error).toMatch(/the runs are still paused/);
+    // The handback may have gone through before the failure.
+    expect(answered.body.error).toBe(
+      "The handback didn't finish. Check whether your runs resumed before you try again.",
+    );
     expect(reported).toHaveBeenCalledWith(
       "A web account could not be handed back",
       offline,

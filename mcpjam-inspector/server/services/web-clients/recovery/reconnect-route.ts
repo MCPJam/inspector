@@ -1,15 +1,18 @@
 /**
  * `POST /api/web-clients/reconnect/:requestId/handback
  *   { projectId, browserSessionId? }`: a signed-in person finished signing a
- * web account in again, in the sign-in browser this server holds for it (the
- * one `browserSessionId` names). Acting as them, recovery checks the browser
- * shows the account's own seat and workspace, saves its profile, and resumes
- * the runs that waited. The backend decides who may hand an account back.
+ * web account in again. Hosted, they signed in in the sign-in browser this
+ * server holds for the account, and `browserSessionId` names it; a local
+ * Inspector reads this machine's own profile and sends none. Acting as them,
+ * recovery checks the browser shows the account's own seat and workspace,
+ * saves its profile, and resumes the runs that waited. The backend decides
+ * who may hand an account back.
  *
  * Answers `{ status: "resumed", resumedRuns }`, or `{ status }` with
- * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`. A sign-in
- * browser this server doesn't hold, or one opened for another account,
- * answers 409 with what the person does next.
+ * `not_signed_in`, `wrong_identity`, `not_found` or `cancelled`. A hosted
+ * handback that names no sign-in browser answers 400. A sign-in browser this
+ * server doesn't hold, or one opened for another account, answers 409 with
+ * what the person does next.
  */
 import { Hono } from "hono";
 import { z } from "zod";
@@ -34,6 +37,7 @@ import { createWebRecoveryCoordinator } from "./coordinator.js";
 import { resumeWebRun } from "./paused-runs.js";
 import {
   SignInBrowserAccountMismatchError,
+  SignInBrowserNotNamedError,
   webRecovery,
   type HandbackBrowsers,
 } from "./turn-recovery.js";
@@ -103,13 +107,21 @@ export function createWebReconnectRoutes(
       );
     }
     const actor = { actorExternalId: userId };
-    const environment = await deps.environmentFor({
-      actor,
-      projectId: body.data.projectId,
-      ...(body.data.browserSessionId
-        ? { browserSessionId: body.data.browserSessionId }
-        : {}),
-    });
+    let environment: HandbackBrowsers | undefined;
+    try {
+      environment = await deps.environmentFor({
+        actor,
+        projectId: body.data.projectId,
+        ...(body.data.browserSessionId
+          ? { browserSessionId: body.data.browserSessionId }
+          : {}),
+      });
+    } catch (error) {
+      if (error instanceof SignInBrowserNotNamedError) {
+        return c.json({ error: error.message }, 400);
+      }
+      throw error;
+    }
     if (!environment) {
       return c.json(
         {
@@ -162,7 +174,7 @@ export function createWebReconnectRoutes(
       return c.json(
         {
           error:
-            "The account wasn't handed back. Try again in a minute; the runs are still paused.",
+            "The handback didn't finish. Check whether your runs resumed before you try again.",
         },
         502,
       );
