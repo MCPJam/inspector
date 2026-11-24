@@ -67,15 +67,38 @@ export interface WebClientEnvironment {
   };
 }
 
-let configured: WebClientEnvironment | undefined;
+/** What a turn tells a per-turn environment about itself. */
+export type WebTurnContext = {
+  runtimeId: "claude-web" | "chatgpt-web";
+  projectId: string;
+  runId: string;
+  iterationId?: string;
+  chatSessionId?: string;
+  /** The request's MCPJam bearer, when a person started the run. */
+  bearer?: string;
+  /** The run's owner, for a run started with nobody signed in. */
+  actor?: { actorExternalId: string } | { actorUserId: string };
+  /** The run's frozen accounts, in the order this turn tries them. */
+  runWebAccountIds?: readonly string[];
+};
+
+/** Hosted runs build their environment per turn: who to act as, which chat. */
+export type WebClientEnvironmentFactory = (
+  turn: WebTurnContext,
+) => Promise<WebClientEnvironment>;
+
+let configured: WebClientEnvironment | WebClientEnvironmentFactory | undefined;
 
 /** Set once at startup (hosted, local Inspector) or by a test. */
 export function setWebClientEnvironment(
-  environment: WebClientEnvironment | undefined,
+  environment: WebClientEnvironment | WebClientEnvironmentFactory | undefined,
 ): void {
   configured = environment;
 }
 
-export function webClientEnvironment(): WebClientEnvironment | undefined {
-  return configured;
+/** This turn's environment, or undefined when this server has none. */
+export async function webClientEnvironmentFor(
+  turn: WebTurnContext,
+): Promise<WebClientEnvironment | undefined> {
+  return typeof configured === "function" ? configured(turn) : configured;
 }

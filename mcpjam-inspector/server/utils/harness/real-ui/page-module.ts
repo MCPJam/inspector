@@ -62,7 +62,9 @@ export type RealUiFailure =
         /** The browser could not do what the module asked. */
         | "driver"
         /** Another turn is running on this connector. */
-        | "turn_running";
+        | "turn_running"
+        /** The backend no longer knows the run's connector. */
+        | "connector_not_found";
       step: RealUiStep;
       message: string;
     };

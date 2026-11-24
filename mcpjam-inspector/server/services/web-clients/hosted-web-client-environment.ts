@@ -3,8 +3,9 @@
  * accounts, their connectors and their saved browser profiles, and the run
  * acts as its person through the Inspector service token.
  *
- *  - Account: the suite's or run's choice, else the vendor's default
- *    (`isDefault`), else the vendor's only account.
+ *  - Account: the run's frozen choice (the suite's, else the project's
+ *    default at start), else the vendor's default (`isDefault`), else the
+ *    vendor's only account.
  *  - Connector: `ensureWebConnector` with `oauth` auth; the vendor's app adds
  *    it as `https://<inspector host>/mcp/<connectorId>`.
  *  - Browser: the saved profile from `profile-for-run`, restored into the
@@ -50,6 +51,10 @@ const accountRow = z.object({
   accountEmail: z.string().optional(),
   hasProfile: z.boolean().optional(),
 });
+const openAnswer = z.union([
+  z.object({ ok: z.literal(true) }).passthrough(),
+  z.object({ ok: z.literal(false), reason: z.enum(["turn_running", "connector_not_found"]) }).passthrough(),
+]);
 const profileAnswer = z.object({
   webAccountId: z.string(),
   profileVersion: z.number(),
@@ -130,8 +135,12 @@ export type HostedWebClientDeps = {
   publicBaseUrl: string;
   runId: string;
   iterationId?: string;
-  /** The suite's or run's chosen account, when it chose one. */
-  chosenWebAccountId?: string;
+  /**
+   * The accounts the run froze at start, in the order this turn tries them.
+   * Given, the turn runs on the first still in the project and never on
+   * another; absent (the Playground), it runs on the vendor's default.
+   */
+  runWebAccountIds?: readonly string[];
   profileForRun: ReturnType<typeof createProfileForRunClient>;
   /** Restores the profile into the run's hosted browser and drives it. */
   openHostedBrowser(args: {
@@ -155,16 +164,14 @@ export function createHostedWebClientEnvironment(
         .array(accountRow)
         .parse(await deps.service.read({ action: "listWebAccounts", projectId, ...deps.actor }))
         .filter((row) => row.vendor === vendor);
-      // The account a suite or run chose, or none: falling back would restore
-      // another account's profile and add connectors to it.
-      const chosen = deps.chosenWebAccountId
-        ? rows.find((row) => row.webAccountId === deps.chosenWebAccountId)
+      const chosen = deps.runWebAccountIds
+        ? deps.runWebAccountIds
+            .map((id) => rows.find((row) => row.webAccountId === id))
+            .find((row) => row !== undefined)
         : (rows.find((row) => row.isDefault) ?? (rows.length === 1 ? rows[0] : undefined));
-      if (!chosen && deps.chosenWebAccountId) {
-        throw needsSignIn(
-          "signed_out",
-          "sign_in_check",
-          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} account chosen for this run is not saved for this project. Choose another account, then run again.`,
+      if (!chosen && deps.runWebAccountIds?.length) {
+        throw new Error(
+          `The ${WEB_CLIENT_DISPLAY_NAMES[vendor]} accounts this run uses were removed from the project. Choose an account for the suite, then run again.`,
         );
       }
       if (!chosen) throw noAccount(vendor);
@@ -201,7 +208,32 @@ export function createHostedWebClientEnvironment(
 
     turnGate: {
       async open(window) {
-        await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor });
+        const answer = openAnswer.safeParse(
+          await deps.service.apply({ action: "openWebTurnWindow", ...window, ...deps.actor }),
+        );
+        // A reply this build can't read opened nothing it knows of, so the
+        // turn stops rather than run without its window.
+        if (!answer.success) {
+          throw new RealUiError({
+            kind: "driver",
+            step: "connector",
+            message: "MCPJam couldn't confirm the connector was ready for this turn.",
+          });
+        }
+        if (answer.data.ok) return;
+        throw new RealUiError(
+          answer.data.reason === "turn_running"
+            ? {
+                kind: "turn_running",
+                step: "connector",
+                message: "Another run is already using this connector.",
+              }
+            : {
+                kind: "connector_not_found",
+                step: "connector",
+                message: "The run's connector is gone. Run again to add it back.",
+              },
+        );
       },
       async close(turnId) {
         await deps.service.apply({ action: "closeWebTurnWindow", turnId, ...deps.actor });

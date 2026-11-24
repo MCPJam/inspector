@@ -48,7 +48,7 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
   const deps: WebAccountRouteDeps = {
     actorOf: async () => ACTOR,
     isEnabled: async () => true,
-    requireManage: async () => undefined,
+    mayManage: async () => true,
     service: {
       read: async () => [ROW],
       apply: async (command) => {
@@ -61,6 +61,7 @@ function routes(overrides: Partial<WebAccountRouteDeps> = {}) {
       start: vi.fn(async () => ({ browserSessionId: "browser-session-1" })),
       driver: async () => claudePage("team@example.com"),
       captureProfile: async () => new Uint8Array([1, 2, 3]),
+      release: vi.fn(async () => undefined),
     },
     ...overrides,
   };
@@ -85,6 +86,7 @@ describe("POST /accounts/:id/sign-in", () => {
     expect(await response.json()).toEqual({ browserSessionId: "browser-session-1" });
     expect(deps.browser.start).toHaveBeenCalledWith({
       actor: ACTOR,
+      bearer: "",
       projectId: "p1",
       webAccountId: "acct-1",
       restoreProfile: true,
@@ -98,13 +100,13 @@ describe("POST /accounts/:id/sign-in", () => {
     expect((await post(routes({ isEnabled: async () => false }).app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(404);
   });
 
-  it("leaves the admin check to the backend's refusal", async () => {
-    const { app } = routes({
-      requireManage: async () => {
-        throw new Error("FORBIDDEN");
-      },
-    });
-    expect((await post(app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(500);
+  it("refuses a member, and anyone the backend can't say manages accounts, opening no browser", async () => {
+    const member = routes({ mayManage: async () => false });
+    expect((await post(member.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(403);
+    const unknown = routes({ mayManage: async () => undefined });
+    expect((await post(unknown.app, "/accounts/acct-1/sign-in", { projectId: "p1" })).status).toBe(503);
+    expect(member.deps.browser.start).not.toHaveBeenCalled();
+    expect(unknown.deps.browser.start).not.toHaveBeenCalled();
   });
 });
 
@@ -158,6 +160,58 @@ describe("POST /accounts/:id/save-profile", () => {
       reason: "version_conflict",
     });
     expect(raced.applied).toEqual([]);
+  });
+
+  it("refuses a save for anyone the backend can't say manages accounts, reading no browser", async () => {
+    const driver = vi.fn(async () => claudePage("team@example.com"));
+    const unknown = routes({ mayManage: async () => undefined, browser: { ...routes().deps.browser, driver } });
+    expect((await post(unknown.app, "/accounts/acct-1/save-profile", body)).status).toBe(503);
+    expect(driver).not.toHaveBeenCalled();
+    expect(unknown.deps.saveProfile).not.toHaveBeenCalled();
+  });
+
+  it("closes the browser once the save is over: saved, saved first by someone else, or failed", async () => {
+    const saved = routes();
+    expect((await post(saved.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const raced = routes({
+      saveProfile: async () => ({ ok: false, reason: "version_conflict", profileVersion: 5 }),
+    });
+    expect((await post(raced.app, "/accounts/acct-1/save-profile", body)).status).toBe(200);
+    const exportFailed = routes({
+      browser: {
+        ...routes().deps.browser,
+        captureProfile: async () => {
+          throw new Error("The export stopped.");
+        },
+      },
+    });
+    const pageGone = routes({
+      browser: {
+        ...routes().deps.browser,
+        driver: async () => ({
+          ...claudePage("team@example.com"),
+          navigate: async () => {
+            throw new Error("The page closed.");
+          },
+        }),
+      },
+    });
+    for (const failed of [exportFailed, pageGone]) {
+      expect((await post(failed.app, "/accounts/acct-1/save-profile", body)).status).toBe(500);
+    }
+    for (const { deps } of [saved, raced, exportFailed, pageGone]) {
+      expect(deps.browser.release).toHaveBeenCalledWith({ actor: ACTOR, ...body, webAccountId: "acct-1" });
+    }
+  });
+
+  it("keeps the browser open while the person finishes signing in or switches accounts", async () => {
+    for (const email of [undefined, "someone@example.com"]) {
+      const { app, deps } = routes({
+        browser: { ...routes().deps.browser, driver: async () => claudePage(email) },
+      });
+      expect(await (await post(app, "/accounts/acct-1/save-profile", body)).json()).toMatchObject({ ok: false });
+      expect(deps.browser.release).not.toHaveBeenCalled();
+    }
   });
 });
 
