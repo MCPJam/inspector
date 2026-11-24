@@ -3820,6 +3820,11 @@ export function PlaygroundMain({
     (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
+      // The fork re-mints the session id with an empty transcript, so with no
+      // active thread the URL restore effect would reopen
+      // `?conversation=<old id>` over it. Clear the param first, as
+      // `onBeforeBranch` does.
+      clearConversationUrlRef.current();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
 
