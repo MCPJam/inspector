@@ -41,30 +41,46 @@ export function Section({
 /** Link to the protocol contract declared by the connected server. */
 export function EventsHeader({
   title = "Events",
+  monospaceTitle,
   profile,
+  action,
   children,
 }: {
   title?: string;
+  monospaceTitle?: boolean;
   profile?: "beta" | "legacy";
+  action?: React.ReactNode;
   children?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border px-5 py-3">
-      <Radio className="h-4 w-4 text-muted-foreground" />
-      <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-      {profile ? (
-        <a
-          href={profile === "beta" ? EVENTS_BETA_SOURCE_URL : EVENTS_DRAFT_SOURCE_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
-          data-testid="events-profile-badge"
+    <div className="space-y-2 border-b border-border px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Radio className="size-4 shrink-0 text-muted-foreground" />
+        <h2
+          className={cn(
+            "min-w-0 flex-1 break-all text-sm font-semibold",
+            monospaceTitle && "font-mono",
+          )}
         >
-          {profile === "beta" ? "Events Beta" : `Legacy draft · ${EVENTS_DRAFT_DATE}`}
-        </a>
-      ) : null}
-      {children ? (
-        <div className="ml-auto flex items-center gap-2">{children}</div>
+          {title}
+        </h2>
+        {action}
+      </div>
+      {profile || children ? (
+        <div className="flex flex-wrap items-center gap-2">
+          {profile ? (
+            <a
+              href={profile === "beta" ? EVENTS_BETA_SOURCE_URL : EVENTS_DRAFT_SOURCE_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-sm border border-pending/40 bg-pending/10 px-1.5 py-0.5 text-[10px] font-medium text-foreground hover:underline"
+              data-testid="events-profile-badge"
+            >
+              {profile === "beta" ? "Events Beta" : `Legacy draft · ${EVENTS_DRAFT_DATE}`}
+            </a>
+          ) : null}
+          {children}
+        </div>
       ) : null}
     </div>
   );

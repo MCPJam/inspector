@@ -161,6 +161,20 @@ const hostedRow = {
   consecutiveFailures: 0,
 };
 
+function openWorkspaceView(name: "Received" | "Subscriptions" | "Definition") {
+  const tabs = screen.getByRole("tablist", { name: "Event workspace" });
+  fireEvent.mouseDown(within(tabs).getByRole("tab", { name }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
+function subscribeButton() {
+  return within(screen.getByRole("dialog")).getByRole("button", {
+    name: "Subscribe",
+  });
+}
+
 describe("EventsTab (hosted)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -255,6 +269,8 @@ describe("EventsTab (hosted)", () => {
     );
 
     // The registry row for this server renders, labelled with its client.
+    await screen.findByTestId("events-activity");
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
     expect(within(card).getByTestId("subscription-host")).toHaveTextContent(
       "ChatGPT",
@@ -265,12 +281,13 @@ describe("EventsTab (hosted)", () => {
         name: /issue\.created/,
       }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     // Hosted webhooks need no acknowledgement: they use the public inbox.
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
     expect(
       screen.queryByRole("checkbox", { name: /local development receiver/ }),
     ).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
+    fireEvent.click(subscribeButton());
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -311,10 +328,11 @@ describe("EventsTab (hosted)", () => {
         name: /issue\.created/,
       }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     // Built-in receives every mode the hosted runtime supports.
     expect(screen.getByRole("radio", { name: /Poll/ })).toBeEnabled();
     fireEvent.click(screen.getByRole("radio", { name: /Webhook/ }));
-    fireEvent.click(screen.getByRole("button", { name: /^Subscribe/ }));
+    fireEvent.click(subscribeButton());
 
     const create = mutations.get(EVENT_SUBSCRIPTIONS_API.create)!;
     await waitFor(() =>
@@ -350,6 +368,7 @@ describe("EventsTab (hosted)", () => {
         name: /issue\.created/,
       }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Subscribe" }));
     expect(screen.getByRole("radio", { name: /Push/ })).toBeDisabled();
     expect(
       screen.getByText(
@@ -380,6 +399,8 @@ describe("EventsTab (hosted)", () => {
       />,
     );
 
+    await screen.findByTestId("events-activity");
+    openWorkspaceView("Subscriptions");
     const card = await screen.findByTestId("subscription-sub_convex_1");
     fireEvent.click(within(card).getByRole("button", { name: /Pause/ }));
     const setState = mutations.get(EVENT_SUBSCRIPTIONS_API.setDesiredState)!;

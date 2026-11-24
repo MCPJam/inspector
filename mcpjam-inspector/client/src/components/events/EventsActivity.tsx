@@ -1,5 +1,11 @@
 import { useMemo, type ReactNode } from "react";
 import { Badge } from "@mcpjam/design-system/badge";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@mcpjam/design-system/tabs";
 import { ScrollArea } from "@mcpjam/design-system/scroll-area";
 import {
   Accordion,
@@ -17,6 +23,7 @@ import type {
   EventsSubscriptionView,
 } from "@/shared/events-api";
 import { CapabilityPanel } from "./CapabilityPanel";
+import { EventDefinition } from "./EventDefinition";
 import { EventsHeader, Section } from "./EventsTabSections";
 import {
   EventsFeedPanel,
@@ -35,29 +42,21 @@ import {
   type TerminationReason,
 } from "./event-utils";
 
-/** What the middle pane is showing, from the left pane's selection. */
+export type EventsWorkspaceView = "received" | "subscriptions" | "definition";
+
+/** Which records the workspace shows. */
 export type ActivityScope =
   | { kind: "server" }
   | { kind: "eventType"; name: string }
   | { kind: "subscription"; id: string }
   | { kind: "entry"; seq: number };
 
-function ScopeLabel({ children }: { children: ReactNode }) {
-  return (
-    <code className="truncate font-mono text-[11px] text-muted-foreground">
-      {children}
-    </code>
-  );
-}
-
-/**
- * The Events middle pane: the subscriptions and received events for what is
- * selected on the left (an event type, a subscription, one received event,
- * or the whole server), then simulation, rejected deliveries and the
- * server's declared capability on demand.
- */
 export function EventsActivity({
   scope,
+  view,
+  onViewChange,
+  event,
+  subscribeAction,
   hostName,
   hosted,
   notice,
@@ -79,6 +78,10 @@ export function EventsActivity({
   catalog,
 }: {
   scope: ActivityScope;
+  view: EventsWorkspaceView;
+  onViewChange: (view: EventsWorkspaceView) => void;
+  event?: EventDescriptorView;
+  subscribeAction?: ReactNode;
   hostName: string;
   hosted: boolean;
   notice: string | null;
@@ -183,16 +186,33 @@ export function EventsActivity({
           : null;
   const emptySubscriptions =
     scope.kind === "eventType"
-      ? "No subscriptions to this event type yet. Configure it in the left pane, then subscribe."
+      ? "No subscriptions to this event type yet."
       : scope.kind === "entry"
         ? "No known subscription received this event."
         : "No subscriptions on this server yet. Pick an event type to subscribe.";
 
   return (
-    <ScrollArea className="h-full">
-      <div className="pb-16" data-testid="events-activity">
-        <EventsHeader title="Activity" profile={catalog.support.beta ? "beta" : "legacy"}>
-          {scopeLabel ? <ScopeLabel>{scopeLabel}</ScopeLabel> : null}
+    <Tabs
+      value={view === "definition" && !event ? "received" : view}
+      onValueChange={(value) => {
+        if (
+          value === "received" ||
+          value === "subscriptions" ||
+          value === "definition"
+        ) {
+          onViewChange(value);
+        }
+      }}
+      className="h-full min-w-0 gap-0 overflow-hidden"
+      data-testid="events-activity"
+    >
+      <div className="shrink-0">
+        <EventsHeader
+          title={scopeLabel ?? "Activity"}
+          monospaceTitle={scopeLabel !== null}
+          profile={catalog.support.beta ? "beta" : "legacy"}
+          action={subscribeAction}
+        >
           <span
             className="text-[11px] text-muted-foreground"
             title="The client MCPJam subscribes as"
@@ -205,94 +225,113 @@ export function EventsActivity({
             {hosted ? "Hosted inbox" : "Local inbox"}
           </Badge>
         </EventsHeader>
-        {notice ? (
-          <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
-            {notice}
-          </p>
-        ) : null}
-
-        <Section title="Subscriptions">
-          {registryError ? (
-            <p className="text-xs text-destructive">{registryError}</p>
-          ) : null}
-          {subscriptionsLoading ? (
-            <p className="text-xs text-muted-foreground">Loading…</p>
-          ) : (
-            <SubscriptionsPanel
-              subscriptions={scopedSubscriptions}
-              hosted={hosted}
-              busyId={busySubscriptionId}
-              slotStates={slotStates}
-              emptyText={emptySubscriptions}
-              terminationFor={terminationFor}
-              onAction={onSubscriptionAction}
-            />
-          )}
-        </Section>
-
-        <Section
-          title="Received"
-          description="Newest first. Event data comes from the server's upstream; treat it as untrusted."
-        >
-          <EventsFeedPanel
-            entries={scopedEntries}
-            gaps={gaps}
-            status={feedStatus}
-            error={feedError}
-            labelFor={labelForEntry}
-            showStatus={false}
-          />
-        </Section>
-
-        <Accordion type="multiple" className="px-5">
-          <AccordionItem value="simulate">
-            <AccordionTrigger className="text-xs">
-              Simulate an event
-            </AccordionTrigger>
-            <AccordionContent className="space-y-3">
-              <p
-                className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
-                data-testid="simulate-warning"
-              >
-                Simulated events stay in MCPJam&apos;s{" "}
-                <code className="font-mono">simulation</code> namespace and
-                never reach the server. Matching triggers still run; live events
-                are never affected.
-              </p>
-              <SimulatePanel
-                subscriptions={subscriptions.filter(
-                  (subscription) => subscription.desiredState !== "removed",
-                )}
-                events={events}
-                busy={simulating}
-                onSimulate={onSimulate}
-              />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="rejections">
-            <AccordionTrigger className="text-xs">
-              Rejected deliveries
-              {rejections.length > 0 ? ` (${rejections.length})` : ""}
-            </AccordionTrigger>
-            <AccordionContent className="space-y-2">
-              <p className="text-[11px] text-muted-foreground">
-                {hosted
-                  ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check inbox on a subscription to load them."
-                  : "Deliveries the local receiver refused (reason, headers, size; never the body or signature)."}
-              </p>
-              <RejectionsPanel rejections={rejections} />
-            </AccordionContent>
-          </AccordionItem>
-          <AccordionItem value="capability">
-            <AccordionTrigger className="text-xs">
-              Server capability
-            </AccordionTrigger>
-            <AccordionContent>
-              <CapabilityPanel catalog={catalog} />
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+        <div className="overflow-x-auto border-b border-border px-4 py-2">
+          <TabsList aria-label="Event workspace">
+            <TabsTrigger value="received">Received</TabsTrigger>
+            <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+            <TabsTrigger value="definition" disabled={!event}>
+              Definition
+            </TabsTrigger>
+          </TabsList>
+        </div>
       </div>
-    </ScrollArea>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="pb-16">
+          {notice ? (
+            <p className="mx-5 mt-4 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-foreground">
+              {notice}
+            </p>
+          ) : null}
+
+          <TabsContent value="received">
+            <Section
+              title="Received"
+              description="Newest first. Event data comes from the server's upstream; treat it as untrusted."
+            >
+              <EventsFeedPanel
+                entries={scopedEntries}
+                gaps={gaps}
+                status={feedStatus}
+                error={feedError}
+                labelFor={labelForEntry}
+                showStatus={false}
+              />
+            </Section>
+          </TabsContent>
+          <TabsContent value="subscriptions">
+            <Section title="Subscriptions">
+              {registryError ? (
+                <p className="text-xs text-destructive">{registryError}</p>
+              ) : null}
+              {subscriptionsLoading ? (
+                <p className="text-xs text-muted-foreground">Loading…</p>
+              ) : (
+                <SubscriptionsPanel
+                  subscriptions={scopedSubscriptions}
+                  hosted={hosted}
+                  busyId={busySubscriptionId}
+                  slotStates={slotStates}
+                  emptyText={emptySubscriptions}
+                  terminationFor={terminationFor}
+                  onAction={onSubscriptionAction}
+                />
+              )}
+            </Section>
+          </TabsContent>
+          <TabsContent value="definition">
+            {event ? <EventDefinition key={event.name} event={event} /> : null}
+          </TabsContent>
+
+          <Accordion type="multiple" className="px-5">
+            <AccordionItem value="simulate">
+              <AccordionTrigger className="text-xs">
+                Simulate an event
+              </AccordionTrigger>
+              <AccordionContent className="space-y-3">
+                <p
+                  className="rounded-md border border-warning/40 bg-warning/10 p-2 text-[11px] text-foreground"
+                  data-testid="simulate-warning"
+                >
+                  Simulated events stay in MCPJam&apos;s{" "}
+                  <code className="font-mono">simulation</code> namespace and
+                  never reach the server. Matching triggers still run; live events
+                  are never affected.
+                </p>
+                <SimulatePanel
+                  subscriptions={subscriptions.filter(
+                    (subscription) => subscription.desiredState !== "removed",
+                  )}
+                  events={events}
+                  busy={simulating}
+                  onSimulate={onSimulate}
+                />
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="rejections">
+              <AccordionTrigger className="text-xs">
+                Rejected deliveries
+                {rejections.length > 0 ? ` (${rejections.length})` : ""}
+              </AccordionTrigger>
+              <AccordionContent className="space-y-2">
+                <p className="text-[11px] text-muted-foreground">
+                  {hosted
+                    ? "Recorded per webhook slot (reason, headers, size; never the body or signature). Use Check inbox on a subscription to load them."
+                    : "Deliveries the local receiver refused (reason, headers, size; never the body or signature)."}
+                </p>
+                <RejectionsPanel rejections={rejections} />
+              </AccordionContent>
+            </AccordionItem>
+            <AccordionItem value="capability">
+              <AccordionTrigger className="text-xs">
+                Server capability
+              </AccordionTrigger>
+              <AccordionContent>
+                <CapabilityPanel catalog={catalog} />
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </ScrollArea>
+    </Tabs>
   );
 }
