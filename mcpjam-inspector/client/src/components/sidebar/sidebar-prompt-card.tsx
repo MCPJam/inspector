@@ -16,7 +16,7 @@ const PROMPT_COPY: Record<
 > = {
   guest_signup: {
     title: "Create a free account",
-    description: "200 credits a day, every testing tool",
+    description: "200 credits a day, plus every testing tool",
     icon: UserPlus,
   },
   pro_upgrade: {
@@ -77,11 +77,11 @@ export function SidebarPromptCard({
         >
           <span className="grid min-w-0 flex-1 text-left leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{title}</span>
-            <span className="truncate text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {description}
             </span>
           </span>
-          <Icon className="size-4 shrink-0 text-muted-foreground" />
+          <Icon className="size-4 shrink-0 text-primary" />
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

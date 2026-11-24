@@ -129,7 +129,7 @@ describe("SidebarUpgradePrompt", () => {
 
     const card = screen.getByTestId("sidebar-prompt-guest_signup");
     expect(card).toHaveTextContent("Create a free account");
-    expect(card).toHaveTextContent("200 credits a day, every testing tool");
+    expect(card).toHaveTextContent("200 credits a day, plus every testing tool");
     expect(mocks.track).toHaveBeenCalledWith(
       "sidebar_prompt_shown",
       expect.objectContaining({ prompt: "guest_signup", page: "/servers" }),
