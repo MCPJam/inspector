@@ -152,6 +152,37 @@ function ServerCard({
   );
   const connectionResult = connection.result;
   const unsupported = connectionResult?.status === "unsupported";
+  const [refused, setRefused] = useState<{
+    config: ServerWithName["config"];
+    connectedAt: ServerWithName["lastConnectionTime"];
+    tokens: ServerWithName["oauthTokens"];
+    versions: ReadonlySet<McpProtocolVersion>;
+  }>();
+  const refusedVersions =
+    refused &&
+    refused.config === server.config &&
+    refused.connectedAt === server.lastConnectionTime &&
+    refused.tokens === server.oauthTokens
+      ? refused.versions
+      : undefined;
+  // A reply can name only the version it negotiated. Hide each revision
+  // the server explicitly refuses, and allow a fresh check after reconnecting.
+  if (unsupported && selection && !refusedVersions?.has(selection)) {
+    setRefused({
+      config: server.config,
+      connectedAt: server.lastConnectionTime,
+      tokens: server.oauthTokens,
+      versions: new Set([...(refusedVersions ?? []), selection]),
+    });
+  }
+  const refusalMessage = unsupported ? (
+    <>
+      {serverName} doesn’t support {connectionResult.protocolVersion}.{" "}
+      {connectionResult.supportedVersions.length > 0
+        ? `Server offers: ${connectionResult.supportedVersions.join(", ")}.`
+        : "Choose another protocol version."}
+    </>
+  ) : null;
   const retry = connectionResult?.status === "failed";
   const needsSetup =
     selection !== null &&
@@ -226,7 +257,9 @@ function ServerCard({
             {!knownLatest && (
               <SelectItem value="auto">{latestVersion ?? "Auto"}</SelectItem>
             )}
-            {PROTOCOL_VERSIONS.map((version) => (
+            {PROTOCOL_VERSIONS.filter(
+              (version) => !refusedVersions?.has(version),
+            ).map((version) => (
               <SelectItem key={version} value={version}>
                 {version}
               </SelectItem>
@@ -254,17 +287,15 @@ function ServerCard({
           role="status"
           className={`mb-2 flex ${SUITE_STACK} items-center justify-center text-center text-sm text-muted-foreground`}
         >
-          {loading
-            ? "Loading latest run…"
-            : "No runs for this protocol version yet."}
+          {refusalMessage ??
+            (loading
+              ? "Loading latest run…"
+              : "Clients can connect on any version your server supports. Run this one to make sure it passes too.")}
         </p>
       )}
-      {unsupported && (
+      {run && refusalMessage && (
         <p role="status" className="text-sm text-muted-foreground">
-          {serverName} doesn’t support {connectionResult.protocolVersion}.{" "}
-          {connectionResult.supportedVersions.length > 0
-            ? `Server offers: ${connectionResult.supportedVersions.join(", ")}.`
-            : "Choose another protocol version."}
+          {refusalMessage}
         </p>
       )}
       {retry && (

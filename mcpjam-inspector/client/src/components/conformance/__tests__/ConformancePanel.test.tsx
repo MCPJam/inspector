@@ -1707,9 +1707,10 @@ describe("ConformanceTab", () => {
     );
   });
 
-  it("blocks Run when a server rejects the protocol revision chosen on its Overview card", async () => {
+  it("blocks Run and hides a rejected revision only on that server's Overview card", async () => {
     const user = userEvent.setup();
     const server = createHttpServer({ name: "alpha" });
+    const beta = createHttpServer({ name: "beta" });
     vi.mocked(checkConformanceConnection).mockResolvedValueOnce({
       status: "unsupported",
       protocolVersion: "2026-07-28",
@@ -1718,9 +1719,12 @@ describe("ConformanceTab", () => {
     render(
       <ConformanceTab
         server={server}
-        servers={[server]}
+        servers={[server, beta]}
         onSelectServer={vi.fn()}
-        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        lastRuns={{
+          alpha: createRunListItem("srv_a"),
+          beta: createRunListItem("srv_b"),
+        }}
         onViewRun={vi.fn()}
       />,
     );
@@ -1740,10 +1744,19 @@ describe("ConformanceTab", () => {
     expect(mockRunProtocol).not.toHaveBeenCalled();
 
     await user.click(picker);
+    expect(screen.queryByRole("option", { name: "2026-07-28" })).toBeNull();
+    expect(screen.getByRole("option", { name: "2025-06-18" })).toBeVisible();
     await user.click(screen.getByRole("option", { name: "2025-11-25" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Run alpha" })).toBeEnabled(),
     );
+    await user.click(picker);
+    expect(screen.queryByRole("option", { name: "2026-07-28" })).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("combobox", { name: "Protocol version for beta" }),
+    );
+    expect(screen.getByRole("option", { name: "2026-07-28" })).toBeVisible();
   });
 
   it.each([

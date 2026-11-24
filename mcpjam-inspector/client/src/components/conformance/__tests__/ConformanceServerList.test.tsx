@@ -145,7 +145,7 @@ describe("ConformanceServerList", () => {
     );
     rerender(<ConformanceServerList {...props} />);
     expect(within(draw).getByRole("status")).toHaveTextContent(
-      "No runs for this protocol version yet.",
+      "Clients can connect on any version your server supports. Run this one to make sure it passes too.",
     );
     await user.click(within(draw).getByRole("button", { name: "Run draw" }));
     expect(onRun).toHaveBeenCalledWith("draw", "2025-06-18", "2025-06-18");
