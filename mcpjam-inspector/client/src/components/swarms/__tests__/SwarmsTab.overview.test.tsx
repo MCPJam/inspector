@@ -8,6 +8,7 @@ import {
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { UsageBreakdown } from "@/hooks/useUsageInsights";
 import type {
   JourneySessionRow,
   SwarmOverview,
@@ -255,6 +256,7 @@ let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
 let overviewThrows = false;
 let waveSignalsData: SwarmWaveSignals | undefined;
+let usageBreakdown: UsageBreakdown | undefined;
 
 vi.mock("convex/react", () => ({
   useConvex: () => ({
@@ -281,6 +283,8 @@ vi.mock("convex/react", () => ({
         return overviewData;
       case "swarmWaveInsights:getWaveSignals":
         return waveSignalsData;
+      case "chatSessions:getSwarmUsageBreakdown":
+        return usageBreakdown;
       default:
         return undefined;
     }
@@ -383,6 +387,7 @@ beforeEach(() => {
   personasData = [persona];
   overviewThrows = false;
   waveSignalsData = undefined;
+  usageBreakdown = undefined;
   launchJourneyRunMock.mockReset();
   mutationCalls.length = 0;
   mutationResult = () => ({});
@@ -651,6 +656,48 @@ describe("describeSwarmIdentity", () => {
 });
 
 describe("Overview — history and report", () => {
+  it("uses content height and allows horizontal scrolling for column controls", async () => {
+    usageBreakdown = {
+      themes: [],
+      userBreakdown: [],
+      deviceBreakdown: [],
+      languageBreakdown: [],
+      modelBreakdown: [],
+      outcomeBreakdown: [],
+      frictionBreakdown: [],
+      behaviorTagBreakdown: [],
+      goalFacets: [],
+      labeledOutcomeCount: 1,
+      outcomeFeedbackCalibration: [],
+      totalSessions: 1,
+      sankey: {
+        nodes: [
+          {
+            id: "goal:refund",
+            stage: "goal",
+            key: "refund",
+            label: "Request a refund",
+            count: 1,
+            clickable: true,
+          },
+        ],
+        links: [],
+        foldedGoalCount: 0,
+      },
+    };
+    renderTab();
+    const report = within(await screen.findByTestId("swarm-overview-report"));
+    expect(
+      report.getByRole("group", { name: /Session flow from goal/ }),
+    ).toBeInTheDocument();
+    expect(report.getByTestId("scenario-insights-sankey")).not.toHaveAttribute(
+      "data-fill-remaining",
+    );
+    expect(report.getByTestId("sankey-chart-pane")).toHaveClass(
+      "overflow-x-auto",
+    );
+  });
+
   it("groups co-launched runs and leads with the saved server and date", async () => {
     const [first, ...otherRuns] = overview.runs;
     overviewData = { ...overview, runs: [{ ...first!, swarmName: "Swarm · Nov 18" }, ...otherRuns] };

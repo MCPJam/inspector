@@ -80,6 +80,8 @@ export function installDesktopDiagnostics() {
     }
   });
   return {
+    /** The allowlisted snapshot, for Help > Copy Diagnostics. */
+    snapshot: () => collector.snapshot(),
     bind(window: BrowserWindow, url: string) {
       trusted = window;
       origin = new URL(url).origin;
