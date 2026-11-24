@@ -178,6 +178,7 @@ export const EVENTS_CHECK_INTRUSIVENESS = {
   "events-private-callback-rejected": "side-effecting",
   "events-delivery-signature": "side-effecting",
   "events-webhook-id-equals-event-id": "side-effecting",
+  "events-webhook-message-id": "side-effecting",
   "events-subscription-id-header": "side-effecting",
   "events-delivery-content-type": "side-effecting",
   "events-delivery-body-size": "side-effecting",

@@ -1,5 +1,8 @@
-import { useCallback, useState } from "react";
-import { Hammer, History, PanelLeftClose } from "lucide-react";
+import { PlaygroundEventsPane } from "./events/PlaygroundEventsPane";
+import { usePlaygroundEvents } from "./events/PlaygroundEventsProvider";
+import { useCurrentSearchParam } from "@/lib/app-navigation";
+import { useCallback, useEffect, useState } from "react";
+import { Hammer, History, PanelLeftClose, Radio } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import { PlaygroundServerConnectButton } from "./PlaygroundServerConnectButton";
@@ -26,7 +29,7 @@ import {
 } from "@/stores/compare-pane-store";
 import { cn } from "@/lib/utils";
 
-type LeftRailTab = "sessions" | "tools";
+type LeftRailTab = "sessions" | "tools" | "events";
 
 /**
  * Playground left rail — Sessions (`ChatHistoryRail`) and Tools tabs in a
@@ -47,7 +50,10 @@ export function PlaygroundLeftRail({
   /** Shows a Collapse panel control, as the right rail has (phone layout). */
   onClose?: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
+  const requestedPanel = useCurrentSearchParam("panel");
+  const events = usePlaygroundEvents();
+  const [activeTab, setActiveTab] = useState<LeftRailTab>(requestedPanel === "events" ? "events" : "tools");
+  useEffect(() => { if (requestedPanel === "events") setActiveTab("events"); }, [requestedPanel]);
   // While Compare runs clients, the tools are the selected pane's.
   const comparePane = useSelectedComparePane();
 
@@ -75,6 +81,7 @@ export function PlaygroundLeftRail({
           isActive={activeTab === "tools"}
           onClick={() => handleTabClick("tools")}
         />
+        {events ? <TabButton icon={Radio} label="Events" isActive={activeTab === "events"} onClick={() => handleTabClick("events")} /> : null}
         <TabButton
           icon={History}
           label="Sessions"
@@ -95,7 +102,9 @@ export function PlaygroundLeftRail({
         ) : null}
       </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "sessions" ? (
+        {activeTab === "events" && events ? (
+          <PlaygroundEventsPane />
+        ) : activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
           <div className="flex h-full min-h-0 flex-col">

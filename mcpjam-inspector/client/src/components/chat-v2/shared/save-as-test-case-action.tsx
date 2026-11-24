@@ -1,6 +1,6 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FlaskConical, Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Save } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { track } from "@/lib/analytics";
 import {
@@ -319,7 +319,7 @@ export function SaveAsTestCaseAction({
                 className="flex size-6 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:bg-accent focus-visible:text-foreground"
                 onClick={() => setOpen(true)}
               >
-                <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                <Save className="h-3.5 w-3.5" aria-hidden />
               </button>
             </span>
           </TooltipTrigger>

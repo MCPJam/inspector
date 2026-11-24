@@ -37,6 +37,21 @@ function fakeSession(dirs: string[], files: Record<string, string | undefined>) 
 beforeEach(() => vi.clearAllMocks());
 
 describe("adoptSandboxSkills", () => {
+  it("rejects an alternate frontmatter engine during adoption", async () => {
+    const session = fakeSession(["sample"], {
+      sample: '---json\n{"name":"sample","description":"example"}\n---\ninstructions',
+    });
+    const out = await adoptSandboxSkills({
+      skillsBase: SKILLS_BASE,
+      session,
+      authHeader: "Bearer test",
+      projectId: "proj_1",
+      managedNames: new Set(),
+    });
+    expect(out.adopted).toEqual([]);
+    expect(convexAdoptComputerSkills).not.toHaveBeenCalled();
+  });
+
   it("adopts a valid unmanaged dir and returns its skillId for the manifest", async () => {
     vi.mocked(convexAdoptComputerSkills).mockResolvedValue({
       results: [{ name: "pdf-tools", status: "adopted", skillId: "sk_1" }],

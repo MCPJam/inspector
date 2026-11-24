@@ -504,6 +504,10 @@ export type RequestEventMap = {
     reason: "failed" | "timeout";
     status: "pending" | "failed";
   };
+  // Same route: Convex refused the sign-out's own token (401), so no durable
+  // record was written and no retry was scheduled. Expected for an expired
+  // token; a burst of them means Convex stopped accepting AuthKit tokens.
+  "auth.session.revoke_refused": Record<string, never>;
   "route.operation.failed": RouteOperationFailedFields;
   /**
    * API key lifecycle (routes/web/api-keys.ts). `workosKeyId` is the WorkOS

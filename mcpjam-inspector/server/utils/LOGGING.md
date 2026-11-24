@@ -112,5 +112,7 @@ shaped, rename it to say what it is (`client`, not `body`) rather than widening 
 
 ## ESLint enforcement
 
-`eslint.config.js` warns on new `logger.warn|error|info` calls in `server/routes/web/`.
-Run `npx eslint server/routes/web/` to check before committing route changes.
+`eslint.config.js` fails on new `logger.warn|error|info` calls in `server/routes/web/`: report a
+caught failure with `reportRouteFailure(message, error, { source, hop })` and everything else with
+`logger.event()`. In the other routes it fails on `logger.error` inside a `catch`, for the same reason.
+Run `npm run lint -w @mcpjam/inspector` to check before committing route changes.
