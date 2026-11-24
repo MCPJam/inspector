@@ -470,6 +470,16 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
     ]);
   });
 
+  it("tells the run's account pool when the account needs sign-in", async () => {
+    setWebClientEnvironment(environment());
+    vendor.challenge = true;
+    const onAccountLost = vi.fn();
+    await expect(
+      runHarnessTurn(options({ webClientRun: { runId: "swarm-1", webAccountIds: ["acct-1"], onAccountLost } }), "none"),
+    ).rejects.toBeInstanceOf(WebClientRunError);
+    expect(onAccountLost).toHaveBeenCalledWith(expect.stringContaining("needs sign-in"));
+  });
+
   it("refuses to start when this server has no web client environment", async () => {
     await expect(runHarnessTurn(options(), "none")).rejects.toThrow(/isn't set up on this server/);
   });

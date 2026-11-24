@@ -16,12 +16,22 @@ import { logger } from "../../utils/logger.js";
 
 export type WebClientRunContext = {
   /** The run's owner (`testSuiteRun.createdBy`), as the service names them. */
-  actor?: { actorUserId: string };
-  /** The eval run, not the iteration: its turns rotate across one list. */
+  actor?: { actorUserId: string } | { actorExternalId: string };
+  /** The eval or swarm run, not the iteration: its turns rotate across one list. */
   runId: string;
   /** The accounts the run froze at start for its vendor, in order. */
   webAccountIds?: readonly string[];
+  /** Tells the run's account pool this account can't serve the run any more. */
+  onAccountLost?: (reason: string) => void;
 };
+
+/** The run's accounts can't serve this turn: removed, or none left signed in. */
+export class WebAccountUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebAccountUnavailableError";
+  }
+}
 
 const evalRunRow = z.object({
   createdBy: z.string().min(1),

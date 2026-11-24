@@ -78,6 +78,16 @@ export function createLocalConnectorRegistry() {
       });
       return connector;
     },
+    /**
+     * Replaces a connector's upstream headers, so a refreshed token reaches
+     * the connector the vendor's app already saved. False once it is gone.
+     */
+    setHeaders(connectorId: string, headers: Record<string, string>): boolean {
+      const entry = entries.get(connectorId);
+      if (!entry) return false;
+      entry.upstream = { ...entry.upstream, headers };
+      return true;
+    },
     remove: (connectorId: string) => entries.delete(connectorId),
     list: () =>
       [...entries.values()].map(({ connector, upstream }) => ({

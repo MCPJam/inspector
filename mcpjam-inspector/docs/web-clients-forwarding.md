@@ -84,6 +84,39 @@ can reach, so a person or an agent can point Claude web or ChatGPT web at it.
 registry lives in the process: a restart forgets it, and the vendor app then
 needs the connector removed and added again.
 
+## Run Claude web or ChatGPT web from a local Inspector
+
+With the flag file on at startup, a local Inspector runs Claude web and
+ChatGPT web turns itself (`local-web-client-environment.ts`): the browser is
+Chromium on this machine, on a profile you signed in to by hand, and each
+server the client uses gets a capability connector in the registry above.
+
+1. Sign in once per vendor. The profile lives in
+   `~/.mcpjam/web-clients/<vendor>-profile`, or under
+   `MCPJAM_WEB_CLIENTS_PROFILE_DIR` when you set it to a folder outside the
+   repository (a turn refuses a profile inside it):
+
+   ```sh
+   npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts --sign-in --vendor chatgpt
+   ```
+
+2. Turn the flag on with the flag file (step 1 of the section above), start a
+   tunnel to the Inspector's port, set `MCPJAM_INSPECTOR_PUBLIC_URL` to the
+   tunnel's HTTPS URL, then start the Inspector.
+
+3. Run a client whose runtime is Claude web or ChatGPT web. Each turn opens a
+   browser window on the profile, adds the connector, sends the prompt and
+   closes the window. Set `MCPJAM_WEB_CLIENTS_HEADLESS=true` to run without a
+   window. When the vendor asks for a sign-in or a human check, the turn stops
+   with "Needs sign-in"; sign in with step 1, then run again.
+
+A server reaches the vendor's app with the URL and headers this Inspector
+connects to it with, so a server must be connected over HTTP, with an access
+token rather than a refresh token. Each server keeps one connector per vendor,
+and a refreshed token replaces the old one in it. One turn at a time uses a
+profile: a turn that finds it open in another Inspector or a sign-in window
+stops as already running, and you send again once that one is done.
+
 ## Opening turn windows from the runtime
 
 ```ts
