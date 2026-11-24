@@ -4146,7 +4146,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Create an eval case",
-        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case persisted without executable steps could never run. When `models` is omitted the suite's configured model is used.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
+        "description": "Adds one case to the suite. Both `title` and a non-empty `steps` array are required: `steps` is optional on the shared case shape so PATCH can be partial, but a case saved without executable steps could never run. When `models` is omitted the suite's configured model is used.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4366,7 +4366,7 @@
         },
         "tags": ["Eval runs"],
         "summary": "Generate eval cases from the suite's tools",
-        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and persists them: the only edit route that connects to a server. Synchronous: connect, generate, persist, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is persisted, so a replay reuses them instead of taking a second slice of the daily quota, and each case is persisted under a derived per-item key so the loop is resumable.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
+        "description": "Discovers the suite's server tools over a live MCP connection, generates cases against them, and saves them to the suite: the only edit route that connects to a server. Synchronous: connect, generate, save, disconnect, respond.\n\nThe authoring model is on MCPJam: **no customer credits are consumed.** The call still counts against the organization's daily generation quota, and against MCPJam's own daily budget for generation, so it can be refused with `429 RATE_LIMITED` and a `Retry-After`. `details.canTopUp` is `false`: wait until `Retry-After` rather than topping up or retrying in a loop.\n\nAn environment-based suite generates against that environment's closed server set, so the cases match the tools its runs will actually see.\n\nPass `x-mcpjam-idempotency-key` to make a retry safe: drafts are recorded BEFORE any case is saved, so a replay reuses them instead of taking a second slice of the daily quota, and each case is saved under a derived per-item key so the loop is resumable.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"` before connecting to any server. This route takes no `declaredSuiteId`, so a suite file cannot use it either.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -4805,7 +4805,7 @@
         "operationId": "deleteEvalCase",
         "tags": ["Eval runs"],
         "summary": "Delete an eval case",
-        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nA case in a CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses this with `409`; send the suite file's `suite.id` as `declaredSuiteId` to delete as the file.",
+        "description": "Removes the case from the suite. Past runs that executed it are not affected.\n\nOn a CI-owned suite (see `EvalSuiteDetail.managedBy`), this returns `409` with `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. The exception is a suite-file sync that sends the suite's own declared id as `declaredSuiteId`. Any other id gets the same `409`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/evalVocabularyHeader"
@@ -14232,7 +14232,7 @@
       "EvalCaseCreateRequestV2": {
         "type": "object",
         "required": ["title", "steps"],
-        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case persisted without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
+        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case saved without executable steps could never run. Vocabulary 2 (`x-mcpjam-eval-vocabulary: 2`): `legacyIterations`/`runs` is the floor, `iterations`/`repetitions` the exact count, `assertions`/`checks`/`predicates` the rules; two spellings of one field is a `400`. A canonical client projects a GET into this body rather than echoing both spellings back.",
         "properties": {
           "judge": {
             "type": "object",
@@ -15441,7 +15441,7 @@
           "title",
           "steps"
         ],
-        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case persisted without executable steps could never run.",
+        "description": "Create one case. `title` and a non-empty `steps` array are both required: a case saved without executable steps could never run.",
         "properties": {
           "judge": {
             "type": "object",
@@ -15735,7 +15735,7 @@
       },
       "EvalCaseGenerateRequest": {
         "type": "object",
-        "description": "AI-generate cases from the suite's server tools and persist them. The authoring model is on MCPJam: no customer credits are consumed; it counts against the organization's daily generation quota.",
+        "description": "AI-generate cases from the suite's server tools and save them to the suite. The authoring model is on MCPJam: no customer credits are consumed; it counts against the organization's daily generation quota.",
         "properties": {
           "mode": {
             "type": "string",
