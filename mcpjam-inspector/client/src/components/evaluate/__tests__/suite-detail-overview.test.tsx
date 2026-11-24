@@ -47,6 +47,10 @@ vi.mock("@/stores/preferences/preferences-provider", async (original) => ({
   usePreferencesStore: (select: (s: { themeMode: string }) => unknown) =>
     select({ themeMode: "light" }),
 }));
+// Off unless a test turns climbs on.
+const climbsOn = vi.hoisted(() => ({ on: false }));
+vi.mock("../../climbs/use-climbs-enabled", () => ({ useClimbsEnabled: () => climbsOn.on }));
+vi.mock("../../climbs/climb-tab", () => ({ SuiteClimbTab: () => <div data-testid="climb-tab" /> }));
 // Off unless a test turns the new Suite page on.
 vi.mock("@/hooks/use-suite-results-page-enabled", () => ({
   useSuiteResultsPageEnabled: vi.fn(() => undefined),
@@ -1746,5 +1750,51 @@ describe("SuiteDetailOverview — header and results only behind eval-suite-resu
       }),
     ).toBeVisible();
     expect(screen.getByTestId("suite-detail-test-cases")).toBeVisible();
+  });
+});
+
+describe("SuiteDetailOverview — the Climb tab behind climbs-enabled", () => {
+  afterEach(() => {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(undefined);
+    climbsOn.on = false;
+  });
+  function renderTab(view: "runs" | "climb") {
+    renderWithProviders(
+      <SuiteDetailOverview
+        projectId="project-1"
+        suite={makeSuite()}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[makeRun({ _id: "run-1", runNumber: 1 })]}
+        runsLoading={false}
+        metricsByRun={metricsByRunFromIterations([])}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        view={view}
+        onViewChange={vi.fn()}
+      />,
+    );
+  }
+
+  it("offers the tab and shows the climbs under it when the flag is on", () => {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(true);
+    climbsOn.on = true;
+    renderTab("climb");
+    expect(screen.getByRole("button", { name: "Climb" })).toBeTruthy();
+    expect(screen.getByTestId("climb-tab")).toBeTruthy();
+    // The runs table is not shown under the Climb tab.
+    expect(screen.queryByTestId("suite-detail-run-history")).toBeNull();
+  });
+
+  it("has no Climb tab, and opens Runs for a link to it, when the flag is off", () => {
+    vi.mocked(useSuiteResultsPageEnabled).mockReturnValue(true);
+    renderTab("climb");
+    expect(screen.queryByRole("button", { name: "Climb" })).toBeNull();
+    expect(screen.queryByTestId("climb-tab")).toBeNull();
+    expect(screen.getByTestId("suite-detail-run-history")).toBeTruthy();
   });
 });

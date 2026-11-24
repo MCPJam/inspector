@@ -18,7 +18,7 @@ export type RunResultPageRoute = {
 };
 
 export type SuiteOverviewView =
-  "runs" | "test-cases" | "executions" | "cross-host";
+  "runs" | "test-cases" | "executions" | "cross-host" | "climb";
 
 /**
  * Unified eval routes for both Evaluate modes: Suites (`/evals`) and Runs

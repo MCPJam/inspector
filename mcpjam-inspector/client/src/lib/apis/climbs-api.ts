@@ -27,6 +27,7 @@ import {
   type PlatformClimbVerdict,
   type PlatformClimbVerified,
   type PlatformMockChange,
+  type PlatformMockServer,
 } from "@mcpjam/sdk/platform";
 import type {
   Climb,
@@ -242,6 +243,14 @@ export function updateClimbMeasure(
   signal?: AbortSignal,
 ): Promise<Climb> {
   return call(() => client().updateClimb(params, { signal }), signal);
+}
+
+/** A mock server for its sheet: name, address, version, and what it changed since its first version. */
+export function readMockSheet(
+  params: { projectId: string; mockId: string; sinceVersion?: number },
+  signal?: AbortSignal,
+): Promise<PlatformMockServer> {
+  return call(() => client().getMockServer(params, { signal }), signal);
 }
 
 /** A mock server's definition at one version, with its head version for the next save. */

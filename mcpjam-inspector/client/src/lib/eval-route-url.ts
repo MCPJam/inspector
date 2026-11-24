@@ -244,7 +244,8 @@ export function useEvaluateRouteFromUrl(): EvalRoute {
 function parseSuiteOverviewView(value: string | null): SuiteOverviewView {
   return value === "test-cases" ||
     value === "executions" ||
-    value === "cross-host"
+    value === "cross-host" ||
+    value === "climb"
     ? value
     : "runs";
 }

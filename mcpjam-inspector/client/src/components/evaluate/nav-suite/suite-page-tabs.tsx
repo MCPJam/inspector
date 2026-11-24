@@ -5,19 +5,23 @@
 import { PAGE_HEADER_TAB_CLASSNAME } from "@/components/shared/landing-page-header";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 
-export type SuitePageTab = "runs" | "test-cases";
+export type SuitePageTab = "runs" | "test-cases" | "climb";
 
 const TABS = [
   { value: "runs", label: "Runs" },
   { value: "test-cases", label: "Test cases" },
 ] as const;
+const CLIMB_TAB = { value: "climb", label: "Climb" } as const;
 
 export function SuitePageTabs({
   value,
   onChange,
+  climbs = false,
 }: {
   value: SuitePageTab;
   onChange: (tab: SuitePageTab) => void;
+  /** Offer the Climb tab: the `climbs-enabled` flag is on. */
+  climbs?: boolean;
 }) {
   return (
     <div className="border-b border-border" data-testid="suite-page-tabs">
@@ -27,7 +31,7 @@ export function SuitePageTabs({
         indicatorId="suite-page-tabs"
         value={value}
         onChange={onChange}
-        options={TABS}
+        options={climbs ? [...TABS, CLIMB_TAB] : TABS}
       />
     </div>
   );

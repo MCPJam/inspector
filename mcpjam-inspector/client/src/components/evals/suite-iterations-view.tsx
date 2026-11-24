@@ -917,7 +917,9 @@ export function SuiteIterationsView({
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
         ? "cross-host"
-        : "runs";
+        : route.type === "suite-overview" && route.view === "climb"
+          ? "climb"
+          : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -2666,7 +2668,7 @@ export function SuiteIterationsView({
                   runHistoryStatus={runHistoryStatus}
                   onLoadMoreRuns={onLoadMoreRuns}
                   metricsByRun={metricsByRun ?? NO_METRICS}
-                  view={runsViewMode === "test-cases" ? "test-cases" : "runs"}
+                  view={runsViewMode === "test-cases" || runsViewMode === "climb" ? runsViewMode : "runs"}
                   onViewChange={(next) =>
                     navigation.toSuiteOverview(suite._id, next)
                   }

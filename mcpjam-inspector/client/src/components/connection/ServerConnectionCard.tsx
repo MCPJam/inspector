@@ -1,3 +1,4 @@
+import { MockServerBadge } from "../climbs/mock-server-badge";
 import { serverCheckQueue, useServerCheckQueueState } from "@/lib/server-check-queue";
 import { tryResolveProjectServer } from "@/lib/apis/web/context";
 import type { ConnectionIntent } from "@/shared/oauth-connections";
@@ -629,6 +630,7 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
+                <MockServerBadge projectId={projectId} serverName={server.name} />
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}

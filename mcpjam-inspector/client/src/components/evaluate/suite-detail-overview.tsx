@@ -105,6 +105,8 @@ import { newestLaunchPills } from "./nav-suite/newest-launch-pills";
 import { SuitePills } from "./landing/suite-pills";
 import { resolveSuitePassThreshold } from "./run-compare-lanes-model";
 import { useSuiteResultsPageEnabled } from "@/hooks/use-suite-results-page-enabled";
+import { SuiteClimbTab } from "../climbs/climb-tab";
+import { useClimbsEnabled } from "../climbs/use-climbs-enabled";
 import { CI_OWNED_REASON_COPY } from "@/lib/evals/is-ci-owned-suite";
 import { targetKeyLabel } from "@/lib/eval-target-key";
 
@@ -285,6 +287,7 @@ export function SuiteDetailOverview({
   const showAccounts = useEvalAccountSelectionEnabled() && runs.some((run) => run.accountsAtRun?.length);
   // The new Suite page's Runs card: health above the strip, ⓘ on the metrics.
   const resultsPageEnabled = useSuiteResultsPageEnabled() === true;
+  const climbsEnabled = useClimbsEnabled();
   useSuitePageViewed({
     enabled: resultsPageEnabled,
     projectId,
@@ -700,7 +703,8 @@ export function SuiteDetailOverview({
   // Today's settings page until Suite settings (EFTW-18) takes over.
   const openSettings = readOnlyConfig || configLocked ? undefined : onEditSuite;
   // Today's page has no tabs: both sections show, as before.
-  const tab = resultsPageEnabled ? view : null;
+  // A link to the Climb tab opens Runs when climbs are off: no climb screen without the flag.
+  const tab = resultsPageEnabled ? (view === "climb" && !climbsEnabled ? "runs" : view) : null;
   const emptyTab =
     (tab === "runs" && !showRunHistory) || (tab === "test-cases" && !hasCases);
   // Adding the first cases ends on Test cases: Generate and Import finish on
@@ -910,8 +914,19 @@ export function SuiteDetailOverview({
       )}
 
       {tab ? (
-        <SuitePageTabs value={tab} onChange={(next) => onViewChange?.(next)} />
+        <SuitePageTabs value={tab} onChange={(next) => onViewChange?.(next)} climbs={climbsEnabled} />
       ) : null}
+
+      {tab === "climb" ? (
+        <SuiteClimbTab
+          projectId={projectId}
+          suite={suite}
+          caseCount={cases.length}
+          environments={environments}
+          hostNamesById={hostNamesById}
+        />
+      ) : (
+        <>
 
       {showRunHistory && tab !== "test-cases" ? (
         <section
@@ -1192,6 +1207,8 @@ export function SuiteDetailOverview({
           </ul>
         </section>
       ) : null}
+        </>
+      )}
 
       {showDeleteColumn ? deleteLaunch.dialog : null}
 

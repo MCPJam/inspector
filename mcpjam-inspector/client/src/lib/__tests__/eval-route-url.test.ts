@@ -76,6 +76,12 @@ describe("eval-route-url", () => {
       suiteId: "s_123",
       view: "cross-host",
     });
+    expect(
+      parseEvalRouteFromUrl("/evaluate", "/evaluate/suite/s_123", "?view=climb"),
+    ).toEqual({ type: "suite-overview", suiteId: "s_123", view: "climb" });
+    expect(buildEvalsPath({ type: "suite-overview", suiteId: "s_123", view: "climb" })).toBe(
+      "/evals/suite/s_123?view=climb",
+    );
   });
 
   it("builds eval suite overview routes", () => {

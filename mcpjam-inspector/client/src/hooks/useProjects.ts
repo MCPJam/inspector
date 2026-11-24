@@ -81,6 +81,9 @@ export interface RemoteServer {
   xaaDcrStatus?: "registered" | "registering" | "uncertain";
   hasXaaDcrRegistration?: boolean;
   authMethod?: string;
+  /** `mock` marks a mock server a climb runs on. */
+  lifecycleScope?: "standalone" | "plugin_component" | "mock";
+  mock?: { baseServerId: string | null; headVersion: number };
   createdAt: number;
   updatedAt: number;
 }
