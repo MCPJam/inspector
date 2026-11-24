@@ -705,12 +705,6 @@ export interface PrepareChatV2Options {
    */
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
-   * Per-tool description rewrites for a description-experiment REWRITE arm.
-   * Forwarded to `mcpToolOptionsFor` so `getToolsForAiSdk` applies them
-   * before the model sees the catalog.
-   */
-  toolDescriptionOverrides?: Readonly<Record<string, string>>;
-  /**
    * Upper bound, in ms, on connecting to the selected servers and listing
    * their tools. On expiry the turn fails with a `MCP server "<name>" timed
    * out` error, marked as the user's hop like any other dead server.
@@ -1293,7 +1287,6 @@ export async function prepareChatV2(
     tasks,
     serverLabels,
     toolCallCancellation,
-    toolDescriptionOverrides,
     toolListingTimeoutMs,
   } = options;
 
@@ -1329,7 +1322,6 @@ export async function prepareChatV2(
     modelVisibleMcpToolResults,
     tasks,
     toolCallCancellation,
-    toolDescriptionOverrides,
   });
 
   // 1. Get MCP + skill tools

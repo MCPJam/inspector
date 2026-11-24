@@ -104,11 +104,7 @@ These words mean something else. A codemod that proposes to mutate one fails the
 - **`sdk/src/host-compat/evaluator.ts`**, an unrelated evaluator (host compatibility).
 - **`steps[].assertion`**, which is kept. Its type is genuinely broader than a transcript rule, and
   only the transcript half can be re-derived from a persisted trace.
-- **Benchmark and description-experiment `repetitions`** (`convex/schema.ts` benchmark tables,
-  `evalDescriptionExperiments.plan.repetitions`).
-- **Description-experiment `iterationOverride`** (`convex/descriptionExperiments.ts`), the experiment's
-  own override beside `maxTrials`. It is not folded into `iteration`. The `--max-trials` flag becomes
-  `--max-iterations`; the stored `maxTrials` and `plannedTrials` fields are out of scope.
+- **Benchmark `repetitions`** (`convex/schema.ts` benchmark tables).
 - **The configuration-identity hash keys** in `convex/lib/evalConfigRevision.ts`: `repetitions`, `runs`,
   `predicates` and `defaultPredicates` (invariant 3). A rename that reaches that file fails the run.
 - Generic verbs and helpers: `assertValid*`, vitest `expect`, prose "check that", mathematical

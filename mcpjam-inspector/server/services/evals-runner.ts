@@ -639,13 +639,6 @@ export type RunEvalSuiteOptions = {
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
   /**
-   * The REWRITE-arm marker from `configSnapshot.toolDescriptionOverride`.
-   * Applied to every tool-prep path; stamped onto iteration metadata after
-   * prep so eligibility can read `metadata.descriptionExperiment.applied`.
-   */
-  toolDescriptionOverride?:
-    ToolDescriptionOverrideMarker | Record<string, unknown>;
-  /**
    * Resolved compat-runtime flag for the suite's host config. When
    * true, widget snapshots captured during this run will have the
    * OpenAI Apps SDK `window.openai` shim injected before they're
@@ -997,138 +990,13 @@ function delay(ms: number): Promise<void> {
 type ToolSet = Record<string, any>;
 
 /**
- * The REWRITE-arm marker copied from `configSnapshot.toolDescriptionOverride`.
- * Presence means this run is the rewrite arm; the ORIGINAL arm has none.
- */
-type ToolDescriptionOverrideMarker = {
-  experimentId: string;
-  toolName: string;
-  description: string;
-  proposalHash: string;
-};
-
-type DescriptionExperimentIterationStamp = {
-  experimentId: string;
-  arm: "rewrite" | "original";
-  toolName: string;
-  proposalHash: string;
-  applied: boolean;
-};
-
-/**
  * Iteration metadata is `v.any()` on the backend. Widen past scalars so a
- * nested `descriptionExperiment` object can persist — E2 eligibility reads
- * `metadata.descriptionExperiment.applied === true` and a JSON-stringified
- * value would fail that check.
+ * nested object such as the timeout record can persist; a JSON-stringified
+ * value would not read back as one.
  */
-type IterationMetadataValue =
-  | string
-  | number
-  | boolean
-  | DescriptionExperimentIterationStamp
-  | TimeoutMetadata;
+type IterationMetadataValue = string | number | boolean | TimeoutMetadata;
 
 type IterationMetadataBase = Record<string, IterationMetadataValue>;
-
-function readToolDescriptionOverrideMarker(
-  raw: unknown,
-): ToolDescriptionOverrideMarker | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  // A marker that is present but unreadable is refused, not ignored: an
-  // ignored marker would run the whole rewrite arm on the ORIGINAL catalog,
-  // spend its trial budget, and report every trial as `overrideNotApplied`.
-  // That is fail-safe for the statistics and a silent full-arm spend for
-  // the customer.
-  if (typeof raw !== "object") {
-    throw new Error(
-      "configSnapshot.toolDescriptionOverride is present but not an object",
-    );
-  }
-  const o = raw as Record<string, unknown>;
-  if (
-    typeof o.toolName !== "string" ||
-    typeof o.description !== "string" ||
-    typeof o.experimentId !== "string" ||
-    typeof o.proposalHash !== "string"
-  ) {
-    throw new Error(
-      "configSnapshot.toolDescriptionOverride is missing toolName, description, experimentId or proposalHash",
-    );
-  }
-  return {
-    toolName: o.toolName,
-    description: o.description,
-    experimentId: o.experimentId,
-    proposalHash: o.proposalHash,
-  };
-}
-
-function descriptionOverridesFromMarker(
-  marker: ToolDescriptionOverrideMarker | undefined,
-): Record<string, string> | undefined {
-  if (!marker) return undefined;
-  return { [marker.toolName]: marker.description };
-}
-
-function applyDescriptionOverridesToToolSet(
-  tools: ToolSet,
-  overrides: Record<string, string> | undefined,
-): number {
-  if (!overrides) return 0;
-  let applied = 0;
-  for (const [name, description] of Object.entries(overrides)) {
-    const tool = tools[name];
-    if (tool && typeof tool === "object") {
-      (tool as { description?: string }).description = description;
-      applied += 1;
-    }
-  }
-  return applied;
-}
-
-function descriptionExperimentStamp(
-  override: ToolDescriptionOverrideMarker,
-  applied: boolean,
-): DescriptionExperimentIterationStamp {
-  return {
-    experimentId: override.experimentId,
-    arm: "rewrite",
-    toolName: override.toolName,
-    proposalHash: override.proposalHash,
-    applied,
-  };
-}
-
-/**
- * Stamp the rewrite-arm facts on an iteration's metadata base: the structured
- * stamp the report reads, and `tools_description_overridden`, the exposure
- * count `buildHostIterationMetadata` would emit if a host policy were present.
- * Written here so it exists whether or not the run has a host policy — the
- * verify recipe reads it beside `applied`.
- */
-function stampDescriptionExperiment(
-  base: IterationMetadataBase,
-  override: ToolDescriptionOverrideMarker,
-  applied: boolean,
-): void {
-  base.descriptionExperiment = descriptionExperimentStamp(override, applied);
-  if (applied) {
-    base.tools_description_overridden = 1;
-  }
-}
-
-function descriptionAppliedOnPreparedTools(
-  allTools: PrepareChatV2Result["allTools"] | undefined,
-  override: ToolDescriptionOverrideMarker,
-): boolean {
-  const prepared = allTools?.[override.toolName];
-  return (
-    prepared != null &&
-    typeof prepared === "object" &&
-    "description" in prepared &&
-    (prepared as { description?: unknown }).description === override.description
-  );
-}
 
 /**
  * What to tell the author when a box could not be provisioned.
@@ -1168,19 +1036,6 @@ export function describeEvalSandboxRefusal(refusal: {
       : `Waiting on sandbox capacity: ${refusal.error}`;
   }
   return `Could not provision the eval's reproducible sandbox: ${refusal.error}`;
-}
-
-function throwIfDescriptionOverrideOnHarness(
-  override: ToolDescriptionOverrideMarker | undefined,
-  harness: string | undefined,
-): void {
-  if (!override || !harness) return;
-  throw new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    "Description overrides are only supported on the emulated engine.",
-    { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
-  );
 }
 
 type ToolCall = {
@@ -1338,7 +1193,6 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   setupObserver?: RunSetupObserver;
-  toolDescriptionOverrides?: Record<string, string>;
 }): Promise<ToolSet> {
   // `undefined` ⇒ the no-options overload, keeping a default run byte-identical.
   // `needsApproval` is deliberately not an input here: an eval run is auto-deny
@@ -1347,7 +1201,6 @@ async function getEvalToolsForAiSdkOrThrow(args: {
     includeAppOnly: args.includeAppOnly,
     modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
     tasks: args.tasks,
-    toolDescriptionOverrides: args.toolDescriptionOverrides,
   });
 
   const now = () => Date.now();
@@ -2322,8 +2175,6 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
-  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
-  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /**
    * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
    * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
@@ -3198,8 +3049,6 @@ const executeTestCase = async (params: {
    * finalizes its own row; the rest are settled by the wrapper.
    */
   onCommittedAttemptEntered?: (runIndex: number) => void;
-  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
-  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
    *  stream* runners. Absent ⇒ batch mode. */
   emit?: StreamEmit;
@@ -3263,7 +3112,6 @@ const executeTestCase = async (params: {
     compareRunId,
     committedIterationIds,
     onCommittedAttemptEntered,
-    toolDescriptionOverride,
     emit,
     injectOpenAiCompat,
     hostPolicy,
@@ -3493,7 +3341,6 @@ const executeTestCase = async (params: {
         abortSignal,
         convexAuthToken,
         ...(compareRunId ? { compareRunId } : {}),
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         injectOpenAiCompat,
         hostPolicy,
         gradingMode,
@@ -3851,7 +3698,6 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
@@ -3927,7 +3773,6 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
@@ -3995,7 +3840,6 @@ const executeTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
-      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
@@ -4107,7 +3951,6 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
-  toolDescriptionOverride: toolDescriptionOverrideRaw,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
@@ -4132,12 +3975,6 @@ export const runEvalSuiteWithAiSdk = async ({
   // difference is which rung each field came from.
   const budgets: ResolvedExecutionBudgets =
     executionBudgets ?? defaultEvalExecutionBudgets();
-  // Resolved inside the setup `try` below: a refused or unreadable override
-  // is a run-setup failure, and the catch there is what marks the precreated
-  // iteration rows failed. Thrown out here, the run would go `failed` while
-  // its rows stayed `pending`.
-  let toolDescriptionOverride: ToolDescriptionOverrideMarker | undefined;
-  let descriptionOverrides: Record<string, string> | undefined;
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
@@ -4235,17 +4072,6 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
-    toolDescriptionOverride = readToolDescriptionOverrideMarker(
-      toolDescriptionOverrideRaw,
-    );
-    descriptionOverrides = descriptionOverridesFromMarker(
-      toolDescriptionOverride,
-    );
-    throwIfDescriptionOverrideOnHarness(
-      toolDescriptionOverride,
-      harnessOfHostConfig(suiteHostConfig),
-    );
-
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
     //   1. Count `toolsTotalBefore` honestly, and
@@ -4264,9 +4090,6 @@ export const runEvalSuiteWithAiSdk = async ({
       ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
       setupObserver,
-      ...(descriptionOverrides
-        ? { toolDescriptionOverrides: descriptionOverrides }
-        : {}),
     });
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
@@ -4333,15 +4156,6 @@ export const runEvalSuiteWithAiSdk = async ({
           hostExecutionPolicy,
         )
       : undefined;
-    if (descriptionOverrides) {
-      const overridden = applyDescriptionOverridesToToolSet(
-        tools,
-        descriptionOverrides,
-      );
-      if (resolvedToolSignals && overridden > 0) {
-        resolvedToolSignals.toolsDescriptionOverridden = overridden;
-      }
-    }
     const resolvedSetupSignals = setupObserver.buildSignals();
     const resolvedSetupSpans =
       setupObserver.buildSyntheticSpans(runSetupStartedAt);
@@ -4438,7 +4252,6 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(committedQuickRunIterationIds
           ? { committedIterationIds: committedQuickRunIterationIds }
           : {}),
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         suiteId,
         runId,
         abortSignal: abortController.signal,
@@ -4909,7 +4722,6 @@ const runLocalIteration = async ({
   abortSignal,
   emit,
   compareRunId,
-  toolDescriptionOverride,
   precreatedIterationId,
   onIterationStarted,
   injectOpenAiCompat,
@@ -5280,10 +5092,6 @@ const runLocalIteration = async ({
     let prepared: PrepareChatV2Result | null = null;
     let llmModel: ReturnType<typeof createLlmModel> | null = null;
     if (caseNeedsModel) {
-      throwIfDescriptionOverrideOnHarness(
-        toolDescriptionOverride,
-        resolvedExecution.harness,
-      );
       resolveHostTools(
         { builtInToolIds: resolvedExecution.builtInToolIds },
         null,
@@ -5302,13 +5110,6 @@ const runLocalIteration = async ({
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
-          : {}),
-        ...(descriptionOverridesFromMarker(toolDescriptionOverride)
-          ? {
-              toolDescriptionOverrides: descriptionOverridesFromMarker(
-                toolDescriptionOverride,
-              ),
-            }
           : {}),
         skills: turnSkills.skills,
         // Host progressive-discovery toggle, same conversion as the chat-v2
@@ -5336,16 +5137,6 @@ const runLocalIteration = async ({
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
       skillsAtTurnForPersist = turnSkills.skillsAtTurn;
-      if (toolDescriptionOverride) {
-        stampDescriptionExperiment(
-          iterationMetadataBase,
-          toolDescriptionOverride,
-          descriptionAppliedOnPreparedTools(
-            prepared.allTools,
-            toolDescriptionOverride,
-          ),
-        );
-      }
       selectionToolsForFinish = prepared.allTools;
       selectionDiscoveryForFinish = {
         progressivePlan: prepared.progressivePlan,
@@ -6068,20 +5859,6 @@ const runLocalIteration = async ({
       httpStatus: acc.stepErrorEvidence?.httpStatus,
     });
 
-    // A prep failure fires before the stamp is written; the failed rewrite
-    // trial still has to say which experiment it belonged to, or the report
-    // cannot tell it apart from a trial that was never part of one.
-    if (
-      toolDescriptionOverride &&
-      !iterationMetadataBase.descriptionExperiment
-    ) {
-      stampDescriptionExperiment(
-        iterationMetadataBase,
-        toolDescriptionOverride,
-        false,
-      );
-    }
-
     let errorMessage: string | undefined = undefined;
     let errorDetails: string | undefined = undefined;
 
@@ -6400,7 +6177,6 @@ const runHostedIterationWithBrowser = async (
     abortSignal,
     emit,
     compareRunId,
-    toolDescriptionOverride,
     precreatedIterationId,
     onIterationStarted,
     injectOpenAiCompat,
@@ -6832,11 +6608,6 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
-    throwIfDescriptionOverrideOnHarness(
-      toolDescriptionOverride,
-      resolvedExecution.harness,
-    );
-
     // ── THE BOX FIRST, because the browser binds to it ──────────────────────
     //
     // Provisioning used to happen after `prepareChatV2`, which was fine while
@@ -7055,13 +6826,6 @@ const runHostedIterationWithBrowser = async (
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
         : {}),
-      ...(descriptionOverridesFromMarker(toolDescriptionOverride)
-        ? {
-            toolDescriptionOverrides: descriptionOverridesFromMarker(
-              toolDescriptionOverride,
-            ),
-          }
-        : {}),
       // Host progressive-discovery toggle, same conversion as the chat-v2
       // routes and the session-sim runner. Only an explicit host value is
       // forwarded — absent stays undefined so prepareChatV2 keeps its
@@ -7081,16 +6845,6 @@ const runHostedIterationWithBrowser = async (
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
     skillsAtTurnForPersist = turnSkills.skillsAtTurn;
-    if (toolDescriptionOverride) {
-      stampDescriptionExperiment(
-        iterationMetadataBase,
-        toolDescriptionOverride,
-        descriptionAppliedOnPreparedTools(
-          prepared.allTools,
-          toolDescriptionOverride,
-        ),
-      );
-    }
     // Seed the case's attachments onto the box whenever anything in this
     // iteration can READ it — the emulated `bash` tool below, or a harness
     // running on the box with its own file tools. See
@@ -7154,13 +6908,6 @@ const runHostedIterationWithBrowser = async (
       );
     } else {
       logger.error("[evals] iteration setup failed (prepareChatV2)", error);
-    }
-    if (toolDescriptionOverride) {
-      stampDescriptionExperiment(
-        iterationMetadataBase,
-        toolDescriptionOverride,
-        false,
-      );
     }
     await persistSetupFailedIteration({
       iterationId,
