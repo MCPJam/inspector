@@ -23,10 +23,9 @@ const MODE_LABELS: Record<EventsDeliveryModeView, string> = {
 };
 
 const MODE_HINTS: Record<EventsDeliveryModeView, string> = {
-  poll: "MCPJam calls events/poll at the interval the server suggests.",
-  push: "MCPJam opens an events/stream request, and the server pushes events on it.",
-  webhook:
-    "MCPJam calls events/subscribe with a callback URL, and the server POSTs each event to it.",
+  poll: "MCPJam checks for new events at the server's suggested interval.",
+  push: "MCPJam keeps a connection open and the server pushes events.",
+  webhook: "The server sends each event to a callback URL MCPJam registers.",
 };
 
 /** The request fields MCPJam fills in itself, by mode. */
@@ -104,7 +103,7 @@ export function SubscribeDelivery({
           const known = isEventDeliveryMode(option);
           const enabled = known && usable.includes(option);
           const reason = !known
-            ? "Not a delivery mode in the Events spec, so MCPJam can't use it."
+            ? "MCPJam doesn't support this delivery mode."
             : availability
               ? describeModeRefusal(option, availability, hostName)
               : null;
