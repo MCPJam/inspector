@@ -7,7 +7,7 @@ import {
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
 import { QUICKSTART_SUITE_TAG } from "@/components/evals/constants";
-import { navigatePlaygroundEvalsRoute } from "@/components/evals/create-suite-navigation";
+import { navigatePlaygroundEvalsRoute } from "@/components/evaluate/create-suite-navigation";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { EXCALIDRAW_QUICKSTART_CASES } from "./excalidraw-quickstart-cases";
 import type { ServerFormData } from "@/shared/types.js";
@@ -84,9 +84,8 @@ export type RunExcalidrawQuickstartOptions = {
    */
   environmentSuites?: boolean;
   /**
-   * Where to land once the suite exists. Defaults to the shipped Evals tab;
-   * Evaluate (New) passes its own so the quickstart does not drop the reader
-   * into the other surface's copy of the same suite.
+   * Where to land once the suite exists. Defaults to current Evaluate;
+   * callers can supply their own navigation adapter.
    */
   navigate?: (route: EvalRoute) => void;
 };

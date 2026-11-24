@@ -5,26 +5,19 @@
  * server change, and how" without connecting to it.
  */
 import { z } from "zod";
-import type {
-  PlatformOperation,
-  PlatformOperationContext,
-} from "./operations.js";
+import type { PlatformOperation } from "./operations.js";
 import {
-  resolveProjectOrThrow,
-  resolveSavedServer,
+  resolveServerScope,
+  serverPermalink,
   serverScopedInput,
-  toSelectedProjectInfo,
-  toServerInfo,
-  type ResolvedServerInfo,
+  type ServerResult,
 } from "./operation-support.js";
-import { derivePermalinks, type PlatformResourceRef } from "./permalinks.js";
+import { derivePermalinks } from "./permalinks.js";
 import type {
   PlatformServerRevision,
   PlatformServerRevisionDiff,
   PlatformServerRevisionSummary,
 } from "./server-revision-types.js";
-import type { SelectedProjectInfo } from "./show-servers.js";
-import type { PlatformApiClient } from "./client.js";
 
 const revisionNumberSchema = z.number().int().min(1);
 
@@ -65,11 +58,6 @@ export type ListServerRevisionsInput = z.infer<typeof listServerRevisionsInput>;
 export type GetServerRevisionInput = z.infer<typeof getServerRevisionInput>;
 export type DiffServerRevisionsInput = z.infer<typeof diffServerRevisionsInput>;
 
-type ServerResult = {
-  project: SelectedProjectInfo;
-  server: ResolvedServerInfo;
-};
-
 export type ListServerRevisionsResult = ServerResult & {
   items: PlatformServerRevisionSummary[];
   nextCursor?: string;
@@ -80,48 +68,6 @@ export type GetServerRevisionResult = ServerResult & {
 export type DiffServerRevisionsResult = ServerResult & {
   diff: PlatformServerRevisionDiff;
 };
-
-async function resolveServerScope(
-  input: { project?: string; server: string },
-  context: PlatformOperationContext
-): Promise<{
-  client: PlatformApiClient;
-  scope: { projectId: string; serverId: string };
-  result: ServerResult;
-}> {
-  const { client, signal, onScopeResolved } = context;
-  const { project } = await resolveProjectOrThrow(
-    { client, signal, onScopeResolved },
-    input.project
-  );
-  // Stored revisions exist for every transport, stdio included, so this does
-  // not require a hosted-operable server the way live operations do.
-  const server = await resolveSavedServer(
-    client,
-    project,
-    input.server,
-    signal
-  );
-  return {
-    client,
-    scope: { projectId: project.id, serverId: server.id },
-    result: {
-      project: toSelectedProjectInfo(project),
-      server: toServerInfo(server),
-    },
-  };
-}
-
-function serverPermalink(result: ServerResult): PlatformResourceRef[] {
-  return [
-    {
-      type: "project_server",
-      id: result.server.id,
-      projectId: result.project?.id,
-      label: `Open ${result.server.name}`,
-    },
-  ];
-}
 
 export const listServerRevisionsOperation: PlatformOperation<
   ListServerRevisionsInput,

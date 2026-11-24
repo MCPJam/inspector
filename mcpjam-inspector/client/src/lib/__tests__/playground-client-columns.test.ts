@@ -6,6 +6,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { resolvePlaygroundClientColumn } from "../playground-client-columns";
 import { harnessPickerModels } from "../harness-model-locks";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
+import { isWebClientRuntimeId } from "@/shared/web-clients";
 
 const hosted: ModelDefinition = {
   id: "openai/gpt-5",
@@ -108,6 +109,30 @@ describe("saved-client comparison resolution", () => {
     });
   });
 
+  it.each([
+    ["missing", []],
+    ["locked", [{ ...hosted, disabled: true }]],
+  ])(
+    "reads a %s saved model as loading while sign-in and the catalog settle",
+    (_label, models: ModelDefinition[]) => {
+      // Just after the sign-in redirect reloads the page, the model list can
+      // lack the saved model only because it has not loaded yet.
+      const result = resolvePlaygroundClientColumn({
+        paneId: host.hostId,
+        hostId: host.hostId,
+        slot: { host, isLoading: false },
+        hosts: [],
+        models,
+        modelsSettling: true,
+      });
+      expect(result).toMatchObject({
+        status: "loading",
+        reason: "Loading saved configuration…",
+      });
+      expect(resolve(host, models).status).toBe("unavailable");
+    },
+  );
+
   it("keys a column by its pane, so two panes on one client stay apart", () => {
     const panes = ["a", "a~2"].map((paneId) =>
       resolvePlaygroundClientColumn({
@@ -195,7 +220,10 @@ describe("each column reads the catalog through its own harness", () => {
 
   for (const harnessId of HARNESS_IDS) {
     it(`${harnessId}: resolves its saved model on its own list, not the lead's`, () => {
-      if (HARNESS_DESCRIPTORS[harnessId].modelAccess === "external-account") {
+      if (
+        HARNESS_DESCRIPTORS[harnessId].modelAccess === "external-account" &&
+        !isWebClientRuntimeId(harnessId)
+      ) {
         // Its account picks the model: the sentinel is what runs.
         const auto = resolve(clientOn({ harness: harnessId }, "cursor/auto"), [
           ...catalog,

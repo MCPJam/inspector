@@ -225,10 +225,35 @@ describe("swarm-agent fetchPinnedSkill — wire contract", () => {
     expect(parsed.searchParams.get("targetId")).toBe("environment:env&1");
     expect(parsed.searchParams.get("contentHash")).toBe("h 1+2");
     expect(parsed.searchParams.get("runId")).toBe("run-1");
+    // Not a captured server skill: no server or URI, as an older backend expects.
+    expect(parsed.searchParams.has("serverId")).toBe(false);
+    expect(parsed.searchParams.has("skillUri")).toBe(false);
     expect((init as RequestInit).method).toBe("GET");
     expect(
       new Headers((init as RequestInit).headers).get("Authorization")
     ).toBe("Bearer bearer-token");
+  });
+
+  it("names a captured server skill's pin by its server and URI as well", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(okSkill("h1")), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    await fetchPinnedSkill(CONVEX_HTTP_URL, "b", {
+      projectId: "p",
+      runId: "r",
+      targetId: "t",
+      contentHash: "h1",
+      serverSkill: { serverId: "srv_docs", skillUri: "skill://docs/search" },
+    });
+
+    const parsed = new URL(String(fetchMock.mock.calls[0]![0]));
+    expect(parsed.searchParams.get("contentHash")).toBe("h1");
+    expect(parsed.searchParams.get("serverId")).toBe("srv_docs");
+    expect(parsed.searchParams.get("skillUri")).toBe("skill://docs/search");
   });
 
   it("surfaces a 404 as SwarmAgentError with status 404 (non-retryable downstream)", async () => {

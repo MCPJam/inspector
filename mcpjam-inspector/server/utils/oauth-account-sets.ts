@@ -1,10 +1,15 @@
 import { connectionKey, type McpToolConnection } from "@mcpjam/sdk";
-import { connectionLabels } from "../../shared/oauth-connections.js";
+import {
+  connectionLabels,
+  type AuthorizedOAuthConnection,
+} from "../../shared/oauth-connections.js";
 import { ErrorCode, WebRouteError } from "../routes/web/errors.js";
 import type { ConvexBatchAuthorizeSuccess } from "../routes/web/auth.js";
+import { oauthRefusalFromAuthorize } from "./local-oauth-refusal.js";
+import { isUploadedAccount } from "./uploaded-account-recovery.js";
 
 /**
- * Exactly which of the acting person's accounts each server runs with, keyed
+ * Exactly which accounts each server runs with for the acting person, keyed
  * by server id. Sent to the backend, which resolves only these accounts'
  * tokens, and checked again here so a run never falls back to an account
  * nobody chose.
@@ -15,13 +20,51 @@ export type ConnectionIdSets = Readonly<Record<string, readonly string[]>>;
 export const SAVED_ACCOUNT_UNAVAILABLE =
   "The account saved with this task is unavailable. Reconnect that account to continue.";
 
+/** A string the backend may send on an account before its type names it. */
+function textField(value: object, key: string): string | undefined {
+  const field: unknown = Reflect.get(value, key);
+  return typeof field === "string" ? field : undefined;
+}
+
+/**
+ * The backend's refusal of one account's token (a shared or uploaded account
+ * not allowed here, the organization's policy, a moved server), in its words
+ * after the server and account it is about.
+ */
+function withheldAccount(
+  c: AuthorizedOAuthConnection,
+  server: { serverId: string; serverName: string },
+  label: string,
+) {
+  const withheld = oauthRefusalFromAuthorize(
+    {
+      oauthAccessToken: c.accessToken,
+      oauthUnavailableReason: c.unavailableReason,
+      oauthUnavailablePolicy: textField(c, "unavailablePolicy"),
+      oauthUnavailableCause: textField(c, "unavailableCause"),
+      oauthUnavailableMessage: textField(c, "unavailableMessage"),
+    },
+    server,
+  );
+  return (
+    withheld &&
+    new WebRouteError(
+      withheld.status,
+      withheld.code,
+      `${server.serverName} ${label}: ${withheld.message}`,
+      withheld.details,
+    )
+  );
+}
+
 /**
  * The account group a server runs with when its launcher sent a set, or
- * `undefined` when no chosen account applies: a project-shared server (one
- * connection for everyone) or a server not on OAuth.
+ * `undefined` when no chosen account applies: a server not on OAuth. A set
+ * names the person's own accounts or, on a server shared with the project,
+ * the project's accounts; the backend answers both the same way.
  *
  * The base account owns the bare server key, which run-level lookups such as
- * the tool snapshot use. It is the person's default when chosen, otherwise the
+ * the tool snapshot use. It is the default account when chosen, otherwise the
  * first chosen account, so leaving the default out never leaves the key empty.
  *
  * Names never carry an email, because a teammate can open the run, and the
@@ -40,7 +83,6 @@ export function accountSetGroup(args: {
   const refuse: (message: string) => never = (message) => {
     throw new WebRouteError(403, ErrorCode.FORBIDDEN, args.refusal ?? message);
   };
-  if (auth.oauthAccountSet === "shared") return undefined;
   if (auth.oauthAccountSet !== "applied") {
     // A token without the backend's answer means the set was ignored, and
     // that token is the default account's.
@@ -57,7 +99,7 @@ export function accountSetGroup(args: {
     );
   }
   const listed = auth.oauthConnections ?? [];
-  // The backend names accounts over the person's whole list, so a name here
+  // The backend names accounts over the server's whole list, so a name here
   // matches the one in suite settings; the local rule covers an older backend.
   const fallback = connectionLabels(listed, { withoutEmail: true });
   const labels = listed.map((c, index) => c.displayName ?? fallback[index]);
@@ -72,8 +114,14 @@ export function accountSetGroup(args: {
       );
     }
     if (!entry.c.accessToken || entry.c.needsReauth) {
+      const withheld =
+        !args.refusal && withheldAccount(entry.c, args, entry.label);
+      if (withheld) throw withheld;
+      // An upload is renewed by uploading again, never by signing in.
       refuse(
-        `${serverName} ${entry.label} needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.`,
+        isUploadedAccount(entry.c)
+          ? `${serverName} ${entry.label} has no usable uploaded token. Upload a fresh token for it, or choose another account in the suite's settings.`
+          : `${serverName} ${entry.label} needs reconnect. Reconnect it in Authorization, or choose another account in the suite's settings.`,
       );
     }
     return entry;

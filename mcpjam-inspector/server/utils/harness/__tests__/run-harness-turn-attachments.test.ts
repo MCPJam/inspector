@@ -87,8 +87,7 @@ vi.mock("../registry.js", () => ({
     supportsMcpToolApproval: true,
     approvalPermissionMode: "allow-reads",
     supportsSkills: false,
-    skillsBaseDir: "/home/user/.claude/skills",
-    skillsWriteOptions: { trailingNewline: true },
+    skills: { writeFolder: ".claude/skills", readFolders: [".claude/skills"] },
     mcpDelivery: "harness",
     mcpNativeDelivery: "session-config",
     supportsModel: vi.fn(() => true),
@@ -110,7 +109,6 @@ vi.mock("../e2b-sandbox-provider.js", () => ({
 }));
 
 vi.mock("../runtime-skills.js", () => ({
-  frontmatterSafeSkills: vi.fn((skills) => skills),
   fetchRuntimeSkills: vi.fn(async () => ({ ok: true, skills: [] })),
   fetchRuntimeSkillFiles: vi.fn(async () => ({ ok: true, files: [] })),
   skillsFingerprint: vi.fn(() => "empty-skills"),
@@ -140,9 +138,6 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
-  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
-  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
-  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -152,6 +147,11 @@ vi.mock("../harness-model-broker.js", () => ({
     proxyBaseUrl: "https://broker.example",
     delivery: "e2b-network-transform",
   })),
+}));
+vi.mock("../harness-box-reservation.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
 }));
 
 vi.mock("../mcp-config.js", async (importOriginal) => {
@@ -175,7 +175,7 @@ vi.mock("../local/local-turn.js", () => ({
       sandbox: {},
       auth: {},
       sandboxWorkDir: "project",
-      skillsBaseDir: `${LOCAL_STATE_DIR}/home/.claude/skills`,
+      homeDir: `${LOCAL_STATE_DIR}/home`,
       attachmentsDir: {
         writeDir: `${LOCAL_STATE_DIR}/attachments`,
         agentDir: `${LOCAL_STATE_DIR}/attachments`,

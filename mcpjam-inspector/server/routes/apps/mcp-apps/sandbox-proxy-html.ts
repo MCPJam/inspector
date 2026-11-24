@@ -85,7 +85,7 @@ export function sandboxProxyHostOriginPatterns(): string[] {
  * `http` on a loopback host. Plaintext anywhere else is left out, since any
  * network hop could then answer as the host. Loopback `http` is kept so a
  * hosted build run on a developer machine (`npm run dev:hosted`, which lists
- * `http://localhost:5173`) can still render views.
+ * its own loopback origins) can still render views.
  */
 function isConfiguredHostOrigin(origin: string): boolean {
   if (origin.startsWith("https://")) return true;

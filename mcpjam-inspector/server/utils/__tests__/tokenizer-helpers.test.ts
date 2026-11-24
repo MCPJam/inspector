@@ -75,6 +75,20 @@ describe("mapModelIdToTokenizerBackend", () => {
         );
       }
     });
+
+    it("maps the GPT-6 family to the closest id ai-tokenizer knows", () => {
+      for (const id of [
+        "gpt-6-astra",
+        "gpt-6-luna",
+        "gpt-6-sol",
+        "gpt-6.1-sol",
+      ]) {
+        expect(mapModelIdToTokenizerBackend(id)).toBe("openai/gpt-5");
+        expect(mapModelIdToTokenizerBackend(`openai/${id}`)).toBe(
+          "openai/gpt-5",
+        );
+      }
+    });
   });
 
   describe("DeepSeek models", () => {

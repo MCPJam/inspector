@@ -436,3 +436,31 @@ describe("baselines by targetKey", () => {
     expect(previousCompletedRunOf(keyed, [legacy, keyed])?._id).toBe("old");
   });
 });
+
+describe("pairing client style", () => {
+  it("carries the run's saved style so a renamed client keeps its logo", () => {
+    const [pairing] = buildHeroPairings({
+      targets: [
+        {
+          key: "codex",
+          run: run({
+            _id: "codex-run",
+            client: {
+              name: "Codex QA",
+              hostStyle: "codex",
+              source: "attached_host",
+              versionId: "v1",
+            },
+          } as Partial<EvalSuiteRun> & { _id: string }),
+          client: "Codex QA",
+          modelId: "gpt-5.1",
+          model: "gpt-5.1",
+          iterations: [],
+        },
+      ],
+      previousLaunch: null,
+      previousIterations: null,
+    });
+    expect(pairing.hostStyle).toBe("codex");
+  });
+});

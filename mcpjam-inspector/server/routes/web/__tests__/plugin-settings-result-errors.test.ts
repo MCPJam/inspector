@@ -35,6 +35,11 @@ vi.mock("../../../services/plugin-host/receipt-store.js", async (original) => ({
   ...(await original<typeof import("../../../services/plugin-host/receipt-store.js")>()),
   createPluginInvocationReceiptPort: () => f.receipts,
 }));
+vi.mock("../../../services/plugin-host/settings-state.js", async () =>
+  (await import("./settings-state-memory.js")).memorySettingsState((token) =>
+    f.get(token),
+  ),
+);
 vi.mock("../../../services/plugin-host/instances.js", () => ({
   pluginInstances: { getPersistent: f.get, get: f.get, invoke: f.invoke },
 }));

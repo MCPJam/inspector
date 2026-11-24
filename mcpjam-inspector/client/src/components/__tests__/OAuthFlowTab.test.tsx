@@ -1,4 +1,5 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { track } from "@/lib/analytics";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { OAuthFlowTab } from "../OAuthFlowTab";
@@ -8,6 +9,13 @@ import { createInspectorOAuthStateMachine } from "@/lib/oauth/debug-state-machin
 vi.mock("@/lib/analytics", () => ({
   track: vi.fn(),
 }));
+
+const starPrompt = vi.hoisted(() => ({
+  recordGitHubStarPromptUse: vi.fn(),
+  requestGitHubStarPrompt: vi.fn(),
+  useGitHubStarPromptOnReturn: vi.fn(),
+}));
+vi.mock("@/lib/github-star-prompt", () => starPrompt);
 
 vi.mock("@mcpjam/sdk/browser", () => ({
   EMPTY_OAUTH_FLOW_STATE: {
@@ -204,6 +212,39 @@ describe("OAuthFlowTab", () => {
     expect(screen.getByTestId("oauth-flow-logger")).toHaveTextContent(
       "https://example.com/mcp",
     );
+  });
+
+  it("asks for a GitHub star once a flow reaches complete", () => {
+    vi.mocked(createInspectorOAuthStateMachine).mockClear();
+    starPrompt.requestGitHubStarPrompt.mockClear();
+    render(
+      <OAuthFlowTab
+        serverConfigs={{
+          "http-server": createServer({
+            name: "http-server",
+            useOAuth: true,
+            config: { url: "https://example.com/mcp" },
+          }),
+        }}
+        selectedServerName="http-server"
+        onSelectServer={vi.fn()}
+      />,
+    );
+    expect(starPrompt.useGitHubStarPromptOnReturn).toHaveBeenCalledWith(
+      "oauth",
+    );
+    expect(starPrompt.requestGitHubStarPrompt).not.toHaveBeenCalled();
+    const config = vi.mocked(createInspectorOAuthStateMachine).mock.calls.at(
+      -1,
+    )?.[0];
+    act(() => config?.updateState({ currentStep: "complete" }));
+    expect(track).toHaveBeenCalledWith("oauth_flow_completed", {
+      location: "oauth_flow_tab",
+    });
+    expect(starPrompt.requestGitHubStarPrompt).toHaveBeenCalledWith({
+      trigger: "oauth",
+      reason: "completed",
+    });
   });
 
   it("passes the profile's pre-registered credentials to the state machine (#3029)", () => {

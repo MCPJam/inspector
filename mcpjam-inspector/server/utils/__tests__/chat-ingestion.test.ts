@@ -526,7 +526,10 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ failureKind: "version_conflict" }),
+      expect.objectContaining({
+        failureKind: "version_conflict",
+        ingestStatusCode: 409,
+      }),
       undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -554,7 +557,11 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ failureKind: "http_error", statusCode: 503 }),
+      expect.objectContaining({
+        failureKind: "http_error",
+        ingestStatusCode: 503,
+        chatOrigin: "playground",
+      }),
       undefined
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
@@ -571,7 +578,7 @@ describe("chat-ingestion", () => {
     origin: "event" as const,
   };
 
-  it("carries an event turn's sourceType and origin on chat.session.persist.failed", async () => {
+  it("carries an event turn's sourceType and chatOrigin on chat.session.persist.failed", async () => {
     global.fetch = vi
       .fn()
       .mockResolvedValue(new Response("Server Error", { status: 503 }));
@@ -584,12 +591,12 @@ describe("chat-ingestion", () => {
     expect(mockLogger.event).toHaveBeenCalledWith(
       "chat.session.persist.failed",
       expect.any(Object),
-      expect.objectContaining({ sourceType: "event", origin: "event" }),
+      expect.objectContaining({ sourceType: "event", chatOrigin: "event" }),
       undefined
     );
   });
 
-  it("carries an event turn's sourceType and origin on chat.session.persist.skipped", async () => {
+  it("carries an event turn's sourceType and chatOrigin on chat.session.persist.skipped", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ skipped: true, version: 3 }), {
         status: 200,
@@ -608,7 +615,7 @@ describe("chat-ingestion", () => {
     );
     expect(skipped?.[2]).toMatchObject({
       sourceType: "event",
-      origin: "event",
+      chatOrigin: "event",
       hasTurnId: false,
     });
   });
@@ -851,7 +858,7 @@ describe("chat-ingestion", () => {
         expect.any(Object),
         expect.objectContaining({
           failureKind: "http_error",
-          statusCode: 400,
+          ingestStatusCode: 400,
           responsePreview: expect.stringContaining("modelId is required"),
         }),
         undefined

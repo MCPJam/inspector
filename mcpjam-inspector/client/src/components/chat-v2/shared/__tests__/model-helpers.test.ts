@@ -209,12 +209,45 @@ describe("org model helpers", () => {
     });
     const byId = new Map(models.map((m) => [String(m.id), m]));
 
-    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]) {
+    for (const id of ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna"]) {
       const row = byId.get(id);
       expect(row, `${id} missing from the BYOK list`).toBeDefined();
       expect(row!.contextLength).toBe(1_050_000);
       // These ids are in the hosted catalog too, so the free/paid split rests
       // on the classifier being asked without a provider.
+      expect(isMCPJamProvidedModelMenuItem(row!)).toBe(false);
+    }
+  });
+
+  it("offers the GPT-6 family on an org OpenAI connection, on the org's key", () => {
+    const models = buildAvailableModelsFromOrgConfig(
+      {
+        providers: [
+          {
+            id: "conn-openai",
+            providerKey: "openai",
+            enabled: true,
+            hasSecret: true,
+          },
+        ],
+      },
+      [CATALOG_ONLY],
+    );
+    const byId = new Map(models.map((m) => [String(m.id), m]));
+
+    for (const id of [
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-6-astra",
+    ]) {
+      const row = byId.get(id);
+      expect(row, `${id} missing from the org OpenAI list`).toMatchObject({
+        provider: "openai",
+        contextLength: 1_050_000,
+        hosted: false,
+        orgProvider: { providerKey: "openai", id: "conn-openai" },
+      });
       expect(isMCPJamProvidedModelMenuItem(row!)).toBe(false);
     }
   });

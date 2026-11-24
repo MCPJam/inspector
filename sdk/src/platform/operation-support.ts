@@ -9,6 +9,7 @@
 import { z } from "zod";
 import type { PlatformApiClient } from "./client.js";
 import type { PlatformOperationContext } from "./operations.js";
+import type { PlatformResourceRef } from "./permalinks.js";
 import { resolveByIdOrName, resolutionError } from "./resource-selectors.js";
 import {
   projectResolutionError,
@@ -19,6 +20,28 @@ import type { PlatformProject, PlatformProjectServer } from "./types.js";
 
 export const PROJECT_SELECTOR_DESCRIPTION =
   "Project name or ID. Defaults to the most recently updated accessible project.";
+
+// Unlike the listing operations, the run-polling reads do NOT default the
+// project: a run is an existing resource in one specific project, and
+// guessing "most recently updated" makes a run in any other project read as
+// NOT_FOUND. run_eval_suite and list_eval_suite_runs return the resolved
+// project precisely so callers can address the polls exactly.
+export const RUN_PROJECT_DESCRIPTION =
+  "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
+
+/** One eval run, addressed in its own project. */
+export const evalRunScopedInput = z.object({
+  project: z.string().trim().min(1).describe(RUN_PROJECT_DESCRIPTION),
+  runId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
+    ),
+});
+
+export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
 
 /**
  * Resolve the caller's project selector, and REPORT what it resolved to.
@@ -152,4 +175,52 @@ export function toServerInfo(
   server: PlatformProjectServer
 ): ResolvedServerInfo {
   return { id: server.id, name: server.name };
+}
+
+export type ServerResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+};
+
+/** Resolve the project and saved server an operation on stored data reads. */
+export async function resolveServerScope(
+  input: { project?: string; server: string },
+  context: PlatformOperationContext
+): Promise<{
+  client: PlatformApiClient;
+  scope: { projectId: string; serverId: string };
+  result: ServerResult;
+}> {
+  const { client, signal, onScopeResolved } = context;
+  const { project } = await resolveProjectOrThrow(
+    { client, signal, onScopeResolved },
+    input.project
+  );
+  // Stored data exists for every transport, stdio included, so this does not
+  // require a hosted-operable server the way live operations do.
+  const server = await resolveSavedServer(
+    client,
+    project,
+    input.server,
+    signal
+  );
+  return {
+    client,
+    scope: { projectId: project.id, serverId: server.id },
+    result: {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+    },
+  };
+}
+
+export function serverPermalink(result: ServerResult): PlatformResourceRef[] {
+  return [
+    {
+      type: "project_server",
+      id: result.server.id,
+      projectId: result.project?.id,
+      label: `Open ${result.server.name}`,
+    },
+  ];
 }

@@ -10,6 +10,7 @@ import {
 } from "@/lib/environment-error";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { pluralize } from "@/components/chat-v2/shared/chat-helpers";
+import { skillExclusionLabel } from "@/lib/skill-delivery-labels";
 import { PlaygroundPluginSelector } from "./PlaygroundPluginSelector";
 import type { PlaygroundEnvironmentState } from "@/hooks/use-playground-environment";
 
@@ -137,7 +138,6 @@ export function PlaygroundEnvironmentSection({
         >
           <ErrorCard
             error={describeEnvironmentError(previewError)}
-            variant="inline"
             // Retry is pointless for a zero-servers failure — the resolve is
             // deterministic and would fail identically. Offer the thing that
             // actually fixes it instead. Note the preview FAILED, so there is
@@ -188,9 +188,11 @@ export function PlaygroundEnvironmentSection({
             >
               <AlertTriangle className="mt-[1px] size-3 shrink-0" aria-hidden />
               <span>
-                {preview.host.hostName ?? "This client"} can't consume skills —
-                the {pluralize(preview.capabilities.skillCount, "skill")} in
-                this environment won't reach the model on these turns.
+                {skillExclusionLabel("unsupported-harness", {
+                  client: preview.host.hostName ?? undefined,
+                })}{" "}
+                The {pluralize(preview.capabilities.skillCount, "skill")} in
+                this environment won’t reach the model.
               </span>
             </p>
           ) : null}

@@ -182,8 +182,11 @@ export type MCPJamReportingConfig = {
   };
   strict?: boolean;
   /**
-   * When not `false`, auto-reported results fail if the trace shows tool
-   * execution errors. Default: strict tool outcomes (equivalent to `true`).
+   * When not `false`, a failed tool call or an iteration error fails the
+   * iteration, both locally and in MCPJam: their `platform:toolExecution` and
+   * `platform:iterationError` score rows are gating. With `false` the rows are
+   * advisory, so the errors stay visible without failing the iteration.
+   * Default: `true`.
    */
   failOnToolError?: boolean;
   externalRunId?: string;

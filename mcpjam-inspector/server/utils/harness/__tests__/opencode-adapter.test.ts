@@ -39,7 +39,7 @@ describe("the OpenCode adapter", () => {
     expect(adapter.supportsHostExecutedToolApproval).toBe(true);
     expect(adapter.supportsMcpToolApproval).toBe(false);
     expect(adapter.supportsNativeToolApproval).toBe(true);
-    expect(adapter.supportsSkills).toBe(false);
+    expect(adapter.supportsSkills).toBe(true);
     expect(adapter.forwardingRuntime).toBeUndefined();
     expect(adapter.liveApprovalRuntime).toBe(true);
     expect(registeredHarnessIds()).toContain("opencode");
@@ -92,23 +92,14 @@ describe("the OpenCode adapter", () => {
     }
   });
 
-  it("admits an approval-gated host someone can answer", () => {
+  it("admits an approval-gated host", () => {
     expect(
       harnessToolApprovalRefusalReason({
         adapter: getHarnessAdapter("opencode"),
         requireToolApproval: true,
         hasSelectedMcpServers: true,
-        unattended: false,
       }),
     ).toBeUndefined();
-    expect(
-      harnessToolApprovalRefusalReason({
-        adapter: getHarnessAdapter("opencode"),
-        requireToolApproval: true,
-        hasSelectedMcpServers: true,
-        unattended: true,
-      }),
-    ).toMatch(/evals or swarms/i);
   });
 
   it("pins title and compaction to the leased Anthropic model", () => {

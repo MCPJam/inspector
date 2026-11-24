@@ -7,6 +7,11 @@ import {
   pluginDiagnostic,
   type PluginDiagnostic,
 } from "./plugin-diagnostics.js";
+import {
+  entrypointIssues,
+  quickActionsShown,
+  type EntrypointBehavior,
+} from "./plugin-entry-checks.js";
 
 export type PluginEntrypointTool = {
   name: string;
@@ -137,16 +142,23 @@ export function pluginFileEntrypoints(tools: readonly PluginEntrypointTool[]) {
   });
 }
 
-/** Resolve only a declaration received from the authorized server's catalog. */
+/** Resolve only a declaration received from the authorized server's catalog.
+ * `behavior` is the client's entry-point rules when it opens one; an App
+ * already open re-resolves without them, as launcher toggles never close it. */
 export function pluginEntrypointPlan(
   tool: { name: string; _meta?: Record<string, unknown> },
   selection: PluginEntrypointSelector,
+  behavior?: EntrypointBehavior,
 ) {
   const selector = pluginEntrypointSelectorSchema.parse(selection);
   if (selector.kind === "file")
     throw new PluginActivationError("PLUGIN_FILE_SOURCE_REQUIRED");
+  const issues = entrypointIssues(tool, behavior);
   if (selector.kind === "quick-action") {
-    const action = pluginQuickAction(tool);
+    const action =
+      quickActionsShown(behavior) && !issues.hidden
+        ? pluginQuickAction(tool)
+        : undefined;
     if (!action)
       throw new PluginActivationError("PLUGIN_QUICK_ACTION_UNAVAILABLE");
     return {
@@ -165,6 +177,8 @@ export function pluginEntrypointPlan(
     !pluginEntrypointKinds(tool).includes(selector.kind)
   )
     throw new PluginActivationError("PLUGIN_ENTRYPOINT_UNAVAILABLE");
+  if (issues.unopenable)
+    throw new PluginActivationError("PLUGIN_ENTRYPOINT_UNOPENABLE");
   return {
     selector,
     params: { name: tool.name, arguments: {} },

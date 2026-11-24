@@ -9,8 +9,10 @@
  *
  * A check still missing its input shows unchecked, locked while picked. The
  * pick is kept: the run still sends it, so the result says it was not run for
- * want of input, and it runs once the input is set. A suite's box is checked
- * only with every check picked.
+ * want of input, and it runs once the input is set. A suite's box toggles
+ * between every check and none: it shows a dash while every check is picked
+ * but some wait on input, and selecting all shakes the needs-input tag as it
+ * appears, to point at what is left.
  */
 
 import { useState, type ReactNode } from "react";
@@ -38,6 +40,7 @@ import {
   useTasksUpdateCheckEnabled,
 } from "./conformance-catalogs";
 import { Collapse, SUITE_COPY } from "./conformance-ui";
+import { ConformanceSourceVersion } from "./conformance-source-version";
 
 export type CheckSuite = "protocol" | "apps" | "tasks";
 
@@ -206,6 +209,7 @@ export function ConformanceCheckPicker({
   renderSuiteExtra,
   checkInputStatus,
   checkNotApplicable,
+  inputsSettling = false,
 }: {
   versionPin: ProtocolVersionPin;
   selection: ConformanceSelection;
@@ -243,6 +247,12 @@ export function ConformanceCheckPicker({
     suite: CheckSuite,
     checkId: string,
   ) => string | undefined;
+  /**
+   * The server's tools are still loading, so which checks have their input,
+   * and so the Protocol and Tasks counts, would still change. Those counts
+   * wait for the list instead of ticking up in front of the user.
+   */
+  inputsSettling?: boolean;
 }) {
   const catalogs = {
     ...checkCatalogs(versionPin),
@@ -294,101 +304,109 @@ export function ConformanceCheckPicker({
   };
   const oauthAdvice = adviceSection("oauth", selection.oauth !== false);
   return (
-    <div className="overflow-hidden rounded-lg border border-border bg-card">
-      {CHECK_SUITES.map((suite) => {
-        const catalog = catalogs[suite];
-        const picked = pickedIds(selection, suite, catalog);
-        const inputStatus = checkInputStatus
-          ? (checkId: string) => checkInputStatus(suite, checkId)
-          : undefined;
-        const adviceSuite = suite === "apps" ? undefined : suite;
-        const suiteAdvice = adviceSuite
-          ? adviceSection(adviceSuite, picked.size > 0)
-          : undefined;
-        const isPicked = (id: string) =>
-          picked.has(id) || Boolean(suiteAdvice?.picked.has(id));
-        const titleOf = (id: string) =>
-          (
-            catalog.find((item) => item.id === id) ??
-            suiteAdvice?.catalog.find((item) => item.id === id)
-          )?.title;
-        const renderExtra = renderCheckExtra
-          ? (entry: CatalogEntry, opened: boolean) =>
-              renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
-          : undefined;
-        const renderTag = (entry: CatalogEntry) => {
-          const status = inputStatus?.(entry.id);
-          return status ? (
-            <NeedsInputTag
-              status={status}
-              picked={isPicked(entry.id)}
-              advice={Boolean(
-                suiteAdvice?.catalog.some((item) => item.id === entry.id),
-              )}
+    // A pinned run is graded against that revision's pages, so the rows link
+    // them; on "auto" the revision is not known yet and they link the current.
+    <ConformanceSourceVersion
+      version={versionPin === "auto" ? undefined : versionPin}
+    >
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        {CHECK_SUITES.map((suite) => {
+          const catalog = catalogs[suite];
+          const picked = pickedIds(selection, suite, catalog);
+          const inputStatus = checkInputStatus
+            ? (checkId: string) => checkInputStatus(suite, checkId)
+            : undefined;
+          const adviceSuite = suite === "apps" ? undefined : suite;
+          const suiteAdvice = adviceSuite
+            ? adviceSection(adviceSuite, picked.size > 0)
+            : undefined;
+          const isPicked = (id: string) =>
+            picked.has(id) || Boolean(suiteAdvice?.picked.has(id));
+          const titleOf = (id: string) =>
+            (
+              catalog.find((item) => item.id === id) ??
+              suiteAdvice?.catalog.find((item) => item.id === id)
+            )?.title;
+          const renderExtra = renderCheckExtra
+            ? (entry: CatalogEntry, opened: boolean) =>
+                renderCheckExtra(suite, entry.id, isPicked, titleOf, opened)
+            : undefined;
+          const renderTag = (entry: CatalogEntry) => {
+            const status = inputStatus?.(entry.id);
+            return status ? (
+              <NeedsInputTag
+                status={status}
+                picked={isPicked(entry.id)}
+                advice={Boolean(
+                  suiteAdvice?.catalog.some((item) => item.id === entry.id),
+                )}
+              />
+            ) : null;
+          };
+          const notApplicableReason = checkNotApplicable
+            ? (entry: CatalogEntry) => checkNotApplicable(suite, entry.id)
+            : undefined;
+          return (
+            <SuiteChecks
+              key={suite}
+              title={SUITE_COPY[suite].title}
+              description={SUITE_COPY[suite].description}
+              catalog={catalog}
+              countLabel={countLabel}
+              defaultOpen={defaultOpen}
+              onSuiteChange={(value) => {
+                const next = withPicked(
+                  selection,
+                  suite,
+                  catalog,
+                  catalog.map((entry) => entry.id),
+                  value,
+                );
+                onChange(
+                  adviceSuite ? withAllAdvice(next, adviceSuite, value) : next,
+                );
+              }}
+              isPicked={(id) => picked.has(id)}
+              needsInput={(id) => inputStatus?.(id) === "missing"}
+              onCheckChange={(id, value) =>
+                onChange(withPicked(selection, suite, catalog, [id], value))
+              }
+              suiteExtra={renderSuiteExtra?.(suite)}
+              renderExtra={renderExtra}
+              renderTag={renderTag}
+              notApplicableReason={notApplicableReason}
+              advice={suiteAdvice?.prop}
+              // Apps checks take no input, so its count is final already.
+              countPending={inputsSettling && suite !== "apps"}
+              needsInputCount={
+                catalog.filter(
+                  (entry) =>
+                    picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
+                ).length
+              }
             />
-          ) : null;
-        };
-        const notApplicableReason = checkNotApplicable
-          ? (entry: CatalogEntry) => checkNotApplicable(suite, entry.id)
-          : undefined;
-        return (
-          <SuiteChecks
-            key={suite}
-            title={SUITE_COPY[suite].title}
-            description={SUITE_COPY[suite].description}
-            catalog={catalog}
-            countLabel={countLabel}
-            defaultOpen={defaultOpen}
-            onSuiteChange={(value) => {
-              const next = withPicked(
-                selection,
-                suite,
-                catalog,
-                catalog.map((entry) => entry.id),
-                value,
-              );
-              onChange(
-                adviceSuite ? withAllAdvice(next, adviceSuite, value) : next,
-              );
-            }}
-            isPicked={(id) => picked.has(id)}
-            needsInput={(id) => inputStatus?.(id) === "missing"}
-            onCheckChange={(id, value) =>
-              onChange(withPicked(selection, suite, catalog, [id], value))
-            }
-            suiteExtra={renderSuiteExtra?.(suite)}
-            renderExtra={renderExtra}
-            renderTag={renderTag}
-            notApplicableReason={notApplicableReason}
-            advice={suiteAdvice?.prop}
-            needsInputCount={
-              catalog.filter(
-                (entry) =>
-                  picked.has(entry.id) && inputStatus?.(entry.id) === "missing",
-              ).length
-            }
-          />
-        );
-      })}
-      <SuiteChecks
-        title={SUITE_COPY.oauth.title}
-        description={SUITE_COPY.oauth.description}
-        catalog={OAUTH_CATALOG}
-        countLabel={countLabel}
-        defaultOpen={defaultOpen}
-        onSuiteChange={(value) =>
-          onChange(
-            withAllAdvice(withOAuthSuite(selection, value), "oauth", value),
-          )
-        }
-        isPicked={(id) => isOAuthStepScored(selection, id)}
-        onCheckChange={(id, value) =>
-          onChange(withOAuthStep(selection, id, value))
-        }
-        listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
-        advice={oauthAdvice.prop}
-      />
-    </div>
+          );
+        })}
+        <SuiteChecks
+          title={SUITE_COPY.oauth.title}
+          description={SUITE_COPY.oauth.description}
+          catalog={OAUTH_CATALOG}
+          countLabel={countLabel}
+          defaultOpen={defaultOpen}
+          onSuiteChange={(value) =>
+            onChange(
+              withAllAdvice(withOAuthSuite(selection, value), "oauth", value),
+            )
+          }
+          isPicked={(id) => isOAuthStepScored(selection, id)}
+          onCheckChange={(id, value) =>
+            onChange(withOAuthStep(selection, id, value))
+          }
+          listNote=". They run together as one sign-in flow, so an unchecked check still runs but does not count toward the score."
+          advice={oauthAdvice.prop}
+        />
+      </div>
+    </ConformanceSourceVersion>
   );
 }
 
@@ -414,6 +432,7 @@ function SuiteChecks({
   notApplicableReason,
   needsInputCount = 0,
   advice,
+  countPending = false,
 }: {
   title: string;
   description: string;
@@ -441,8 +460,13 @@ function SuiteChecks({
     isPicked: (id: string) => boolean;
     onChange?: (id: string, picked: boolean) => void;
   };
+  /** The count would still change: hold it, and the needs-input tag, back. */
+  countPending?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Bumped on each select-all that leaves checks waiting on input, so the
+  // needs-input tag remounts and shakes as it appears.
+  const [shakes, setShakes] = useState(0);
   const missing = (id: string) => Boolean(needsInput?.(id));
   const picked = (id: string) => Boolean(isPicked?.(id));
   // A picked check missing its input shows unchecked and is locked until the
@@ -455,21 +479,36 @@ function SuiteChecks({
   const pickedCount = catalog.filter(
     (entry) => picked(entry.id) && !missing(entry.id),
   ).length;
-  // The box follows the count, so the two never disagree. Once every check
-  // that can run is picked, a click leaves the suite out, so it is never a
-  // dead click while some checks still need input.
+  // Two states, like any select-all: every check picked, or not. With every
+  // check picked but some waiting on input the box shows a dash, since the
+  // count says fewer will run; a click on it leaves the suite out. A click on
+  // an unchecked box picks every check, and when some of them still need
+  // input the needs-input tag shakes as it appears, to say what is left.
+  const allPicked = catalog.every((entry) => picked(entry.id));
   const checked = pickedCount === catalog.length;
-  const turnsOff =
-    catalog.some((entry) => picked(entry.id)) &&
-    catalog.every((entry) => missing(entry.id) || picked(entry.id));
+  const boxState: boolean | "indeterminate" = checked
+    ? true
+    : allPicked
+      ? "indeterminate"
+      : false;
+  const onSuiteBox = () => {
+    if (allPicked) {
+      onSuiteChange(false);
+      return;
+    }
+    if (catalog.some((entry) => missing(entry.id))) {
+      setShakes((count) => count + 1);
+    }
+    onSuiteChange(true);
+  };
   return (
     <div className="border-b border-border/60 last:border-b-0">
       <div className="flex items-start gap-3 p-4 transition-colors hover:bg-muted/30">
         {/* A 24px target around the box: the label passes its clicks on. */}
         <label className="-m-1 flex size-6 shrink-0 cursor-pointer items-center justify-center">
           <Checkbox
-            checked={checked}
-            onCheckedChange={() => onSuiteChange(!turnsOff)}
+            checked={boxState}
+            onCheckedChange={onSuiteBox}
             aria-label={`Run ${title}`}
           />
         </label>
@@ -482,8 +521,14 @@ function SuiteChecks({
           <span className="flex min-w-0 grow flex-col gap-0.5">
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-semibold">{title}</span>
-              {needsInputCount > 0 ? (
-                <span className="rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground">
+              {needsInputCount > 0 && !countPending ? (
+                <span
+                  key={shakes}
+                  className={cn(
+                    "rounded-sm border border-warning/50 bg-warning/10 px-1.5 py-px text-xs text-warning-foreground",
+                    shakes > 0 && "animate-needs-input-shake",
+                  )}
+                >
                   {needsInputCount} <em>optional</em>{" "}
                   {needsInputCount === 1
                     ? "check needs input"
@@ -493,9 +538,19 @@ function SuiteChecks({
             </span>
             <span className="text-sm text-muted-foreground">{description}</span>
           </span>
-          <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
-            {countLabel(pickedCount, catalog.length)}
-          </span>
+          {countPending ? (
+            <span className="shrink-0 text-sm font-medium text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="inline-block h-3.5 w-28 animate-pulse rounded bg-muted align-middle motion-reduce:animate-none"
+              />
+              <span className="sr-only">Counting checks</span>
+            </span>
+          ) : (
+            <span className="shrink-0 text-sm font-medium text-muted-foreground tabular-nums">
+              {countLabel(pickedCount, catalog.length)}
+            </span>
+          )}
           <ChevronRight
             className={cn(
               "mt-0.5 size-4 shrink-0 transition-transform duration-300 ease-out motion-reduce:transition-none",

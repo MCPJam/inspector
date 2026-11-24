@@ -1,8 +1,11 @@
-import { useCallback, useState } from "react";
-import { Hammer, History, PanelLeftClose } from "lucide-react";
+import { PlaygroundEventsPane } from "./events/PlaygroundEventsPane";
+import { usePlaygroundEvents } from "./events/PlaygroundEventsProvider";
+import { useCurrentSearchParam } from "@/lib/app-navigation";
+import { useCallback, useEffect, useState } from "react";
+import { Hammer, History, PanelLeftClose, Radio } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
-import { AddServerModal } from "@/components/connection/AddServerModal";
+import { PlaygroundServerConnectButton } from "./PlaygroundServerConnectButton";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
@@ -26,7 +29,7 @@ import {
 } from "@/stores/compare-pane-store";
 import { cn } from "@/lib/utils";
 
-type LeftRailTab = "sessions" | "tools";
+type LeftRailTab = "sessions" | "tools" | "events";
 
 /**
  * Playground left rail — Sessions (`ChatHistoryRail`) and Tools tabs in a
@@ -47,7 +50,10 @@ export function PlaygroundLeftRail({
   /** Shows a Collapse panel control, as the right rail has (phone layout). */
   onClose?: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<LeftRailTab>("tools");
+  const requestedPanel = useCurrentSearchParam("panel");
+  const events = usePlaygroundEvents();
+  const [activeTab, setActiveTab] = useState<LeftRailTab>(requestedPanel === "events" ? "events" : "tools");
+  useEffect(() => { if (requestedPanel === "events") setActiveTab("events"); }, [requestedPanel]);
   // While Compare runs clients, the tools are the selected pane's.
   const comparePane = useSelectedComparePane();
 
@@ -75,6 +81,7 @@ export function PlaygroundLeftRail({
           isActive={activeTab === "tools"}
           onClick={() => handleTabClick("tools")}
         />
+        {events ? <TabButton icon={Radio} label="Events" isActive={activeTab === "events"} onClick={() => handleTabClick("events")} /> : null}
         <TabButton
           icon={History}
           label="Sessions"
@@ -95,7 +102,9 @@ export function PlaygroundLeftRail({
         ) : null}
       </div>
       <div className="flex-1 min-h-0">
-        {activeTab === "sessions" ? (
+        {activeTab === "events" && events ? (
+          <PlaygroundEventsPane />
+        ) : activeTab === "sessions" ? (
           <SessionsBody />
         ) : (
           <div className="flex h-full min-h-0 flex-col">
@@ -192,8 +201,21 @@ function ToolsBody({
   projectId: string | null;
 }) {
   const state = usePlaygroundStateContext();
+  const [pendingScope, setPendingScope] = useState<string | null>(null);
+  const scope = `${projectId ?? state.activeProjectId}:${comparePane?.paneId}:${previewedHostId}`;
+  const handlePendingChange = useCallback(
+    (pending: boolean) => {
+      setPendingScope((current) =>
+        pending ? scope : current === scope ? null : current,
+      );
+    },
+    [scope],
+  );
   const activeServerNames = serverNames
-    ? state.activeServerNames.filter((name) => serverNames.includes(name))
+    ? serverNames.filter((name) => {
+        const status = state.servers[name]?.connectionStatus;
+        return status === "connected" || status === "connecting";
+      })
     : state.activeServerNames;
   // The agent browser the previewed host attaches, if any: the six `browser_*`
   // tools plus whatever the page it has open offers. Resolved HERE, beside the
@@ -249,7 +271,7 @@ function ToolsBody({
   // server pane (keyed on the stale `serverName` pointer), so the remaining
   // server's tools vanished. Only the zero-server case falls back to
   // PlaygroundLeft for its empty/onboarding state.
-  if (activeServerNames.length >= 1) {
+  if (activeServerNames.length >= 1 && pendingScope !== scope) {
     return (
       <MultiServerToolsPaneInner
         previewedHarnessId={previewedHarnessId}
@@ -265,34 +287,36 @@ function ToolsBody({
   // but suppress its inline LoggerView since the logger lives in the right rail.
   return (
     <ZeroServerToolsBody
+      key={scope}
       previewedHarnessId={previewedHarnessId}
       builtinTools={harnessBuiltinTools}
       builtinToolsRunLocally={builtinToolsRunLocally}
       browserTools={browserTools}
+      onChooseServer={comparePane?.onServerChosen}
+      onPendingChange={handlePendingChange}
     />
   );
 }
 
 /**
- * Zero-server Tools body. Owns the Add Server modal so the empty state's
- * "Connect a server" button connects here instead of navigating to Servers and
- * dropping the user out of the Playground mid-flow. Split out of `ToolsBody`
- * because that function returns early above, and a hook declared past those
- * returns would run conditionally.
+ * Evals without a connect handler retain the Servers navigation fallback.
  */
 function ZeroServerToolsBody({
   previewedHarnessId,
   builtinTools,
   builtinToolsRunLocally,
   browserTools,
+  onChooseServer,
+  onPendingChange,
 }: {
   previewedHarnessId?: string | null;
   builtinTools: HarnessBuiltinToolInfo[];
   builtinToolsRunLocally: boolean;
   browserTools: BrowserToolsState;
+  onChooseServer?: (name: string) => (() => void) | undefined;
+  onPendingChange: (pending: boolean) => void;
 }) {
   const state = usePlaygroundStateContext();
-  const [isAddServerOpen, setIsAddServerOpen] = useState(false);
   const { onConnect } = state;
 
   return (
@@ -321,25 +345,30 @@ function ZeroServerToolsBody({
         builtinToolsRunLocally={builtinToolsRunLocally}
         browserTools={browserTools}
         hasConnectedServer={false}
-        // The Evals embedded chat provides no connect handler; there the
-        // button keeps its Servers navigation.
-        onAddServerRequested={
-          onConnect ? () => setIsAddServerOpen(true) : undefined
+        connectServerControl={
+          onConnect ? (
+            <PlaygroundServerConnectButton
+              servers={state.servers}
+              catalogKnown={state.areServersHydrated}
+              onAddServer={onConnect}
+              ensureServersReady={state.ensureServersReady}
+              onChooseServer={onChooseServer}
+              onConnected={(name) => {
+                if (onChooseServer) return;
+                const selected = state.selectedServerNames?.length
+                  ? state.selectedServerNames
+                  : state.activeServerNames;
+                if (!state.selectedServerNames?.includes(name)) {
+                  state.onSelectMultipleServers?.([
+                    ...new Set([...selected, name]),
+                  ]);
+                }
+              }}
+              onPendingChange={onPendingChange}
+            />
+          ) : undefined
         }
       />
-      {onConnect && (
-        <AddServerModal
-          isOpen={isAddServerOpen}
-          onClose={() => setIsAddServerOpen(false)}
-          onSubmit={(formData) => {
-            track("connecting_server", {
-              location: "playground_tools_rail",
-            });
-            onConnect(formData);
-            setIsAddServerOpen(false);
-          }}
-        />
-      )}
     </>
   );
 }

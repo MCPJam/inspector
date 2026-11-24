@@ -501,7 +501,8 @@ export class OAuthConformanceTest {
   }
 
   async run(): Promise<ConformanceResult> {
-    if (!this.suppressTelemetry) void captureConformanceRun("sdk");
+    if (!this.suppressTelemetry)
+      void captureConformanceRun("sdk", { suite: "oauth", mode: "single" });
     const startedAt = Date.now();
     const steps: StepResult[] = [];
     let state = cloneEmptyFlowState();
@@ -1006,9 +1007,12 @@ export class OAuthConformanceTest {
 
           // A server the pre-flight found publishing this server's metadata
           // is graded from proactive discovery, so its 2xx is expected here.
+          // So is one the pre-flight saw challenge: a 401 proves it requires
+          // sign-in, and a later 2xx cannot make that not applicable.
           if (
             probe.kind === "anonymous_allowed" &&
-            authRequirement.requirement !== "optional"
+            authRequirement.requirement !== "optional" &&
+            authRequirement.requirement !== "required"
           ) {
             notApplicableReason = `the server answered a request without a token with HTTP ${probeStatus}`;
             // Replace the transition into the probe with the same single row

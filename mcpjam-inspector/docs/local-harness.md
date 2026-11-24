@@ -442,8 +442,10 @@ watched on the #mcpjam-alerts PostHog insight.
 ## Validation and activation
 
 The conformance workflow builds and runs the native runtime on macOS arm64/x64,
-Linux arm64/x64, and Windows x64, and Codex's own legs on the four POSIX
-targets (the certified ones block; see the conformance README). It exercises process lifecycle, cancellation,
+Linux arm64/x64, and Windows x64, and Codex's own legs on its targets (the
+certified ones block; see the conformance README). macOS x64 runs as x64 Node
+under Rosetta 2 on an Apple Silicon runner. The SDK and the pretest bundles are
+built once, by the `unit` job, and every platform leg runs on that build. It exercises process lifecycle, cancellation,
 workspace access, skills, secrets, selected MCP delivery, exclusion of a real
 planted project MCP server, and resume after Stop. The upstream model is mocked;
 the vendor CLI, bridge and supervisor are real. With `published_pack_version`
@@ -456,13 +458,20 @@ published packs: a bridge change is tested with the pack users already have, and
 nothing has to be published for the PR to pass.
 
 Every passing leg writes a conformance evidence record — this commit's layer
-digest × the pack it ran × the target — and uploads it. A release runs the legs
-against every pack it may select (desired, then permitted), and
-`check-local-harness-release.mjs --evidence` refuses the release unless every
-(harness × selected pack × advertised target) is covered at this commit's layer
-digest. It then writes `runtime-contract.json` (the layer digests, the selected
-packs and the run behind each), which the release attests with
-`actions/attest-build-provenance` and attaches to the Inspector release.
+digest × the pack it ran × the target, with the commit and its conformance
+inputs digest — and uploads it. The legs run against every pack a release may
+select (desired, then permitted) when a releasable commit lands on `main`
+(`local-harness-release-evidence.yml`, alongside Deploy Staging), and the
+release picks that evidence up; it runs the legs itself only when no trusted
+run has evidence for its inputs. `check-local-harness-release.mjs --evidence`
+refuses the release unless every (harness × selected pack × advertised target)
+is covered at this commit's layer digest, by a record from this commit or from
+one whose conformance inputs digest is the same
+(`scripts/conformance-inputs-digest.mjs`: every tracked file a leg could load,
+with version bumps normalized away). It then writes `runtime-contract.json`
+(the layer digests, the selected packs and the run behind each), which the
+release attests with `actions/attest-build-provenance` and attaches to the
+Inspector release.
 
 Passing unit tests or a local macOS smoke test does not establish support for all
 platforms. The compatibility record and the release contract remain the release

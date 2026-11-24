@@ -29,6 +29,9 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
+import { Button } from "@mcpjam/design-system/button";
+import { useThrottledInputPing } from "@/components/browser/usePausedPane";
+import type { ViewportSize } from "@/shared/browser-viewport";
 import { BrowserStream } from "./BrowserStream";
 import { BrowserProfileSaveButton } from "@/components/browser/BrowserProfileSaveButton";
 import {
@@ -88,6 +91,8 @@ interface SessionInfo {
   sessionId: string;
   bootId: string;
   lease: LeaseState;
+  yours: boolean;
+  asleep?: boolean;
   // No `streamUrl` or `streamPassword`: the route stopped returning them, and
   // the stream socket authenticates on the server. See `BrowserStream`.
 }
@@ -99,12 +104,20 @@ export interface BrowserPanelProps {
   /** Boot a browser if none is running yet. Off by default: opening a panel
    *  should not start a machine's browser behind the user's back. */
   ensure?: boolean;
+  /**
+   * Hears a person's input to the desktop. A pane that already reports input
+   * (the hosted pane's `PausablePane`) passes its own throttled ping here, so
+   * the desktop gets one ping a minute rather than one from each. Without it
+   * the panel pings `/input-ping` itself.
+   */
+  onInput?: () => void;
 }
 
 export function BrowserPanel({
   projectId,
   sessionId,
   ensure = false,
+  onInput,
 }: BrowserPanelProps) {
   const mintBrowserToken = useMintBrowserToken();
   const mintConversationBrowserToken = useMintConversationBrowserToken();
@@ -119,6 +132,8 @@ export function BrowserPanel({
   const visibleRef = useRef(true);
   /** Bumped whenever this panel changes which browser it is looking at. */
   const panelGeneration = useRef(0);
+  /** Bumped whenever this panel takes control or hands it back. */
+  const leaseChanges = useRef(0);
   /** The live browser token, reused until it is nearly expired. */
   const tokenCache = useRef<{
     key: string;
@@ -197,6 +212,25 @@ export function BrowserPanel({
     [getToken],
   );
 
+  // A failed resize stays quiet: noVNC scales the picture to the pane, so the
+  // desktop is still usable at its old size, and the next pane resize asks
+  // again. The reporter swallows the throw; it only lets that retry happen.
+  const resizeViewport = useCallback(async (size: ViewportSize) => {
+    const response = await authorized("/viewport", {
+      method: "POST",
+      body: JSON.stringify({ ...size, policy: "followPane" }),
+    });
+    if (!response.ok) {
+      throw new Error("viewport resize failed");
+    }
+  }, [authorized]);
+
+  const disconnected = useCallback(() => {
+    setHolding(false);
+    setSession(null);
+    setError("The browser disconnected. Reconnect to continue.");
+  }, []);
+
   const exportProfile = useCallback(async () => {
     const response = await authorized("/profile/export", { method: "POST" });
     if (!response.ok) {
@@ -233,28 +267,52 @@ export function BrowserPanel({
     setError(message);
   }, []);
 
-  const refresh = useCallback(async () => {
+  const noteInput = useThrottledInputPing(() =>
+    authorized("/input-ping", { method: "POST" }).catch(handlePollFailure),
+  );
+
+  const refresh = useCallback(async (wake = false) => {
     // Captured before the await. Clearing state on a switch is not enough on
     // its own: conversation A's refresh can still be in flight and land LAST,
     // writing A's boot over B — and `BrowserStream` then pairs that stale boot
     // with B's token, cannot connect, and leaves the viewer broken until some
     // later refresh happens to fix it.
     const generation = panelGeneration.current;
-    const stale = () => panelGeneration.current !== generation;
+    // Likewise a read from before this panel took control or handed it back.
+    // It can land after the change, with the old lease, and set `holding`
+    // back; nothing reads the lease again on its own, so the panel would stay
+    // that way. The change's own refresh reads it afresh.
+    const leaseChange = leaseChanges.current;
+    const stale = () =>
+      panelGeneration.current !== generation ||
+      leaseChanges.current !== leaseChange;
     try {
-      const res = await authorized(`/session${ensure ? "?ensure=1" : ""}`);
+      const res = await authorized(`/session${ensure || wake ? "?ensure=1" : ""}`);
       const body = await res.json();
       if (stale()) return;
       if (!res.ok) {
+        setHolding(false);
         setSession(null);
         setError(
           body?.error === "no_browser_session"
-            ? "No browser is running on this computer yet."
+            ? "The browser is offline. Reconnect to continue."
             : (body?.detail ?? body?.error ?? "Could not reach the browser."),
         );
         return;
       }
-      setSession(body as SessionInfo);
+      const current = body as SessionInfo;
+      if (current.asleep) {
+        disconnected();
+        return;
+      }
+      // `unknown` means the server could not read the lease this time. One
+      // failed read must not end a control this panel just took: the stream
+      // would go view-only and the heartbeat would stop while the person
+      // still holds the lease. The next read settles it.
+      if (current.lease.state !== "unknown") {
+        setHolding(current.yours === true && current.lease.state === "held");
+      }
+      setSession(current);
       if (sessionId) {
         markBrowserSessionActive(sessionId);
         useActiveChatSessionStore
@@ -262,6 +320,7 @@ export function BrowserPanel({
           .setBrowserLocation({ projectId, sessionId, engine: "cloud" });
       }
       setError(null);
+      return current;
     } catch (cause) {
       if (stale()) return;
       setError(
@@ -269,7 +328,7 @@ export function BrowserPanel({
           (cause instanceof Error ? cause.message : String(cause)),
       );
     }
-  }, [authorized, ensure, markBrowserSessionActive, projectId, sessionId]);
+  }, [authorized, disconnected, ensure, markBrowserSessionActive, projectId, sessionId]);
 
   /**
    * A conversation switch is a change of BROWSER, so none of this panel's
@@ -318,30 +377,41 @@ export function BrowserPanel({
   // server decides whether an open panel still counts at all.
   useEffect(() => {
     if (!session) return;
+    let active = true;
     const timer = setInterval(() => {
       if (!visibleRef.current) return;
-      void authorized("/keepalive", { method: "POST" }).catch(
-        handlePollFailure,
-      );
+      void authorized("/keepalive", { method: "POST" }).then((response) => {
+        if (active && response.status === 409) disconnected();
+      }).catch((cause) => { if (active) handlePollFailure(cause); });
     }, KEEPALIVE_MS);
-    return () => clearInterval(timer);
-  }, [authorized, handlePollFailure, session]);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [authorized, disconnected, handlePollFailure, session]);
 
   // Heartbeat while holding. Stopping (closing the tab, losing the network)
   // parks the lease rather than freeing it, so the agent stays stopped.
   useEffect(() => {
     if (!holding) return;
+    let active = true;
     const timer = setInterval(() => {
       void authorized("/lease", {
         method: "POST",
         body: JSON.stringify({ action: "heartbeat" }),
-      }).catch(handlePollFailure);
+      }).then(async (response) => {
+        if (active && response.status === 409) {
+          setHolding(false);
+          await refresh();
+        }
+      }).catch((cause) => { if (active) handlePollFailure(cause); });
     }, LEASE_HEARTBEAT_MS);
-    return () => clearInterval(timer);
-  }, [authorized, handlePollFailure, holding]);
+    return () => { active = false; clearInterval(timer); };
+  }, [authorized, handlePollFailure, holding, refresh]);
 
   const changeLease = useCallback(
     async (action: "acquire" | "resume") => {
+      const generation = panelGeneration.current;
       setBusy(true);
       try {
         const res = await authorized("/lease", {
@@ -349,7 +419,12 @@ export function BrowserPanel({
           body: JSON.stringify({ action }),
         });
         const body = await res.json();
+        if (generation !== panelGeneration.current) return;
         if (!res.ok) {
+          if (body?.error === "no_browser_session") {
+            disconnected();
+            return;
+          }
           setError(
             body?.lease?.holder
               ? "Someone else is using this browser right now."
@@ -357,27 +432,48 @@ export function BrowserPanel({
           );
           return;
         }
+        leaseChanges.current += 1;
         setHolding(action === "acquire");
         setError(null);
         await refresh();
+      } catch {
+        if (generation === panelGeneration.current) {
+          setError(
+            action === "acquire"
+              ? "Couldn't take control of the browser. Select Take control to try again."
+              : "Couldn't hand the browser back to the agent. Select Hand back to the agent to try again.",
+          );
+        }
       } finally {
-        setBusy(false);
+        if (generation === panelGeneration.current) setBusy(false);
       }
     },
-    [authorized, refresh],
+    [authorized, disconnected, refresh],
   );
 
   if (error && !session) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
         <p>{error}</p>
-        <button
-          className="mt-2 underline"
-          onClick={() => void refresh()}
-          type="button"
+        <Button
+          className="mt-2"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const current = await refresh(true);
+              if (current?.yours && current.lease.state === "parked") {
+                await changeLease("acquire");
+              }
+            } finally {
+              setBusy(false);
+            }
+          }}
         >
-          Try again
-        </button>
+          {busy ? "Reconnecting…" : "Reconnect browser"}
+        </Button>
       </div>
     );
   }
@@ -449,12 +545,13 @@ export function BrowserPanel({
               onClick={() => void changeLease("acquire")}
               className="rounded border px-2 py-1"
             >
-              Take control
+              {parked && session.yours ? "Resume private control" : "Take control"}
             </button>
           )}
         </div>
       </div>
 
+      {error && <p role="alert" className="px-3 py-2 text-sm">{error}</p>}
       {holding && (
         <p className="border-b px-3 py-2 text-xs text-muted-foreground">
           While you have control, the agent is stopped and nothing is being
@@ -471,6 +568,9 @@ export function BrowserPanel({
         mintToken={mintStreamToken}
         viewOnly={!holding}
         bootId={session.bootId}
+        onSessionGone={disconnected}
+        onInput={onInput ?? noteInput}
+        onViewport={resizeViewport}
       />
     </div>
   );

@@ -95,11 +95,13 @@ describe("BehaviorTab harness gray-out", () => {
   });
 
   it("leaves approval EDITABLE for claude-code now that its proxy phase landed", () => {
-    // The adapter bridge's `canUseTool` gates every surface — built-ins,
-    // host-executed tools, and (under `approvalPermissionMode: "allow-reads"`)
-    // the MCP tools the in-sandbox client calls — so `requireToolApproval` is
-    // enforced for claude-code (#4531) and the switch must not gray out or
-    // carry the old "refused rather than run unapproved" note.
+    // Approval reaches every surface, though not every call: the adapter
+    // bridge's `canUseTool` gates side-effecting built-ins and (under
+    // `approvalPermissionMode: "allow-reads"`) the MCP tools the in-sandbox
+    // client calls, and the host gates its own host-executed tools — so
+    // `requireToolApproval` is enforced for claude-code (#4531) and the
+    // switch must not gray out or carry the old "refused rather than run
+    // unapproved" note.
     renderBehaviorTab({ harness: "claude-code" });
 
     expect(

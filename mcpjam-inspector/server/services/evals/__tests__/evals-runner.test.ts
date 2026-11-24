@@ -162,6 +162,7 @@ vi.mock("../needs-ephemeral-sandbox", async (importOriginal) => {
 
 import { withPluginExecutionServers } from "../plugin-execution-servers";
 import { PERSONAL, accountToolSet } from "./helpers/account-tools";
+import { HarnessToolNameCollisionError } from "../../../utils/harness/harness-tool-names";
 import {
   createConcurrencyLimiter,
   defaultEvalExecutionBudgets,
@@ -312,6 +313,61 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       ]);
     },
   );
+
+  // OpenRouter answers a BYOK key with no balance with a 402 whose message
+  // matches the MCPJam exhaustion phrases.
+  it("keeps running when the customer's own provider reports insufficient credits", async () => {
+    const success = streamTextMock.getMockImplementation()!;
+    streamTextMock
+      .mockImplementationOnce(success)
+      .mockImplementationOnce(() => {
+        throw Object.assign(
+          new Error(
+            "Insufficient credits. Add more using https://openrouter.ai/settings/credits",
+          ),
+          {
+            name: "AI_APICallError",
+            statusCode: 402,
+            responseBody:
+              '{"error":{"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits","code":402}}',
+          },
+        );
+      });
+    const config = buildQuickRunConfig();
+    config.config.tests[0].runs = 3;
+
+    const result = await runEvalSuiteWithAiSdk(config as any);
+
+    expect(streamTextMock).toHaveBeenCalledTimes(3);
+    expect(
+      result?.quickRunIterationOutcomes?.map(
+        (outcome) => outcome.creditsExhausted,
+      ),
+    ).toEqual([false, false, false]);
+    const persisted = convexClient.action.mock.calls.find(
+      ([name, args]) =>
+        name === "testSuites:updateTestIteration" && args.errorDetails,
+    );
+    expect(persisted?.[1].errorDetails).toContain("Insufficient credits");
+  });
+
+  it("redacts a key the provider's error message echoes before storing it", async () => {
+    const keyTail = "x".repeat(32);
+    streamTextMock.mockImplementationOnce(() => {
+      throw Object.assign(
+        new Error(`Incorrect API key provided: sk-proj-${keyTail}`),
+        { name: "AI_APICallError", statusCode: 401 },
+      );
+    });
+
+    await runEvalSuiteWithAiSdk(buildQuickRunConfig() as any);
+
+    const failed = convexClient.action.mock.calls.find(
+      ([name, args]) => name === "testSuites:updateTestIteration" && args.error,
+    );
+    expect(failed?.[1].error).toContain("Incorrect API key provided");
+    expect(failed?.[1].error).not.toContain(keyTail);
+  });
 
   describe("environment quick runs (committed iterations)", () => {
     it("runs every attempt on its committed row and creates none", async () => {
@@ -2436,6 +2492,47 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(Object.keys(options.builtInTools!)).toEqual(["web_search"]);
   });
 
+  it("prepares an eval's tools without the host's approval switch", async () => {
+    fetchMock.mockResolvedValue(createBackendStreamResponse());
+    const orchestration = await import("../../../utils/chat-v2-orchestration");
+    const prepareMock = vi.mocked(orchestration.prepareChatV2);
+    prepareMock.mockClear();
+
+    await runEvalSuiteWithAiSdk({
+      suiteId: "suite-1",
+      runId: null,
+      config: {
+        tests: [
+          {
+            title: "Case",
+            query: "Hello",
+            runs: 1,
+            model: "claude-haiku-4.5",
+            provider: "anthropic",
+            expectedToolCalls: [],
+            promptTurns: [
+              { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+            ],
+            testCaseId: "case-1",
+          },
+        ],
+        environment: { servers: ["srv-1"] },
+      },
+      modelApiKeys: {},
+      convexClient: convexClient as any,
+      convexHttpUrl: "https://example.convex.site",
+      convexAuthToken: "token",
+      mcpClientManager: mcpClientManager as any,
+      testCaseId: "case-1",
+      suiteHostConfig: { requireToolApproval: true },
+    });
+
+    expect(prepareMock).toHaveBeenCalled();
+    expect(prepareMock.mock.calls[0]?.[0]).toMatchObject({
+      requireToolApproval: false,
+    });
+  });
+
   it("omits builtInTools on the backend path when no project target exists", async () => {
     // Org-level targets (or no target at all) carry no projectId; the Exa
     // Convex route requires one, so the runner must omit the tool rather
@@ -2904,16 +3001,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   });
 
   it("records prepareChatV2 setup failures as a failed iteration", async () => {
-    // Force prepareChatV2 to throw — simulates Anthropic name validation,
+    // Force prepareChatV2 to throw — simulates a harness tool-name collision,
     // meta-tool name collision, or skill-tool prep failure. The runner must
     // catch this and persist a failed iteration row, NOT propagate the throw.
     const orchestration = await import("../../../utils/chat-v2-orchestration");
     const prepareSpy = vi
       .spyOn(orchestration, "prepareChatV2")
       .mockRejectedValueOnce(
-        new Error(
-          "Invalid tool name(s) for Anthropic: 'bad.name'. Tool names must only contain letters, numbers, underscores, and hyphens (max 64 characters).",
-        ),
+        new HarnessToolNameCollisionError([
+          { serverId: "shop", toolNames: ["a.b", "a_b"] },
+        ]),
       );
 
     // The iteration row is created via `action`
@@ -2966,7 +3063,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       expect(payload.status).toBe("failed");
       expect(payload.result).toBe("failed");
       expect(payload.error).toEqual(
-        expect.stringContaining("Invalid tool name"),
+        expect.stringContaining("Claude Code can't run `a.b` and `a_b`"),
       );
       expect(payload.iterationId).toBe("iter-failed-setup");
 
@@ -5417,8 +5514,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       });
       const emitted: Array<Record<string, unknown>> = [];
       streamTextMock.mockReset();
+      // The AI SDK settles a step's onStepFinish before the stream reports
+      // an error; a personal-key step awaits its price there.
+      let stepSettled: Promise<unknown> | undefined;
       streamTextMock.mockImplementationOnce((options: any) => {
-        void options.onStepFinish?.({
+        stepSettled = options.onStepFinish?.({
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           response: {
             messages: [
@@ -5451,6 +5551,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         });
         return {
           consumeStream: async () => {
+            await stepSettled;
             throw new Error("stream dropped");
           },
           response: Promise.resolve({ modelId: "gpt-4-turbo", messages: [] }),

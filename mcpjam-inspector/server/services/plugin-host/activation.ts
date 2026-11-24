@@ -3,6 +3,11 @@ import {
   type PluginEntrypointSelector,
 } from "../../../shared/plugin-activation.js";
 import {
+  entrypointIssues,
+  unopenableEntrypointTitle,
+  type EntrypointBehavior,
+} from "../../../shared/plugin-entry-checks.js";
+import {
   pluginBindingDigest,
   pluginOptionalResourceUri,
   pluginResourceUri,
@@ -12,8 +17,25 @@ import {
   type createPluginRequestRuntime,
 } from "./request-runtime.js";
 import { pluginToolCallValidation } from "./tool-call-validation.js";
-import { PluginInvocationError } from "./invocation.js";
+import { PluginInvocationError, withPluginDiagnostic } from "./invocation.js";
 import type { PluginInstanceAdmissionRead } from "./instances.js";
+
+/** An entry point the client's rules list but can't open is refused with
+ * its code and a Logs row naming the characters. */
+export function assertPluginEntrypointOpenable(
+  tool: { name: string; _meta?: Record<string, unknown> },
+  behavior: EntrypointBehavior,
+  serverId: string,
+) {
+  const pairs = entrypointIssues(tool, behavior).unopenable;
+  if (pairs)
+    throw withPluginDiagnostic(
+      new PluginInvocationError("PLUGIN_ENTRYPOINT_UNOPENABLE"),
+      serverId,
+      unopenableEntrypointTitle(tool.name, pairs),
+      "error",
+    );
+}
 
 /** Source and target come from one freshly authorized catalog on the same server. */
 export async function resolvePluginActivation(
@@ -62,16 +84,18 @@ export function resolveOpenPluginActivation(
     : runtime.resolve(activation.toolName, signal);
 }
 
-/** The same plan from a catalog this request already admitted. */
+/** The same plan from a catalog this request already admitted. `behavior`
+ * applies the client's entry-point rules, as an open does. */
 export function pluginActivationFromCatalog(
   catalog: Awaited<
     ReturnType<ReturnType<typeof createPluginRequestRuntime>["catalog"]>
   >,
   sourceName: string,
   selector: PluginEntrypointSelector,
+  behavior?: EntrypointBehavior,
 ) {
   const source = resolvePluginCatalogTool(catalog, sourceName);
-  const plan = pluginEntrypointPlan(source.tool, selector);
+  const plan = pluginEntrypointPlan(source.tool, selector, behavior);
   const target = resolvePluginCatalogTool(catalog, plan.params.name);
   pluginToolCallValidation(
     target.tool,

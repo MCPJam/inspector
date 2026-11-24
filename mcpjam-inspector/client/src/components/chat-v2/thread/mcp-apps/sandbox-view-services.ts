@@ -30,7 +30,12 @@ export function createSandboxViewServices(
     const platform = request.source.serverId === MCPJAM_PLATFORM_SERVER_ID;
     const web = HOSTED_MODE || forceWeb() || platform;
     const endpoint = `/api/${web ? "web/apps" : "apps"}/mcp-apps/view-admissions`;
-    const context = { source: request.source, ...(web && !platform ? serverContext(request.source.serverId) : {}) };
+    const server = web && !platform ? serverContext(request.source.serverId) : {};
+    const source = {
+      ...request.source,
+      serverId: typeof server.serverId === "string" ? server.serverId : request.source.serverId,
+    };
+    const context = { source, ...server };
     const response = await authFetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

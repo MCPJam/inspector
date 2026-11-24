@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { HARNESS_REASONING_EFFORTS } from "@mcpjam/sdk/host-config/internal";
-import { LOCAL_HARNESS_IDS } from "@/shared/harness-descriptors";
+import {
+  LOCAL_HARNESS_IDS,
+  harnessSurfaceRefusal,
+} from "@/shared/harness-descriptors";
 import { harnessOrgUpstreamProfile } from "@/shared/harness-gateway-model";
+import { WEB_CLIENT_SITES, webClientVendorForRuntime } from "@/shared/web-clients";
 import { buildBrokerDummyAuth } from "../../registry";
 import { LOCAL_HARNESS_MANIFEST } from "../../local/compatibility";
+import { localRuntimeOf } from "../../local/runtimes/index";
 import { CASES, FOREIGN_MODEL, OWN_MODEL, assertFullMatrix } from "./support";
 
 it("covers every registered harness", assertFullMatrix);
@@ -35,6 +40,17 @@ describe.each(CASES)(
         expect(adapter.externalAccountCredentialEnv).toBeUndefined();
         return;
       }
+      if ("kind" in descriptor.credential) {
+        // A web account is a saved browser profile, never a key in the env.
+        expect(descriptor.credential.kind).toBe("web-account");
+        expect(adapter.externalAccountCredentialEnv).toBeUndefined();
+        expect(adapter.webAccount?.vendor).toBe(webClientVendorForRuntime(id));
+        expect(descriptor.credential.sites).toEqual(
+          WEB_CLIENT_SITES[webClientVendorForRuntime(id)!],
+        );
+        return;
+      }
+      expect(adapter.webAccount).toBeUndefined();
       expect(adapter.externalAccountCredentialEnv).toEqual([
         descriptor.credential.env,
       ]);
@@ -68,12 +84,14 @@ describe.each(CASES)(
     });
 
     it("runs locally exactly when the descriptor and the local manifest agree", () => {
-      const local = (LOCAL_HARNESS_IDS as readonly string[]).includes(id);
-      expect(local).toBe(descriptor.local);
-      expect(Object.hasOwn(LOCAL_HARNESS_MANIFEST, id)).toBe(descriptor.local);
+      const runsLocally = !harnessSurfaceRefusal(id, "local");
+      expect((LOCAL_HARNESS_IDS as readonly string[]).includes(id)).toBe(runsLocally);
+      expect(Object.hasOwn(LOCAL_HARNESS_MANIFEST, id)).toBe(runsLocally);
       if (descriptor.modelAccess === "external-account") {
-        expect(descriptor.guest).toBe(false);
-        expect(descriptor.local).toBe(false);
+        expect(harnessSurfaceRefusal(id, "guests")).toBeDefined();
+        // On the member's computer only on a login the backend hands out for
+        // the session: there is no model lease to run it on.
+        if (runsLocally) expect(localRuntimeOf(id)?.credential.kind).toBe("runtime-login");
       }
     });
   },

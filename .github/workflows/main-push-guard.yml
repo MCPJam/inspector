@@ -1,0 +1,82 @@
+name: Main push guard
+
+# Every change reaches `main` through a reviewed pull request, except Start
+# release's version commit, which the release GitHub App pushes directly
+# (prepare-release.yml). This checks every commit a push brings to `main`:
+# one that no pull request merged must be a version commit, carrying nothing
+# but versions, changelogs, lockfile version entries and consumed changesets
+# (.github/scripts/release-commit.mjs). Anything else fails this run and posts
+# to #prs, so a bypass that was used for more than a version bump is seen
+# the moment it lands.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check commits that no pull request merged
+        id: check
+        uses: actions/github-script@v9
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const { checkVersionCommitBetween } =
+              await import(`${workspace}/.github/scripts/release-commit.mjs`);
+            const git = (...args) => execFileSync("git", args, { cwd: workspace, encoding: "utf8" }).trim();
+            const { BEFORE, AFTER } = process.env;
+            // A brand-new branch has no `before`; `main` always has one, but
+            // check the tip alone rather than all of history if it ever doesn't.
+            const range = /^0+$/.test(BEFORE) ? [AFTER, "-1"] : [`${BEFORE}..${AFTER}`];
+            const commits = git("rev-list", "--first-parent", ...range).split("\n").filter(Boolean);
+            const problems = [];
+            for (const sha of commits) {
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                ...context.repo, commit_sha: sha,
+              });
+              if (prs.some((pr) => pr.merged_at)) continue;
+              const found = checkVersionCommitBetween(`${sha}^1`, sha, workspace);
+              if (found.length === 0) {
+                core.info(`${sha} reached main without a pull request and is a plain version commit.`);
+                continue;
+              }
+              problems.push(`${sha}:\n${found.map((p) => `  - ${p}`).join("\n")}`);
+            }
+            if (problems.length > 0) {
+              const report = `Commits reached main without a pull request and change more than versions:\n${problems.join("\n")}`;
+              core.setOutput("report", report);
+              core.setFailed(report);
+            }
+
+      - name: Alert #prs
+        if: failure() && steps.check.outputs.report != ''
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PRS_WEBHOOK_URL }}
+          REPORT: ${{ steps.check.outputs.report }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "::error::SLACK_PRS_WEBHOOK_URL is not set, so #prs was not alerted."
+            exit 1
+          fi
+          text="$(printf '<!channel> Main push guard failed: a commit reached main without a pull request. <%s|Run>\n```%s```' "$RUN_URL" "$REPORT")"
+          jq -n --arg text "$text" '{text: $text}' \
+            | curl -fsS --max-time 20 --retry 2 -X POST -H 'Content-Type: application/json' \
+                -d @- "$SLACK_WEBHOOK_URL"

@@ -222,7 +222,7 @@ describe("manifest locations", () => {
         canonical: false,
         normalizedFrom: location,
       });
-      expect(codes(evidence)).not.toContain("manifest-missing");
+      expect(codes(evidence)).not.toContain("plugin_manifest_missing");
     });
   }
 
@@ -230,7 +230,7 @@ describe("manifest locations", () => {
     const evidence = await read({
       "skills/forecast/SKILL.md": skillMarkdown(),
     });
-    expect(codes(evidence)).toContain("manifest-missing");
+    expect(codes(evidence)).toContain("plugin_manifest_missing");
   });
 
   it("reports malformed manifest JSON", async () => {
@@ -257,7 +257,7 @@ describe("manifest locations", () => {
         version: "1.0",
       }),
     });
-    expect(codes(evidence)).toContain("manifest-name-too-long");
+    expect(codes(evidence)).toContain("plugin_name_too_long");
     expect(codes(evidence)).toContain("manifest-version-invalid");
   });
 

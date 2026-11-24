@@ -28,8 +28,17 @@ import {
   type AppToolEntry,
   type UiToolEntry,
 } from "../chat-v2-orchestration";
+import { HarnessToolNameCollisionError } from "../harness/harness-tool-names";
 import { getSkillToolsAndPrompt } from "../skill-tools";
 import { listCloudSkills } from "../computers/cloud-skills";
+import {
+  resolveTurnSkills,
+  turnSkillsFromLegacySource,
+} from "../../services/environments/turn-skills";
+import {
+  namePin,
+  preparedRunSkills,
+} from "../../test/support/skill-delivery";
 import {
   buildExaWebSearchTool,
   WEB_SEARCH_TOOL_NAME,
@@ -40,9 +49,17 @@ import {
   resolveActiveToolNames,
 } from "@mcpjam/sdk";
 
-function mockManager(tools: Record<string, unknown>) {
+function mockManager(
+  tools: Record<string, unknown>,
+  toolNamesByServer: Record<string, string[]> = {},
+) {
   return {
     getToolsForAiSdk: vi.fn().mockResolvedValue(tools),
+    getAllToolAnnotations: vi.fn((serverId: string) =>
+      Object.fromEntries(
+        (toolNamesByServer[serverId] ?? []).map((name) => [name, {}]),
+      ),
+    ),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     listServers: vi.fn().mockReturnValue([]),
     hasServer: vi.fn().mockReturnValue(true),
@@ -604,33 +621,54 @@ describe("prepareChatV2", () => {
     expect(rewrittenTool._meta).toEqual(baselineTool._meta);
   });
 
-  describe("MCP tool names Anthropic rejects", () => {
+  describe("MCP tool names with dots on harness turns", () => {
     const anthropicModel = {
       id: "anthropic/claude-sonnet-4.5",
       provider: "anthropic",
     } as any;
-
-    it("prepares a direct or hosted turn, which aliases them on the wire", async () => {
-      const result = await prepareChatV2({
-        mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
-        selectedServers: ["shop"],
+    const prepare = (
+      toolNamesByServer: Record<string, string[]>,
+      harness?: any,
+    ) => {
+      // The merged map keeps one tool per name, as the real manager does.
+      const tools: Record<string, unknown> = {};
+      for (const [serverId, names] of Object.entries(toolNamesByServer)) {
+        for (const name of names) tools[name] = { _serverId: serverId };
+      }
+      return prepareChatV2({
+        mcpClientManager: mockManager(tools, toolNamesByServer),
+        selectedServers: Object.keys(toolNamesByServer),
         modelDefinition: anthropicModel,
         systemPrompt: "Base prompt.",
+        harness,
       });
+    };
 
+    it("prepares a Claude Code turn with a dotted tool name", async () => {
+      const result = await prepare({ shop: ["cart.add"] }, "claude-code");
       expect(Object.keys(result.allTools)).toContain("cart.add");
     });
 
-    it("refuses a harness turn, which builds its own tool names", async () => {
-      await expect(
-        prepareChatV2({
-          mcpClientManager: mockManager({ "cart.add": { _serverId: "shop" } }),
-          selectedServers: ["shop"],
-          modelDefinition: anthropicModel,
-          systemPrompt: "Base prompt.",
-          harness: "claude-code",
-        }),
-      ).rejects.toThrow("Invalid tool name(s) for Anthropic: 'cart.add'");
+    it("refuses a Claude Code turn when two tools on one server rename to the same name", async () => {
+      const turn = prepare({ shop: ["cart.add", "cart_add"] }, "claude-code");
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+      await expect(turn).rejects.toThrow("`cart.add` and `cart_add`");
+    });
+
+    it("finds the collision when another server has a tool of the same name", async () => {
+      // `other` is listed last, so the merged map credits `cart.add` to it.
+      const turn = prepare(
+        { shop: ["cart.add", "cart_add"], other: ["cart.add"] },
+        "claude-code",
+      );
+      await expect(turn).rejects.toBeInstanceOf(HarnessToolNameCollisionError);
+    });
+
+    it("prepares the same pair on OpenCode, which MCPJam names itself", async () => {
+      const result = await prepare({ shop: ["cart.add", "cart_add"] }, "opencode");
+      expect(Object.keys(result.allTools)).toEqual(
+        expect.arrayContaining(["cart.add", "cart_add"]),
+      );
     });
   });
 
@@ -943,7 +981,7 @@ describe("prepareChatV2 built-in tools", () => {
             execute: async () => ({}),
           },
         } as any,
-        skillsSource: {
+        skills: turnSkillsFromLegacySource({
           kind: "resolved",
           capabilities: {
             ...emptyCapabilities(),
@@ -960,7 +998,7 @@ describe("prepareChatV2 built-in tools", () => {
               },
             ],
           },
-        },
+        }),
       })
     ).rejects.toThrow(/loadSkill.*collides/);
   });
@@ -1611,15 +1649,19 @@ describe("prepareChatV2 — WebMCP UI tools", () => {
       expect(prompt).toContain("never pause");
       expect(prompt).toContain("`app_*`");
       expect(prompt).toContain("discovery meta-tools");
+      expect(prompt).toContain("loading a skill or reading its files");
     }
 
     // And so is the ONE thing that still asks whatever the switch says. This
-    // is the opposite mistake and the worse one: a server-origin skill ref
-    // pauses in either setting, so an approval-off prompt that claimed nothing
-    // would stop the model has it plan straight past a real checkpoint.
+    // is the opposite mistake and the worse one: while a server's skill is
+    // loaded a command pauses in either setting, so an approval-off prompt
+    // that claimed nothing would stop the model has it plan straight past a
+    // real checkpoint. Loading the skill is not that checkpoint.
     for (const prompt of [strict, buildUiToolsSystemPrompt(annotated)]) {
-      expect(prompt).toContain("skill that a connected MCP server provides");
-      expect(prompt).toContain("always asks");
+      expect(prompt).toContain(
+        "While a skill that a connected MCP server provides is loaded, running a shell command",
+      );
+      expect(prompt).not.toContain("always asks");
     }
     expect(buildUiToolsSystemPrompt(annotated)).not.toContain(
       "Nothing will stop you",
@@ -1651,7 +1693,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
       selectedServers: ["server-a"],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: { kind: "none" },
+      skills: turnSkillsFromLegacySource({ kind: "none" }),
     });
     expect(manager.getSkillsSupport).not.toHaveBeenCalled();
     expect(result.allTools).not.toHaveProperty("loadSkill");
@@ -1659,10 +1701,10 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
 
   // The throw is a CALLER contract (the two delivery channels are disjoint), not
   // a claim that a harness cannot take pinned skills — it can, and does, as
-  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and pass
-  // `{ kind: "none" }` here; `resolveIterationSkillsSource` is the eval side of
-  // that, and `sessionSimulation/runner.ts` the swarm side.
-  it("THROWS on harness + skillsSource pinned (harness pinned skills must ride the harness path, never this branch)", async () => {
+  // SKILL.md on the box. Callers route pins to `pinnedHarnessSkills` and plan
+  // the turn for the harness; `iterationTurnSkills` is the eval side of that,
+  // and `sessionTurnSkills` the swarm side.
+  it("THROWS on a harness turn handed MCPJam's agent's pinned tools (they ride the harness path, never this branch)", async () => {
     const manager = mockManager({});
     await expect(
       prepareChatV2({
@@ -1671,14 +1713,28 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
         systemPrompt: "Base prompt.",
         harness: "claude-code" as any,
-        skillsSource: {
-          kind: "pinned",
-          skills: [
-            { name: "s", description: "d", content: "c", contentHash: "h" },
-          ],
-        },
+        skills: resolveTurnSkills({
+          source: (await preparedRunSkills([namePin("s")])).pinnedSkillSource,
+          runtime: { kind: "agent" },
+        }),
       })
-    ).rejects.toThrow(/receive skills on box via `pinnedHarnessSkills`/);
+    ).rejects.toThrow(/deliberately disjoint/);
+  });
+
+  it("THROWS on MCPJam's agent handed a harness's plan, which would leave it without the planned skills", async () => {
+    const manager = mockManager({});
+    await expect(
+      prepareChatV2({
+        mcpClientManager: manager,
+        selectedServers: [],
+        modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+        systemPrompt: "Base prompt.",
+        skills: resolveTurnSkills({
+          source: { kind: "none" },
+          runtime: { kind: "harness", harnessId: "claude-code" },
+        }),
+      })
+    ).rejects.toThrow(/planned for a different engine/);
   });
 
   it("REFUSES a live resolved source on a harness turn, flag or no flag", async () => {
@@ -1694,16 +1750,16 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
         modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
         systemPrompt: "Base prompt.",
         harness: "claude-code" as any,
-        skillsSource: {
+        skills: turnSkillsFromLegacySource({
           kind: "resolved",
           capabilities: emptyCapabilities(),
           composeLiveServerSkills: true,
-        },
+        }),
       })
     ).rejects.toThrow(/deliberately disjoint/);
   });
 
-  it("accepts harness + skillsSource none (a deliberately skill-less env target)", async () => {
+  it("accepts a harness turn with no skill plan (a deliberately skill-less env target)", async () => {
     const manager = mockManager({});
     const result = await prepareChatV2({
       mcpClientManager: manager,
@@ -1711,7 +1767,7 @@ describe("prepareChatV2 — pinned skills × harness (Project Environments guard
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
       harness: "claude-code" as any,
-      skillsSource: { kind: "none" },
+      skills: turnSkillsFromLegacySource({ kind: "none" }),
     });
     expect(Object.keys(result.allTools)).toEqual([]);
   });
@@ -1747,13 +1803,13 @@ describe("prepareChatV2 — a live resolved source", () => {
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: liveSet([
           { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
         ]),
         composeLiveServerSkills: true,
-      },
+      }),
     });
     expect(result.enhancedSystemPrompt).toContain("## Skills");
     expect(result.enhancedSystemPrompt).toContain("**pdf-tools**");
@@ -1770,38 +1826,65 @@ describe("prepareChatV2 — a live resolved source", () => {
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
         capabilities: emptyCapabilities(),
         composeLiveServerSkills: true,
-      },
+      }),
     });
     expect(result.allTools).not.toHaveProperty("loadSkill");
     expect(result.allTools).not.toHaveProperty("listSkills");
     expect(result.enhancedSystemPrompt).toBe("Base prompt.");
   });
 
-  it("keeps skill tools under the host's approval rule, unlike a pinned source", async () => {
-    // `resolved` is an interactive turn; only the pinned kinds bypass approval,
-    // and that divergence is the whole reason they are separate kinds.
+  it("never asks before a skill tool, even with tool approval on", async () => {
+    // An interactive turn with the switch on, holding a Library skill and a
+    // skill captured from an MCP server: loading or reading either one acts
+    // on nothing, so neither asks.
     const result = await prepareChatV2({
       mcpClientManager: mockManager({}),
       selectedServers: [],
       modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
       systemPrompt: "Base prompt.",
       requireToolApproval: true,
-      skillsSource: {
+      skills: turnSkillsFromLegacySource({
         kind: "resolved",
-        capabilities: liveSet([
-          { ref: "pdf-tools", name: "pdf-tools", description: "Process PDFs" },
-        ]),
+        capabilities: {
+          ...liveSet([
+            {
+              ref: "pdf-tools",
+              name: "pdf-tools",
+              description: "Process PDFs",
+            },
+          ]),
+          serverSkills: [
+            {
+              ref: "acme/refunds",
+              skillId: "server_skill_1",
+              name: "refunds",
+              description: "Handle refunds",
+              content: "CAPTURED SERVER BODY",
+              aggregateHash: "version_hash_1",
+              files: [],
+              serverId: "server_1",
+              serverLabel: "Acme Billing",
+              skillUri: "skill://acme/refunds/SKILL.md",
+              versionId: "version_1",
+              versionNumber: 3,
+              capturedAt: 1,
+            },
+          ],
+        },
         composeLiveServerSkills: true,
-      },
+      }),
     });
-    expect(
-      (result.allTools as Record<string, { needsApproval?: unknown }>).loadSkill
-        .needsApproval
-    ).toBe(true);
+    const tools = result.allTools as Record<
+      string,
+      { needsApproval?: unknown }
+    >;
+    for (const name of ["loadSkill", "listSkillFiles", "readSkillFile"]) {
+      expect(tools[name]?.needsApproval, name).toBe(false);
+    }
   });
 });
 
@@ -2180,6 +2263,22 @@ describe("prepareChatV2 isolated plugin servers", () => {
   it("still fails the turn for a server it does not isolate", async () => {
     await expect(turn(["plugin"])).rejects.toThrow("fetch failed");
     await expect(turn(["chosen"], ["plugin"])).rejects.toThrow("fetch failed");
+  });
+
+  it("ignores a stale tool-name collision on a plugin server the turn runs without", async () => {
+    const manager = managerWith(["plugin"]);
+    // The cache still holds the plugin's last list, with a pair Claude Code would merge.
+    manager.getAllToolAnnotations = vi.fn((key: string) =>
+      key === "plugin" ? { "a.b": {}, a_b: {} } : { chosen_tool: {} },
+    );
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["chosen", "plugin"],
+      isolatedServers: ["plugin"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      harness: "claude-code",
+    });
+    expect(Object.keys(result.allTools)).toContain("chosen_tool");
   });
 
   it("reports nothing when every isolated server listed", async () => {

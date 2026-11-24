@@ -58,8 +58,14 @@ import {
   type UpsertOrgProviderArgs,
 } from "@/hooks/use-org-model-config";
 import { OrganizationAiCards } from "./OrganizationAiCards";
+import { OrganizationModelRates } from "../model-rates/organization-model-rates";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import { GatewayDialog } from "./gateway/GatewayDialog";
+import { AddProviderDialog } from "./gateway/AddProviderDialog";
+import {
+  ConfigureProviderSheet,
+  type ConfigureSection,
+} from "./gateway/ConfigureProviderSheet";
+import { CustomProviderStatus } from "./gateway/CustomProviderStatus";
 
 // ---------------------------------------------------------------------------
 // Provider catalog -- defines known providers and their configuration fields
@@ -287,6 +293,7 @@ function OrganizationProviderSettings({
   const [editingCustom, setEditingCustom] = useState<OrgModelProvider | null>(
     null,
   );
+  const [configureSection, setConfigureSection] = useState<ConfigureSection>();
 
   // -----------------------------------------------------------------------
   // Handlers
@@ -331,8 +338,12 @@ function OrganizationProviderSettings({
     setCustomDialogOpen(true);
   };
 
-  const openEditCustom = (provider: OrgModelProvider) => {
+  const openEditCustom = (
+    provider: OrgModelProvider,
+    section?: ConfigureSection,
+  ) => {
     setEditingCustom(provider);
+    setConfigureSection(section);
     setCustomDialogOpen(true);
   };
 
@@ -357,11 +368,7 @@ function OrganizationProviderSettings({
       try {
         await upsertProvider(args);
         toast.success(
-          gatewaysEnabled
-            ? "Gateway saved"
-            : editingCustom
-              ? "Custom provider updated"
-              : "Custom provider added",
+          editingCustom ? "Custom provider updated" : "Custom provider added",
         );
         setCustomDialogOpen(false);
         setEditingCustom(null);
@@ -431,6 +438,19 @@ function OrganizationProviderSettings({
                   configured={!!cp.hasSecret || !!cp.baseUrl}
                   isAdmin={isAdmin}
                   isCustom
+                  detail={
+                    gatewaysEnabled ? (
+                      <CustomProviderStatus
+                        provider={cp}
+                        requireOrgKeys={requireOrgKeys}
+                        onOpen={
+                          isAdmin
+                            ? (section) => openEditCustom(cp, section)
+                            : undefined
+                        }
+                      />
+                    ) : undefined
+                  }
                   onConfigure={() => openEditCustom(cp)}
                   onRemove={() =>
                     openDeleteConfirm(
@@ -453,7 +473,9 @@ function OrganizationProviderSettings({
                   </Button>
                   <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
-                    {gatewaysEnabled ? "Add a gateway" : "Add Custom Provider"}
+                    {gatewaysEnabled
+                      ? "Add custom provider"
+                      : "Add Custom Provider"}
                   </Button>
                   <Button
                     variant="outline"
@@ -473,6 +495,11 @@ function OrganizationProviderSettings({
           )}
         </CardContent>
         <OrganizationAiCards
+          organizationId={organizationId}
+          isAdmin={isAdmin}
+          providers={providers}
+        />
+        <OrganizationModelRates
           organizationId={organizationId}
           isAdmin={isAdmin}
           providers={providers}
@@ -508,14 +535,24 @@ function OrganizationProviderSettings({
         />
       ) : null}
 
-      {/* Custom provider dialog; the gateway editor behind its flag */}
+      {/* Custom provider dialog; add now, configure later behind its flag */}
       {gatewaysEnabled ? (
-        <GatewayDialog
-          {...customDialogProps}
-          organizationId={organizationId}
-          existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
-          requireOrgKeys={requireOrgKeys}
-        />
+        <>
+          <AddProviderDialog
+            {...customDialogProps}
+            open={customDialogOpen && !editingCustom}
+            organizationId={organizationId}
+            existingProviderKeys={providers?.map((p) => p.providerKey) ?? []}
+          />
+          <ConfigureProviderSheet
+            {...customDialogProps}
+            open={customDialogOpen && !!editingCustom}
+            provider={editingCustom}
+            organizationId={organizationId}
+            requireOrgKeys={requireOrgKeys}
+            initialSection={configureSection}
+          />
+        </>
       ) : (
         <OrgCustomProviderDialog {...customDialogProps} />
       )}
