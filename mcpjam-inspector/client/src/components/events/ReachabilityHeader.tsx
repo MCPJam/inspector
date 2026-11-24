@@ -25,7 +25,7 @@ export function ReachabilityHeader({ subscription }: { subscription: EventsSubsc
         <ErrorCard
           error={{
             slug: "webhook/receiver",
-            title: "Couldn't deliver webhook events",
+            title: "Check webhook delivery settings",
             oneLine: failure,
             likelyCauses: [],
             nextSteps: [],
