@@ -54,8 +54,81 @@ export interface MockSavedError {
  */
 export interface MockSavedCase {
   when?: JsonObject;
+  /** What the mock sends and asks before it answers, in order. */
+  steps?: MockStep[];
   result?: JsonObject;
   error?: MockSavedError;
+}
+
+export type MockLogLevel =
+  | "debug"
+  | "info"
+  | "notice"
+  | "warning"
+  | "error"
+  | "critical"
+  | "alert"
+  | "emergency";
+
+interface StepTiming {
+  /** Wait this long before the step, so a caller or a poll can see the one before it. */
+  delayMs?: number;
+}
+
+/**
+ * One thing a saved case does before it answers. `ask`, `askUrl` and `sample`
+ * need an `id`: the reply is read in the result as `{{steps.<id>.action}}`,
+ * `{{steps.<id>.content.<field>}}` (a form's values) or `{{steps.<id>.text}}`
+ * (a model's text). `{{input.x}}` is filled in a step's text too.
+ */
+export type MockStep = StepTiming &
+  (
+    | { kind: "progress"; progress: number; total?: number; message?: string }
+    | { kind: "log"; level: MockLogLevel; data: JsonValue; logger?: string }
+    /** A question to the person, as a form. */
+    | { kind: "ask"; id: string; message: string; requestedSchema: JsonObject }
+    /** A question that sends the person to a page. */
+    | { kind: "askUrl"; id: string; message: string; url: string }
+    /** A request to the client's model. */
+    | {
+        kind: "sample";
+        id: string;
+        prompt: string;
+        systemPrompt?: string;
+        maxTokens: number;
+      }
+  );
+
+export const MAX_CASE_STEPS = 20;
+export const MAX_STEP_DELAY_MS = 5000;
+export const MAX_CASE_DELAY_MS = 20000;
+export const MAX_SAMPLE_TOKENS = 4096;
+
+/** Whether the step waits for the client (a question or a model request). */
+export function isInputStep(
+  step: MockStep
+): step is Extract<MockStep, { kind: "ask" | "askUrl" | "sample" }> {
+  return (
+    step.kind === "ask" || step.kind === "askUrl" || step.kind === "sample"
+  );
+}
+
+/** Whether any saved case of the definition asks the client something. */
+export function definitionAsks(definition: MockDefinition): boolean {
+  return savedCasesOf(definition).some((c) => c.steps?.some(isInputStep));
+}
+
+/** Whether any saved case sends a log message. */
+export function definitionLogs(definition: MockDefinition): boolean {
+  return savedCasesOf(definition).some((c) =>
+    c.steps?.some((step) => step.kind === "log")
+  );
+}
+
+function savedCasesOf(definition: MockDefinition): MockSavedCase[] {
+  return Object.values(definition.tools ?? {}).flatMap((tool) =>
+    tool.answer?.from === "saved" ? tool.answer.cases : []
+  );
 }
 
 /** Cases are tried in order and the first that matches answers. There is no memory of earlier calls. */

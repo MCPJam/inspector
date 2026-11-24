@@ -2,6 +2,7 @@ import { checkDefinitionCaps } from "./definition-caps.js";
 import type { MockCapIssueCode } from "./definition-caps.js";
 import { MAX_SAVED_CASES, MOCK_CAPABILITY_KEYS } from "./definition-types.js";
 import { checkItems } from "./validate-items.js";
+import { checkCaseSteps } from "./validate-steps.js";
 import type { MockDefinition } from "./definition-types.js";
 
 export type MockIssueCode =
@@ -50,7 +51,7 @@ const ANSWER_FIELDS = ["from", "tool", "arguments"];
 const SAVED_ANSWER_FIELDS = ["from", "cases"];
 const MODEL_ANSWER_FIELDS = ["from", "instructions"];
 const MAX_ANSWER_INSTRUCTIONS = 4000;
-const SAVED_CASE_FIELDS = ["when", "result", "error"];
+const SAVED_CASE_FIELDS = ["when", "steps", "result", "error"];
 const SAVED_ERROR_FIELDS = ["code", "message", "data"];
 const INFO_FIELDS = ["name", "title", "version"];
 const HINTS = [
@@ -177,6 +178,9 @@ class Check {
     if (!this.object(value, path)) return;
     this.fields(value, SAVED_CASE_FIELDS, path);
     if ("when" in value) this.object(value.when, at(path, "when"));
+    checkCaseSteps(value, path, (code, p, message) =>
+      this.add(code, p, message)
+    );
     const hasResult = "result" in value;
     const hasError = "error" in value;
     if (hasResult === hasError) {

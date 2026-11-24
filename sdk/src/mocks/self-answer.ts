@@ -1,10 +1,16 @@
-import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
+import type {
+  CallToolResult,
+  InputRequiredResult,
+  Tool,
+} from "@modelcontextprotocol/server";
+import { answerCase } from "./case-call.js";
+import type { CaseCall } from "./case-call.js";
 import { checkToolArgs } from "../conformance-tool-args.js";
 import type { MockSavedAnswer } from "./definition-types.js";
 import { MockAnswerError } from "./model-answers.js";
 import type { MockModelAnswerer } from "./model-answers.js";
 import type { MockObserver } from "./mock-observer.js";
-import { answerFromSaved } from "./saved-answers.js";
+import { chooseCase, finishCase } from "./saved-answers.js";
 
 /** A refusal a model reads, as a real server's own input check gives it. */
 function toolErrorResult(text: string): CallToolResult {
@@ -24,6 +30,8 @@ export interface SelfAnswerCall {
   observer?: MockObserver;
   modelAnswerer?: MockModelAnswerer;
   signal?: AbortSignal;
+  /** What a case with steps needs from the call. */
+  caseCall?: CaseCall;
 }
 
 /**
@@ -34,7 +42,7 @@ export interface SelfAnswerCall {
  */
 export async function answerItself(
   call: SelfAnswerCall
-): Promise<CallToolResult | undefined> {
+): Promise<CallToolResult | InputRequiredResult | undefined> {
   const { name, answer, input, observer } = call;
   const source = answer.from;
   const verdict = checkToolArgs(call.tool?.inputSchema, input);
@@ -52,16 +60,19 @@ export async function answerItself(
   if (answer.from === "model") {
     return answerWithModel(call, answer.instructions);
   }
-  const outcome = answerFromSaved(answer, input);
-  if (outcome.kind === "answered") {
+  const found = chooseCase(answer, input);
+  if (found) {
     observer?.({
       type: "answered",
       tool: name,
       source,
-      caseIndex: outcome.caseIndex,
+      caseIndex: found.caseIndex,
       outcome: "case",
     });
-    return outcome.result;
+    // A case with steps is run; a plain one is just filled.
+    return found.chosen.steps && call.caseCall
+      ? answerCase(found.chosen, input, call.caseCall)
+      : finishCase(found.chosen, input);
   }
   observer?.({ type: "unmatched", tool: name, arguments: input });
   // A tool the real server also has falls through to it; an added tool has

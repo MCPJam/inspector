@@ -3,6 +3,8 @@ import type {
   McpHttpHandler,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
+import { stepHostFor } from "./case-call.js";
+import { definitionLogs } from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
 import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
@@ -52,6 +54,9 @@ function effectiveCapabilities(
   if (definitionServesSkills(definition) && !("extensions" in stated)) {
     merged.extensions = { ...skillsCapability(), ...(real.extensions ?? {}) };
   }
+  // A case that logs makes the mock a server that logs.
+  if (definitionLogs(definition) && !("logging" in stated))
+    merged.logging ??= {};
   return merged as ServerCapabilities;
 }
 
@@ -146,6 +151,11 @@ async function buildServer(
         observer: options.observer,
         modelAnswerer: options.modelAnswerer,
         signal: ctx.mcpReq.signal,
+        caseCall: {
+          host: stepHostFor(ctx, request.params._meta?.progressToken),
+          responses: ctx.mcpReq.inputResponses,
+          requestState: ctx.mcpReq.requestState(),
+        },
       });
       if (itself) return itself;
     }
