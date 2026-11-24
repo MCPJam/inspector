@@ -1,3 +1,4 @@
+import { usePublishEventAgent } from "@/components/playground/events/event-agent-bridge";
 import { HARNESS_DESCRIPTORS } from "@/shared/harness-descriptors";
 import {
   hasComparisonAuthRecoveryRequest,
@@ -4996,13 +4997,13 @@ export function PlaygroundMain({
   pluginMessageDispatchRef.current = pluginMessage.send;
 
   const handleSendFollowUp = useCallback(
-    (text: string) => {
+    (text: string, isCurrent: () => boolean = () => true) => {
       return (async () => {
         // Same gate as the composer, and for the same reason: a widget-driven
         // follow-up on a reopened conversation would otherwise be the FIRST
         // thing that runs on a target the transcript never used, with no user
         // action in between to make that a choice.
-        if (conversationSendBlockedRef.current) {
+        if (!isCurrent() || conversationSendBlockedRef.current) {
           return false;
         }
         if (!(await ensureSelectedServerReadyForChat())) {
@@ -5034,7 +5035,7 @@ export function PlaygroundMain({
         // The first check is stale once the gates above have yielded. A study
         // block, a target disclosure, or a history restore that landed in that
         // window has to win, or the follow-up still goes out.
-        if (conversationSendBlockedRef.current) {
+        if (!isCurrent() || conversationSendBlockedRef.current) {
           return false;
         }
         const sentContext = modelContextQueue;
@@ -5044,7 +5045,7 @@ export function PlaygroundMain({
           widgetModelContext: sentContext,
           // The gates above can finish and this call can still await server
           // preparation. The study block has to be read again at dispatch.
-          isCurrent: () => !conversationSendBlockedRef.current,
+          isCurrent: () => isCurrent() && !conversationSendBlockedRef.current,
         });
         // A refusal keeps the queue. A success drops only the objects this
         // request carried: a widget can replace or add entries during the
@@ -5075,6 +5076,21 @@ export function PlaygroundMain({
       outgoingSenderMetadata,
     ],
   );
+
+  usePublishEventAgent({
+    scope: `${chatSessionId}:${selectedModel ? modelRowKey(selectedModel) : ""}:${previewedHostId ?? ""}`,
+    blockedReason: !isSessionBootstrapComplete ||
+      !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
+      ? "Wait for the agent conversation to finish loading."
+      : isCompareMode
+      ? "Choose one agent to run events."
+      : isStreamingActive || isPreparingServerForSend
+        ? "Event skipped while the agent is busy. Trigger it again when the turn finishes."
+        : composerDisabled || sendBlocked || conversationSendBlockedRef.current
+          ? "The conversation is not ready. Check the agent settings, then trigger the event again."
+          : null,
+    send: handleSendFollowUp,
+  });
 
   const compareAutoRun = usePlaygroundAutoRun({
     autoRunInput,

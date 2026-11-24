@@ -532,7 +532,8 @@ export interface HostedEventSubscriptionRow {
 
 export interface HostedEventDescriptor {
   hash: string;
-  payloadSchema?: Record<string, unknown>;
+  /** JSON text avoids Convex's reserved `$` keys; old rows contain objects. */
+  payloadSchema?: string | Record<string, unknown>;
   delivery: string[];
 }
 
@@ -685,7 +686,7 @@ export async function buildHostedEventDescriptor(
     return {
       hash,
       ...(descriptor.payloadSchema
-        ? { payloadSchema: descriptor.payloadSchema }
+        ? { payloadSchema: canonicalJson(descriptor.payloadSchema) }
         : {}),
       delivery: [...descriptor.delivery],
     };

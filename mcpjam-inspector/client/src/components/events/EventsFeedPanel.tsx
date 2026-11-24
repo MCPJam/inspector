@@ -108,11 +108,6 @@ function FeedEntryRow({
             Subscription mismatch
           </Flag>
         ) : null}
-        {entry.webhookIdMismatch ? (
-          <Flag title="This delivery names a different event than the one it carries. The event was still recorded.">
-            Delivery mismatch
-          </Flag>
-        ) : null}
         {entry.quarantined || entry.kind === "quarantined" ? (
           <Flag title="The payload did not match the event's payload schema; nothing was run.">
             Quarantined
