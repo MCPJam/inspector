@@ -16,7 +16,12 @@ import type {
   ConformanceSelection,
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import { isSelected, runnableSelection } from "@/hooks/conformance-suite-state";
+import {
+  isHttpServer,
+  isSelected,
+  runnableSelection,
+} from "@/hooks/conformance-suite-state";
+import { withoutTaskAnswersCheck } from "@/shared/conformance-settings";
 import {
   CONFORMANCE_RUN_PARAM,
   CONFORMANCE_SETUP_PARAM,
@@ -44,6 +49,7 @@ import type { ConformanceProbes } from "@/hooks/use-conformance-probes";
 import { ConformanceDefaultsError } from "./ConformanceDefaultsError";
 import { ConformanceSettings } from "./ConformanceSettings";
 import { ConformanceSetup } from "./ConformanceSetup";
+import { useTasksUpdateCheckEnabled } from "./conformance-catalogs";
 import { track } from "@/lib/analytics";
 import { ConformanceRunRequestContext } from "./conformance-run-request";
 import {
@@ -159,9 +165,13 @@ export function ConformanceTab({
   // run, and the run view mounts fresh for them and starts. `id` keys that
   // mount, so a Continue on the server already shown still starts anew.
   // Home's checklist lands with `?setup=1` to start at the setup steps.
-  const [setupOpen, setSetupOpen] = useState(() =>
-    new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM),
+  const [setupTarget, setSetupTarget] = useState<{
+    serverName?: string;
+    version?: McpProtocolVersion;
+  } | null>(() =>
+    new URLSearchParams(location.search).has(CONFORMANCE_SETUP_PARAM) ? {} : null,
   );
+  const tasksUpdateCheckEnabled = useTasksUpdateCheckEnabled();
   // Dropped once read, so a refresh or a view change doesn't reopen setup.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -358,12 +368,18 @@ export function ConformanceTab({
     resolvedProtocolVersion?: McpProtocolVersion,
   ) => {
     if (versionPin !== "auto") {
-      const checks = runnableSelection(selection, versionPin);
+      const target = servers?.find((offered) => offered.name === serverName);
+      const hasHttpSuites = !target || isHttpServer(target);
+      const checks = runnableSelection(
+        tasksUpdateCheckEnabled ? selection : withoutTaskAnswersCheck(selection),
+        resolvedProtocolVersion ?? versionPin,
+      );
       if (
-        checks?.oauth === false &&
-        !isSelected(checks.protocol) &&
+        checks &&
         !isSelected(checks.apps) &&
-        !isSelected(checks.tasks)
+        !isSelected(checks.tasks) &&
+        (!hasHttpSuites ||
+          (checks.oauth === false && !isSelected(checks.protocol)))
       ) {
         toast.error(
           "No selected checks can run on this protocol version. Open Run conformance checks to choose checks.",
@@ -410,7 +426,7 @@ export function ConformanceTab({
   const requestDefaults = async (
     name: string,
     pin?: ProtocolVersionPin,
-    arriving = false,
+    options?: { arriving?: boolean; resolvedVersion?: McpProtocolVersion },
   ) => {
     const id = ++requestId.current;
     setLoadingDefaults(true);
@@ -420,11 +436,12 @@ export function ConformanceTab({
       const defaults = await readDefaults(name);
       if (!mounted.current || id !== requestId.current) return;
       if (pin)
-        (arriving ? beginRun : startRun)(
+        (options?.arriving ? beginRun : startRun)(
           name,
           pin,
           defaults.selection,
           defaults.inputs,
+          options?.resolvedVersion,
         );
       else setSettingsFor(name);
     } catch {
@@ -460,7 +477,7 @@ export function ConformanceTab({
         { replace: true },
       );
       if (servers?.some((offered) => offered.name === runRequest)) {
-        void requestDefaults(runRequest, "auto", true);
+        void requestDefaults(runRequest, "auto", { arriving: true });
       } else {
         toast.info(`${runRequest} is not one of this project's servers.`);
       }
@@ -484,7 +501,7 @@ export function ConformanceTab({
   // straight to a run with that server's default checks.
   const recentServers = (servers ?? []).flatMap((offered) => {
     const run = lastRuns?.[offered.name];
-    return run ? [{ serverName: offered.name, run }] : [];
+    return run ? [{ server: offered, run }] : [];
   });
   // A run connecting its server holds every Run off, even before the server
   // itself reports "connecting": a second Run would replace the pending one.
@@ -493,10 +510,22 @@ export function ConformanceTab({
     loadingDefaults ||
     selectionIsReconnecting ||
     connectingServer !== null;
-  const runServer = (serverName: string, version: ProtocolVersionPin) => {
+  const runServer = (
+    serverName: string,
+    version: ProtocolVersionPin,
+    resolvedVersion?: McpProtocolVersion,
+  ) => {
     setRunFrom("overview");
-    if (onLoadServerDefaults) void requestDefaults(serverName, version);
-    else startRun(serverName, version, defaultsFor(serverName) ?? {});
+    if (onLoadServerDefaults)
+      void requestDefaults(serverName, version, { resolvedVersion });
+    else
+      startRun(
+        serverName,
+        version,
+        defaultsFor(serverName) ?? {},
+        undefined,
+        resolvedVersion,
+      );
   };
   const home =
     recentServers.length > 0 && onViewRun ? (
@@ -510,28 +539,30 @@ export function ConformanceTab({
           (loadingDefaults ? startingServer : connectingServer) ?? undefined
         }
         onRun={runServer}
+        onSetup={(serverName, version) => setSetupTarget({ serverName, version })}
       />
     ) : undefined;
   // Run always opens the setup steps, even with no servers yet: the server
   // list may still be loading, and the steps say what is missing.
   const openSetup =
-    servers && onSelectServer ? () => setSetupOpen(true) : undefined;
+    servers && onSelectServer ? () => setSetupTarget({}) : undefined;
+  const setupServerName =
+    setupTarget?.serverName ?? (selectionIsOffered ? server?.name ?? null : null);
 
   const setup =
-    setupOpen && servers && onSelectServer ? (
+    setupTarget && servers && onSelectServer ? (
       <ConformanceSetup
         servers={servers}
         projectServerNames={projectServerNames}
         projectServersLoading={projectServersLoading}
-        initialServerName={selectionIsOffered ? (server?.name ?? null) : null}
-        initialVersionPin={start?.versionPin ?? "auto"}
+        initialServerName={setupServerName}
+        initialVersionPin={setupTarget.version ?? start?.versionPin ?? "auto"}
         // Saved defaults win, as they do for Run again: they already hold the
         // last setup run's picks, plus any Settings change since. The last
         // run's picks only count for the server it ran on.
         initialSelection={
           start &&
-          selectionIsOffered &&
-          start.serverName === server?.name &&
+          start.serverName === setupServerName &&
           !defaultsFor(start.serverName)
             ? start.selection
             : undefined
@@ -542,7 +573,7 @@ export function ConformanceTab({
         onConnectServer={onConnectServer}
         onEditServer={onEditServer}
         probesFor={probesFor}
-        onCancel={() => setSetupOpen(false)}
+        onCancel={() => setSetupTarget(null)}
         onRun={(
           serverName,
           versionPin,
@@ -551,7 +582,7 @@ export function ConformanceTab({
           resolvedProtocolVersion,
         ) => {
           const effectiveVersion = resolvedProtocolVersion ?? versionPin;
-          setSetupOpen(false);
+          setSetupTarget(null);
           const runnable = runnableSelection(selection, effectiveVersion);
           const savedInputs = probesAfterRun(
             probesFor(serverName),

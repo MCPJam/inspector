@@ -1,11 +1,19 @@
 import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import type { ServerWithName } from "@/hooks/use-app-state";
 import type { ConformanceRunListItem } from "../ConformanceHistory";
 import { ConformanceServerList } from "../ConformanceServerList";
 
 const { useQuery } = vi.hoisted(() => ({ useQuery: vi.fn() }));
 vi.mock("convex/react", () => ({ useQuery }));
+
+vi.mock("@/lib/apis/conformance-connection-api", () => ({
+  checkConformanceConnection: async (_name: string, protocolVersion: string) => ({
+    status: "ready",
+    protocolVersion,
+  }),
+}));
 
 vi.mock("@/lib/artifact-urls", () => ({
   useArtifactQuery: () => ({
@@ -63,6 +71,17 @@ function run(): ConformanceRunListItem {
   };
 }
 
+function server(name: string): ServerWithName {
+  return {
+    name,
+    config: { url: "https://example.test" },
+    connectionStatus: "connected",
+    lastConnectionTime: new Date(),
+    enabled: true,
+    retryCount: 0,
+  };
+}
+
 describe("ConformanceServerList", () => {
   it("shows each card's selected revision and runs that revision when it has no history", async () => {
     const user = userEvent.setup();
@@ -82,15 +101,15 @@ describe("ConformanceServerList", () => {
       serverId: "srv_2",
     };
     const runs = [
-      { serverName: "draw", run: newest },
-      { serverName: "echo", run: beta },
+      { server: server("draw"), run: newest },
+      { server: server("echo"), run: beta },
     ];
     useQuery.mockImplementation((_query, args) => {
       if (args === "skip" || args.protocolVersion === "2025-06-18")
         return undefined;
       return { page: [older] };
     });
-    const props = { runs, onRun, onViewRun };
+    const props = { runs, onRun, onViewRun, onSetup: vi.fn() };
     const { rerender } = render(<ConformanceServerList {...props} />);
     const [draw, echo] = screen.getAllByRole("listitem");
     const picker = within(draw).getByRole("combobox", {
@@ -129,7 +148,7 @@ describe("ConformanceServerList", () => {
       "No runs for this protocol version yet.",
     );
     await user.click(within(draw).getByRole("button", { name: "Run draw" }));
-    expect(onRun).toHaveBeenCalledWith("draw", "2025-06-18");
+    expect(onRun).toHaveBeenCalledWith("draw", "2025-06-18", "2025-06-18");
     expect(
       within(echo).getByRole("button", { name: "View last run" }),
     ).toBeVisible();
@@ -139,9 +158,10 @@ describe("ConformanceServerList", () => {
   it("shows scored suites as fractions and leaves out a suite that did not run", () => {
     render(
       <ConformanceServerList
-        runs={[{ serverName: "draw", run: run() }]}
+        runs={[{ server: server("draw"), run: run() }]}
         onViewRun={vi.fn()}
         onRun={vi.fn()}
+        onSetup={vi.fn()}
       />,
     );
 
@@ -159,9 +179,10 @@ describe("ConformanceServerList", () => {
     try {
       render(
         <ConformanceServerList
-          runs={[{ serverName: "draw", run: run() }]}
+          runs={[{ server: server("draw"), run: run() }]}
           onViewRun={vi.fn()}
           onRun={vi.fn()}
+          onSetup={vi.fn()}
         />,
       );
       expect(screen.getByText("Last run just now")).toBeInTheDocument();

@@ -1692,6 +1692,10 @@ describe("ConformanceTab", () => {
     await user.click(screen.getByRole("button", { name: "Run alpha" }));
 
     expect(load).toHaveBeenCalledWith("alpha");
+    expect(checkConformanceConnection).toHaveBeenCalledExactlyOnceWith(
+      "alpha",
+      "2025-03-26",
+    );
     await waitFor(() =>
       expect(mockRunProtocol).toHaveBeenCalledWith(
         "alpha",
@@ -1703,9 +1707,52 @@ describe("ConformanceTab", () => {
     );
   });
 
-  it("keeps the Overview open when no saved checks apply to the selected revision", async () => {
+  it("blocks Run when a server rejects the protocol revision chosen on its Overview card", async () => {
+    const user = userEvent.setup();
+    const server = createHttpServer({ name: "alpha" });
+    vi.mocked(checkConformanceConnection).mockResolvedValueOnce({
+      status: "unsupported",
+      protocolVersion: "2026-07-28",
+      supportedVersions: ["2025-11-25"],
+    });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+      />,
+    );
+    const picker = screen.getByRole("combobox", {
+      name: "Protocol version for alpha",
+    });
+    expect(checkConformanceConnection).not.toHaveBeenCalled();
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2026-07-28" }));
+
+    expect(
+      await screen.findByText(
+        "alpha doesn’t support 2026-07-28. Server offers: 2025-11-25.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Run alpha" })).toBeDisabled();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2025-11-25" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Run alpha" })).toBeEnabled(),
+    );
+  });
+
+  it.each([
+    { tasks: [] },
+    { tasks: ["tasks-update-ack-shape" as const] },
+  ])("keeps the Overview open when no visible saved checks apply ($tasks)", async ({ tasks }) => {
     const user = userEvent.setup();
     const error = vi.spyOn(toast, "error");
+    enabledFlags.delete("conformance-tasks-update-check");
     const server = createHttpServer({ name: "alpha" });
     render(
       <ConformanceTab
@@ -1716,9 +1763,9 @@ describe("ConformanceTab", () => {
         onViewRun={vi.fn()}
         onLoadServerDefaults={async () => ({
           selection: {
-            protocol: ["modern-logs-require-log-level"],
+            protocol: ["tools-x-mcp-header-declarations-valid"],
             apps: [],
-            tasks: [],
+            tasks,
             oauth: false,
           },
           inputs: {},

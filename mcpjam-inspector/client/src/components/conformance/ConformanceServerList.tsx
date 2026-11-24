@@ -20,6 +20,8 @@ import {
   type McpProtocolVersion,
 } from "@mcpjam/sdk/browser";
 import type { ProtocolVersionPin } from "@/hooks/use-conformance-run";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { useConformanceProtocolConnection } from "@/hooks/use-conformance-protocol-connection";
 import { useArtifactQuery } from "@/lib/artifact-urls";
 import { type ConformanceRunListItem } from "./ConformanceHistory";
 import { RunResultRing } from "./RunResultRing";
@@ -114,28 +116,57 @@ function SuiteMeter({
 }
 
 function ServerCard({
-  serverName,
+  server,
   run: latestRun,
   iconUrl,
   onViewRun,
   onRun,
+  onSetup,
   disabled,
   starting,
 }: {
-  serverName: string;
+  server: ServerWithName;
   run: ConformanceRunListItem;
   iconUrl?: string;
   onViewRun: (runId: string) => void;
-  onRun: (serverName: string, version: ProtocolVersionPin) => void;
+  onRun: (
+    serverName: string,
+    version: ProtocolVersionPin,
+    resolvedVersion?: McpProtocolVersion,
+  ) => void;
+  onSetup: (serverName: string, version: McpProtocolVersion) => void;
   disabled: boolean;
   /** This card's Run was pressed and its run is being set up. */
   starting: boolean;
 }) {
+  const serverName = server.name;
   const [selection, setSelection] = useState<McpProtocolVersion | null>(null);
   const latestVersion = latestRun.protocolVersion;
   const selectedVersion = selection ?? latestVersion;
   const knownLatest = latestVersion && isKnownProtocolVersion(latestVersion);
   const pin = selection ?? (knownLatest ? latestVersion : "auto");
+  // Check an explicitly chosen revision without probing every server on load.
+  const connection = useConformanceProtocolConnection(
+    selection ? server : undefined,
+    pin,
+  );
+  const connectionResult = connection.result;
+  const unsupported = connectionResult?.status === "unsupported";
+  const retry = connectionResult?.status === "failed";
+  const needsSetup =
+    selection !== null &&
+    (server.connectionStatus !== "connected" ||
+      connectionResult?.status === "auth-required");
+  const runLabel = retry ? "Retry" : needsSetup ? "Set up run" : "Run";
+  const resolvedVersion =
+    connectionResult?.status === "ready"
+      ? connectionResult.protocolVersion
+      : undefined;
+  const handleRun = () => {
+    if (retry) connection.retry();
+    else if (needsSetup) onSetup(serverName, selection);
+    else onRun(serverName, pin, resolvedVersion);
+  };
   const showLatest = selection === null || selection === latestVersion;
   const byVersion = useQuery(
     listRuns,
@@ -228,6 +259,19 @@ function ServerCard({
             : "No runs for this protocol version yet."}
         </p>
       )}
+      {unsupported && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {serverName} doesn’t support {connectionResult.protocolVersion}.{" "}
+          {connectionResult.supportedVersions.length > 0
+            ? `Server offers: ${connectionResult.supportedVersions.join(", ")}.`
+            : "Choose another protocol version."}
+        </p>
+      )}
+      {retry && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Couldn’t check this protocol version. Try again.
+        </p>
+      )}
       <div className="mt-auto flex flex-wrap items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">
           {run && lastRunLabel(run.createdAt, now)}
@@ -244,12 +288,12 @@ function ServerCard({
           )}
           <Button
             size="sm"
-            disabled={disabled || starting}
-            onClick={() => onRun(serverName, pin)}
+            disabled={disabled || starting || connection.checking || unsupported}
+            onClick={handleRun}
             aria-label={
-              starting ? `Starting ${serverName}` : `Run ${serverName}`
+              starting ? `Starting ${serverName}` : `${runLabel} ${serverName}`
             }
-            aria-busy={starting || undefined}
+            aria-busy={starting || connection.checking || undefined}
           >
             {starting ? (
               <>
@@ -260,7 +304,7 @@ function ServerCard({
                 Starting...
               </>
             ) : (
-              "Run"
+              connection.checking ? "Checking version..." : runLabel
             )}
           </Button>
         </div>
@@ -274,16 +318,18 @@ export function ConformanceServerList({
   serverIcons,
   onViewRun,
   onRun,
+  onSetup,
   disabled = false,
   disabledServerName,
   startingServerName,
 }: {
   /** Each server's latest run, by server name. */
-  runs: Array<{ serverName: string; run: ConformanceRunListItem }>;
+  runs: Array<{ server: ServerWithName; run: ConformanceRunListItem }>;
   /** Each server's logo URL, by name; initials where there is none. */
   serverIcons?: Record<string, string>;
   onViewRun: (runId: string) => void;
-  onRun: (serverName: string, version: ProtocolVersionPin) => void;
+  onRun: Parameters<typeof ServerCard>[0]["onRun"];
+  onSetup: Parameters<typeof ServerCard>[0]["onSetup"];
   /** A run is connecting, or the saved defaults are still loading. */
   disabled?: boolean;
   /** The server whose saved defaults could not be loaded. */
@@ -300,16 +346,17 @@ export function ConformanceServerList({
       className="grid grid-cols-1 items-stretch gap-4 md:grid-cols-2"
       aria-label="Servers"
     >
-      {runs.map(({ serverName, run }) => (
+      {runs.map(({ server, run }) => (
         <ServerCard
           key={`${run.projectId}/${run.targetKey}`}
-          serverName={serverName}
+          server={server}
           run={run}
-          iconUrl={serverIcons?.[serverName]}
+          iconUrl={serverIcons?.[server.name]}
           onViewRun={onViewRun}
           onRun={onRun}
-          disabled={disabled || disabledServerName === serverName}
-          starting={startingServerName === serverName}
+          onSetup={onSetup}
+          disabled={disabled || disabledServerName === server.name}
+          starting={startingServerName === server.name}
         />
       ))}
     </ul>
