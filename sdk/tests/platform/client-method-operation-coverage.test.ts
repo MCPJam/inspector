@@ -38,8 +38,6 @@ const CLIENT_METHODS_WITHOUT_OPERATION: Readonly<Record<string, string>> = {
     "Backlog (eval authoring): `cloud eval rerun` calls it directly; no operation yet.",
   rerunEvalRun:
     "Backlog (eval authoring): `cloud eval rerun` calls it directly; no operation yet.",
-  listEvalDescriptionExperimentsForRun:
-    "Backlog (eval analyzers): get_eval_description_experiment reads one experiment by id; no operation lists a run's experiments yet.",
   getSpendBudget:
     "Backlog (org, billing and keys): spend budgets are organization billing settings; no operation yet.",
   setSpendBudget:

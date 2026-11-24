@@ -90,7 +90,6 @@ const NOT_LAUNCHES = [
   "/projects/:projectId/eval-runs/:runId/judge",
   "/projects/:projectId/eval-runs/:runId/cancel",
   "/projects/:projectId/eval-runs/:runId/gate-waivers",
-  "/projects/:projectId/eval-runs/:runId/description-experiments",
   "/projects/:projectId/eval-suites/:suiteId/environments",
   "/projects/:projectId/eval-suites/:suiteId/cases",
   "/projects/:projectId/eval-suites/:suiteId/cases/batch",

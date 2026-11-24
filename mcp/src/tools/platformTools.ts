@@ -77,9 +77,6 @@ import {
   backtestEvalRunOperation,
   backtestEvalRunJudgeOperation,
   requestEvalRunJudgeOperation,
-  proposeEvalDescriptionRewriteOperation,
-  startEvalDescriptionExperimentOperation,
-  getEvalDescriptionExperimentOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
@@ -318,14 +315,6 @@ const HELD_WHILE_IN_BETA: ReadonlyArray<{
       connectEvalCheckRepoOperation,
     ],
   },
-  {
-    feature: "description experiments",
-    operations: [
-      proposeEvalDescriptionRewriteOperation,
-      startEvalDescriptionExperimentOperation,
-      getEvalDescriptionExperimentOperation,
-    ],
-  },
   { feature: "scheduled runs", operations: [setEvalSuiteScheduleOperation] },
 ];
 
@@ -522,9 +511,6 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   // the same risk metadata the judge request does, and the read closes the
   // loop an agent opened. Both routes are wired now (PR-E3), so the earlier
   // catalog exclusion no longer applies.
-  proposeEvalDescriptionRewriteOperation,
-  startEvalDescriptionExperimentOperation,
-  getEvalDescriptionExperimentOperation,
   listEvalGithubReposOperation,
   connectEvalGithubRepoOperation,
   // The pre-rename spellings of the two above, still advertised so an agent

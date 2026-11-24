@@ -256,8 +256,6 @@ is resolved per caller, these are held off this surface for **everyone**
 - Agent Plugins: `list_project_plugins`, `get_plugin_version`
 - GitHub checks: `list_eval_github_repos`, `connect_eval_github_repo`,
   `list_eval_check_repos`, `connect_eval_check_repo`
-- Description experiments: `propose_eval_description_rewrite`,
-  `start_eval_description_experiment`, `get_eval_description_experiment`
 - Scheduled runs: `set_eval_suite_schedule`
 
 **The MCP Apps widgets are PAUSED.** `PLATFORM_WIDGETS_ENABLED` in

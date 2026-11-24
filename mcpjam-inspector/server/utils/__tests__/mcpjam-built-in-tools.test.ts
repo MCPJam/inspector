@@ -215,9 +215,6 @@ describe("workspace tool catalog", () => {
       "get_eval_run_gate",
       "get_eval_run_route_facts",
       "get_eval_run_server_facts",
-      "get_eval_description_experiment",
-      "propose_eval_description_rewrite",
-      "start_eval_description_experiment",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       // The gate-waiver trio. The READ is advertised alongside the writes on
@@ -644,7 +641,7 @@ describe("live server operations", () => {
     expect(approval("list_registry_connections")).toBe(false);
   });
 
-  it("requires approval for both description-experiment spends, like the judge", () => {
+  it("requires approval for the judge, which spends credits", () => {
     const { client } = makeClient({});
     const approval = (id: string) =>
       (
@@ -657,10 +654,6 @@ describe("live server operations", () => {
 
     expect(approval("request_eval_run_judge")).toBe(true);
     expect(approval("backtest_eval_run_judge")).toBe(true);
-    expect(approval("propose_eval_description_rewrite")).toBe(true);
-    expect(approval("start_eval_description_experiment")).toBe(true);
-    // The read closes the loop and spends nothing.
-    expect(approval("get_eval_description_experiment")).toBe(false);
   });
 });
 

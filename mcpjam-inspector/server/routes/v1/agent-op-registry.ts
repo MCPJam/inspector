@@ -116,9 +116,6 @@ import {
   getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   getEvalRunServerFactsOperation,
-  getEvalDescriptionExperimentOperation,
-  proposeEvalDescriptionRewriteOperation,
-  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -1895,13 +1892,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
-    operation: getEvalDescriptionExperimentOperation,
-    tier: "direct",
-    promptNotes: [
-      "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
-    ],
-  },
-  {
     operation: listEvalSuiteStageAnalyticsOperation,
     tier: "direct",
     promptNotes: [
@@ -2220,39 +2210,6 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `request_eval_run_insights` consumes no credits, but it counts against a daily insight QUOTA shared with goal, study and user-testing insights. Most finished runs are analyzed automatically: read `get_eval_run`'s `insights` first. The findings are `currentFindings`, and `unifiedFindings.snapshot.enrichment.status` says whether a model explained them. Request only when there is no explanation or it is `stale`, and never when `unifiedFindings.job.errorCode` is `org_model_unavailable`: that analysis cannot run until the organization's AI key policy changes.",
-    ],
-  },
-  {
-    operation: proposeEvalDescriptionRewriteOperation,
-    tier: "gated",
-    proposal: {
-      describe: (input) =>
-        `Draft a rewritten description for ${
-          named(input, "toolName") ?? "(unnamed tool)"
-        } from run ${named(input, "runId") ?? "(unnamed)"}`,
-      buttonLabel: "Propose the rewrite",
-      kind: "generate",
-      // Platform-paid; see `generate_eval_cases` above.
-      confirmSeverity: "none",
-    },
-    promptNotes: [
-      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again runs another analysis against MCPJam's daily analysis budget.",
-    ],
-  },
-  {
-    operation: startEvalDescriptionExperimentOperation,
-    tier: "gated",
-    proposal: {
-      describe: (input) =>
-        `Launch the two-arm description experiment ${
-          named(input, "experiment") ?? "(unnamed)"
-        } (original + rewrite)`,
-      buttonLabel: "Start the experiment",
-      kind: "start",
-      confirmSeverity: "spend",
-    },
-    promptNotes: [
-      "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
     ],
   },
 

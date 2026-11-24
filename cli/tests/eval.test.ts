@@ -735,25 +735,6 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       res.end(JSON.stringify({ items: [STAGE_ANALYTICS_DOCUMENT] }));
       return;
     }
-    // Description experiments: the propose route, answering the receipt the
-    // real route answers — a `proposing` document the caller polls.
-    if (
-      url.pathname ===
-        "/api/v1/projects/proj-alpha/eval-runs/run-failed/description-experiments" &&
-      (req.method ?? "GET") === "POST"
-    ) {
-      res.statusCode = 202;
-      res.end(
-        JSON.stringify({
-          id: "exp-1",
-          suiteId: "suite-1",
-          sourceRunId: "run-failed",
-          toolName: "tool_a",
-          status: "proposing",
-        })
-      );
-      return;
-    }
     if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-suites" &&
       (req.method ?? "GET") === "GET"
@@ -2900,84 +2881,6 @@ test("eval stage-analytics reads one run's funnel", async () => {
   }
 });
 
-test("eval description-experiment propose resolves the project like its siblings", async () => {
-  // The propose input schema REQUIRES `project`, and the command validates
-  // before the cloud CLI fills it in — so without `projectOptional`, omitting
-  // --project was a usage error on the one command where it should not be.
-  const fixture = await startEvalFixture();
-  try {
-    const run = await captureProcessOutput(() =>
-      main(
-        evalArgv(
-          fixture.baseUrl,
-          "description-experiment",
-          "propose",
-          "--run",
-          "run-failed",
-          "--tool",
-          "tool_a",
-          "--format",
-          "json"
-        ),
-        { telemetry: telemetryDisabled }
-      )
-    );
-
-    assert.equal(run.result.exitCode, 0, run.stderr);
-    const document = JSON.parse(run.stdout.trim());
-    assert.equal(document.project.id, "proj-alpha");
-    assert.equal(document.experiment.id, "exp-1");
-    assert.equal(document.experiment.status, "proposing");
-    assert.ok(
-      fixture.requestUrls.includes(
-        "/api/v1/projects/proj-alpha/eval-runs/run-failed/description-experiments"
-      ),
-      fixture.requestUrls.join("\n")
-    );
-  } finally {
-    await fixture.close();
-  }
-});
-
-test("eval description-experiment start refuses out-of-range flags before any request", async () => {
-  // The operation schema holds the documented limits; the command validates
-  // against it so a bad flag is a usage error, not a request.
-  const fixture = await startEvalFixture();
-  try {
-    for (const [flag, value, field] of [
-      ["--iterations", "11", "iterationOverride"],
-      ["--repetitions", "11", "iterationOverride"],
-      ["--max-iterations", "401", "maxTrials"],
-      ["--max-trials", "401", "maxTrials"],
-      ["--case-scope", "some", "caseScope"],
-    ] as const) {
-      const run = await captureProcessOutput(() =>
-        main(
-          evalArgv(
-            fixture.baseUrl,
-            "description-experiment",
-            "start",
-            "--experiment",
-            "exp-1",
-            flag,
-            value
-          ),
-          { telemetry: telemetryDisabled }
-        )
-      );
-      assert.equal(
-        run.result.exitCode,
-        2,
-        `accepted ${flag} ${value}: ${run.stderr}`
-      );
-      assert.match(run.stderr, new RegExp(`Invalid input:.*${field}`));
-    }
-    assert.equal(fixture.authHeaders.length, 0);
-  } finally {
-    await fixture.close();
-  }
-});
-
 test("both spellings of a count flag are a usage error, not a precedence rule", async () => {
   // `--iterations` is canonical and `--repetitions` its legacy spelling; a
   // script passing both mid-migration must stop, not silently launch with one.
@@ -2998,20 +2901,6 @@ test("both spellings of a count flag are a usage error, not a precedence rule", 
           "2"
         ),
         /Use --iterations or --repetitions, not both — they are two spellings of one flag\./,
-      ],
-      [
-        evalArgv(
-          fixture.baseUrl,
-          "description-experiment",
-          "start",
-          "--experiment",
-          "exp-1",
-          "--max-iterations",
-          "10",
-          "--max-trials",
-          "20"
-        ),
-        /Use --max-iterations or --max-trials, not both — they are two spellings of one flag\./,
       ],
     ] as const) {
       const run = await captureProcessOutput(() =>

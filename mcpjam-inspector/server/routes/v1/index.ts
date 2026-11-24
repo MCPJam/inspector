@@ -169,7 +169,6 @@ export const V1_EVAL_LAUNCH_ROUTES = [
   "/projects/:projectId/eval-runs",
   "/projects/:projectId/eval-run-groups",
   "/projects/:projectId/eval-runs/:runId/rerun",
-  "/projects/:projectId/eval-description-experiments/:experimentId/start",
 ] as const;
 v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 

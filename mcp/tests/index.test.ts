@@ -51,9 +51,6 @@ const HELD_TOOLS = [
   "connect_eval_github_repo",
   "list_eval_check_repos",
   "connect_eval_check_repo",
-  "propose_eval_description_rewrite",
-  "start_eval_description_experiment",
-  "get_eval_description_experiment",
   "set_eval_suite_schedule",
 ];
 

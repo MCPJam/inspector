@@ -46,7 +46,6 @@ export const PLATFORM_FEATURE_KEYS = [
   "shared-slack-channel",
   "automatic-paid-slack",
   "trace-destinations",
-  "description-experiments",
   "climbs",
   "conformance",
   "directory-readiness",
@@ -78,7 +77,6 @@ export const PLATFORM_FEATURES: Readonly<Record<PlatformFeatureKey, string>> = {
   "shared-slack-channel": "Shared Slack channels",
   "automatic-paid-slack": "Automatic Slack onboarding",
   "trace-destinations": "Trace destinations",
-  "description-experiments": "Description experiments",
   climbs: "Climbs and mock servers",
   conformance: "Conformance",
   "directory-readiness": "Directory readiness",
@@ -187,10 +185,6 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   connect_eval_github_repo: "github-checks",
   list_eval_check_repos: "github-checks",
   connect_eval_check_repo: "github-checks",
-  // Description experiments.
-  propose_eval_description_rewrite: "description-experiments",
-  start_eval_description_experiment: "description-experiments",
-  get_eval_description_experiment: "description-experiments",
   // Swarms, goals, personas and studies.
   create_persona: "sandboxes",
   update_persona: "sandboxes",

@@ -901,18 +901,10 @@ describe("the id gate covers the whole eval surface", () => {
     ["run gate", `/projects/${PROJECT}/eval-runs/${BAD}/gate`],
     ["run route-facts", `/projects/${PROJECT}/eval-runs/${BAD}/route-facts`],
     ["run server-facts", `/projects/${PROJECT}/eval-runs/${BAD}/server-facts`],
-    [
-      "run description-experiments",
-      `/projects/${PROJECT}/eval-runs/${BAD}/description-experiments`,
-    ],
     ["suite revisions", `/projects/${PROJECT}/eval-suites/${BAD}/revisions`],
     [
       "suite stage-analytics",
       `/projects/${PROJECT}/eval-suites/${BAD}/stage-analytics`,
-    ],
-    [
-      "description experiment detail",
-      `/projects/${PROJECT}/eval-description-experiments/${BAD}`,
     ],
   ])("404s %s without calling Convex", async (_name, path) => {
     vi.clearAllMocks();
@@ -956,24 +948,6 @@ describe("the id gate covers the whole eval surface", () => {
     );
 
     expect(res.status).toBe(404);
-    expect(mutationMock).not.toHaveBeenCalled();
-  });
-
-  it("404s a malformed experimentId before the start mutation", async () => {
-    vi.clearAllMocks();
-    answerQueries({ getTestSuiteRun: RUN_ROW });
-
-    const res = await makeApp(evals).request(
-      `/api/v1/projects/${PROJECT}/eval-description-experiments/${BAD}/start`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      },
-    );
-
-    expect(res.status).toBe(404);
-    expect(queryMock).not.toHaveBeenCalled();
     expect(mutationMock).not.toHaveBeenCalled();
   });
 

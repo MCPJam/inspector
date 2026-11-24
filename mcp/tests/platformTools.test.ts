@@ -300,11 +300,6 @@ const PLAIN_TOOLS = [
   "build_eval_run_findings",
   "request_eval_run_insights",
   "cancel_eval_run_insights",
-  // The description-rewrite experiment: agent-oriented payloads (a diff and
-  // two arm counts), no widget view.
-  "propose_eval_description_rewrite",
-  "start_eval_description_experiment",
-  "get_eval_description_experiment",
   // GitHub checks: agent-oriented payloads, no widget view. Both spellings —
   // the `*_check_repo*` pair is the pre-rename one, still advertised.
   "list_eval_github_repos",
