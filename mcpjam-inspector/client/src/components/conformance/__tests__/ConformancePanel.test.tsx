@@ -1703,6 +1703,44 @@ describe("ConformanceTab", () => {
     );
   });
 
+  it("keeps the Overview open when no saved checks apply to the selected revision", async () => {
+    const user = userEvent.setup();
+    const error = vi.spyOn(toast, "error");
+    const server = createHttpServer({ name: "alpha" });
+    render(
+      <ConformanceTab
+        server={server}
+        servers={[server]}
+        onSelectServer={vi.fn()}
+        lastRuns={{ alpha: createRunListItem("srv_a") }}
+        onViewRun={vi.fn()}
+        onLoadServerDefaults={async () => ({
+          selection: {
+            protocol: ["modern-logs-require-log-level"],
+            apps: [],
+            tasks: [],
+            oauth: false,
+          },
+          inputs: {},
+        })}
+      />,
+    );
+    const picker = screen.getByRole("combobox", {
+      name: "Protocol version for alpha",
+    });
+    await user.click(picker);
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+    await user.click(screen.getByRole("button", { name: "Run alpha" }));
+
+    await waitFor(() =>
+      expect(error).toHaveBeenCalledWith(
+        "No selected checks can run on this protocol version. Open Run conformance checks to choose checks.",
+      ),
+    );
+    expect(picker).toBeVisible();
+    expect(mockRunProtocol).not.toHaveBeenCalled();
+  });
+
   it("shows a server's logo on its card, and initials without one", () => {
     const alpha = createHttpServer({ name: "alpha" });
     const beta = createHttpServer({ name: "beta" });

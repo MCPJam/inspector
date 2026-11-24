@@ -16,7 +16,7 @@ import type {
   ConformanceSelection,
   ProtocolVersionPin,
 } from "@/hooks/use-conformance-run";
-import { runnableSelection } from "@/hooks/conformance-suite-state";
+import { isSelected, runnableSelection } from "@/hooks/conformance-suite-state";
 import {
   CONFORMANCE_RUN_PARAM,
   CONFORMANCE_SETUP_PARAM,
@@ -357,6 +357,20 @@ export function ConformanceTab({
     inputs?: ConformanceProbes,
     resolvedProtocolVersion?: McpProtocolVersion,
   ) => {
+    if (versionPin !== "auto") {
+      const checks = runnableSelection(selection, versionPin);
+      if (
+        checks?.oauth === false &&
+        !isSelected(checks.protocol) &&
+        !isSelected(checks.apps) &&
+        !isSelected(checks.tasks)
+      ) {
+        toast.error(
+          "No selected checks can run on this protocol version. Open Run conformance checks to choose checks.",
+        );
+        return;
+      }
+    }
     beginRun(serverName, versionPin, selection, inputs, resolvedProtocolVersion);
     changeView("overview");
   };
