@@ -3820,10 +3820,10 @@ export function PlaygroundMain({
     (toastMessage: string, opts?: { silent?: boolean }) => {
       resumedThreadSendBaselineRef.current = null;
       cancelPendingHistorySelection();
-      // Clearing `activeHistorySessionId` drops one restore guard and the
-      // fork's hydration briefly drops the other (`hasMessages`), so a
-      // `?conversation=` still naming the old thread reopened it over the fork
-      // and the user's reply vanished. A rewind's `onBeforeBranch` does the same.
+      // The fork re-mints the session id with an empty transcript, so with no
+      // active thread the URL restore effect would reopen
+      // `?conversation=<old id>` over it. Clear the param first, as
+      // `onBeforeBranch` does.
       clearConversationUrlRef.current();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
