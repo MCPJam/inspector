@@ -437,7 +437,7 @@ describe("ChatHistoryRow", () => {
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
   });
 
-  it("shows Share to Shared Sessions when shared threads are enabled", () => {
+  it("shows Add to Shared Sessions when shared threads are enabled", () => {
     render(
       <ChatHistoryRow
         session={sessionStub({ directVisibility: "private" })}
@@ -450,10 +450,10 @@ describe("ChatHistoryRow", () => {
       />
     );
 
-    expect(screen.getByText("Share to Shared Sessions")).toBeInTheDocument();
+    expect(screen.getByText("Add to Shared Sessions")).toBeInTheDocument();
   });
 
-  it("hides Share to Shared Sessions when shared threads are disabled", () => {
+  it("hides Add to Shared Sessions when shared threads are disabled", () => {
     render(
       <ChatHistoryRow
         session={sessionStub({ directVisibility: "private" })}
@@ -466,7 +466,7 @@ describe("ChatHistoryRow", () => {
       />
     );
 
-    expect(screen.queryByText("Share to Shared Sessions")).not.toBeInTheDocument();
+    expect(screen.queryByText("Add to Shared Sessions")).not.toBeInTheDocument();
   });
 
   it("hides Unshare when shared threads are disabled", () => {
