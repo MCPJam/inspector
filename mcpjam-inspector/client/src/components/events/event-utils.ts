@@ -1,4 +1,7 @@
+import { classifyEventsRpcError } from "@mcpjam/sdk/browser";
 import type {
+  EventsDeliveryModeView,
+  EventsFeedEntryView,
   EventsObservedStateView,
   EventsSubscriptionView,
 } from "@/shared/events-api";
@@ -153,4 +156,100 @@ export function hasInsecureLocalReceiver(
   subscription: EventsSubscriptionView,
 ): boolean {
   return (subscription.overrides ?? []).includes("insecure-local-receiver");
+}
+
+/**
+ * What ending a subscription is called in each mode, in the spec's words:
+ * only webhook has an unsubscribe method; poll stops polling and push closes
+ * its `events/stream` request.
+ */
+export const END_SUBSCRIPTION_LABELS: Record<EventsDeliveryModeView, string> = {
+  webhook: "Unsubscribe",
+  poll: "Stop polling",
+  push: "Close stream",
+};
+
+export interface TerminationReason {
+  label: string;
+  /** What happened or what to do next, when there is something to say. */
+  hint?: string;
+}
+
+/**
+ * Why the server ended a subscription, from the error its `terminated`
+ * signal carried. The spec names three causes; anything else shows the
+ * server's own message. Every mode carries the same error shape, so the
+ * method passed to the shared classifier is only there to satisfy its
+ * `events/*` check.
+ */
+export function describeTermination(
+  error: EventsFeedEntryView["error"] | undefined,
+): TerminationReason {
+  const classified = error
+    ? classifyEventsRpcError("events/stream", error)
+    : undefined;
+  const raw = classified?.data;
+  const data: JsonObject = isRecord(raw) ? raw : {};
+  switch (classified?.kind) {
+    case "NotFound":
+      return {
+        label: "Event type removed",
+        hint: "The server no longer lists this event type.",
+      };
+    case "Unsupported":
+      if (data.reason === "schema_changed") {
+        return {
+          label: "Schema changed",
+          hint: "Refresh the event types, then subscribe again.",
+        };
+      }
+      break;
+    case "Forbidden":
+      return {
+        label: "Access revoked",
+        hint: "The server no longer lets this client receive these events.",
+      };
+  }
+  return { label: "Terminated", hint: error?.message || undefined };
+}
+
+/** The spec's `deliveryStatus` fields, read defensively from what the server sent. */
+export interface DeliveryStatusView {
+  /** `active: false`: the server suspended delivery after repeated failures. */
+  suspended: boolean;
+  throttled: boolean;
+  retryAfterMs?: number;
+  /** A category such as `timeout` or `http_5xx`, never the endpoint's response. */
+  lastError?: string;
+  lastDeliveryAt?: string;
+  failedSince?: string;
+}
+
+export function readDeliveryStatus(value: unknown): DeliveryStatusView | null {
+  if (!isRecord(value)) return null;
+  const text = (field: unknown) =>
+    typeof field === "string" && field ? field : undefined;
+  const lastError = text(value.lastError);
+  const lastDeliveryAt = text(value.lastDeliveryAt);
+  const failedSince = text(value.failedSince);
+  return {
+    suspended: value.active === false,
+    throttled: value.throttled === true,
+    ...(typeof value.retryAfterMs === "number"
+      ? { retryAfterMs: value.retryAfterMs }
+      : {}),
+    ...(lastError ? { lastError } : {}),
+    ...(lastDeliveryAt ? { lastDeliveryAt } : {}),
+    ...(failedSince ? { failedSince } : {}),
+  };
+}
+
+/**
+ * A server that answers with `cursor: null` cannot replay this event type.
+ * `undefined` means no position has come back yet, which says nothing.
+ */
+export function replayUnsupported(
+  subscription: EventsSubscriptionView,
+): boolean {
+  return subscription.lastCursor === null;
 }
