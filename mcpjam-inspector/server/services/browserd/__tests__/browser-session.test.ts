@@ -1541,6 +1541,38 @@ describe("ensureBrowserSession — sandbox target", () => {
     expect(lost.bootHandle.stop).toHaveBeenCalled();
   });
 
+  it("refuses a winner recorded behind the relaunch fence when a fresh profile is asked for", async () => {
+    // A watched box takes the relaunch claim and fence before it kills. A
+    // daemon another replica recorded meanwhile holds its own profile: it is
+    // refused and left running, and the fence and the claim are handed back.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner", contextMode: "persistent" }),
+      ],
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+      leaseAction: leaseBackedBy(lease),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+        target: { ...SANDBOX_ARGS.target, watched: true },
+        freshProfile: true,
+      }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(lease.state()).toEqual({ state: "free" });
+    expect(f.releaseRelaunch).toHaveBeenCalledTimes(1);
+  });
+
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
     // `killBrowserd` is a pkill on the box, so it would reap a daemon somebody
     // booted during our connect and leave their row addressing nothing — and
