@@ -705,7 +705,8 @@ button[aria-label*="helpful" i]:hover {
    bordered links. Drop every border; the hover background marks the target. */
 nav[aria-label*="agination" i],
 nav[aria-label*="age navigation" i],
-[class*="pagination" i] {
+[class*="pagination" i],
+#pagination {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
@@ -714,7 +715,8 @@ nav[aria-label*="age navigation" i],
 
 nav[aria-label*="agination" i] a,
 nav[aria-label*="age navigation" i] a,
-[class*="pagination" i] a {
+[class*="pagination" i] a,
+#pagination a {
   background: transparent !important;
   border: none !important;
   color: var(--mcj-ink) !important;
@@ -723,9 +725,16 @@ nav[aria-label*="age navigation" i] a,
 }
 nav[aria-label*="agination" i] a:hover,
 nav[aria-label*="age navigation" i] a:hover,
-[class*="pagination" i] a:hover {
+[class*="pagination" i] a:hover,
+#pagination a:hover {
   background: var(--mcj-paper-2) !important;
   color: var(--mcj-ink-strong) !important;
+}
+
+/* The 1px separator Mintlify puts between Previous and Next. */
+#pagination div.w-px,
+nav[aria-label*="agination" i] div.w-px {
+  display: none !important;
 }
 
 /* ── Footer ──────────────────────────────────────────────────────────────
