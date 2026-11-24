@@ -184,7 +184,7 @@ export async function startEventsFixture(
     kind: DeliveryRecord["kind"],
     webhookId: string,
     body: string
-  ): Promise<{ record: DeliveryRecord; response?: Response }> => {
+  ): Promise<{ record: DeliveryRecord; response?: Response; networkReason?: "tls_error" | "timeout" }> => {
     const timestampSeconds = Math.floor(now() / 1000) - (misbehavior.staleTimestamp ? 3600 : 0);
     const secrets = misbehavior.badSignature
       ? [`whsec_${randomBytes(32).toString("base64")}`]
@@ -197,6 +197,7 @@ export async function startEventsFixture(
       subscriptionId: subscription.id,
     });
     let response: Response | undefined;
+    let networkReason: "tls_error" | "timeout" | undefined;
     let status: DeliveryRecord["status"];
     try {
       response = await deliveryFetch(subscription.url, {
@@ -208,8 +209,15 @@ export async function startEventsFixture(
         signal: AbortSignal.timeout(5_000),
       });
       status = response.status;
-    } catch {
+    } catch (error) {
       status = "network_error";
+      const cause = error instanceof Error ? error.cause : undefined;
+      const code = typeof cause === "object" && cause !== null && "code" in cause ? cause.code : undefined;
+      if (typeof code === "string" && /CERT|TLS|SELF_SIGNED|VERIFY_LEAF/.test(code)) {
+        networkReason = "tls_error";
+      } else if (error instanceof Error && error.name === "TimeoutError") {
+        networkReason = "timeout";
+      }
     }
     const record: DeliveryRecord = {
       subscriptionId: subscription.id,
@@ -220,12 +228,12 @@ export async function startEventsFixture(
       body,
     };
     deliveries.push(record);
-    return { record, response };
+    return { record, response, networkReason };
   };
 
   const verify = async (subscription: FixtureSubscription): Promise<void> => {
     const challenge = randomBytes(16).toString("hex");
-    const { record, response } = await post(
+    const { record, response, networkReason } = await post(
       subscription,
       "verification",
       `msg_verification_${randomBytes(6).toString("hex")}`,
@@ -233,7 +241,7 @@ export async function startEventsFixture(
     );
     if (record.status === "network_error") {
       throw new JsonRpcFailure(errors.CallbackEndpointError, "CallbackEndpointError", {
-        reason: "connection_refused",
+        reason: networkReason ?? "connection_refused",
       });
     }
     let echoed: unknown;
