@@ -2,4 +2,4 @@
 "@mcpjam/sdk": patch
 ---
 
-Keep retrying a failed Events webhook refresh before `refreshBefore` instead of letting the backoff schedule the next attempt after the grant expires.
+Keep Events webhook refreshes before `refreshBefore`: a failed refresh is retried before the grant expires instead of after the backoff, and a grant shorter than 2 s is refreshed before it expires.

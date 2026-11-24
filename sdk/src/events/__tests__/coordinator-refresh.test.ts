@@ -10,10 +10,11 @@ const HOUR = 60 * MINUTE;
 
 /**
  * Drives the coordinator the way the runtimes do: apply the patch, wait until
- * `nextActionAt`, step again. Every grant is 1 h, and the server is
- * unreachable for `outageMs` from the first refresh attempt.
+ * `nextActionAt`, step again for two grant lengths. Every grant lasts
+ * `grantMs`, and the server is unreachable for `outageMs` from the first
+ * refresh attempt.
  */
-async function driveWebhook(outageMs: number) {
+async function driveWebhook(outageMs: number, grantMs = HOUR) {
   let now = 0;
   let outageStart: number | undefined;
   const attempts: Array<{ at: number; ok: boolean }> = [];
@@ -25,7 +26,7 @@ async function driveWebhook(outageMs: number) {
       if (down) throw new Error("fetch failed: ECONNRESET");
       return {
         id: "srv_sub",
-        refreshBefore: new Date(now + HOUR).toISOString(),
+        refreshBefore: new Date(now + grantMs).toISOString(),
         cursor: null,
       };
     },
@@ -54,7 +55,7 @@ async function driveWebhook(outageMs: number) {
   };
   let grantedUntil = 0;
   let lapsed = false;
-  while (now < 2 * HOUR) {
+  while (now < 2 * grantMs) {
     const outcome = await coordinator.step(record);
     record = {
       ...record,
@@ -72,6 +73,13 @@ describe("webhook refresh before refreshBefore", () => {
   it("refreshes ahead of every grant while the server is healthy", async () => {
     const { attempts, lapsed } = await driveWebhook(0);
     expect(lapsed).toBe(false);
+    expect(attempts.every((attempt) => attempt.ok)).toBe(true);
+  });
+
+  it("refreshes a grant shorter than the 1 s floor before it expires", async () => {
+    const { attempts, lapsed } = await driveWebhook(0, 500);
+    expect(lapsed).toBe(false);
+    expect(attempts.length).toBeGreaterThan(2);
     expect(attempts.every((attempt) => attempt.ok)).toBe(true);
   });
 
@@ -113,9 +121,24 @@ describe("computeRetryAt", () => {
     expect(computeRetryAt({ now: 0, backoffMs: 5_000 })).toBe(5_000);
   });
 
-  it("never schedules sooner than the base backoff", () => {
-    expect(
-      computeRetryAt({ now: 0, backoffMs: 60_000, refreshBefore: 4_000 })
-    ).toBe(5_000);
+  it("keeps every retry before refreshBefore as the deadline nears", () => {
+    const refreshBefore = 4_000;
+    const retries: number[] = [];
+    let now = 0;
+    for (;;) {
+      const next = computeRetryAt({ now, backoffMs: 60_000, refreshBefore });
+      if (next >= refreshBefore) break;
+      retries.push(next);
+      now = next;
+    }
+    expect(retries.length).toBeGreaterThan(0);
+    expect(retries.length).toBeLessThanOrEqual(Math.ceil(Math.log2(4_000)));
+    expect(retries.every((at) => at < refreshBefore)).toBe(true);
+  });
+
+  it("keeps the backoff once under 2 ms of the grant remain", () => {
+    expect(computeRetryAt({ now: 0, backoffMs: 5_000, refreshBefore: 1 })).toBe(
+      5_000
+    );
   });
 });
