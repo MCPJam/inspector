@@ -2,6 +2,12 @@ import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { JWTPayload } from "jose";
 import { handleMcpRequest } from "./server.js";
 import {
+  clientProperties,
+  createWorkerAnalytics,
+  readMcpRequestFacts,
+  recordMcpRequest,
+} from "./analytics.js";
+import {
   GUEST_ISSUER,
   OAUTH_DISCOVERY_HEADERS,
   normalizeIssuer,
@@ -145,7 +151,11 @@ function warnGuestMintMisconfiguredOnce(): void {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<Response> {
     const url = new URL(request.url);
     const origin = url.origin;
 
@@ -235,6 +245,7 @@ export default {
       }
 
       const guestAccess = resolveGuestAccess(env.MCPJAM_GUEST_ACCESS);
+      const analytics = createWorkerAnalytics(env, ctx);
 
       // Guest tokens verify only under `mixed`, and only when a guest JWKS URL
       // is configured. Otherwise the guest issuer is absent from the
@@ -269,15 +280,43 @@ export default {
           { clientId, authkitDomain: env.AUTHKIT_DOMAIN, guest },
           origin,
         );
-        if (!result.ok) return withMcpCors(result.response);
+        if (!result.ok) {
+          // A missing token is the OAuth challenge every new client gets, not
+          // a failure; only a presented token that did not verify counts.
+          // Counted after the 401 leaves, so a refusal never waits on it.
+          if (request.headers.has("authorization")) {
+            analytics.captureAfter(
+              "mcp_request_rejected",
+              undefined,
+              readMcpRequestFacts(request).then((facts) => ({
+                ...clientProperties(facts, request.headers.get("user-agent")),
+                reason: "invalid_token",
+              }))
+            );
+          }
+          return withMcpCors(result.response);
+        }
         authInfo = toAuthInfo(result.verified, clientId);
       }
+
+      const caller = recordMcpRequest(
+        analytics,
+        await readMcpRequestFacts(request),
+        request,
+        authInfo?.extra?.claims as { sub?: unknown; iss?: unknown } | undefined,
+        GUEST_ISSUER
+      );
 
       // No `parsedBody`: nothing above reads the request body, so there is no
       // first read to hand the handler — let it read the raw request. The
       // handler does no path routing of its own, so `/mcp/...` is served too.
       return withMcpCors(
-        await handleMcpRequest(request, env, authInfo ? { authInfo } : undefined),
+        await handleMcpRequest(
+          request,
+          env,
+          authInfo ? { authInfo } : undefined,
+          caller
+        ),
       );
     }
 
