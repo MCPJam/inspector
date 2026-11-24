@@ -51,6 +51,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_server_revisions: { command: "cloud projects servers revisions" },
   get_server_revision: { command: "cloud projects servers revision" },
   diff_server_revisions: { command: "cloud projects servers revision-diff" },
+  create_mock_server: { command: "cloud mocks create" },
+  update_mock_server: { command: "cloud mocks update" },
+  get_mock_server: { command: "cloud mocks get" },
   // `default` runs the same operation as `rename`, with `isDefault` in place
   // of a name.
   list_server_accounts: { command: "cloud server-accounts list" },

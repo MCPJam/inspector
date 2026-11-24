@@ -47,6 +47,9 @@ beta; they are listed [after the table](#held-tools).
 | `list_server_revisions` | List a saved MCP server's stored revisions, newest first: captures of its tools and server info, recorded whenever they change. | — |
 | `get_server_revision` | Read one stored revision of a saved MCP server: every tool's definition and the server info it reported. Fields listed in `droppedFields` were too large to store, so they are unknown, not absent. | — |
 | `diff_server_revisions` | Compare two stored revisions of a saved MCP server: tools added, removed and changed with old and new definitions, and server info changes with values. A field in `droppedFields` was not stored on that side, so a change to it is unknown. | — |
+| `create_mock_server` | Create a mock of a saved MCP server, or of nothing, with a definition that changes only what it states: tool descriptions and schemas, annotations, hidden or fixed parameters, renamed tools. Returns its address and the change list. Behind the `climbs` feature. | — |
+| `update_mock_server` | Save a new version of a mock from a whole definition or a JSON merge patch, naming the head version read in `expectedVersion`. `dryRun` returns the change list without saving. Behind the `climbs` feature. | — |
+| `get_mock_server` | Read one version of a mock: its address, its definition, the change list since another version, and the real server's current values for what the definition edits. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |

@@ -158,6 +158,10 @@ const PLAIN_TOOLS = [
   "list_server_revisions",
   "get_server_revision",
   "diff_server_revisions",
+  // Mock servers: structured definitions and change lists, no widget view.
+  "create_mock_server",
+  "update_mock_server",
+  "get_mock_server",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -507,6 +511,9 @@ describe("platform tool registration", () => {
       "list_server_revisions",
       "get_server_revision",
       "diff_server_revisions",
+      "create_mock_server",
+      "update_mock_server",
+      "get_mock_server",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",

@@ -8,6 +8,7 @@ import { registerFeedbackCommand } from "./feedback.js";
 import { registerClientsCommands } from "./clients.js";
 import { registerCloudConformanceCommands } from "./conformance-cloud.js";
 import { registerImagesCommands } from "./images.js";
+import { registerMocksCommands } from "./mocks.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
 import { registerOrganizationsCommands } from "./organizations.js";
@@ -54,6 +55,7 @@ export function registerCloudCommands(program: Command): Command {
   // Server accounts sit beside secrets: each stores a credential runs use, and
   // no command prints one.
   registerServerAccountsCommands(cloud);
+  registerMocksCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
 
