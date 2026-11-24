@@ -220,7 +220,7 @@ describe("SidebarUpgradePrompt", () => {
     });
 
     const card = screen.getByTestId("sidebar-prompt-pro_upgrade");
-    expect(card).toHaveTextContent("No daily credit limit, add more anytime");
+    expect(card).toHaveTextContent("No daily credit limit, add more credits anytime");
     fireEvent.click(card);
 
     expect(mocks.track).toHaveBeenCalledWith(
