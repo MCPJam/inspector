@@ -16,6 +16,7 @@ import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/c
 import { OUT_OF_CREDITS_MODEL_REASON } from "@/components/chat-v2/shared/available-models";
 import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
+import { useEventAgentBridge } from "@/components/playground/events/event-agent-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
@@ -973,6 +974,24 @@ describe("PlaygroundMain", () => {
     mockMultiModelPlaygroundCard.mockClear();
     compareSetup.ready = true;
     compareSetup.error = undefined;
+  });
+
+  it("changes the event agent scope when the same model uses another provider connection", () => {
+    const original = mockUseChatSession.selectedModel;
+    try {
+      const model = { ...original, hosted: false, orgProvider: { id: "provider-a" } };
+      mockUseChatSession.selectedModel = model;
+      const { rerender } = render(<PlaygroundMain {...defaultProps} />);
+      const firstScope = useEventAgentBridge.getState().agent?.scope;
+      expect(firstScope).toContain("provider-a");
+      mockUseChatSession.selectedModel = { ...model, orgProvider: { id: "provider-b" } };
+      rerender(<PlaygroundMain {...defaultProps} />);
+      const nextScope = useEventAgentBridge.getState().agent?.scope;
+      expect(nextScope).toContain("provider-b");
+      expect(nextScope).not.toBe(firstScope);
+    } finally {
+      mockUseChatSession.selectedModel = original;
+    }
   });
 
   describe("display rules for the chat's Apps", () => {

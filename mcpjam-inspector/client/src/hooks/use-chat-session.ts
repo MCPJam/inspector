@@ -5522,6 +5522,14 @@ export function useChatSession(
     syncRestoredToolRenderOverrides,
   ]);
 
+  // The SDK status reaches React after admission. Hold a synchronous lease so
+  // manual and event sends cannot both enter that gap in the same conversation.
+  const activeSendSessions = useRef(new Set<string>());
+  const canStartTurn = useCallback(() =>
+    !activeSendSessions.current.has(chatSessionIdRef.current) &&
+    statusRef.current !== "submitted" && statusRef.current !== "streaming",
+  []);
+
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
     (options: {
@@ -5564,7 +5572,7 @@ export function useChatSession(
       // (Only genuinely NEW user turns flow through this wrapper; in-turn
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
-      if (isCurrent && !isCurrent()) return Promise.resolve(false);
+      if (!canStartTurn() || (isCurrent && !isCurrent())) return Promise.resolve(false);
       if (hiddenEnvironmentActive && hostedHiddenEnvironment?.blockingError) {
         toast.error(hostedHiddenEnvironment.blockingError);
         return Promise.resolve(false);
@@ -5698,8 +5706,9 @@ export function useChatSession(
           );
           return false;
         }
+        let admitted = false;
         try {
-          if (!sendIsCurrent() || (isCurrent && !isCurrent())) {
+          if (!canStartTurn() || !sendIsCurrent() || (isCurrent && !isCurrent())) {
             pendingWidgetModelContextRef.current = undefined;
             resolvedHostedServersRef.current = null;
             return false;
@@ -5760,6 +5769,8 @@ export function useChatSession(
             ? { body: { scopeStepUpCancel: cancelSignIn } }
             : undefined;
           appMessageTurnRef.current = pluginMessage !== undefined;
+          activeSendSessions.current.add(sessionAtSend);
+          admitted = true;
           let sent: Promise<void>;
           if (pluginMessage) {
             sent = baseSendMessage(
@@ -5787,6 +5798,8 @@ export function useChatSession(
           } else {
             sent = baseSendMessage({ text, ...extra }, requestOptions);
           }
+          const release = () => { activeSendSessions.current.delete(sessionAtSend); };
+          void Promise.resolve(sent).then(release, release);
           if (cancelClaim) {
             // The settle effect then clears the marker once the server's
             // finished part or the call's result arrived, and otherwise
@@ -5801,6 +5814,7 @@ export function useChatSession(
             void Promise.resolve(sent).then(settle, settle);
           }
         } catch (error) {
+          if (admitted) activeSendSessions.current.delete(sessionAtSend);
           pendingWidgetModelContextRef.current = undefined;
           resolvedHostedServersRef.current = null;
           throw error;
@@ -5812,6 +5826,7 @@ export function useChatSession(
       hostedHiddenEnvironment?.blockingError,
       hiddenEnvironmentActive,
       baseSendMessage,
+      canStartTurn,
       setMessages,
       savedClientSendGuard,
       sendPreparationGuard,

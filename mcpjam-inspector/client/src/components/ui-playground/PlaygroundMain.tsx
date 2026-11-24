@@ -5078,7 +5078,7 @@ export function PlaygroundMain({
   );
 
   usePublishEventAgent({
-    scope: `${chatSessionId}:${selectedModel?.id}:${previewedHostId ?? ""}`,
+    scope: `${chatSessionId}:${selectedModel ? modelRowKey(selectedModel) : ""}:${previewedHostId ?? ""}`,
     blockedReason: !isSessionBootstrapComplete ||
       !isSelectedModelResolved || previewedHostLoading || restoringAdhoc
       ? "Wait for the agent conversation to finish loading."
