@@ -191,6 +191,32 @@ describe("chat-ingestion", () => {
     });
   });
 
+  it("serializes the multi-model column of a compare column", async () => {
+    const multiModel = {
+      groupId: "group-1",
+      position: 1,
+      columnKind: "model" as const,
+      compareId: "openai/gpt-4.1-mini",
+    };
+    await persistChatSessionToConvex({
+      chatSessionId: "column-session",
+      modelId: "openai/gpt-4.1-mini",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      projectId: "project-1",
+      sourceType: "direct",
+      origin: "playground",
+      multiModel,
+      sessionMessages: [],
+      startedAt: 1,
+    });
+
+    const request = vi.mocked(global.fetch).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.multiModel).toEqual(multiModel);
+  });
+
   it("stamps senderUserId onto persisted user messages only for the authenticated user", () => {
     const sessionMessages = [
       { role: "system", content: "system" },

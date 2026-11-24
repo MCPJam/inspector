@@ -6,7 +6,10 @@ import {
   readComparisonAuthRecovery,
   registerComparisonLayout,
   clearComparisonAuthRecovery,
+  type ComparisonAuthRecovery,
 } from "@/lib/comparison-auth-recovery";
+import { useMultiModelSessions } from "@/hooks/use-multi-model-sessions";
+import { useRecoveryColumnReads } from "@/hooks/use-recovery-column-reads";
 import { useRetainedCompareClients } from "@/hooks/use-retained-compare-clients";
 import { useHistoryTarget } from "@/hooks/use-history-target";
 import { useLocalAutoApproveConsent } from "@/hooks/useLocalAutoApproveConsent";
@@ -956,7 +959,10 @@ export function PlaygroundMain({
   );
   const [comparisonServersRestored, setComparisonServersRestored] =
     useState(false);
-  const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
+  const {
+    isAuthenticated: isConvexAuthenticated,
+    isLoading: isConvexAuthLoading,
+  } = useConvexAuth();
   // Multi-server: `playgroundServerSelectorProps.selectedMultipleServers` is
   // the source of truth for which servers the chat session sees in the
   // Playground tab. Views and other read-only surfaces don't pass this and
@@ -1073,8 +1079,15 @@ export function PlaygroundMain({
       }),
     [manageOrgProviders, tester?.hostedContext.scenarioId],
   );
-  const { serversById, serversByName } = useProjectServers({
+  const {
+    serversById,
+    serversByName,
+    isLoading: serversLoading,
+    isBootstrapping: serversBootstrapping,
+  } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
+    // While sign-in loads, the skipped query would otherwise look settled.
+    authLoading: isConvexAuthLoading,
     projectId: convexProjectId,
   });
   // Optional: present app-wide, absent in isolated embeds. Drives the hosted
@@ -3452,6 +3465,23 @@ export function PlaygroundMain({
     setRestoredConversation(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
+  // Reopens a multi-model session through the sign-in recovery path: the
+  // layout effect applies the lineup and each remounted column loads its chat.
+  const restoreMultiModelSession = useCallback(
+    (record: ComparisonAuthRecovery) => {
+      cancelPendingHistorySelection();
+      clearMultiModelUiState();
+      compareTranscriptsRef.current = {};
+      comparisonLayoutRestoredRef.current = false;
+      comparisonServersRestoredRef.current = false;
+      comparisonSelectionShownRef.current = false;
+      setComparisonServersRestored(false);
+      setComparisonRecovery(record);
+      setMultiModelSessionGeneration((previous) => previous + 1);
+    },
+    [cancelPendingHistorySelection, clearMultiModelUiState],
+  );
+
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
       await chatHistoryAction("mark-read", sessionId);
@@ -4081,16 +4111,57 @@ export function PlaygroundMain({
     resumedVersion,
   ]);
 
+  const multiModelSessions = useMultiModelSessions({
+    groupId: comparisonRecoveryGroupId,
+    projectId: convexProjectId ?? "local",
+    selectedServers,
+    serverCatalog: {
+      serversById,
+      serversByName,
+      loaded: !serversLoading && !serversBootstrapping,
+      signedIn: isConvexAuthenticated,
+    },
+    liveColumnKeys: compareLanes.map((lane) => lane.id),
+    applyRestore: restoreMultiModelSession,
+  });
+  const { openFromHistory: openMultiModelSessionFromHistory } =
+    multiModelSessions;
+  const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
+  // What a compare column needs to restore its chat and to save its place.
+  const multiModelColumnProps = (columnKey: string) => ({
+    comparisonRecovery: recoveryReads.recoveryFor(columnKey),
+    onRecoveryColumnRead: recoveryReads.markRead,
+    multiModelPosition: multiModelSessions.positionFor(columnKey),
+  });
   const handleSelectThread = useCallback(
-    async (session: ChatHistorySession) => {
+    async (
+      session: ChatHistorySession,
+      siblings?: readonly ChatHistorySession[],
+    ) => {
       if (isStreaming) return;
       if (!(await ensureDiscardDraftConfirmed())) return;
       if (hasUnsavedDraftRef.current) {
         clearComposerDraft();
       }
-
       const selectionRequestId = historySelectionRequestIdRef.current + 1;
       historySelectionRequestIdRef.current = selectionRequestId;
+      const isCurrentSelection = () =>
+        historySelectionRequestIdRef.current === selectionRequestId;
+      // Holds sends while a session may be reopening; a restore clears it.
+      setLoadingHistorySessionId(session._id);
+      const opened = await openMultiModelSessionFromHistory(
+        session,
+        siblings,
+        isCurrentSelection,
+      );
+      if (opened === "restored") {
+        setPendingDirectVisibility(session.directVisibility);
+      }
+      // A project switch or sign-in change leaves no newer selection to clear it.
+      if (opened === "stale" && isCurrentSelection()) {
+        setLoadingHistorySessionId(null);
+      }
+      if (opened) return;
       setActiveHistorySessionId(session._id);
       setViewingHistoryReplay(true);
       setLoadingHistorySessionId(session._id);
@@ -4150,6 +4221,7 @@ export function PlaygroundMain({
       isStreaming,
       loadHistorySession,
       restoreHistoryServerSelection,
+      openMultiModelSessionFromHistory,
     ],
   );
 
@@ -7556,6 +7628,7 @@ export function PlaygroundMain({
                             order: columnIndex,
                             clientCount: multiHostColumns.length,
                           }}
+                          {...multiModelColumnProps(`host:${column.compareId}`)}
                           usePageTools={webmcpPageToolsEnabled}
                           // Include `compareKind` in the key so a mode
                           // swap between multi-model and multi-host can't
@@ -7694,6 +7767,7 @@ export function PlaygroundMain({
                               order: modelIndex,
                               clientCount: modelCompareCards.length,
                             }}
+                            {...multiModelColumnProps(`model:${compareId}`)}
                             usePageTools={webmcpPageToolsEnabled}
                             // Phase 3: include `compareKind` in the key so
                             // model-mode and host-mode keys never collide
