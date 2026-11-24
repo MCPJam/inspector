@@ -7,7 +7,7 @@ import {
 } from "@mcpjam/sdk/events";
 import {
   assertEventsDeclaredOrForced,
-  checkCallbackUrl,
+  requireCallbackUrl,
   insecureModeWarning,
   listAllServerEvents,
   parseEventArguments,
@@ -245,7 +245,7 @@ function registerSubscribe(events: Command): void {
     const ctx = buildContext(options, command);
     const eventArguments = parseEventArguments(options.eventArgs);
     if (!options.callbackUrl) throw usageError("--callback-url is required.");
-    const callback = checkCallbackUrl(options.callbackUrl, {
+    const callback = requireCallbackUrl(options.callbackUrl, {
       flag: "--callback-url",
       insecureFlag: "--insecure-callback",
       allowInsecure: options.insecureCallback === true,

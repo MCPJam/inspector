@@ -316,6 +316,9 @@ function useRuntime(
           host.id === null
             ? null
             : { id: host.id, name: host.name, eventDeliveryModes: host.modes },
+        ...(value.receiver ? { receiver: value.receiver } : {}),
+        ...(value.maxAgeMs !== undefined ? { maxAgeMs: value.maxAgeMs } : {}),
+        ...(value.ttlMs !== undefined ? { ttlMs: value.ttlMs } : {}),
         ...(value.insecureLocalReceiver
           ? { overrides: ["insecure-local-receiver"] }
           : {}),

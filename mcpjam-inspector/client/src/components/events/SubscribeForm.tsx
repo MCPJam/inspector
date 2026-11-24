@@ -11,6 +11,7 @@ import {
 } from "@mcpjam/sdk/browser";
 import { ParametersForm } from "@/components/ui-playground/ParametersForm";
 import type { EventsDeliveryModeView } from "@/shared/events-api";
+import { CallbackField } from "./CallbackField";
 import type { SubscribeForm } from "./use-subscribe-form";
 
 export type { SubscribeFormValue } from "./use-subscribe-form";
@@ -83,6 +84,7 @@ export function SubscribeDelivery({
   hostName,
   hosted,
   replayUnsupported,
+  localCallbackBase,
 }: {
   form: SubscribeForm;
   eventName: string;
@@ -90,6 +92,7 @@ export function SubscribeDelivery({
   availability: SubscribableModes | undefined;
   hostName: string;
   hosted: boolean;
+  localCallbackBase?: string;
   /** A subscription to this event type got `cursor: null` back. */
   replayUnsupported: boolean;
 }) {
@@ -159,32 +162,8 @@ export function SubscribeDelivery({
           down.
         </p>
       ) : null}
-      {form.needsAcknowledgement ? (
-        <div className="flex items-start gap-2 pt-2">
-          <Checkbox
-            id={`subscribe-${eventName}-ack`}
-            aria-describedby={`subscribe-${eventName}-receiver-description`}
-            checked={form.acknowledged}
-            onCheckedChange={(checked) =>
-              form.setAcknowledged(checked === true)
-            }
-          />
-          <div className="space-y-1">
-            <Label
-              htmlFor={`subscribe-${eventName}-ack`}
-              className="text-xs leading-4"
-            >
-              Receive webhooks on this machine
-            </Label>
-            <p
-              id={`subscribe-${eventName}-receiver-description`}
-              className="text-[11px] text-muted-foreground"
-            >
-              Uses unencrypted HTTP. The server must be able to reach this
-              machine.
-            </p>
-          </div>
-        </div>
+      {form.mode === "webhook" && !hosted ? (
+        <CallbackField form={form} localCallbackBase={localCallbackBase} />
       ) : null}
     </fieldset>
   );
@@ -197,9 +176,11 @@ export function SubscribeDelivery({
 export function SubscribeAdvanced({
   form,
   eventName,
+  hosted,
 }: {
   form: SubscribeForm;
   eventName: string;
+  hosted: boolean;
 }) {
   const idPrefix = `subscribe-${eventName}`;
   return (
@@ -233,7 +214,7 @@ export function SubscribeAdvanced({
             value={form.noExpiry ? "" : form.ttlMs}
             disabled={form.noExpiry}
             onChange={(e) => form.setTtlMs(e.target.value)}
-            placeholder={form.noExpiry ? "No expiry" : "Server default"}
+            placeholder={form.noExpiry ? "No expiry" : hosted ? "Server default" : "10 minutes"}
             className="h-8 text-xs"
           />
           <p className="text-[11px] text-muted-foreground">
@@ -253,6 +234,11 @@ export function SubscribeAdvanced({
               No expiry
             </Label>
           </div>
+          {!hosted && form.noExpiry ? (
+            <p className="text-[11px] text-warning">
+              The server can keep sending events after MCPJam closes.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {form.mode ? (

@@ -433,6 +433,7 @@ export function EventsTab({
               ? { maxAgeMs: value.maxAgeMs }
               : {}),
             ...(value.ttlMs !== undefined ? { ttlMs: value.ttlMs } : {}),
+            ...(value.receiver ? { receiver: value.receiver } : {}),
             ...(value.insecureLocalReceiver
               ? { overrides: ["insecure-local-receiver" as const] }
               : {}),
@@ -443,7 +444,7 @@ export function EventsTab({
       });
       setActiveTab("subscriptions");
       setWorkspaceSelected(true);
-      toast.success(`Subscribed to ${event.name}`);
+      if (hosted || value.mode !== "webhook") toast.success(`Subscribed to ${event.name}`);
     } catch (error) {
       toast.error(errorMessage(error, "Could not subscribe. Try again."));
     } finally {
@@ -520,6 +521,8 @@ export function EventsTab({
     modes: selectedAvailability?.modes ?? [],
     blockedReason,
     hosted,
+    projectId,
+    serverId: serverName,
     busy: subscribing,
     onSubscribe: handleSubscribe,
   });
@@ -673,6 +676,7 @@ export function EventsTab({
           <EventSubscribePanel
             event={workspaceEvent}
             form={form}
+            localCallbackBase={catalog?.localCallbackBase}
             availability={selectedAvailability}
             hostName={hostName}
             hosted={hosted}
