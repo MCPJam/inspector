@@ -226,6 +226,7 @@ evals.post("/run", async (c) =>
             inputAnswerResolverFor(
               createConvexClient(await getConvexBearerForRequest(c)),
               { suiteId: body.suiteId },
+              { modelAnswers: true },
             ),
           hostConfigForBody: async (body) =>
             await loadSuiteHostConfig(
@@ -428,6 +429,7 @@ evals.post("/run-test-case", async (c) => {
         inputAnswerResolverFor(
           createConvexClient(await getConvexBearerForRequest(c)),
           { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+          { modelAnswers: true },
         ),
       // Connect as the host this case runs under, not as whichever one the
       // browser had active — same rule as the suite-run and streaming routes.
@@ -555,6 +557,7 @@ evals.post("/stream-test-case", async (c) => {
   const caseInputAnswers = await inputAnswerResolverFor(
     createConvexClient(await getConvexBearerForRequest(c)),
     { suiteId: rawBody.suiteId, testCaseId: rawBody.testCaseId },
+    { modelAnswers: true },
   );
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),

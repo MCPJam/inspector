@@ -7,7 +7,7 @@ vi.mock("../../../routes/web/auth.js", () => ({
   createAuthorizedManager: vi.fn(),
 }));
 
-import { MCPClientManager } from "@mcpjam/sdk";
+import { MCPClientManager, type ElicitResult } from "@mcpjam/sdk";
 import { createMockSessionMap, createMockTaskStore } from "@mcpjam/sdk/mocks";
 import { mockConnectionPool } from "../connection.js";
 import { serveMock } from "../route.js";
@@ -76,27 +76,27 @@ afterEach(async () => {
 /** A dialer in this process, as MCPJam's own are, answering questions with `reply`. */
 async function dial(
   serve: (request: Request) => Promise<Response>,
-  version: string,
-  reply: () => {
-    action: "accept" | "decline";
-    content?: Record<string, unknown>;
-  },
+  version: "2025-06-18" | "2026-07-28",
+  reply: () => ElicitResult,
 ) {
   const manager = new MCPClientManager();
   manager.setElicitationCallback(async () => reply());
   // The 2026-07-28 revision carries the question in the result: the collector answers it.
   manager.setMrtrInputCollector("mock", async ({ inputRequests }) =>
-    Object.fromEntries(Object.keys(inputRequests).map((key) => [key, reply()])),
+    Object.fromEntries(
+      Object.keys(inputRequests).map((key) => [key, reply()] as const),
+    ),
   );
   await manager.connectToServer("mock", {
     url: "https://mock.mcpjam.invalid/mock1",
     mcpProtocolVersion: version,
-    baseFetch: (input, init) => serve(new Request(input as string, init)),
-  } as never);
+    baseFetch: (input: string | URL | Request, init?: RequestInit) =>
+      serve(new Request(input, init)),
+  });
   return manager;
 }
 
-describe.each(["2025-06-18", "2026-07-28"])(
+describe.each(["2025-06-18", "2026-07-28"] as const)(
   "a question from a mock at the route, revision %s",
   (version) => {
     it("reaches the dialer's callback and its answer reaches the result", async () => {

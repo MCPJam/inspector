@@ -21,6 +21,8 @@ export interface InputExchange {
   content?: Record<string, unknown>;
   /** Position of the reply in the case's `inputAnswers`; absent when none fit. */
   replyIndex?: number;
+  /** The reply was chosen from the run's pooled replies because the case being run could not be known. */
+  pooled?: boolean;
   /** Why the exchange was declined without a reply, in words. */
   note?: string;
 }
@@ -47,8 +49,9 @@ export function exchangeSpan(
   const asked =
     exchange.kind === "question" ? "Question" : "Request to the model";
   const reply =
-    exchange.note ??
-    (exchange.action === "answered" ? "answered" : exchange.action);
+    (exchange.note ??
+      (exchange.action === "answered" ? "answered" : exchange.action)) +
+    (exchange.pooled ? " (case unknown: the run's replies pooled)" : "");
   return {
     id: place.id,
     ...(place.parentId ? { parentId: place.parentId } : {}),

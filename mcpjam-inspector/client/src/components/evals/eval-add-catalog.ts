@@ -110,6 +110,7 @@ const predicateIcons: Record<PredicateKind, LucideIcon> = {
   toolResultMatches: Regex,
   toolResultMatchesSchema: FileJson,
   responseContains: MessageSquareText,
+  inputAnswered: MessageSquareText,
   responseCloseTo: MessageSquareText,
   responseMatches: Regex,
   finalAssistantMessageNonEmpty: CheckCheck,

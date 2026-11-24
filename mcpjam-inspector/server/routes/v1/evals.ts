@@ -4438,6 +4438,7 @@ async function launchEvalRun(params: {
   const inputAnswers = await inputAnswerResolverFor(
     createConvexClients(convexAuthToken).convexClient,
     { suiteId: body.suiteId },
+    { modelAnswers: true },
   );
   const { manager } = await createAuthorizedManager(
     params.callerContext,

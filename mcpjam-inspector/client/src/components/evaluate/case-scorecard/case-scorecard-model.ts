@@ -454,6 +454,7 @@ const PREDICATE_PURPOSE: Record<PredicateKind, string> = {
   onlyToolsCalled: "Require that nothing else is called",
   firstToolWas: "Require this tool to be reached first",
   responseContains: "Check what the answer says",
+  inputAnswered: "Check the question a server asked was answered",
   responseCloseTo: "Compare the answer to reference text",
   responseMatches: "Check the answer's shape",
   noToolErrors: "Catch tool failures",

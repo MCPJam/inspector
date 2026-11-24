@@ -35,6 +35,9 @@ vi.mock("@mcpjam/sdk", async (importOriginal) => {
       this.configs = configs;
       mocks.managers.push(this);
     }
+    setElicitationHandler = vi.fn();
+    setMrtrInputCollector = vi.fn();
+    setSamplingCallback = vi.fn();
     listServers() {
       return Object.keys(this.configs);
     }
@@ -263,6 +266,9 @@ describe("local eval runs", () => {
             };
           case "servers:getProjectServers":
             return PROJECT_SERVERS;
+          // The replies saved on the suite's cases; none here.
+          case "testSuites:listTestCases":
+            return [];
           default:
             throw new Error(`Unexpected query ${getFunctionName(ref)}`);
         }

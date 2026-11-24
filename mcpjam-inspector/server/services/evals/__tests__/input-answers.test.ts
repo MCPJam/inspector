@@ -19,6 +19,7 @@ import {
   inputAnswerResolverFor,
   loadInputAnswers,
   loadPinnedInputAnswers,
+  runWithIterationExchanges,
   withToolCallScope,
   type ModelRequestAnswerer,
 } from "../input-answers.js";
@@ -147,9 +148,9 @@ describe("the exchange in the trace", () => {
 
 describe("loading the replies before connect", () => {
   const cases = [
-    { inputAnswers: [answers[0]!] },
-    {},
-    { inputAnswers: [answers[1]!] },
+    { _id: "c1", inputAnswers: [answers[0]!] },
+    { _id: "c2" },
+    { _id: "c3", inputAnswers: [answers[1]!] },
   ];
 
   it("takes one case's for a quick run and pools a suite's in case order", async () => {
@@ -158,11 +159,17 @@ describe("loading the replies before connect", () => {
     );
     expect(
       await loadInputAnswers({ query } as never, { testCaseId: "c1" }),
-    ).toEqual([answers[0]]);
+    ).toEqual({ pooled: [answers[0]], byCase: { c1: [answers[0]] } });
     expect(
       await loadInputAnswers({ query } as never, { suiteId: "s1" }),
-    ).toEqual(answers);
-    expect(await loadInputAnswers({ query } as never, {})).toEqual([]);
+    ).toEqual({
+      pooled: answers,
+      byCase: { c1: [answers[0]], c2: [], c3: [answers[1]] },
+    });
+    expect(await loadInputAnswers({ query } as never, {})).toEqual({
+      pooled: [],
+      byCase: {},
+    });
     const resolver = await inputAnswerResolverFor({ query } as never, {
       suiteId: "s1",
     });
@@ -175,7 +182,7 @@ describe("loading the replies before connect", () => {
     });
     expect(
       await loadInputAnswers({ query: old } as never, { suiteId: "s" }),
-    ).toEqual([]);
+    ).toEqual({ pooled: [], byCase: {} });
     const down = vi.fn(async () => {
       throw new Error("boom");
     });
@@ -287,7 +294,10 @@ describe.each(["2025-06-18", "2026-07-28"])(
       };
       // Registered before connect, as `createAuthorizedManager` does.
       const manager = new MCPClientManager();
-      manager.setElicitationCallback(resolver.elicitationCallback);
+      manager.setElicitationHandler(
+        "mock",
+        resolver.elicitationHandlerFor("mock"),
+      );
       manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
       resolver.useServerNames({ mock: "files" });
       await manager.connectToServer("mock", {
@@ -385,8 +395,11 @@ describe.each(["2025-06-18", "2026-07-28"])(
       };
       // Registered before connect, as `createAuthorizedManager` does.
       const manager = new MCPClientManager();
-      manager.setElicitationCallback(resolver.elicitationCallback);
-      manager.setSamplingCallback(resolver.samplingCallback);
+      manager.setElicitationHandler(
+        "mock",
+        resolver.elicitationHandlerFor("mock"),
+      );
+      manager.setSamplingCallback("mock", resolver.samplingCallback);
       manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
       await manager.connectToServer("mock", {
         url: "https://mock.mcpjam.invalid/mock1",
@@ -480,5 +493,149 @@ describe("the iteration's model", () => {
       }),
     );
     vi.doUnmock("../../mock/model-call.js");
+  });
+});
+
+describe.each(["2025-06-18", "2026-07-28"])(
+  "replies belong to the case being run (revision %s)",
+  (version) => {
+    let stub: ReturnType<typeof stubRealServer>;
+    beforeEach(() => {
+      stub = stubRealServer();
+    });
+    afterEach(async () => {
+      await mockConnectionPool.clear();
+    });
+
+    // One connection for the run, as an eval has; two cases answer the same question differently.
+    const byCase = {
+      "case-a": [
+        {
+          server: "files",
+          tool: "cleanup",
+          message: "Delete",
+          action: "accept",
+          content: { sure: true },
+        },
+      ],
+      "case-b": [
+        {
+          server: "files",
+          tool: "cleanup",
+          message: "Delete",
+          action: "decline",
+        },
+      ],
+    } satisfies Record<string, InputAnswer[]>;
+
+    async function runCases(caseIds: Array<string | undefined>) {
+      const resolver = createInputAnswerResolver({
+        answers: [...byCase["case-a"], ...byCase["case-b"]],
+        answersByCase: byCase,
+      });
+      const sessions = createMockSessionMap();
+      const deps = {
+        open: stub.open,
+        resolve: vi.fn(async () => asking),
+        sessions,
+      };
+      const manager = new MCPClientManager();
+      manager.setElicitationHandler(
+        "mock",
+        resolver.elicitationHandlerFor("mock"),
+      );
+      manager.setMrtrInputCollector("mock", resolver.collectorFor("mock"));
+      resolver.useServerNames({ mock: "files" });
+      await manager.connectToServer("mock", {
+        url: "https://mock.mcpjam.invalid/mock1",
+        mcpProtocolVersion: version,
+        baseFetch: (input, init) =>
+          serveMock(new Request(input as string, init), "mock1", door, deps),
+      } as never);
+      try {
+        const texts: string[] = [];
+        for (const caseId of caseIds) {
+          const result = (await runWithIterationExchanges(
+            () =>
+              withToolCallScope({ tool: "cleanup" }, () =>
+                manager.executeTool("mock", "cleanup", { dir: "/tmp/x" }),
+              ),
+            caseId,
+          )) as { content: Array<{ text: string }> };
+          texts.push(result.content[0]!.text);
+        }
+        return { texts, resolver };
+      } finally {
+        await manager.disconnectAllServers();
+        await sessions.closeAll();
+      }
+    }
+
+    it("gives each case its own reply to the same server, tool and message", async () => {
+      const { texts, resolver } = await runCases(["case-a", "case-b"]);
+      expect(texts).toEqual([
+        "accept true",
+        "decline {{steps.sure.content.sure}}",
+      ]);
+      expect(resolver.exchanges.map((e) => e.pooled)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    });
+
+    it("falls back to the run's pooled replies where the case cannot be known, and says so", async () => {
+      const { texts, resolver } = await runCases([undefined]);
+      expect(texts).toEqual(["accept true"]);
+      expect(resolver.exchanges[0]).toMatchObject({
+        pooled: true,
+        replyIndex: 0,
+      });
+      expect(
+        exchangeSpan(resolver.exchanges[0]!, { id: "x", startMs: 0, endMs: 0 })
+          .name,
+      ).toContain("case unknown");
+    });
+  },
+);
+
+describe("which connections declare what", () => {
+  const resolver = (
+    over: Partial<Parameters<typeof createInputAnswerResolver>[0]> = {},
+  ) => createInputAnswerResolver({ answers: [], ...over });
+
+  it("declares elicitation for a mock, and for a real server only when a reply names it", () => {
+    const none = resolver();
+    expect(none.declaresElicitation({ name: "files", mock: true })).toBe(true);
+    expect(none.declaresElicitation({ name: "files", mock: false })).toBe(
+      false,
+    );
+    // A reply that names no server is for mocks and servers named elsewhere, not every real server.
+    const anyServer = resolver({ answers: [{ action: "decline" }] });
+    expect(anyServer.declaresElicitation({ name: "files", mock: false })).toBe(
+      false,
+    );
+    const named = resolver({
+      answers: [{ server: "files", action: "accept" }],
+    });
+    expect(named.declaresElicitation({ name: "files", mock: false })).toBe(
+      true,
+    );
+    expect(named.declaresElicitation({ name: "web", mock: false })).toBe(false);
+    const inACase = resolver({
+      answersByCase: { c: [{ server: "web", action: "accept" }] },
+    });
+    expect(inACase.declaresElicitation({ name: "web", mock: false })).toBe(
+      true,
+    );
+  });
+
+  it("declares sampling only for a mock, and only when the run has an answerer", () => {
+    expect(
+      resolver({ modelAnswers: true }).declaresSampling({ mock: true }),
+    ).toBe(true);
+    expect(
+      resolver({ modelAnswers: true }).declaresSampling({ mock: false }),
+    ).toBe(false);
+    expect(resolver().declaresSampling({ mock: true })).toBe(false);
   });
 });

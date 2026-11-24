@@ -6,7 +6,7 @@
  * with the config it had.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import { MCPClientManager, type MCPServerConfig } from "@mcpjam/sdk";
 
 const { hosted } = vi.hoisted(() => ({ hosted: { on: false } }));
 
@@ -170,31 +170,59 @@ for (const mode of ["local", "hosted"] as const) {
       expect(doors[0]?.runKey).toBe("token-run");
     });
 
-    it("registers an eval's replies with the connection, and names each server for them", async () => {
-      const resolver = createInputAnswerResolver({
-        answers: [{ server: "Echo mock", action: "accept" }],
+    describe("an eval's replies", () => {
+      const open = async (
+        resolver: ReturnType<typeof createInputAnswerResolver>,
+      ) => {
+        const handlers: string[] = [];
+        const samplers: string[] = [];
+        const elicit = vi
+          .spyOn(MCPClientManager.prototype, "setElicitationHandler")
+          .mockImplementation((id: string) => void handlers.push(id));
+        const sample = vi
+          .spyOn(MCPClientManager.prototype, "setSamplingCallback")
+          .mockImplementation((id: string) => void samplers.push(id));
+        try {
+          const { manager } = await createAuthorizedManager(
+            { authMethod: "authkit_jwt", workosUserId: "ann", mcpjamOrganizationId: "org1" },
+            "ann-bearer",
+            "proj1",
+            ["mock1", "plain"],
+            9_000,
+            undefined,
+            undefined,
+            { lazyConnect: true, mockVersions: { mock1: 5 }, inputAnswers: resolver },
+          );
+          expect(inputAnswerResolverOf(manager)).toBe(resolver);
+        } finally {
+          elicit.mockRestore();
+          sample.mockRestore();
+        }
+        return { handlers, samplers };
+      };
+
+      it("declare elicitation and sampling for a mock only, and nothing for a real server no reply names", async () => {
+        const resolver = createInputAnswerResolver({
+          answers: [{ action: "accept" }],
+          modelAnswers: true,
+        });
+        expect(await open(resolver)).toEqual({ handlers: ["mock1"], samplers: ["mock1"] });
       });
-      const { manager } = await createAuthorizedManager(
-        { authMethod: "authkit_jwt", workosUserId: "ann", mcpjamOrganizationId: "org1" },
-        "ann-bearer",
-        "proj1",
-        ["mock1", "plain"],
-        9_000,
-        undefined,
-        undefined,
-        { lazyConnect: true, mockVersions: { mock1: 5 }, inputAnswers: resolver },
-      );
-      // Registered before the first await past the manager's construction, so
-      // the capability is declared at connect.
-      expect(inputAnswerResolverOf(manager)).toBe(resolver);
-      const reply = await resolver.elicitationCallback({
-        requestId: "r",
-        message: "Anything?",
-        schema: {},
-        serverId: "mock1",
+
+      it("declare elicitation for a real server a reply names, and still no sampling there", async () => {
+        const resolver = createInputAnswerResolver({
+          answers: [{ server: "Plain", action: "accept" }],
+          modelAnswers: true,
+        });
+        const { handlers, samplers } = await open(resolver);
+        expect(handlers.sort()).toEqual(["mock1", "plain"]);
+        expect(samplers).toEqual(["mock1"]);
       });
-      expect(reply).toEqual({ action: "accept" });
-      expect(resolver.exchanges[0]).toMatchObject({ server: "Echo mock", replyIndex: 0 });
+
+      it("declare no sampling for a mock when the run has no answerer", async () => {
+        const resolver = createInputAnswerResolver({ answers: [] });
+        expect(await open(resolver)).toEqual({ handlers: ["mock1"], samplers: [] });
+      });
     });
 
     it("asks authorize for the caller's pin, and again for the same pin when it re-mints", async () => {

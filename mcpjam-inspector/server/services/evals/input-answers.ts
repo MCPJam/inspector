@@ -11,6 +11,7 @@ import type {
   SamplingCallback,
   ElicitationCallback,
   ElicitationCallbackRequest,
+  ElicitationHandler,
   MrtrInputCollector,
   TaskInputHandlers,
 } from "@mcpjam/sdk";
@@ -49,20 +50,25 @@ export interface ToolCallScope {
 }
 
 const toolCallScope = new AsyncLocalStorage<ToolCallScope>();
-const iterationExchanges = new AsyncLocalStorage<InputExchange[]>();
+interface IterationScope {
+  exchanges: InputExchange[];
+  /** The case this iteration runs, when the runner knows it. */
+  caseId?: string;
+}
+const iterationScope = new AsyncLocalStorage<IterationScope>();
 
 /**
  * Runs one iteration so every exchange asked during it is collected, for the
  * checks that read them. Connections are per run and carry no iteration, so
  * the iteration's own async chain is what tells them apart.
  */
-export function runWithIterationExchanges<T>(run: () => T): T {
-  return iterationExchanges.run([], run);
+export function runWithIterationExchanges<T>(run: () => T, caseId?: string): T {
+  return iterationScope.run({ exchanges: [], caseId }, run);
 }
 
 /** The exchanges of the iteration this code is running in; empty outside one. */
 export function currentIterationExchanges(): readonly InputExchange[] {
-  return iterationExchanges.getStore() ?? [];
+  return iterationScope.getStore()?.exchanges ?? [];
 }
 
 /**
@@ -87,12 +93,27 @@ export interface InputAnswerResolver {
   readonly samplingCallback: SamplingCallback;
   /** Tasks: the same answers, for the task driver's input slot. */
   readonly taskHandlers: TaskInputHandlers;
+  /** A server's elicitation handler, for a connection that declares elicitation for it alone. */
+  elicitationHandlerFor(serverId: string): ElicitationHandler;
+  /** Whether a connection to this server declares elicitation: it is a mock, or a reply names it. */
+  declaresElicitation(server: { name: string; mock: boolean }): boolean;
+  /** Whether a connection to this server declares sampling: it is a mock and the run has an answerer. */
+  declaresSampling(server: { mock: boolean }): boolean;
   /** Names the connection's servers once they are authorized, so a reply can fit on `server`. */
   useServerNames(names: Record<string, string>): void;
 }
 
 export interface InputAnswerResolverOptions {
+  /** Every reply of the run, in case order: used only where the case cannot be known. */
   answers: readonly InputAnswer[];
+  /**
+   * The replies of each case by its id. With it, a question is answered from
+   * the case the iteration runs; without it (the harness proxy reads one
+   * iteration's replies) `answers` are that case's own.
+   */
+  answersByCase?: Record<string, readonly InputAnswer[]>;
+  /** The run can answer a server's request for the model. */
+  modelAnswers?: boolean;
   /** The server's name as the suite names it, from the connection's server id. */
   serverName?: (serverId: string) => string | undefined;
 }
@@ -104,6 +125,24 @@ export function createInputAnswerResolver(
 ): InputAnswerResolver {
   const exchanges: InputExchange[] = [];
   let names: Record<string, string> = {};
+
+  /**
+   * The replies of the case this iteration runs. Where the case cannot be
+   * known (no case id in the iteration's context), the run's pooled replies
+   * answer and the exchange says so.
+   */
+  function repliesOfRunningCase(): {
+    replies: readonly InputAnswer[];
+    pooled: boolean;
+  } {
+    if (!options.answersByCase)
+      return { replies: options.answers, pooled: false };
+    const caseId = iterationScope.getStore()?.caseId;
+    if (caseId !== undefined) {
+      return { replies: options.answersByCase[caseId] ?? [], pooled: false };
+    }
+    return { replies: options.answers, pooled: options.answers.length > 0 };
+  }
 
   function answer(question: {
     serverId?: string;
@@ -119,7 +158,8 @@ export function createInputAnswerResolver(
           question.serverId)
         : undefined;
     const tool = question.tool ?? scope?.tool;
-    const matched = matchInputAnswer(options.answers, {
+    const { replies, pooled } = repliesOfRunningCase();
+    const matched = matchInputAnswer(replies, {
       ...(server !== undefined && { server }),
       ...(tool !== undefined && { tool }),
       message: question.message,
@@ -134,12 +174,13 @@ export function createInputAnswerResolver(
       action: reply.action,
       ...(reply.content !== undefined && { content: reply.content }),
       ...(matched && { replyIndex: matched.index }),
+      ...(pooled && { pooled: true }),
       ...(!matched && {
         note: "declined, no reply was set for this question",
       }),
     };
     exchanges.push(exchange);
-    iterationExchanges.getStore()?.push(exchange);
+    iterationScope.getStore()?.exchanges.push(exchange);
     scope?.record?.(exchange);
     return reply;
   }
@@ -153,12 +194,12 @@ export function createInputAnswerResolver(
     serverId: string | undefined,
     params: Record<string, unknown>,
     tool?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<Record<string, unknown>> {
     const scope = toolCallScope.getStore();
     if (!scope?.answerModel) {
       throw new Error(
-        "A server asked for the run's model, and this run has none to give it. Run the case with a model selected."
+        "A server asked for the run's model, and this run has none to give it. Run the case with a model selected.",
       );
     }
     const { system, prompt } = modelRequestWords(params);
@@ -175,7 +216,7 @@ export function createInputAnswerResolver(
       content: { text, model },
     };
     exchanges.push(exchange);
-    iterationExchanges.getStore()?.push(exchange);
+    iterationScope.getStore()?.exchanges.push(exchange);
     scope.record?.(exchange);
     return {
       role: "assistant",
@@ -216,7 +257,7 @@ export function createInputAnswerResolver(
               serverId,
               params,
               tool,
-              signal
+              signal,
             )) as never;
             continue;
           }
@@ -229,6 +270,19 @@ export function createInputAnswerResolver(
         }
         return responses;
       },
+    elicitationHandlerFor: (serverId) => (params) =>
+      answer({
+        serverId,
+        message: params.message ?? "",
+        mode: (params as { mode?: string }).mode === "url" ? "url" : "form",
+      }),
+    declaresElicitation: ({ name, mock }) =>
+      mock ||
+      options.answers.some((reply) => reply.server === name) ||
+      Object.values(options.answersByCase ?? {}).some((replies) =>
+        replies.some((reply) => reply.server === name),
+      ),
+    declaresSampling: ({ mock }) => mock && options.modelAnswers === true,
     useServerNames: (next) => {
       names = { ...names, ...next };
     },
@@ -257,7 +311,7 @@ function modelRequestWords(params: Record<string, unknown>): {
       typeof block === "object" &&
       (block as { type?: unknown }).type === "text"
         ? [String((block as { text?: unknown }).text ?? "")]
-        : []
+        : [],
     );
   });
   return {
@@ -292,8 +346,14 @@ const getCase = makeFunctionReference<
 const listCases = makeFunctionReference<
   "query",
   { suiteId: string },
-  Array<{ inputAnswers?: InputAnswer[]; disabled?: boolean }>
+  Array<{ _id?: string; inputAnswers?: InputAnswer[] }>
 >("testSuites:listTestCases");
+
+/** A run's replies: all of them in case order, and each case's own by its id. */
+export interface LoadedInputAnswers {
+  pooled: InputAnswer[];
+  byCase: Record<string, InputAnswer[]>;
+}
 
 /**
  * The replies a run gives, read before the connection opens because the
@@ -308,22 +368,31 @@ const listCases = makeFunctionReference<
 export async function loadInputAnswers(
   convex: Pick<ConvexHttpClient, "query">,
   target: { suiteId?: unknown; testCaseId?: unknown },
-): Promise<InputAnswer[]> {
+): Promise<LoadedInputAnswers> {
+  const none: LoadedInputAnswers = { pooled: [], byCase: {} };
   const named = (value: unknown) =>
     typeof value === "string" && value ? value : undefined;
   const testCaseId = named(target.testCaseId);
   const suiteId = named(target.suiteId);
   try {
     if (testCaseId) {
-      return (await convex.query(getCase, { testCaseId }))?.inputAnswers ?? [];
+      const replies =
+        (await convex.query(getCase, { testCaseId }))?.inputAnswers ?? [];
+      return { pooled: replies, byCase: { [testCaseId]: replies } };
     }
-    if (!suiteId) return [];
+    if (!suiteId) return none;
     const cases = await convex.query(listCases, { suiteId });
-    return (Array.isArray(cases) ? cases : []).flatMap(
-      (testCase) => testCase.inputAnswers ?? [],
-    );
+    const list = Array.isArray(cases) ? cases : [];
+    return {
+      pooled: list.flatMap((testCase) => testCase.inputAnswers ?? []),
+      byCase: Object.fromEntries(
+        list.flatMap((testCase) =>
+          testCase._id ? [[testCase._id, testCase.inputAnswers ?? []]] : [],
+        ),
+      ),
+    };
   } catch (error) {
-    if (/Could not find public function/i.test(String(error))) return [];
+    if (/Could not find public function/i.test(String(error))) return none;
     throw new WebRouteError(
       503,
       ErrorCode.INTERNAL_ERROR,
@@ -336,9 +405,13 @@ export async function loadInputAnswers(
 export async function inputAnswerResolverFor(
   convex: Pick<ConvexHttpClient, "query">,
   target: { suiteId?: unknown; testCaseId?: unknown },
+  options: { modelAnswers?: boolean } = {},
 ): Promise<InputAnswerResolver> {
+  const loaded = await loadInputAnswers(convex, target);
   return createInputAnswerResolver({
-    answers: await loadInputAnswers(convex, target),
+    answers: loaded.pooled,
+    answersByCase: loaded.byCase,
+    modelAnswers: options.modelAnswers,
   });
 }
 

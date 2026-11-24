@@ -2342,11 +2342,15 @@ export class MCPClientManager {
     this.mrtrFormSchemaSelectors.delete(serverId);
   }
 
-  private samplingCallback?: SamplingCallback;
+  private readonly samplingCallbacks = new Map<string, SamplingCallback>();
 
-  /** Answers a server's request for the client's model, on every server; set it before connect, as the connection declares `sampling` only with one. */
-  setSamplingCallback(callback: SamplingCallback | undefined): void {
-    this.samplingCallback = callback;
+  /** Answers one server's request for the client's model; set it before connect, as that connection declares `sampling` only with one. */
+  setSamplingCallback(
+    serverId: string,
+    callback: SamplingCallback | undefined
+  ): void {
+    if (callback) this.samplingCallbacks.set(serverId, callback);
+    else this.samplingCallbacks.delete(serverId);
   }
 
   /**
@@ -3245,7 +3249,7 @@ export class MCPClientManager {
         client,
         serverId,
         clientCapabilities as Record<string, unknown>,
-        this.samplingCallback
+        this.samplingCallbacks.get(serverId)
       );
 
       for (const binding of this.extensionRequestHandlers.get(serverId) ?? []) {
@@ -4493,7 +4497,7 @@ export class MCPClientManager {
   ): ClientCapabilityOptions {
     return withSamplingCapability(
       this.buildElicitationCapabilities(serverId, config, era),
-      this.samplingCallback
+      this.samplingCallbacks.get(serverId)
     ) as ClientCapabilityOptions;
   }
 
@@ -5138,7 +5142,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
-      allowSampling: () => this.samplingCallback !== undefined,
+      allowSampling: () => this.samplingCallbacks.has(serverId),
       validateResponse: (result) =>
         this.validateToolOutputSchema(serverId, callParams.name, result),
       requestOptions: baseOptions,
@@ -5179,7 +5183,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
-      allowSampling: () => this.samplingCallback !== undefined,
+      allowSampling: () => this.samplingCallbacks.has(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,
@@ -5226,7 +5230,7 @@ export class MCPClientManager {
       validateContent: this.mrtrElicitationContentValidator,
       selectFormSchema: this.mrtrFormSchemaSelectors.get(serverId),
       supportedElicitationModes: this.mrtrSupportedElicitationModes(serverId),
-      allowSampling: () => this.samplingCallback !== undefined,
+      allowSampling: () => this.samplingCallbacks.has(serverId),
       requestOptions: options,
       maxRounds: this.mrtrMaxRounds,
       signal: options?.signal,

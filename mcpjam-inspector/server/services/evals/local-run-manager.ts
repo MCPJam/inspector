@@ -330,9 +330,11 @@ export async function openLocalEvalRun(
       pluginComputerRuntime: false,
       ...(connectionIdSets ? { connectionIdSets } : {}),
       // Loaded before connect: the capability to be asked is declared there.
-      inputAnswers: await inputAnswerResolverFor(convex, {
-        suiteId: target.suiteId,
-      }),
+      inputAnswers: await inputAnswerResolverFor(
+        convex,
+        { suiteId: target.suiteId },
+        { modelAnswers: true },
+      ),
       serverNames: servers.serverNames,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       ...(host ? { xaaPolicy: xaaPolicyFromMcpProfile(host.mcpProfile) } : {}),

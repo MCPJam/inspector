@@ -3081,6 +3081,8 @@ async function markIterationStopped(args: {
  * row to a product failure.
  */
 export async function runIterationUnderBudget<T>(args: {
+  /** The case this iteration runs, so a server's question is answered from that case's replies. */
+  caseId?: string;
   run: (iterationSignal: AbortSignal, deadlineAt: number) => Promise<T>;
   /** Parent: the run signal (cancel poller ∧ run deadline ∧ shutdown). */
   runSignal: AbortSignal | undefined;
@@ -3095,8 +3097,9 @@ export async function runIterationUnderBudget<T>(args: {
   // Started ONCE and held. Racing `args.run(...)` again would launch a second
   // iteration of the same trial — a second model call, a second sandbox, a
   // second set of rows — which is the opposite of what a timeout is for.
-  const running = runWithIterationExchanges(() =>
-    args.run(handle.signal, Date.now() + args.unitTimeoutMs),
+  const running = runWithIterationExchanges(
+    () => args.run(handle.signal, Date.now() + args.unitTimeoutMs),
+    args.caseId,
   ).then(
     (value) => ({ kind: "settled" as const, value }),
     (error) => ({ kind: "threw" as const, error }),
@@ -3376,6 +3379,7 @@ const executeTestCase = async (params: {
       // is the contract `evals-runner.test.ts` pinned before this change.
       try {
         return await runIterationUnderBudget({
+          caseId: timeoutTest.testCaseId,
           run: runAndCheckCredits,
           runSignal: abortSignal,
           unitTimeoutMs: budgets.unitTimeoutMs,
@@ -3405,6 +3409,7 @@ const executeTestCase = async (params: {
 
     try {
       return await runIterationUnderBudget({
+        caseId: timeoutTest.testCaseId,
         run: runAndCheckCredits,
         runSignal: abortSignal,
         unitTimeoutMs: budgets.unitTimeoutMs,

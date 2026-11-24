@@ -3107,26 +3107,40 @@ export async function createAuthorizedManager(
   // wins that race; registering after an await never does.
   if (options?.elicitationCallback) {
     manager.setElicitationCallback(options.elicitationCallback);
-  } else if (options?.inputAnswers) {
-    manager.setElicitationCallback(options.inputAnswers.elicitationCallback);
-    // A server may ask for the run's model too; declared at connect like the rest.
-    manager.setSamplingCallback(options.inputAnswers.samplingCallback);
-    registerInputAnswerResolver(manager, options.inputAnswers);
   }
-  if (options?.inputAnswers && !options.mrtrInputCollectorForServer) {
+  // An eval's replies, server by server: a connection declares elicitation only
+  // for a mock, or for a server some reply names, and sampling only for a mock
+  // the run can answer. Any other server keeps today's behavior: no capability,
+  // and `-32601` if it asks anyway.
+  if (options?.inputAnswers && !options.elicitationCallback) {
+    const resolver = options.inputAnswers;
     const names: Record<string, string> = {};
+    registerInputAnswerResolver(manager, resolver);
     for (const [serverId] of connectionEntries) {
-      manager.setMrtrInputCollector(
-        serverId,
-        options.inputAnswers.collectorFor(serverId),
-      );
       const baseServerId =
         Object.entries(connectionsByServerId).find(([, group]) =>
           group.some((connection) => connection.key === serverId),
         )?.[0] ?? serverId;
-      names[serverId] = serverNamesById[baseServerId] ?? baseServerId;
+      const base = batch.results[baseServerId];
+      const server = {
+        name: serverNamesById[baseServerId] ?? baseServerId,
+        mock: base?.ok === true && Boolean(base.serverConfig.mock),
+      };
+      names[serverId] = server.name;
+      if (resolver.declaresElicitation(server)) {
+        manager.setElicitationHandler(
+          serverId,
+          resolver.elicitationHandlerFor(serverId),
+        );
+        if (!options.mrtrInputCollectorForServer) {
+          manager.setMrtrInputCollector(serverId, resolver.collectorFor(serverId));
+        }
+      }
+      if (resolver.declaresSampling(server)) {
+        manager.setSamplingCallback(serverId, resolver.samplingCallback);
+      }
     }
-    options.inputAnswers.useServerNames(names);
+    resolver.useServerNames(names);
   }
   // ALSO synchronous, same microtask-race discipline: register each server's
   // MRTR collector before the constructor's connects run, so `buildCapabilities`

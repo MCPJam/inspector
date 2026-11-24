@@ -133,11 +133,16 @@ describe("/api/web/harness-mcp", () => {
       runId: "run-77",
       iterationId: "iter-1",
     });
+    // The proxy's request names its iteration, so the replies are that case's own.
+    loadPinned.mockResolvedValueOnce([{ action: "accept" }]);
     expect((await post("srv-a", { "X-MCPJam-Proxy-Token": scoped })).status).toBe(200);
     expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toMatchObject({ mockRunKey: "run-77" });
     // The iteration's pinned replies are read per request and handed to the connection.
     expect(loadPinned).toHaveBeenCalledWith({ runId: "run-77", iterationId: "iter-1" });
-    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toHaveProperty("inputAnswers");
+    const given = vi.mocked(createAuthorizedManager).mock.lastCall?.[7] as {
+      inputAnswers: { answers: unknown[]; declaresElicitation: Function };
+    };
+    expect(given.inputAnswers.answers).toEqual([{ action: "accept" }]);
     // Playground traffic carries no run.
     expect((await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") })).status).toBe(200);
     expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).not.toHaveProperty("mockRunKey");

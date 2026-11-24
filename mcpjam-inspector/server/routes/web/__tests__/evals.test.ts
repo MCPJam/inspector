@@ -54,6 +54,7 @@ vi.mock("@mcpjam/sdk", async () => {
       return {
         disconnectAllServers: disconnectAllServersMock,
         setElicitationCallback: vi.fn(),
+        setElicitationHandler: vi.fn(),
         setSamplingCallback: vi.fn(),
         setMrtrInputCollector: vi.fn(),
       };
