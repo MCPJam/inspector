@@ -3154,6 +3154,32 @@ describe("PlaygroundMain", () => {
       });
     });
 
+    it('treats "Ask agent to run" that sendMessage refuses as unsent', async () => {
+      const onFirstMessageSent = vi.fn();
+      mockUseChatSession.messages = transcript as never;
+      vi.mocked(mockUseChatSession.sendMessage).mockResolvedValueOnce(
+        false as never,
+      );
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          onFirstMessageSent={onFirstMessageSent}
+        />,
+      );
+      await waitFor(() => expect(bridge()).not.toBe(null));
+
+      await act(async () => {
+        useAgentToolPromptBridge.getState().requestRun("Run the tool for me");
+      });
+      await settle();
+
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      expect(onFirstMessageSent).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Run the tool for me",
+      );
+    });
+
     it.each([
       ["a composer send", true],
       ["a starter chip", false],

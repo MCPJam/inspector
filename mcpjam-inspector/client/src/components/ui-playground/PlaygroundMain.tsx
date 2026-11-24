@@ -6263,12 +6263,16 @@ export function PlaygroundMain({
         setModelContextQueue([]);
       } else {
         trackSendMessage({ single_model_send: true });
-        sendMessage({
+        const sent = await sendMessage({
           text,
           metadata: outgoingSenderMetadata,
           widgetModelContext: modelContextQueue,
           isCurrent,
         });
+        if (!sent) {
+          refuse();
+          return;
+        }
         setModelContextQueue([]);
       }
       onFirstMessageSent?.();
