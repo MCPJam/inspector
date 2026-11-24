@@ -808,8 +808,8 @@ function ConvertSessionDialogCoreInner({
       <AlertTriangle className="h-4 w-4" />
       <AlertTitle>Import unavailable</AlertTitle>
       <AlertDescription>
-        This session is not linked to a shared project yet, so it can't be
-        saved as a test case.
+        This session isn't linked to a shared project, so it can't be saved as
+        a test case. Open a session from a shared project instead.
       </AlertDescription>
     </Alert>
   ) : null;

@@ -630,12 +630,12 @@ export function ShareUsageThreadDetail({
         // session at once. Without this line the only symptom is a trickle of
         // one-off "unknown outcome" tickets that each look like bad data.
         warnMissingRunAttemptStatusOnce();
-        return "This session's run outcome is unknown, so it can't be saved as a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
       default:
         // `null` (an attempt the backend could not identify) and any status
         // this client has not learned yet. A property of the session, so no
         // warning.
-        return "This session's run outcome is unknown, so it can't be saved as a test case.";
+        return "This session's run outcome is unknown, so it can't be saved as a test case. Open a session from a run that finished.";
     }
   }, [canPromoteThread, thread?.sourceType, thread?.runAttemptStatus]);
 
