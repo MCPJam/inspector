@@ -9,6 +9,8 @@ import { WebAccountsSettings } from "../WebAccountsSettings";
 const mocks = vi.hoisted(() => ({
   accounts: vi.fn(),
   mutations: {} as Record<string, ReturnType<typeof vi.fn>>,
+  navigate: vi.fn(),
+  savePreviewed: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock("sonner", () => ({ toast: mocks.toast }));
@@ -19,6 +21,13 @@ vi.mock("convex/react", () => ({
     mocks.mutations[name] ??= vi.fn().mockResolvedValue(null);
     return mocks.mutations[name];
   },
+}));
+vi.mock("@/lib/app-navigation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/app-navigation")>()),
+  navigateApp: mocks.navigate,
+}));
+vi.mock("@/lib/previewed-client-storage", () => ({
+  savePreviewedHostId: mocks.savePreviewed,
 }));
 
 // Radix menus read pointer capture, which jsdom does not implement.
@@ -44,7 +53,11 @@ const evals = createWebAccountView({
 function mount(isAdmin: boolean, accounts: WebAccount[] = [qa, evals]) {
   mocks.accounts.mockReturnValue({ accounts, loaded: true, isAdmin });
   render(
-    <WebAccountsSettings projectId="project-1" vendor="claude" />,
+    <WebAccountsSettings
+      projectId="project-1"
+      hostId="host-1"
+      vendor="claude"
+    />,
   );
 }
 
@@ -69,11 +82,11 @@ describe("WebAccountsSettings", () => {
     expect(document.body.textContent).not.toMatch(/token|Needs reconnect/i);
 
     await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
-    // Nothing on this screen signs an account in again, so nothing offers to.
-    const remove = await screen.findByRole("menuitem", { name: "Remove" });
-    expect(screen.queryByRole("menuitem", { name: "Sign in again" })).toBeNull();
+    expect(
+      await screen.findByRole("menuitem", { name: "Sign in again" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("menuitem", { name: "Reconnect" })).toBeNull();
-    await user.click(remove);
+    await user.click(screen.getByRole("menuitem", { name: "Remove" }));
     expect(await screen.findByRole("alertdialog")).toHaveTextContent(
       "MCPJam will remove this account and its saved sign-in.",
     );
@@ -153,11 +166,27 @@ describe("WebAccountsSettings", () => {
       });
   });
 
-  it("offers an admin no way to add an account until the pane can sign in", () => {
+  it("sends an admin to the playground's pane to sign in", async () => {
+    const user = userEvent.setup();
     mount(true, []);
-    expect(
-      screen.queryByRole("button", { name: /Connect an account/ }),
-    ).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Connect an account" }),
+    );
+    expect(mocks.savePreviewed).toHaveBeenCalledWith("project-1", "host-1");
+    expect(mocks.navigate).toHaveBeenCalledWith("/playground");
+  });
+
+  it("signs a chosen account in again on its own page, not the default's", async () => {
+    const user = userEvent.setup();
+    mount(true);
+    await user.click(screen.getByRole("button", { name: /^Manage Evals bot/ }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Sign in again" }),
+    );
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/web-accounts/wa-evals/reconnect?project=project-1",
+    );
+    expect(mocks.savePreviewed).not.toHaveBeenCalled();
   });
 
   it("sets the default and renames through the web account functions", async () => {

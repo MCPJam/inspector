@@ -10,6 +10,8 @@ const webAccountsState = vi.hoisted(() => ({
 vi.mock("@/hooks/use-web-accounts", () => ({
   useWebAccounts: () => webAccountsState,
 }));
+// An admin's first sign-in makes the account; nothing here signs in.
+vi.mock("convex/react", () => ({ useMutation: () => vi.fn() }));
 /**
  * The browser panel, in its new home beside chat.
  *
@@ -19,7 +21,7 @@ vi.mock("@/hooks/use-web-accounts", () => ({
  * a pane nobody is looking at stops claiming somebody is.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { createWebAccountView } from "@/test/factories";
 
 const engineState = {
@@ -86,16 +88,19 @@ vi.mock("@/components/browser/HostedBrowserBody", () => ({
     active,
     sessionId,
     mintToken,
+    allowProfileSave = true,
   }: {
     active?: boolean;
     sessionId?: string;
     mintToken?: (args: { projectId: string }) => Promise<{ token: string }>;
+    allowProfileSave?: boolean;
   }) => (
     <div
       data-testid="browser-pane"
       data-engine="hosted"
       data-active={String(active)}
       data-session={sessionId ?? ""}
+      data-profile-save={String(allowProfileSave)}
       onClick={() => {
         void mintToken?.({ projectId: "proj-1" }).then((t) => {
           document
@@ -307,6 +312,34 @@ describe("the browser a chat owns", () => {
     expect(screen.getByTestId("browser-pane")).toHaveAttribute(
       "data-session",
       "chat-1",
+    );
+  });
+
+  it("never offers to save a web client's browser as the person's profile", () => {
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    renderPanel();
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-profile-save",
+      "true",
+    );
+    cleanup();
+    // The browser runs on the project's Claude or ChatGPT account.
+    webAccountsState.accounts = [
+      createWebAccountView({ webAccountId: "wa-1", status: "ready" }),
+    ];
+    render(
+      <PlaygroundBrowserPanel
+        projectId="proj-1"
+        hostId="host-1"
+        visible
+        onClose={vi.fn()}
+        webClientVendor="claude"
+      />,
+    );
+    expect(screen.getByTestId("browser-pane")).toHaveAttribute(
+      "data-profile-save",
+      "false",
     );
   });
 
