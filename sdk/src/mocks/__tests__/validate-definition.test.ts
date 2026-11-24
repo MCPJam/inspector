@@ -75,18 +75,75 @@ describe("validateMockDefinition shape", () => {
     }
   });
 
-  it("accepts answer.from real or omitted and refuses saved, model and anything else", () => {
+  it("accepts answer.from real, saved or omitted and refuses model and anything else", () => {
     const answer = (value: unknown) => ({ tools: { t: { answer: value } } });
     expect(codes(answer({ from: "real" }))).toEqual([]);
     expect(codes(answer({ tool: "other" }))).toEqual([]);
     expect(codes(answer({ from: "saved", cases: [] }))).toEqual([
-      "answer_not_supported",
+      "invalid_type",
     ]);
     expect(codes(answer({ from: "model" }))).toEqual(["answer_not_supported"]);
     expect(codes(answer({ from: "base" }))).toEqual(["invalid_value"]);
     expect(codes(answer({ from: "real", cases: [] }))).toEqual([
       "unknown_field",
     ]);
+  });
+
+  it("checks the shape of saved cases", () => {
+    const saved = (cases: unknown) => ({
+      tools: { t: { answer: { from: "saved", cases } } },
+    });
+    expect(
+      codes(
+        saved([
+          { when: { a: 1 }, result: { content: [] } },
+          { error: { code: -32000, message: "no" } },
+          { result: { content: [{ type: "text", text: "{{input.a}}" }] } },
+        ])
+      )
+    ).toEqual([]);
+    // Both, neither, a result with no content, a fractional code, an unknown key.
+    expect(
+      codes(
+        saved([{ result: { content: [] }, error: { code: 1, message: "x" } }])
+      )
+    ).toEqual(["invalid_value"]);
+    expect(codes(saved([{ when: {} }]))).toEqual(["invalid_value"]);
+    expect(codes(saved([{ result: { isError: true } }]))).toEqual([
+      "invalid_type",
+    ]);
+    expect(codes(saved([{ error: { code: 1.5, message: "x" } }]))).toEqual([
+      "invalid_type",
+    ]);
+    expect(codes(saved([{ result: { content: [] }, extra: 1 }]))).toEqual([
+      "unknown_field",
+    ]);
+    expect(
+      codes(
+        saved(Array.from({ length: 201 }, () => ({ result: { content: [] } })))
+      )
+    ).toEqual(["invalid_value"]);
+    expect(
+      codes({
+        tools: {
+          t: {
+            answer: {
+              from: "saved",
+              cases: [{ result: { content: [] } }],
+              tool: "u",
+            },
+          },
+        },
+      })
+    ).toEqual(["unknown_field"]);
+  });
+
+  it("accepts a page size from 1 to 1000 and refuses others", () => {
+    expect(codes({ pageSize: 1 })).toEqual([]);
+    expect(codes({ pageSize: 1000 })).toEqual([]);
+    expect(codes({ pageSize: 0 })).toEqual(["invalid_value"]);
+    expect(codes({ pageSize: 1001 })).toEqual(["invalid_value"]);
+    expect(codes({ pageSize: 2.5 })).toEqual(["invalid_value"]);
   });
 
   it("refuses a hidden tool that also carries edits, and a param that is hidden and described", () => {

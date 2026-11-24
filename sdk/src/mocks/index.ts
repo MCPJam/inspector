@@ -14,3 +14,14 @@ export {
   resolveMockTools,
 } from "./resolve-tools.js";
 export { inverseOfChanges, type InverseMock, type OldServer, type Unrestorable } from "./inverse.js";
+export type {
+  MockAnswerSource,
+  MockObservedEvent,
+  MockObserver,
+} from "./mock-observer.js";
+export {
+  answerFromSaved,
+  caseMatches,
+  fillInputs,
+  jsonEqual,
+} from "./saved-answers.js";

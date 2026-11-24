@@ -46,6 +46,18 @@ export type PlatformMockRealServer = {
   }>;
 };
 
+/** A call to a tool with saved answers that none of them matched. */
+export type PlatformMockUnmatchedCall = {
+  tool: string;
+  /** The input that found no answer; `{}` when it was too large to keep. */
+  arguments: Record<string, unknown>;
+  /** The version that was serving when it was last seen. */
+  version: number;
+  /** How many times it was seen. */
+  count: number;
+  lastSeenAt: number;
+};
+
 export type PlatformMockServer = Omit<PlatformMockSaved, "created" | "dryRun" | "changes"> & {
   headVersion: number;
   definition: PlatformMockDefinition;
@@ -54,6 +66,12 @@ export type PlatformMockServer = Omit<PlatformMockSaved, "created" | "dryRun" | 
   sinceVersion?: number;
   changes?: PlatformMockChange[];
   realServer: PlatformMockRealServer;
+  /**
+   * The most recent calls no saved answer matched, newest first: the input to
+   * write a case for. Bounded per mock by the backend. Empty when there are
+   * none or the list could not be read.
+   */
+  unmatchedCalls: PlatformMockUnmatchedCall[];
   /** Everything the mock can change on this server, ranked, with who reads each. Present when the real server was read. */
   whatCanChange?: ChangeEntry[];
 };

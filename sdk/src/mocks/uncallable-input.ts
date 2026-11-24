@@ -1,3 +1,4 @@
+import { answersItself, realAnswerOf } from "./definition-types.js";
 import type { MockDefinition, MockTool } from "./definition-types.js";
 import type { MockIssue } from "./validate-definition.js";
 
@@ -25,7 +26,7 @@ function requiredNames(schema: unknown): string[] {
 
 /** The real tool an entry points at: `answer.tool`, else its own key. */
 export function realToolNameFor(key: string, entry: MockTool): string {
-  return entry.answer?.tool ?? key;
+  return realAnswerOf(entry)?.tool ?? key;
 }
 
 /**
@@ -34,9 +35,11 @@ export function realToolNameFor(key: string, entry: MockTool): string {
  * send and the entry does not set itself.
  *
  * An entry maps an input when it fixes it (`params.<name>.fixed`) or lays it
- * over the call (`answer.arguments`). Stage 3 adds "or has saved answers".
- * Entries whose real tool is missing from `realTools` are skipped here: the
- * listing refuses those by name.
+ * over the call (`answer.arguments`), or when the entry has saved answers and
+ * so never calls the real tool. The reverse also fails: a parameter the entry
+ * lists that a real tool declared strict (`additionalProperties: false`) does
+ * not have, which the real tool would refuse. Entries whose real tool is
+ * missing from `realTools` are skipped here: the listing refuses those by name.
  */
 export function findUncallableInputs(
   definition: MockDefinition,
@@ -46,7 +49,7 @@ export function findUncallableInputs(
   const realByName = new Map(realTools.map((tool) => [tool.name, tool]));
 
   for (const [key, entry] of Object.entries(definition.tools ?? {})) {
-    if (entry.hidden === true) continue;
+    if (entry.hidden === true || answersItself(entry)) continue;
     const realName = realToolNameFor(key, entry);
     const real = realByName.get(realName);
     if (!real || !isRecord(real.inputSchema)) continue;
@@ -60,13 +63,25 @@ export function findUncallableInputs(
     );
     const mapped = new Set([
       ...params.filter(([, p]) => "fixed" in p).map(([n]) => n),
-      ...Object.keys(entry.answer?.arguments ?? {}),
+      ...Object.keys(realAnswerOf(entry)?.arguments ?? {}),
     ]);
     const listed = new Set(
       [...propertyNames(entry.inputSchema ?? real.inputSchema)].filter(
         (name) => !hidden.has(name)
       )
     );
+
+    if (real.inputSchema.additionalProperties === false && entry.inputSchema) {
+      const realProps = propertyNames(real.inputSchema);
+      for (const name of listed) {
+        if (realProps.has(name)) continue;
+        issues.push({
+          code: "uncallable_input",
+          path: `${path}.inputSchema.properties.${name}`,
+          message: `Tool "${key}" lists "${name}", which the real tool "${realName}" does not take and refuses as an extra parameter. Remove "${name}" from the input schema, or map it with a saved answer.`,
+        });
+      }
+    }
 
     for (const name of requiredNames(real.inputSchema)) {
       if (listed.has(name) || mapped.has(name)) continue;

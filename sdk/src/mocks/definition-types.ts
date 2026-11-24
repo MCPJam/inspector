@@ -5,12 +5,17 @@
  * `params` and `answer`.
  *
  * Later stages add `prompts`, `resources` and `resourceTemplates` as more
- * optional maps on `MockDefinition`, and `answer.from` values `"saved"` and
- * `"model"` as more members of `MockAnswer`. The validator refuses them today.
+ * optional maps on `MockDefinition`, and `answer.from` value `"model"` as
+ * another member of `MockAnswer`. The validator refuses them today.
  */
 
 export type JsonValue =
-  string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
 
 export type JsonObject = { [key: string]: JsonValue };
 
@@ -32,8 +37,51 @@ export interface MockRealAnswer {
   arguments?: JsonObject;
 }
 
-/** Stage 3 adds `{ from: "saved" }` and `{ from: "model" }` here. */
-export type MockAnswer = MockRealAnswer;
+/** A protocol error a saved case answers with, as JSON-RPC carries it. */
+export interface MockSavedError {
+  code: number;
+  message: string;
+  data?: JsonValue;
+}
+
+/**
+ * One saved case. `when` is a subset of the call's input: every key listed
+ * must equal the call's value (deeply), extra input is ignored, and no `when`
+ * matches any input. Exactly one of `result` (a whole `CallToolResult`) or
+ * `error` (a protocol error) says what the mock answers. `{{input.x}}` in a
+ * string of the result, or of the error's message or data, is filled from the
+ * call's input.
+ */
+export interface MockSavedCase {
+  when?: JsonObject;
+  result?: JsonObject;
+  error?: MockSavedError;
+}
+
+/** Cases are tried in order and the first that matches answers. There is no memory of earlier calls. */
+export interface MockSavedAnswer {
+  from: "saved";
+  cases: MockSavedCase[];
+}
+
+export type MockAnswer = MockRealAnswer | MockSavedAnswer;
+
+/** Whether the mock answers this tool's calls itself, without calling a real tool. */
+export function answersItself(entry: MockTool | undefined): boolean {
+  const from = entry?.answer?.from;
+  return from === "saved";
+}
+
+/** The entry's answer when it calls a real tool; `undefined` when it answers itself. */
+export function realAnswerOf(
+  entry: MockTool | undefined
+): MockRealAnswer | undefined {
+  const answer = entry?.answer;
+  return answer && answer.from !== "saved" ? answer : undefined;
+}
+
+/** The most saved cases one tool may carry. */
+export const MAX_SAVED_CASES = 200;
 
 export interface MockToolAnnotations {
   title?: string;
@@ -89,6 +137,11 @@ export interface MockDefinition {
   serverInfo?: MockServerInfo;
   instructions?: string;
   capabilities?: MockCapabilities;
+  /**
+   * Lists the mock builds itself come in pages of this many entries. Left out,
+   * each list is one page.
+   */
+  pageSize?: number;
   tools?: Record<string, MockTool>;
 }
 

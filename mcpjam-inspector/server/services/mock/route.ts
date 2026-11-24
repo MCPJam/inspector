@@ -12,16 +12,24 @@
  * caller's own connection to the real server, so nothing of one caller's
  * credentials reaches another.
  */
-import { buildMock, type MockRealServer } from "@mcpjam/sdk/mocks";
+import { buildMock, type MockObservedEvent, type MockRealServer } from "@mcpjam/sdk/mocks";
 import type { ManagerCallerContext } from "../../routes/web/auth.js";
 import { logger } from "../../utils/logger.js";
 import { actorDigest, resolveMock, type ResolvedMock } from "./backend.js";
 import { leaseRealServer, type MockLease, type OpenReal } from "./connection.js";
 import { MockRefusal, mockRefusalResponse } from "./refusal.js";
+import { recordUnmatchedCalls } from "./unmatched.js";
 import type { MockDialProfile, MockDoorContext } from "./registry.js";
 
 export const MOCK_VERSION_HEADER = "x-mcpjam-mock-version";
 export const MOCK_LISTING_HASH_HEADER = "x-mcpjam-mock-real-listing-hash";
+/**
+ * Which calls of this response the mock answered itself, as `tool=source`
+ * pairs (tool names URL-encoded). It is the trace's mark, out of band: nothing
+ * in the result a model reads says so. Only a response that is complete when
+ * its headers go out can carry it; a streamed one is marked on the RPC log.
+ */
+export const MOCK_ANSWERED_HEADER = "x-mcpjam-mock-answered";
 export const DEFAULT_MOCK_PROFILE: MockDialProfile = { timeoutMs: 30_000 };
 
 /** Who is calling and how they proved it, whichever door they came through. */
@@ -32,6 +40,7 @@ export type MockDoor =
 export interface MockRouteDeps {
   open?: OpenReal;
   resolve?: typeof resolveMock;
+  recordUnmatched?: typeof recordUnmatchedCalls;
 }
 
 /**
@@ -149,8 +158,11 @@ export async function serveMock(
       real = realUnreachable(error);
     }
   }
+  const observed: MockObservedEvent[] = [];
   try {
-    const response = await buildMock(resolved.definition, real).fetch(request, {
+    const response = await buildMock(resolved.definition, real, {
+      observer: (event) => observed.push(event),
+    }).fetch(request, {
       // Names the caller by a digest; carries no credential.
       authInfo: {
         token: "",
@@ -160,13 +172,26 @@ export async function serveMock(
       },
     });
     const hash = lease?.real.listingHash();
+    const answered = observed.filter((e) => e.type === "answered");
+    const marks = answered.map((e) => `${encodeURIComponent(e.tool)}=${e.source}`);
+    // Whatever the response held back is reported once its body is done.
+    const settle = async () => {
+      const unmatched = observed.flatMap((e) =>
+        e.type === "unmatched" ? [{ mockId, version: resolved.version, tool: e.tool, arguments: e.arguments }] : [],
+      );
+      if (unmatched.length > 0) {
+        await (deps.recordUnmatched ?? recordUnmatchedCalls)({ caller: door.caller, bearerToken, calls: unmatched });
+      }
+      await lease?.release();
+    };
     return finish(
       response,
       {
         [MOCK_VERSION_HEADER]: String(resolved.version),
         ...(hash && { [MOCK_LISTING_HASH_HEADER]: hash }),
+        ...(marks.length > 0 && { [MOCK_ANSWERED_HEADER]: marks.join(",") }),
       },
-      lease?.release,
+      settle,
     );
   } catch (error) {
     await lease?.discard();

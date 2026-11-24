@@ -1,6 +1,7 @@
 import { checkDefinitionCaps } from "./definition-caps.js";
 import type { MockCapIssueCode } from "./definition-caps.js";
 import {
+  MAX_SAVED_CASES,
   MOCK_CAPABILITY_KEYS,
   MOCK_RESERVED_DEFINITION_KEYS,
 } from "./definition-types.js";
@@ -23,9 +24,17 @@ export interface MockIssue {
 }
 
 export type MockValidationResult =
-  { ok: true; definition: MockDefinition } | { ok: false; issues: MockIssue[] };
+  | { ok: true; definition: MockDefinition }
+  | { ok: false; issues: MockIssue[] };
 
-const TOP_FIELDS = ["serverInfo", "instructions", "capabilities", "tools"];
+const TOP_FIELDS = [
+  "serverInfo",
+  "instructions",
+  "capabilities",
+  "pageSize",
+  "tools",
+];
+const MAX_PAGE_SIZE = 1000;
 const TOOL_FIELDS = [
   "hidden",
   "title",
@@ -40,6 +49,9 @@ const TOOL_FIELDS = [
 ];
 const PARAM_FIELDS = ["hidden", "fixed", "description"];
 const ANSWER_FIELDS = ["from", "tool", "arguments"];
+const SAVED_ANSWER_FIELDS = ["from", "cases"];
+const SAVED_CASE_FIELDS = ["when", "result", "error"];
+const SAVED_ERROR_FIELDS = ["code", "message", "data"];
 const INFO_FIELDS = ["name", "title", "version"];
 const HINTS = [
   "readOnlyHint",
@@ -139,14 +151,74 @@ class Check {
     }
   }
 
+  savedAnswer(value: Obj, path: string): void {
+    this.fields(value, SAVED_ANSWER_FIELDS, path);
+    const cases = value.cases;
+    if (!Array.isArray(cases) || cases.length === 0) {
+      this.add(
+        "invalid_type",
+        at(path, "cases"),
+        `${at(path, "cases")} must be a list with at least one case. Add a case, or leave answer out to call the real tool.`
+      );
+      return;
+    }
+    if (cases.length > MAX_SAVED_CASES) {
+      this.add(
+        "invalid_value",
+        at(path, "cases"),
+        `A tool may have ${MAX_SAVED_CASES} saved cases at most. Merge cases that differ only by input, using {{input.x}}.`
+      );
+      return;
+    }
+    cases.forEach((entry, i) => this.savedCase(entry, at(path, `cases.${i}`)));
+  }
+
+  savedCase(value: unknown, path: string): void {
+    if (!this.object(value, path)) return;
+    this.fields(value, SAVED_CASE_FIELDS, path);
+    if ("when" in value) this.object(value.when, at(path, "when"));
+    const hasResult = "result" in value;
+    const hasError = "error" in value;
+    if (hasResult === hasError) {
+      this.add(
+        "invalid_value",
+        path,
+        `${path} must have exactly one of "result" (the tool's whole result) or "error" (a protocol error).`
+      );
+    }
+    if (hasResult && this.object(value.result, at(path, "result"))) {
+      if (!Array.isArray(value.result.content)) {
+        this.add(
+          "invalid_type",
+          at(path, "result.content"),
+          `${at(path, "result.content")} must be a list of content blocks, as a tool result carries. Use [] for none.`
+        );
+      }
+    }
+    if (hasError && this.object(value.error, at(path, "error"))) {
+      const error = value.error;
+      const p = at(path, "error");
+      this.fields(error, SAVED_ERROR_FIELDS, p);
+      if (!Number.isInteger(error.code)) {
+        this.add(
+          "invalid_type",
+          at(p, "code"),
+          `${at(p, "code")} must be an integer JSON-RPC error code.`
+        );
+      }
+      this.string(error.message, at(p, "message"), true);
+    }
+  }
+
   answer(value: unknown, path: string): void {
     if (!this.object(value, path)) return;
     const from = value.from;
-    if (from === "saved" || from === "model") {
+    if (from === "saved") return this.savedAnswer(value, path);
+    if (from === "model") {
       this.add(
         "answer_not_supported",
         at(path, "from"),
-        `Answers from "${from}" are not available yet. Use "real", or leave answer.from out.`
+        `Answers from "${from}" are not available yet. Use "saved", "real", or leave answer.from out.`
       );
       return;
     }
@@ -154,7 +226,7 @@ class Check {
       this.add(
         "invalid_value",
         at(path, "from"),
-        `answer.from must be "real", not ${JSON.stringify(from)}. Use "real", or leave it out.`
+        `answer.from must be "real" or "saved", not ${JSON.stringify(from)}. Use one of them, or leave it out.`
       );
       return;
     }
@@ -272,6 +344,20 @@ export function validateMockDefinition(input: unknown): MockValidationResult {
       }
     }
     if ("instructions" in input) c.string(input.instructions, "instructions");
+    if (
+      "pageSize" in input &&
+      !(
+        Number.isInteger(input.pageSize) &&
+        (input.pageSize as number) >= 1 &&
+        (input.pageSize as number) <= MAX_PAGE_SIZE
+      )
+    ) {
+      c.add(
+        "invalid_value",
+        "pageSize",
+        `pageSize must be a whole number from 1 to ${MAX_PAGE_SIZE}. Remove it to list everything in one page.`
+      );
+    }
     if ("capabilities" in input)
       c.capabilities(input.capabilities, "capabilities");
     if ("tools" in input && c.object(input.tools, "tools")) {

@@ -1,5 +1,6 @@
 import type { Tool } from "@modelcontextprotocol/server";
 import { canonicalDigest } from "../contract/index.js";
+import { answersItself, realAnswerOf } from "./definition-types.js";
 import type {
   JsonObject,
   MockDefinition,
@@ -88,7 +89,13 @@ export function resolveMockTools(
   const missing: MissingEditedTool[] = [];
   const listEntry = (key: string, entry: MockTool): Tool | undefined => {
     const realTool = realToolNameFor(key, entry);
-    const real = realByName.get(realTool);
+    // A tool that answers for itself needs no real tool: when the real server
+    // lacks it, it is an added tool, listed from the entry alone.
+    const real =
+      realByName.get(realTool) ??
+      (answersItself(entry)
+        ? ({ name: key, inputSchema: { type: "object" } } as Tool)
+        : undefined);
     if (!real) {
       missing.push({ tool: key, realTool });
       return undefined;
@@ -122,7 +129,7 @@ export function planToolCall(
     if (edit.hidden === true || "fixed" in edit) delete sent[param];
     if ("fixed" in edit) sent[param] = edit.fixed;
   }
-  Object.assign(sent, entry?.answer?.arguments);
+  Object.assign(sent, realAnswerOf(entry)?.arguments);
   return {
     realName: entry ? realToolNameFor(name, entry) : name,
     arguments: sent,

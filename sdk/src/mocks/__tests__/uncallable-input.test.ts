@@ -104,4 +104,60 @@ describe("findUncallableInputs", () => {
       findUncallableInputs({ tools: { search: { hidden: true } } }, realTools)
     ).toEqual([]);
   });
+
+  it("passes an entry with saved answers, which never calls the real tool", () => {
+    const saved = {
+      from: "saved" as const,
+      cases: [{ result: { content: [] } }],
+    };
+    expect(
+      findUncallableInputs(
+        {
+          tools: {
+            search: { params: { limit: { hidden: true } }, answer: saved },
+          },
+        },
+        realTools
+      )
+    ).toEqual([]);
+  });
+
+  it("refuses a listed parameter that a strict real tool would reject as extra", () => {
+    const issues = findUncallableInputs(
+      {
+        tools: {
+          search: {
+            inputSchema: {
+              type: "object",
+              properties: { q: {}, limit: {}, lang: {} },
+            },
+          },
+        },
+      },
+      realTools
+    );
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({
+      code: "uncallable_input",
+      path: "tools.search.inputSchema.properties.lang",
+    });
+    expect(issues[0].message).toContain('"lang"');
+    // Hiding it, or a real tool that allows extras, is fine.
+    expect(
+      findUncallableInputs(
+        {
+          tools: {
+            search: {
+              inputSchema: {
+                type: "object",
+                properties: { q: {}, limit: {}, lang: {} },
+              },
+              params: { lang: { hidden: true } },
+            },
+          },
+        },
+        realTools
+      )
+    ).toEqual([]);
+  });
 });

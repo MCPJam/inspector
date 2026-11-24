@@ -12,7 +12,11 @@ import { makeFunctionReference } from "convex/server";
 import { diffMockDefinitions, type MockChange, type MockDefinition } from "@mcpjam/sdk/mocks";
 import { listAllTools } from "@mcpjam/sdk/operations";
 import { ALL_CLIENTS, whatCanChange } from "@mcpjam/sdk/climbs";
-import type { PlatformMockSaved, PlatformMockServer } from "@mcpjam/sdk/platform";
+import type {
+  PlatformMockSaved,
+  PlatformMockServer,
+  PlatformMockUnmatchedCall,
+} from "@mcpjam/sdk/platform";
 import { projectServerSchema, runEphemeralConnection } from "../web/auth.js";
 import { ErrorCode, WebRouteError, parseWithSchema } from "../web/errors.js";
 import { logger } from "../../utils/logger.js";
@@ -38,6 +42,7 @@ const fn = {
   create: makeFunctionReference<"mutation">("mockServers:createMock"),
   save: makeFunctionReference<"mutation">("mockServers:saveMockVersion"),
   get: makeFunctionReference<"query">("mockServers:getMock"),
+  unmatched: makeFunctionReference<"query">("mockAnswers:listUnmatchedCalls"),
 };
 
 /** `mockServers:getMock`'s row. The definition crosses Convex as JSON text. */
@@ -247,6 +252,19 @@ async function readRealForGet(
   }
 }
 
+/** The calls no saved answer matched. A list that cannot be read is empty: the mock reads without it. */
+async function readUnmatched(token: string, mockId: string): Promise<PlatformMockUnmatchedCall[]> {
+  try {
+    return await createConvexClient(token).query(fn.unmatched, { mockId });
+  } catch (error) {
+    logger.warn("[v1.mock-servers] unmatched calls not read for get_mock_server", {
+      mockId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+}
+
 // GET /v1/projects/:projectId/mock-servers/:mockId?version=&since=
 mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
   const projectId = projectIdOf(c);
@@ -269,6 +287,7 @@ mockServers.get("/projects/:projectId/mock-servers/:mockId", async (c) => {
     ...(earlier
       ? { sinceVersion: earlier.version, changes: diffMockDefinitions(JSON.parse(earlier.definitionJson), definition) }
       : {}),
+    unmatchedCalls: await readUnmatched(await getConvexBearerForRequest(c), row.mockId),
     ...(await readRealForGet(c, projectId, row, definition)),
   };
   return v1Resource(c, dto);

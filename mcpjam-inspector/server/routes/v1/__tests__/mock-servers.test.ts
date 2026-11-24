@@ -146,6 +146,7 @@ beforeEach(() => {
   queries = {
     "mockServers:getMock": () =>
       stored({ tools: { search: { description: "Find things." } } }),
+    "mockAnswers:listUnmatchedCalls": () => [],
   };
   mutations = {
     "mockServers:createMock": () => ({
@@ -570,6 +571,26 @@ describe("GET /projects/:projectId/mock-servers/:mockId", () => {
     expect(calls(mocks.query, "mockServers:getMock")).toEqual([
       { mockId: MOCK },
     ]);
+  });
+
+  it("lists the calls no saved answer matched, and reads without them when the list cannot be read", async () => {
+    const seen = {
+      tool: "search",
+      arguments: { query: "x", lang: "fr" },
+      version: 2,
+      count: 3,
+      lastSeenAt: 9,
+    };
+    queries["mockAnswers:listUnmatchedCalls"] = () => [seen];
+    const body = await json(request("GET", ONE));
+    expect(body.unmatchedCalls).toEqual([seen]);
+    expect(calls(mocks.query, "mockAnswers:listUnmatchedCalls")).toEqual([{ mockId: MOCK }]);
+    queries["mockAnswers:listUnmatchedCalls"] = () => {
+      throw new Error("not deployed");
+    };
+    const again = await json(request("GET", ONE));
+    expect(again.unmatchedCalls).toEqual([]);
+    expect(again.definition).toBeDefined();
   });
 
   it("reads a named version and lists what changed since another", async () => {
