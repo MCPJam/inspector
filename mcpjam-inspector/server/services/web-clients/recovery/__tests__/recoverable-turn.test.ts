@@ -195,8 +195,13 @@ describe("runRecoverableWebTurn", () => {
     const ledger = createInMemoryToolCallLedger();
     // A wake is the only way out of a pause here: no poll comes in time.
     const setup = { backendFor: () => backend, ledger, pollMs: 60_000 };
-    const pausedOn = (stops: WebRunStop[]) => (stop: WebRunStop) =>
-      stops.push(stop);
+    const stopHeartbeatA = vi.fn();
+    const stopHeartbeatB = vi.fn();
+    const pausedOn = (stops: WebRunStop[], stopHeartbeat: () => void) =>
+      (stop: WebRunStop) => {
+        stops.push(stop);
+        return stopHeartbeat;
+      };
     const aPaused: WebRunStop[] = [];
     const bPaused: WebRunStop[] = [];
     const a = environmentOn("account-a", [signedOut, replied()]);
@@ -207,13 +212,13 @@ describe("runRecoverableWebTurn", () => {
     const turnA = runRecoverableWebTurn(
       playgroundTurn(a),
       { ...setup, maxPauseMs: 4_000 },
-      pausedOn(aPaused),
+      pausedOn(aPaused, stopHeartbeatA),
     );
     await vi.waitFor(() => expect(aPaused).toHaveLength(1));
     const turnB = runRecoverableWebTurn(
       playgroundTurn(b, stopB.signal),
       { ...setup, maxPauseMs: 60_000 },
-      pausedOn(bPaused),
+      pausedOn(bPaused, stopHeartbeatB),
     );
     await vi.waitFor(() => expect(bPaused).toHaveLength(1));
     const [requestA, requestB] = [aPaused[0], bPaused[0]].map((stop) =>
@@ -246,6 +251,8 @@ describe("runRecoverableWebTurn", () => {
     });
     expect(await turnA).toMatchObject({ ok: true });
     expect(triesOf(a)).toBe(2);
+    expect(stopHeartbeatA).toHaveBeenCalledOnce();
+    expect(stopHeartbeatB).not.toHaveBeenCalled();
     // B's account is still signed out, so its turn still waits.
     expect(triesOf(b)).toBe(1);
     stopB.abort();
@@ -254,6 +261,7 @@ describe("runRecoverableWebTurn", () => {
       stop: { kind: "paused_for_person", requestId: requestB },
     });
     expect(triesOf(b)).toBe(1);
+    expect(stopHeartbeatB).toHaveBeenCalledOnce();
   });
 
   it("opens the account's sign-in request when the last try finds it signed out", async () => {
@@ -432,13 +440,17 @@ describe("runRecoverableWebTurn", () => {
     const firstTurn = runRecoverableWebTurn(
       playgroundTurn(first),
       setup,
-      (stop) => paused.push(stop),
+      (stop) => {
+        paused.push(stop);
+      },
     );
     await vi.waitFor(() => expect(paused).toHaveLength(1));
     const secondTurn = runRecoverableWebTurn(
       playgroundTurn(second),
       setup,
-      (stop) => paused.push(stop),
+      (stop) => {
+        paused.push(stop);
+      },
     );
     await vi.waitFor(() => expect(paused).toHaveLength(2));
     const [requestId, other] = paused.map((stop) =>
