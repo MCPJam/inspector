@@ -8,8 +8,8 @@ import type { MCPClientManager } from "@mcpjam/sdk";
  *
  *   1. SAME TERMS AS THE PLAYGROUND. Behind `MCPJAM_HARNESS_API_WARM`, an API
  *      turn's manager is admitted exactly when `admitWarmChatManager` would
- *      admit the web route's: the organization's warm switch is on, and any
- *      servers the manager holds were authorized for that organization.
+ *      admit the web route's: the backend named the project's organization,
+ *      and any servers the manager holds were authorized for it.
  *   2. THE BACKEND'S ORGANIZATION. The organization is the one the backend's
  *      capabilities read returned for the project, never the request's or the
  *      API key's own.
@@ -199,8 +199,6 @@ beforeEach(() => {
   process.env.E2B_API_KEY = "e2b";
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "secret";
   process.env.MCPJAM_HARNESS_API_WARM = "true";
-  delete process.env.MCPJAM_HOSTED_WARM_AGENT;
-  delete process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS;
   __setHostedCatalogForTests([MODEL]);
   projectOrganization = "org_a";
   serverOrganization = "org_a";
@@ -283,20 +281,6 @@ describe("an API turn is admitted on the Playground's terms", () => {
       false,
     ],
     [
-      "refuses when warm reuse is off for every organization",
-      () => {
-        process.env.MCPJAM_HOSTED_WARM_AGENT = "false";
-      },
-      false,
-    ],
-    [
-      "refuses an organization the warm switch leaves out",
-      () => {
-        process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS = "org_other";
-      },
-      false,
-    ],
-    [
       "refuses servers authorized for another organization",
       () => {
         serverOrganization = "org_b";
@@ -327,13 +311,15 @@ describe("an API turn is admitted on the Playground's terms", () => {
   });
 
   it("keys the organization on the backend's answer, not the API key's", async () => {
-    process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS = "org_key";
-    await send(firstTurn(), "org_key");
-    expect(ranWarm()).toBe(false);
-
-    process.env.MCPJAM_HOSTED_WARM_AGENT_ORG_IDS = "org_a";
+    // The servers were authorized for the project's organization: only a
+    // check against the backend's answer admits them.
     await send(firstTurn(), "org_key");
     expect(ranWarm()).toBe(true);
+
+    // Authorized for the key's own organization instead, they are refused.
+    serverOrganization = "org_key";
+    await send(firstTurn(), "org_key");
+    expect(ranWarm()).toBe(false);
   });
 });
 

@@ -4,10 +4,6 @@ import { TurnResources } from "../../services/chat-turn/resources.js";
 import { prepareTurnAuthorization } from "../../services/chat-turn/turn-authorization.js";
 import { environmentSelectsSecretDelivery } from "../../utils/harness/environment-secret-delivery.js";
 import { canProvisionHarnessBoxes } from "../../utils/harness/harness-box.js";
-import {
-  harnessPrepareBoxEnabled,
-  harnessPrepareBoxSwitchedOn,
-} from "../../utils/harness/harness-flags.js";
 import { OrgLeaseTurn } from "../../utils/harness/org-lease-turn.js";
 import { isHarnessId } from "../../utils/harness/registry.js";
 import {
@@ -32,12 +28,13 @@ type Skip = Extract<BoxPreparationOutcome, { outcome: "skipped" }>["reason"];
  * typed (`prepare-conversation-box.ts`), after the turn's own setup
  * up to the box: the same project and turn authorization, the same client and
  * environment resolution. Answers a closed outcome, which the client ignores;
- * a setup the turn route would refuse is refused the same way here.
+ * a setup the turn route would refuse is refused the same way here. Who gets
+ * it is the backend's `harness-box-preparation-enabled` flag, checked before
+ * anything boots; the browser asks only when that flag is on for the member.
  */
 chatPrepare.post("/prepare", async (c) => {
   const skip = (reason: Skip) =>
     c.json({ outcome: "skipped", reason } satisfies BoxPreparationOutcome);
-  if (!harnessPrepareBoxSwitchedOn()) return skip("disabled");
   const bearerToken = assertBearerToken(c);
   // No message exists yet; nothing in the setup may read one.
   const rawBody = {
@@ -67,9 +64,8 @@ chatPrepare.post("/prepare", async (c) => {
   } = setup.value;
   const harness = resolvedExecution.harness;
   const chatSessionId = hostedBody.chatSessionId;
-  if (!harnessPrepareBoxEnabled(authorizedOrganizationId)) {
-    return skip("disabled");
-  }
+  // The backend prepares only for an organization; ask it nothing without one.
+  if (!authorizedOrganizationId) return skip("disabled");
   // The conversation's own box: a runtime on the customer's account takes it
   // for that credential (`credential`), every other for the chat. A compare
   // column's box is its own.
