@@ -1520,6 +1520,25 @@ describe("ensureBrowserSession — sandbox target", () => {
     ).rejects.toBeInstanceOf(FreshProfileRefusedError);
     expect(raced.sandbox.killBrowserd).not.toHaveBeenCalled();
     expect(raced.boot).not.toHaveBeenCalled();
+    // So is one whose record wins after our own fresh boot: ours is stopped,
+    // and theirs is not adopted.
+    const lost = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({
+        kind: "ok",
+        bootId: "boot-winner",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    });
+    await expect(
+      ensureBrowserSession(lost.deps, { ...SANDBOX_ARGS, freshProfile: true }),
+    ).rejects.toBeInstanceOf(FreshProfileRefusedError);
+    expect(lost.bootHandle.stop).toHaveBeenCalled();
   });
 
   it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {

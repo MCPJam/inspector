@@ -1586,9 +1586,11 @@ async function bootAndPublish<THandle>(
   const recorded = await args.publish(booted);
   if (recorded.status === "conflict") {
     // Stop our own daemon first (the winner's session must be verified against
-    // a box we are no longer fighting over), then adopt the winner.
+    // a box we are no longer fighting over), then adopt the winner. Never for
+    // a fresh profile: the winner's browser may not have started from one.
     await booted.stop().catch(() => {});
     args.onAdopt?.();
+    if (args.freshProfile) throw new FreshProfileRefusedError();
     const adopted = await args.reuseAgain();
     if (adopted) return { kind: "adopted", handle: adopted };
     throw new Error(
