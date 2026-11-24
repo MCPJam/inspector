@@ -36,6 +36,14 @@ export const CONFIRM_CLIMB_PROPOSAL: GatedProposalMeta = {
   confirmSeverity: "spend",
 };
 
+export const VERIFY_CLIMB_PROPOSAL: GatedProposalMeta = {
+  describe: (input) =>
+    `Verify climb ${text(input, "climb") ?? "(unnamed)"} on the real server: two run groups, the server as it is and the server with a mock that puts the old values back${text(input, "commit") ? `, recording commit ${text(input, "commit")}` : ""}`,
+  buttonLabel: "Run the verification",
+  kind: "start",
+  confirmSeverity: "spend",
+};
+
 export const START_CLIMB_PROPOSAL: GatedProposalMeta = {
   describe: (input) =>
     `Start a climb of ${text(input, "server") ?? "(unnamed server)"} on suite ${text(input, "suite") ?? "(unnamed)"}: ` +

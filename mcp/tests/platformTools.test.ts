@@ -172,6 +172,7 @@ const PLAIN_TOOLS = [
   "set_climb_round_decision",
   "stop_climb",
   "confirm_climb",
+  "verify_climb",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -533,6 +534,7 @@ describe("platform tool registration", () => {
       "set_climb_round_decision",
       "stop_climb",
       "confirm_climb",
+      "verify_climb",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",
@@ -862,7 +864,7 @@ describe("platform tool registration", () => {
     for (const name of ["get_climb", "list_climbs", "get_climb_round"]) {
       expect(annotationsOf(name), name).toMatchObject({ readOnlyHint: true });
     }
-    for (const name of ["start_climb", "submit_climb_round", "confirm_climb", "stop_climb"]) {
+    for (const name of ["start_climb", "submit_climb_round", "confirm_climb", "verify_climb", "stop_climb"]) {
       expect(annotationsOf(name), name).toMatchObject({ readOnlyHint: false, destructiveHint: true });
       expect(annotationsOf(name)?.openWorldHint, name).toBe(true);
     }

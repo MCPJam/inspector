@@ -8,6 +8,8 @@ import {
   getClimbOperation,
   getClimbRoundOperation,
   type ConfirmClimbInput,
+  type VerifyClimbInput,
+  verifyClimbOperation,
 } from "@mcpjam/sdk/platform";
 import { usageError } from "./output.js";
 
@@ -108,4 +110,27 @@ export async function waitForConfirmation(
     await new Promise((resolve) => setTimeout(resolve, 10_000));
   }
   return confirmed;
+}
+
+/**
+ * `verify --wait`: the first call launches and holds for at most a minute; then
+ * the climb is read until its newest verification has settled or the bound
+ * passes. A verification is never launched twice by waiting.
+ */
+export async function waitForVerification(
+  input: VerifyClimbInput & { wait?: boolean; waitSeconds?: number },
+  context: Context
+): Promise<Awaited<ReturnType<typeof verifyClimbOperation.execute>>> {
+  const { wait, waitSeconds, ...verify } = input;
+  const hold = wait && !verify.dryRun ? Math.min(MAX_ROUND_WAIT_SECONDS, waitSeconds ?? WAIT_SECONDS_DEFAULT) : 0;
+  const verified = await verifyClimbOperation.execute({ ...verify, waitSeconds: hold }, context);
+  const deadline = Date.now() + (waitSeconds ?? WAIT_SECONDS_DEFAULT) * 1000;
+  while (wait && verified.ran && !verified.settled && Date.now() < deadline) {
+    const climb = await getClimbOperation.execute({ project: input.project, climb: input.climb }, context);
+    const report = climb.verificationReports?.find((entry) => entry.index === verified.verificationIndex);
+    const record = climb.verifications.find((entry) => entry.index === verified.verificationIndex);
+    if (report && record && record.status !== "running") return { ...verified, settled: true, report };
+    await new Promise((resolve) => setTimeout(resolve, 10_000));
+  }
+  return verified;
 }

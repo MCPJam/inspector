@@ -29,6 +29,7 @@
   "set_climb_round_decision",
   "stop_climb",
   "confirm_climb",
+  "verify_climb",
   "list_server_accounts",
   "get_server_account",
   "upload_server_account_tokens",

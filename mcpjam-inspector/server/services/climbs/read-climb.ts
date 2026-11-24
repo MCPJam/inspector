@@ -9,11 +9,13 @@ import {
   climbForOptions,
   suiteCheck,
   summarizeConfirmation,
+  verificationReport,
   whatCanChange,
   type ChangeEntry,
   type ClimbForOption,
   type ConfirmationSummary,
   type SuiteCheck,
+  type VerificationReport,
 } from "@mcpjam/sdk/climbs";
 import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import { logger } from "../../utils/logger.js";
@@ -29,13 +31,15 @@ export type ClimbRead = PlatformClimb & {
   whatCanChange?: ChangeEntry[];
   /** The confirmation's difference and interval once it has settled. */
   confirmationResult?: ConfirmationSummary;
+  verificationReports?: VerificationReport[];
   /** What this read could not do, in words a caller can act on. */
   notes: string[];
 };
 
 export async function readClimbInFull(deps: ClimbDeps, climb: PlatformClimb): Promise<ClimbRead> {
   const check = suiteCheck(climb);
-  if (!climb.baseline) return { ...climb, suiteCheck: check, notes: ["The baseline has not settled yet. Read the climb again when its state is ready."] };
+  const reports = climb.verifications.length > 0 ? { verificationReports: climb.verifications.map((entry) => verificationReport(climb, entry)) } : {};
+  if (!climb.baseline) return { ...climb, ...reports, suiteCheck: check, notes: ["The baseline has not settled yet. Read the climb again when its state is ready."] };
 
   const notes: string[] = [];
   const { projectId } = climb;
@@ -55,11 +59,12 @@ export async function readClimbInFull(deps: ClimbDeps, climb: PlatformClimb): Pr
   if (!available) notes.push("This backend does not return the baseline's runs yet, so no failed runs are shown.");
 
   const options = climbForOptions(climb, evidence, { toolCount: server?.tools.length });
-  if (!server) return { ...climb, suiteCheck: check, climbFor: options, ...(confirmationResult ? { confirmationResult } : {}), notes };
+  if (!server) return { ...climb, ...reports, suiteCheck: check, climbFor: options, ...(confirmationResult ? { confirmationResult } : {}), notes };
   const [clients, tried] = await Promise.all([clientsOfClimb(deps.convex, climb), loadRoundChanges(deps.convex, climb)]);
   const view = { serverInfo: server.serverInfo, instructions: server.instructions, tools: server.tools };
   return {
     ...climb,
+    ...reports,
     suiteCheck: check,
     climbFor: options,
     whatCanChange: whatCanChange({ server: view, clients, evidence, tried }),

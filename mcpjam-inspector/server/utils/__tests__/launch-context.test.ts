@@ -194,3 +194,10 @@ describe("parseCiHeader", () => {
     expect(parseCiHeader(JSON.stringify({ runUrl }))).toEqual({ runUrl });
   });
 });
+
+describe("the CI header's dirty flag", () => {
+  it("carries whether the checkout had uncommitted changes, and drops anything but a boolean", () => {
+    expect(parseCiHeader(JSON.stringify({ commitSha: "abc", dirty: true }))).toEqual({ commitSha: "abc", dirty: true });
+    expect(parseCiHeader(JSON.stringify({ commitSha: "abc", dirty: "yes" }))).toEqual({ commitSha: "abc" });
+  });
+});

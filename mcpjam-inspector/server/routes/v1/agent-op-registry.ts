@@ -163,6 +163,7 @@ import {
   setClimbRoundDecisionOperation,
   submitClimbRoundOperation,
   confirmClimbOperation,
+  verifyClimbOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -232,7 +233,7 @@ import {
 } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { logger } from "../../utils/logger.js";
-import { CONFIRM_CLIMB_PROPOSAL, START_CLIMB_PROPOSAL, SUBMIT_CLIMB_ROUND_PROPOSAL } from "./agent-climb-entries.js";
+import { CONFIRM_CLIMB_PROPOSAL, START_CLIMB_PROPOSAL, SUBMIT_CLIMB_ROUND_PROPOSAL, VERIFY_CLIMB_PROPOSAL } from "./agent-climb-entries.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -1789,6 +1790,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: setClimbRoundDecisionOperation, tier: "direct" },
   { operation: submitClimbRoundOperation, tier: "gated", proposal: SUBMIT_CLIMB_ROUND_PROPOSAL },
   { operation: confirmClimbOperation, tier: "gated", proposal: CONFIRM_CLIMB_PROPOSAL },
+  { operation: verifyClimbOperation, tier: "gated", proposal: VERIFY_CLIMB_PROPOSAL },
   { operation: startClimbOperation, tier: "gated", proposal: START_CLIMB_PROPOSAL },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.

@@ -5,6 +5,8 @@
  */
 import type { ChangeEntry, ClimbForOption, SuiteCheck } from "../climbs/types.js";
 import type { ClimbSummary, ConfirmationSummary } from "../climbs/summary.js";
+import type { ListingCheck } from "../climbs/listing-check.js";
+import type { VerificationReport } from "../climbs/verification.js";
 
 export type PlatformClimbMeasure = "pass_rate" | "tokens" | "cost" | "tool_calls";
 export type PlatformClimbState = "baselining" | "ready" | "running" | "stopped";
@@ -141,6 +143,8 @@ export type PlatformClimb = PlatformClimbBase & {
   whatCanChange?: ChangeEntry[];
   /** Once a confirmation has settled: its per-environment difference and 95% interval, computed on read. */
   confirmationResult?: ConfirmationSummary;
+  /** Each verification as a reader wants it: whether the gain holds, both gains, the baseline then and now, the commit. */
+  verificationReports?: VerificationReport[];
   /** What this read could not do, in words a caller can act on. */
   notes?: string[];
 };
@@ -282,5 +286,29 @@ export type PlatformClimbConfirmed = {
   result?: ConfirmationSummary;
   summary?: ClimbSummary;
   /** False when the call returned with the confirmation still running: read `get_climb` for it. */
+  settled: boolean;
+};
+
+/** `verify_climb`: the listing check, and when it ran, the pair of run groups and the verdict. */
+export type PlatformClimbVerified = {
+  climbId: string;
+  suiteId: string;
+  dryRun: boolean;
+  /** False for a dry run, and when the listing check stopped it. */
+  ran: boolean;
+  /** Each kept change against the server's listing now: applied, missing or different. */
+  listingCheck: ListingCheck;
+  /** Why no run started, when the check found a change missing or different and `runAnyway` was not given. */
+  blockedBecause?: string;
+  estimate: PlatformClimbEstimate;
+  /** `paired`: the server beside the mock that puts the old values back. `server_only`: a kept change cannot be put back. */
+  mode: "paired" | "server_only";
+  /** What could not be put back, and why: the reason only the server runs. */
+  unrestorable: Array<{ path: string; why: string }>;
+  unitKey?: string;
+  verificationIndex?: number;
+  groups?: PlatformClimbLaunchedGroup[];
+  /** Present once the verification settled within the wait. */
+  report?: VerificationReport;
   settled: boolean;
 };

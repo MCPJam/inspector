@@ -14,13 +14,15 @@ import {
   setClimbRoundDecisionOperation,
   stopClimbOperation,
   submitClimbRoundOperation,
+  verifyClimbOperation,
   getClimbRoundOperation,
   suitePermalink,
   type ConfirmClimbInput,
   type SubmitClimbRoundInput,
+  type VerifyClimbInput,
 } from "@mcpjam/sdk/platform";
 import { usageError } from "../lib/output.js";
-import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, waitForConfirmation, waitForRound } from "../lib/climb-command.js";
+import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, waitForConfirmation, waitForRound, waitForVerification } from "../lib/climb-command.js";
 import {
   addProjectOption,
   bindOperation,
@@ -33,6 +35,7 @@ type Wait = { wait?: boolean; waitSeconds?: string };
 type RoundOptions = PlatformOptions & Wait & { project?: string; climb: string; round: string };
 type SubmitInput = SubmitClimbRoundInput & { wait?: boolean; waitSeconds?: number };
 type ConfirmInput = ConfirmClimbInput & { wait?: boolean; waitSeconds?: number };
+type VerifyInput = VerifyClimbInput & { wait?: boolean; waitSeconds?: number };
 
 function decisionOf(value: string): "kept" | "reverted" {
   if (value === "kept" || value === "reverted") return value;
@@ -149,6 +152,49 @@ export function registerClimbRoundCommands(climbs: Command): void {
       project: options.project,
       climb: options.climb,
       dryRun: options.dryRun,
+      wait: options.wait,
+      waitSeconds: waitSeconds(options),
+    }),
+  );
+
+  bindOperation(
+    addProjectOption(
+      climbs
+        .command("verify")
+        .description(
+          "After the kept changes are in the server's code, check the gain on the real server. Names each kept change as applied, missing or different and starts no run unless --run-anyway; then runs the server beside a mock that puts the old values back. THIS LAUNCHES PAID RUNS",
+        )
+        .requiredOption("--climb <id>", "The climb's ID")
+        .option("--commit <sha>", "The commit the server runs, recorded on the runs and the climb")
+        .option("--branch <name>", "The branch of that commit")
+        .option("--repository-url <url>", "The repository's URL")
+        .option("--dirty", "The checkout had uncommitted changes")
+        .option("--server <id-or-name>", "A saved server that runs the new code, in place of the climbed one")
+        .option("--server-version <v>", "The version the server reports")
+        .option("--dry-run", "Print the listing check and the estimate and start nothing")
+        .option("--run-anyway", "Run the pair although a kept change is missing or different")
+        .option(WAIT_FLAG, "Wait for the verification to settle")
+        .option(WAIT_SECONDS_FLAG, `How long --wait may take (default ${WAIT_SECONDS_DEFAULT})`),
+    ),
+    {
+      name: verifyClimbOperation.name,
+      permalink: suitePermalink,
+      execute: (input: VerifyInput, context) => waitForVerification(input, context),
+    },
+    (
+      options: PlatformOptions &
+        Wait & { project?: string; climb: string; commit?: string; branch?: string; repositoryUrl?: string; dirty?: boolean; server?: string; serverVersion?: string; dryRun?: boolean; runAnyway?: boolean },
+    ) => ({
+      project: options.project,
+      climb: options.climb,
+      commit: options.commit,
+      branch: options.branch,
+      repositoryUrl: options.repositoryUrl,
+      dirty: options.dirty,
+      server: options.server,
+      serverVersion: options.serverVersion,
+      dryRun: options.dryRun,
+      runAnyway: options.runAnyway,
       wait: options.wait,
       waitSeconds: waitSeconds(options),
     }),

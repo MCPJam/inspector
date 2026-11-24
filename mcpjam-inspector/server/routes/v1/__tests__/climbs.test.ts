@@ -29,7 +29,7 @@ vi.mock("../../web/auth.js", async () => {
     ...actual,
     runEphemeralConnection: async (_c: unknown, rawBody: Record<string, unknown>, schema: { parse(v: unknown): { serverId: string } }, fn: (m: unknown, b: { serverId: string }, r: object) => Promise<unknown>) => {
       const body = schema.parse(rawBody);
-      return fn({ listTools: async () => ({ tools: [{ name: "echo", inputSchema: { type: "object" } }] }) }, body, {});
+      return fn({ listTools: async () => ({ tools: [{ name: "echo", inputSchema: { type: "object" } }] }), getInitializationInfo: () => undefined }, body, {});
     },
   };
 });
@@ -63,6 +63,8 @@ function request(method: string, path: string, body?: unknown, headers: Record<s
 }
 
 const climbRow = (over: Record<string, unknown> = {}) => ({
+  rounds: [],
+  verifications: [],
   climbId: CLIMB,
   suiteId: SUITE,
   projectId: PROJECT,
@@ -110,6 +112,8 @@ beforeEach(() => {
         { status: 202 },
       );
     }
+    // A server's stored revisions: none, so a verification cannot tell missing from different.
+    if (req.url.includes("/revisions")) return Response.json({ items: [] });
     return Response.json({}, { status: 200 });
   });
   queries = {
@@ -497,5 +501,30 @@ describe("confirmation", () => {
   it("bounds the wait and refuses an unknown field", async () => {
     expect((await request("POST", CONFIRM, { waitSeconds: 500 })).status).toBe(400);
     expect((await request("POST", CONFIRM, { wait: true })).status).toBe(400);
+  });
+});
+
+describe("verifications", () => {
+  const VERIFY = `${CLIMBS}/${CLIMB}/verifications`;
+  beforeEach(() => {
+    queries["climbs:getClimb"] = () => climbRow({ state: "stopped", createdAt: 1000, best: { serverId: "s_best", serverVersion: "3", roundNumber: 1 }, verifications: [] });
+    queries["climbFinish:planClimbFinish"] = () => ({ allowed: true, caseIds: ["c1"], environmentIds: ["env_a"], confirmationCasesUsedBy: [] });
+    queries["mockServers:getMock"] = () => ({ definitionJson: JSON.stringify({ tools: { search: { description: "Search the index." } } }) });
+  });
+
+  it("answers a dry run with the listing check and the estimate, and starts nothing", async () => {
+    const res = await request("POST", VERIFY, { dryRun: true, commit: { sha: "abc" } });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body).toMatchObject({ dryRun: true, ran: false, listingCheck: { different: 1 }, mode: "server_only" });
+    expect(launches.filter((launch) => launch.path.includes("eval-run-groups"))).toEqual([]);
+  });
+
+  it("refuses a limit, a mock target and an unknown field by name", async () => {
+    queries["climbFinish:planClimbFinish"] = () => ({ allowed: false, refusal: { code: "CLIMB_VERIFY_TARGET_IS_MOCK", message: "The target is a mock. Verify a saved server that is not one." }, caseIds: [], environmentIds: [], confirmationCasesUsedBy: [] });
+    const res = await request("POST", VERIFY, { targetServerId: "s_mock" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ details: { code: "CLIMB_VERIFY_TARGET_IS_MOCK" } });
+    expect((await request("POST", VERIFY, { sha: "abc" })).status).toBe(400);
   });
 });

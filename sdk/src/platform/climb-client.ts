@@ -10,6 +10,7 @@ import type {
   PlatformClimbConfirmed,
   PlatformClimbListItem,
   PlatformClimbMeasure,
+  PlatformClimbVerified,
   PlatformClimbDecision,
   PlatformClimbRoundRead,
   PlatformClimbRoundSubmitted,
@@ -125,5 +126,23 @@ export abstract class ClimbClient extends MockServerClient {
   ): Promise<PlatformClimbConfirmed> {
     const { projectId, climbId, ...body } = params;
     return this.request("POST", climbPath(projectId, climbId, "/confirmation"), { body, declareLaunch: true }, options);
+  }
+
+  /** Checks the server's listing against the kept changes and, if they are in, runs it beside a mock that puts the old values back. */
+  verifyClimb(
+    params: {
+      projectId: string;
+      climbId: string;
+      dryRun?: boolean;
+      runAnyway?: boolean;
+      waitSeconds?: number;
+      targetServerId?: string;
+      serverVersion?: string;
+      commit?: { sha?: string; branch?: string; repositoryUrl?: string; dirty?: boolean };
+    },
+    options?: Options
+  ): Promise<PlatformClimbVerified> {
+    const { projectId, climbId, ...body } = params;
+    return this.request("POST", climbPath(projectId, climbId, "/verifications"), { body, declareLaunch: true }, options);
   }
 }

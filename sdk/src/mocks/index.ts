@@ -13,3 +13,4 @@ export {
   mergeTool,
   resolveMockTools,
 } from "./resolve-tools.js";
+export { inverseOfChanges, type InverseMock, type OldServer, type Unrestorable } from "./inverse.js";

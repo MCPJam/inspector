@@ -70,6 +70,8 @@ export type RunCiMetadata = {
   branchUrl?: string;
   branch?: string;
   commitSha?: string;
+  /** Whether the checkout had uncommitted changes. */
+  dirty?: boolean;
 };
 
 export type LaunchContext = {
@@ -177,6 +179,7 @@ export function parseCiHeader(
     ...pick("branch", parsed.branch),
     ...pick("commitSha", parsed.commitSha),
   };
+  if (typeof parsed.dirty === "boolean") envelope.dirty = parsed.dirty;
   return Object.keys(envelope).length > 0 ? envelope : undefined;
 }
 

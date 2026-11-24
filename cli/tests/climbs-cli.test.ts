@@ -237,3 +237,15 @@ test("confirm sends the dry run and the wait; --wait reads the climb for the res
   // One call holds for at most the operation's own bound (50 s), then `get` is read until it settles.
   assert.deepEqual(posts.at(-1)?.body, { waitSeconds: 50 });
 });
+
+test("verify sends the commit with the flags; --dry-run starts no wait", async () => {
+  const requests = stubFetch({ [`POST ${CLIMBS}/climb-1/verifications`]: [{ climbId: "climb-1", suiteId: "suite-1", ran: false, dryRun: true, settled: false }] });
+  await run("verify", ["--climb", "climb-1", "--commit", "abc123", "--branch", "fix", "--dirty", "--server", "echo", "--dry-run", "--run-anyway"]);
+  assert.deepEqual(requests[0]?.body, {
+    dryRun: true,
+    runAnyway: true,
+    waitSeconds: 0,
+    targetServerId: "server-1",
+    commit: { sha: "abc123", branch: "fix", dirty: true },
+  });
+});

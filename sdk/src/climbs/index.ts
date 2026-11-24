@@ -28,3 +28,5 @@ export {
   type ConfirmationSummary,
   type SummaryEnvironment,
 } from "./summary.js";
+export { checkKeptChanges, maskKeptFields, type KeptChangeCheck, type KeptChangeStatus, type ListingCheck } from "./listing-check.js";
+export { verificationReport, type VerificationEnvironment, type VerificationReport } from "./verification.js";

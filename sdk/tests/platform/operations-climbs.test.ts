@@ -13,6 +13,7 @@ import {
   stopClimbOperation,
   submitClimbRoundOperation,
   updateClimbOperation,
+  verifyClimbOperation,
 } from "../../src/platform/index.js";
 
 const PROJECT = {
@@ -266,5 +267,41 @@ describe("confirm_climb", () => {
         Response.json({ code: "CONFLICT", message: "The suite set no cases aside for a confirmation.", details: { code: "CLIMB_NO_CONFIRMATION_CASES" } }, { status: 409 }),
     });
     await expect(confirmClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT })).rejects.toThrow("set no cases aside");
+  });
+});
+
+describe("verify_climb", () => {
+  it("resolves the server to verify, groups the commit and sends the flags", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/verifications`]: { climbId: "climb-1", suiteId: "suite-1", ran: false, dryRun: true } });
+    await verifyClimbOperation.execute(
+      { climb: "climb-1", commit: "abc123", branch: "fix", dirty: true, server: "echo", dryRun: true, runAnyway: false, waitSeconds: 20 },
+      { client, ...CONTEXT }
+    );
+    expect(bodies).toEqual([
+      { dryRun: true, runAnyway: false, waitSeconds: 20, targetServerId: "server-1", commit: { sha: "abc123", branch: "fix", dirty: true } },
+    ]);
+  });
+
+  it("sends no commit when none was given, and is a paid write behind climbs", async () => {
+    const { client, bodies } = clientWith({ [`POST ${CLIMBS}/climb-1/verifications`]: { climbId: "climb-1" } });
+    await verifyClimbOperation.execute({ climb: "climb-1" }, { client, ...CONTEXT });
+    expect(bodies).toEqual([{}]);
+    expect(verifyClimbOperation).toMatchObject({ readOnly: false, risk: "spend" });
+    expect(OPERATION_FEATURES.verify_climb).toBe("climbs");
+  });
+
+  it("sends the dirty flag in the CI header of a launch", async () => {
+    const seen: Array<Record<string, string>> = [];
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.test/api/v1",
+      getAuth: () => "t",
+      ci: { commitSha: "abc", dirty: true },
+      fetch: (async (_url: unknown, init?: RequestInit) => {
+        seen.push(Object.fromEntries(new Headers(init?.headers).entries()));
+        return Response.json({ climbId: "c" });
+      }) as unknown as typeof fetch,
+    });
+    await client.verifyClimb({ projectId: "project-1", climbId: "c" });
+    expect(JSON.parse(seen[0]!["x-mcpjam-ci"]!)).toEqual({ commitSha: "abc", dirty: true });
   });
 });

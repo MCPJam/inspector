@@ -45,6 +45,7 @@ export const climbRow = (over: Record<string, unknown> = {}) => ({
   },
   best: { serverId: "s_baseline", serverVersion: "1", roundNumber: 0 },
   rounds: [],
+  verifications: [],
   ...over,
 });
 

@@ -369,6 +369,8 @@ export interface PlatformCiMetadataOption {
   job?: string;
   runUrl?: string;
   runId?: string;
+  /** Whether the checkout had uncommitted changes: a verification records it beside the commit. */
+  dirty?: boolean;
   repositoryUrl?: string;
   prUrl?: string;
   branchUrl?: string;
@@ -513,7 +515,7 @@ function buildLaunchHeaders(
     // anyway would spend the header budget on fields nothing can read — and an
     // envelope over that cap is dropped WHOLE, so a dead field's only possible
     // effect is to cost a live one.
-    const ci: Record<string, string> = {};
+    const ci: Record<string, string | boolean> = {};
     for (const key of [
       "provider",
       "commitSha",
@@ -533,6 +535,8 @@ function buildLaunchHeaders(
       );
       if (value) ci[key] = value;
     }
+    // The one boolean: whether the working tree had uncommitted changes.
+    if (typeof options.ci.dirty === "boolean") ci.dirty = options.ci.dirty;
     if (Object.keys(ci).length > 0) {
       const serialized = withinHeaderCap(
         JSON.stringify(ci),

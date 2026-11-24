@@ -11,6 +11,7 @@ import type { PlatformClimb } from "@mcpjam/sdk/platform";
 import { climbFns, translateClimbReadError, translateClimbWriteError } from "../../services/climbs/backend.js";
 import type { ClimbDeps } from "../../services/climbs/deps.js";
 import { hashRealServerListing, readRealServer } from "../../services/climbs/listing.js";
+import { verifyClimb } from "../../services/climbs/verify-climb.js";
 import { confirmClimb } from "../../services/climbs/confirm-climb.js";
 import { readClimbInFull } from "../../services/climbs/read-climb.js";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
@@ -86,6 +87,15 @@ const confirmBody = z.strictObject({
   waitSeconds: z.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional(),
 });
 
+const verifyBody = z.strictObject({
+  commit: z.strictObject({ sha: id.max(64).optional(), branch: id.max(200).optional(), repositoryUrl: id.max(512).optional(), dirty: z.boolean().optional() }).optional(),
+  targetServerId: id.optional(),
+  serverVersion: id.max(200).optional(),
+  dryRun: z.boolean().optional(),
+  runAnyway: z.boolean().optional(),
+  waitSeconds: z.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional(),
+});
+
 const roundQuery = z.object({ wait: z.coerce.number().int().min(0).max(MAX_ROUND_WAIT_SECONDS).optional() });
 
 const roundNumberOf = (c: Context): number => {
@@ -108,13 +118,15 @@ export function projectIdOf(c: Context): string {
 }
 
 /** The backend, the grouped launch and the listing, each as this caller. */
-export async function climbDepsFor(c: Context): Promise<ClimbDeps> {
+export async function climbDepsFor(c: Context, commit?: { sha?: string; branch?: string; repositoryUrl?: string; dirty?: boolean }): Promise<ClimbDeps> {
   const launch = readLaunchContext(c);
+  // A verification records the commit it was given on every run it launches, over what the call declared.
+  const ci = { ...launch?.ciMetadata, ...(commit?.sha ? { commitSha: commit.sha } : {}), ...(commit?.branch ? { branch: commit.branch } : {}), ...(commit?.repositoryUrl ? { repositoryUrl: commit.repositoryUrl } : {}), ...(commit?.dirty !== undefined ? { dirty: commit.dirty } : {}) };
   return {
     convex: createConvexClient(await getConvexBearerForRequest(c)),
     client: buildMcpjamPlatformClient(c, {
       ...(launch?.launcher ? { launcher: launch.launcher } : {}),
-      ...(launch?.ciMetadata ? { ci: launch.ciMetadata } : {}),
+      ...(Object.keys(ci).length > 0 ? { ci } : {}),
     }),
     hashListing: (projectId, serverId) => hashRealServerListing(c, projectId, serverId),
     readServer: (projectId, serverId) => readRealServer(c, projectId, serverId),
@@ -253,6 +265,27 @@ climbs.post("/projects/:projectId/climbs/:climbId/confirmation", async (c) => {
   try {
     const confirmed = await confirmClimb(deps, projectId, climb, { dryRun: body.dryRun === true, waitSeconds: body.waitSeconds ?? 0 });
     return v1Resource(c, confirmed, confirmed.dryRun ? 200 : 202);
+  } catch (error) {
+    throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
+  }
+});
+
+// POST /v1/projects/:projectId/climbs/:climbId/verifications: check the real server against the kept changes, then run it.
+climbs.post("/projects/:projectId/climbs/:climbId/verifications", async (c) => {
+  const projectId = projectIdOf(c);
+  const body = parseWithSchema(verifyBody, await readJsonObjectBody(c));
+  const deps = await climbDepsFor(c, body.commit);
+  const climb = await readClimb(deps, projectId, c.req.param("climbId") ?? "");
+  try {
+    const verified = await verifyClimb(deps, projectId, climb, {
+      dryRun: body.dryRun === true,
+      runAnyway: body.runAnyway === true,
+      waitSeconds: body.waitSeconds ?? 0,
+      targetServerId: body.targetServerId,
+      serverVersion: body.serverVersion,
+      commit: body.commit,
+    });
+    return v1Resource(c, verified, verified.ran ? 202 : 200);
   } catch (error) {
     throw error instanceof WebRouteError ? error : translateClimbWriteError(error);
   }
