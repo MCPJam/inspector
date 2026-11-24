@@ -987,6 +987,19 @@ describe("a tool call runs once across recovery", () => {
     expect(verdict.status).toBe(expected);
   });
 
+  it("refuses a step with no turn and no connector to read", async () => {
+    const ledger = createInMemoryToolCallLedger();
+    const step = { stepId: "step-1", startedAt: new Date().toISOString() };
+
+    // Nothing could show a forwarded call, so nothing may be sent again.
+    await expect(
+      reconcileWithLedger(ledger, { runId: "run-1", step }),
+    ).rejects.toThrow("can't be checked against the ledger");
+    await expect(
+      reconcileWithLedger(ledger, { runId: "run-1", connectorIds: [], step }),
+    ).rejects.toThrow("can't be checked against the ledger");
+  });
+
   it.each(["turn", "connector"] as const)(
     "keeps a call's answer when the %s read saw it before it settled",
     async (stale) => {
