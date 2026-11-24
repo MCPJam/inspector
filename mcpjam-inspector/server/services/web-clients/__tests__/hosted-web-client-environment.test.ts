@@ -44,6 +44,7 @@ function recordedService(accounts = ACCOUNTS) {
     calls.push({ kind, command });
     if (command.action === "listWebAccounts") return accounts;
     if (command.action === "ensureWebConnector") return { connectorId: `conn-${String(command.serverId)}` };
+    if (command.action === "openWebTurnWindow") return { ok: true, window: {} };
     return null;
   };
   const service: WebClientService = {
@@ -72,18 +73,19 @@ function environment(
 }
 
 describe("the hosted environment's backend calls", () => {
-  it("uses the run's chosen account, else the vendor's default, else its only one", async () => {
+  it("uses the run's frozen accounts, else the vendor's default, else its only one", async () => {
     const { service } = recordedService();
     expect(
-      await environment(service, { chosenWebAccountId: "acct-other" }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      await environment(service, { runWebAccountIds: ["acct-removed", "acct-other"] }).resolveAccount({
+        projectId: "p",
+        vendor: "claude",
+      }),
     ).toEqual({ webAccountId: "acct-other" });
-    // A chosen account that is gone, or is another vendor's, stops the run: it never moves to the default.
-    for (const chosenWebAccountId of ["acct-removed", "acct-gpt"]) {
+    // A run whose frozen accounts are all gone, or are another vendor's, stops; it never moves to the default.
+    for (const id of ["acct-removed", "acct-gpt"]) {
       await expect(
-        environment(service, { chosenWebAccountId }).resolveAccount({ projectId: "p", vendor: "claude" }),
-      ).rejects.toMatchObject({
-        failure: { kind: "needs_sign_in", message: expect.stringContaining("chosen for this run is not saved") },
-      });
+        environment(service, { runWebAccountIds: [id] }).resolveAccount({ projectId: "p", vendor: "claude" }),
+      ).rejects.toThrow("Claude web accounts this run uses were removed");
     }
     expect(await environment(service).resolveAccount({ projectId: "p", vendor: "claude" })).toEqual({
       webAccountId: "acct-default",
