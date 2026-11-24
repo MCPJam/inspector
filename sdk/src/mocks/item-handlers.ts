@@ -7,6 +7,11 @@ import type {
   Server,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
+import {
+  MCP_SKILLS_EXTENSION_ID,
+  isSkillNotFoundError,
+} from "../mcp-client-manager/index.js";
+import type { SkillEntry } from "../mcp-client-manager/index.js";
 import type { MockDefinition } from "./definition-types.js";
 import {
   editedItemMissingError,
@@ -22,6 +27,15 @@ import {
   resolveMockResources,
   resolveMockTemplates,
 } from "./resolve-items.js";
+import {
+  SKILLS_CACHE_SCOPE,
+  SKILLS_SETTINGS_TTL_MS,
+  adjustMockSkill,
+  definitionTouchesSkills,
+  listMockSkills,
+  skillNotFoundError,
+} from "./mock-skills.js";
+
 /** What the handlers need about both sides of the mock. */
 export interface ItemHandlerContext {
   definition: MockDefinition;
@@ -31,6 +45,8 @@ export interface ItemHandlerContext {
   /** What the mock declares after the definition's edits. */
   mockCapabilities: ServerCapabilities;
 }
+
+type Obj = Record<string, unknown>;
 
 /** Every page of one of the real server's lists. */
 async function realPages<T>(
@@ -161,4 +177,77 @@ export function registerItemHandlers(
       )) as ReadResourceResult;
     });
   }
+}
+
+const SKILL_METHODS = ["skills/list", "skills/get"];
+
+/**
+ * `skills/list` and `skills/get` for a mock whose definition has skill files.
+ * Returns `undefined` for any other method or when there is nothing to say
+ * about skills, so the caller passes the method to the real server instead.
+ */
+export async function answerSkillsMethod(
+  request: { method: string; params?: Obj },
+  c: ItemHandlerContext,
+  signal: AbortSignal | undefined
+): Promise<Obj | undefined> {
+  const { definition, real, realCapabilities, mockCapabilities } = c;
+  if (
+    !SKILL_METHODS.includes(request.method) ||
+    !definitionTouchesSkills(definition) ||
+    !mockCapabilities.extensions?.[MCP_SKILLS_EXTENSION_ID]
+  ) {
+    return undefined;
+  }
+  const realHasSkills = Boolean(
+    realCapabilities.extensions?.[MCP_SKILLS_EXTENSION_ID]
+  );
+  const cache = {
+    ttlMs: SKILLS_SETTINGS_TTL_MS,
+    cacheScope: SKILLS_CACHE_SCOPE,
+  };
+  if (request.method === "skills/list") {
+    const realSkills = realHasSkills
+      ? await realPages<SkillEntry>(real, "skills/list", "skills", signal)
+      : [];
+    const skills = await listMockSkills(definition, realSkills);
+    const page = pageOf(
+      skills,
+      request.params?.cursor as string | undefined,
+      definition.pageSize
+    );
+    return {
+      skills: page.items,
+      ...(page.nextCursor && { nextCursor: page.nextCursor }),
+      ...cache,
+    };
+  }
+  const uri = String(request.params?.uri ?? "");
+  const realSkills = realHasSkills
+    ? await realPages<SkillEntry>(real, "skills/list", "skills", signal)
+    : [];
+  const listed = (await listMockSkills(definition, realSkills)).find(
+    (s) => s.uri === uri
+  );
+  if (listed) return { skill: listed, ...cache };
+  // A skill the real server serves but never listed: ask it, and adjust what it says.
+  if (realHasSkills) {
+    try {
+      const found = (await real.request(
+        { method: "skills/get", params: { uri } },
+        { signal }
+      )) as {
+        skill?: SkillEntry;
+      };
+      const adjusted = found.skill
+        ? await adjustMockSkill(definition, found.skill)
+        : undefined;
+      if (adjusted) return { skill: adjusted, ...cache };
+    } catch (error) {
+      // A skill the real server does not serve is not found here either; any
+      // other failure is the real server's and reaches the caller.
+      if (!isSkillNotFoundError(error)) throw error;
+    }
+  }
+  throw skillNotFoundError(uri);
 }

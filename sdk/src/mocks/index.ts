@@ -17,6 +17,7 @@ export {
   type ResolvedItems,
 } from "./resolve-items.js";
 export { matchTemplate, templateVariables } from "./uri-template.js";
+export { listMockSkills } from "./mock-skills.js";
 export {
   hashRealToolListing,
   mergeTool,

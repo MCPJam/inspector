@@ -6,11 +6,15 @@
  * tools through this object and the hash is of that same listing.
  */
 import type { MCPClientManager } from "@mcpjam/sdk";
+import { z } from "zod";
 import {
   hashRealToolListing,
   type MockListChangedKind,
   type MockRealServer,
 } from "@mcpjam/sdk/mocks";
+
+/** The skills extension's methods are not spec methods, so they go through the client's schema-checked request. */
+const LOOSE_RESULT = z.looseObject({});
 
 const LIST_CHANGED: Array<[string, MockListChangedKind]> = [
   ["notifications/tools/list_changed", "tools"],
@@ -81,6 +85,13 @@ export function realServerOn(manager: MCPClientManager, id: string): PooledRealS
     request: async (request, options) => {
       const client = manager.getManagedClient(id);
       if (!client) throw new Error("The real server is not connected.");
+      if (request.method.startsWith("skills/")) {
+        return (await client.requestWithSchema(
+          { method: request.method, params: request.params } as never,
+          LOOSE_RESULT,
+          options,
+        )) as Record<string, unknown>;
+      }
       return (await client.request(
         { method: request.method, params: request.params } as never,
         options,

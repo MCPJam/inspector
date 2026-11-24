@@ -5,7 +5,8 @@ import type {
 } from "@modelcontextprotocol/server";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
-import { registerItemHandlers } from "./item-handlers.js";
+import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
+import { definitionServesSkills, skillsCapability } from "./mock-skills.js";
 import { pageOf } from "./paging.js";
 import { ownsItems } from "./resolve-items.js";
 import type { MockModelAnswerer } from "./model-answers.js";
@@ -47,6 +48,9 @@ function effectiveCapabilities(
   const own = ownsItems(definition);
   if (own.prompts && !("prompts" in stated)) merged.prompts ??= {};
   if (own.resources && !("resources" in stated)) merged.resources ??= {};
+  if (definitionServesSkills(definition) && !("extensions" in stated)) {
+    merged.extensions = { ...skillsCapability(), ...(real.extensions ?? {}) };
+  }
   return merged as ServerCapabilities;
 }
 
@@ -174,6 +178,12 @@ async function buildServer(
   // Every other method goes to the real server when both sides have it, and is
   // refused by name when only one does.
   server.fallbackRequestHandler = async (request, ctx) => {
+    const skills = await answerSkillsMethod(
+      request,
+      itemContext,
+      ctx.mcpReq.signal
+    );
+    if (skills) return skills;
     const family = METHOD_FAMILIES.find(([prefix]) =>
       request.method.startsWith(prefix)
     );
