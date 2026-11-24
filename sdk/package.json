@@ -52,6 +52,11 @@
       "import": "./dist/mocks/index.js",
       "default": "./dist/mocks/index.js"
     },
+    "./mocks/definition": {
+      "types": "./dist/mocks/definition.d.ts",
+      "import": "./dist/mocks/definition.js",
+      "default": "./dist/mocks/definition.js"
+    },
     "./climbs": {
       "types": "./dist/climbs/index.d.ts",
       "import": "./dist/climbs/index.js",

@@ -50,6 +50,12 @@ const sdkHostConfigTemplatesEntry = path.resolve(
 );
 // Host catalog helpers must resolve from source in dev. Otherwise the client
 // can use stale SDK dist output and miss newly-derived template fields.
+// The mock definition's validator alone, so the mock sheet checks a save in the browser
+// without `@mcpjam/sdk/mocks` (the MCP server runtime); aliased to source like the entries above.
+const sdkMockDefinitionEntry = path.resolve(
+  rootDir,
+  "../sdk/src/mocks/definition.ts",
+);
 const sdkHostCompatEntry = path.resolve(
   rootDir,
   "../sdk/src/host-compat/index.ts",
@@ -230,6 +236,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,
+        "@mcpjam/sdk/mocks/definition": sdkMockDefinitionEntry,
         "@mcpjam/sdk/host-config/templates": sdkHostConfigTemplatesEntry,
         "@mcpjam/sdk/host-config/internal": sdkHostConfigInternalEntry,
         "@modelcontextprotocol/sdk/client/auth.js": mcpSdkClientAuthEntry,

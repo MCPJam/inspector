@@ -36,6 +36,12 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/templates/index.ts",
 );
+// The mock definition's validator alone, so the mock sheet checks a save in the browser
+// without `@mcpjam/sdk/mocks` (the MCP server runtime); aliased to source like the entries above.
+const sdkMockDefinitionEntry = path.resolve(
+  rootDir,
+  "../sdk/src/mocks/definition.ts",
+);
 const sdkHostCompatEntry = path.resolve(
   rootDir,
   "../sdk/src/host-compat/index.ts",
@@ -170,6 +176,10 @@ export default defineConfig({
       {
         find: "@mcpjam/sdk/plugin-bundle",
         replacement: sdkPluginBundleEntry,
+      },
+      {
+        find: "@mcpjam/sdk/mocks/definition",
+        replacement: sdkMockDefinitionEntry,
       },
       {
         find: "@mcpjam/sdk/host-compat",
