@@ -118,6 +118,8 @@ export interface LatencyBreakdown {
 export interface PromptResultData {
   /** Model-visible catalog and runtime settings captured at execution time. */
   recordedContext?: {
+    runUnloadedToolCalls?: boolean;
+    engineVersion?: string;
     toolDefinitions: unknown;
     systemPrompt: string;
     model: string;

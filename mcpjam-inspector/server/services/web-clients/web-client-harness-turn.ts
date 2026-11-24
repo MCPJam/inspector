@@ -1,3 +1,4 @@
+import { inspectorDiscoveryRunMetadata } from "../../utils/discovery-run-metadata";
 /**
  * A web client turn in the shape every harness turn returns, so the
  * Playground, evals, swarms and compare run it through the lifecycle they
@@ -238,6 +239,7 @@ export async function runWebClientHarnessTurn(
       throw error;
     }
     const traceOf = (failed: boolean): PersistedTurnTrace => ({
+      ...inspectorDiscoveryRunMetadata(undefined, true),
       turnId: result.turnId,
       promptIndex,
       startedAt: result.startedAt,
@@ -294,6 +296,7 @@ export async function runWebClientHarnessTurn(
       requireNativeToolDiscovery: false,
     });
     const turnTrace: PersistedTurnTrace = {
+      ...inspectorDiscoveryRunMetadata(undefined, true),
       ...traceOf(false),
       ...(harnessMcpAtTurn ? { harnessMcpAtTurn } : {}),
     };

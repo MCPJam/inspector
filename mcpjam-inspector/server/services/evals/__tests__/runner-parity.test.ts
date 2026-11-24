@@ -182,6 +182,9 @@ function scrub(value: unknown): unknown {
         // Preserve immutable v11 payload fixtures while asserting the v12 producer.
         expect(v).toBe(12);
         out[k] = 11;
+      } else if (k === "engineVersion") {
+        expect(v).toEqual(expect.any(String));
+        out[k] = "<inspector-version>";
       } else if (SCRUB_KEYS.has(k)) {
         out[k] = v == null ? v : "<scrubbed>";
       } else if (k === "requestPayloadsJson" && typeof v === "string") {

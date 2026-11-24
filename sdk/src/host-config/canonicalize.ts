@@ -2837,5 +2837,6 @@ export function canonicalizeHostConfigV2(
               }
             : {},
         }),
+    ...(input.runUnloadedToolCalls === undefined ? {} : { runUnloadedToolCalls: input.runUnloadedToolCalls }),
   };
 }

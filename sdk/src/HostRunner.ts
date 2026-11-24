@@ -1,3 +1,6 @@
+import { originalMcpInputSchema } from "./original-mcp-input-schema.js";
+import { discoveryRunMetadata } from "./sdk-version.js";
+import { redactUnavailableToolError, validateDeferredToolInputs } from "./progressive-discovery/step.js";
 import { collectRejectedToolCalls, markRejectedCalls } from "./progressive-discovery/rejected-calls.js";
 /**
  * HostRunner - Runs LLM prompts with tool calling for evals
@@ -263,6 +266,7 @@ function convertToToolSet(
       },
     });
 
+    Object.assign(converted, { [originalMcpInputSchema]: tool.inputSchema });
     // Preserve _serverId like getToolsForAiSdk() does
     if (tool._meta?._serverId) {
       (converted as any)._serverId = tool._meta._serverId;
@@ -878,6 +882,7 @@ export class HostRunner implements HostExecutor {
     };
     const toolDefinitions = Object.entries(this.tools).map(describeTool);
     const recordedContext = {
+      ...discoveryRunMetadata(this.hostSnapshot?.runUnloadedToolCalls),
       toolDefinitions,
       systemPrompt: this.systemPrompt,
       model: this.model,
@@ -943,11 +948,9 @@ export class HostRunner implements HostExecutor {
         baseUrls: this.baseUrls,
         customProviders: this.customProviders,
       };
-      const model = withProviderSafeToolNames(
-        (this.createLanguageModel ?? createModelFromString)(
+      const model = (this.createLanguageModel ?? createModelFromString)(
           this.model,
           modelOptions
-        )
       );
       const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
         options?.stopAfterToolCall
@@ -975,6 +978,7 @@ export class HostRunner implements HostExecutor {
           this.progressiveToolDiscoveryWhenUnset
         ),
         priorMessages: contextMessages,
+        runUnloadedToolCalls: this.hostSnapshot?.runUnloadedToolCalls,
         onCallStarted: (call) =>
           pendingStepToolCalls.push({ ...call, shortCircuited: false }),
       });
@@ -985,9 +989,13 @@ export class HostRunner implements HostExecutor {
       }
 
       const generateTextOptions: any = {
-        model: withUniqueToolCallIds(model, contextMessages),
-        tools: { ...instrumentedTools, ...discovery?.metaTools },
+        model: withUniqueToolCallIds(
+          withProviderSafeToolNames(model, () => discovery?.currentStep()?.shown),
+          contextMessages,
+        ),
+        tools: discovery ? { ...validateDeferredToolInputs(instrumentedTools, discovery.currentStep), ...discovery.metaTools } : instrumentedTools,
         ...(discovery && {
+          repairToolCall: redactUnavailableToolError,
           prepareStep: ({ stepNumber }: { stepNumber: number }) =>
             discovery.prepareStep(stepNumber),
         }),

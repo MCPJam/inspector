@@ -1601,6 +1601,7 @@ async function runJourneyFanOut(
               ...(webSession ? { webClientRun: webSession.run } : {}),
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
+              runUnloadedToolCalls: target.runUnloadedToolCalls,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
               requireNativeToolDiscovery: target.requireNativeToolDiscovery,
               builtInToolIds: target.builtInToolIds,
