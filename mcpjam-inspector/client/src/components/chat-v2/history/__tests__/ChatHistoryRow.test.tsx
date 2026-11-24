@@ -48,8 +48,16 @@ vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
       {children}
     </div>
   ),
-  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
-    <button type="button">{children}</button>
+  DropdownMenuTrigger: ({
+    children,
+    "aria-label": ariaLabel,
+  }: {
+    children: ReactNode;
+    "aria-label"?: string;
+  }) => (
+    <button type="button" aria-label={ariaLabel}>
+      {children}
+    </button>
   ),
   DropdownMenuContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
@@ -346,13 +354,49 @@ describe("ChatHistoryRow", () => {
 
     const promote = screen.getByTestId("chat-history-promote-to-test-case");
     expect(promote).toHaveAttribute("aria-label", "Promote to test case");
-    expect(
-      screen.queryByText("Promote to test case", { exact: true })
-    ).not.toBeInTheDocument();
 
     await user.click(promote);
     expect(onConvertToTestCase).toHaveBeenCalledTimes(1);
     expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
+  it("offers Promote to test case in the row menu", async () => {
+    const onConvertToTestCase = vi.fn();
+    const user = userEvent.setup();
+    const session = sessionStub({ status: "active" });
+    render(
+      <ChatHistoryRow
+        session={session}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        canConvertToTestCase
+        onConvertToTestCase={onConvertToTestCase}
+        actions={actions}
+      />
+    );
+
+    await user.click(screen.getByText("Promote to test case", { exact: true }));
+    expect(onConvertToTestCase).toHaveBeenCalledWith(session);
+  });
+
+  it("keeps the timestamp and the row menu trigger rendered together", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub()}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />
+    );
+
+    expect(screen.getByText("now")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Session actions" })
+    ).toBeInTheDocument();
   });
 
   it("shows Unarchive when the session is archived", () => {

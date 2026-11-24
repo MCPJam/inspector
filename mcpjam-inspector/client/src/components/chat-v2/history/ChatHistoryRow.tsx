@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { FlaskConical, Pin, MoreVertical, User } from "lucide-react";
+import { Pin, MoreVertical, Save, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +28,11 @@ import {
 } from "@/lib/scenario-client-style";
 import { CHAT_HISTORY_STRONG_BG_CLASS } from "./chat-history-theme";
 import { sessionEffortSuffix } from "@/components/connection/share-usage/session-client-model";
+import {
+  showSessionActionFailure,
+  showSessionActionSuccess,
+  type SessionRowAction,
+} from "./session-action-feedback";
 
 function formatChatHistoryModelLabel(
   session: ChatHistorySession,
@@ -39,6 +44,9 @@ function formatChatHistoryModelLabel(
     session.modelSelection,
   )}`;
 }
+
+const ROW_ICON_BUTTON_CLASS =
+  "flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/40 data-[disabled]:pointer-events-none data-[disabled]:opacity-50 disabled:pointer-events-none disabled:opacity-50";
 
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
@@ -197,11 +205,22 @@ export function ChatHistoryRow({
   };
 
   const runAction = async (
-    action: "archive" | "unarchive" | "pin" | "unpin" | "share" | "unshare",
+    action: SessionRowAction,
     operation: () => Promise<void>,
   ) => {
-    await operation();
+    try {
+      await operation();
+    } catch (error) {
+      showSessionActionFailure(action, error);
+      return;
+    }
     await onActionComplete?.({ action, session });
+    showSessionActionSuccess(action, {
+      undoArchive: async () => {
+        await actions.unarchive(session._id);
+        await onActionComplete?.({ action: "unarchive", session });
+      },
+    });
   };
 
   const handleClick = () => {
@@ -245,7 +264,7 @@ export function ChatHistoryRow({
 
   const rowMain = (
     <div
-      className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
+      className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors ${
         isActive
           ? CHAT_HISTORY_STRONG_BG_CLASS[hostStyleFamily]
           : "hover:bg-accent/50"
@@ -317,88 +336,95 @@ export function ChatHistoryRow({
                   data-testid="chat-history-promote-to-test-case"
                   disabled={isStreaming}
                   aria-label="Promote to test case"
-                  className="flex size-5 shrink-0 items-center justify-center rounded p-0.5 text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                  className={ROW_ICON_BUTTON_CLASS}
                   onClick={(e) => {
                     e.stopPropagation();
                     onConvertToTestCase(session);
                   }}
                 >
-                  <FlaskConical className="h-3.5 w-3.5" aria-hidden />
+                  <Save className="h-3.5 w-3.5" aria-hidden />
                 </button>
               </span>
             </TooltipTrigger>
             <TooltipContent side="right">Promote to test case</TooltipContent>
           </Tooltip>
         ) : null}
-        <div className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1">
-          <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
-            {relativeTime}
-          </span>
-          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-            <DropdownMenuTrigger
-              disabled={isStreaming}
-              className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
-              onClick={(e) => e.stopPropagation()}
+        <span className="chat-history-time w-7 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground">
+          {relativeTime}
+        </span>
+        <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+          <DropdownMenuTrigger
+            disabled={isStreaming}
+            aria-label="Session actions"
+            className={ROW_ICON_BUTTON_CLASS}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreVertical className="h-3.5 w-3.5" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-44">
+            {canConvertToTestCase && onConvertToTestCase ? (
+              <>
+                <DropdownMenuItem onClick={() => onConvertToTestCase(session)}>
+                  Promote to test case
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
+            <DropdownMenuItem
+              onClick={() => {
+                setRenameValue(session.customTitle || "");
+                setIsRenaming(true);
+              }}
             >
-              <MoreVertical className="h-3.5 w-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
-              <DropdownMenuItem
-                onClick={() => {
-                  setRenameValue(session.customTitle || "");
-                  setIsRenaming(true);
-                }}
-              >
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={async () =>
-                  session.isPinned
-                    ? await runAction("unpin", () => actions.unpin(session._id))
-                    : await runAction("pin", () => actions.pin(session._id))
-                }
-              >
-                {session.isPinned ? "Unpin" : "Pin"}
-              </DropdownMenuItem>
+              Rename
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={async () =>
+                session.isPinned
+                  ? await runAction("unpin", () => actions.unpin(session._id))
+                  : await runAction("pin", () => actions.pin(session._id))
+              }
+            >
+              {session.isPinned ? "Unpin" : "Pin"}
+            </DropdownMenuItem>
 
-              {canManageProjectSharing && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={async () =>
-                      session.directVisibility === "project"
-                        ? await runAction("unshare", () =>
-                            actions.unshare(session._id),
-                          )
-                        : await runAction("share", () =>
-                            actions.share(session._id),
-                          )
-                    }
-                  >
-                    {session.directVisibility === "project"
-                      ? "Unshare"
-                      : "Share to project"}
-                  </DropdownMenuItem>
-                </>
-              )}
+            {canManageProjectSharing && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={async () =>
+                    session.directVisibility === "project"
+                      ? await runAction("unshare", () =>
+                          actions.unshare(session._id),
+                        )
+                      : await runAction("share", () =>
+                          actions.share(session._id),
+                        )
+                  }
+                >
+                  {session.directVisibility === "project"
+                    ? "Unshare"
+                    : "Share to project"}
+                </DropdownMenuItem>
+              </>
+            )}
 
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={async () =>
-                  session.status === "active"
-                    ? await runAction("archive", () =>
-                        actions.archive(session._id),
-                      )
-                    : await runAction("unarchive", () =>
-                        actions.unarchive(session._id),
-                      )
-                }
-              >
-                {session.status === "active" ? "Archive" : "Unarchive"}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              onClick={async () =>
+                session.status === "active"
+                  ? await runAction("archive", () =>
+                      actions.archive(session._id),
+                    )
+                  : await runAction("unarchive", () =>
+                      actions.unarchive(session._id),
+                    )
+              }
+            >
+              {session.status === "active" ? "Archive" : "Unarchive"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
