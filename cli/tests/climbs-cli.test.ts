@@ -10,9 +10,10 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { Command } from "commander";
 import { registerClimbsCommands } from "../src/commands/climbs.js";
-import { waitForClimb } from "../src/lib/climb-command.js";
+import { climbCallTimeoutMs, waitForClimb } from "../src/lib/climb-command.js";
 import { CliError } from "../src/lib/output.js";
 import { addPlatformOptions } from "../src/lib/platform-command.js";
+import { addGlobalOptions } from "../src/lib/server-config.js";
 import { captureProcessOutput } from "./support/cli-run.js";
 
 const PROJECT = { id: "project-1", name: "Checkout", description: null, icon: null, organizationId: "org-a", visibility: null, createdAt: 1, updatedAt: 2 };
@@ -44,7 +45,7 @@ function stubFetch(answers: Record<string, unknown[]> = {}): Captured[] {
 }
 
 function buildProgram(): Command {
-  const program = new Command().name("mcpjam").exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });
+  const program = addGlobalOptions(new Command().name("mcpjam")).exitOverride().configureOutput({ writeErr: () => {}, writeOut: () => {} });
   const cloud = program.command("cloud");
   addPlatformOptions(cloud);
   registerClimbsCommands(cloud);
@@ -99,7 +100,7 @@ test("start resolves names, converts percents to basis points and sends both lim
     minImprovementBps: 150,
     targetBps: 500,
     groupLists: { steering: ["a", "b"], validation: ["c"] },
-    seed: 7,
+    seed: "7",
   });
 });
 
@@ -279,3 +280,51 @@ test("draft posts the tool, the cases and the title request to the climb's draft
     includeTitle: true,
   });
 });
+
+/** The delays the CLI armed its deadline with while `act` ran. */
+async function deadlinesDuring(act: () => Promise<unknown>): Promise<number[]> {
+  const delays: number[] = [];
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: TimerHandler, delay?: number, ...rest: unknown[]) => {
+    if (typeof delay === "number") delays.push(delay);
+    return realSetTimeout(handler, delay, ...rest);
+  }) as typeof setTimeout;
+  try {
+    await act();
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  return delays;
+}
+
+test("a call that launches run groups gets two minutes unless --timeout says otherwise", async () => {
+  stubFetch();
+  const defaulted = await deadlinesDuring(() => run("start", START));
+  assert.ok(defaulted.includes(120_000), `deadlines were ${defaulted.join(", ")}`);
+  assert.ok(!defaulted.includes(30_000));
+
+  stubFetch();
+  const explicit = await deadlinesDuring(() => run("start", [...START, "--timeout", "5000"]));
+  assert.ok(explicit.includes(5_000));
+  assert.ok(!explicit.includes(120_000));
+});
+
+test("--wait extends the deadline by the wait, so the wait is not cut at the launch allowance", () => {
+  assert.equal(climbCallTimeoutMs({}), 120_000);
+  assert.equal(climbCallTimeoutMs({ wait: true }), 120_000 + 1_800_000);
+  assert.equal(climbCallTimeoutMs({ wait: true, waitSeconds: "60" }), 180_000);
+});
+
+for (const [verb, args] of [
+  ["rounds submit", ["--climb", "climb-1", "--server", "Echo"]],
+  ["confirm", ["--climb", "climb-1"]],
+  ["verify", ["--climb", "climb-1"]],
+] as const) {
+  test(`${verb} gets the launch deadline too`, async () => {
+    stubFetch();
+    // The stub does not answer with what the verb returns, so the call may fail;
+    // only the deadline it armed matters here.
+    const delays = await deadlinesDuring(() => run(verb, [...args]).then(() => undefined, () => undefined));
+    assert.ok(delays.includes(120_000), `deadlines were ${delays.join(", ")}`);
+  });
+}

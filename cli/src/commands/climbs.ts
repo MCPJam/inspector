@@ -27,6 +27,7 @@ import {
   WAIT_FLAG,
   WAIT_SECONDS_DEFAULT,
   WAIT_SECONDS_FLAG,
+  climbCallTimeoutMs,
   parseListOption,
   parseNumberOption,
   waitForClimb,
@@ -94,7 +95,7 @@ export function registerClimbsCommands(cloud: Command): void {
         .option("--steering <keys>", "Case keys for the steering group, comma-separated")
         .option("--validation <keys>", "Case keys for the validation group, comma-separated")
         .option("--confirmation <keys>", "Case keys for the confirmation group, comma-separated")
-        .option("--seed <n>", "Seeds the random split of the cases")
+        .option("--seed <value>", "Seeds the random split of the cases (any text, or a number)")
         .option(WAIT_FLAG, "Wait for the baseline to settle, then print the climb")
         .option(WAIT_SECONDS_FLAG, `How long --wait may take (default ${WAIT_SECONDS_DEFAULT})`),
     ),
@@ -163,11 +164,12 @@ export function registerClimbsCommands(cloud: Command): void {
         targetPercent: parseNumberOption(options.targetPercent, "--target-percent", { exclusiveMin: 0, max: 99.99 }),
         groupSizes: given(sizes) ? clean(sizes) : undefined,
         groups: given(lists) ? clean(lists) : undefined,
-        seed: parseIntegerOption(options.seed, "--seed"),
+        seed: options.seed?.trim() || undefined,
         wait: options.wait,
         waitSeconds: waitSeconds(options),
       };
     },
+    { defaultTimeoutMs: climbCallTimeoutMs },
   );
 
   bindOperation(

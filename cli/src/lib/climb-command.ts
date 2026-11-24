@@ -44,6 +44,21 @@ export const WAIT_SECONDS_FLAG = "--wait-seconds <n>";
 export const WAIT_SECONDS_DEFAULT = 1800;
 const POLL_MS = 10_000;
 
+/**
+ * A climb call that launches run groups (start, a round, confirm, verify)
+ * quotes, registers and launches each group in the route before it answers,
+ * and on two environments that outlasts the program's 30 s default while the
+ * climb goes on. The call gets as long as an eval launch does; `--wait` runs
+ * inside the same deadline, so it adds the wait. An explicit `--timeout` wins.
+ */
+export const CLIMB_LAUNCH_TIMEOUT_MS = 120_000;
+
+export function climbCallTimeoutMs(options: { wait?: boolean; waitSeconds?: string }): number {
+  if (!options.wait) return CLIMB_LAUNCH_TIMEOUT_MS;
+  const seconds = Number(options.waitSeconds);
+  return CLIMB_LAUNCH_TIMEOUT_MS + (Number.isFinite(seconds) && seconds > 0 ? seconds : WAIT_SECONDS_DEFAULT) * 1000;
+}
+
 type Context = Parameters<typeof getClimbOperation.execute>[1];
 type Climb = Awaited<ReturnType<typeof getClimbOperation.execute>>;
 

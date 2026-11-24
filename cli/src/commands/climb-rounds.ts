@@ -26,7 +26,7 @@ import {
   type VerifyClimbInput,
 } from "@mcpjam/sdk/platform";
 import { usageError } from "../lib/output.js";
-import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, parseListOption, waitForConfirmation, waitForRound, waitForVerification } from "../lib/climb-command.js";
+import { WAIT_FLAG, WAIT_SECONDS_DEFAULT, WAIT_SECONDS_FLAG, climbCallTimeoutMs, parseListOption, waitForConfirmation, waitForRound, waitForVerification } from "../lib/climb-command.js";
 import {
   addProjectOption,
   bindOperation,
@@ -84,6 +84,7 @@ export function registerClimbRoundCommands(climbs: Command): void {
       wait: options.wait,
       waitSeconds: waitSeconds(options),
     }),
+    { defaultTimeoutMs: climbCallTimeoutMs },
   );
 
   bindOperation(
@@ -113,6 +114,7 @@ export function registerClimbRoundCommands(climbs: Command): void {
       wait: options.wait,
       waitSeconds: waitSeconds(options),
     }),
+    { defaultTimeoutMs: climbCallTimeoutMs },
   );
 
   bindOperation(
@@ -159,6 +161,7 @@ export function registerClimbRoundCommands(climbs: Command): void {
       wait: options.wait,
       waitSeconds: waitSeconds(options),
     }),
+    { defaultTimeoutMs: climbCallTimeoutMs },
   );
 
   bindOperation(
@@ -202,6 +205,7 @@ export function registerClimbRoundCommands(climbs: Command): void {
       wait: options.wait,
       waitSeconds: waitSeconds(options),
     }),
+    { defaultTimeoutMs: climbCallTimeoutMs },
   );
 
   bindOperation(

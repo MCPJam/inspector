@@ -342,8 +342,11 @@ export type BindOperationExtras<TOutput> = {
    * command keeps the probe commands snappy without making the blocking ones
    * lie about what happened. `eval run` needs none of this: it returns once
    * the run has STARTED, and the run is then polled.
+   *
+   * A function gets the parsed options, for a command whose deadline depends
+   * on them (`--wait-seconds`).
    */
-  defaultTimeoutMs?: number;
+  defaultTimeoutMs?: number | ((options: never) => number);
 };
 
 /**
@@ -395,7 +398,12 @@ export function bindOperation<
     const invoked = invocation[invocation.length - 1] as Command;
     const options = invocation[invocation.length - 2] as TOptions;
     const positionals = invocation.slice(0, -2) as (string | undefined)[];
-    const globalOptions = getGlobalOptions(invoked, bindExtras.defaultTimeoutMs);
+    const globalOptions = getGlobalOptions(
+      invoked,
+      typeof bindExtras.defaultTimeoutMs === "function"
+        ? (bindExtras.defaultTimeoutMs as (options: TOptions) => number)(options)
+        : bindExtras.defaultTimeoutMs
+    );
     const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
     const underCloud = hasCloudAncestor(invoked);
     // Gating ambient resolution on the parent being named `cloud` alone
