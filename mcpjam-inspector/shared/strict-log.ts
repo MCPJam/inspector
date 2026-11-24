@@ -26,6 +26,8 @@ const ENUMS: Record<string, readonly string[]> = {
   origin: ["mcpjam", "user_server", "user_config", "ambiguous"],
   method: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   level: ["debug", "info", "warn", "error"],
+  // The error describer's catalog keys, the slug behind an `origin`.
+  slug: catalog.slugs,
 };
 
 /**
