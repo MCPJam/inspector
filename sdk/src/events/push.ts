@@ -10,7 +10,7 @@
  *
  * Draft rules (*Push-Based Delivery → Lifecycle*) and the spike's gates:
  *   - Liveness is ANY frame — an event or a heartbeat (or `active`). Nothing
- *     for more than twice the heartbeat interval ⇒ the stream is dead ⇒
+ *     past the negotiated HTTP silence window ⇒ the stream is dead ⇒
  *     reconnect with the last cursor.
  *   - The default request timeout must not apply; but the official client's
  *     timer is always finite (and `setTimeout` caps at ~24.8 days), so the
@@ -34,6 +34,7 @@ import {
   EventsHeartbeatNotificationMethod,
   EventsTerminatedNotificationMethod,
 } from "../mcp-client-manager/events-ext.js";
+import { BETA_PROFILE_ID } from "./profiles.js";
 import { assertEventOccurrence } from "../mcp-client-manager/events-ext-guards.js";
 import {
   InboxBackpressureError,
@@ -47,6 +48,8 @@ import {
 export const MAX_TIMER_MS = 2_147_483_647;
 
 export interface PushConnectionPort {
+  /** Transport of a negotiated beta connection. Other profiles use draft liveness. */
+  betaTransport?(): "http" | "stdio" | undefined;
   /** Send `events/stream`; see `MCPClientManager.openEventsStream`. */
   openStream(
     params: {
@@ -96,6 +99,8 @@ interface StreamState {
   callbacks: PushStreamCallbacks;
   cursor: string | null;
   controller?: AbortController;
+  betaTransport?: "http" | "stdio";
+  silenceMs?: number;
   requestId?: string | number;
   livenessTimer?: ReturnType<typeof setTimeout>;
   rolloverTimer?: ReturnType<typeof setTimeout>;
@@ -183,6 +188,14 @@ export class EventsPushRuntime {
       if (!state || state.stopped || !state.controller) return;
       // Frames of one stream are processed strictly in order, each only while
       // the request it arrived on is still the current one.
+      if (state.betaTransport === "http" && notification.method === EventsActiveNotificationMethod) {
+        const grant = notification.params?.heartbeatMs;
+        if (typeof grant === "number" && Number.isSafeInteger(grant) && grant > 0) {
+          state.silenceMs = Math.min(MAX_TIMER_MS, 3 * grant);
+        }
+      }
+      // Measure silence on arrival even if an earlier inbox append is still pending.
+      this.armLiveness(state);
       const controller = state.controller;
       state.queue = state.queue.then(async () => {
         try {
@@ -208,6 +221,10 @@ export class EventsPushRuntime {
     if (state.stopped) return;
     const controller = new AbortController();
     state.controller = controller;
+    state.betaTransport = this.options.port.betaTransport?.() ??
+      (state.record.profile === BETA_PROFILE_ID ? "http" : undefined);
+    const intervalsBeforeReconnect = state.betaTransport ? 3 : 2;
+    state.silenceMs = Math.min(MAX_TIMER_MS, intervalsBeforeReconnect * this.heartbeatIntervalMs);
     state.attempts += 1;
     state.callbacks.onOpen?.({ attempt: state.attempts, cursor: state.cursor, reason });
     this.armLiveness(state);
@@ -293,12 +310,13 @@ export class EventsPushRuntime {
 
   private armLiveness(state: StreamState): void {
     clearTimeout(state.livenessTimer);
+    if (state.betaTransport === "stdio") return; // EOF signals a dead stdio peer.
     const controller = state.controller;
     state.livenessTimer = setTimeout(() => {
       if (state.controller === controller) {
         this.reconnect(state, "liveness_timeout", 0);
       }
-    }, 2 * this.heartbeatIntervalMs);
+    }, state.silenceMs);
   }
 
   private stopStream(id: string): void {
@@ -319,7 +337,6 @@ export class EventsPushRuntime {
     // its request is gone, and advancing here would skip the failed frame.
     // The reopened request replays it from the committed cursor.
     if (state.controller !== controller) return;
-    this.armLiveness(state);
     const params = notification.params ?? {};
     switch (notification.method) {
       case EventsActiveNotificationMethod: {
@@ -440,6 +457,8 @@ export class EventsPushRuntime {
 /** A {@link PushConnectionPort} over an `MCPClientManager` connection. */
 export function createManagerPushPort(
   manager: {
+    getEventsSupport?(serverId: string): { beta?: boolean };
+    getInitializationInfo?(serverId: string): { transport: string } | undefined;
     openEventsStream: PushConnectionPort["openStream"] extends (
       params: infer P,
       options: infer O
@@ -460,6 +479,10 @@ export function createManagerPushPort(
   serverId: string
 ): PushConnectionPort {
   return {
+    betaTransport: () => {
+      if (!manager.getEventsSupport?.(serverId).beta) return undefined;
+      return manager.getInitializationInfo?.(serverId)?.transport === "stdio" ? "stdio" : "http";
+    },
     openStream: (params, options) => manager.openEventsStream(serverId, params, options),
     onNotification: (method, handler) => {
       manager.addNotificationHandler(serverId, method, handler);

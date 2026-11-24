@@ -10,6 +10,7 @@ import { EVENTS_SUBSCRIPTION_ID_META_KEY } from "../../mcp-client-manager/events
 import {
   EventsActiveNotificationMethod,
   EventsEventNotificationMethod,
+  EventsHeartbeatNotificationMethod,
 } from "../../mcp-client-manager/events-ext.js";
 import {
   InboxBackpressureError,
@@ -121,11 +122,11 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 50; i++) await Promise.resolve();
 }
 
-function setup(lastCursor: string | null) {
+function setup(lastCursor: string | null, betaTransport?: "http" | "stdio") {
   const connection = scriptedPort();
   const inbox = scriptedInbox();
   const runtime = new EventsPushRuntime({
-    port: connection.port,
+    port: { ...connection.port, betaTransport: () => betaTransport },
     inbox: inbox.inbox,
     maxBackoffMs: 100,
   });
@@ -148,6 +149,33 @@ beforeEach(() => {
 afterEach(() => {
   for (const runtime of opened.splice(0)) runtime.close();
   vi.useRealTimers();
+});
+
+describe("Events beta push liveness", () => {
+  it.each(["c1", null])("reopens a silent HTTP stream with cursor %s after three granted intervals", async cursor => {
+    const t = setup(null, "http");
+    t.send(1, EventsActiveNotificationMethod, { heartbeatMs: 500, cursor: null });
+    await settle();
+    await vi.advanceTimersByTimeAsync(1000);
+    t.send(1, EventsHeartbeatNotificationMethod, { cursor });
+    await settle();
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(t.opens).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(t.opens.map(open => open.cursor)).toEqual([null, cursor]);
+    t.send(2, EventsActiveNotificationMethod, { heartbeatMs: 5000, cursor });
+    await settle();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(t.opens).toHaveLength(2);
+  });
+
+  it("waits for EOF on a quiet stdio connection", async () => {
+    const t = setup(null, "stdio");
+    t.send(1, EventsActiveNotificationMethod, { heartbeatMs: 500, cursor: null });
+    await settle();
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(t.opens).toHaveLength(1);
+  });
 });
 
 describe("EventsPushRuntime cursor safety on append failure", () => {
