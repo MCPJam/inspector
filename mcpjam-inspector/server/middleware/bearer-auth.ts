@@ -128,6 +128,17 @@ function consumeWorkOSToken(keyId: string): number | null {
   return null;
 }
 
+/**
+ * Whether this request needs no debit from the per-key bucket: it was debited
+ * already, or its route family counts its own callers (`ownRateLimit`).
+ */
+function hasRateDebit(c: Context): boolean {
+  return (
+    getRequestLocal(c, "workosRateLimitConsumed") === true ||
+    getRequestLocal(c, "ownRateLimit") === true
+  );
+}
+
 /** Test-only: clear all token buckets. */
 export function resetWorkOSRateLimitForTests(): void {
   workosKeyBuckets.clear();
@@ -249,7 +260,7 @@ export async function bearerAuthMiddleware(
     // flood can't tie up the database either. Debit once per request (memoized
     // like the validation/binding lookups above) so the limit isn't double
     // counted if the middleware ever runs on both a parent and child router.
-    if (!getRequestLocal(c, "workosRateLimitConsumed")) {
+    if (!hasRateDebit(c)) {
       const waitMs = consumeWorkOSToken(workosKeyId);
       if (waitMs !== null) {
         return c.json(
@@ -487,7 +498,7 @@ async function authenticateAgentRegistration(
   next: Next,
   claims: AgentRegistrationClaims,
 ): Promise<Response | void> {
-  if (!getRequestLocal(c, "workosRateLimitConsumed")) {
+  if (!hasRateDebit(c)) {
     const waitMs = consumeWorkOSToken(`agent:${claims.registrationId}`);
     if (waitMs !== null) {
       return c.json(

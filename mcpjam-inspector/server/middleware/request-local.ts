@@ -49,6 +49,12 @@ export interface RequestLocalMap {
    */
   workosRateLimitConsumed: boolean;
   /**
+   * Set by a route family that counts its own callers (the mock server's HTTP
+   * door): the generic per-key and per-token limiters step aside for it, so
+   * the family's published limits are the ones a caller meets.
+   */
+  ownRateLimit: boolean;
+  /**
    * The claims of a `workos_agent` bearer, kept so a long turn can resolve the
    * same user and org again after the 5-minute token has expired.
    */

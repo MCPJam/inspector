@@ -17,6 +17,7 @@ import { Hono, type Context, type Next } from "hono";
 import { HOSTED_MODE } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { getAttestedClientIp } from "../../utils/client-ip.js";
+import { setRequestLocal } from "../../middleware/request-local.js";
 import { principalKey } from "../../utils/request-principal.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { digestOf } from "../../services/mock/backend.js";
@@ -60,6 +61,9 @@ function tooMany(retryAfterMs: number): Response {
 
 /** Step one: a counter per source address, before any key is checked. */
 export async function mockSourceLimit(c: Context, next: Next) {
+  // The door counts its own callers (per source here, per key below), so the
+  // generic per-key and per-token limiters step aside for it.
+  setRequestLocal(c, "ownRateLimit", true);
   const address = getAttestedClientIp(c);
   const waitMs = address
     ? sourceLimiter.take(`ip:${address}`)

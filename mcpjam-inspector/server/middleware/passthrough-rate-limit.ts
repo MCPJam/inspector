@@ -3,6 +3,7 @@ import type { Context, Next } from "hono";
 import { ErrorCode } from "../routes/web/errors.js";
 import { getAttestedClientIp } from "../utils/client-ip.js";
 import { HOSTED_MODE } from "../config.js";
+import { getRequestLocal } from "./request-local.js";
 
 /**
  * A spike brake on the JWT branches of `bearerAuthMiddleware`:
@@ -243,6 +244,9 @@ export async function passthroughRateLimitMiddleware(
   next: Next,
 ): Promise<Response | void> {
   if (!HOSTED_MODE) return next();
+  // A route family with its own per-key and per-source counters (the mock
+  // server's HTTP door) meets its published limits, not this brake.
+  if (getRequestLocal(c, "ownRateLimit")) return next();
   const authMethod = c.get("authMethod");
   if (typeof authMethod !== "string" || !METERED_AUTH_METHODS.has(authMethod)) {
     return next();
