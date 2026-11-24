@@ -1,3 +1,4 @@
+import { isWebClientRuntimeId } from "../../shared/web-clients.js";
 import type { TurnAuthorization } from "../services/turn-authorization.js";
 import type { TurnTiming } from "./turn-timing.js";
 import { takeEarly, type EarlyStart } from "./early-start.js";
@@ -1197,6 +1198,12 @@ export async function streamChatTurn(
   ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
+  // The prompt the turn runs on, and so the one it records. A web client's
+  // vendor receives only the user message; its settings check needs the
+  // project prompt, before MCPJam adds instructions for its own model.
+  const executionSystemPrompt = isWebClientRuntimeId(persist.harness)
+    ? (persist.systemPrompt ?? "")
+    : effectiveEnhancedSystemPrompt;
 
   const hostedChatSessionId = persist.chatSessionId;
   if (runtime.executionBinding) await takeEarly(runtime.executionBinding);
@@ -1361,7 +1368,7 @@ export async function streamChatTurn(
       maxSteps,
       secretsUnavailable,
       modelVenue,
-      systemPrompt: effectiveEnhancedSystemPrompt,
+      systemPrompt: executionSystemPrompt,
       serverIds: prepare.selectedServerIds.filter(
         (id) =>
           (typeof manager.hasServer !== "function" || manager.hasServer(id)) &&
@@ -1429,7 +1436,7 @@ export async function streamChatTurn(
         });
         authorizationFailure = { status };
       }
-      return await persistChatSessionToConvex({
+      const persistOptions: Parameters<typeof persistChatSessionToConvex>[0] = {
         chatSessionId: hostedChatSessionId,
         authorizationFailure,
         retryOwner: persist.retryOwner,
@@ -1472,7 +1479,7 @@ export async function streamChatTurn(
         // reset" long after the fact is the confabulation `resumeConfig`'s raw
         // prompt exists to prevent. Hence two fields, both already on the
         // ingest contract — the local route has always filled this one.
-        systemPrompt: effectiveEnhancedSystemPrompt,
+        systemPrompt: executionSystemPrompt,
         sessionMessages: preservePluginMessageTitles(
           stampSenderUserIdsOnSessionMessages(
             stripUiContextModelParts(
@@ -1588,7 +1595,8 @@ export async function streamChatTurn(
         // the transcript inside the ingest mutation.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
         forwardHeaders: pickEnrichmentHeaders(c.req.raw.headers),
-      });
+      };
+      return await persistChatSessionToConvex(persistOptions, c);
     };
   };
 
@@ -1960,7 +1968,7 @@ export async function streamChatTurn(
     chatSessionId: hostedChatSessionId,
     ...(persist.hostId ? { hostId: persist.hostId } : {}),
     sourceType: persist.sourceType,
-    systemPrompt: effectiveEnhancedSystemPrompt,
+    systemPrompt: executionSystemPrompt,
     temperature: resolvedTemperature,
     // Hosted `/stream`: the top-level body field. Harness: the typed field its
     // adapter's declared efforts gate (refused, never dropped).

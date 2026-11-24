@@ -902,10 +902,10 @@ export async function persistChatSessionToConvex(
         "chat.session.persist.failed",
         {
           failureKind,
-          ...(status !== undefined ? { statusCode: status } : {}),
+          ...(status !== undefined ? { ingestStatusCode: status } : {}),
           ...(preview ? { responsePreview: preview } : {}),
           sourceType: options.sourceType,
-          origin: options.origin,
+          chatOrigin: options.origin,
         },
         error ? { error } : undefined,
       );
@@ -982,7 +982,7 @@ export async function persistChatSessionToConvex(
             "chat.session.persist.skipped",
             {
               sourceType: options.sourceType,
-              origin: options.origin,
+              chatOrigin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
             },
           );

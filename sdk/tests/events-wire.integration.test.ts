@@ -16,10 +16,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { MCPClientManager } from "../src/mcp-client-manager/index.js";
 import type { RpcLogEvent } from "../src/mcp-client-manager/types.js";
-import { MCPEventsWireError } from "../src/mcp-client-manager/events-ext-guards.js";
+import {
+  classifyEventsRpcError,
+  InvalidEventsPayloadError,
+  MCPEventsWireError,
+} from "../src/mcp-client-manager/events-ext-guards.js";
 import {
   EventsCoordinator,
   applySubscriptionPatch,
+  classifyStepFailure,
 } from "../src/events/coordinator.js";
 import type {
   EventsRpcPort,
@@ -27,6 +32,7 @@ import type {
 } from "../src/events/types.js";
 import { computeBindingKey } from "../src/events/identity.js";
 import { DRAFT_PROFILE_ID } from "../src/events/profiles.js";
+import { decodeMcpHeaderValue } from "../src/mcp-client-manager/mcp-header-mirror.js";
 import { startEventsFixture, type EventsFixtureHandle } from "./support/events-fixture.js";
 import {
   startHttpsInbox,
@@ -67,6 +73,125 @@ async function httpsInbox(): Promise<HttpsInboxHandle> {
   opened.inboxes.push(handle);
   return handle;
 }
+
+it("validates Beta results and uses legacy error meanings only on the legacy connection", async () => {
+  const beta = await fixture({ beta: true });
+  const draft = await fixture();
+  const manager = new MCPClientManager();
+  opened.managers.push(manager);
+  const request = { name: "comment.created", arguments: { document_id: "doc" } };
+  const unsubscribe = { ...request, delivery: { url: "https://example.invalid/hooks/1" } };
+  let responses: Record<string, { result: object } | { error: { code: number; message: string; data?: object } }> = {};
+  const baseFetch: typeof fetch = async (url, init) => {
+    if (typeof init?.body === "string") {
+      const body = JSON.parse(init.body);
+      const response = responses[body.method];
+      if (response) return Response.json({ jsonrpc: "2.0", id: body.id, ...response });
+    }
+    return fetch(url, init);
+  };
+
+  await manager.connectToServer(SERVER_ID, { url: beta.url, mcpProtocolVersion: "2026-07-28", baseFetch });
+  expect(manager.getEventsSupport(SERVER_ID)).toMatchObject({ beta: true, declared: true });
+  expect((await manager.listServerEvents(SERVER_ID)).events.length).toBeGreaterThan(0);
+
+  responses = { "events/list": { result: { events: [] } } };
+  await expect(manager.listServerEvents(SERVER_ID)).rejects.toBeInstanceOf(InvalidEventsPayloadError);
+  responses["events/list"] = { result: { resultType: "input_required", requestState: "pending" } };
+  await expect(manager.listServerEvents(SERVER_ID)).rejects.toBeInstanceOf(InvalidEventsPayloadError);
+
+  responses = {};
+
+  responses = { "events/unsubscribe": { error: { code: -32011, message: "Application error" } } };
+  await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).rejects.toMatchObject({ code: -32011 });
+  responses["events/unsubscribe"] = { error: { code: -32023, message: "NotFound" } };
+  await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).resolves.toBe("already-gone");
+
+  const subscribe = { ...request, cursor: null, delivery: { ...unsubscribe.delivery, secret: "fixture" } };
+  const failures = [
+    { code: -32024, kind: "Forbidden", authLost: true, retryable: false },
+    { code: -32025, kind: "ResourceExhausted", authLost: false, retryable: true },
+    { code: -32026, kind: "Unsupported", authLost: false, retryable: false },
+    { code: -32027, reason: "timeout", kind: "callback_timeout", authLost: false, retryable: true },
+    { code: -32027, reason: "http_4xx", kind: "callback_http_4xx", authLost: false, retryable: false },
+  ];
+  for (const { code, reason, ...expected } of failures) {
+    responses["events/subscribe"] = { error: { code, message: expected.kind, ...(reason ? { data: { reason } } : {}) } };
+    const operation = manager.subscribeServerEvents(SERVER_ID, subscribe);
+    await expect(operation).rejects.toMatchObject({ code });
+    const error: unknown = await operation.catch((cause: unknown) => cause);
+    expect(classifyStepFailure("events/subscribe", error, 0)).toMatchObject(expected);
+  }
+
+  const stream = {
+    signal: new AbortController().signal,
+    timeout: 1_000,
+    onRequestId: () => undefined,
+    onRequestStreamEnd: () => undefined,
+  };
+  responses["events/stream"] = { result: { resultType: "complete" } };
+  await expect(manager.openEventsStream(SERVER_ID, { ...request, cursor: null }, stream))
+    .rejects.toBeInstanceOf(InvalidEventsPayloadError);
+
+  await manager.disconnectServer(SERVER_ID);
+  await manager.connectToServer(SERVER_ID, { url: draft.url, mcpProtocolVersion: "2025-11-25", baseFetch });
+  expect(manager.getEventsSupport(SERVER_ID)).toMatchObject({ declared: true, source: "initialize" });
+  expect(manager.getEventsSupport(SERVER_ID).beta).toBeUndefined();
+  responses = { "events/list": { result: { events: [] } } };
+  await expect(manager.listServerEvents(SERVER_ID)).resolves.toEqual({ events: [] });
+  responses["events/unsubscribe"] = { error: { code: -32011, message: "NotFound" } };
+  await expect(manager.unsubscribeServerEvents(SERVER_ID, unsubscribe)).resolves.toBe("already-gone");
+});
+
+it("encodes Beta routing headers and rediscovers before retrying on the HTTP path", async () => {
+  const beta = await fixture({ beta: true });
+  const manager = new MCPClientManager();
+  opened.managers.push(manager);
+  const headers: Headers[] = [];
+  const name = "更新";
+  const baseFetch: typeof fetch = async (url, init) => {
+    if (typeof init?.body === "string") {
+      const body = JSON.parse(init.body);
+      const params = new Headers(init.headers);
+      if (body.method === "events/list") {
+        expect(params.has("mcp-name")).toBe(false);
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: {
+          resultType: "complete",
+          events: [{ name, delivery: ["poll"], inputSchema: { type: "object", properties: {
+            region: { type: "string", "x-mcp-header": headers.length === 0 ? "Old" : "Region" },
+            secret: { type: "string" },
+          } } }],
+        } });
+      }
+      if (body.method === "events/poll") {
+        headers.push(params);
+        if (headers.length === 1) {
+          return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32020, message: "HeaderMismatch" } }, { status: 400 });
+        }
+        return Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32024, message: "Forbidden" } });
+      }
+    }
+    return fetch(url, init);
+  };
+  await manager.connectToServer(SERVER_ID, { url: beta.url, mcpProtocolVersion: "2026-07-28", baseFetch });
+  const outcome = manager.pollServerEvents(SERVER_ID, {
+    name,
+    arguments: { region: "北", secret: "unannotated" },
+    cursor: null,
+  });
+  await expect(outcome).rejects.toMatchObject({ code: -32024 });
+  expect(classifyEventsRpcError("events/poll", await outcome.catch((error) => error))).toMatchObject({
+    kind: "Forbidden",
+    retryable: false,
+  });
+  expect(headers.map((entry) => decodeMcpHeaderValue(entry.get("mcp-name") ?? ""))).toEqual(
+    [expect.objectContaining({ encoded: true, value: name }), expect.objectContaining({ encoded: true, value: name })],
+  );
+  expect(headers[0]?.has("mcp-param-old")).toBe(true);
+  expect(headers[1]?.has("mcp-param-old")).toBe(false);
+  expect(decodeMcpHeaderValue(headers[1]?.get("mcp-param-region") ?? "").value).toBe("北");
+  expect(headers.every((entry) => !entry.has("mcp-param-secret"))).toBe(true);
+});
 
 async function connect(
   url: string,

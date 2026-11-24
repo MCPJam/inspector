@@ -247,6 +247,103 @@ describe('ChromiumDriver — observe {mode:"text"}', () => {
     expect(res.leaseBlocked).toBe(true);
     expect(JSON.stringify(res)).not.toContain("secret");
   });
+
+  const LAST_REPLY = '[data-message-author-role="assistant"] >> nth=-1';
+  /** CSS and a role selector joined by a space, which Playwright can't parse. */
+  const UNPARSED = '.pane role=button[name="Add"]';
+
+  /** A page whose engine knows one element: the last reply. */
+  function withEngine(page: FakePage, onRead?: () => void): FakePage {
+    return {
+      ...page,
+      async elementText(selector) {
+        onRead?.();
+        if (selector === UNPARSED) {
+          throw new Error('locator.count: Unexpected token "=" while parsing css selector');
+        }
+        return selector === LAST_REPLY ? 'It said "hello".' : null;
+      },
+    };
+  }
+
+  it("reads one element's text when a rootSelector names it, in Playwright's syntax", async () => {
+    // The hosted web-client driver's `readText`: an element's `innerText`,
+    // found as an act's target is, never the whole page's prose.
+    const page = withEngine(fakePage({ url: "https://x.test/", text: "the whole page" }));
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "text", rootSelector: LAST_REPLY }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.output).toMatchObject({ text: 'It said "hello".', url: "https://x.test/" });
+    expect(res.stateToken).toMatchObject({ tabId: "@session" });
+
+    const missing = await driver.execute(
+      cmd({ kind: "observe", mode: "text", rootSelector: "role=dialog" }),
+    );
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toMatch(/^unknown_selector: /);
+    // Not "nothing matches": the selector itself could not be used.
+    const unparsed = await driver.execute(
+      cmd({ kind: "observe", mode: "text", rootSelector: UNPARSED }),
+    );
+    expect(unparsed.ok).toBe(false);
+    expect(unparsed.error).toMatch(/^unsupported_target: locator\.count: Unexpected token/);
+  });
+
+  it("refuses a scoped text read on a page with no engine, rather than reading the whole page", async () => {
+    // An answer of the whole page's prose would read as the element's text.
+    const page = fakePage({ url: "https://x.test/", text: "the whole page" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "text", rootSelector: "main" }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^unsupported_target: /);
+    expect(JSON.stringify(res)).not.toContain("the whole page");
+  });
+
+  it("refuses to hand over an element's text read while a person took the browser", async () => {
+    const lease = new HandoffLease();
+    const page = withEngine(fakePage({ url: "https://x.test/" }), () => {
+      lease.acquire("person-1", 60_000);
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "text", rootSelector: LAST_REPLY }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.leaseBlocked).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("hello");
+  });
+
+  it("says the person has the browser, not that the element is missing, when they take it mid-read", async () => {
+    // A read that found nothing, or could not look, while someone took the
+    // browser says nothing about the element: the turn has to wait for them.
+    for (const rootSelector of ["role=dialog", UNPARSED]) {
+      const lease = new HandoffLease();
+      const page = withEngine(fakePage({ url: "https://x.test/" }), () => {
+        lease.acquire("person-1", 60_000);
+      });
+      const { context } = fakeContext({ pages: [page] });
+      const driver = new ChromiumDriver(context, { lease });
+      await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+      const res = await driver.execute(
+        cmd({ kind: "observe", mode: "text", rootSelector }),
+      );
+      expect(res.ok).toBe(false);
+      expect(res.leaseBlocked).toBe(true);
+      expect(res.error).toMatch(/^lease_held: /);
+    }
+  });
 });
 
 describe("ChromiumDriver — observe", () => {
@@ -683,6 +780,64 @@ describe("ChromiumDriver — observe", () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/unknown_selector/);
     expect(res.error).toContain("#gone");
+  });
+
+  /** A page whose CDP refuses every selector, as it refuses Playwright's syntax. */
+  const refusingCdp = {
+    "DOM.getDocument": { root: { nodeId: 1 } },
+    "DOM.querySelector": () => {
+      throw new Error("Protocol error (DOM.querySelector): DOM Error while querying");
+    },
+    "Accessibility.getFullAXTree": axTree({
+      role: "RootWebArea",
+      children: [
+        {
+          role: "dialog",
+          name: "Add server",
+          id: 41,
+          children: [{ role: "button", name: "Add", id: 42 }],
+        },
+      ],
+    }),
+  };
+
+  it("roots the tree at a selector in Playwright's syntax, found by the page's engine", async () => {
+    // Act targets take `role=` and `>>`; CDP refuses them, so the page finds
+    // the element instead of the observation answering that nothing matched.
+    const page = fakePage({ url: "https://x.test/", cdpReplies: refusingCdp });
+    const asked: string[] = [];
+    const engine: FakePage = {
+      ...page,
+      async elementNodeId(selector) {
+        asked.push(selector);
+        return 41;
+      },
+    };
+    const { context } = fakeContext({ pages: [engine] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: 'role=dialog[name="Add server"]' }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(asked).toEqual(['role=dialog[name="Add server"]']);
+    expect((res.output as { a11y: string }).a11y).toContain('button "Add"');
+  });
+
+  it("still says nothing matches a refused selector on a page with no engine to ask", async () => {
+    const page = fakePage({ url: "https://x.test/", cdpReplies: refusingCdp });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootSelector: "role=dialog" }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/^unknown_selector: /);
   });
 
   it("says the tree is unavailable when the page cannot answer one", async () => {

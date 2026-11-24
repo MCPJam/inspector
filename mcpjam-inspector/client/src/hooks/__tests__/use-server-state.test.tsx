@@ -478,6 +478,48 @@ describe("useServerState CLI config import", () => {
     } as Response);
   });
 
+  it("deletes the row from the eager mapping when the snapshot doesn't list it yet", async () => {
+    vi.clearAllMocks();
+    mockUseDbUserReady.mockReset();
+    mockUseDbUserReady.mockReturnValue(true);
+    mockConvexQuery.mockResolvedValue([]);
+    vi.mocked(authFetch).mockReset();
+    vi.mocked(authFetch).mockResolvedValue({
+      json: async () => ({}),
+    } as Response);
+    mockDeleteServer.mockReset();
+    mockDeleteServer.mockResolvedValue(undefined);
+    tryResolveProjectServerMock.mockReturnValue({
+      projectId: "proj_cloud",
+      serverId: "srv_just_saved",
+    });
+    const appState = createCloudCliAppState();
+    const { result } = renderHook(() =>
+      useServerState({
+        appState,
+        dispatch: vi.fn(),
+        isLoading: false,
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        isAuthLoading: false,
+        isLoadingProjects: false,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+        logger: createTestLogger(),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleRemoveServer("acme");
+    });
+
+    expect(mockDeleteServer).toHaveBeenCalledWith({
+      serverId: "srv_just_saved",
+    });
+  });
+
   it("does not ask for sign-in when there is no CLI server payload", async () => {
     vi.mocked(authFetch).mockResolvedValueOnce({
       json: async () => ({ config: { servers: [] } }),
@@ -3132,6 +3174,64 @@ describe("useServerState OAuth callback failures", () => {
           action.type === "CONNECT_SUCCESS" || action.type === "CONNECT_FAILURE"
       )
     ).toBe(false);
+  });
+
+  describe("removing a server while its save is in flight", () => {
+    const acme = { name: "Acme", type: "http", url: "https://mcp.acme.dev" };
+    const saves: Array<(serverId: string) => void> = [];
+    const render = () => {
+      saves.length = 0;
+      mockDeleteServer.mockReset();
+      mockDeleteServer.mockResolvedValue(undefined);
+      mockCreateServerIfMissing.mockImplementation(
+        () => new Promise<string>((resolve) => saves.push(resolve))
+      );
+      tryResolveProjectServerMock.mockReturnValue(null);
+      const appState = createCloudCliAppState();
+      return renderUseServerState(vi.fn(), appState, {
+        isAuthenticated: true,
+        hasSignedInUser: true,
+        useLocalFallback: false,
+        effectiveProjects: appState.projects,
+        effectiveActiveProjectId: "proj_cloud",
+        activeProjectServersFlat: [],
+      }).result;
+    };
+    const connect = (result: ReturnType<typeof render>) => {
+      let pending!: Promise<void>;
+      act(() => {
+        pending = result.current.handleConnect(acme as any);
+      });
+      return pending;
+    };
+
+    it("deletes the row the save creates", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).toHaveBeenCalledWith({ serverId: "srv_acme" });
+    });
+
+    it("keeps the row when a same-name connect started after the removal", async () => {
+      const result = render();
+      const first = connect(result);
+      await waitFor(() => expect(saves).toHaveLength(1));
+      await act(async () => result.current.handleRemoveServer("Acme"));
+      connect(result);
+      await waitFor(() => expect(saves).toHaveLength(2));
+      await act(async () => {
+        saves[0]("srv_acme");
+        await first;
+      });
+      expect(mockDeleteServer).not.toHaveBeenCalledWith({
+        serverId: "srv_acme",
+      });
+    });
   });
 
   it("applies project connection defaults on local reconnect", async () => {
@@ -6768,3 +6868,4 @@ describe("persistRuntimeServerToProjectIfNeeded", () => {
     expect(mockCreateServerIfMissing).toHaveBeenCalledTimes(1);
   });
 });
+
