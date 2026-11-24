@@ -4165,24 +4165,27 @@ export function PlaygroundMain({
       ? harnessDisplayName(previewedHarnessId)
       : null,
   });
+  const {
+    sendInColumn,
+    clearOpenedColumn,
+    trackStarted: trackMultiModelStarted,
+    openFromHistory: openMultiModelSessionFromHistory,
+  } = multiModelSessions;
   // While a column is open alone, every send starts a new chat from it, so
   // the saved column keeps the turns its session ran.
   const sendOrBranch = useCallback(
     // A branch copies `prependMessages` in after the transcript; an ordinary
     // send writes them itself after its admission check.
     (message: Parameters<typeof sendMessage>[0]) => {
-      if (!multiModelSessions.sendInColumn) return sendMessage(message);
+      if (!sendInColumn) return sendMessage(message);
       const context = message.widgetModelContext ?? [];
-      return multiModelSessions.sendInColumn({
+      return sendInColumn({
         ...message,
         onDispatchRefused: () => restoreModelContext(context),
       });
     },
-    [multiModelSessions.sendInColumn, restoreModelContext, sendMessage],
+    [sendInColumn, restoreModelContext, sendMessage],
   );
-  const { clearOpenedColumn } = multiModelSessions;
-  const { openFromHistory: openMultiModelSessionFromHistory } =
-    multiModelSessions;
   const recoveryReads = useRecoveryColumnReads(comparisonRecovery);
   // What a compare column needs to restore its chat and to save its place.
   const multiModelColumnProps = (columnKey: string) => ({
@@ -4261,7 +4264,7 @@ export function PlaygroundMain({
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
           setViewingHistoryReplay(false);
-          multiModelSessions.clearOpenedColumn();
+          clearOpenedColumn();
         }
         console.error("[PlaygroundMain] Failed to load chat session", err);
         toast.error("Failed to load chat history.");
@@ -4272,6 +4275,7 @@ export function PlaygroundMain({
       }
     },
     [
+      clearOpenedColumn,
       adoptRestoredConversationTarget,
       clearComposerDraft,
       convexProjectId,
@@ -4458,12 +4462,13 @@ export function PlaygroundMain({
       // root single-model session alone leaves the visible lane transcripts
       // intact and the user sees nothing happen.
       resetMultiModelSessions();
-      multiModelSessions.clearOpenedColumn();
+      clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility(options?.shared ? "project" : "private");
       return true;
     },
     [
+      clearOpenedColumn,
       cancelPendingHistorySelection,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
@@ -4514,11 +4519,12 @@ export function PlaygroundMain({
       syncResumedVersion(null);
       resetChat();
       resetMultiModelSessions();
-      multiModelSessions.clearOpenedColumn();
+      clearOpenedColumn();
       setLoadedThreadOwnerUserId(null);
       setPendingDirectVisibility("private");
     },
     [
+      clearOpenedColumn,
       cancelPendingHistorySelection,
       clearComposerDraft,
       resetChat,
@@ -5126,7 +5132,7 @@ export function PlaygroundMain({
     // preparation lapses.
     preparedForMs: PLUGIN_MESSAGE_PREPARATION_MS - 15_000,
     send: async (intent, isCurrent) => {
-      if (multiModelSessions.sendInColumn) {
+      if (sendInColumn) {
         toast.error(
           "Apps can't send into a saved column. Open the multi-model session, or send a message to start a new chat.",
         );
@@ -5300,13 +5306,13 @@ export function PlaygroundMain({
     setInjectedToolRenderOverrides({});
     setPreludeTraceExecutions([]);
     resetMultiModelSessions();
-    multiModelSessions.clearOpenedColumn();
+    clearOpenedColumn();
     setViewingHistoryReplay(false);
   }, [
     cancelPendingHistorySelection,
     clearLogs,
     composer,
-    multiModelSessions.clearOpenedColumn,
+    clearOpenedColumn,
     resetChat,
     resetMultiModelSessions,
     syncResumedVersion,
@@ -5629,7 +5635,7 @@ export function PlaygroundMain({
   ) => {
     if (!isCompareMode || !ensureCompareReady()) return false;
     trackSendMessage(captureProps);
-    multiModelSessions.trackStarted(request.text ?? "");
+    trackMultiModelStarted(request.text ?? "");
     const kind = isMultiHostMode ? "host" : "model";
     const recipients = compareLanes.map(({ id }) =>
       broadcastRecipient(kind, id.slice(kind.length + 1)),
@@ -5956,7 +5962,7 @@ export function PlaygroundMain({
     trackSendMessage,
     modelContextQueue,
     sendOrBranch,
-    multiModelSessions.trackStarted,
+    trackMultiModelStarted,
     compareSentPrompts.length,
     outgoingSenderMetadata,
     onFirstMessageSent,
