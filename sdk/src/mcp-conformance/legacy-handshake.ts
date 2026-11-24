@@ -9,6 +9,7 @@
  */
 
 import { needsSetupDetails } from "../conformance-input.js";
+import { MCP_ERROR_CODES } from "../mcp-client-manager/mcp-error-codes.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
   CONFORMANCE_CLIENT_INFO,
@@ -20,6 +21,7 @@ import {
   type RawHttpResult,
 } from "./raw-http.js";
 import type { RawHttpCheckContext } from "./types.js";
+import { describePinRefusal } from "./version-refusal.js";
 
 /**
  * The 2025-era `initialize` prelude a raw legacy probe needs before it can
@@ -106,7 +108,7 @@ export async function legacyInitialize(
       : {}),
   };
 
-  const refused = initializeRefusal(result);
+  const refused = initializeRefusal(result, requestedVersion);
   if (refused !== undefined) return { ...answer, stop: refused };
 
   const startedAt = Date.now();
@@ -176,10 +178,11 @@ export type LegacyHandshake = LegacyHandshakeAnswer &
 export interface LegacyHandshakeStop {
   /**
    * `refused`: the server answered `initialize` with an error.
+   * `pin-refused`: that error says it does not speak the run's version.
    * `version`: it answered with a version the run does not use.
    * `undelivered`: the `initialized` notification did not reach it.
    */
-  kind: "refused" | "version" | "undelivered";
+  kind: "refused" | "pin-refused" | "version" | "undelivered";
   /** The reason, in plain words, for a check's "could not run". */
   message: string;
   /** `details` for that verdict. */
@@ -196,11 +199,30 @@ export interface LegacyHandshakeStop {
  * stream or body gets graded.
  */
 function initializeRefusal(
-  initialize: RawHttpResult
+  initialize: RawHttpResult,
+  requestedVersion: string
 ): LegacyHandshakeStop | undefined {
   const rpcError = jsonRpcError(initialize);
   const httpOk = initialize.status >= 200 && initialize.status < 300;
   if (httpOk && rpcError === undefined) return undefined;
+  const offered = offeredOnVersionRefusal(rpcError);
+  if (rpcError !== undefined && offered !== undefined) {
+    // The server may refuse a version it does not speak, and the run chose
+    // the version. So this is the caller's setup to change, as it is when the
+    // client connection is refused for the pin: no points lost, run incomplete.
+    const { message, setupGap } = describePinRefusal(requestedVersion, offered);
+    return {
+      kind: "pin-refused",
+      message,
+      details: {
+        status: initialize.status,
+        error: { code: rpcError.code, message: rpcError.message },
+        requestedProtocolVersion: requestedVersion,
+        offeredProtocolVersions: offered,
+        ...(setupGap ? needsSetupDetails("protocolVersion", message) : {}),
+      },
+    };
+  }
   const how =
     rpcError !== undefined
       ? `a JSON-RPC error (${rpcError.code}: ${rpcError.message})`
@@ -259,4 +281,29 @@ function differentVersionStop(requested: string, answered: string): string {
 /** Why a raw legacy check stopped after `initialize`, in plain words. */
 export function unsupportedVersionStop(version: string): string {
   return `The server answered initialize with protocol version "${version}", which MCPJam does not support. A client should disconnect in that case, so this check sent nothing more and could not run.`;
+}
+
+/**
+ * The versions a refused `initialize` says the server supports, when the error
+ * is about the version: the 2026 code for it, or the `supported` + `requested`
+ * data the 2025 lifecycle page shows on its `-32602` example. An empty list
+ * means the server refused the version and named no other. Undefined means the
+ * error is about something else.
+ */
+function offeredOnVersionRefusal(
+  error: { code: number; data?: unknown } | undefined
+): string[] | undefined {
+  if (error === undefined) return undefined;
+  const data =
+    error.data !== null && typeof error.data === "object"
+      ? (error.data as { supported?: unknown; requested?: unknown })
+      : {};
+  const listed = Array.isArray(data.supported) ? data.supported : undefined;
+  const aboutVersion =
+    error.code === MCP_ERROR_CODES.UnsupportedProtocolVersion ||
+    (listed !== undefined && typeof data.requested === "string");
+  if (!aboutVersion) return undefined;
+  return (listed ?? []).filter(
+    (version): version is string => typeof version === "string"
+  );
 }

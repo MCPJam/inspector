@@ -189,6 +189,36 @@ describe("a server that asks for a login on initialize", () => {
   });
 });
 
+describe("a server that does not speak the pinned version", () => {
+  it("is not failed for refusing it: every check is a setup gap", async () => {
+    const ids: MCPCheckId[] = [
+      "protocol-invalid-method-error",
+      "server-sse-polling-session",
+      "server-accepts-multiple-post-streams",
+      "get-stream-or-405",
+    ];
+    // What a 2026-only server answers a 2025 initialize.
+    const { served, status, message, details } = await run(
+      { refuseVersion: { status: 400, code: -32022, supported: ["2026-07-28"] } },
+      { checkIds: ids }
+    );
+
+    expect(served.log).toEqual(["POST initialize", "POST initialize"]);
+    for (const id of ids) {
+      expect([id, status(id), message(id)]).toEqual([
+        id,
+        "skipped",
+        "The server does not support protocol version 2025-11-25, which this run uses, so nothing could be checked on it. Run it on 2026-07-28 instead.",
+      ]);
+      // The marker that keeps it out of the score and offers the other version.
+      expect(details(id)).toMatchObject({
+        missingInput: "protocolVersion",
+        offeredProtocolVersions: ["2026-07-28"],
+      });
+    }
+  });
+});
+
 describe("a strict server the notification never reaches", () => {
   it("is not sent the probes it would refuse", async () => {
     const { served, status, message } = await run(

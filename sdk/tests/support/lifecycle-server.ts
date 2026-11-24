@@ -18,6 +18,12 @@ export interface LifecycleServerOptions {
   stateless?: boolean;
   /** How `initialize` is answered. A normal result by default. */
   initialize?: "ok" | "http-400" | "http-401" | "http-500-bare" | "rpc-error";
+  /**
+   * Refuse `initialize` because of its protocol version, with this status and
+   * JSON-RPC code, naming these versions as supported. `-32022` is the 2026
+   * code; `-32602` with `supported` and `requested` is the 2025 example.
+   */
+  refuseVersion?: { status: number; code: number; supported: string[] };
   /** How `notifications/initialized` is answered. 202 with no body by default. */
   initialized?:
     | "accepted"
@@ -100,6 +106,21 @@ export function createLifecycleServer(
       ...(asStream ? { sse: true } : {}),
     });
 
+    if (method === "initialize" && options.refuseVersion) {
+      const { status, code, supported } = options.refuseVersion;
+      return {
+        status,
+        body: {
+          jsonrpc: "2.0",
+          id: request.id ?? null,
+          error: {
+            code,
+            message: "Unsupported protocol version",
+            data: { supported, requested: request.protocolVersion },
+          },
+        },
+      };
+    }
     if (method === "initialize") {
       if (options.initialize === "http-400") {
         return error(400, -32600, "Invalid Request");

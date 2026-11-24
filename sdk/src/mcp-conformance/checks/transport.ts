@@ -375,13 +375,24 @@ export async function runTransportChecks(
     sessionId = session.sessionId;
     const hasStatefulSession = !!sessionId;
     // A 2xx that carries a JSON-RPC error is a refusal too: no session was
-    // opened, so there is no session id or stream to say anything about.
+    // opened, so there is no session id or stream to say anything about. So
+    // is a refusal of the run's version, on any status: the server may refuse
+    // it, so nothing here fails or is blocked for it.
     const stop = session.stop;
-    const refused = session.ok && stop?.kind === "refused" ? stop : undefined;
+    const refused =
+      stop?.kind === "pin-refused" || (session.ok && stop?.kind === "refused")
+        ? stop
+        : undefined;
 
     if (selectedCheckIds.has("server-sse-polling-session")) {
       results.push(
-        !session.ok
+        refused
+          ? couldNotRunResult(
+              TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
+              refused.message,
+              refused.details,
+            )
+          : !session.ok
           ? failedResult(
               TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
               Date.now() - initializationStartedAt,
@@ -390,12 +401,6 @@ export async function runTransportChecks(
                 status: session.status,
                 body: session.body as Record<string, unknown> | string | undefined,
               },
-            )
-          : refused
-          ? couldNotRunResult(
-              TRANSPORT_CHECK_METADATA["server-sse-polling-session"],
-              refused.message,
-              refused.details,
             )
           : hasStatefulSession
           ? passedResult(
@@ -434,20 +439,20 @@ export async function runTransportChecks(
     }
 
     if (selectedCheckIds.has("session-id-visible-ascii")) {
-      if (!session.ok) {
-        results.push(
-          couldNotRunResult(
-            TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
-            `Initialize failed with HTTP ${session.status}, so no session id was observed`,
-            { status: session.status },
-          ),
-        );
-      } else if (refused) {
+      if (refused) {
         results.push(
           couldNotRunResult(
             TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
             refused.message,
             refused.details,
+          ),
+        );
+      } else if (!session.ok) {
+        results.push(
+          couldNotRunResult(
+            TRANSPORT_CHECK_METADATA["session-id-visible-ascii"],
+            `Initialize failed with HTTP ${session.status}, so no session id was observed`,
+            { status: session.status },
           ),
         );
       } else if (!sessionId) {
@@ -478,7 +483,7 @@ export async function runTransportChecks(
       }
     }
 
-    if (!session.ok) {
+    if (!session.ok && !refused) {
       for (const id of SESSION_PROBE_CHECKS) {
         if (selectedCheckIds.has(id)) {
           results.push(

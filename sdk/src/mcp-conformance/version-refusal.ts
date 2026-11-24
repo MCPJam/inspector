@@ -49,12 +49,13 @@ function findPinRefusal(
  * version it offered is one MCPJam does not speak: no choice of pin gets
  * around that, so it is not a setup gap.
  */
-function describeRefusal(refusal: ProtocolVersionPinUnsupported): {
+export function describePinRefusal(
+  pinned: string,
+  offered: readonly string[]
+): {
   message: string;
   setupGap: boolean;
 } {
-  const pinned = refusal.protocolVersion;
-  const offered = refusal.supportedVersions;
   const known = offered.filter(isKnownProtocolVersion);
   const stopped = `The server does not support protocol version ${pinned}, which this run uses, so nothing could be checked on it.`;
   if (known.length === 1) {
@@ -103,7 +104,10 @@ export function pinRefusalChecks(
   const refusal =
     config.protocolVersion !== undefined ? findPinRefusal(error) : undefined;
   if (!refusal) return undefined;
-  const { message, setupGap } = describeRefusal(refusal);
+  const { message, setupGap } = describePinRefusal(
+    refusal.protocolVersion,
+    refusal.supportedVersions
+  );
   const details = {
     requestedProtocolVersion: refusal.protocolVersion,
     offeredProtocolVersions: [...refusal.supportedVersions],
