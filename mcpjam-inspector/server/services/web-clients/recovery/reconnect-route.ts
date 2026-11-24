@@ -162,7 +162,7 @@ export function createWebReconnectRoutes(
       return c.json(
         {
           error:
-            "The account wasn't handed back. Try again in a minute; the runs are still paused.",
+            "The handback didn't finish. Check whether your runs resumed before you try again.",
         },
         502,
       );

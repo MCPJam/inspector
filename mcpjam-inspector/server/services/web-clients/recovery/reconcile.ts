@@ -75,6 +75,12 @@ export async function reconcileWithLedger(
   input: ReconcileInput,
 ): Promise<ReconcileOutcome> {
   const { runId, step, toolUseId, argsHash, connectorIds } = input;
+  // With no turn and no connector to read, nothing rules out a forwarded call.
+  if (!step.turnId && !connectorIds?.length) {
+    throw new Error(
+      "A step with no turn and no connectors can't be checked against the ledger.",
+    );
+  }
   const belongsToStep = (entry: LedgerEntry) =>
     (connectorIds === undefined || connectorIds.includes(entry.connectorId)) &&
     (toolUseId === undefined || entry.toolUseId === toolUseId) &&

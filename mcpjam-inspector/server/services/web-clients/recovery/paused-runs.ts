@@ -16,7 +16,11 @@ import type { ClaimedRun, PendingStep } from "./backend.js";
 /** A paused turn: the reconnect request it waits on, and its run. */
 export type PausedRun = { requestId: string; runId: string };
 
-const waiting = new Map<string, (pendingStep: PendingStep) => void>();
+/**
+ * Every turn waiting on a request and run. Two Playground turns on one
+ * account share both, and a handback wakes each of them.
+ */
+const waiting = new Map<string, Set<(pendingStep: PendingStep) => void>>();
 
 const keyOf = ({ requestId, runId }: PausedRun) => `${requestId}:${runId}`;
 
@@ -44,7 +48,9 @@ export function waitForResume(
       clearTimeout(deadline);
       clearTimeout(poll);
       wait.signal?.removeEventListener("abort", stop);
-      if (waiting.get(key) === finish) waiting.delete(key);
+      const waiters = waiting.get(key);
+      waiters?.delete(finish);
+      if (waiters?.size === 0) waiting.delete(key);
       resolve(step);
     };
     const stop = () => finish(undefined);
@@ -69,7 +75,9 @@ export function waitForResume(
     const deadline = setTimeout(stop, wait.timeoutMs);
     if (wait.signal?.aborted) return stop();
     wait.signal?.addEventListener("abort", stop, { once: true });
-    waiting.set(key, finish);
+    const waiters = waiting.get(key) ?? new Set();
+    waiters.add(finish);
+    waiting.set(key, waiters);
     check();
   });
 }
@@ -79,11 +87,10 @@ export function waitForResume(
  * waits here, and answers whether one did.
  */
 export async function resumeWebRun(run: ClaimedRun): Promise<boolean> {
-  const wake = waiting.get(keyOf(run));
-  if (wake) {
-    wake(run.pendingStep);
-    return true;
-  }
+  // A copy, since each waiter leaves the set as it wakes.
+  const waiters = [...(waiting.get(keyOf(run)) ?? [])];
+  for (const wake of waiters) wake(run.pendingStep);
+  if (waiters.length > 0) return true;
   logger.debug("[web-recovery] No paused turn of this run waits here", {
     runId: run.runId,
     requestId: run.requestId,

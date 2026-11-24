@@ -210,9 +210,30 @@ export async function runRecoverableWebTurn(
       });
     }
   };
+  /**
+   * The step's calls the server never answered, as the stop that reports
+   * them: they may have run, so no one should be asked to send them again.
+   */
+  const ledgerCheck = async (step: PendingStep) => {
+    const verdict = await coordinator.reconcileBeforeResend({ runId, step });
+    if (verdict.status !== "ambiguous_execution") return { verdict };
+    const calls = verdict.calls.map(({ toolName, toolUseId }) => ({
+      toolName,
+      ...(toolUseId ? { toolUseId } : {}),
+    }));
+    return {
+      verdict,
+      ambiguous: { kind: "ambiguous_execution", calls } as const,
+    };
+  };
   let attempt = input;
+  // A retry keeps the turn and its earlier calls, so the turn's trace starts
+  // with its first try.
+  let firstStartedAt: number | undefined;
   for (let tried = 1; ; tried += 1) {
-    const result = await runWebClientTurn(attempt);
+    const tryResult = await runWebClientTurn(attempt);
+    firstStartedAt ??= tryResult.startedAt;
+    const result = { ...tryResult, startedAt: firstStartedAt };
     if (result.ok) return result;
     const failure = runFailureOf(result.failure);
     if (!failure) return result;
@@ -221,7 +242,7 @@ export async function runRecoverableWebTurn(
     const last = tried >= MAX_ATTEMPTS;
     const step: PendingStep = result.pendingStep ?? {
       stepId: result.failure.step,
-      startedAt: new Date(result.startedAt).toISOString(),
+      startedAt: new Date(tryResult.startedAt).toISOString(),
       turnId: result.turnId,
     };
     const outcome = await handleFailure(failure, step);
@@ -236,8 +257,13 @@ export async function runRecoverableWebTurn(
         step: result.failure.step,
         message: result.failure.message,
       } as const;
+      // A paused turn still reports a call that may have run.
+      const pausedStop = async () => ({
+        ...result,
+        stop: (await ledgerCheck(step)).ambiguous ?? paused,
+      });
       // No try is left to carry the turn on after a handback.
-      if (last) return { ...result, stop: paused };
+      if (last) return pausedStop();
       onPaused?.(paused);
       const waitingOn = { requestId: outcome.requestId, runId };
       const resumed = await waitForResume(waitingOn, step, {
@@ -249,22 +275,16 @@ export async function runRecoverableWebTurn(
             (request) => request.requestId === outcome.requestId,
           )?.status,
       });
-      if (!resumed) return { ...result, stop: paused };
+      if (!resumed) return pausedStop();
     }
-    const verdict = await coordinator.reconcileBeforeResend({ runId, step });
-    if (verdict.status === "ambiguous_execution") {
-      const calls = verdict.calls.map(({ toolName, toolUseId }) => ({
-        toolName,
-        ...(toolUseId ? { toolUseId } : {}),
-      }));
-      return { ...result, stop: { kind: "ambiguous_execution", calls } };
-    }
+    const { verdict, ambiguous } = await ledgerCheck(step);
+    if (ambiguous) return { ...result, stop: ambiguous };
     if (last) return result;
     if (verdict.status === "reconciled" || SENT_STEPS.has(step.stepId)) {
       await keepSendRecord(
         environment.journal,
         result.turnId,
-        new Date(result.startedAt).toISOString(),
+        new Date(tryResult.startedAt).toISOString(),
       );
     }
     attempt = { ...input, turnId: result.turnId };
