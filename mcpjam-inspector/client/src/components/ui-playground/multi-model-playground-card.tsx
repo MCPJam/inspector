@@ -581,17 +581,18 @@ export function MultiModelPlaygroundCard({
   );
   // The comparison id is the multi-model session's group: a restored
   // comparison keeps the id it was saved under, so its columns stay together.
+  const browserWorkspaceId = browserWorkspace?.id;
   const multiModelColumn = useMemo(
     () =>
-      browserWorkspace && multiModelPosition !== undefined
+      browserWorkspaceId !== undefined && multiModelPosition !== undefined
         ? {
-            groupId: browserWorkspace.id,
+            groupId: browserWorkspaceId,
             position: multiModelPosition,
             columnKind: compareKind,
             compareId,
           }
         : undefined,
-    [browserWorkspace?.id, multiModelPosition, compareKind, compareId],
+    [browserWorkspaceId, multiModelPosition, compareKind, compareId],
   );
   const {
     messages,
