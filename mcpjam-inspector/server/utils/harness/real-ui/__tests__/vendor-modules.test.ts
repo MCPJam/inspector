@@ -449,6 +449,29 @@ describe("chatgpt.com", () => {
     ).toBeUndefined();
   });
 
+  it("refuses a page read when the browser moved to another chat while it read", async () => {
+    // A person can take the browser to another chat between the reads, and
+    // hand it back: its prompt and reply must not come back under this id.
+    const other = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const base = cannedDriver({ url: `https://chatgpt.com/c/${id}` });
+    const driver: PageDriver = {
+      ...base,
+      kind: "hosted",
+      canEvaluate: false,
+      async readText(selector) {
+        if (selector === '[data-message-author-role="assistant"] >> nth=-1') {
+          await base.navigate(`https://chatgpt.com/c/${other}`);
+          return "the other chat's reply";
+        }
+        return selector.startsWith("[data-message-author-role=") ? "shown" : undefined;
+      },
+    };
+    const read = chatgptWebPageModule.readConversation(driver, `https://chatgpt.com/c/${id}`, { timeoutMs: 1_000 });
+    await expect(read).rejects.toMatchObject({
+      failure: { kind: "driver", step: "read_conversation" },
+    });
+  });
+
   it("finds its own chat after a restart, and never one created before the send began", async () => {
     const earlier = "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee";
     const asked = (prompt: string) => ({
@@ -670,6 +693,18 @@ describe("the hosted driver", () => {
     ]);
     expect(driver.canEvaluate).toBe(false);
     await expect(driver.evaluate(() => 1, {})).rejects.toMatchObject({ code: "unsupported" });
+  });
+
+  it("stops claude.ai's connector step before it changes any connector on the account", async () => {
+    // Its chat menu needs a key pressed on one element, which this browser
+    // refuses: stopping at the menu would leave the account's connectors changed.
+    const send = vi.fn(async (_command: BrowserAgentCommand) => executed({ url: "https://claude.ai/new" }));
+    const driver = createHostedPageDriver(send, { sites: WEB_CLIENT_SITES.claude });
+    const connector = { name: "MCPJam orders 1a2b3c4d", url: "https://inspector.example/mcp/connector-1" };
+    await expect(claudeWebPageModule.ensureConnector(driver, connector, { timeoutMs: 300 })).rejects.toMatchObject({
+      failure: { kind: "driver", step: "connector" },
+    });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it("reads an element as absent only when nothing matches it, and fails any other read", async () => {
