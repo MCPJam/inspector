@@ -16,10 +16,7 @@ import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
-import {
-  ServerCredentialRecovery,
-  ServerUrlChangeHistory,
-} from "./ServerUrlChangeHistory";
+import { ServerCredentialRecovery } from "./ServerUrlChangeHistory";
 import { EffectiveProtocolVersionChip } from "./shared/EffectiveProtocolVersionChip";
 import type { ServerDetailController } from "./hooks/use-server-detail-controller";
 
@@ -386,9 +383,10 @@ export function ServerHistoryTabBody({ controller }: ControllerProps) {
   const { projectId, hostedServerId } = controller;
   if (!projectId || !hostedServerId) return null;
   return (
-    <div className="space-y-4">
-      <ServerUrlChangeHistory serverId={hostedServerId} />
-      <ServerHistoryContent projectId={projectId} serverId={hostedServerId} />
-    </div>
+    <ServerHistoryContent
+      key={hostedServerId}
+      projectId={projectId}
+      serverId={hostedServerId}
+    />
   );
 }

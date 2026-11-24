@@ -1,12 +1,15 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { getFunctionName } from "convex/server";
 
-const { useQueryMock, reportBoundaryError } = vi.hoisted(() => ({
+const { useQueriesMock, useQueryMock, reportBoundaryError } = vi.hoisted(() => ({
+  useQueriesMock: vi.fn(),
   useQueryMock: vi.fn(),
   reportBoundaryError: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
+  useQueries: (...args: unknown[]) => useQueriesMock(...args),
   useQuery: (...args: unknown[]) => useQueryMock(...args),
 }));
 
@@ -18,9 +21,9 @@ vi.mock("@/lib/error-reporting", () => ({
 import {
   SERVER_URL_CHANGES_QUERY,
   ServerCredentialRecovery,
-  ServerUrlChangeHistory,
   isServerUrlHistoryUnavailable,
 } from "../ServerUrlChangeHistory";
+import { ServerHistoryContent } from "../ServerHistoryContent";
 import { createServer } from "@/test/factories";
 
 // The exact string `convex/react` throws from render in PRODUCTION: the
@@ -40,7 +43,7 @@ const urlChange = {
   id: "evt_1",
   action: "server.url.changed",
   actorEmail: "editor@example.com",
-  timestamp: Date.UTC(2026, 8, 9, 12, 0, 0),
+  timestamp: new Date(2026, 8, 9, 12).getTime(),
   metadata: {
     cause: "url_origin_change",
     previousOrigin: "https://old.example.com",
@@ -65,11 +68,22 @@ const urlChangeClear = {
   },
 };
 
-describe("ServerUrlChangeHistory", () => {
+const history = <ServerHistoryContent projectId="proj_1" serverId="srv_1" />;
+const recoveryServer = createServer({
+  config: { url: "https://new.example.com/mcp" },
+  connectionStatus: "failed",
+  lastError: "HTTP 401 Unauthorized",
+});
+const recoveryAuth = { method: "bearer", bearer: null, headers: null } as const;
+
+describe("Server History", () => {
   let consoleError: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     useQueryMock.mockReset();
+    useQueryMock.mockReturnValue([]);
+    useQueriesMock.mockReset();
+    useQueriesMock.mockReturnValue({ result: [] });
     reportBoundaryError.mockReset();
     // React logs caught boundary errors; keep the suite output readable.
     consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -85,7 +99,9 @@ describe("ServerUrlChangeHistory", () => {
       throw PROD_DARK_SHIP;
     });
 
-    const { container } = render(<ServerUrlChangeHistory serverId="srv_1" />);
+    const { container } = render(
+      <ServerCredentialRecovery serverId="srv_1" server={recoveryServer} auth={recoveryAuth} />
+    );
 
     expect(container).toBeEmptyDOMElement();
     expect(reportBoundaryError).not.toHaveBeenCalled();
@@ -96,7 +112,9 @@ describe("ServerUrlChangeHistory", () => {
       throw DEV_DARK_SHIP;
     });
 
-    const { container } = render(<ServerUrlChangeHistory serverId="srv_1" />);
+    const { container } = render(
+      <ServerCredentialRecovery serverId="srv_1" server={recoveryServer} auth={recoveryAuth} />
+    );
 
     expect(container).toBeEmptyDOMElement();
     expect(reportBoundaryError).not.toHaveBeenCalled();
@@ -109,7 +127,9 @@ describe("ServerUrlChangeHistory", () => {
       throw new Error("kaboom");
     });
 
-    const { container } = render(<ServerUrlChangeHistory serverId="srv_1" />);
+    const { container } = render(
+      <ServerCredentialRecovery serverId="srv_1" server={recoveryServer} auth={recoveryAuth} />
+    );
 
     expect(container).toBeEmptyDOMElement();
     expect(reportBoundaryError).toHaveBeenCalledTimes(1);
@@ -126,28 +146,30 @@ describe("ServerUrlChangeHistory", () => {
     useQueryMock.mockImplementation(() => {
       throw PROD_DARK_SHIP;
     });
-    const { rerender } = render(<ServerUrlChangeHistory serverId="srv_1" />);
-    expect(
-      screen.queryByRole("heading", { name: "Server URL and command changes" })
-    ).not.toBeInTheDocument();
+    const { rerender } = render(
+      <ServerCredentialRecovery serverId="srv_1" server={recoveryServer} auth={recoveryAuth} />
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
 
     useQueryMock.mockReset();
     useQueryMock.mockReturnValue([urlChange]);
-    rerender(<ServerUrlChangeHistory serverId="srv_2" />);
+    rerender(
+      <ServerCredentialRecovery serverId="srv_2" server={recoveryServer} auth={recoveryAuth} />
+    );
 
-    expect(
-      screen.getByRole("heading", { name: "Server URL and command changes" })
-    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Re-enter the request headers and bearer token to reconnect."
+    );
   });
 
   it("renders one row per edit when the backend answers", () => {
-    useQueryMock.mockReturnValue([urlChange, urlChangeClear]);
+    useQueriesMock.mockReturnValue({ result: [urlChange, urlChangeClear] });
 
-    render(<ServerUrlChangeHistory serverId="srv_1" />);
+    render(history);
 
-    expect(useQueryMock).toHaveBeenCalledWith(SERVER_URL_CHANGES_QUERY, {
-      serverId: "srv_1",
-    });
+    const [{ result }] = useQueriesMock.mock.calls[0];
+    expect(getFunctionName(result.query)).toBe(SERVER_URL_CHANGES_QUERY);
+    expect(result.args).toEqual({ serverId: "srv_1" });
     expect(screen.getByText("https://old.example.com")).toBeInTheDocument();
     expect(screen.getByText("https://new.example.com")).toBeInTheDocument();
     expect(screen.getByText(/editor@example\.com/)).toBeInTheDocument();
@@ -163,7 +185,7 @@ describe("ServerUrlChangeHistory", () => {
     // mcpjam-backend#1260. A stdio row's destination is its command, so the
     // only record of the edit is the clear — filtering to `server.url.changed`
     // left this vector invisible in the panel.
-    useQueryMock.mockReturnValue([
+    useQueriesMock.mockReturnValue({ result: [
       {
         id: "evt_stdio",
         action: "server.credentials.cleared_on_origin_change",
@@ -176,12 +198,12 @@ describe("ServerUrlChangeHistory", () => {
           clearedKinds: ["env"],
         },
       },
-    ]);
+    ] });
 
-    render(<ServerUrlChangeHistory serverId="srv_1" />);
+    render(history);
 
     expect(
-      screen.getByText("Pointed at a different command")
+      screen.getByText("Server command changed")
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -196,7 +218,7 @@ describe("ServerUrlChangeHistory", () => {
     // A flip to stdio fires the url event with `nextOrigin: null` while the row
     // KEEPS its url. Reading that as a repoint tells the user their URL moved
     // while the field in front of them still shows the old one.
-    useQueryMock.mockReturnValue([
+    useQueriesMock.mockReturnValue({ result: [
       {
         ...urlChange,
         id: "evt_flip",
@@ -207,26 +229,102 @@ describe("ServerUrlChangeHistory", () => {
           clearedKinds: ["env"],
         },
       },
-    ]);
+    ] });
 
-    render(<ServerUrlChangeHistory serverId="srv_1" />);
+    render(history);
 
     expect(
       screen.getByText(/Switched to a local command/)
     ).toBeInTheDocument();
-    expect(screen.queryByText(/URL changed/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Server URL changed")).not.toBeInTheDocument();
     expect(
       screen.queryByText("https://old.example.com")
     ).not.toBeInTheDocument();
   });
 
   it("skips the query while the server id is unresolved", () => {
-    useQueryMock.mockReturnValue(undefined);
+    const { container } = render(
+      <ServerCredentialRecovery serverId={null} server={recoveryServer} auth={recoveryAuth} />
+    );
 
-    const { container } = render(<ServerUrlChangeHistory serverId={null} />);
-
-    expect(useQueryMock).toHaveBeenCalledWith(SERVER_URL_CHANGES_QUERY, "skip");
+    expect(useQueryMock).not.toHaveBeenCalled();
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("orders both event types by time and compares a revision with the previous revision", () => {
+    const revisions = [
+      { revisionNumber: 3, capturedAt: urlChange.timestamp + 60_000, counts: { tools: 5 } },
+      { revisionNumber: 2, capturedAt: urlChange.timestamp - 60_000, counts: { tools: 3 } },
+      { revisionNumber: 1, capturedAt: new Date(2026, 8, 8, 12).getTime(), counts: { tools: 1 } },
+    ];
+    const sameOriginChange = {
+      ...urlChange,
+      id: "evt_path",
+      timestamp: urlChange.timestamp - 120_000,
+      metadata: {
+        previousOrigin: urlChange.metadata.nextOrigin,
+        nextOrigin: urlChange.metadata.nextOrigin,
+        clearedOnOriginChange: false,
+      },
+    };
+    useQueriesMock.mockReturnValue({ result: [sameOriginChange, urlChange] });
+    useQueryMock.mockImplementation((query: string) => {
+      if (query === "serverInspections:listInspectionRevisions") return revisions;
+      if (query === "serverInspections:diffInspectionRevisions") return null;
+      return { counts: { tools: 0 }, snapshot: { tools: [] } };
+    });
+
+    render(history);
+
+    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(2);
+    const rows = screen.getAllByRole("listitem");
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toHaveTextContent(/Revision 3\+2 tools/);
+    expect(rows[1]).toHaveTextContent("Server URL changed");
+    expect(rows[2]).toHaveTextContent("Revision 2");
+    expect(rows[3]).toHaveTextContent("Within");
+    expect(rows[3]).not.toHaveTextContent("Cleared");
+    expect(rows[4]).toHaveTextContent("Revision 1");
+
+    const latest = screen.getByRole("button", { name: /Revision 3/ });
+    expect(latest).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(latest);
+    expect(latest).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: /diff/i })).toHaveAttribute("aria-pressed", "true");
+    expect(useQueryMock).toHaveBeenCalledWith("serverInspections:diffInspectionRevisions", {
+      projectId: "proj_1",
+      serverId: "srv_1",
+      fromRevisionNumber: 2,
+      toRevisionNumber: 3,
+    });
+    fireEvent.click(screen.getByRole("button", { name: /snapshot/i }));
+    expect(screen.getByText("No tools")).toBeInTheDocument();
+    fireEvent.click(latest);
+    expect(latest).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("No tools")).not.toBeInTheDocument();
+  });
+
+  it("keeps revisions available when the URL change query fails", () => {
+    useQueriesMock.mockReturnValue({ result: DEV_DARK_SHIP });
+    useQueryMock.mockReturnValue([
+      { revisionNumber: 1, capturedAt: urlChange.timestamp, counts: { tools: 1 } },
+    ]);
+    const { rerender } = render(history);
+
+    expect(screen.getByRole("button", { name: /Revision 1/ })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+    useQueriesMock.mockReturnValue({ result: new Error("Server not found") });
+    rerender(<ServerHistoryContent projectId="proj_1" serverId="srv_1" />);
+    expect(screen.getByRole("button", { name: /Revision 1/ })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Server URL and command changes unavailable");
+  });
+
+  it("uses a single empty state when neither history has events", () => {
+    render(history);
+
+    expect(screen.getByText("No server activity yet")).toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
   });
 
   it("offers recovery after a forbidden response at the new address", () => {
