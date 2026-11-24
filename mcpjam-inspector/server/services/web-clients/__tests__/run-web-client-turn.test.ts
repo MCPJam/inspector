@@ -17,6 +17,7 @@ import { startFixtureVendor, type FixtureVendor } from "../../../test/support/we
 import { startStandInEndpoint, type StandInEndpoint } from "../../../test/support/web-clients/stand-in-endpoint";
 import { createMemorySendJournal } from "../../../utils/harness/real-ui/drive-turn";
 import { createFixtureWebPageModule } from "../../../utils/harness/real-ui/fixture-web";
+import { RealUiError } from "../../../utils/harness/real-ui/page-module";
 import { createPlaywrightDriver } from "../../../utils/harness/real-ui/playwright-driver";
 import { runHarnessTurn } from "../../../utils/harness/run-harness-turn";
 import { logger } from "../../../utils/logger";
@@ -37,7 +38,7 @@ import {
   type WebClientEnvironment,
   type WebTurnContext,
 } from "../web-client-environment";
-import { WebClientRunError } from "../web-client-harness-turn";
+import { WebClientRunError, webClientFailureEvidenceOf } from "../web-client-harness-turn";
 
 let browser: Browser;
 let vendor: FixtureVendor;
@@ -131,8 +132,29 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
     expect(call?.params).toMatchObject({ name: "echo", arguments: { message: "say hello" } });
   });
 
-  it("stops as turn_running when another run has the connector, and leaves its window alone", async () => {
+  it("waits for another run's turn on the same connector, then runs", async () => {
     // Two compared runs, or two Playground panes, on one account and server.
+    windows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
+    setTimeout(() => windows.close("other-turn"), 150);
+    const result = await runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: environment(),
+      turnWindows: windows,
+      ledger,
+      stepTimeoutMs: 10_000,
+      replyTimeoutMs: 20_000,
+      connectorPollMs: 25,
+    });
+    expect(result.ok).toBe(true);
+    expect(upstream.received.filter((r) => r.method === "tools/call")).toHaveLength(1);
+  });
+
+  it("stops as turn_running when the connector stays busy, and leaves the other turn's window alone", async () => {
     windows.open({ connectorId: "conn-orders", runId: "run-0", turnId: "other-turn", approve: async () => ({ allow: true }) });
     const openBrowser = vi.fn();
     const result = await runWebClientTurn({
@@ -145,10 +167,78 @@ describe("runWebClientTurn", { timeout: 90_000 }, () => {
       environment: { ...environment(), openBrowser },
       turnWindows: windows,
       ledger,
+      connectorWaitMs: 120,
+      connectorPollMs: 25,
     });
     expect(result).toMatchObject({ ok: false, infrastructure: true, failure: { kind: "turn_running", step: "connector" } });
     expect(windows.active("conn-orders")?.turnId).toBe("other-turn");
     expect(openBrowser).not.toHaveBeenCalled();
+  });
+
+  it("ends the wait on a Stop as the run's cancellation, never as a busy connector", async () => {
+    windows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    const stop = new AbortController();
+    const openBrowser = vi.fn();
+    const onOutcome = vi.fn(async () => {});
+    const result = runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: { ...environment(), openBrowser, onOutcome },
+      turnWindows: windows,
+      ledger,
+      signal: stop.signal,
+      connectorPollMs: 25,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    stop.abort();
+    await expect(result).rejects.toBe(stop.signal.reason);
+    expect(windows.active("conn-orders")?.turnId).toBe("other-turn");
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(onOutcome).not.toHaveBeenCalled();
+  });
+
+  it("holds no window while another replica's turn has the connector", async () => {
+    let refusals = 2;
+    const heldWhileRefused: Array<string | undefined> = [];
+    const close = vi.fn(async () => {});
+    const result = await runWebClientTurn({
+      runtimeId: "claude-web",
+      projectId: "project-1",
+      serverIds: ["orders"],
+      prompt: "say hello",
+      runId: "run-1",
+      approval: ALLOW,
+      environment: {
+        ...environment(),
+        turnGate: {
+          async open() {
+            if (refusals === 0) return;
+            refusals -= 1;
+            setTimeout(() => heldWhileRefused.push(windows.active("conn-orders")?.turnId), 5);
+            throw new RealUiError({ kind: "turn_running", step: "connector", message: "Another run is already using this connector." });
+          },
+          close,
+        },
+      },
+      turnWindows: windows,
+      ledger,
+      stepTimeoutMs: 10_000,
+      replyTimeoutMs: 20_000,
+      connectorPollMs: 25,
+    });
+    expect(result.ok).toBe(true);
+    expect(heldWhileRefused).toEqual([undefined, undefined]);
+    expect(windows.active("conn-orders")).toBeUndefined();
+    expect(close).toHaveBeenCalled();
   });
 
   it("lets MCPJam's gate refuse a call before it reaches the server", async () => {
@@ -451,6 +541,32 @@ describe("the harness lifecycle", { timeout: 90_000 }, () => {
       failure: { kind: "needs_sign_in", reason: "human_check" },
       message: expect.stringContaining("Sign in again"),
     });
+    // An eval iteration reads this as the run's failure, out of the pass rate.
+    expect(webClientFailureEvidenceOf(failure)).toEqual({ source: "web_client", code: "needs_sign_in" });
+    expect(webClientFailureEvidenceOf(new Error("the server failed"))).toBeUndefined();
+  });
+
+  it("ends a Stop during the connector wait as the person's, and opens no browser when the connector frees", async () => {
+    const openBrowser = vi.fn();
+    setWebClientEnvironment({ ...environment(), openBrowser });
+    webClientTurnWindows.open({
+      connectorId: "conn-orders",
+      runId: "run-0",
+      turnId: "other-turn",
+      approve: async () => ({ allow: true }),
+    });
+    const stop = new AbortController();
+    const result = runHarnessTurn(
+      options({ abortSignal: stop.signal }),
+      "none",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    // The other run lets go of the connector just as this one is stopped.
+    stop.abort();
+    webClientTurnWindows.close("other-turn");
+    await expect(result).resolves.toMatchObject({ aborted: true });
+    expect(openBrowser).not.toHaveBeenCalled();
+    expect(webClientTurnWindows.active("conn-orders")).toBeUndefined();
   });
 
   it("acts as the eval run's owner on its frozen accounts, one account on per iteration", async () => {
