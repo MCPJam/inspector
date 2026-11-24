@@ -204,7 +204,7 @@ export async function driveRealUiTurn(
       async () => {
         const blocked = await module.blocker(driver);
         if (blocked) throw new RealUiError({ ...blocked, step: "reply" });
-        if (await module.answerApproval(driver)) {
+        if (await module.answerApproval(driver, [input.connector.name])) {
           approvalsAnswered += 1;
           return false;
         }

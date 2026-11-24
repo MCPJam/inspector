@@ -20,6 +20,7 @@ function pageAnswering(body: string, canEvaluate: boolean): PageDriver {
   return {
     kind: canEvaluate ? "playwright" : "hosted",
     canEvaluate,
+    playwrightSelectors: canEvaluate,
     async navigate(next) {
       url = next;
     },
