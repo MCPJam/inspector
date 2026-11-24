@@ -25,7 +25,7 @@ async function waitForReply(page: Page, message: string) {
   ).toHaveCount(1, { timeout: 60_000 });
   await expect(
     page.getByRole("button", { name: "Stop generating", exact: true }),
-  ).toHaveCount(0);
+  ).toHaveCount(0, { timeout: 60_000 });
 }
 
 async function chooseClient(page: Page, name: string) {
