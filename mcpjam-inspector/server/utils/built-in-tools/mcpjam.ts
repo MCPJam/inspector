@@ -678,6 +678,16 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Saves a new version of a mock; chat gets it with the change-list screen. Available on the API, the CLI, MCP and the agent.",
   get_mock_server:
     "Dials the real server to show its values beside the definition; chat gets it with the mock screen. Available on the API, the CLI, MCP and the agent.",
+
+  // Climbs: chat gets them with the screens, which come after the product gate.
+  start_climb:
+    "Launches the baseline's paid runs and opens a loop of rounds; chat gets climbs with their screens. Available on the API, the CLI and MCP.",
+  update_climb:
+    "Changes what a climb is for; chat gets it with the climb screens. Available on the API, the CLI, MCP and the agent.",
+  get_climb:
+    "Returns the baseline, the suite check and the failed runs behind each option; chat gets it with the climb screens. Available on the API, the CLI, MCP and the agent.",
+  list_climbs:
+    "Lists climbs; chat gets it with the suite's Climb tab. Available on the API, the CLI, MCP and the agent.",
 };
 
 const OPERATIONS_BY_ID = new Map(

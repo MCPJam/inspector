@@ -15,7 +15,7 @@
  * live request.
  */
 import type { Context } from "hono";
-import { PlatformApiClient } from "@mcpjam/sdk/platform";
+import { PlatformApiClient, type PlatformApiClientOptions } from "@mcpjam/sdk/platform";
 import { assertBearerToken } from "./errors.js";
 import { getSelfFetch } from "../../utils/self-app.js";
 
@@ -33,11 +33,16 @@ const selfDispatchFetch: typeof fetch = async (input, init) => {
   return dispatch(new Request(input, init));
 };
 
-export function buildMcpjamPlatformClient(c: Context): PlatformApiClient {
+export function buildMcpjamPlatformClient(
+  c: Context,
+  /** What the calls declare about their launcher, so a launch keeps the caller's badge. */
+  launch: Pick<PlatformApiClientOptions, "launcher" | "ci"> = {},
+): PlatformApiClient {
   const token = assertBearerToken(c);
   return new PlatformApiClient({
     baseUrl: SELF_BASE_URL,
     getAuth: () => token,
     fetch: selfDispatchFetch,
+    ...launch,
   });
 }

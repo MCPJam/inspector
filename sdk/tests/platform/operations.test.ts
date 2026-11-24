@@ -2759,6 +2759,10 @@ describe("operation catalog consistency", () => {
     install_registry_server: { registryServerId: "rs" },
     uninstall_registry_server: { registryServerId: "rs" },
     send_feedback: { kind: "bug", summary: "the run page crashes" },
+    start_climb: { suite: "s", server: "x", roundLimit: 1, creditLimit: 10 },
+    update_climb: { climb: "c", measure: "tokens" },
+    get_climb: { climb: "c" },
+    list_climbs: {},
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -3011,6 +3015,10 @@ describe("operation catalog consistency", () => {
       // A mock is saved and versioned: writes, reversible and free (`risk: "none"`).
       "create_mock_server",
       "update_mock_server",
+      // A climb launches paid runs (`start_climb`, `risk: "spend"`); the other
+      // write only changes what the climb is for.
+      "start_climb",
+      "update_climb",
       // Stores a report and sends its text to the MCPJam team — a write, and
       // `risk: "exposure"` because the text leaves the caller's organization.
       "send_feedback",

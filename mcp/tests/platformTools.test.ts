@@ -162,6 +162,11 @@ const PLAIN_TOOLS = [
   "create_mock_server",
   "update_mock_server",
   "get_mock_server",
+  // Climbs: structured climbs and their numbers, no widget view.
+  "start_climb",
+  "update_climb",
+  "get_climb",
+  "list_climbs",
   // Server accounts: metadata reads and the delete, no widget view.
   "list_server_accounts",
   "get_server_account",
@@ -514,6 +519,10 @@ describe("platform tool registration", () => {
       "create_mock_server",
       "update_mock_server",
       "get_mock_server",
+      "start_climb",
+      "update_climb",
+      "get_climb",
+      "list_climbs",
       "list_server_accounts",
       "get_server_account",
       "delete_server_account",

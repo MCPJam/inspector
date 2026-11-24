@@ -23,6 +23,7 @@ import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
 import serverGroups from "./server-groups.js";
 import mockServers from "./mock-servers.js";
+import climbs from "./climbs.js";
 import { markMockServers } from "./mock-server-marks.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
@@ -172,6 +173,10 @@ export const V1_EVAL_LAUNCH_ROUTES = [
 ] as const;
 v1.on("POST", [...V1_EVAL_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
 
+/** The climb routes that launch run groups (they dispatch into the launch routes above). */
+export const V1_CLIMB_LAUNCH_ROUTES = ["/projects/:projectId/climbs"] as const;
+v1.on("POST", [...V1_CLIMB_LAUNCH_ROUTES], refuseWhileDraining("eval_run"));
+
 /**
  * The conformance start route, refused while draining like eval launches. Its
  * per-user limit is spent inside the start (`startHostedConformanceRun`), so a
@@ -194,6 +199,8 @@ v1.route("/", serverGroups);
 // Mock servers (guest-DENIED by default). The middleware marks mocks in the
 // server list that `catalog` answers below.
 v1.route("/", mockServers);
+// Climbs (guest-DENIED by default).
+v1.route("/", climbs);
 v1.on("GET", "/projects/:projectId/servers", markMockServers);
 v1.route("/", serverConnections);
 v1.route("/", tools);

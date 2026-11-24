@@ -26,6 +26,9 @@ export {
 // Mock servers: operations and wire shapes (defined in their own modules).
 export * from "./mock-operations.js";
 export type * from "./mock-types.js";
+// Climbs: operations and wire shapes (defined in their own modules).
+export * from "./climb-operations.js";
+export type * from "./climb-types.js";
 
 export {
   OPERATION_FEATURES,

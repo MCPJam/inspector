@@ -340,6 +340,11 @@ export const OPERATION_FEATURES: Readonly<Record<string, OperationFeature>> = {
   create_mock_server: "climbs",
   update_mock_server: "climbs",
   get_mock_server: "climbs",
+  // Every climb call is behind the flag, reads included: the backend gates them all.
+  start_climb: "climbs",
+  update_climb: "climbs",
+  get_climb: "climbs",
+  list_climbs: "climbs",
   // Not hidden by `multi-account-connections`: a first account needs no
   // feature, and the backend refuses a second one where the feature is off.
   list_server_accounts: null,

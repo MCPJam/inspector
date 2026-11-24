@@ -9,6 +9,7 @@ import { registerClientsCommands } from "./clients.js";
 import { registerCloudConformanceCommands } from "./conformance-cloud.js";
 import { registerImagesCommands } from "./images.js";
 import { registerMocksCommands } from "./mocks.js";
+import { registerClimbsCommands } from "./climbs.js";
 import { registerSkillsCommands } from "./skills.js";
 import { registerGoalsCommands } from "./goals.js";
 import { registerOrganizationsCommands } from "./organizations.js";
@@ -56,6 +57,7 @@ export function registerCloudCommands(program: Command): Command {
   // no command prints one.
   registerServerAccountsCommands(cloud);
   registerMocksCommands(cloud);
+  registerClimbsCommands(cloud);
   registerImagesCommands(cloud);
   registerSkillsCommands(cloud);
 

@@ -54,6 +54,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_mock_server: { command: "cloud mocks create" },
   update_mock_server: { command: "cloud mocks update" },
   get_mock_server: { command: "cloud mocks get" },
+  start_climb: { command: "cloud climbs start" },
+  update_climb: { command: "cloud climbs update" },
+  get_climb: { command: "cloud climbs get" },
+  list_climbs: { command: "cloud climbs list" },
   // `default` runs the same operation as `rename`, with `isDefault` in place
   // of a name.
   list_server_accounts: { command: "cloud server-accounts list" },

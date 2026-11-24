@@ -50,6 +50,10 @@ beta; they are listed [after the table](#held-tools).
 | `create_mock_server` | Create a mock of a saved MCP server, or of nothing, with a definition that changes only what it states: tool descriptions and schemas, annotations, hidden or fixed parameters, renamed tools. Returns its address and the change list. Behind the `climbs` feature. | — |
 | `update_mock_server` | Save a new version of a mock from a whole definition or a JSON merge patch, naming the head version read in `expectedVersion`. `dryRun` returns the change list without saving. Behind the `climbs` feature. | — |
 | `get_mock_server` | Read one version of a mock: its address, its definition, the change list since another version, and the real server's current values for what the definition edits. | — |
+| `start_climb` | Start a climb: improve a saved server from an eval suite, one round at a time. Splits the suite's cases into steering, validation and confirmation cases, and launches the baseline twice through a mock with no changes. Needs a round limit and a credit limit. Launches paid runs. Behind the `climbs` feature. | — |
+| `update_climb` | Change what a climb is for, the smallest improvement or its target until round 1 settles, or set cases aside as confirmation cases. Behind the `climbs` feature. | — |
+| `get_climb` | Read a climb: its state, limits, the cases in each group, the baseline's noise per environment, every round with who submitted it, and the best server so far. Validation shows totals only. | — |
+| `list_climbs` | List a project's climbs, newest first. | — |
 | `list_server_accounts` | List the accounts a saved MCP server signs in with: id, name, default, needs reconnecting, hosted-only. Never a token. | — |
 | `get_server_account` | Read one of a saved server's accounts by id or name. Never a token; another person's account answers not found. | — |
 | `delete_server_account` | Delete one of a saved server's accounts and ask its issuer to revoke the token. The default account is refused while other accounts exist. | — |

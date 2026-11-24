@@ -128,6 +128,11 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /projects/{projectId}/mock-servers",
   "post /projects/{projectId}/mock-servers/{mockId}/versions",
   "get /projects/{projectId}/mock-servers/{mockId}",
+  // Climbs share the flag with mock servers and are documented with them.
+  "post /projects/{projectId}/climbs",
+  "get /projects/{projectId}/climbs",
+  "get /projects/{projectId}/climbs/{climbId}",
+  "patch /projects/{projectId}/climbs/{climbId}",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",

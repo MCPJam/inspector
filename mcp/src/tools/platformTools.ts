@@ -138,6 +138,10 @@ import {
   createMockServerOperation,
   updateMockServerOperation,
   getMockServerOperation,
+  startClimbOperation,
+  updateClimbOperation,
+  getClimbOperation,
+  listClimbsOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   deleteServerAccountOperation,
@@ -371,6 +375,12 @@ const CATALOG_OPERATIONS_INCLUDING_HELD: ReadonlyArray<
   createMockServerOperation,
   updateMockServerOperation,
   getMockServerOperation,
+  // Climbs: improve a server from an eval suite, a round at a time. Behind
+  // `climbs`; the runs they launch connect to the real server, so they stay open-world.
+  startClimbOperation,
+  updateClimbOperation,
+  getClimbOperation,
+  listClimbsOperation,
   // SERVER ACCOUNTS — the reads plus the delete. The upload and the update
   // are in EXCLUDED_FROM_CATALOG; deleting the default while other accounts
   // exist is refused, so the delete never moves runs onto another account.

@@ -4991,7 +4991,7 @@ const createEvalRunGroupSchema = z
  * An UNKEYED launch gets a random id, which is the honest answer: a request
  * with no replay identity has no replay semantics to offer.
  */
-function deriveRunGroupId(
+export function deriveRunGroupId(
   suiteId: string,
   idempotencyKey: string | undefined,
 ): string {

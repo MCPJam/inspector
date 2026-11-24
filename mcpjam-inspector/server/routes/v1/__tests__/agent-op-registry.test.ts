@@ -217,6 +217,8 @@ describe("agent op registry", () => {
         // the version before. The backend holds the tier and the flag.
         "create_mock_server",
         "update_mock_server",
+        // What a climb is for, until round 1: free, and the backend holds the tier.
+        "update_climb",
       ].sort(),
     );
   });

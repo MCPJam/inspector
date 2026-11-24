@@ -134,6 +134,12 @@ import {
 } from "./server-revision-operations.js";
 import { replacementsBody, serverReplacementsInput } from "./run-replacements.js";
 import {
+  getClimbOperation,
+  listClimbsOperation,
+  startClimbOperation,
+  updateClimbOperation,
+} from "./climb-operations.js";
+import {
   createMockServerOperation,
   getMockServerOperation,
   updateMockServerOperation,
@@ -19407,6 +19413,11 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   createMockServerOperation,
   updateMockServerOperation,
   getMockServerOperation,
+  // Climbs: improve a server from an eval suite, a round at a time.
+  startClimbOperation,
+  updateClimbOperation,
+  getClimbOperation,
+  listClimbsOperation,
   // Server accounts. Tokens are write-only, and the upload and the update are
   // excluded from the MCP catalog and the agent registry: the upload carries a
   // token in its INPUT, and the default decides which account runs with no

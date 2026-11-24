@@ -155,6 +155,10 @@ import {
   createMockServerOperation,
   updateMockServerOperation,
   getMockServerOperation,
+  startClimbOperation,
+  updateClimbOperation,
+  getClimbOperation,
+  listClimbsOperation,
   listServerAccountsOperation,
   getServerAccountOperation,
   readServerResourceOperation,
@@ -224,6 +228,7 @@ import {
 } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
 import { logger } from "../../utils/logger.js";
+import { START_CLIMB_PROPOSAL } from "./agent-climb-entries.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -1771,6 +1776,12 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: createMockServerOperation, tier: "direct" },
   { operation: updateMockServerOperation, tier: "direct" },
   { operation: getMockServerOperation, tier: "direct" },
+  // Climbs: the reads, and the change of what a climb is for (free and
+  // reversible until round 1). The operations that launch runs are excluded.
+  { operation: getClimbOperation, tier: "direct" },
+  { operation: listClimbsOperation, tier: "direct" },
+  { operation: updateClimbOperation, tier: "direct" },
+  { operation: startClimbOperation, tier: "gated", proposal: START_CLIMB_PROPOSAL },
   // Account metadata only, structurally without a token, like the secrets
   // reads; the three writes are in EXCLUDED_FROM_AGENT.
   { operation: listServerAccountsOperation, tier: "direct" },
