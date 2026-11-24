@@ -1,8 +1,8 @@
 /**
  * MCP Events conformance — profile-aware, MUST vs SHOULD.
  *
- * Every result names its PROFILE (an {@link EventsProfileId}: the pinned
- * draft or the dated ChatGPT surface), each check's STRENGTH (a MUST
+ * Every result names its PROFILE (an {@link EventsProfileId}: Beta, the
+ * pinned draft or a dated ChatGPT surface), each check's STRENGTH (a MUST
  * violation fails the run, a SHOULD violation only warns), and the protocol
  * pin the run used. Checks that would fail
  * behaviour the draft ALLOWS are written to pass the allowed alternatives:
@@ -29,6 +29,7 @@ export const EVENTS_CHECK_IDS = [
   "events-private-callback-rejected",
   "events-delivery-signature",
   "events-webhook-id-equals-event-id",
+  "events-webhook-message-id",
   "events-subscription-id-header",
   "events-delivery-content-type",
   "events-delivery-body-size",
@@ -40,6 +41,32 @@ export const EVENTS_CHECK_IDS = [
 ] as const;
 
 export type EventsCheckId = (typeof EVENTS_CHECK_IDS)[number];
+
+/**
+ * Checks that subscribe a webhook with the server and receive deliveries. They
+ * register state on the server, so they run only when a person starts a run.
+ */
+export const EVENTS_WEBHOOK_CHECK_IDS = [
+  "events-subscribe-rejects-http-callback",
+  "events-subscribe-rejects-invalid-secret",
+  "events-subscribe-result-shape",
+  "events-subscribe-idempotent",
+  "events-granted-lifetime",
+  "events-no-expiry-only-when-requested",
+  "events-receiver-consent",
+  "events-consent-failure-blocks-delivery",
+  "events-no-redirect-follow",
+  "events-private-callback-rejected",
+  "events-delivery-signature",
+  "events-webhook-id-equals-event-id",
+  "events-webhook-message-id",
+  "events-subscription-id-header",
+  "events-delivery-content-type",
+  "events-delivery-body-size",
+  "events-unsubscribe-twice",
+] as const satisfies readonly EventsCheckId[];
+
+export type EventsWebhookCheckId = (typeof EVENTS_WEBHOOK_CHECK_IDS)[number];
 
 export type EventsCheckStrength = "MUST" | "SHOULD";
 

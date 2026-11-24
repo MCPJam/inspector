@@ -6,6 +6,7 @@ import {
   parseAndValidateJsonRpc,
   BridgeMode,
 } from "../../services/mcp-http-bridge";
+import { downstreamProtocolVersionOf } from "../../services/bridge-protocol-version.js";
 import {
   isCrossServerToolCall,
   pinMcpManagerToServer,
@@ -421,6 +422,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
       clientManager,
       mode,
       {
+        downstreamProtocolVersion: downstreamProtocolVersionOf(body),
         onToolCallError: (context) =>
           publishHarnessScopeStepUpFromToolError(
             readScopeStepUpCorrelationId(c),
@@ -515,6 +517,7 @@ function createHttpHandler(mode: BridgeMode, routePrefix: string) {
               : c.mcpClientManager,
             mode,
             {
+              downstreamProtocolVersion: downstreamProtocolVersionOf({ method, params }),
               onToolCallError: (context) =>
                 publishHarnessScopeStepUpFromToolError(
                   readScopeStepUpCorrelationId(c) ?? sess.scopeStepUpCorrelationId,

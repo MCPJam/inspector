@@ -8,6 +8,10 @@ import {
 } from "@/shared/plugin-message";
 import { logPluginExtensionIssue } from "@/lib/plugin-extension-logs";
 import type { ThreadAppHandle } from "./thread-app-api";
+import {
+  observeExtensionOperation,
+  type ExtensionOperationProfile,
+} from "@/lib/extension-operation-health";
 
 /** Host-supplied dispatch uses the normal composer/session gates, not a second session. */
 export function withAppMessages(
@@ -22,6 +26,8 @@ export function withAppMessages(
       intent: PluginMessageIntent,
       isLive: () => boolean,
     ) => Promise<boolean>;
+    /** Which client profile App messages are counted under. */
+    profile?: ExtensionOperationProfile | (() => ExtensionOperationProfile);
   },
 ): WidgetHost {
   const allowed = (
@@ -41,17 +47,25 @@ export function withAppMessages(
             sendMessage: async (value: unknown) => {
               if (!port.isLive()) throw new Error("This App is closed");
               const params = parsePluginMessage(value);
-              const accepted = await port.send(
+              const intent = {
+                instanceToken: handle.instanceToken,
+                operationId: crypto.randomUUID(),
+                sourceThreadId:
+                  typeof port.threadId === "function"
+                    ? port.threadId()
+                    : port.threadId,
+                params,
+              };
+              const accepted = await observeExtensionOperation(
                 {
-                  instanceToken: handle.instanceToken,
-                  operationId: crypto.randomUUID(),
-                  sourceThreadId:
-                    typeof port.threadId === "function"
-                      ? port.threadId()
-                      : port.threadId,
-                  params,
+                  operation: "app_message",
+                  profile:
+                    typeof port.profile === "function"
+                      ? port.profile()
+                      : port.profile,
                 },
-                port.isLive,
+                () => port.send(intent, port.isLive),
+                (sent) => sent,
               );
               if (!accepted && !pluginMessageSendMode(params).send) {
                 logPluginExtensionIssue({

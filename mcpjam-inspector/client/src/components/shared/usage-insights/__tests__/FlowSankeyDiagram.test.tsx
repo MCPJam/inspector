@@ -60,6 +60,62 @@ const SANKEY: InsightsSankey<Stage> = {
 };
 
 describe("FlowSankeyDiagram", () => {
+  it("moves the final column toward the edge while leaving space for its labels", () => {
+    const veryLongLabel = "The first lookup did not find an exact match";
+    Object.defineProperty(SVGElement.prototype, "getComputedTextLength", {
+      configurable: true,
+      value(this: SVGElement) {
+        if (this.textContent === veryLongLabel) return 240;
+        return this.textContent === "Skipped the lookup" ? 150 : 60;
+      },
+    });
+    try {
+      const chart = (sankey: InsightsSankey<Stage>, contentLayout = false) => (
+        <FlowSankeyDiagram
+          sankey={sankey}
+          stages={STAGES}
+          stageTitles={TITLES}
+          stageColors={COLORS}
+          unitNoun="trials"
+          ariaLabel="Failed trials"
+          contentLayout={contentLayout}
+        />
+      );
+      const chartWithFinalLabel = (label: string) =>
+        chart(
+          {
+            ...SANKEY,
+            nodes: SANKEY.nodes.map((node) =>
+              node.stage === "reason" ? { ...node, label } : node,
+            ),
+          },
+          true,
+        );
+      const { rerender } = render(chart(SANKEY));
+      const svg = screen.getByRole("group", { name: "Failed trials" });
+      expect(svg.style.minWidth).toBe("");
+      const lastColumn = () => screen.getByText("Reason").parentElement;
+      const lastX = () => Number(lastColumn()?.getAttribute("data-column-x"));
+      const originalX = lastX();
+      rerender(chart(SANKEY, true));
+      const longLabelX = lastX();
+      expect(longLabelX).toBeGreaterThan(originalX);
+      expect(lastColumn()).toHaveStyle({ width: "max-content" });
+      expect(svg).toHaveStyle({ minWidth: "432px" });
+      expect(screen.getByTestId("sankey-column-headers")).toHaveStyle({
+        minWidth: svg.style.minWidth,
+      });
+
+      rerender(chartWithFinalLabel("Skipped"));
+      expect(lastX()).toBeGreaterThan(longLabelX);
+
+      rerender(chartWithFinalLabel(veryLongLabel));
+      expect(lastX()).toBeLessThan(originalX);
+    } finally {
+      Reflect.deleteProperty(SVGElement.prototype, "getComputedTextLength");
+    }
+  });
+
   it("draws three column headers at their own column x", () => {
     render(
       <FlowSankeyDiagram

@@ -759,6 +759,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
+        structuredContent: "fallback",
       },
       mcpToolResultImageRendering: {
         placement: "inline",
@@ -1074,6 +1075,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             image: false,
           },
         },
+        structuredContent: "preferred",
       },
       mcpToolResultImageRendering: {
         placement: "none",
@@ -1095,7 +1097,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       modelId: "anthropic/claude-haiku-5.5",
       systemPrompt: "",
       temperature: 1,
-      requireToolApproval: false,
+      requireToolApproval: true,
       respectToolVisibility: true,
       progressiveToolDiscovery: true,
       serverIds: [],
@@ -1107,7 +1109,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       harness: "claude-code",
       connectionDefaults: {
         headers: {},
-        requestTimeout: 10000,
+        requestTimeout: 300000,
       },
       clientCapabilities: {
         roots: {
@@ -1115,10 +1117,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         },
         elicitation: {
           form: {},
-          url: {},
-        },
-        extensions: {
-          "io.modelcontextprotocol/tasks": {},
         },
       },
       hostContext: {},
@@ -1136,7 +1134,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.312",
+            version: "2.1.290",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -4264,11 +4262,19 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         headers: {},
         requestTimeout: 300000,
       },
-      clientCapabilities: {},
+      clientCapabilities: {
+        sampling: {},
+      },
       hostContext: {},
       hostCapabilitiesOverride: {},
       mcpProfile: {
         profileVersion: 1,
+        initialize: {
+          clientInfo: {
+            name: "copilot-cli",
+            version: "1.0.92",
+          },
+        },
         paginationTraversal: "full",
         toolListChanged: {
           listens: true,
@@ -4341,7 +4347,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       modelId: "cursor/auto",
       systemPrompt: "",
       temperature: 1,
-      requireToolApproval: false,
+      requireToolApproval: true,
       respectToolVisibility: false,
       progressiveToolDiscovery: false,
       serverIds: [],
@@ -4355,11 +4361,21 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         headers: {},
         requestTimeout: 300000,
       },
-      clientCapabilities: {},
+      clientCapabilities: {
+        elicitation: {
+          form: {},
+        },
+      },
       hostContext: {},
       mcpProfile: {
         profileVersion: 1,
         versionNegotiation: "legacy-first",
+        initialize: {
+          clientInfo: {
+            name: "Cursor",
+            version: "1.0.0",
+          },
+        },
         apps: {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline"],
@@ -4839,13 +4855,15 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       rendersMcpApps: false,
       supportedProtocolVersions: ["2025-06-18"],
       verifiedAt: 1794528000000,
-      modelVisibleMcpToolResults: {},
+      modelVisibleMcpToolResults: {
+        structuredContent: "preferred",
+      },
       mcpToolResultImageRendering: {},
       hostStyle: "codex-cli",
       modelId: "openai/gpt-6-luna",
       systemPrompt: "",
       temperature: 0.7,
-      requireToolApproval: false,
+      requireToolApproval: true,
       respectToolVisibility: true,
       progressiveToolDiscovery: true,
       serverIds: [],
@@ -4857,7 +4875,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       harness: "codex",
       connectionDefaults: {
         headers: {},
-        requestTimeout: 10000,
+        requestTimeout: 300000,
       },
       clientCapabilities: {
         elicitation: {
@@ -4878,7 +4896,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.168.0",
+            version: "0.163.0",
           },
         },
         apps: {
@@ -4908,6 +4926,102 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             widgetDisplayModeRequests: "accept",
           },
         },
+      },
+    },
+    opencode: {
+      id: "opencode",
+      label: "OpenCode",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: {},
+      mcpToolResultImageRendering: {},
+      hostStyle: "opencode",
+      modelId: "anthropic/claude-haiku-4.5",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: true,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: true,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "opencode",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 300000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+      },
+    },
+    "web-claude": {
+      id: "web-claude",
+      label: "Claude web",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: {},
+      mcpToolResultImageRendering: {},
+      hostStyle: "web-claude",
+      modelId: "claude-web/default",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "claude-web",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 300000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
+      },
+    },
+    "web-chatgpt": {
+      id: "web-chatgpt",
+      label: "ChatGPT web",
+      provenance: "assumed",
+      rendersMcpApps: false,
+      modelVisibleMcpToolResults: {},
+      mcpToolResultImageRendering: {},
+      hostStyle: "web-chatgpt",
+      modelId: "chatgpt-web/default",
+      systemPrompt: "",
+      temperature: 1,
+      requireToolApproval: false,
+      respectToolVisibility: true,
+      progressiveToolDiscovery: false,
+      serverIds: [],
+      optionalServerIds: [],
+      builtInToolIds: [],
+      computer: {
+        kind: "personal",
+      },
+      harness: "chatgpt-web",
+      connectionDefaults: {
+        headers: {},
+        requestTimeout: 300000,
+      },
+      clientCapabilities: {},
+      hostContext: {},
+      hostCapabilitiesOverride: {},
+      mcpProfile: {
+        profileVersion: 1,
       },
     },
     copilot: {

@@ -1,41 +1,28 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({
-  hosted: false,
-  authenticated: false,
-  refused: false,
-  refreshStatus: "idle" as "idle" | "failed" | "retrying",
-  reportCaught: vi.fn(),
-}));
+const state = vi.hoisted(() => ({ reportCaught: vi.fn() }));
 
-vi.mock("../config", () => ({
-  get HOSTED_MODE() {
-    return state.hosted;
-  },
-}));
-vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isLoading: false,
-    isAuthenticated: state.authenticated,
-  }),
-}));
 vi.mock("../error-reporting", () => ({ reportCaught: state.reportCaught }));
-vi.mock("../guest-session", () => ({
-  getGuestSessionRefusal: () => (state.refused ? { until: Infinity } : null),
-}));
-vi.mock("@/stores/session-refresh-store", () => ({
-  useSessionRefreshStore: {
-    getState: () => ({ status: state.refreshStatus }),
-  },
-}));
 
 import {
   AppLoadStalledError,
   resetAppLoadStallForTests,
   useAppLoadStallReport,
 } from "../app-load-stall";
-import { APP_LOAD_STALL_MS } from "@/shared/app-load-stall";
+import {
+  APP_LOAD_STALL_MS,
+  type AppLoadStallCode,
+} from "@/shared/app-load-stall";
+
+type Props = { ready: boolean; stage: AppLoadStallCode };
+
+function renderReport(initialProps: Props) {
+  return renderHook(
+    ({ ready, stage }: Props) => useAppLoadStallReport(ready, stage),
+    { initialProps },
+  );
+}
 
 describe("useAppLoadStallReport", () => {
   beforeEach(() => {
@@ -48,19 +35,13 @@ describe("useAppLoadStallReport", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
-    Object.assign(state, {
-      hosted: false,
-      authenticated: false,
-      refused: false,
-      refreshStatus: "idle",
-    });
     state.reportCaught.mockReset();
   });
 
   it("reports once, naming the stuck step, when the app never becomes usable", () => {
-    state.refreshStatus = "failed";
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: false },
+    const { rerender } = renderReport({
+      ready: false,
+      stage: "app_load/session_refresh_failed",
     });
 
     vi.advanceTimersByTime(APP_LOAD_STALL_MS - 1);
@@ -73,43 +54,50 @@ describe("useAppLoadStallReport", () => {
     expect(options).toEqual({
       source: "app_load_stall",
       level: "error",
-      extra: { code: "app_load/guest_session_failed" },
+      extra: { code: "app_load/session_refresh_failed" },
     });
 
-    rerender({ ready: false });
+    rerender({ ready: false, stage: "app_load/auth_pending" });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
     expect(state.reportCaught).toHaveBeenCalledTimes(1);
   });
 
+  it("names the stage at the moment it fires, not when it started", () => {
+    const { rerender } = renderReport({
+      ready: false,
+      stage: "app_load/auth_pending",
+    });
+    rerender({ ready: false, stage: "app_load/user_setup_pending" });
+    vi.advanceTimersByTime(APP_LOAD_STALL_MS);
+    expect(state.reportCaught.mock.calls[0]![1].extra).toEqual({
+      code: "app_load/user_setup_pending",
+    });
+  });
+
   it("counts from page start, not from when the hook mounted", () => {
     vi.spyOn(performance, "now").mockReturnValue(APP_LOAD_STALL_MS - 100);
-    renderHook(() => useAppLoadStallReport(false));
+    renderReport({ ready: false, stage: "app_load/auth_pending" });
     vi.advanceTimersByTime(100);
     expect(state.reportCaught).toHaveBeenCalledTimes(1);
   });
 
   it("stays quiet when the app becomes usable in time", () => {
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: false },
+    const { rerender } = renderReport({
+      ready: false,
+      stage: "app_load/auth_pending",
     });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS / 2);
-    rerender({ ready: true });
+    rerender({ ready: true, stage: "app_load/auth_pending" });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
     expect(state.reportCaught).not.toHaveBeenCalled();
   });
 
   it("does not treat a later sign-out as a failed load", () => {
-    const { rerender } = renderHook(({ ready }) => useAppLoadStallReport(ready), {
-      initialProps: { ready: true },
+    const { rerender } = renderReport({
+      ready: true,
+      stage: "app_load/auth_pending",
     });
-    rerender({ ready: false });
-    vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
-    expect(state.reportCaught).not.toHaveBeenCalled();
-  });
-
-  it("does nothing on the hosted app", () => {
-    state.hosted = true;
-    renderHook(() => useAppLoadStallReport(false));
+    rerender({ ready: false, stage: "app_load/auth_pending" });
     vi.advanceTimersByTime(APP_LOAD_STALL_MS * 2);
     expect(state.reportCaught).not.toHaveBeenCalled();
   });

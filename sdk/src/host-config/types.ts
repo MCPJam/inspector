@@ -79,6 +79,8 @@ export const HARNESS_IDS = [
   "cursor",
   "copilot-cli",
   "opencode",
+  "claude-web",
+  "chatgpt-web",
 ] as const;
 
 /**
@@ -89,6 +91,9 @@ export const HARNESS_IDS = [
  * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP;
  * `"opencode"` runs OpenCode through the published AI SDK adapter, with MCPJam
  * host-executed tools and a platform-brokered Anthropic lease.
+ * `"claude-web"` and `"chatgpt-web"` drive the vendor's own website in a
+ * browser on a project's web account; the vendor's MCP client reaches the
+ * servers through MCPJam's forwarding endpoint.
  * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
  * migration.
  */
@@ -1085,7 +1090,24 @@ export type McpToolResultBlobVisibility = {
   otherBinary?: boolean;
 };
 
+/**
+ * Which of a tool result's two representations the emulated client shows its
+ * model. The MCP spec leaves this to each client, so each catalog row records
+ * what the real client was measured to do.
+ *
+ * - `fallback`: the content blocks; structuredContent only when content has no
+ *   blocks (Claude Desktop).
+ * - `preferred`: structuredContent when present, otherwise the content blocks
+ *   (Claude Code, Codex CLI).
+ * - `both`: the content blocks, then structuredContent (ChatGPT's docs).
+ *
+ * Any value also keeps result and block `_meta` out of the model's input.
+ * Unset keeps the projection every host had before the setting existed.
+ */
+export type ModelVisibleStructuredContent = "fallback" | "preferred" | "both";
+
 export type ModelVisibleMcpToolResults = {
+  structuredContent?: ModelVisibleStructuredContent;
   directContent?: {
     text?: boolean;
     image?: boolean;

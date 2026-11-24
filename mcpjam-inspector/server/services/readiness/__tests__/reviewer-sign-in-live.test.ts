@@ -8,16 +8,31 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureLiveBrowserSession = vi.fn();
-const collectHostedRecordingThenRelease = vi.fn();
 const prepareAuthorization = vi.fn();
+const runConnectionJob = vi.fn();
+vi.mock("../../server-connection-worker.js", () => ({
+  runConnectionJob: (id: string) => runConnectionJob(id),
+}));
+/** What the live seams handed the agent, and how the fake agent answers. */
+let agentDeps:
+  | import("../reviewer-sign-in-agent.js").SignInAgentDeps
+  | undefined;
+let agentRun = vi.fn();
 
 vi.mock("../../browserd/live-session-deps.js", () => ({
   ensureLiveBrowserSession: (...args: unknown[]) =>
     ensureLiveBrowserSession(...args),
 }));
-vi.mock("../../browserd/hosted-recording.js", () => ({
-  collectHostedRecordingThenRelease: (...args: unknown[]) =>
-    collectHostedRecordingThenRelease(...args),
+vi.mock("../reviewer-sign-in-agent.js", () => ({
+  createSignInAgent: (
+    given: import("../reviewer-sign-in-agent.js").SignInAgentDeps,
+  ) => {
+    agentDeps = given;
+    return {
+      features: given.features,
+      run: (input: unknown) => agentRun(input),
+    };
+  },
 }));
 // The polls wait for nothing here; what they ask for is what is tested.
 vi.mock("node:timers/promises", () => ({ setTimeout: async () => undefined }));
@@ -149,10 +164,10 @@ describe("the desktop", () => {
     };
   });
 
-  it("reserves a blank browser, boots the reservation's own box and records the boot", async () => {
+  it("reserves a blank, unrecorded browser, boots the reservation's own box and hands it to the agent", async () => {
     const live = handle();
     ensureLiveBrowserSession.mockResolvedValue(live);
-    const { browser, recordingArtifactId } = await deps().desktop.reserve(
+    const { agent } = await deps().desktop.reserve(
       new AbortController().signal,
     );
 
@@ -165,14 +180,17 @@ describe("the desktop", () => {
       reservationId: "res_1",
       sandboxRowId: "row_1",
     });
+    // Not recorded: credentials are typed on this desktop. Public addresses
+    // only: the submitter's pages steer this browser.
     expect(ensureLiveBrowserSession).toHaveBeenCalledWith(
       expect.objectContaining({
         contextMode: "ephemeral",
+        networkPolicy: "public",
         target: {
           kind: "sandbox",
           sandboxRowId: "row_1",
           sandboxId: "sbx_1",
-          record: true,
+          record: false,
         },
       }),
     );
@@ -182,101 +200,106 @@ describe("the desktop", () => {
       reservationId: "res_1",
       bootId: "boot_1",
     });
-    expect(browser.features).toEqual(["secret-origins"]);
-    expect(recordingArtifactId).toBe("res_1");
-    expect(await browser.screenshot()).toMatch(/^res_1#t=\d+\.\d$/);
+    expect(agent.features).toEqual(["secret-origins"]);
+    expect(agentDeps).toMatchObject({
+      handle: live,
+      lease: LEASE,
+      attemptId: "att_1",
+      projectId: "proj_1",
+      sandbox: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+    });
   });
 
-  it("drives the page by refs, sending a secret beside the command and never inside it", async () => {
-    const live = handle();
-    ensureLiveBrowserSession.mockResolvedValue(live);
-    routes[`${RUNS}/browser-session/desktop`] = () => [
-      200,
-      { ok: true, sandboxRowId: "row_1", sandboxId: "sbx_1" },
-    ];
-    const { browser } = await deps().desktop.reserve(
-      new AbortController().signal,
-    );
-
-    expect(await browser.read()).toEqual({
-      url: "https://acme.authkit.app/sign-in",
-      text: "Sign in",
-      controls: [{ ref: "e1", role: "textbox", name: "Email" }],
-    });
-    const secret = {
-      name: ATTEMPT.usernameSecretName,
-      value: "review@example.com",
-      origins: ["https://acme.authkit.app"],
-    };
-    await browser.type("e1", `{{secret:${secret.name}}}`, {
-      secrets: [secret],
-      submit: true,
-    });
-    const [command, bootId, options] = live.client.sendCommand.mock.calls.at(
-      -1,
-    )! as unknown as [
-      { action: Record<string, unknown> },
-      string,
-      { secrets: unknown[] },
-    ];
-    expect(command.action).toEqual({
-      kind: "act",
-      verb: "type",
-      target: { a11yRef: "e1" },
-      value: `{{secret:${secret.name}}}`,
-      submit: true,
-      observe: "none",
-    });
-    expect(JSON.stringify(command)).not.toContain(secret.value);
-    expect(bootId).toBe("boot_1");
-    expect(options.secrets).toEqual([secret]);
-  });
-
-  it("reads the recording off the box before closing it, then keeps it with the reservation", async () => {
+  it("keeps the one password try on the attempt, and gives back only a try that typed nothing", async () => {
     ensureLiveBrowserSession.mockResolvedValue(handle());
-    routes[`${RUNS}/browser-session/desktop`] = () => [
-      200,
-      { ok: true, sandboxRowId: "row_1", sandboxId: "sbx_1" },
-    ];
-    collectHostedRecordingThenRelease.mockImplementation(
-      async ({ release }: { release: () => Promise<unknown> }) => {
-        expect(paths()).not.toContain(`${RUNS}/browser-session/close`);
-        await release();
-        return {
-          bytes: Buffer.from("mp4"),
-          mime: "video/mp4",
-          durationMs: 4000,
-          distinctFrames: 12,
-          fps: 15,
-          truncated: false,
-          startedAtMs: 1,
-        };
-      },
+    let spent: string | undefined;
+    routes[`${RUNS}/reviewer-attempt`] = (body) => {
+      const submission = body.passwordSubmission as {
+        commandId: string;
+        outcome: string;
+      };
+      if (submission.outcome === "not_typed") {
+        if (spent === submission.commandId) spent = undefined;
+        return [200, { ok: true, attempt: {} }];
+      }
+      if (spent && spent !== submission.commandId) {
+        return [
+          409,
+          {
+            ok: false,
+            error: "password_already_submitted",
+            message:
+              "MCPJam already typed the reviewer password once in this attempt.",
+          },
+        ];
+      }
+      spent = submission.commandId;
+      return [200, { ok: true, attempt: {} }];
+    };
+    await deps().desktop.reserve(new AbortController().signal);
+    const password = agentDeps!.password;
+    expect(await password.mark("c1")).toBeUndefined();
+    expect(await password.mark("c2")).toMatch(
+      /^password_already_submitted: .*stop_sign_in/,
     );
+    await password.giveBack("c1");
+    expect(await password.mark("c2")).toBeUndefined();
+    expect(
+      posted.filter((call) => call.path === `${RUNS}/reviewer-attempt`)[0]!
+        .body,
+    ).toEqual({
+      ...LEASE,
+      attemptId: "att_1",
+      passwordSubmission: { commandId: "c1", outcome: "intent" },
+    });
+  });
+
+  it("stores a stage screenshot as the image itself, with the lease in the query", async () => {
+    ensureLiveBrowserSession.mockResolvedValue(handle());
+    const sent: { url: string; type?: string; bytes?: number }[] = [];
+    const backend = vi.mocked(fetch);
+    backend.mockImplementation((async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/browser-session/screenshot")) {
+        sent.push({
+          url,
+          type: (init?.headers as Record<string, string>)["content-type"],
+          bytes: (init?.body as Uint8Array).length,
+        });
+        return new Response(
+          JSON.stringify({ ok: true, screenshotId: "shot_1" }),
+        );
+      }
+      const path = new URL(url).pathname;
+      const body = typeof init?.body === "string" ? JSON.parse(init.body) : {};
+      posted.push({ path, body });
+      const [status, answer] = routes[path]!(body);
+      return new Response(JSON.stringify(answer), { status });
+    }) as never);
+    await deps().desktop.reserve(new AbortController().signal);
+    const id = await agentDeps!.storeScreenshot({
+      base64: Buffer.from([0xff, 0xd8, 0xff, 1]).toString("base64"),
+      mediaType: "image/jpeg",
+      bytes: 4,
+    });
+    expect(id).toBe("shot_1");
+    expect(sent).toEqual([
+      {
+        url: `https://backend.test${RUNS}/browser-session/screenshot?runId=run_1&jobId=job_1`,
+        type: "image/jpeg",
+        bytes: 4,
+      },
+    ]);
+  });
+
+  it("closes the desktop once on release, with nothing to collect", async () => {
+    ensureLiveBrowserSession.mockResolvedValue(handle());
     const live = deps();
     await live.desktop.reserve(new AbortController().signal);
     await live.desktop.release();
     await live.desktop.release();
-
-    expect(collectHostedRecordingThenRelease).toHaveBeenCalledTimes(1);
-    expect(collectHostedRecordingThenRelease.mock.calls[0]![0]).toMatchObject({
-      sandboxRowId: "row_1",
-    });
-    expect(
-      posted.find((call) => call.path.endsWith("/browser-session/recording"))!
-        .body,
-    ).toEqual({
-      ...LEASE,
-      uploadGrantId: "grant_1",
-      storageId: "store_1",
-      meta: {
-        source: "hosted",
-        fps: 15,
-        durationMs: 4000,
-        distinctFrames: 12,
-        truncated: false,
-      },
-    });
+    expect(paths().filter((path) => path.endsWith("/close"))).toHaveLength(1);
+    expect(paths().some((path) => path.includes("/recording"))).toBe(false);
   });
 
   it("only closes when the reservation never got a box", async () => {
@@ -294,7 +317,6 @@ describe("the desktop", () => {
     ).rejects.toThrow("Desktops are at capacity");
     await live.desktop.release();
     expect(paths().at(-1)).toBe(`${RUNS}/browser-session/close`);
-    expect(collectHostedRecordingThenRelease).not.toHaveBeenCalled();
   });
 });
 
@@ -323,7 +345,8 @@ describe("the connection", () => {
                 ok: true,
                 requestId: "req_1",
                 serverUrl: "https://connector.example.com/mcp",
-                authorizationServerUrl: "https://acme.authkit.app",
+                authorizationServerUrl: null,
+                callbackUrl: "https://preview.example.org/oauth/callback",
                 registrationMode: "dynamic",
                 requestedName: "Acme",
                 account: { name: "reviewer-sub_1" },
@@ -361,7 +384,7 @@ describe("the connection", () => {
 
     expect(prepareAuthorization).toHaveBeenCalledWith({
       serverUrl: "https://connector.example.com/mcp",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       requestedName: "Acme",
     });
     expect(
@@ -371,14 +394,14 @@ describe("the connection", () => {
       requestId: "req_1",
       clientId: "client_1",
       codeVerifier: "verifier-1",
-      redirectUri: "https://app.mcpjam.com/oauth/callback",
+      redirectUri: "https://preview.example.org/oauth/callback",
       state: "st_1",
       issuer: "https://acme.authkit.app",
     });
     expect(link).toEqual({
       authorizationUrl: "https://acme.authkit.app/oauth2/authorize?state=st_1",
       authorizationServerOrigin: "https://acme.authkit.app",
-      callbackUrl: "https://app.mcpjam.com/oauth/callback",
+      callbackUrl: "https://preview.example.org/oauth/callback",
     });
     expect(JSON.stringify(link)).not.toContain("verifier-1");
   });
@@ -407,6 +430,19 @@ describe("the connection", () => {
       state: "st_1",
       code: "code_1",
     });
+  });
+
+  it("drives discovery and validation for its own request on a local Inspector", async () => {
+    vi.stubEnv("MCPJAM_LOCAL_DOORBELL_MS", "2000");
+    try {
+      const live = deps().connect;
+      const signal = new AbortController().signal;
+      await live.prepare(signal);
+      await live.complete({ state: "st_1", code: "code_1" }, signal);
+      expect(runConnectionJob.mock.calls).toEqual([["req_1"], ["req_1"]]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("answers a refused completion and a failed request with the backend's words", async () => {
@@ -534,74 +570,11 @@ describe("the credentials", () => {
   });
 });
 
-describe("the stop at MCPJam's callback", () => {
+describe("a sign-in that reaches MCPJam's callback", () => {
   const CALLBACK = "https://app.mcpjam.com/oauth/callback";
   const CODE = "code-sample-123";
   const STATE = "state-sample-456";
-  const AUTHKIT = "https://acme.authkit.app";
-  const PAGES = [
-    {
-      url: `${AUTHKIT}/sign-in`,
-      text: "Sign in",
-      refs: { e1: { role: "textbox", name: "Email" } },
-    },
-    {
-      url: `${AUTHKIT}/password`,
-      text: "Enter your password",
-      refs: { e2: { role: "textbox", name: "Password" } },
-    },
-    {
-      url: `${AUTHKIT}/consent`,
-      text: "MCPJam wants to access your account",
-      refs: {
-        e3: { role: "button", name: "Allow access" },
-        e4: { role: "button", name: "Deny" },
-      },
-    },
-  ];
-
-  /** A daemon that walks the pages; the consent click is stopped at the callback. */
-  function daemon() {
-    let index = 0;
-    const commands: Array<
-      Record<string, unknown> & { action: Record<string, unknown> }
-    > = [];
-    const sendCommand = vi.fn(async (command: (typeof commands)[number]) => {
-      commands.push(command);
-      const page = PAGES[index]!;
-      const { action } = command;
-      if (action.kind === "act" && action.verb === "click") {
-        return {
-          status: "ok",
-          bootId: "boot_1",
-          result: {
-            ok: true,
-            stoppedAt: `${CALLBACK}?code=${CODE}&state=${STATE}`,
-          },
-        };
-      }
-      if (action.kind === "act" && action.submit) index += 1;
-      const output =
-        action.mode === "a11y"
-          ? { url: page.url, refs: page.refs }
-          : action.mode === "text"
-            ? { url: page.url, text: page.text }
-            : {};
-      return { status: "ok", bootId: "boot_1", result: { ok: true, output } };
-    });
-    const handle = {
-      bootId: "boot_1",
-      client: {
-        status: vi.fn(async () => ({
-          kind: "ok",
-          bootId: "boot_1",
-          features: ["secret-origins", "navigation-stop"],
-        })),
-        sendCommand,
-      },
-    };
-    return { handle, commands };
-  }
+  const AUTH = "https://login.acme.example";
 
   beforeEach(() => {
     routes = {
@@ -610,11 +583,8 @@ describe("the stop at MCPJam's callback", () => {
         {
           ok: true,
           secrets: [
+            { name: ATTEMPT.passwordSecretName, value: "reviewer-password-1" },
             { name: ATTEMPT.usernameSecretName, value: "review@example.com" },
-            {
-              name: ATTEMPT.passwordSecretName,
-              value: "correct-horse-battery-staple",
-            },
           ],
         },
       ],
@@ -633,11 +603,7 @@ describe("the stop at MCPJam's callback", () => {
       [CONNECTIONS]: () => [200, { ok: true, requestId: "req_1" }],
       [`${CONNECTIONS}/claim`]: () => [
         200,
-        {
-          ok: true,
-          serverUrl: "https://connector.example.com/mcp",
-          authorizationServerUrl: AUTHKIT,
-        },
+        { ok: true, serverUrl: "https://connector.example.com/mcp" },
       ],
       [`${CONNECTIONS}/start`]: () => [200, { ok: true }],
       [`${CONNECTIONS}/complete`]: () => [200, { ok: true }],
@@ -647,46 +613,44 @@ describe("the stop at MCPJam's callback", () => {
       ],
     };
     prepareAuthorization.mockResolvedValue({
-      authorizationUrl: `${AUTHKIT}/oauth2/authorize?state=${STATE}`,
+      authorizationUrl: `${AUTH}/oauth2/authorize?state=${STATE}`,
       codeVerifier: "verifier-1",
       state: STATE,
       clientId: "client_1",
     });
-    collectHostedRecordingThenRelease.mockImplementation(
-      async ({ release }: { release: () => Promise<unknown> }) => {
-        await release();
-        return null;
+    ensureLiveBrowserSession.mockResolvedValue({
+      bootId: "boot_1",
+      client: {
+        status: vi.fn(async () => ({
+          kind: "ok",
+          features: [
+            "network-public-only",
+            "secret-origins",
+            "navigation-stop-persistent",
+          ],
+        })),
+        sendCommand: vi.fn(),
       },
-    );
-  });
-
-  it("asks every command that can navigate to stop there, and reads the stopped URL as the page", async () => {
-    const { handle, commands } = daemon();
-    ensureLiveBrowserSession.mockResolvedValue(handle);
-    const { browser } = await deps().desktop.reserve(
-      new AbortController().signal,
-    );
-
-    await browser.open(`${AUTHKIT}/oauth2/authorize`);
-    await browser.read();
-    await browser.click("e3");
-    const daemonReads = commands.length;
-    const page = await browser.read();
-
-    expect(page.url).toBe(`${CALLBACK}?code=${CODE}&state=${STATE}`);
-    expect(commands).toHaveLength(daemonReads);
-    for (const command of commands) {
-      const navigates =
-        command.action.kind === "navigate" || command.action.kind === "act";
-      expect(command.stopAt).toBe(navigates ? CALLBACK : undefined);
-    }
+    });
   });
 
   it("completes with the captured code and state, and records and logs neither", async () => {
     const warn = vi.spyOn(logger, "warn");
     const info = vi.spyOn(logger, "info");
-    const { handle } = daemon();
-    ensureLiveBrowserSession.mockResolvedValue(handle);
+    agentRun = vi.fn(
+      async (input: {
+        link: { callbackUrl: string; authorizationServerOrigin: string };
+      }) => {
+        expect(input.link).toMatchObject({
+          callbackUrl: CALLBACK,
+          authorizationServerOrigin: AUTH,
+        });
+        return {
+          kind: "callback",
+          url: `${CALLBACK}?code=${CODE}&state=${STATE}`,
+        };
+      },
+    );
 
     const outcome = await rehearseReviewerSignInLive({
       lease: LEASE,
@@ -707,9 +671,6 @@ describe("the stop at MCPJam's callback", () => {
     const writes = posted.filter(
       (call) => call.path === `${RUNS}/reviewer-attempt`,
     );
-    expect(
-      writes.map((call) => (call.body.stage as { stage: string }).stage),
-    ).toEqual(["connect-link", "sign-in", "consent", "connected"]);
     const kept = JSON.stringify({
       writes,
       logs: [...warn.mock.calls, ...info.mock.calls],

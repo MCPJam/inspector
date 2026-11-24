@@ -1,7 +1,7 @@
 import { modelApps } from "./model-apps.js";
 import { isCallToolResult } from "@modelcontextprotocol/client";
 import { pluginBindingDigest } from "./bindings.js";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import type { UIMessageChunk } from "ai";
 import { OPENAI_ELICITATION_EXTENSION, type MrtrInputCollector } from "@mcpjam/sdk";
@@ -21,7 +21,6 @@ import {
 } from "./instances.js";
 import { createPluginRequestRuntime } from "./request-runtime.js";
 import { createModelFormDispatch } from "./model-forms.js";
-import { RequestOwnedToolInvoker } from "./request-invoker.js";
 import { createPluginInvocationReceiptPort } from "./receipt-store.js";
 import {
   PluginInvocationError,
@@ -30,25 +29,17 @@ import {
   type PluginContinuationSubmission,
   type PluginInvocationPorts,
 } from "./invocation.js";
+import { pluginModelForms, type ModelForm } from "./model-form-control.js";
+import { cancelContinuation } from "../../utils/mrtr-continuation-state.js";
 
-type Record = {
-  token: string;
-  instance: PluginFormOwner;
-  identity: PluginInstanceIdentity;
-  params: ReturnType<typeof sanitizePluginToolParams>;
-  toolCallId: string;
-  revision: string;
-  invoker: RequestOwnedToolInvoker;
-  expiresAt: number;
-  pending?: PluginInvocationSuspension;
-  close: () => void;
-};
-// Original engine controls only. No bearer, manager, request or execution callback
-// survives a turn. A process restart fails closed rather than replaying an effect.
-const records = new Map<string, Record>();
-const anchors = new Map<string, string>();
-const identityKey = (value: PluginInstanceIdentity) => JSON.stringify(value);
-const denied = () => new PluginInvocationError("CONTINUATION_OPERATION_DENIED");
+// Calls this process began, by anchor, so a repeated callback for the same
+// call reuses its invoker. Only data survives a turn; a form's stored row
+// (`model-form-control.ts`) is what lets another replica take the answer.
+// A dispatched call is never rerun: its receipt replays or reports unknown.
+const begun = new Map<string, ModelForm>();
+const identityKey = (value: PluginInstanceIdentity) =>
+  JSON.stringify([value.actorId, value.projectId, value.workspaceId, value.subject]);
+const denied = () => new PluginInvocationError("MODEL_FORM_UNAVAILABLE");
 
 type Options = {
   c: Context;
@@ -64,16 +55,20 @@ export function createModelMrtrAdapter(options: Options) {
   let writer: { write(chunk: UIMessageChunk): void } | undefined;
   const active = new Map<string, MrtrInputCollector>();
   const queue = createModelFormDispatch([]);
-  const getRuntime = (record: Record) =>
+  const getRuntime = (record: ModelForm) =>
     createPluginRequestRuntime(
       options.c,
       options.admission,
       options.bearer,
       { hostId: options.hostId, serverId: record.instance.owner.serverId },
       record.instance,
+      {
+        ownerRef: { kind: "model-form", token: record.token },
+        fenceOwner: record.stored,
+      },
     );
   const publishCompleted = async (
-    record: Record,
+    record: ModelForm,
     runtime: ReturnType<typeof getRuntime>,
     result: unknown,
     signal: AbortSignal,
@@ -101,9 +96,11 @@ export function createModelMrtrAdapter(options: Options) {
       signal,
     );
   };
-  const current = (record: Record) => {
+  /** This turn's checks on the copy this process holds. A stored form's row
+   * is read by `restore` and by every authorization's fence. */
+  const current = (record: ModelForm) => {
     if (
-      records.get(record.token) !== record ||
+      record.abort.signal.aborted ||
       record.expiresAt <= Date.now() ||
       identityKey(record.identity) !== identityKey(options.identity) ||
       record.instance.hostId !== options.hostId ||
@@ -111,11 +108,14 @@ export function createModelMrtrAdapter(options: Options) {
       !options.serverIds.includes(record.instance.owner.serverId)
     )
       throw denied();
+    if (record.stored) pluginModelForms.get(record.token, options.identity);
     pluginInstances.getFormOwner(record.instance.owner, options.identity);
   };
-  const emitPending = (record: Record, pending: PluginInvocationSuspension) => {
+  const emitPending = (
+    record: ModelForm,
+    pending: PluginInvocationSuspension,
+  ) => {
     current(record);
-    record.pending = pending;
     if (!writer)
       throw new PluginInvocationError("CONTINUATION_STREAM_UNAVAILABLE");
     writer.write({
@@ -137,7 +137,7 @@ export function createModelMrtrAdapter(options: Options) {
     } as unknown as UIMessageChunk);
   };
   const ports = (
-    record: Record,
+    record: ModelForm,
     runtime: ReturnType<typeof getRuntime>,
     execute: PluginInvocationPorts["execute"],
   ): PluginInvocationPorts => ({
@@ -153,7 +153,15 @@ export function createModelMrtrAdapter(options: Options) {
         params.name !== record.params.name
       )
         throw denied();
-      const result = await runtime.resolve(params.name, signal);
+      // A stored form re-reads its row after the admission wait, so an
+      // expiry anywhere refuses what follows.
+      const result = await runtime.resolve(
+        params.name,
+        signal,
+        record.stored
+          ? pluginModelForms.fence(record.token, options.identity, signal)
+          : undefined,
+      );
       if (result.revision !== record.revision) throw denied();
       return {
         owner,
@@ -190,10 +198,16 @@ export function createModelMrtrAdapter(options: Options) {
         ]),
       )
       .digest("hex");
-    let record = records.get(anchors.get(anchor) ?? "");
+    let record = begun.get(anchor);
+    if (
+      record &&
+      (record.abort.signal.aborted || record.expiresAt <= Date.now())
+    ) {
+      begun.delete(anchor);
+      record = undefined;
+    }
     if (!record) {
-      if (records.size >= 512)
-        throw new PluginInvocationError("INSTANCE_LIMIT");
+      if (begun.size >= 512) throw new PluginInvocationError("INSTANCE_LIMIT");
       const discovery = createPluginRequestRuntime(
         options.c,
         options.admission,
@@ -225,42 +239,27 @@ export function createModelMrtrAdapter(options: Options) {
         hostRevision: initial.hostRevision,
         serverIdentity: initial.serverIdentity,
       };
-      const controller = new AbortController();
-      const release = pluginInstances.retainModelOwner(
+      const begin = pluginModelForms.begin({
         instance,
-        controller.signal,
-      );
-      const token = randomBytes(32).toString("base64url");
-      const ownerIdentity = structuredClone(options.identity);
-      const invoker = new RequestOwnedToolInvoker(instance.owner, () => {
-        pluginInstances.getFormOwner(instance.owner, ownerIdentity);
-      });
-      const close = () => {
-        clearTimeout(expiry);
-        records.delete(token);
-        if (anchors.get(anchor) === token) anchors.delete(anchor);
-        invoker.close();
-        controller.abort();
-        release();
-      };
-      const expiry = setTimeout(close, 30 * 60_000);
-      expiry.unref();
-      record = {
-        token,
-        instance,
-        identity: structuredClone(options.identity),
+        identity: options.identity,
         params: sanitizePluginToolParams({
           name: execution.toolName,
           arguments: execution.input as never,
         }),
         toolCallId: execution.toolCallId,
         revision: initial.revision,
-        invoker,
-        expiresAt: Date.now() + 30 * 60_000,
-        close,
-      };
-      records.set(token, record);
-      anchors.set(anchor, token);
+      });
+      record = begin;
+      begun.set(anchor, begin);
+      // An unstored call is this process's alone; a stored one is released
+      // by the shared cache when its lease ends.
+      setTimeout(
+        () => {
+          if (begun.get(anchor) === begin) begun.delete(anchor);
+          if (!begin.stored) begin.release();
+        },
+        Math.max(0, begin.expiresAt - Date.now()),
+      ).unref();
     }
     const original = record;
     if (
@@ -307,6 +306,7 @@ export function createModelMrtrAdapter(options: Options) {
         signal,
       );
       if (result instanceof PluginInvocationSuspension) {
+        await storeForm(original, result, signal);
         emitPending(original, result);
         throw new MrtrSuspendedSignal(
           result.pending.continuationId as string,
@@ -316,6 +316,23 @@ export function createModelMrtrAdapter(options: Options) {
       return result;
     } finally {
       await runtime.release();
+    }
+  };
+  /** The row goes in before the form reaches the browser. If it can't, no
+   * replica could take the answer, so the form is withdrawn upstream. */
+  const storeForm = async (
+    record: ModelForm,
+    pending: PluginInvocationSuspension,
+    signal: AbortSignal,
+  ) => {
+    try {
+      await pluginModelForms.store(record, signal);
+    } catch (error) {
+      await cancelContinuation(options.bearer, {
+        continuationId: pending.pending.continuationId,
+        reason: "plugin_form_not_saved",
+      });
+      throw error;
     }
   };
   return {
@@ -344,17 +361,19 @@ export function createModelMrtrAdapter(options: Options) {
       submission: PluginContinuationSubmission,
       serverId: string,
     ) {
-      const record = records.get(owned.instanceToken);
-      if (!record) throw denied();
+      // Any replica: the stored row, restored for this caller. The round
+      // itself is checked against the call's receipt by the invoker.
+      const record = await pluginModelForms.restore(
+        owned.instanceToken,
+        options.identity,
+        options.c.req.raw.signal,
+      );
       current(record);
       if (
         owned.toolCallId !== record.toolCallId ||
         owned.toolName !== record.params.name ||
         serverId !== record.instance.owner.serverId ||
-        !record.pending ||
-        submission.continuationId !== record.pending.pending.continuationId ||
-        submission.round < 1 ||
-        submission.round > record.pending.pending.round
+        submission.round < 1
       )
         throw denied();
       const runtime = getRuntime(record);
@@ -364,22 +383,34 @@ export function createModelMrtrAdapter(options: Options) {
         });
         invokePorts.continuation = {
           submission,
-          resume: async (auth, params, signal) =>
+          resume: async (auth, params, signal, pending) =>
             publishCompleted(record, runtime, await runtime.resumeMrtr(
               auth,
               record.toolCallId,
               params,
               submission,
               signal,
+              pending,
             ), signal, true),
         };
-        const result = await record.invoker.invoke(
-          invokePorts,
-          "model",
-          record.toolCallId,
-          record.params,
-          options.c.req.raw.signal,
-        );
+        const result = await record.invoker
+          .invoke(
+            invokePorts,
+            "model",
+            record.toolCallId,
+            record.params,
+            options.c.req.raw.signal,
+          )
+          .catch((error: unknown) => {
+            // A refusal from the store drops this copy, which aborts the
+            // call it was authorizing: report the refusal, not the abort.
+            if (
+              record.abort.signal.aborted &&
+              !(error instanceof PluginInvocationError)
+            )
+              throw denied();
+            throw error;
+          });
         if (result instanceof PluginInvocationSuspension) {
           emitPending(record, result);
           return {

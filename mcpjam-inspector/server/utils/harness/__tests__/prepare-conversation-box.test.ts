@@ -291,6 +291,30 @@ describe("preparing a new chat's box", () => {
     expect(releasedAs()).toBe("clean");
   });
 
+  it("stops OpenCode on a box under 1 GiB before installing, and hands it back clean", async () => {
+    const box = fakeBox();
+    const answer = box.session.run.getMockImplementation()!;
+    box.session.run.mockImplementation(async (run: Run) =>
+      run.command.includes("MemTotal")
+        ? { exitCode: 0, stdout: "MemTotal: 484444 kB\n", stderr: "" }
+        : answer(run),
+    );
+    await expect(
+      prepareConversationBox({
+        harnessId: "opencode",
+        projectId: "project_1",
+        chatSessionId: "chat_1",
+        modelId: "anthropic/claude-haiku-4.5",
+        bearer: "member-bearer",
+        authorization: async () => "Bearer fresh",
+        cleanupAuthorization: async () => "Bearer cleanup",
+      }),
+    ).resolves.toEqual({ outcome: "failed" });
+    expect(box.runs.some((run) => isGuard(run.command))).toBe(false);
+    expect(box.session.writeTextFile).not.toHaveBeenCalled();
+    expect(releasedAs()).toBe("clean");
+  });
+
   it("renews the claim while it runs, stops when it is lost, and retires its box", async () => {
     vi.useFakeTimers();
     const box = fakeBox({ hang: true });
@@ -535,7 +559,8 @@ describe("the recipes a preparation applies", () => {
     ),
   ) as { recipes: Array<{ harnessId: string; identity: string }> };
 
-  it.each(["claude-code", "codex"] as const)(
+  // Every hosted runtime: cold, plus warm where it may run warm.
+  it.each(["claude-code", "codex", "copilot-cli", "cursor", "opencode"] as const)(
     "are the ones the template bakes for %s",
     async (harnessId) => {
       const identities = await Promise.all(

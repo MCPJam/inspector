@@ -131,7 +131,10 @@ describe("createAuthorizedManager with an uploaded account", () => {
 
       await expect(
         onUnauthorized(key)({ serverId: key, error: rejected() }),
-      ).resolves.toEqual({ accessToken: "new-token" });
+      ).resolves.toEqual({
+        accessToken: "new-token",
+        onRetryRejected: expect.any(Function),
+      });
     },
   );
 
@@ -181,6 +184,7 @@ describe("createAuthorizedManager with an uploaded account", () => {
       onUnauthorized()({ serverId: "srv_1", error: rejected() }),
     ).resolves.toEqual({
       accessToken: "new-token",
+      onRetryRejected: expect.any(Function),
     });
     const reResolves = requests.filter(
       (r) => r.route === "/web/authorize-batch-local",
@@ -270,7 +274,10 @@ describe("createAuthorizedManager with an uploaded account", () => {
           },
         }),
       }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toEqual({
+      accessToken: "new-token",
+      onRetryRejected: expect.any(Function),
+    });
     expect(requests.map((r) => r.route)).toEqual([
       "/web/authorize-batch",
       "/web/oauth/force-refresh",
@@ -368,10 +375,16 @@ describe("createAuthorizedManager with an uploaded account", () => {
     // token, finds it too with a read of its own.
     await expect(
       first!({ serverId: "srv_1", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toEqual({
+      accessToken: "new-token",
+      onRetryRejected: expect.any(Function),
+    });
     await expect(
       second!({ serverId: "srv_1", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "new-token" });
+    ).resolves.toEqual({
+      accessToken: "new-token",
+      onRetryRejected: expect.any(Function),
+    });
     expect(reads()).toBe(2);
 
     // The first run gives up on a rejected upload; the second still reads
@@ -382,7 +395,10 @@ describe("createAuthorizedManager with an uploaded account", () => {
     upload = "fresh-token";
     await expect(
       second!({ serverId: "srv_1", error: rejected() }),
-    ).resolves.toEqual({ accessToken: "fresh-token" });
+    ).resolves.toEqual({
+      accessToken: "fresh-token",
+      onRetryRejected: expect.any(Function),
+    });
     await expect(
       first!({ serverId: "srv_1", error: rejected() }),
     ).rejects.toThrow("Upload a fresh token for Linear");

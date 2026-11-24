@@ -82,7 +82,8 @@ function resolves(destination: string): boolean {
   if (destination.startsWith("/api-reference/")) {
     return current.has(destination);
   }
-  const page = resolve(docsDir, destination.replace(/^\//, ""));
+  // The site root is served by docs/index.mdx.
+  const page = resolve(docsDir, destination.replace(/^\//, "") || "index");
   return existsSync(`${page}.mdx`) || existsSync(`${page}.md`);
 }
 

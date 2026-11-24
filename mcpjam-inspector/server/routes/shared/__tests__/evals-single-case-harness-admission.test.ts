@@ -116,10 +116,15 @@ describe("prepareSingleCaseExecution — hosted harness admission", () => {
     return error as { message: string; details?: Record<string, unknown> };
   }
 
-  it("refuses an approval host: nobody can answer one in an eval", async () => {
-    const error = await refusal(request({ requireToolApproval: true }));
-    expect(error.details).toMatchObject({ reason: "HARNESS_UNAVAILABLE" });
-    expect(error.message).toContain("cannot wait for tool approval in evals or swarms");
+  it("admits an approval host: an eval runs it as approval off", async () => {
+    const error = await prepareSingleCaseExecution(
+      clientManager as never,
+      request({ requireToolApproval: true }),
+    ).then(
+      () => undefined,
+      (caught: unknown) => caught as { details?: Record<string, unknown> },
+    );
+    expect(error?.details?.reason).not.toBe("HARNESS_UNAVAILABLE");
   });
 
   it("refuses a model the harness has not verified", async () => {

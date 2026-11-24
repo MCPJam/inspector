@@ -31,6 +31,9 @@ const backendCalls = vi.hoisted(() => ({
   completeAuthorizationAttempt: vi.fn(),
 }));
 
+const worker = vi.hoisted(() => ({ runConnectionJob: vi.fn() }));
+vi.mock("../../../services/server-connection-worker.js", () => worker);
+
 const authorize = vi.hoisted(() => ({ prepareAuthorization: vi.fn() }));
 
 const authkit = vi.hoisted(() => ({ verifyAuthKitToken: vi.fn() }));
@@ -575,6 +578,20 @@ describe("the steps after the claim", () => {
     expect(backendCalls.fetchHandoffState).toHaveBeenCalledWith(
       "continuation-abc"
     );
+  });
+
+  it("wakes the local validation job for the authenticated handoff", async () => {
+    vi.stubEnv("MCPJAM_LOCAL_DOORBELL_MS", "3000");
+    try {
+      backendCalls.fetchHandoffState.mockResolvedValue({
+        requestId: "scr_1", status: "validating", live: true,
+      });
+      const res = await get("/state", { cookie: `${COOKIE}=continuation-abc` });
+      expect(res.status).toBe(200);
+      expect(worker.runConnectionJob).toHaveBeenCalledWith("scr_1");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("ignores the de-prefixed cookie name off loopback", async () => {

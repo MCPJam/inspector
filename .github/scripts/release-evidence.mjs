@@ -78,6 +78,14 @@ async function activeEvidenceRun({ github, owner, repo, sha }) {
  * The id of the run whose evidence covers `name`, or null. With `sha`, waits
  * up to `timeoutMs` while an evidence run for that commit is still going:
  * running the gate again beside it would only compete for the same runners.
+ *
+ * Except a run that has not started. `pending` is a run held back by the
+ * evidence workflow's concurrency group, behind another commit's run that
+ * takes about half an hour. It would only start after that run, and the next
+ * push to `main` replaces it anyway, so waiting for it is the slowest way to
+ * get evidence. With `cancelRun`, the release cancels it, so it can't start
+ * later and take the macOS runners the release's own legs need, and the
+ * release runs the gate itself. Its marker serves later releases just as well.
  */
 export async function findReleaseEvidence({
   github,
@@ -90,6 +98,7 @@ export async function findReleaseEvidence({
   now = Date.now,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = () => {},
+  cancelRun = null,
 }) {
   const deadline = now() + timeoutMs;
   for (;;) {
@@ -100,10 +109,28 @@ export async function findReleaseEvidence({
     if (active === null) {
       return { runId: null, reason: "No run has conformance evidence for these inputs and packs, and none is producing it." };
     }
+    if (active.status === "pending") {
+      let outcome = "left it in place";
+      if (cancelRun !== null) {
+        try {
+          await cancelRun(active.id);
+          outcome = "cancelled it";
+        } catch (error) {
+          outcome = `could not cancel it (${error.message})`;
+        }
+      }
+      return {
+        runId: null,
+        reason: `Evidence run ${active.id} for ${sha} has not started: it waits behind another evidence run. This release ${outcome} and runs the gate here.`,
+      };
+    }
     if (now() >= deadline) {
       return { runId: null, reason: `Evidence run ${active.id} is still ${active.status} after the wait; running the gate here.` };
     }
-    log(`Evidence run ${active.id} for ${sha} is ${active.status}; checking again shortly.`);
+    log(
+      `Evidence run ${active.id} for ${sha} is ${active.status}; checking again shortly. ` +
+        "Cancel that run to run the gate in this release instead.",
+    );
     await sleep(pollMs);
   }
 }

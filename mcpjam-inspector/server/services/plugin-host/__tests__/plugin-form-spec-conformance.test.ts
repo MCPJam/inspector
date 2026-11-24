@@ -233,6 +233,7 @@ describe("10. Legacy and MRTR complete the same way", () => {
   };
   const mrtr = () =>
     createOwnedPluginMrtr({
+      identity: { actorId: "actor", projectId: "project", workspaceId: "workspace", subject: "subject" },
       c: {} as never,
       bearer: "fixture",
       projectId: "project",
@@ -264,7 +265,7 @@ describe("10. Legacy and MRTR complete the same way", () => {
       },
       requestedSchema: schema,
       expiresAt: Date.now() + 60_000,
-    });
+    }, "subject");
     let delivered: unknown;
     seams.resume.mockImplementationOnce(async (options) => {
       const prepared = await options.prepareLeg(
@@ -430,7 +431,7 @@ describe("9. Previews open on the originating server; arguments default to {}", 
           },
         },
       },
-    });
+    }, "subject");
     cleanup.push(source.release, () =>
       pluginInstances.closePersistent(
         opened.token,

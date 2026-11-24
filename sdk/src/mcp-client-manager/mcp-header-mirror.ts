@@ -125,6 +125,8 @@ export type MirroredBodyValues = {
   name?: string;
   /** `_meta["io.modelcontextprotocol/protocolVersion"]`. */
   protocolVersion?: string;
+  /** The connection negotiated the Events Beta extension. */
+  eventsBeta?: boolean;
 };
 
 /** Methods for which `Mcp-Name` is REQUIRED (SEP-2243 Standard Request Headers). */
@@ -150,10 +152,19 @@ export const TASK_ROUTED_METHODS = new Set([
   "tasks/cancel",
 ]);
 
-/** Whether `Mcp-Name` is required for `method`, across core and the tasks extension. */
-export function isNameRequiredMethod(method: string | undefined): boolean {
+/** Events Beta Streamable HTTP methods that route on `params.name`. */
+export const EVENTS_BETA_ROUTED_METHODS = new Set([
+  "events/poll",
+  "events/stream",
+  "events/subscribe",
+  "events/unsubscribe",
+]);
+
+/** Whether `Mcp-Name` is required for the negotiated contract. */
+export function isNameRequiredMethod(method: string | undefined, eventsBeta = false): boolean {
   if (method === undefined) return false;
-  return NAME_REQUIRED_METHODS.has(method) || TASK_ROUTED_METHODS.has(method);
+  return NAME_REQUIRED_METHODS.has(method) || TASK_ROUTED_METHODS.has(method) ||
+    (eventsBeta && EVENTS_BETA_ROUTED_METHODS.has(method));
 }
 
 export type McpHeaderIssue =
@@ -373,7 +384,7 @@ export function evaluateMcpHeaders(
             family: "name",
             bodyValue: body.name,
             bodyField: nameSourceField(body.method),
-            required: isNameRequiredMethod(body.method),
+            required: isNameRequiredMethod(body.method, body.eventsBeta),
           },
         ]
       : [];

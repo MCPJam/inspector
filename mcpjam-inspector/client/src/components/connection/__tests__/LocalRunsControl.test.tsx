@@ -7,7 +7,10 @@ import { LocalRunsControl } from "../LocalRunsControl";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-function mount(allowed: boolean, onChange = vi.fn().mockResolvedValue(undefined)) {
+function mount(
+  allowed: boolean,
+  onChange = vi.fn().mockResolvedValue(undefined),
+) {
   render(<LocalRunsControl allowed={allowed} onChange={onChange} />);
   return onChange;
 }
@@ -75,6 +78,47 @@ describe("LocalRunsControl", () => {
     expect(screen.getByRole("switch")).toBeEnabled();
   });
 
+  it("re-enables when the reload shows another admin's value", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // Another admin turned it off again: the list reloads, still not allowed.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    expect(screen.getByRole("switch")).toBeEnabled();
+    expect(screen.getByRole("switch")).not.toBeChecked();
+  });
+
+  it("waits for the save's own reload when another reload lands mid-save", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    const onChange = vi.fn(
+      () => new Promise<void>((resolve) => (finish = resolve)),
+    );
+    const { rerender } = render(
+      <LocalRunsControl allowed={false} listVersion={1} onChange={onChange} />,
+    );
+    await flip(user);
+    await user.click(screen.getByRole("button", { name: "Allow local runs" }));
+    // An unrelated reload lands while the write is still pending.
+    rerender(
+      <LocalRunsControl allowed={false} listVersion={2} onChange={onChange} />,
+    );
+    finish();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    expect(screen.getByRole("switch")).toBeDisabled();
+    // The reload the save triggered lands.
+    rerender(<LocalRunsControl allowed listVersion={3} onChange={onChange} />);
+    expect(screen.getByRole("switch")).toBeEnabled();
+  });
+
   it("says the write failed when it fails for another reason", async () => {
     const user = userEvent.setup();
     mount(false, vi.fn().mockRejectedValue(new Error("network down")));
@@ -107,5 +151,22 @@ describe("LocalRunsControl", () => {
         "Only a project admin can change whether local runs may use this server's shared sign-in. Ask a project admin.",
       ),
     );
+  });
+
+  it("speaks of a web client's saved sign-ins, not a server's tokens", async () => {
+    const user = userEvent.setup();
+    render(
+      <LocalRunsControl
+        allowed
+        noun="client"
+        onChange={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    expect(
+      screen.getByText("Members' local apps can use these accounts' saved sign-ins."),
+    ).toBeTruthy();
+    const dialog = await flip(user);
+    expect(dialog).toHaveTextContent("Stop local runs for this client?");
+    expect(dialog.textContent).not.toMatch(/token|server/i);
   });
 });
