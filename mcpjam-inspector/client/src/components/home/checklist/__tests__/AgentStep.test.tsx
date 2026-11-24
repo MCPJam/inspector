@@ -79,6 +79,18 @@ describe("AgentStep", () => {
     );
   });
 
+  it("shows only manual editor setup in the desktop app", async () => {
+    vi.stubGlobal("electronAPI", {});
+    try {
+      renderStep();
+      await pick("Cursor");
+      expect(screen.queryByRole("link", { name: /Add to Cursor/ })).toBeNull();
+      expect(screen.getByText("Add it by hand")).toBeTruthy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("copies the picked agent's snippet and reports which agent", async () => {
     const onCopied = vi.fn();
     renderStep(onCopied);

@@ -212,6 +212,8 @@ function ClientSetup({
   copied: boolean;
   onCopy: (text: string) => void;
 }) {
+  // The desktop app only opens http(s) links, so editor deep links can't open there.
+  const canOpenEditorLinks = !window.electronAPI;
   switch (client.kind) {
     case "command":
       return (
@@ -234,23 +236,25 @@ function ClientSetup({
     case "install":
       return (
         <>
+          {canOpenEditorLinks ? (
+            <Section
+              title="One-click setup"
+              description={`Opens ${client.label} to install the MCPJam server, then click Install.`}
+            >
+              <Button asChild size="sm" variant="outline" className="gap-2">
+                <a href={client.install}>
+                  <ClientIcon client={client} />
+                  Add to {client.label}
+                  <ArrowUpRight
+                    className="size-3.5 text-muted-foreground"
+                    aria-hidden
+                  />
+                </a>
+              </Button>
+            </Section>
+          ) : null}
           <Section
-            title="One-click setup"
-            description={`Opens ${client.label} to install the MCPJam server, then click Install.`}
-          >
-            <Button asChild size="sm" variant="outline" className="gap-2">
-              <a href={client.install}>
-                <ClientIcon client={client} />
-                Add to {client.label}
-                <ArrowUpRight
-                  className="size-3.5 text-muted-foreground"
-                  aria-hidden
-                />
-              </a>
-            </Button>
-          </Section>
-          <Section
-            title="Or add it by hand"
+            title={canOpenEditorLinks ? "Or add it by hand" : "Add it by hand"}
             description={
               <>
                 {client.manual} {client.after}{" "}
