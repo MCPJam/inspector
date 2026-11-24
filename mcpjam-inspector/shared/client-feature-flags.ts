@@ -11,6 +11,7 @@ export const CLIENT_FEATURE_FLAG_KEYS = [
   "browser-workspace-enabled",
   "claude-code-host-enabled",
   "client-agent-loop",
+  "climbs-enabled",
   "codex-host-enabled",
   "conformance-tasks-update-check",
   "copilot-cli-harness",
