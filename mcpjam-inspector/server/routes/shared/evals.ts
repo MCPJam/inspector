@@ -124,6 +124,7 @@ import {
   readStoredModelSelection,
 } from "../../utils/model-resolution-local.js";
 import { routingSelectionForModel } from "../../utils/selection-rail.js";
+import { bindMockRun } from "../../utils/mock-run.js";
 import {
   countModelSteps,
   isModelFree,
@@ -2816,6 +2817,8 @@ export async function prepareEvalRun(
       ? { ciMetadata: launchContext.ciMetadata }
       : {}),
   });
+  // The run has an id: a mock these connections reach counts its model answers against it.
+  if (runId) bindMockRun(clientManager, runId);
   // An adopted run belongs to its original executor. Later setup gates may
   // finalize a run when they refuse, so replay must return before those gates.
   //

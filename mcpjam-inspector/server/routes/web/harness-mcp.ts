@@ -406,6 +406,8 @@ async function handle(c: any) {
           ...(claims.mockVersion
             ? { mockVersions: { [serverId]: claims.mockVersion } }
             : {}),
+          // The token names the run too: a model answer counts against it.
+          ...(claims.runId ? { mockRunKey: claims.runId } : {}),
           // Per-server XAA works on the harness proxy (configured servers
           // mint instead of 500ing). KNOWN LIMITATION: the host's
           // enterprise-managed POLICY is NOT enforced here — the harness

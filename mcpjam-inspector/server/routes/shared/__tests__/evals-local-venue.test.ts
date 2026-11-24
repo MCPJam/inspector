@@ -38,6 +38,7 @@ vi.mock("../../../services/evals/pinned-skill-source.js", async (original) => {
   return { ...actual, buildPinnedSkillSource: mocks.pinned.mockImplementation(actual.buildPinnedSkillSource) };
 });
 import { prepareEvalRun } from "../evals";
+import { registerMockRunSlot, type MockRunSlot } from "../../../utils/mock-run.js";
 import { prepareSuiteReplayFromRun } from "../../../services/evals/replay-suite-run";
 
 beforeEach(() => {
@@ -185,4 +186,22 @@ it("refuses a suite launch when its authorization project cannot be resolved", a
   } as any)).rejects.toThrow("project lookup unavailable");
   expect(mocks.mutation).not.toHaveBeenCalled();
   expect(mocks.run).not.toHaveBeenCalled();
+});
+
+describe("the run a mock counts its model answers against", () => {
+  it("is told to the connection the run was prepared on, once the run has an id", async () => {
+    mocks.available.mockResolvedValue(false);
+    const manager = {
+      listServers: () => ["s1"], hasServer: () => true, getConnectionStatus: () => "connected",
+      getServerNames: () => ({ s1: "s1" }), getServerReplayConfigs: () => [],
+      listTools: async () => ({ tools: [] }),
+    };
+    const slot: MockRunSlot = {};
+    registerMockRunSlot(manager, slot);
+    await prepareEvalRun(manager as any, {
+      suiteId: "suite-1", suiteRerun: true, serverIds: ["s1"], tests: [], convexAuthToken: "token",
+      runtimeVenue: "local", orgModelConfig: { providers: [] },
+    } as any);
+    expect(slot.key).toBe("run-1");
+  });
 });

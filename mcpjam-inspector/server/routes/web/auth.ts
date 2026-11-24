@@ -158,6 +158,7 @@ import {
 import { getConfidentialCimdProviderForOrg } from "../../services/xaa-confidential-cimd.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { isOrgBoundCredential } from "../../utils/org-bound-credential.js";
+import { registerMockRunSlot, type MockRunSlot } from "../../utils/mock-run.js";
 import {
   dispatchMockInProcess,
   type MockAuthorizeEntry,
@@ -1649,6 +1650,8 @@ export async function createAuthorizedManager(
     accessVersion?: number;
     /** The version of each mock to open, by the mock's id; absent means the head. */
     mockVersions?: Record<string, number>;
+    /** The run these connections serve, when known now; an eval run is told later (`bindMockRun`). */
+    mockRunKey?: string;
     rpcLogger?: RpcLogger;
     /**
      * Headers-only HTTP-exchange channel, a SEPARATE SDK channel from
@@ -1873,11 +1876,13 @@ export async function createAuthorizedManager(
     },
   );
   // A mock's dialer authorizes it again for a fresh grant, with the same pin.
+  const mockRun: MockRunSlot = { key: options?.mockRunKey };
   const mockDialFor = (serverId: string): MockDial => ({
     caller,
     bearerToken,
     projectId,
     xaaIssuer: options?.xaaIssuer,
+    runKey: () => mockRun.key,
     reauthorize: async () =>
       (
         await authorizeBatch(caller, bearerToken, projectId, [serverId], {
@@ -3145,6 +3150,7 @@ export async function createAuthorizedManager(
     resourceSnapshots.set(key, {serverUpdatedAt: auth.serverConfig.updatedAt, credentialAuthorizedAt: credentialAuthorizedAt ?? null, credentialId: connection?.connectionId ?? auth.oauthCredentialId ?? undefined, headersReconstructible: !!connection || reconstructibleHeaderServers.has(serverId)});
   }
   setManagerResourceSnapshots(manager, resourceSnapshots);
+  registerMockRunSlot(manager, mockRun);
   setManagerOrganization(manager, batch.organizationId);
   const ownerScope = taskOwnerScope(projectId, authorizedUserId);
   if (ownerScope)

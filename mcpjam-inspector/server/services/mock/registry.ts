@@ -32,6 +32,8 @@ export interface MockDoorContext {
   caller: ManagerCallerContext;
   projectId: string;
   profile: MockDialProfile;
+  /** The eval run this call belongs to, when the dialer knows it. */
+  runKey?: string;
 }
 
 export type MockInProcessHandler = (

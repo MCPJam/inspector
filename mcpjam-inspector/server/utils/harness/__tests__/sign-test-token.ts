@@ -16,6 +16,9 @@ export function signTestProxyToken(
     projectId?: string;
     /** The version of a mock server, as the backend's signer writes it. */
     mockVersion?: unknown;
+    /** The eval scope the control plane put on the token; both are written or neither. */
+    runId?: string;
+    iterationId?: string;
   },
   opts: { nowS?: number; expS?: number } = {},
 ): string {
@@ -31,6 +34,8 @@ export function signTestProxyToken(
     projectId: claims.projectId ?? "proj_1",
     serverId: claims.serverId,
     ...(claims.mockVersion !== undefined ? { mockVersion: claims.mockVersion } : {}),
+    ...(claims.runId ? { runId: claims.runId } : {}),
+    ...(claims.iterationId ? { iterationId: claims.iterationId } : {}),
     iat: now,
     exp: opts.expS ?? now + 3600,
   };

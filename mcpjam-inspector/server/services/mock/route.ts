@@ -185,7 +185,9 @@ export async function serveMock(
   const observed: MockObservedEvent[] = [];
   try {
     const usesModel = Object.values(resolved.definition.tools ?? {}).some((t) => t.answer?.from === "model");
-    const runKey = request.headers.get(MOCK_RUN_HEADER)?.slice(0, 128) || undefined;
+    // A dialer in this process names its own run; over HTTP the caller's header is all there is.
+    const runKey =
+      ((door.kind === "in-process" ? door.runKey : undefined) ?? request.headers.get(MOCK_RUN_HEADER))?.slice(0, 128) || undefined;
     const mock = { mockId, version: resolved.version, projectId: resolved.projectId, runKey };
     const modelAnswerer = !usesModel
       ? undefined

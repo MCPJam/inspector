@@ -116,6 +116,22 @@ describe("/api/web/harness-mcp", () => {
       "mockVersions",
     );
   });
+  it("names the eval run its token carries, so a mock counts its model answers against it", async () => {
+    const scoped = signTestProxyToken({
+      serverId: "srv-a",
+      projectId: "p1",
+      externalId: "user_ext_1",
+      orgId: "org_1",
+      mockVersion: 3,
+      runId: "run-77",
+      iterationId: "iter-1",
+    });
+    expect((await post("srv-a", { "X-MCPJam-Proxy-Token": scoped })).status).toBe(200);
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).toMatchObject({ mockRunKey: "run-77" });
+    // Playground traffic carries no run.
+    expect((await post("srv-a", { "X-MCPJam-Proxy-Token": webToken("srv-a") })).status).toBe(200);
+    expect(vi.mocked(createAuthorizedManager).mock.lastCall?.[7]).not.toHaveProperty("mockRunKey");
+  });
   it("401s without a token (token IS the auth here)", async () => {
     expect((await post("srv-a")).status).toBe(401);
   });

@@ -26,6 +26,7 @@ vi.mock("../../../utils/mcp-backpressure.js", () => ({
 import { scrubDeliveredSecrets } from "../../../../shared/delivered-secret-registry.js";
 import { registerMockInProcessHandler } from "../../../services/mock/registry.js";
 import { createAuthorizedManager } from "../auth.js";
+import { bindMockRun } from "../../../utils/mock-run.js";
 
 const NOW = 1_800_000_000_000;
 const GRANT = "grant-token-aaaaaaaaaaaa";
@@ -35,6 +36,7 @@ let authorizeBodies: Array<Record<string, unknown>>;
 let grants: string[];
 /** How long the first grant minted lasts; later ones last an hour. */
 let firstLife: number;
+let lastManager: object;
 
 function authorizeAnswer(grant: string, life: number) {
   return Response.json({
@@ -102,7 +104,7 @@ for (const mode of ["local", "hosted"] as const) {
       hosted.on = mode === "hosted";
     });
 
-    async function open() {
+    async function open(extra: { mockRunKey?: string } = {}) {
       const result = await createAuthorizedManager(
         { authMethod: "authkit_jwt", workosUserId: "ann", mcpjamOrganizationId: "org1" },
         "ann-bearer",
@@ -111,8 +113,9 @@ for (const mode of ["local", "hosted"] as const) {
         9_000,
         undefined,
         { roots: {} },
-        { lazyConnect: true, mockVersions: { mock1: 5 } },
+        { lazyConnect: true, mockVersions: { mock1: 5 }, ...extra },
       );
+      lastManager = result.manager;
       return result.authorizedServerConfigs as Record<string, MCPServerConfig & { url: string }>;
     }
 
@@ -136,6 +139,31 @@ for (const mode of ["local", "hosted"] as const) {
           profile: expect.objectContaining({ timeoutMs: 9_000, clientCapabilities: { roots: {} } }),
         }),
       ]);
+    });
+
+    it("names the eval run once it has an id, on a connection built before it", async () => {
+      const configs = await open();
+      const doors: Array<{ runKey?: string }> = [];
+      registerMockInProcessHandler(async (_id, _request, door) => {
+        doors.push(door);
+        return new Response("{}");
+      });
+      await configs.mock1.baseFetch!(configs.mock1.url, { method: "POST", body: "{}" });
+      bindMockRun(lastManager, "run-9");
+      await configs.mock1.baseFetch!(configs.mock1.url, { method: "POST", body: "{}" });
+      expect(doors.map((door) => door.runKey)).toEqual([undefined, "run-9"]);
+    });
+
+    it("keeps the run a dialer named when it connected, as the harness proxy does", async () => {
+      const configs = await open({ mockRunKey: "token-run" });
+      const doors: Array<{ runKey?: string }> = [];
+      registerMockInProcessHandler(async (_id, _request, door) => {
+        doors.push(door);
+        return new Response("{}");
+      });
+      bindMockRun(lastManager, "run-9");
+      await configs.mock1.baseFetch!(configs.mock1.url, { method: "POST", body: "{}" });
+      expect(doors[0]?.runKey).toBe("token-run");
     });
 
     it("asks authorize for the caller's pin, and again for the same pin when it re-mints", async () => {

@@ -69,6 +69,8 @@ export interface MockDial {
   bearerToken: string;
   projectId: string;
   xaaIssuer?: string;
+  /** The eval run this connection serves, read on every call; absent outside an eval run. */
+  runKey?: () => string | undefined;
   /** Authorizes this mock again, with the same pin, for a fresh grant. */
   reauthorize(): Promise<MockAuthorized>;
 }
@@ -161,6 +163,7 @@ export function dispatchMockInProcess(
       bearerToken: dial.bearerToken,
       caller: dial.caller,
       projectId: dial.projectId,
+      ...(dial.runKey?.() ? { runKey: dial.runKey() } : {}),
       profile: { ...profile, ...(dial.xaaIssuer ? { xaaIssuer: dial.xaaIssuer } : {}) },
     });
   };

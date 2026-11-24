@@ -305,4 +305,43 @@ describe("a model-answered tool at the route", () => {
     expect(marks).toContain("list_invoices=model");
     await client.disconnectAllServers();
   });
+
+  it("counts an in-process dialer's run apart from every other run of the same mock", async () => {
+    // The backend's per-run cap, as a count per run key: two answers a run.
+    const perRun = new Map<string, number>();
+    const { backend } = memoryBackend();
+    const capped: AnswersBackend = {
+      ...backend,
+      reserve: async ({ runKey }) => {
+        const used = (perRun.get(runKey ?? "") ?? 0) + 1;
+        if (used > 2) throw new MockAnswerError("This run has used its model answers.");
+        perRun.set(runKey ?? "", used);
+      },
+    };
+    const deps = {
+      open: stubRealServer().open,
+      resolve: vi.fn(async () => modelMock),
+      recordUnmatched: vi.fn(),
+      modelAnswerer: (mock: { mockId: string; version: number; runKey?: string }) =>
+        createModelAnswerer({ ...mock, backend: capped, callModel: modelReply('{"content":[{"type":"text","text":"ok"}]}') }),
+    };
+    const ask = async (runKey: string, customer: string) => {
+      const client = await dialMock((r) => serveMock(r, "mock1", { ...door, runKey }, deps));
+      try {
+        const result = (await client.executeTool("mock", "list_invoices", { customer })) as { isError?: boolean };
+        return result.isError !== true;
+      } catch {
+        // A refused answer reaches the dialer as an error: that is what this reads.
+        return false;
+      } finally {
+        await client.disconnectAllServers();
+      }
+    };
+    const runA = [await ask("run-a", "1"), await ask("run-a", "2"), await ask("run-a", "3")];
+    // Other questions: an answer one run stored is replayed to another without a reservation.
+    const runB = [await ask("run-b", "4"), await ask("run-b", "5")];
+    expect(runA).toEqual([true, true, false]);
+    expect(runB).toEqual([true, true]);
+    expect(Object.fromEntries(perRun)).toEqual({ "run-a": 2, "run-b": 2 });
+  });
 });

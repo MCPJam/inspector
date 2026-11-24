@@ -75,6 +75,20 @@ describe("dispatchMockInProcess", () => {
     expect(new Headers(config.requestInit?.headers).get("x-kept")).toBe("yes");
   });
 
+  it("names the run on every call, read when the call is made, and names none outside a run", async () => {
+    const slot: { key?: string } = {};
+    const { handler, dial } = setup(async () => entry("unused", NOW));
+    const config = dispatchMockInProcess(base, entry("grant-token-1", NOW + 3_600_000), profile, { ...dial, runKey: () => slot.key });
+    const callIt = () => config.baseFetch!("https://mock.mcpjam.invalid/mock1", { method: "POST", body: "{}" });
+    await callIt();
+    // The run is told after the connection was built.
+    slot.key = "run-42";
+    await callIt();
+    const doors = handler.mock.calls.map((call) => (call as unknown as [string, Request, Record<string, unknown>])[2]);
+    expect(doors[0]).not.toHaveProperty("runKey");
+    expect(doors[1]).toMatchObject({ runKey: "run-42" });
+  });
+
   it("registers the grant with the scrubber, so no error body carries it", () => {
     setup(async () => entry("unused", NOW));
     expect(scrubDeliveredSecrets("failed with grant-token-1 in the body")).not.toContain("grant-token-1");
