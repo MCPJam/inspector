@@ -153,7 +153,6 @@ function withReal(
 type SavedFields = Omit<PlatformMockSaved, "address" | "changes" | "created" | "dryRun">;
 
 function saved(
-  c: Context,
   fields: SavedFields,
   changes: MockChange[],
   state: Pick<PlatformMockSaved, "created" | "dryRun">,
@@ -189,7 +188,7 @@ mockServers.post("/projects/:projectId/mock-servers", async (c) => {
       contentHash: created.contentHash,
     };
     const changes = diffMockDefinitions(undefined, definition);
-    return v1Resource(ctx, saved(ctx, fields, changes, { created: true, dryRun: false }), 201);
+    return v1Resource(ctx, saved(fields, changes, { created: true, dryRun: false }), 201);
   });
 });
 
@@ -228,7 +227,7 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
       contentHash: head.contentHash,
     };
     if (body.dryRun) {
-      return v1Resource(ctx, saved(ctx, fields, changes, { created: changes.length > 0, dryRun: true }));
+      return v1Resource(ctx, saved(fields, changes, { created: changes.length > 0, dryRun: true }));
     }
     let result: { version: number; contentHash: string; created: boolean };
     try {
@@ -242,7 +241,7 @@ mockServers.post("/projects/:projectId/mock-servers/:mockId/versions", async (c)
     }
     const state = { created: result.created, dryRun: false };
     const stored = { ...fields, version: result.version, contentHash: result.contentHash };
-    return v1Resource(ctx, saved(ctx, stored, changes, state), result.created ? 201 : 200);
+    return v1Resource(ctx, saved(stored, changes, state), result.created ? 201 : 200);
   });
 });
 
