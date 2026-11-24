@@ -1,16 +1,24 @@
-import {
-  createMcpHandler,
-  isLegacyRequest,
-  Server,
-} from "@modelcontextprotocol/server";
+import { createMcpHandler, isLegacyRequest, Server } from "@modelcontextprotocol/server";
 import type {
   McpHttpHandler,
+  Result,
   ServerCapabilities,
 } from "@modelcontextprotocol/server";
-import { stepHostFor } from "./case-call.js";
+import { z } from "zod";
+import { stepHostFor, taskStarter } from "./case-call.js";
+import {
+  answerTaskMethod,
+  TASKS_EXTENSION_ID,
+  unknownTask,
+} from "./mock-tasks.js";
+import type { MockTaskStore } from "./mock-tasks.js";
 import { createLegacySessionHandler } from "./session-map.js";
 import type { MockSessionMap } from "./session-map.js";
-import { definitionAsks, definitionLogs } from "./definition-types.js";
+import {
+  definitionAsks,
+  definitionLogs,
+  definitionRunsTasks,
+} from "./definition-types.js";
 import type { MockDefinition } from "./definition-types.js";
 import type { MockObserver } from "./mock-observer.js";
 import { answerSkillsMethod, registerItemHandlers } from "./item-handlers.js";
@@ -19,6 +27,7 @@ import { pageOf } from "./paging.js";
 import { ownsItems } from "./resolve-items.js";
 import type { MockModelAnswerer } from "./model-answers.js";
 import { answerItself } from "./self-answer.js";
+import { isTaskCreated, MockServer } from "./mock-server.js";
 import {
   editedToolMissingError,
   methodUnavailableError,
@@ -45,7 +54,8 @@ const METHOD_FAMILIES: Array<
 /** The real server's capabilities with the definition's laid over them; `null` removes one. */
 function effectiveCapabilities(
   real: ServerCapabilities,
-  definition: MockDefinition
+  definition: MockDefinition,
+  era: Era
 ): ServerCapabilities {
   const merged: Record<string, unknown> = { ...real, tools: real.tools ?? {} };
   for (const [key, value] of Object.entries(definition.capabilities ?? {})) {
@@ -61,9 +71,31 @@ function effectiveCapabilities(
     merged.extensions = { ...skillsCapability(), ...(real.extensions ?? {}) };
   }
   // A case that logs makes the mock a server that logs.
-  if (definitionLogs(definition) && !("logging" in stated))
-    merged.logging ??= {};
+  if (definitionLogs(definition) && !("logging" in stated)) merged.logging ??= {};
+  // A case that runs as a task makes the mock a task server, on the wire the
+  // caller's era speaks (the 2025-11-25 utility, or the 2026-07-28 extension).
+  if (definitionRunsTasks(definition)) {
+    if (era === "modern" && !("extensions" in stated)) {
+      merged.extensions = {
+        ...(merged.extensions as object | undefined),
+        [TASKS_EXTENSION_ID]: {},
+      };
+    } else if (era === "legacy" && !("tasks" in stated)) {
+      merged.tasks ??= {
+        list: {},
+        cancel: {},
+        requests: { tools: { call: {} } },
+      };
+    }
+  }
   return merged as ServerCapabilities;
+}
+
+type Era = "legacy" | "modern";
+
+function serverDeclaresTasks(capabilities: ServerCapabilities): boolean {
+  const extensions = capabilities.extensions as Record<string, unknown> | undefined;
+  return extensions?.[TASKS_EXTENSION_ID] !== undefined;
 }
 
 function unreachableServer(error: Error): Server {
@@ -87,6 +119,11 @@ export interface BuildMockOptions {
   /** Answers the calls of tools with `answer.from: "model"`; without one, such a call says so. */
   modelAnswerer?: MockModelAnswerer;
   /**
+   * Where the tasks of cases that run as tasks live, and whose they are. Without
+   * it such a case answers in place.
+   */
+  tasks?: { store: MockTaskStore; owner: string };
+  /**
    * Holds the sessions a 2025-era caller needs when a case asks a question or
    * a model request. Without it a 2025-era call to such a case is refused by
    * the server SDK; a 2026-07-28 caller needs no session either way.
@@ -98,6 +135,7 @@ async function buildServer(
   definition: MockDefinition,
   real: MockRealServer,
   options: BuildMockOptions,
+  era: Era,
   signal?: AbortSignal
 ): Promise<Server> {
   let info: MockRealServerInfo;
@@ -108,10 +146,14 @@ async function buildServer(
     // server that answers every request with the reason instead.
     return unreachableServer(realUnreachableError(cause));
   }
-  const mockCapabilities = effectiveCapabilities(info.capabilities, definition);
+  const mockCapabilities = effectiveCapabilities(
+    info.capabilities,
+    definition,
+    era
+  );
   const name =
     definition.serverInfo?.name ?? info.serverInfo?.name ?? "mcpjam-mock";
-  const server = new Server(
+  const server = new MockServer(
     {
       ...info.serverInfo,
       ...definition.serverInfo,
@@ -167,8 +209,18 @@ async function buildServer(
           host: stepHostFor(ctx, request.params._meta?.progressToken),
           responses: ctx.mcpReq.inputResponses,
           requestState: ctx.mcpReq.requestState(),
+          startTask: taskStarter(
+            options.tasks,
+            era,
+            ctx,
+            (request.params as { task?: unknown }).task
+          ),
         },
       });
+      if (isTaskCreated(itself)) {
+        server.holdTask(ctx.mcpReq.id, itself.taskCreated);
+        return { content: [] };
+      }
       if (itself) return itself;
     }
     const relay = relayDuringCall(
@@ -190,6 +242,29 @@ async function buildServer(
     return result;
   });
 
+  // On 2026-07-28 the extension reuses two method names the core dropped, so the
+  // server SDK dispatches them only to a handler registered with its own params
+  // schema; the 2025 wire's task methods come through the fallback below.
+  const tasks = options.tasks;
+  if (tasks && era === "modern" && definitionRunsTasks(definition)) {
+    const params = { params: z.looseObject({ taskId: z.string() }) };
+    for (const method of ["tasks/get", "tasks/update", "tasks/cancel"]) {
+      server.setRequestHandler(method, params, async (taskParams, ctx) => {
+        const answered = await answerTaskMethod(
+          tasks.store,
+          tasks.owner,
+          "extension",
+          method,
+          // The server SDK lifts the replies out of the params.
+          { ...taskParams, inputResponses: ctx.mcpReq.inputResponses },
+          ctx.mcpReq.signal
+        );
+        if (!answered) throw unknownTask();
+        return answered as Result;
+      });
+    }
+  }
+
   const itemContext = {
     definition,
     real,
@@ -201,6 +276,21 @@ async function buildServer(
   // Every other method goes to the real server when both sides have it, and is
   // refused by name when only one does.
   server.fallbackRequestHandler = async (request, ctx) => {
+    if (options.tasks && request.method.startsWith("tasks/")) {
+      const answered = await answerTaskMethod(
+        options.tasks.store,
+        options.tasks.owner,
+        era === "modern" ? "extension" : "legacy",
+        request.method,
+        request.params,
+        ctx.mcpReq.signal
+      );
+      if (answered) return answered as Result;
+      // A task this store does not hold is the real server's, if it has tasks.
+      if (!info.capabilities.tasks && !serverDeclaresTasks(info.capabilities)) {
+        throw unknownTask();
+      }
+    }
     const skills = await answerSkillsMethod(
       request,
       itemContext,
@@ -248,8 +338,8 @@ export function buildMock(
   real: MockRealServer = NO_REAL_SERVER,
   options: BuildMockOptions = {}
 ): McpHttpHandler {
-  const factory = (ctx: { requestInfo?: Request }) =>
-    buildServer(definition, real, options, ctx.requestInfo?.signal);
+  const factory = (ctx: { era: Era; requestInfo?: Request }) =>
+    buildServer(definition, real, options, ctx.era, ctx.requestInfo?.signal);
   if (!options.sessions || !definitionAsks(definition)) {
     return createMcpHandler(factory, { legacy: "stateless" });
   }
@@ -259,7 +349,7 @@ export function buildMock(
   const legacy = createLegacySessionHandler(
     options.sessions.map,
     options.sessions.key,
-    (swap) => buildServer(definition, swap, options)
+    (swap) => buildServer(definition, swap, options, "legacy")
   );
   return {
     ...modern,

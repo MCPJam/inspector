@@ -8,7 +8,7 @@ vi.mock("../../../routes/web/auth.js", () => ({
 }));
 
 import { MCPClientManager } from "@mcpjam/sdk";
-import { createMockSessionMap } from "@mcpjam/sdk/mocks";
+import { createMockSessionMap, createMockTaskStore } from "@mcpjam/sdk/mocks";
 import { mockConnectionPool } from "../connection.js";
 import { serveMock } from "../route.js";
 import { resolvedMock, stubRealServer, type StubReal } from "./helpers.js";
@@ -150,5 +150,48 @@ describe("what the route keeps between requests", () => {
     );
     expect(sessions.size()).toBe(0);
     await other.disconnectAllServers();
+  });
+
+  it("keeps tasks in the store the route is given", async () => {
+    const tasks = createMockTaskStore();
+    const definition = resolvedMock({
+      baseServerId: undefined,
+      definition: {
+        tools: {
+          slow: {
+            inputSchema: { type: "object" },
+            answer: {
+              from: "saved",
+              cases: [
+                {
+                  task: true,
+                  result: { content: [{ type: "text", text: "ok" }] },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    const response = await serveMock(
+      new Request("https://mock.test/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "slow", arguments: {}, task: {} },
+        }),
+      }),
+      "mock1",
+      door("ann"),
+      { open: stub.open, resolve: vi.fn(async () => definition), tasks },
+    );
+    expect(await response.text()).toContain('"task"');
+    expect(tasks.size()).toBe(1);
   });
 });

@@ -15,9 +15,12 @@
 import {
   buildMock,
   createMockSessionMap,
+  createMockTaskStore,
   definitionAsks,
+  definitionRunsTasks,
   type MockModelAnswerer,
   type MockSessionMap,
+  type MockTaskStore,
   type MockObservedEvent,
   type MockRealServer,
 } from "@mcpjam/sdk/mocks";
@@ -51,15 +54,19 @@ export type MockDoor =
   | ({ kind: "in-process" } & MockDoorContext);
 
 /**
- * What a mock that asks questions keeps between requests. It lives in this
- * process: a caller inside MCPJam always reaches it, and a client outside on a
- * 2025 revision may land on another replica, where its session is not found.
+ * What a mock that asks questions or runs tasks keeps between requests. Both
+ * live in this process: a caller inside MCPJam always reaches them, and a
+ * client outside on a 2025 revision may land on another replica, where its
+ * session or task is not found.
  */
 const defaultSessions = createMockSessionMap();
+const defaultTasks = createMockTaskStore();
 
 export interface MockRouteDeps {
   /** Where 2025-era sessions live (default: this process's own map). */
   sessions?: MockSessionMap;
+  /** Where tasks live (default: this process's own store). */
+  tasks?: MockTaskStore;
   open?: OpenReal;
   resolve?: typeof resolveMock;
   recordUnmatched?: typeof recordUnmatchedCalls;
@@ -205,13 +212,16 @@ export async function serveMock(
       ? undefined
       : (deps.modelAnswerer ?? defaultModelAnswerer(door.caller, bearerToken))(mock);
     // A session belongs to one caller and one version of one mock, so no other
-    // caller can use its id.
+    // caller can use its id; a task belongs to the caller and the mock.
     const owner = `${actorDigest(caller, bearerToken)}:${mockId}`;
     const response = await buildMock(resolved.definition, real, {
       observer: (event) => observed.push(event),
       modelAnswerer,
       ...(definitionAsks(resolved.definition) && {
         sessions: { map: deps.sessions ?? defaultSessions, key: `${owner}:${resolved.version}` },
+      }),
+      ...(definitionRunsTasks(resolved.definition) && {
+        tasks: { store: deps.tasks ?? defaultTasks, owner },
       }),
     }).fetch(request, {
       // Names the caller by a digest; carries no credential.

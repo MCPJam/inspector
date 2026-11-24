@@ -7,7 +7,7 @@ import {
 import type { MockIssueCode } from "./validate-definition.js";
 
 /**
- * The shape checks for a saved case's `steps`, called by the
+ * The shape checks for a saved case's `steps` and `task`, called by the
  * definition validator. Each message says what to change.
  */
 
@@ -38,6 +38,13 @@ const STEP_FIELDS: Record<string, string[]> = {
 const ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 export function checkCaseSteps(savedCase: Obj, path: string, add: Add): void {
+  if ("task" in savedCase && savedCase.task !== true) {
+    add(
+      "invalid_value",
+      at(path, "task"),
+      `${at(path, "task")} must be true. Remove it to answer in place.`
+    );
+  }
   if (!("steps" in savedCase)) return;
   const steps = savedCase.steps;
   const stepsPath = at(path, "steps");

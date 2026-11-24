@@ -56,6 +56,8 @@ export interface MockSavedCase {
   when?: JsonObject;
   /** What the mock sends and asks before it answers, in order. */
   steps?: MockStep[];
+  /** Run as a task when the caller can take one; otherwise the call answers in place. */
+  task?: true;
   result?: JsonObject;
   error?: MockSavedError;
 }
@@ -123,6 +125,11 @@ export function definitionLogs(definition: MockDefinition): boolean {
   return savedCasesOf(definition).some((c) =>
     c.steps?.some((step) => step.kind === "log")
   );
+}
+
+/** Whether any saved case runs as a task. */
+export function definitionRunsTasks(definition: MockDefinition): boolean {
+  return savedCasesOf(definition).some((c) => c.task === true);
 }
 
 function savedCasesOf(definition: MockDefinition): MockSavedCase[] {

@@ -1,8 +1,5 @@
-import type {
-  CallToolResult,
-  InputRequiredResult,
-  Tool,
-} from "@modelcontextprotocol/server";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/server";
+import type { CallAnswer } from "./mock-server.js";
 import { answerCase } from "./case-call.js";
 import type { CaseCall } from "./case-call.js";
 import { checkToolArgs } from "../conformance-tool-args.js";
@@ -30,7 +27,7 @@ export interface SelfAnswerCall {
   observer?: MockObserver;
   modelAnswerer?: MockModelAnswerer;
   signal?: AbortSignal;
-  /** What a case with steps needs from the call. */
+  /** What a case with steps or a task needs from the call; without it those parts are refused. */
   caseCall?: CaseCall;
 }
 
@@ -42,7 +39,7 @@ export interface SelfAnswerCall {
  */
 export async function answerItself(
   call: SelfAnswerCall
-): Promise<CallToolResult | InputRequiredResult | undefined> {
+): Promise<CallAnswer | undefined> {
   const { name, answer, input, observer } = call;
   const source = answer.from;
   const verdict = checkToolArgs(call.tool?.inputSchema, input);
@@ -69,8 +66,8 @@ export async function answerItself(
       caseIndex: found.caseIndex,
       outcome: "case",
     });
-    // A case with steps is run; a plain one is just filled.
-    return found.chosen.steps && call.caseCall
+    // A case with steps or a task is run; a plain one is just filled.
+    return (found.chosen.steps || found.chosen.task) && call.caseCall
       ? answerCase(found.chosen, input, call.caseCall)
       : finishCase(found.chosen, input);
   }

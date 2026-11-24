@@ -53,4 +53,10 @@ export {
   type MockSessionMap,
   type MockSessionMapOptions,
 } from "./session-map.js";
+export {
+  createMockTaskStore,
+  type MockTaskRecord,
+  type MockTaskStore,
+  type MockTaskStoreOptions,
+} from "./mock-tasks.js";
 export { chooseCase, finishCase, fillSteps } from "./saved-answers.js";

@@ -3,10 +3,15 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { LOG_LEVEL_META_KEY } from "@modelcontextprotocol/server";
+import {
+  modernHeaders,
+  modernRequestBody,
+} from "../../mcp-conformance/raw-http.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   buildMock,
   createMockSessionMap,
+  createMockTaskStore,
   NO_REAL_SERVER,
   validateMockDefinition,
 } from "../index.js";
@@ -443,6 +448,7 @@ describe("validation of steps", () => {
           { kind: "askUrl", id: "b", message: "m", url: "https://example.com" },
           { kind: "sample", id: "c", prompt: "p", maxTokens: 10 },
         ],
+        task: true,
         result: text("x"),
       })
     ).toMatchObject({ ok: true });
@@ -483,5 +489,311 @@ describe("validation of steps", () => {
         result: text("x"),
       })
     ).toContain("tools.work.answer.cases.0.steps");
+    expect(issues({ task: false, result: text("x") })).toContain(
+      "tools.work.answer.cases.0.task"
+    );
+  });
+});
+
+/** One raw request on the 2026-07-28 wire; `tasks` declares that the caller can take a task. */
+async function modernRpc(
+  handler: { fetch: (r: Request) => Promise<Response> },
+  method: string,
+  params: Record<string, unknown>,
+  tasks = true
+) {
+  const response = await handler.fetch(
+    new Request("http://mock.local/mcp", {
+      method: "POST",
+      headers: modernHeaders({
+        protocolVersion: "2026-07-28",
+        method,
+        ...((typeof params.name === "string" ||
+          typeof params.taskId === "string") && {
+          name: String(params.name ?? params.taskId),
+        }),
+      }),
+      body: JSON.stringify(
+        modernRequestBody({
+          id: 1,
+          method,
+          params,
+          protocolVersion: "2026-07-28",
+          clientCapabilities: tasks
+            ? { extensions: { "io.modelcontextprotocol/tasks": {} } }
+            : {},
+        })
+      ),
+    })
+  );
+  const body = await response.text();
+  const data = /^data:/m.test(body)
+    ? body
+        .split("\n")
+        .find((l) => l.startsWith("data:"))!
+        .slice(5)
+    : body;
+  return JSON.parse(data) as {
+    result?: Record<string, any>;
+    error?: { code: number; message: string };
+  };
+}
+
+const pollUntil = async (check: () => Promise<boolean>) => {
+  for (let i = 0; i < 100; i++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("the condition never held");
+};
+
+describe("a case that runs as a task", () => {
+  const taskCase: MockSavedCase = {
+    task: true,
+    steps: [
+      { kind: "progress", progress: 1, total: 2, message: "halfway" },
+      { kind: "log", level: "info", data: "all good", delayMs: 30 },
+    ],
+    result: text("finished"),
+  };
+
+  it("answers in place for a caller that cannot take a task", async () => {
+    const store = createMockTaskStore();
+    const { client } = await connect(
+      definitionOf([taskCase]),
+      "legacy",
+      {},
+      {
+        tasks: { store, owner: "me" },
+      }
+    );
+    const result = await client.callTool({ name: "work", arguments: {} });
+    expect(result.content).toEqual([{ type: "text", text: "finished" }]);
+    expect(store.size()).toBe(0);
+  });
+
+  it("is a task on the 2026-07-28 extension: a handle, polling, then the result inline", async () => {
+    const store = createMockTaskStore({ pollIntervalMs: 10 });
+    const handler = buildMock(definitionOf([taskCase]), NO_REAL_SERVER, {
+      tasks: { store, owner: "me" },
+    });
+    const created = await modernRpc(handler, "tools/call", {
+      name: "work",
+      arguments: {},
+    });
+    expect(created.result).toMatchObject({
+      resultType: "task",
+      status: "working",
+      pollIntervalMs: 10,
+    });
+    const taskId = created.result!.taskId as string;
+    const seen = new Set<string>();
+    await pollUntil(async () => {
+      const got = await modernRpc(handler, "tasks/get", { taskId });
+      if (got.result?.statusMessage) seen.add(got.result.statusMessage);
+      return got.result?.status === "completed";
+    });
+    expect(seen).toContain("halfway");
+    const done = await modernRpc(handler, "tasks/get", { taskId });
+    expect(done.result).toMatchObject({
+      status: "completed",
+      result: { content: [{ type: "text", text: "finished" }] },
+    });
+    // Another caller's task id is no task.
+    const other = buildMock(definitionOf([taskCase]), NO_REAL_SERVER, {
+      tasks: { store, owner: "someone else" },
+    });
+    expect(
+      (await modernRpc(other, "tasks/get", { taskId })).error
+    ).toBeDefined();
+  });
+
+  it("waits for the person's answer on the extension, through tasks/update", async () => {
+    const store = createMockTaskStore({ pollIntervalMs: 10 });
+    const handler = buildMock(
+      definitionOf([
+        {
+          task: true,
+          steps: [
+            {
+              kind: "ask",
+              id: "q",
+              message: "ok?",
+              requestedSchema: {
+                type: "object",
+                properties: { v: { type: "string" } },
+              },
+            },
+          ],
+          result: text("{{steps.q.content.v}}"),
+        },
+      ]),
+      NO_REAL_SERVER,
+      { tasks: { store, owner: "me" } }
+    );
+    const created = await modernRpc(handler, "tools/call", {
+      name: "work",
+      arguments: {},
+    });
+    const taskId = created.result!.taskId as string;
+    let asked: Record<string, any> | undefined;
+    await pollUntil(async () => {
+      const got = await modernRpc(handler, "tasks/get", { taskId });
+      asked = got.result?.inputRequests;
+      return got.result?.status === "input_required";
+    });
+    expect(asked?.q).toMatchObject({ method: "elicitation/create" });
+    await modernRpc(handler, "tasks/update", {
+      taskId,
+      inputResponses: { q: { action: "accept", content: { v: "yes" } } },
+    });
+    await pollUntil(async () => {
+      const got = await modernRpc(handler, "tasks/get", { taskId });
+      return (
+        got.result?.status === "completed" &&
+        got.result.result.content[0].text === "yes"
+      );
+    });
+  });
+
+  it("cancels a running task", async () => {
+    const store = createMockTaskStore({ pollIntervalMs: 10 });
+    const handler = buildMock(
+      definitionOf([
+        {
+          task: true,
+          steps: [{ kind: "log", level: "info", data: "x", delayMs: 5000 }],
+          result: text("late"),
+        },
+      ]),
+      NO_REAL_SERVER,
+      { tasks: { store, owner: "me" } }
+    );
+    const created = await modernRpc(handler, "tools/call", {
+      name: "work",
+      arguments: {},
+    });
+    const taskId = created.result!.taskId as string;
+    await modernRpc(handler, "tasks/cancel", { taskId });
+    expect(
+      (await modernRpc(handler, "tasks/get", { taskId })).result?.status
+    ).toBe("cancelled");
+  });
+
+  it("is a task on 2025-11-25 when the caller asks for one: get, result, list, cancel", async () => {
+    const store = createMockTaskStore({ pollIntervalMs: 10 });
+    const handler = buildMock(definitionOf([taskCase]), NO_REAL_SERVER, {
+      tasks: { store, owner: "me" },
+    });
+    const rpc = async (
+      id: number,
+      method: string,
+      params: object,
+      session?: string
+    ) => {
+      const response = await handler.fetch(
+        new Request("http://mock.local/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            ...(session && { "mcp-session-id": session }),
+            ...(session && { "mcp-protocol-version": "2025-11-25" }),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+        })
+      );
+      const body = await response.text();
+      const data = /^data:/m.test(body)
+        ? body
+            .split("\n")
+            .find((l) => l.startsWith("data:"))!
+            .slice(5)
+        : body;
+      return JSON.parse(data) as {
+        result?: Record<string, any>;
+        error?: { message: string };
+      };
+    };
+    // Stateless 2025 serving: each request stands alone, so no handshake is needed.
+    const created = await rpc(1, "tools/call", {
+      name: "work",
+      arguments: {},
+      task: { ttl: 60000 },
+    });
+    expect(created.result?.task).toMatchObject({
+      status: "working",
+      pollInterval: 10,
+    });
+    const taskId = created.result!.task.taskId as string;
+    const result = await rpc(2, "tasks/result", { taskId });
+    expect(result.result).toMatchObject({
+      content: [{ type: "text", text: "finished" }],
+      _meta: { "io.modelcontextprotocol/related-task": { taskId } },
+    });
+    expect((await rpc(3, "tasks/get", { taskId })).result).toMatchObject({
+      status: "completed",
+    });
+    expect((await rpc(4, "tasks/list", {})).result?.tasks).toHaveLength(1);
+    expect((await rpc(5, "tasks/cancel", { taskId })).result).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("says a 2025-11-25 task cannot ask a question", async () => {
+    const store = createMockTaskStore();
+    const handler = buildMock(
+      definitionOf([
+        {
+          task: true,
+          steps: [
+            {
+              kind: "ask",
+              id: "q",
+              message: "ok?",
+              requestedSchema: { type: "object", properties: {} },
+            },
+          ],
+          result: text("x"),
+        },
+      ]),
+      NO_REAL_SERVER,
+      { tasks: { store, owner: "me" } }
+    );
+    const response = await handler.fetch(
+      new Request("http://mock.local/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "work", arguments: {}, task: {} },
+        }),
+      })
+    );
+    expect(await response.text()).toContain("2026-07-28");
+    expect(store.size()).toBe(0);
+  });
+
+  it("bounds the tasks it holds", async () => {
+    const store = createMockTaskStore({ maxTasks: 1 });
+    store.create(
+      "me",
+      {
+        task: true,
+        steps: [{ kind: "log", level: "info", data: "x", delayMs: 5000 }],
+        result: text("x"),
+      },
+      {}
+    );
+    expect(() => store.create("me", { result: text("y") }, {})).toThrow(
+      /as many tasks/
+    );
+    store.cancel("me", [...[store.list("me")[0]!.taskId]][0]!);
+    expect(store.create("me", { result: text("y") }, {}).taskId).toBeTruthy();
   });
 });
