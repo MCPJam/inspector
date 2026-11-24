@@ -134,6 +134,7 @@ export function traceMessagePartIndicatesToolFailure(part: unknown): boolean {
  * on a tool result alone cannot distinguish a refusal from an MCP failure. */
 export function rejectedToolCallIds(messages: readonly unknown[]): Set<string> {
   const ids = new Set<string>();
+  if (!Array.isArray(messages)) return ids;
   for (const message of messages) {
     if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.content)) continue;
     for (const part of message.content) {

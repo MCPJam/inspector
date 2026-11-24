@@ -1,4 +1,4 @@
-import { collectRejectedToolCalls, markRejectedCalls } from "@mcpjam/sdk";
+import { collectRejectedToolCalls, markRejectedCalls, withUniqueToolCallIds } from "@mcpjam/sdk";
 import { buildResolvedModelRequestPayload } from "./model-request-payload";
 import { withPageToolAttributionMetadata } from "./page-tool-call-attribution";
 import {
@@ -305,9 +305,9 @@ export interface DirectChatTurnEngineErrorEvent {
  * provider rejects (`cart.add`) are aliased on the wire and restored in its
  * reply. A gateway id string has no model object to wrap.
  */
-function providerReadyModel(llmModel: LanguageModel): LanguageModel {
+function providerReadyModel(llmModel: LanguageModel, history: ModelMessage[]): LanguageModel {
   const model = withoutEmptyTextBlocks(llmModel);
-  return typeof model === "string" ? model : withProviderSafeToolNames(model);
+  return typeof model === "string" ? model : withUniqueToolCallIds(withProviderSafeToolNames(model), history);
 }
 
 export interface RunDirectChatTurnOptions {
@@ -760,7 +760,7 @@ export function runDirectChatTurn(
   let result: ReturnType<typeof streamText>;
   try {
     result = streamText({
-    model: providerReadyModel(llmModel),
+    model: providerReadyModel(llmModel, messageHistory),
     messages: messageHistory,
     // AI SDK 7 rejects system messages in `messages` by default. The history
     // carries them on purpose: MCP server instructions reach the model as

@@ -25,6 +25,7 @@ import type {
 import type { CallToolResult } from "@modelcontextprotocol/client";
 import { resolveToolUiResourceUri } from "./widget-runtime/tool-ui-resource.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
+import { withUniqueToolCallIds } from "./tool-call-ids.js";
 import { withProviderSafeToolNames } from "./provider-tool-names.js";
 import {
   readDiscoveryMode,
@@ -983,7 +984,7 @@ export class HostRunner implements HostExecutor {
       }
 
       const generateTextOptions: any = {
-        model: model as any,
+        model: withUniqueToolCallIds(model, contextMessages),
         tools: { ...instrumentedTools, ...discovery?.metaTools },
         ...(discovery && {
           prepareStep: ({ stepNumber }: { stepNumber: number }) =>
