@@ -69,7 +69,7 @@ export function SidebarPromptCard({
         <SidebarMenuButton
           size="lg"
           tooltip={title}
-          aria-label={title}
+          aria-label={`${title}: ${description}`}
           disabled={disabled}
           onClick={onClick}
           data-testid={`sidebar-prompt-${kind}`}
