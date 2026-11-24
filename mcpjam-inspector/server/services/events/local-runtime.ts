@@ -35,6 +35,7 @@ import {
   computeArgumentsHash,
   computeBindingKey,
   createManagerPushPort,
+  rememberEventsErrorProfile,
   type EventsRpcPort,
   type JournalEntry,
   type PushStreamHandle,
@@ -162,7 +163,17 @@ export class LocalEventsRuntime {
     return {
       list: (params) => manager.listServerEvents(serverId, params),
       poll: (params) => manager.pollServerEvents(serverId, params),
-      subscribe: (params) => manager.subscribeServerEvents(serverId, params),
+      subscribe: async (params) => {
+        try {
+          return await manager.subscribeServerEvents(serverId, params);
+        } catch (error) {
+          // The manager and coordinator can load through different SDK entry points.
+          const profile = manager.getServerConfig(serverId)?.eventsWireProfile
+            ?? (manager.getEventsSupport(serverId).beta ? "beta" : "legacy");
+          rememberEventsErrorProfile(error, profile);
+          throw error;
+        }
+      },
       unsubscribe: (params) => manager.unsubscribeServerEvents(serverId, params),
     };
   }

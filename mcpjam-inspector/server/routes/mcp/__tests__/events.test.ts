@@ -470,6 +470,47 @@ describe("local events routes", () => {
     await call("POST", `/subscriptions/${id}/state`, { desiredState: "removed" });
   });
 
+  it.each([
+    {
+      serverId: "beta-auth",
+      options: { acceptedTokens: ["fixture-token"] },
+      error: { kind: "callback_auth_required", retryable: false },
+    },
+    {
+      serverId: "beta-tls",
+      options: {
+        deliveryFetch: async () => {
+          throw new TypeError("fetch failed", { cause: { code: "DEPTH_ZERO_SELF_SIGNED_CERT" } });
+        },
+      },
+      error: { kind: "callback_tls_error", retryable: true },
+    },
+  ])("preserves classified subscribe refusals from $serverId", async ({ serverId, options, error }) => {
+    const beta = await startEventsFixture({ beta: true, ...options });
+    try {
+      await manager.connectToServer(serverId, { url: beta.url });
+      const created = await call("POST", "/subscriptions", {
+        serverId,
+        eventName: "comment.created",
+        arguments: { document_id: serverId },
+        mode: "webhook",
+        host: null,
+        receiver: { kind: "custom", baseUrl: "https://localhost:9443/hooks" },
+      });
+      expect(created.status).toBe(200);
+      const id = created.body.subscription.id;
+      await vi.waitFor(async () => {
+        const list = await call("GET", "/subscriptions");
+        const subscription = list.body.subscriptions.find((row: { id: string }) => row.id === id);
+        expect(subscription?.lastError).toMatchObject(error);
+      });
+      await call("POST", `/subscriptions/${id}/state`, { desiredState: "removed" });
+    } finally {
+      await manager.disconnectServer(serverId);
+      await beta.close();
+    }
+  });
+
   it("delivers push events through events/stream", async () => {
     const created = await call("POST", "/subscriptions", {
       serverId: SERVER_ID,
