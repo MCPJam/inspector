@@ -55,7 +55,8 @@ npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts \
 ```
 
 Options: `--port` (default `6280`), `--profile` (a folder outside the
-repository).
+repository; by default `~/.mcpjam/web-clients/<vendor>-profile`, or under
+`MCPJAM_WEB_CLIENTS_PROFILE_DIR`).
 
 ## Needs sign-in
 
@@ -70,7 +71,10 @@ npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts --si
 ```
 
 Sign in to claude.ai in the window that opens, close it, then run the tracer
-again. The profile keeps the session for later runs.
+again. The profile keeps the session for later runs. Add `--vendor chatgpt` to
+sign in to ChatGPT instead; the tracer itself drives Claude web only, but a
+local Inspector runs either vendor on these profiles (see
+`web-clients-forwarding.md`).
 
 ## Notes
 

@@ -4,6 +4,8 @@
  *
  *   npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts \
  *     --tunnel-url https://<your tunnel host> [--port 6280] [--profile <dir>]
+ *   npx tsx --tsconfig server/tsconfig.json scripts/web-clients-local-tracer.ts \
+ *     --sign-in [--vendor claude|chatgpt]
  *
  * See docs/web-clients-local-tracer.md. It never answers a human check, a
  * password, a code or a consent page: it prints one "Needs sign-in" line and
@@ -12,25 +14,9 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, posix, resolve, win32 } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-
-/** The repository this script is in, wherever the command runs from. */
-const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
-
-/**
- * Whether `folder` (an absolute path) is outside the repository. On Windows a
- * folder on another drive has no path relative to the repository, and
- * `relative` answers with the folder's absolute path.
- */
-export function isOutsideRepository(
-  folder: string,
-  { root = REPO_ROOT, paths = process.platform === "win32" ? win32 : posix } = {},
-): boolean {
-  const fromRoot = paths.relative(root, folder);
-  return fromRoot === ".." || fromRoot.startsWith(`..${paths.sep}`) || paths.isAbsolute(fromRoot);
-}
+import { isOutsideRepository } from "../server/utils/outside-repository";
 
 /** Generated files the server code imports come from these build steps. */
 const SETUP =
@@ -44,16 +30,30 @@ function fail(message: string, code = 1): never {
   process.exit(code);
 }
 
+/** Where each vendor's sign-in page is, for a person signing in by hand. */
+const SIGN_IN = {
+  claude: { url: "https://claude.ai/login", site: "claude.ai" },
+  chatgpt: { url: "https://chatgpt.com/auth/login", site: "chatgpt.com" },
+} as const;
+
 async function main() {
   const { values } = parseArgs({
     options: {
       "tunnel-url": { type: "string" },
       port: { type: "string", default: "6280" },
-      profile: { type: "string", default: join(homedir(), ".mcpjam", "web-clients", "claude-profile") },
+      vendor: { type: "string", default: "claude" },
+      profile: { type: "string" },
       "sign-in": { type: "boolean", default: false },
     },
   });
-  const profile = resolve(values.profile);
+  const vendor = values.vendor;
+  if (vendor !== "claude" && vendor !== "chatgpt") fail("Pass --vendor claude or --vendor chatgpt.");
+  if (vendor !== "claude" && !values["sign-in"]) {
+    fail("The tracer drives Claude web only. Pass --vendor chatgpt with --sign-in to sign in to ChatGPT for a local Inspector.");
+  }
+  // The same folder a local Inspector's web clients open (localWebClientProfileDir).
+  const profiles = process.env.MCPJAM_WEB_CLIENTS_PROFILE_DIR?.trim() || join(homedir(), ".mcpjam", "web-clients");
+  const profile = resolve(values.profile ?? join(profiles, `${vendor}-profile`));
   if (!isOutsideRepository(profile)) {
     fail("Keep the browser profile outside the repository. Pass --profile with a folder in your home directory.");
   }
@@ -62,8 +62,8 @@ async function main() {
     const { chromium } = await import("playwright");
     const context = await chromium.launchPersistentContext(profile, { headless: false });
     const page = context.pages()[0] ?? (await context.newPage());
-    await page.goto("https://claude.ai/login");
-    process.stdout.write("Sign in to claude.ai in the window that opened, then close the window.\n");
+    await page.goto(SIGN_IN[vendor].url);
+    process.stdout.write(`Sign in to ${SIGN_IN[vendor].site} in the window that opened, then close the window.\n`);
     await new Promise<void>((done) => context.on("close", () => done()));
     process.exit(0);
   }

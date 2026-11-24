@@ -6,6 +6,11 @@ import { resolveBrowserHostCapabilities } from "../../utils/browser-host-capabil
 import { harnessDisplayName } from "@/shared/harness-model-support";
 import { orgKeyHarnessName } from "@/shared/org-key-surfaces";
 import { isWebClientRuntimeId } from "@/shared/web-clients";
+import {
+  createSwarmWebAccounts,
+  type SwarmWebSession,
+} from "../web-clients/swarm-web-accounts.js";
+import { WebAccountUnavailableError } from "../web-clients/web-client-run.js";
 import { appliedToolApproval } from "@/shared/tool-approval";
 import type { LocalHarnessActor } from "../../utils/harness/local/acting-user.js";
 import { isLocalHarnessVenue, prepareLocalHarnessRun, acquireLocalHarnessSlot, assertLocalHarnessCapabilities, localHarnessIdOf } from "../../utils/harness/local/run-resources.js";
@@ -714,6 +719,8 @@ async function runJourneyFanOut(
   // against a wedged host could sit open indefinitely, holding its sandboxes
   // and its spend.
   const runDeadline = withDeadline(abortSignal, budgets.runTimeoutMs, "run");
+  // Web client targets share the swarm's web accounts, one session per account.
+  const webAccounts = createSwarmWebAccounts({ projectId, runId, getBearer });
   const runStop = new AbortController();
   const sessionSignals = composeAbortSignals([
     runDeadline.signal,
@@ -876,6 +883,10 @@ async function runJourneyFanOut(
     // Hoisted so the worker-level catch below knows how far this target got and
     // can finalize the attempts it left behind.
     let sessionIdx = 0;
+    // Whether this runner's claim on `sessionIdx` applied. Until it has, the
+    // attempt may be another runner's, so the catch's sweep leaves alone any
+    // attempt whose claim doesn't apply.
+    let claimedSessionIdx = false;
     let targetSponsorshipRejected = false;
     // A pure property read, so it lives OUT here where both the per-target
     // admission block and the per-attempt binding check can see it — and
@@ -1166,6 +1177,7 @@ async function runJourneyFanOut(
       }
 
       for (sessionIdx = 0; sessionIdx < sessionsPerTarget; sessionIdx++) {
+        claimedSessionIdx = false;
         // Run-level stop (shutdown/cancel/deadline) halts THIS target too.
         if (stopScheduling()) return;
         // Funding-scoped stop: a spend cap skips this target's credit-funded
@@ -1179,6 +1191,7 @@ async function runJourneyFanOut(
         // Queue before claiming an attempt or starting its deadline. Release
         // after each session so other runs share the machine fairly.
         let releaseLocalSlot: (() => void) | undefined;
+        let webSession: SwarmWebSession | undefined;
         if (runsLocally(opts, (target.agentLoop ?? target.harness))) {
           try {
             releaseLocalSlot = await acquireLocalHarnessSlot(attemptSignal);
@@ -1190,6 +1203,15 @@ async function runJourneyFanOut(
           }
         }
         try {
+        // A web client session waits for a free account and holds it for all
+        // its turns. Like the local slot: before the claim, the deadline and
+        // this session's token, so a long wait doesn't age the token.
+        try {
+          webSession = await webAccounts.acquire(target.agentLoop ?? target.harness, attemptSignal);
+        } catch (err) {
+          if (attemptSignal.aborted && creditStop.signal.aborted && !stopScheduling()) continue;
+          throw err;
+        }
         // Per-SESSION re-resolution — the granularity that actually bounds
         // staleness. Everything constructed below bakes this value in for the
         // session's lifetime: the browser-artifact outbox, the widget-snapshot
@@ -1280,6 +1302,7 @@ async function runJourneyFanOut(
           );
           continue;
         }
+        claimedSessionIdx = true;
 
         const attemptStartedAt = Date.now();
         logEvent("attempt.start", {
@@ -1569,6 +1592,7 @@ async function runJourneyFanOut(
                 : {}),
               maxSteps: SWARM_PERSONA_TURN_MAX_STEPS,
               maxOutputTokens: HOSTED_STEP_MAX_OUTPUT_TOKENS,
+              ...(webSession ? { webClientRun: webSession.run } : {}),
               requireToolApproval: target.requireToolApproval,
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
@@ -2171,7 +2195,7 @@ async function runJourneyFanOut(
             await attemptSandbox.release();
           }
         }
-        } finally { releaseLocalSlot?.(); }
+        } finally { releaseLocalSlot?.(); webSession?.lease.release(); }
       }
     } catch (err) {
       // A worker-level throw (a model-less pinned spec whose modelId can't
@@ -2210,18 +2234,30 @@ async function runJourneyFanOut(
         return;
       }
       logEvent("target.worker_failed", { runId, hostId, targetId, sessionIdx });
-      logger.error(
-        "[swarm.runner] target worker failed; finalizing its attempts",
-        err,
-        {
+      // No web account left is the accounts' state, not a fault here.
+      const webAccountFailure =
+        err instanceof WebAccountUnavailableError ? err.message : undefined;
+      if (webAccountFailure) {
+        logger.warn("[swarm.runner] no web account left for this target; finalizing its attempts", {
           runId,
           hostId,
           targetId,
           sessionIdx,
-          setupReason:
-            err instanceof SwarmSetupError ? err.partial.reason : undefined,
-        },
-      );
+        });
+      } else {
+        logger.error(
+          "[swarm.runner] target worker failed; finalizing its attempts",
+          err,
+          {
+            runId,
+            hostId,
+            targetId,
+            sessionIdx,
+            setupReason:
+              err instanceof SwarmSetupError ? err.partial.reason : undefined,
+          },
+        );
+      }
       // Finalize this target's not-yet-terminal attempts `[sessionIdx..N)`: the
       // sweep re-claims the in-flight attempt (if the throw landed after a
       // claim; an idempotent re-claim with the same chatSessionId) and every
@@ -2268,15 +2304,17 @@ async function runJourneyFanOut(
           ? humanizeSwarmAttemptErrorMessage(causeMessage)
           : undefined;
       const failureMessage =
+        webAccountFailure ??
         signInMessage ??
         (err instanceof SwarmSetupError && !signInFailure
           ? setupFailureMessage(err.partial, err.platformFailure)
           : undefined);
-      const failureCode =
-        signInFailure ??
-        (err instanceof SwarmSetupError
-          ? "prerequisites_unavailable"
-          : "host_worker_failed");
+      const failureCode = webAccountFailure
+        ? "web_account_unavailable"
+        : (signInFailure ??
+          (err instanceof SwarmSetupError
+            ? "prerequisites_unavailable"
+            : "host_worker_failed"));
       // Sponsored conversations are never claimed here: claiming one counts as
       // execution and would spend the allowance for a conversation that never
       // ran. They are closed below instead.
@@ -2294,6 +2332,11 @@ async function runJourneyFanOut(
         sessionsPerTarget,
         failureCode,
         failureMessage,
+        // Before this runner's claim (waiting for a web account, say), an
+        // attempt whose claim doesn't apply is another runner's, with its own
+        // terminal. After it, the in-flight attempt is this runner's, and its
+        // re-claim doesn't apply either.
+        !claimedSessionIdx,
       );
       // Capacity leaves them for the run-level finalize. A sponsorship refusal
       // closes only this target, preserving healthy targets. Other failures close this target's
