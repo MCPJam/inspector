@@ -336,8 +336,9 @@ export interface EnsureBrowserSessionArgs {
   /** Saved profile bytes to apply only if this ensure has to boot a daemon. */
   profileArchive?: Uint8Array;
   /**
-   * If this ensure has to boot a daemon, start it from an empty profile (then
-   * `profileArchive`, if any), not whatever an earlier boot left on the box.
+   * If this ensure has to boot a daemon on a sandbox, start it from an empty
+   * profile (then `profileArchive`, if any), not whatever an earlier boot left
+   * on the box. Never honoured on a computer, whose profile is its owner's.
    */
   freshProfile?: boolean;
   signal?: AbortSignal;
@@ -1911,11 +1912,7 @@ async function ensureOnComputer(
   // function cannot accidentally reserve anything.
   args: Pick<
     EnsureBrowserSessionArgs,
-    | "signal"
-    | "logicalSessionId"
-    | "profileArchive"
-    | "freshProfile"
-    | "expectedExistingBootId"
+    "signal" | "logicalSessionId" | "profileArchive" | "expectedExistingBootId"
   > &
     Partial<Pick<EnsureBrowserSessionArgs, "bearer" | "projectId">>,
 ): Promise<ComputerHostedBrowserSessionHandle> {
@@ -2142,7 +2139,6 @@ async function ensureOnComputer(
         contextMode,
         diagnostics,
         ...(args.profileArchive ? { profileArchive: args.profileArchive } : {}),
-        ...(args.freshProfile ? { freshProfile: true } : {}),
         reuseAgain: async () =>
           tryReuse(
             deps,
