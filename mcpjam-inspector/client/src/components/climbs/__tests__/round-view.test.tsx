@@ -8,6 +8,7 @@ vi.mock("@/lib/apis/climbs-api", () => ({
   getClimbRound: (...args: unknown[]) => getClimbRound(...args),
   decideRound: (...args: unknown[]) => decideRound(...args),
 }));
+vi.mock("../round-panes", () => ({ RoundPanes: () => <div data-testid="round-panes" /> }));
 vi.mock("../running-view", () => ({
   RunningView: ({ title, eyebrow }: { title: string; eyebrow?: string }) => (
     <div data-testid="running-view">{eyebrow} {title}</div>
@@ -44,13 +45,14 @@ beforeEach(() => {
 });
 
 describe("RoundView", () => {
-  it("shows a kept round: who, the change, the verdict and each environment", async () => {
+  it("shows a kept round: who, the change, the verdict, each environment and the panes", async () => {
     show();
     expect(await screen.findByText("Kept.")).toBeInTheDocument();
     expect(screen.getByText("Round 1 · You")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: 'Changed the description of "list_projects"' })).toBeInTheDocument();
     expect(screen.getByText(/MCPJam · Sonnet went from 78% to 94%/)).toBeInTheDocument();
     expect(screen.getAllByTestId("environment-cell")).toHaveLength(2);
+    expect(screen.getByTestId("round-panes")).toBeInTheDocument();
     expect(screen.getByText("Validation cases didn't move")).toBeInTheDocument();
   });
 

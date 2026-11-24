@@ -18,8 +18,9 @@ import { EnvironmentCell } from "./environment-cell";
 import { PickerTranscript } from "./picker-transcript";
 import { ResultBadge } from "./result-badge";
 import { ResultTable } from "./result-table";
+import { RoundPanes } from "./round-panes";
 import { RunningView } from "./running-view";
-import { changeTitle, roundResult, submittedByLabel } from "./round-model";
+import { bestSoFarLabel, changeTitle, roundResult, submittedByLabel } from "./round-model";
 import { verdictSentence } from "./round-verdict";
 import { useAsyncRead } from "./use-async-read";
 import type { RoundChanges } from "./use-round-changes";
@@ -95,6 +96,7 @@ export function RoundView({
     serverName: climb.serverName,
   });
   const undecided = result === "undecided";
+  const earlier = { ...climb, rounds: climb.rounds.filter((candidate) => candidate.number < roundNumber) };
   const decide = async (decision: "kept" | "reverted", reason: string) => {
     await decideRound({ projectId: climb.projectId, climbId: climb.climbId, roundNumber, decision, reason });
     onChanged();
@@ -181,6 +183,14 @@ export function RoundView({
           />
         ))}
       </div>
+
+      <RoundPanes
+        climb={climb}
+        roundNumber={roundNumber}
+        failedCaseKeys={round.failedSteeringCaseKeys}
+        labels={labels}
+        bestSub={bestSoFarLabel(earlier)}
+      />
 
       <Accordion type="multiple" className="border-t border-border">
         <AccordionItem value="change">
