@@ -86,6 +86,10 @@ import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { localHostAllowlistMiddleware } from "./middleware/local-host-allowlist.js";
 import { mountLocalSandboxViewHost } from "./middleware/local-sandbox-view-host.js";
 import {
+  createLocalConnectorRoutes,
+  mountInspectorWebConnectors,
+} from "./services/web-clients/inspector-endpoint.js";
+import {
   documentScriptNonce,
   securityHeadersMiddleware,
   withScriptNonce,
@@ -290,6 +294,9 @@ export async function createHonoApp() {
   // Local App documents answer their own `localhost` subdomains before any
   // other middleware or route sees the request.
   mountLocalSandboxViewHost(app);
+  // Claude web and ChatGPT web reach the project's server here, before the
+  // global middleware too. Mirror of the mount in server/index.ts.
+  mountInspectorWebConnectors(app);
 
   // Middleware to inject the client manager into context
   app.use("*", async (c, next) => {
@@ -362,6 +369,10 @@ export async function createHonoApp() {
   if (!HOSTED_MODE) {
     app.route("/api/apps", appsRoutes);
     app.route("/api/mcp", mcpRoutes);
+    app.route(
+      "/api/web-clients/local-connectors",
+      createLocalConnectorRoutes(),
+    );
   } else {
     // Only the hosted-open paths (health + public model catalog) are mounted;
     // the rest of /api/mcp and /api/apps stays 410'd by applyHostedPartition.

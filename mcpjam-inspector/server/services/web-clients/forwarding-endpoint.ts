@@ -68,6 +68,7 @@ import {
 import {
   hashPayload,
   webClientToolCallLedger,
+  type DurableToolCallLedger,
   type LedgerState,
   type ToolCallLedger,
 } from "./tool-call-ledger.js";
@@ -81,6 +82,11 @@ export type WebConnectorEndpointDeps = {
   resolver: WebConnectorResolver;
   turns?: TurnWindowStore;
   ledger?: ToolCallLedger;
+  /**
+   * The backend's ledger. When set, a call goes upstream only after it is
+   * recorded there, and is settled there too.
+   */
+  durableLedger?: DurableToolCallLedger;
   /**
    * The MCPJam user an OAuth bearer names, when it was issued for one of
    * `audiences`: the connector's URL, or the `/mcp` family the root metadata
@@ -476,8 +482,6 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       return answerAll(body, () => COPY.noUpstream, REFUSED, 502, frame);
     }
 
-    const calls = body.messages.filter(isToolCall);
-    const callIds = new Set(calls.map((call) => call.id));
     type Outcome = Parameters<ToolCallLedger["settle"]>[1];
     const outcomeOf = (
       state: Exclude<LedgerState, "forwarded">,
@@ -489,20 +493,39 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       ...(resultHash ? { resultHash } : {}),
     });
     /** A call sent on and not settled yet, with the answer seen for it if the ledger refused that. */
-    type Pending = { entryId: string; seen?: Outcome };
+    type Pending = { entryId: string; durableId?: string; seen?: Outcome };
+    const warn = (what: string, error: unknown) =>
+      logger.warn(`[web-clients] ${what}`, {
+        connector: connectorTag(connectorId),
+        message: error instanceof Error ? error.message : String(error),
+      });
+    const release = () =>
+      target
+        .release?.()
+        .catch((error: unknown) =>
+          warn("the upstream connection was not released", error),
+        );
+    const settleDurable = (durableId: string | undefined, outcome: Outcome) => {
+      // An unsettled record reads as ambiguous: the safe direction for recovery.
+      if (durableId)
+        deps.durableLedger
+          ?.settle(durableId, outcome)
+          .catch((error: unknown) => warn("a call was not settled durably", error));
+    };
     const pending = new Map<RpcId, Pending>();
-    /** Whether the ledger took the outcome. */
+    /** Whether the ledger here took the outcome. */
     const settle = (call: Pending, outcome: Outcome): boolean => {
+      let recorded = true;
       try {
         ledger.settle(call.entryId, outcome);
-        return true;
       } catch (error) {
-        logger.warn("[web-clients] a forwarded call could not be settled", {
-          connector: connectorTag(connectorId),
-          message: error instanceof Error ? error.message : String(error),
-        });
-        return false;
+        recorded = false;
+        warn("a forwarded call could not be settled", error);
       }
+      // The durable copy keeps its first outcome, so it is sent only that one.
+      settleDurable(call.durableId, outcome);
+      call.durableId = undefined;
+      return recorded;
     };
     let finished = false;
     const finish = (state: "lost" | "error", upstreamStatus?: number) => {
@@ -512,60 +535,77 @@ export function createWebConnectorEndpoint(deps: WebConnectorEndpointDeps): Hono
       for (const call of pending.values())
         settle(call, call.seen ?? outcomeOf(state, upstreamStatus));
       pending.clear();
-      target.release?.().catch((error: unknown) =>
-        logger.warn("[web-clients] the upstream connection was not released", {
-          connector: connectorTag(connectorId),
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      );
+      void release();
     };
-    // A call goes only under the turn that approved it, which can end while
-    // the server is resolved or its credential refreshed.
-    const approvedTurnOpen = () =>
-      calls.length === 0 ||
-      turns.active(connectorId)?.turnId === window?.turnId;
-    if (!approvedTurnOpen()) {
+
+    // Recorded before anything is sent, so a call lost mid-flight stays on
+    // record as uncertain, and recovery after a restart reads the durable copy.
+    const calls = body.messages.filter(isToolCall).map((call) => {
+      const params = paramsOf(call);
+      const toolUseId = toolUseIdOf(params);
+      return {
+        connectorId,
+        turnId: window?.turnId,
+        runId: window?.runId,
+        jsonrpcId: call.id,
+        toolName: String(params.name),
+        ...(toolUseId ? { toolUseId } : {}),
+        ...(args.userId ? { userId: args.userId } : {}),
+        argsHash: hashPayload(params.arguments ?? {}),
+      };
+    });
+    const callIds = new Set(calls.map((call) => call.jsonrpcId));
+    const durableIds: Array<string | undefined> = [];
+    // Recorded but never sent: each record gets the error the vendor gets.
+    const refuseCalls = (reason: string) => {
+      const settling = new Set(
+        Array.from(pending.values(), (call) => call.durableId),
+      );
       finish("error");
+      for (const durableId of durableIds)
+        if (!settling.has(durableId))
+          settleDurable(durableId, { state: "error" });
       return answerAll(
         body,
-        (id) => (callIds.has(id) ? COPY.noTurn : COPY.batchHeld),
+        (id) => (callIds.has(id) ? reason : COPY.batchHeld),
         REFUSED,
         200,
         frame,
       );
-    }
-
-    // Written down before anything is sent: a call lost mid-flight stays on record as uncertain.
+    };
     try {
-      for (const call of calls) {
-        const params = paramsOf(call);
-        const toolUseId = toolUseIdOf(params);
-        const entry = ledger.forwarded({
-          connectorId,
-          turnId: window?.turnId,
-          runId: window?.runId,
-          jsonrpcId: call.id,
-          toolName: String(params.name),
-          ...(toolUseId ? { toolUseId } : {}),
-          ...(args.userId ? { userId: args.userId } : {}),
-          argsHash: hashPayload(params.arguments ?? {}),
-        });
-        pending.set(call.id, { entryId: entry.id });
-      }
+      for (const call of calls)
+        durableIds.push(await deps.durableLedger?.record(call));
     } catch (error) {
-      // Recorded but never sent: each record gets the error the vendor gets.
-      finish("error");
       reportRouteFailure("Web connector call could not be recorded", error, {
         source: SOURCE,
         hop: "mcpjam_internal",
       });
-      return answerAll(
-        body,
-        (id) => (callIds.has(id) ? COPY.notRecorded : COPY.batchHeld),
-        REFUSED,
-        200,
-        frame,
-      );
+      return refuseCalls(COPY.notRecorded);
+    }
+    // A call goes only under the turn that approved it, which can end while
+    // the server is resolved, the calls are recorded or a credential is
+    // refreshed. A recovery that read the ledger after the close may not
+    // have seen these calls and may send its own, so these are not sent.
+    const approvedTurnOpen = () =>
+      calls.length === 0 ||
+      turns.active(connectorId)?.turnId === window?.turnId;
+    if (!approvedTurnOpen()) return refuseCalls(COPY.noTurn);
+    try {
+      calls.forEach((call, index) => {
+        const durableId = durableIds[index];
+        const entry = ledger.forwarded({
+          ...call,
+          ...(durableId ? { durableId } : {}),
+        });
+        pending.set(call.jsonrpcId, { entryId: entry.id, durableId });
+      });
+    } catch (error) {
+      reportRouteFailure("Web connector call could not be recorded", error, {
+        source: SOURCE,
+        hop: "mcpjam_internal",
+      });
+      return refuseCalls(COPY.notRecorded);
     }
 
     let response: Response;
