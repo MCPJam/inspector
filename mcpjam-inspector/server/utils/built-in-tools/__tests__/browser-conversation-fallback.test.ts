@@ -213,6 +213,30 @@ describe("a caller's own profile", () => {
     await ensure({ archive });
     expect(hoisted.ensureLive.mock.lastCall?.[0]).not.toHaveProperty("profileArchive");
   });
+
+  it("boots from an empty profile directory, so nothing an earlier boot left on the box remains", async () => {
+    const session = await hoisted.resolveSession();
+    for (const own of [{}, { archive: new Uint8Array([1, 2, 3]) }]) {
+      hoisted.resolveSession.mockResolvedValueOnce({ ...session, profileId: "default-profile" });
+      await ensure(own);
+      expect(hoisted.ensureLive).toHaveBeenLastCalledWith(expect.objectContaining({ freshProfile: true }));
+    }
+    // Neither a browser that already booted nor the person's own default
+    // profile is emptied.
+    hoisted.resolveSession.mockResolvedValueOnce({ ...session, lastBootId: "boot-0" });
+    await ensure({});
+    expect(hoisted.ensureLive.mock.lastCall?.[0]).not.toHaveProperty("freshProfile");
+    hoisted.resolveSession.mockResolvedValueOnce({ ...session, profileId: "default-profile" });
+    await ensureHostedConversationSession({
+      bearer: "Bearer user",
+      projectId: "project-1",
+      logicalSessionId: "chat-a",
+      ownerKind: "conversation",
+      contextMode: "persistent",
+      target: { kind: "sandbox", sandboxRowId: "row", sandboxId: "box" },
+    });
+    expect(hoisted.ensureLive.mock.lastCall?.[0]).not.toHaveProperty("freshProfile");
+  });
 });
 
 describe("unattended recording targets", () => {
