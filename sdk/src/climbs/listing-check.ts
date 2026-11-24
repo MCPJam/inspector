@@ -5,6 +5,7 @@
  * check also masks the fields the kept changes touched, so a hash of the rest
  * of the listing says whether the server changed beyond them.
  */
+import { mockPathOf } from "../mocks/change-kinds.js";
 import type { MockChange } from "../mocks/change-list.js";
 import type { RealServerView } from "./types.js";
 
@@ -63,6 +64,11 @@ export function checkKeptChanges(
       if (change.target === "server") {
         if (detail.path === "instructions") judge("instructions", detail.summary, detail.after, listing.instructions, old?.instructions);
         else notChecked.push(detail.path);
+        continue;
+      }
+      // The listing here is the tools': a prompt, resource, skill or app is not judged against it.
+      if (change.target !== "tool") {
+        notChecked.push(mockPathOf(change, detail.path));
         continue;
       }
       const name = change.name ?? "";

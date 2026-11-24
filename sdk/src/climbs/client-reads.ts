@@ -23,7 +23,17 @@ export type ReadField =
   | "toolAnnotations"
   | "toolIcons"
   | "toolMeta"
-  | "toolResult";
+  | "toolResult"
+  | "promptListing"
+  | "promptContent"
+  | "resourceListing"
+  | "resourceContent"
+  | "templateListing"
+  | "templateContent"
+  | "skillListing"
+  | "skillContent"
+  | "appListing"
+  | "appContent";
 
 type Reads = ChangeReader["reads"];
 const HARNESS: readonly ClimbClient[] = ["claude-code", "codex", "cursor", "copilot-cli", "opencode"];
@@ -44,6 +54,19 @@ const MCPJAM: Record<ReadField, Reads> = {
   toolIcons: "ignores",
   toolMeta: "ignores",
   toolResult: "reads",
+  // "Not in MCPJam's eval loop."
+  promptListing: "ignores",
+  promptContent: "ignores",
+  resourceListing: "ignores",
+  resourceContent: "ignores",
+  templateListing: "ignores",
+  templateContent: "ignores",
+  // "MCPJam's client uses a pinned set in eval runs."
+  skillListing: "ignores",
+  skillContent: "ignores",
+  // "Playground; eval widget steps": whether an eval's model-facing loop reads an app is what V7 measures.
+  appListing: "unconfirmed",
+  appContent: "unconfirmed",
 };
 
 const HARNESS_READS: Record<ReadField, Reads> = {
@@ -61,6 +84,19 @@ const HARNESS_READS: Record<ReadField, Reads> = {
   toolIcons: "unconfirmed",
   toolMeta: "unconfirmed",
   toolResult: "reads",
+  // "Passed to harness clients": whether the model sees them is what V7 measures.
+  promptListing: "unconfirmed",
+  promptContent: "unconfirmed",
+  resourceListing: "unconfirmed",
+  resourceContent: "unconfirmed",
+  templateListing: "unconfirmed",
+  templateContent: "unconfirmed",
+  // "Harness clients, as host tools."
+  skillListing: "reads",
+  skillContent: "reads",
+  // "Playground; eval widget steps": no harness client is named.
+  appListing: "unconfirmed",
+  appContent: "unconfirmed",
 };
 
 export const CLIENT_LABELS: Readonly<Record<ClimbClient, string>> = {
@@ -89,6 +125,22 @@ export function fieldOfChange(change: MockChange, path: string): ReadField {
     if (path.startsWith("serverInfo")) return "serverName";
     if (path.startsWith("instructions")) return "instructions";
     return "capabilities";
+  }
+  if (change.target !== "tool") {
+    // Whatever the entry states, a reader of the item reads its content; only `hidden` changes what is listed.
+    const listed = path.split(".")[0] === "hidden";
+    switch (change.target) {
+      case "prompt":
+        return listed ? "promptListing" : "promptContent";
+      case "resource":
+        return listed ? "resourceListing" : "resourceContent";
+      case "resourceTemplate":
+        return listed ? "templateListing" : "templateContent";
+      case "skill":
+        return listed ? "skillListing" : "skillContent";
+      case "app":
+        return listed ? "appListing" : "appContent";
+    }
   }
   // An entry added to the definition states fields of a tool the real server already lists, so
   // each detail is judged by its own path; only `hidden` changes what the listing holds.

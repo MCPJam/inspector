@@ -53,3 +53,53 @@ describe("inverseOfChanges", () => {
     expect(inverse.unrestorable).toHaveLength(1);
   });
 });
+
+describe("inverseOfChanges for prompts, resources, templates, skills and apps", () => {
+  const OLD_ITEMS: OldServer = {
+    ...OLD,
+    prompts: { greet: { description: "Says hello.", title: "Greet" } },
+    resources: {
+      "file:///notes.md": { description: "Notes.", mimeType: "text/markdown" },
+      "skill://triage/SKILL.md": { text: "old skill text" },
+      "ui://card": { description: "A card.", _meta: { ui: { csp: {} } } },
+    },
+    resourceTemplates: { "file:///logs/{name}": { description: "A log." } },
+  };
+
+  it.each([
+    ["a prompt's description", { prompts: { greet: { description: "Hello!" } } }, { prompts: { greet: { description: "Says hello." } } }],
+    ["a resource's description", { resources: { "file:///notes.md": { description: "New." } } }, { resources: { "file:///notes.md": { description: "Notes." } } }],
+    ["a template's description", { resourceTemplates: { "file:///logs/{name}": { description: "New." } } }, { resourceTemplates: { "file:///logs/{name}": { description: "A log." } } }],
+    ["a skill file's text", { resources: { "skill://triage/SKILL.md": { text: "new" } } }, { resources: { "skill://triage/SKILL.md": { text: "old skill text" } } }],
+    ["an app's meta", { resources: { "ui://card": { _meta: { ui: { csp: { a: 1 } } } } } }, { resources: { "ui://card": { _meta: { ui: { csp: {} } } } } }],
+  ])("puts back %s", (_label, definition, expected) => {
+    const inverse = inverseOfChanges(kept(definition), OLD_ITEMS);
+    expect(inverse.unrestorable).toEqual([]);
+    expect(inverse.definition).toEqual(expected);
+  });
+
+  it("hides again an entry the kept change showed again, and states nothing else for it", () => {
+    const before = { prompts: { greet: { hidden: true as const } }, resources: { "ui://card": { hidden: true as const } } };
+    const after = { prompts: { greet: { description: "Hello!" } }, resources: { "ui://card": { description: "x" } } };
+    const inverse = inverseOfChanges(diffMockDefinitions(before as never, after as never), OLD_ITEMS);
+    expect(inverse.unrestorable).toEqual([]);
+    expect(inverse.definition).toEqual({ prompts: { greet: { hidden: true } }, resources: { "ui://card": { hidden: true } } });
+  });
+
+  it.each([
+    ["an entry the new code removed", { prompts: { greet: { hidden: true } } }, "prompts.greet.hidden", /removed the prompt "greet"/],
+    ["an entry that did not exist", { prompts: { fresh: { description: "x" } } }, "prompts.fresh.description", /did not exist before/],
+    ["a field the old entry did not have", { prompts: { greet: { arguments: [{ name: "a" }] } } }, "prompts.greet.arguments", /cannot take a field away/],
+    ["a kind the capture did not store", { resources: { "file:///other": { description: "x" } } }, "resources.file:///other.description", /did not exist before/],
+    ["a skill the capture did not store", { resources: { "skill://x/SKILL.md": { text: "x" } } }, "resources.skill://x/SKILL.md.text", /did not exist before/],
+  ])("cannot put back %s, and says why", (_label, definition, path, why) => {
+    const inverse = inverseOfChanges(kept(definition), OLD_ITEMS);
+    expect(inverse.unrestorable.find((entry) => entry.path === path)?.why).toMatch(why);
+    expect(inverse.definition.prompts).toBeUndefined();
+  });
+
+  it("says the old value was not stored when the capture holds no such map", () => {
+    const inverse = inverseOfChanges(kept({ prompts: { greet: { description: "x" } } }), OLD);
+    expect(inverse.unrestorable[0]).toMatchObject({ path: "prompts.greet.description", why: expect.stringContaining("was not stored") });
+  });
+});

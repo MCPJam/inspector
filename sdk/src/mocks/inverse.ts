@@ -9,14 +9,29 @@
  * the verification runs the server alone, setting its result beside the one the
  * climb recorded.
  */
-import type { MockChange } from "./change-list.js";
-import type { MockDefinition, MockTool } from "./definition-types.js";
+import type { MockChange, MockChangeTarget } from "./change-list.js";
+import { CHANGE_PLACES, mockPathOf } from "./change-kinds.js";
+import type {
+  MockDefinition,
+  MockPrompt,
+  MockResource,
+  MockResourceTemplate,
+  MockTool,
+} from "./definition-types.js";
 
 /** What the real server held before the climb changed anything. */
 export type OldServer = {
   instructions?: string;
   serverInfo?: { name?: string; title?: string; version?: string };
   tools: Record<string, Partial<Record<(typeof RESTORABLE)[number], unknown>>>;
+  /**
+   * What the server listed before, by prompt name, resource URI (skills and
+   * apps included) and URI template. A map left out was not stored: nothing
+   * in it can be put back. An entry missing from a stored map did not exist.
+   */
+  prompts?: Record<string, Record<string, unknown>>;
+  resources?: Record<string, Record<string, unknown>>;
+  resourceTemplates?: Record<string, Record<string, unknown>>;
   /** Paths the stored capture dropped for size, such as `tools.search.inputSchema`: their old values are unknown. */
   droppedFields?: readonly string[];
 };
@@ -31,12 +46,30 @@ function isRestorable(head: string): head is Restorable {
   return (RESTORABLE as readonly string[]).includes(head);
 }
 
+type ItemTarget = Exclude<MockChangeTarget, "server" | "tool">;
+
+const PROMPT_FIELDS = ["title", "description", "arguments", "icons", "_meta", "messages"];
+const TEMPLATE_FIELDS = ["name", "title", "description", "mimeType", "annotations", "icons", "_meta", "text", "blob"];
+const RESOURCE_FIELDS = [...TEMPLATE_FIELDS, "size"];
+
+/** The fields of a prompt, resource, template, skill file or app a mock can state again. */
+const ITEM_FIELDS: Record<ItemTarget, readonly string[]> = {
+  prompt: PROMPT_FIELDS,
+  resource: RESOURCE_FIELDS,
+  skill: RESOURCE_FIELDS,
+  app: RESOURCE_FIELDS,
+  resourceTemplate: TEMPLATE_FIELDS,
+};
+
 /** The inverse of a kept change list: the definition that states the old values, and what it could not. */
 export function inverseOfChanges(changes: readonly MockChange[], old: OldServer): InverseMock {
   const tools: Record<string, MockTool> = {};
   const serverInfo: Record<string, string> = {};
   let instructions: string | undefined;
   const unrestorable: Unrestorable[] = [];
+  const prompts: Record<string, Record<string, unknown>> = {};
+  const resources: Record<string, Record<string, unknown>> = {};
+  const templates: Record<string, Record<string, unknown>> = {};
   const dropped = new Set(old.droppedFields ?? []);
   const cannot = (path: string, why: string) => {
     if (!unrestorable.some((entry) => entry.path === path)) unrestorable.push({ path, why });
@@ -61,7 +94,27 @@ export function inverseOfChanges(changes: readonly MockChange[], old: OldServer)
       }
       const name = change.name ?? "";
       if (change.target !== "tool") {
-        cannot(`${change.target}.${name}.${detail.path}`, `a mock cannot yet put back an edit to the ${change.target} "${name}"`);
+        const place = CHANGE_PLACES[change.target];
+        const path = mockPathOf(change, detail.path);
+        const noun = `${place.noun.replace(/^the /, "")} "${name}"`;
+        const restored = place.map === "prompts" ? prompts : place.map === "resourceTemplates" ? templates : resources;
+        const head = detail.path.split(".")[0] ?? "";
+        const stored = old[place.map as "prompts" | "resources" | "resourceTemplates"];
+        if (head === "hidden") {
+          // A mock can hide what the server lists, not list what the new code removed.
+          if (detail.after === true) cannot(path, `the new code removed the ${noun}, and a mock cannot list what the server no longer has`);
+          else restored[name] = { hidden: true };
+        } else if (!ITEM_FIELDS[change.target].includes(head)) {
+          cannot(path, `a mock cannot put back ${detail.path} of the ${noun}`);
+        } else if (stored === undefined) {
+          cannot(path, `the old ${noun} was not stored, so its old ${head} is not known`);
+        } else if (stored[name] === undefined) {
+          cannot(path, `the ${noun} did not exist before, so the new code's version of it cannot be put back`);
+        } else if (stored[name][head] === undefined || dropped.has(path)) {
+          cannot(path, `the old ${head} of the ${noun} ${stored[name][head] === undefined ? "was not set, and a mock cannot take a field away" : "was not stored"}`);
+        } else if (restored[name]?.hidden !== true) {
+          restored[name] = { ...restored[name], [head]: stored[name][head] };
+        }
         continue;
       }
       const path = `tools.${name}.${detail.path}`;
@@ -92,6 +145,9 @@ export function inverseOfChanges(changes: readonly MockChange[], old: OldServer)
       ...(instructions !== undefined ? { instructions } : {}),
       ...(Object.keys(serverInfo).length > 0 ? { serverInfo } : {}),
       ...(Object.keys(tools).length > 0 ? { tools } : {}),
+      ...(Object.keys(prompts).length > 0 ? { prompts: prompts as Record<string, MockPrompt> } : {}),
+      ...(Object.keys(resources).length > 0 ? { resources: resources as Record<string, MockResource> } : {}),
+      ...(Object.keys(templates).length > 0 ? { resourceTemplates: templates as Record<string, MockResourceTemplate> } : {}),
     },
     unrestorable,
   };

@@ -6,6 +6,7 @@
  * stage, and the rounds so far. An entry no client of the climb reads sorts
  * last and says so, because a round that changes only that is refused.
  */
+import { mockPathOf } from "../mocks/change-kinds.js";
 import type { PlatformClimbVerdict } from "../platform/climb-types.js";
 import { readersOf, type ReadField } from "./client-reads.js";
 import { pickFailedRuns } from "./failed-runs.js";
@@ -114,7 +115,7 @@ function triedFor(tried: readonly TriedChange[], mockPath: string): Array<{ roun
     .filter((round) =>
       round.changes.some((change) =>
         change.details.some((detail) => {
-          const path = change.target === "server" ? detail.path : `tools.${change.name}.${detail.path}`;
+          const path = mockPathOf(change, detail.path);
           return path === mockPath || path.startsWith(`${mockPath}.`) || mockPath.startsWith(`${path}.`);
         }),
       ),

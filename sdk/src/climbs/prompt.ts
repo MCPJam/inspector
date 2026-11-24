@@ -5,6 +5,7 @@
  * have fit the steering cases alone. The prompt names no validation or
  * confirmation case.
  */
+import { describePlace } from "../mocks/change-kinds.js";
 import type { MockChange, MockFieldChange } from "../mocks/change-list.js";
 import type { KeptRound } from "./types.js";
 
@@ -17,9 +18,8 @@ function show(value: unknown): string {
 }
 
 function describeField(change: MockChange, detail: MockFieldChange): string {
-  const where = change.target === "server" ? "the server" : `the tool "${change.name}"`;
   return [
-    `- ${detail.summary} (${detail.path} of ${where})`,
+    `- ${detail.summary} (${detail.path} of ${describePlace(change)})`,
     `  Was: ${show(detail.before)}`,
     `  Now: ${show(detail.after)}`,
   ].join("\n");
@@ -52,7 +52,7 @@ export function climbPrompt(input: { serverName: string; kept: readonly KeptRoun
     return [header, ...round.changes.map(describeChange)].join("\n");
   });
   return [
-    `Apply these changes to the code of ${serverName}. Each was measured on a mock that put it in front of the server, and kept by the climb's rule. Make each edit so the server lists exactly what "Now" says, keeping everything else as it is.`,
+    `Apply these changes to the code of ${serverName}. Each was measured on a mock that put it in front of the server, and kept by the climb's rule. Make each edit so the server lists or serves exactly what "Now" says, keeping everything else as it is.`,
     "Changes that also helped on validation cases come first.",
     "",
     sections.join("\n\n"),
